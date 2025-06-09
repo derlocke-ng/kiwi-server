@@ -522,4 +522,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**KISS Philosophy**: Keep It Simple, Stupid. Kiwi Server hides the complexity of CoreOS deployment while providing full access to its powerful features.
+Made with 🥝 for security enthusiasts

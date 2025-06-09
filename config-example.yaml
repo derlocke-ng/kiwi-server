@@ -1,0 +1,71 @@
+# KISS CoreOS/uBlue Mass Deployment Example Config
+#
+# This is a minimal, human-friendly YAML config for mass-generating Fedora CoreOS/uBlue ISOs and Ignition files.
+# - Global settings apply to all servers unless overridden per-server.
+# - Per-server settings override global ones (but do not destroy unrelated settings).
+# - Only simple, high-level keys are exposed. No Butane/FCOS complexity.
+# - All features below are supported and auto-converted to valid Butane YAML and Ignition JSON.
+#
+# --- GLOBAL SETTINGS ---
+global:
+  user: core
+  password: mypassword
+  ssh_keys:
+    - ssh-ed25519 AAAA...global-key
+  groups: [wheel, docker]
+  image: ghcr.io/ublue-os/ucore-hci:stable  # Used for ucore autorebase systemd units
+  network:
+    interface: eth0
+    gateway: 192.168.1.1
+    dns: [1.1.1.1, 8.8.8.8]
+    dhcp: false
+    iprange: 192.168.0.14-192.168.255.100  # Used for auto IP assignment if no address is set
+    #mask: 24  # Optional: override auto-calculated netmask for assigned IPs
+  services: [docker, cockpit, libvirtd]
+  motd: "Welcome to CoreOS!"
+  #timezone: UTC  # Not supported in FCOS v1.6 (Butane)
+  files:
+    - path: /etc/profile.d/hello.sh
+      contents: 'echo Hello, world!'
+  directories:
+    - path: /opt/mydir
+      mode: 0755
+  kernel_arguments:
+    - quiet
+    - loglevel=3
+  boot_device:
+    luks:
+      tpm2: false
+      tang:
+        - url: https://tang1.example.com
+          thumbprint: ABCDEF123456
+        - url: https://tang2.example.com
+          thumbprint: 123456ABCDEF
+
+# --- SERVER-SPECIFIC SETTINGS ---
+servers:
+  server1:
+    hostname: server1
+    network:
+      #address: 192.168.2.10/24  # Uncomment to set static IP manually
+      dhcp: false
+      #mask: 24  # Optional: override netmask for this server
+    ssh_keys:
+      - ssh-ed25519 AAAA...server1-key
+    image: ghcr.io/ublue-os/ucore-hci:testing  # Per-server autorebase image
+    services: [docker, cockpit]
+    motd: "This is server1"
+    #timezone: Europe/Berlin  # Not supported in FCOS v1.6 (Butane)
+    files:
+      - path: /etc/hostname
+        contents: server1
+    directories:
+      - path: /opt/server1
+        mode: 0700
+    kernel_arguments:
+      - myarg=1
+  server2:
+    hostname: server2
+    network:
+      dhcp: true  # DHCP for this server
+    # Inherits all other settings from global

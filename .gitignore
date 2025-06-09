@@ -1,0 +1,3 @@
+# Ignore development config and build output
+config-dev.yaml
+output/

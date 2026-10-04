@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kiwi Server
+Comment=Build install ISOs and first-boot scripts for kiwi-node and kiwi-master machines
+Exec=kiwi-server-gui
+Icon=eu.kiwinetwork.KiwiServer
+Terminal=false
+Categories=System;Settings;
+Keywords=coreos;ucore;debian;iso;ignition;preseed;server;kiwi;deploy;

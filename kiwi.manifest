@@ -1,0 +1,19 @@
+# kiwi.manifest — app metadata for the kiwi updater
+NAME=kiwi-server
+DESCRIPTION=Build first-boot scripts and unattended install ISOs that turn Fedora CoreOS, uCore or Debian machines into a kiwi-node or kiwi-master
+VERSION=2.0.0
+AUTHOR=derlocke-ng
+HOMEPAGE=https://github.com/derlocke-ng/kiwi-server
+LICENSE=MIT
+
+COMPONENTS=cli gui config
+CATEGORY=System
+TAGS=coreos ucore debian iso ignition butane preseed kiwi-node kiwi-master deployment
+
+SCOPES=user
+
+ICON=data/icons/eu.kiwinetwork.KiwiServer.svg
+ABOUT=README.md
+DEPENDS=python3 git
+
+INSTALLER=install.sh

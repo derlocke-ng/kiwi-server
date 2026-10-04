@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# kiwi-server — scripts, configs and unattended install ISOs for Kiwi Network
+# machines (kiwi-node, kiwi-master) on Fedora CoreOS, uCore and Debian.
+#
+# A launcher: the work is in the kiwiserver Python package next to this file
+# (a checkout: ../lib/kiwiserver; installed: ../lib/kiwi-server/kiwiserver).
+# It needs python3 with PyYAML — both in the Silverblue/Bluefin base image.
+set -euo pipefail
+
+here="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+if [[ -d "$here/../lib/kiwi-server/kiwiserver" ]]; then
+    home="$(cd "$here/../lib/kiwi-server" && pwd)"      # installed by kiwi / install.sh
+    pypath="$home"
+elif [[ -d "$here/../lib/kiwiserver" ]]; then
+    home="$(cd "$here/.." && pwd)"                       # a git checkout
+    pypath="$home/lib"
+else
+    echo "error: kiwi-server's library is missing next to $here" >&2
+    exit 1
+fi
+
+export KIWI_SERVER_HOME="${KIWI_SERVER_HOME:-$home}"
+export PYTHONPATH="$pypath${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+exec python3 -m kiwiserver "$@"

@@ -1,525 +1,264 @@
-# Kiwi Server - CoreOS/uBlue Mass Deployment Tool
+# kiwi-server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Build the machines of a [Kiwi Network](https://kiwi-network.eu): write one
+`fleet.yaml`, get a **first-boot script**, an **Ignition or preseed config**
+and an **unattended install ISO** per host. Boot the ISO, walk away, and the
+machine comes back as a `kiwi-node` or `kiwi-master` — on Fedora CoreOS, uCore
+or Debian stable — with automatic updates that reboot only in the window you
+chose.
 
-**Kiwi Server** is a KISS (Keep It Simple, Stupid) automation tool for mass deployment of Fedora CoreOS and uBlue systems. It generates customized ISOs and Ignition configs from a simple, human-friendly YAML configuration file, hiding the complexity of Butane while supporting all essential CoreOS features.
+A [kiwi-updater](https://github.com/derlocke-ng/kiwi-updater) app: a CLI
+(`kiwi-server`) and a GTK4 desktop app (**Kiwi Server**, `kiwi-server-gui`),
+installed into `~/.local`, no root.
 
-## 🚀 Features
+```
+fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash script
+                       <host>.bu / .ign          CoreOS, uCore: Butane → Ignition
+                       <host>.preseed.cfg        Debian: preseed + /kiwi-server files
+           ──build───▶ <host>.iso                installs to the given disk WITHOUT ASKING,
+                                                 reboots, runs the role script once
+```
 
-### Configuration Management
-- **Global + Per-Server Overrides**: Define defaults globally, override per server as needed
-- **YAML Schema Validation**: Robust validation with helpful error messages
-- **Config Merging**: Intelligent merging of global and per-server settings
-- **Deduplication**: Automatic deduplication of files and settings
+- **Targets** — `coreos` (Fedora CoreOS stable), `ucore` (CoreOS that rebases
+  itself onto a `ghcr.io/ublue-os/ucore*` image, like the uCore project's own
+  autorebase example), `debian` (trixie netinst, preseeded).
+- **Roles** — `bare`, `node-cloud` (the
+  [kiwi-cloud](https://github.com/derlocke-ng/kiwi-cloud) stack: Nextcloud
+  AIO, Vaultwarden, Portainer, nginx behind a gluetun WireGuard client) and
+  `master` (wg-easy + Pi-hole). A role is a directory; drop a new one in and
+  the CLI, the validation and the GUI form pick it up.
+- **Updates** — fetched continuously on every target; the *reboot* happens in
+  your window: Zincati `periodic` on CoreOS, staged rpm-ostree updates plus a
+  reboot timer on uCore, unattended-upgrades plus a reboot-if-required timer
+  on Debian.
+- **No layering** — butane, coreos-installer and xorriso run natively when
+  installed, otherwise in a small podman/docker image.
 
-### User & Authentication
-- **User Management**: Configure users, passwords, SSH keys, and groups
-- **Password Hashing**: Automatic SHA-512 password hashing
-- **SSH Key Management**: Global and per-server SSH key configuration
+## Install
 
-### Networking
-- **DHCP/Static Configuration**: Support for both DHCP and static IP assignment
-- **Auto IP Assignment**: Automatic static IP assignment from global IP ranges
-- **Custom Subnet Masks**: Optional custom subnet mask overrides
-- **NetworkManager Integration**: Generates proper NetworkManager connection files
-
-### System Configuration
-- **Systemd Services**: Enable services by simple names (docker, cockpit, etc.) or custom units
-- **File & Directory Creation**: Create files and directories with custom permissions
-- **Kernel Arguments**: Global and per-server kernel argument configuration
-- **Hostname & MOTD**: Automatic hostname and MOTD setup
-
-### Security & Encryption
-- **LUKS Disk Encryption**: Full support for encrypted root and boot devices
-- **Clevis Integration**: TPM2, Tang, and Shamir's Secret Sharing (SSS) support
-- **Boot Device Encryption**: Specialized support for encrypted boot devices
-
-### uBlue Integration
-- **uCore Autorebase**: Automatic ucore autorebase systemd units and directory creation
-- **Custom Images**: Support for custom uBlue images (global or per-server)
-- **Signed/Unsigned Workflow**: Complete rebase workflow from unsigned to signed images
-
-### Mass Deployment
-- **Containerized Generation**: Reproducible builds using containerized toolchain
-- **Batch Processing**: Process multiple servers in a single run
-- **Output Organization**: Clean output structure with per-server directories
-- **Error Handling**: Robust error handling with detailed feedback
-
-## 📋 Prerequisites
-
-- **Container Runtime**: Docker or Podman
-- **Operating System**: Linux (tested on Fedora, should work on other distributions)
-- **Network Access**: Internet connection for downloading base ISOs and container images
-
-## 🛠️ Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/derlocke-ng/kiwi-server.git
-   cd kiwi-server
-   ```
-
-2. **Make the main script executable**:
-   ```bash
-   chmod +x kiwi-server-gen.sh
-   ```
-
-3. **Build the container image**:
-   ```bash
-   ./kiwi-server-gen.sh build
-   ```
-
-## 🚀 Quick Start
-
-1. **Copy the example configuration**:
-   ```bash
-   cp config-example.yaml config.yaml
-   ```
-
-2. **Edit your configuration**:
-   ```bash
-   nano config.yaml  # or your favorite editor
-   ```
-
-3. **Generate ISOs and configs**:
-   ```bash
-   ./kiwi-server-gen.sh generate config.yaml
-   ```
-
-4. **Find your generated files**:
-   ```bash
-   ls -la output/
-   # output/server1/server1.bu   # Butane YAML config
-   # output/server1/server1.ign  # Ignition JSON config  
-   # output/server1/server1.iso  # Bootable ISO with embedded config
-   ```
-
-## 📖 Usage
-
-### Basic Commands
+Through kiwi, once it is in your catalog:
 
 ```bash
-# Build the container image
-./kiwi-server-gen.sh build
-
-# Generate ISOs from config
-./kiwi-server-gen.sh generate config.yaml
-
-# Generate with custom output directory
-./kiwi-server-gen.sh generate config.yaml --output-dir /path/to/output
-
-# Generate only configs (skip ISO creation)
-./kiwi-server-gen.sh generate config.yaml --no-iso
-
-# Force rebuild container before generation
-./kiwi-server-gen.sh generate config.yaml --build
-
-# Show help
-./kiwi-server-gen.sh help
+kiwi install kiwi-server
 ```
 
-### Configuration File Structure
-
-The configuration uses a simple two-level structure:
-
-```yaml
-global:
-  # Global defaults for all servers
-  user: core
-  password: mypassword
-  # ... other global settings
-
-servers:
-  server1:
-    # Server-specific overrides
-    hostname: server1
-    # ... other server settings
-  server2:
-    hostname: server2
-    # Inherits global settings unless overridden
-```
-
-## 📝 Configuration Reference
-
-### Global Configuration Options
-
-#### User Management
-```yaml
-global:
-  user: core                    # Username (default: core)
-  password: mypassword          # Plain text password (auto-hashed)
-  password_hash: $6$...         # Pre-hashed password (alternative to password)
-  ssh_keys:                     # SSH public keys
-    - ssh-ed25519 AAAA...
-    - ssh-rsa AAAA...
-  groups: [wheel, docker]       # User groups
-```
-
-#### Networking
-```yaml
-global:
-  network:
-    interface: eth0             # Network interface name
-    dhcp: false                 # Use DHCP (true) or static (false)
-    gateway: 192.168.1.1        # Default gateway (static only)
-    dns: [1.1.1.1, 8.8.8.8]   # DNS servers (static only)
-    iprange: 192.168.0.10-192.168.1.100  # Auto IP assignment range
-    mask: 24                    # Optional: override auto-calculated netmask
-```
-
-#### System Services
-```yaml
-global:
-  services:                     # Services to enable (mapped to systemd units)
-    - docker                    # → docker.socket
-    - podman                    # → podman.socket
-    - cockpit                   # → cockpit.socket
-    - tailscale                 # → tailscaled.service
-    - nfs                       # → nfs-server.service
-    - samba                     # → smb.service
-    - libvirtd                  # → libvirtd.socket
-    - custom.service            # → custom.service (pass-through)
-  
-  systemd_units:                # Custom systemd units
-    - name: my-service.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=My Service
-        [Service]
-        ExecStart=/usr/bin/my-command
-        [Install]
-        WantedBy=multi-user.target
-```
-
-#### Files and Directories
-```yaml
-global:
-  files:
-    - path: /etc/profile.d/hello.sh
-      contents: 'echo Hello, world!'
-      mode: 0755                # Optional: file permissions
-      overwrite: true           # Optional: overwrite existing files
-  
-  directories:
-    - path: /opt/mydir
-      mode: 0755                # Optional: directory permissions
-```
-
-#### uBlue Configuration
-```yaml
-global:
-  image: ghcr.io/ublue-os/ucore-hci:stable  # uBlue image for autorebase
-```
-
-#### Security and Encryption
-```yaml
-global:
-  # LUKS encryption for additional devices
-  luks:
-    device: /dev/sdb
-    name: encrypted_storage
-    key_file: /etc/luks/key
-    wipe_volume: true
-    label: encrypted_storage
-    mount_root: false           # Don't mount as root filesystem
-    clevis:                     # Optional: Clevis integration
-      tpm2: true
-      tang:
-        - url: https://tang.example.com
-          thumbprint: ABCDEF123456
-  
-  # Boot device encryption
-  boot_device:
-    luks:
-      tpm2: false
-      tang:
-        - url: https://tang1.example.com
-          thumbprint: ABCDEF123456
-        - url: https://tang2.example.com
-          thumbprint: 123456ABCDEF
-      # SSS (Shamir's Secret Sharing) example
-      sss:
-        threshold: 2
-        tang:
-          - url: https://tang1.example.com
-            thumbprint: ABCDEF123456
-          - url: https://tang2.example.com
-            thumbprint: 123456ABCDEF
-          - url: https://tang3.example.com
-            thumbprint: FEDCBA654321
-```
-
-#### System Configuration
-```yaml
-global:
-  hostname: default-hostname    # Default hostname
-  motd: "Welcome to CoreOS!"    # Message of the day
-  kernel_arguments:             # Kernel boot arguments
-    - quiet
-    - loglevel=3
-    - myarg=value
-  # timezone: UTC               # Not supported in Butane 1.6.0
-```
-
-### Per-Server Configuration
-
-Any global setting can be overridden per server:
-
-```yaml
-servers:
-  server1:
-    hostname: server1
-    network:
-      address: 192.168.1.100/24 # Manual static IP (overrides auto-assignment)
-      dhcp: false
-      mask: 24                  # Override netmask for this server
-    image: ghcr.io/ublue-os/ucore-hci:testing  # Different image
-    ssh_keys:                   # Additional SSH keys (merged with global)
-      - ssh-ed25519 AAAA...server1-specific-key
-    services: [docker]          # Different service set
-    files:                      # Server-specific files
-      - path: /etc/server-id
-        contents: server1
-    kernel_arguments:           # Additional kernel args
-      - server=1
-  
-  server2:
-    hostname: server2
-    network:
-      dhcp: true                # Use DHCP for this server
-    # All other settings inherited from global
-```
-
-## 🏗️ Architecture
-
-### Components
-
-1. **`kiwi-server-gen.sh`**: Main entrypoint script
-   - Handles command-line interface
-   - Manages container building and execution
-   - Supports both Docker and Podman
-
-2. **`container/generate-server-config.py`**: Configuration processor
-   - Merges global and per-server configurations
-   - Validates YAML structure and settings
-   - Generates Butane YAML configurations
-   - Handles IP range assignment and deduplication
-
-3. **`container/generate-coreos-iso.sh`**: ISO generation engine
-   - Converts Butane YAML to Ignition JSON
-   - Downloads latest Fedora CoreOS ISOs
-   - Embeds Ignition configs into ISOs
-   - Manages caching and batch processing
-
-4. **`container/entrypoint.sh`**: Container entrypoint
-   - Provides argument parsing and validation
-   - Bridges host and container environments
-
-5. **`container/Dockerfile`**: Build environment
-   - Based on latest Fedora
-   - Includes all required tools: `coreos-installer`, `butane`, Python 3
-   - Self-contained with no external dependencies
-
-### Workflow
-
-1. **Configuration Processing**: YAML config is validated and merged
-2. **Butane Generation**: Per-server Butane YAML files are created
-3. **Ignition Conversion**: Butane converts YAML to Ignition JSON
-4. **ISO Generation**: Ignition configs are embedded into bootable ISOs
-5. **Output Organization**: Files are organized in per-server directories
-
-### Output Structure
-
-```
-output/
-├── fedora-coreos-<version>-live.x86_64.iso  # Cached base ISO
-├── server1/
-│   ├── server1.bu     # Butane YAML configuration
-│   ├── server1.ign    # Ignition JSON configuration
-│   └── server1.iso    # Bootable ISO with embedded config
-├── server2/
-│   ├── server2.bu
-│   ├── server2.ign
-│   └── server2.iso
-└── ...
-```
-
-## 🔧 Advanced Usage
-
-### IP Range Assignment
-
-Kiwi Server can automatically assign static IP addresses from a defined range:
-
-```yaml
-global:
-  network:
-    iprange: 192.168.0.10-192.168.1.100
-    gateway: 192.168.1.1
-    dhcp: false
-
-servers:
-  server1: {}          # Will get 192.168.0.10/24
-  server2: {}          # Will get 192.168.0.11/24
-  server3:
-    network:
-      address: 192.168.2.100/24  # Manual override
-  server4: {}          # Will get 192.168.0.12/24 (skips manually assigned)
-```
-
-### Service Mapping
-
-Common services are automatically mapped to their correct systemd units:
-
-| Service Name | Systemd Unit |
-|-------------|-------------|
-| `docker` | `docker.socket` |
-| `podman` | `podman.socket` |
-| `cockpit` | `cockpit.socket` |
-| `tailscale` | `tailscaled.service` |
-| `nfs` | `nfs-server.service` |
-| `samba` | `smb.service` |
-| `libvirtd` | `libvirtd.socket` |
-
-Other service names are passed through as-is.
-
-### uCore Autorebase
-
-Kiwi Server automatically sets up the ucore autorebase workflow:
-
-1. Creates `/etc/ucore-autorebase` directory
-2. Installs `ucore-unsigned-autorebase.service` for initial rebase to unsigned image
-3. Installs `ucore-signed-autorebase.service` for subsequent rebase to signed image
-4. Uses the `image` setting from your configuration
-
-### LUKS Encryption Examples
-
-#### TPM2 Boot Device Encryption
-```yaml
-global:
-  boot_device:
-    luks:
-      tpm2: true
-```
-
-#### Tang Server Boot Device Encryption
-```yaml
-global:
-  boot_device:
-    luks:
-      tang:
-        - url: https://tang.example.com
-          thumbprint: ABCDEF123456
-```
-
-#### Shamir's Secret Sharing (SSS)
-```yaml
-global:
-  boot_device:
-    luks:
-      sss:
-        threshold: 2
-        tang:
-          - url: https://tang1.example.com
-            thumbprint: ABCDEF123456
-          - url: https://tang2.example.com
-            thumbprint: 123456ABCDEF
-          - url: https://tang3.example.com
-            thumbprint: FEDCBA654321
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**"Container build failed"**
-- Ensure Docker or Podman is installed and running
-- Check internet connectivity for package downloads
-
-**"Config file not found"**
-- Verify the config file path is correct
-- Ensure the file has proper YAML syntax
-
-**"No servers found in config"**
-- Check that your config has a `servers:` section
-- Verify YAML indentation is correct
-
-**"Failed to download base ISO"**
-- Check internet connectivity
-- Verify DNS resolution is working
-
-**"Butane validation failed"**
-- Check the generated `.bu` file for syntax errors
-- Ensure all required fields are present
-
-### Debug Mode
-
-To debug issues, you can inspect the generated Butane files:
+Or straight from the checkout — it is the same installer kiwi runs:
 
 ```bash
-# Generate configs only (no ISO)
-./kiwi-server-gen.sh generate config.yaml --no-iso
-
-# Check generated Butane config
-cat output/server1/server1.bu
-
-# Validate Butane config manually
-butane --strict output/server1/server1.bu
+git clone https://github.com/derlocke-ng/kiwi-server.git && cd kiwi-server
+./install.sh install            # ~/.local/bin/kiwi-server, kiwi-server-gui, the library
+kiwi-server doctor              # python, pyyaml, build tools, container runtime
 ```
 
-### Container Runtime Issues
-
-If you encounter SELinux issues with Podman:
+Needs `python3` with PyYAML and `git` (all in the Silverblue/Bluefin base
+image). Building ISOs needs `butane`, `coreos-installer` and `xorriso`; on a
+desktop that does not have them:
 
 ```bash
-# Check SELinux status
-getenforce
-
-# Use Docker instead of Podman
-export CONTAINER_CMD=docker
-./kiwi-server-gen.sh generate config.yaml
+kiwi-server toolchain build     # one image with all three, used automatically
 ```
 
-## 🤝 Contributing
+## Quick start
 
-Contributions are welcome! Please feel free to:
+```bash
+kiwi-server init                # writes a commented fleet.yaml
+$EDITOR fleet.yaml              # hosts, roles, your ssh key, the install disk
+kiwi-server validate fleet.yaml
+kiwi-server render fleet.yaml   # scripts + configs into ./output/<host>/
+kiwi-server build fleet.yaml    # + the ISOs (base images cached in ~/.cache/kiwi-server)
+sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
 
-1. **Report Bugs**: Open an issue describing the problem
-2. **Request Features**: Suggest new functionality
-3. **Submit Pull Requests**: Contribute code improvements
-4. **Improve Documentation**: Help make the docs clearer
+Boot the machine from it. CoreOS and Debian install, reboot, and run the role
+on first boot; uCore reboots twice more first (unsigned rebase, then signed).
+Watch it with `journalctl -u kiwi-role -f`; `/var/lib/kiwi-server/role.done`
+appears when it is finished.
 
-### Development Setup
+Or skip the ISO: `kiwi-server script fleet.yaml sh3 > sh3.sh`, copy it to any
+installed Debian / CoreOS / uCore machine and `sudo bash sh3.sh`. It is the
+same script the ISO runs.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with your own configurations
-5. Submit a pull request
+## The fleet file
 
-### Code Style
+```yaml
+defaults:                          # every host, unless it says otherwise
+  target: ucore                    # coreos | ucore | debian
+  role: bare                       # bare | node-cloud | master
+  domain: kiwi                     # sh3 becomes sh3.kiwi
+  timezone: Europe/Berlin
+  disk: /dev/sda                   # WIPED by the ISO. Required for build, not for render
+  admin:
+    user: core                     # passwordless sudo on every target
+    password: change-me            # hashed at render; or password_hash: $6$…
+    ssh_keys: [~/.ssh/id_ed25519.pub]   # keys, or files holding keys
+  network: { dhcp: true }          # or dhcp: false + address/gateway/dns, or an iprange
+  updates: { days: [Sun], time: "03:30", length_minutes: 90 }
+  ucore: { image: ghcr.io/ublue-os/ucore:stable }
+  debian: { release: trixie, partitioning: lvm }
 
-- Shell scripts: Follow existing conventions, use `shellcheck`
-- Python: Follow PEP 8, use type hints where appropriate
-- YAML: Use 2-space indentation, maintain readability
+hosts:
+  sh3:
+    role: node-cloud
+    ucore: { image: ghcr.io/ublue-os/ucore-hci:stable }
+    node-cloud:                    # the role's settings, under the role's name
+      vpn_config: secrets/sh3.kiwi.conf
+      vpn_ip: 10.8.0.25
+  gate:
+    role: master
+    target: debian
+    master: { wg_host: vpn.example.org, wg_admin_password: …, pihole_password: … }
+```
 
-## 📄 License
+Hosts override defaults key by key; the lists `admin.ssh_keys`,
+`debian.packages` and the `coreos.*` lists *add* to the defaults. File
+settings are paths relative to the fleet file and their content is embedded
+into the host's role script. `kiwi-server show fleet.yaml sh3` prints what a
+host ends up with, secrets masked. The full reference is the commented
+[examples/fleet.yaml](examples/fleet.yaml); `kiwi-server roles -v` lists every
+role setting.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Static addresses without typing them: `network: { dhcp: false, gateway: …,
+iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
+the next free address in file order; a host's own `address:` is reserved first.
 
-## 🙏 Acknowledgments
+## What you get
 
-- **Fedora CoreOS Team**: For the excellent CoreOS distribution and tooling
-- **uBlue Project**: For the innovative universal blue approach
-- **Butane Project**: For the human-friendly configuration format
-- **Tang/Clevis**: For robust network-bound disk encryption
+`output/<host>/`:
 
-## 📞 Support
+| file | what |
+|---|---|
+| `<host>.role.sh` | the role as one script: settings, embedded files, the common library, the role body. Mode 0600 — it holds secrets |
+| `<host>.bu`, `<host>.ign` | CoreOS/uCore: Butane (fcos 1.6.0) and Ignition. Admin user, hostname, static network, time zone, update policy, `kiwi-role.service` with the script, uCore autorebase units |
+| `<host>.preseed.cfg`, `<host>.kiwi-server/` | Debian: the preseed, and the files its late command copies in from `/cdrom/kiwi-server` — role script, `kiwi-role.service`, SSH keys, sudoers, sshd and update policy |
+| `<host>.iso` | the unattended installer |
+| `README.txt` | the same, for that host |
 
-- **GitHub Issues**: For bug reports and feature requests
-- **Discussions**: For questions and community support
-- **Documentation**: Check this README and example configurations
+**CoreOS/uCore** media is the stock live ISO after `coreos-installer iso
+customize --dest-device <disk> --dest-ignition <host>.ign`: no network is
+needed for the install, Ignition is embedded for the installed system.
+**Debian** media is the stock netinst with the preseed appended to the
+installer's initrd (so it answers from the first question on), the boot menus
+rewritten to start the unattended entry after a second, and the host's files
+under `/kiwi-server`; `xorriso -boot_image any replay` keeps the original
+BIOS/UEFI boot setup.
 
----
+## First boot
 
-Made with 🥝 for security enthusiasts
+`kiwi-role.service` is a oneshot that runs `/var/lib/kiwi-server/role.sh` as
+root after the network is up and never again once
+`/var/lib/kiwi-server/role.done` exists. A failed run is retried on the next
+boot and shown on the console; the log is `/var/log/kiwi-server-role.log`.
+On uCore the unit also waits for `/etc/ucore-autorebase/signed`, so the role
+always runs on the final image. `sudo bash /var/lib/kiwi-server/role.sh
+--force` runs it again by hand.
+
+## Updates
+
+| target | installs updates | reboots |
+|---|---|---|
+| coreos | Zincati, continuously | only inside the window (`strategy = "periodic"`, local time) |
+| ucore | `rpm-ostreed-automatic.timer` stages them (the image's default) | `kiwi-staged-reboot.timer` reboots into a staged deployment in the window |
+| debian | unattended-upgrades, daily | `kiwi-reboot-if-required.timer` reboots in the window when `/var/run/reboot-required` exists |
+
+`updates.days: []` means any day; `updates.enabled: false` turns all of it off.
+
+## Roles
+
+| role | what the machine becomes | status |
+|---|---|---|
+| `bare` | the base system: admin user, SSH, updates | stable |
+| `node-cloud` | a kiwi-node in cloud mode: clones kiwi-cloud, writes its `.env`, drops the WireGuard config and TLS certificate in, renders nginx.conf and the gluetun rules, starts the stack through `kiwi-node.sh` as `kiwi-node.service` | wip — follows kiwi-cloud |
+| `master` | a kiwi-master: wg-easy (unattended setup through `INIT_*`), Pi-hole as the VPN's DNS, optional Portainer; only the WireGuard port is public | wip — a baseline until the modularized kiwi-master exists |
+
+### Writing one
+
+A role is `roles/<name>/` with two files. `role.yaml` says what it is and
+what it asks for:
+
+```yaml
+name: my-role
+title: My role
+description: One line.
+targets: [coreos, ucore, debian]
+settings:
+  - key: endpoint          # becomes KS_ROLE_ENDPOINT in the script
+    required: true
+  - key: wg_conf
+    type: file             # embedded; ks_file wg_conf /etc/wireguard/wg0.conf 0600
+  - key: extra
+    type: map              # declare -A KS_ROLE_EXTRA
+```
+
+Types: `string` (default), `text`, `int`, `bool`, `enum` (+ `options`),
+`file`, `list`, `map`, `secret`. `group`, `label`, `help`, `default`,
+`placeholder` and `targets` shape the form and the docs. `apply.sh` defines
+one function:
+
+```bash
+ks_role_apply() {
+    ks_ensure_docker                  # Debian: Docker CE; uCore: enable the socket
+    ks_git_clone "$KS_ROLE_REPO" main /opt/thing
+    ks_file wg_conf /etc/wireguard/wg0.conf 0600
+    ks_unit thing.service <<'UNIT'
+    ...
+UNIT
+    systemctl enable --now thing.service
+}
+```
+
+It runs as root with `set -euo pipefail`, `KS_HOSTNAME`, `KS_ADMIN_USER`,
+`KS_TARGET`, `KS_OS` (`debian` or `ostree`) and the library in
+[roles/common/lib.sh](roles/common/lib.sh): `ks_say/ks_warn/ks_die`,
+`ks_apt`, `ks_file`, `ks_write`, `ks_subst`, `ks_ensure_user`,
+`ks_ensure_docker`, `ks_git_clone`, `ks_unit`, `ks_firewall_open`,
+`ks_self_signed_cert`. Render a host with the role and
+`shellcheck` the result; the tests do that for every role in the tree.
+
+## The GUI
+
+**Kiwi Server** in the app grid: open or create a fleet, pick Defaults or a
+host on the left, edit on the right. Every host field shows what it inherits;
+the role's settings appear as their own groups, built from `role.yaml`.
+*Render* and *Build ISOs* run the CLI and stream its output; *Build* lists
+every host with the disk it will wipe before it starts. The GUI writes plain
+YAML — comments in a hand-written fleet file are not kept when it saves.
+
+## Toolchain
+
+| tool | used for |
+|---|---|
+| `butane` | Butane → Ignition (`--strict`) |
+| `coreos-installer` | downloading and verifying the Fedora CoreOS ISO, `iso customize` |
+| `xorriso`, `cpio`, `gzip`, `curl` | the Debian netinst rebuild and download |
+
+`kiwi-server toolchain` shows which run natively and which would use the
+container image; `--toolchain native` or `container` forces one. Inside the
+container a tool sees the output and cache directories at the same paths, so
+nothing else changes. On Fedora the three are `dnf install butane
+coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
+
+## Mind
+
+- **The ISOs wipe the disk they are told to**, on boot, without a question.
+  Label them. `disk:` is required for `build` for that reason.
+- **The output holds secrets**: password hashes, WireGuard keys, TLS keys, the
+  LUKS passphrase. Files are written 0600 and `output/` is in `.gitignore`;
+  treat the ISOs the same way.
+- A role script runs as root and does what the role says. Read
+  `kiwi-server script fleet.yaml <host>` before trusting a role you did not
+  write, the same way you would read an installer.
+
+## Status
+
+2.0.0 is a rewrite; see [CHANGELOG.md](CHANGELOG.md). The generators are
+tested (every rendered script is shellchecked, every Butane config validated
+with `butane --strict`, the Debian ISO rebuild runs against a mock netinst in
+CI). What still wants a real machine: the first boot of each target end to
+end, and the Debian netinst rebuild against a current 13.x image. The
+`node-cloud` and `master` roles follow kiwi-cloud as it is today and will be
+replaced by the modularized kiwi-node / kiwi-master when they land — that is
+what the role directories are for.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

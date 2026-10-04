@@ -1,0 +1,108 @@
+# fleet.yaml — every machine kiwi-server should build media for.
+#
+#   defaults:   applies to every host
+#   hosts:      one entry per machine; anything here overrides the defaults
+#
+# A host has a TARGET (what gets installed) and a ROLE (what it becomes):
+#   target:  coreos  — Fedora CoreOS, stable stream
+#            ucore   — CoreOS that rebases itself onto ghcr.io/ublue-os/ucore*
+#            debian  — Debian stable (trixie) from the netinst image
+#   role:    bare | node-cloud | master   (kiwi-server roles)
+#
+# Settings for a role go under a key with the role's name (node-cloud:,
+# master:). File settings (WireGuard config, certificates) are paths relative
+# to this file; their CONTENT is embedded into the host's role script, so the
+# generated output contains secrets. Keep output/ private.
+#
+# Check what you wrote with:  kiwi-server validate fleet.yaml
+# See the effective config:   kiwi-server show fleet.yaml sh3
+
+defaults:
+  target: ucore
+  role: bare
+  domain: kiwi                      # host "sh3" becomes sh3.kiwi unless hostname: is set
+  timezone: Europe/Berlin
+  locale: en_US.UTF-8
+  keyboard: de
+  disk: /dev/sda                    # WIPED by the ISO without asking. nvme: /dev/nvme0n1
+
+  admin:
+    user: core                      # has passwordless sudo on every target
+    password: change-me             # hashed at render time; or password_hash: $6$...
+    ssh_keys:
+      - ~/.ssh/id_ed25519.pub       # a key, or a file containing keys
+    groups: [docker]
+    ssh_password_auth: false        # keys only; the password is for the console
+
+  network:
+    dhcp: true
+    # dhcp: false                   # static instead — either give address: per host
+    # gateway: 192.168.1.1          # or let iprange: hand out addresses in file order
+    # dns: [192.168.1.1, 1.1.1.1]
+    # iprange: 192.168.1.20-192.168.1.99
+    # interface: eth0               # optional; otherwise the first wired interface
+
+  updates:                          # updates install continuously; this is when a
+    enabled: true                   # REBOOT into them may happen
+    days: [Sun]                     # [] = any day
+    time: "03:30"                   # local time
+    length_minutes: 90
+
+  ucore:
+    image: ghcr.io/ublue-os/ucore:stable     # ucore-minimal / ucore / ucore-hci (+ -nvidia, -zfs)
+
+  debian:
+    release: trixie
+    mirror: deb.debian.org
+    partitioning: lvm               # regular | lvm | crypto
+    # encrypt: true                 # full-disk LUKS — needs passphrase:
+    # passphrase: ...
+    packages: [vim, htop]
+
+  # coreos:                         # advanced, passed through to Butane
+  #   kernel_arguments: [mitigations=auto]
+  #   services: [cockpit]
+  #   boot_device: { luks: { tpm2: true } }
+
+hosts:
+  # a kiwi-node in cloud mode on uCore (Nextcloud, Vaultwarden, Portainer, nginx, gluetun)
+  sh3:
+    role: node-cloud
+    ucore:
+      image: ghcr.io/ublue-os/ucore-hci:stable
+    node-cloud:
+      vpn_config: secrets/sh3.kiwi.conf       # the WireGuard client config from your master
+      vpn_ip: 10.8.0.25
+      data_dir: /mnt/nvme_2tb/docker
+      # tls_fullchain: secrets/sh3-fullchain.pem   # self-signed until you add these
+      # tls_privkey: secrets/sh3-privkey.pem
+      env:
+        NEXTCLOUD_MEMORY_LIMIT: 8192M
+
+  # the same role on Debian, with a static address
+  sh4:
+    role: node-cloud
+    target: debian
+    network:
+      dhcp: false
+      address: 192.168.1.21/24
+      gateway: 192.168.1.1
+      dns: [192.168.1.1]
+    node-cloud:
+      vpn_config: secrets/sh4.kiwi.conf
+      vpn_ip: 10.8.0.26
+
+  # a kiwi-master on Debian: WireGuard entry point + Pi-hole for the VPN
+  gate:
+    role: master
+    target: debian
+    disk: /dev/vda
+    master:
+      wg_host: vpn.example.org
+      wg_admin_password: change-me-too
+      pihole_password: change-me-three
+
+  # just the base system
+  lab1:
+    target: coreos
+    role: bare

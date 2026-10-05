@@ -1,0 +1,25 @@
+# vault (Vaultwarden)
+services:
+  {{ container_prefix }}-vault:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-vault
+    environment:
+      - DOMAIN={{ vault_domain or 'https://vault.' ~ hostname }}
+      - SIGNUPS_ALLOWED={{ 'true' if signups_allowed else 'false' }}
+      - INVITATIONS_ALLOWED={{ 'true' if invitations_allowed else 'false' }}
+      - SHOW_PASSWORD_HINT={{ 'true' if show_password_hint else 'false' }}
+      - LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+{% if admin_token %}
+      - ADMIN_TOKEN={{ admin_token }}
+{% endif %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-vault:/data:z

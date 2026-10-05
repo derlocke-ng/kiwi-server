@@ -1,0 +1,63 @@
+# vpn-client (gluetun) — the network anchor of a node or the exit of a master
+services:
+  {{ container_prefix }}-vpn-client:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-vpn-client
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER={{ vpn_provider }}
+      - VPN_TYPE={{ vpn_type }}
+{% if not wireguard_config_present %}
+      - WIREGUARD_PRIVATE_KEY={{ wireguard_private_key }}
+      - WIREGUARD_ADDRESSES={{ wireguard_addresses }}
+{% endif %}
+{% if server_countries %}
+      - SERVER_COUNTRIES={{ server_countries }}
+{% endif %}
+{% if server_cities %}
+      - SERVER_CITIES={{ server_cities }}
+{% endif %}
+{% if vpn_endpoint_port %}
+      - VPN_ENDPOINT_PORT={{ vpn_endpoint_port }}
+{% endif %}
+      - TZ={{ timezone }}
+      - WIREGUARD_MTU={{ mtu }}
+      - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
+      - DOT_PROVIDERS={{ dot_providers }}
+      - BLOCK_MALICIOUS=off
+{% if vpn_provider != 'custom' %}
+      - UPDATER_PERIOD=24h
+{% endif %}
+{% set inbound = [] %}
+{% if enable_vpn_dnat %}{% set _ = inbound.extend(['80', '443']) %}{% endif %}
+{% for r in extra_dnat_rules %}{% set _ = inbound.append(r.split(':')[0].split('/')[0]) %}{% endfor %}
+{% if vpn_input_ports %}{% set _ = inbound.append(vpn_input_ports) %}{% endif %}
+{% if inbound %}
+      - FIREWALL_VPN_INPUT_PORTS={{ inbound | join(',') }}
+{% endif %}
+{% if outbound_subnets %}
+      - FIREWALL_OUTBOUND_SUBNETS={{ outbound_subnets }}
+{% endif %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+{% if published_ports %}
+    ports:
+{% for p in published_ports %}
+      - "{{ p }}"
+{% endfor %}
+{% endif %}
+    sysctls:
+      - net.ipv4.tcp_mtu_probing=1
+      - net.ipv4.tcp_base_mss=1024
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
+{% if wireguard_config_present %}
+      - {{ docker_dir }}/{{ container_prefix }}-vpn-client/wg0.conf:/gluetun/wireguard/wg0.conf:z
+{% endif %}

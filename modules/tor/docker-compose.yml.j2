@@ -1,0 +1,22 @@
+# tor — SOCKS5 proxy for the mesh
+services:
+  {{ container_prefix }}-tor:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-tor
+{% if network_mode %}
+    network_mode: "service:{{ container_prefix }}-{{ network_mode }}"
+{% else %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    ports:
+      - "127.0.0.1:9050:9050/tcp"
+{% endif %}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-tor/etc:/etc/tor:z
+      - {{ docker_dir }}/{{ container_prefix }}-tor/var:/var/lib/tor:z

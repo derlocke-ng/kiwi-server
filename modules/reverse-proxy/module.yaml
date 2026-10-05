@@ -1,0 +1,53 @@
+schema_version: "1.0"
+
+module:
+  name: reverse-proxy
+  title: Reverse proxy (nginx)
+  version: 1.1.0
+  description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own"
+  category: core
+  node_types: [node]
+
+dependencies:
+  required: []
+  optional: [vpn-client, cloud, vault, downloader, dns, portainer]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: ["80/tcp", "443/tcp"]
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  nginx: nginx.conf.j2
+
+outputs:
+  nginx: { path: "{{ container_prefix }}-nginx/nginx.conf", mode: 0644 }
+  tls_fullchain: { path: "{{ container_prefix }}-nginx/fullchain.pem", mode: 0644 }
+  tls_privkey: { path: "{{ container_prefix }}-nginx/privkey.pem", mode: 0600 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx", type: dir, required: true }
+
+nginx:
+  aggregator: true
+
+settings:
+  - key: tls_fullchain
+    type: file
+    label: TLS certificate chain (fullchain.pem)
+    help: "For <hostname> and *.<hostname>. Empty: issued by the fleet CA at render time (kiwi-server ca)."
+  - key: tls_privkey
+    type: file
+    label: TLS private key (privkey.pem)
+  - key: hsts
+    type: bool
+    label: Send HSTS headers
+    default: true
+  - key: image
+    group: Advanced
+    default: nginx:latest

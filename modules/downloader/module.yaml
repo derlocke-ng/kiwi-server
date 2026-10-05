@@ -1,0 +1,90 @@
+schema_version: "1.0"
+
+module:
+  name: downloader
+  title: Download station
+  version: 1.1.0
+  description: "Transmission and JDownloader inside the VPN client's network namespace — no tunnel, no traffic — with their web UIs behind the reverse proxy"
+  category: storage
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client]
+  optional: [reverse-proxy]
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-transmission", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-jdownloader", type: dir, required: true }
+    - { host: "{{ download_dir }}", type: dir, required: true }
+
+urls:
+  - "Transmission: https://{{ transmission_hostname or 'dl.' ~ hostname }}"
+  - "JDownloader: https://{{ jd_hostname or 'jd.' ~ hostname }}"
+
+nginx:
+  servers:
+    - server_name: "{{ transmission_hostname or 'dl.' ~ hostname }}"
+      proxy_pass: "http://{{ container_prefix }}-vpn-client:9091"
+      comment: Transmission (reached through the VPN client's namespace)
+    - server_name: "{{ jd_hostname or 'jd.' ~ hostname }}"
+      proxy_pass: "http://{{ container_prefix }}-vpn-client:5800"
+      websocket: true
+      when: jdownloader
+      comment: JDownloader
+
+settings:
+  - key: download_dir
+    required: true
+    label: Download directory
+    help: Absolute path on the host, e.g. /mnt/data/downloads.
+    placeholder: /mnt/data/downloads
+  - key: transmission_user
+    default: user
+  - key: transmission_password
+    type: secret
+    required: true
+  - key: transmission_hostname
+    label: Transmission hostname
+    help: "Empty: dl.<hostname>."
+    default: ""
+  - key: jdownloader
+    type: bool
+    label: Run JDownloader
+    default: true
+  - key: jd_hostname
+    label: JDownloader hostname
+    help: "Empty: jd.<hostname>."
+    default: ""
+  - key: myjd_email
+    label: MyJDownloader account
+    help: Optional remote control through my.jdownloader.org.
+    default: ""
+  - key: myjd_password
+    type: secret
+    default: ""
+  - key: myjd_device_name
+    default: ""
+  - key: puid
+    type: int
+    default: 1000
+  - key: pgid
+    type: int
+    default: 1000
+  - key: transmission_image
+    group: Advanced
+    default: lscr.io/linuxserver/transmission:latest
+  - key: jdownloader_image
+    group: Advanced
+    default: jlesage/jdownloader-2:latest

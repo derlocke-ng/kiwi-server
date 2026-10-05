@@ -89,6 +89,14 @@ DEFAULTS = {
         "non_free_firmware": True,
         "iso_url": None,
     },
+    "tls": {
+        # certificates for hosts that run the reverse proxy and bring none:
+        # one fleet CA in ca_dir (next to the fleet file), one wildcard
+        # certificate per host, the CA trusted on every machine built
+        "auto": True,
+        "ca_dir": "secrets/ca",
+        "days": 3650,
+    },
     "post_script": "",
 }
 
@@ -167,6 +175,9 @@ class Host:
                                             overrides.get(self.role) or {}) if self.role else {}
         self.role_settings = {}   # filled by roles.resolve_settings
         self.role_files = {}      # key -> bytes, embedded into the role script
+        self.modules = []         # module roles: the resolved module list
+        self.module_settings = {}  # module -> {key: value}
+        self.module_files = {}    # "module/key" -> bytes
         self.warnings = []
 
     # ---- derived values -------------------------------------------------

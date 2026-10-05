@@ -1,0 +1,15 @@
+[Unit]
+Description=Kiwi Network LAN gateway routing ({{ hostname }})
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=docker.service kiwi-stack.service network-online.target
+Requires=docker.service
+Wants=kiwi-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh start
+ExecStop=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh stop
+
+[Install]
+WantedBy=multi-user.target

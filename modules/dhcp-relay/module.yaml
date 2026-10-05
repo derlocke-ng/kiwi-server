@@ -1,0 +1,32 @@
+schema_version: "1.0"
+
+module:
+  name: dhcp-relay
+  title: DHCP relay for Pi-hole
+  version: 1.0.0
+  description: "Relays the LAN's DHCP broadcasts to the Pi-hole container, so Pi-hole can be the LAN's DHCP server although it sits in a bridge network"
+  category: network
+  node_types: [node]
+
+dependencies:
+  required: [dns]
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  open_ports: ["67/udp"]
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  bind_mounts: []
+
+settings:
+  - key: image
+    group: Advanced
+    default: homeall/dhcphelper:latest

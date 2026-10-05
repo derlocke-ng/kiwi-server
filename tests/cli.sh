@@ -25,14 +25,23 @@ mkdir -p "$tmp/fleet/secrets"
 cd "$tmp/fleet"
 "$ks" init fleet.yaml
 printf '[Interface]\nPrivateKey=x\n' > secrets/sh3.kiwi.conf
-cp secrets/sh3.kiwi.conf secrets/sh4.kiwi.conf
+cp secrets/sh3.kiwi.conf secrets/m1.kiwi.conf
 "$ks" validate fleet.yaml
 "$ks" render fleet.yaml --toolchain native
 "$ks" list fleet.yaml | grep -q '^sh3 '
 "$ks" list fleet.yaml --porcelain | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["hosts"])==4; assert all(not h["errors"] for h in d["hosts"])'
 "$ks" script fleet.yaml gate | bash -n
 test -f output/gate/gate.preseed.cfg
+test -f output/gate/gate.stack/km-vpn-server/start.sh
 test -f output/sh3/sh3.bu
+test -f output/sh3/sh3.stack/docker-compose.yml
+test -f output/m1/m1.stack/kiwi/gw.sh
+test -f secrets/ca/kiwiCA.pem
+grep -q 'KS_FILES\[ca_cert\]' output/lab1/lab1.role.sh
+"$ks" ca fleet.yaml | grep -q kiwiCA.pem
+"$ks" modules | grep -q 'vpn-client'
+"$ks" roles -v | grep -q 'vpn-server.wg_host'
+if command -v shellcheck >/dev/null; then shellcheck -S warning output/*/*.stack/kiwi/gw.sh; fi
 if command -v shellcheck >/dev/null; then shellcheck -S warning output/*/*.role.sh; fi
 if command -v butane >/dev/null; then butane --strict output/sh3/sh3.bu >/dev/null; fi
 # build must refuse politely without the tools, never half-build

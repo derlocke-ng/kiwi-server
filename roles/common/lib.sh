@@ -189,13 +189,201 @@ ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates e
     chmod 0600 "$key"
 }
 
+# ---- stacks: module roles ------------------------------------------------------------
+# The generator renders the modules into a bundle (docker-compose.yml, per-module
+# configs, host units) and embeds it as KS_FILES[stack/...] / KS_FILES[unit/...]
+# with KS_STACK_* describing directories, ports, sysctls and kernel modules.
+KS_STACK_ENV=/etc/kiwi-server/stack.env
+
+ks_stack_host_prep() {
+    local m kv
+    for m in "${KS_STACK_KMODS[@]}"; do
+        modprobe "$m" 2>/dev/null || ks_warn "kernel module $m did not load"
+        install -d -m 0755 /etc/modules-load.d
+        echo "$m" > "/etc/modules-load.d/kiwi-$m.conf"
+    done
+    if [[ ${#KS_STACK_SYSCTL[@]} -gt 0 ]]; then
+        install -d -m 0755 /etc/sysctl.d
+        printf '%s\n' "# kiwi-server stack" "${KS_STACK_SYSCTL[@]}" > /etc/sysctl.d/90-kiwi-stack.conf
+        for kv in "${KS_STACK_SYSCTL[@]}"; do sysctl -q -w "$kv" || true; done
+    fi
+    # Pi-hole wants port 53 on the host; systemd-resolved's stub listener (Fedora
+    # CoreOS, uCore) sits on 127.0.0.53:53 and would block it. Debian's default
+    # install has no systemd-resolved, so nothing happens there.
+    if (( KS_STACK_NO_RESOLVED_STUB )) && systemctl is-active -q systemd-resolved 2>/dev/null; then
+        ks_say "turning off systemd-resolved's stub listener (port 53 goes to the dns module)"
+        install -d -m 0755 /etc/systemd/resolved.conf.d
+        printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/90-kiwi-stack.conf
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+        systemctl restart systemd-resolved
+    fi
+}
+
+ks_stack_unpack() {
+    local dd=$KS_STACK_DIR u=$KS_STACK_USER d entry rel mode unit
+    install -d -m 0750 "$dd"
+    for d in "${KS_STACK_DIRS[@]}"; do
+        if [[ $d == /* ]]; then install -d -m 0755 "$d"; else install -d -m 0755 "$dd/$d"; fi
+    done
+    for entry in "${KS_STACK_FILES[@]}"; do
+        rel=${entry%:*}; mode=${entry##*:}
+        ks_file "stack/$rel" "$dd/$rel" "$mode" "$u:$u"
+    done
+    chown "$u:$u" "$dd"
+    for d in "${KS_STACK_DIRS[@]}"; do
+        [[ $d == /* ]] || chown "$u:$u" "$dd/$d"
+    done
+    for unit in "${KS_STACK_UNITS[@]}"; do
+        ks_file "unit/$unit" "/etc/systemd/system/$unit" 0644
+    done
+    install -d -m 0755 /etc/kiwi-server
+    {
+        echo "# written by kiwi-server $KS_VERSION — read by /usr/local/bin/kiwi-stack"
+        echo "STACK_DIR=$dd"
+        echo "STACK_USER=$u"
+        echo "STACK_PREFIX=$KS_STACK_PREFIX"
+        echo "STACK_VPN_CONTAINER=$KS_STACK_VPN_CONTAINER"
+        echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
+        echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
+    } | ks_write "$KS_STACK_ENV" 0644
+}
+
+ks_stack_install_cli() {
+    ks_write /usr/local/bin/kiwi-stack 0755 <<'KIWI_STACK'
+#!/usr/bin/env bash
+# kiwi-stack — run the stack kiwi-server put on this machine.
+#   kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart
+set -euo pipefail
+# shellcheck disable=SC1091
+. /etc/kiwi-server/stack.env
+cd "$STACK_DIR"
+compose() { docker compose --file "$STACK_DIR/docker-compose.yml" "$@"; }
+host_units() { local u; for u in $STACK_UNITS; do systemctl "$1" "$u" 2>/dev/null || true; done; }
+case "${1:-}" in
+    start)   compose up --detach --remove-orphans; host_units restart ;;
+    stop)    host_units stop; compose down ;;
+    restart) "$0" stop; "$0" start ;;
+    update)  compose pull; compose up --detach --remove-orphans; docker image prune -f >/dev/null; host_units restart ;;
+    status)  compose ps; host_units status ;;
+    logs)    compose logs --follow "${@:2}" ;;
+    vpn-restart) [[ -n ${STACK_VPN_CONTAINER:-} ]] && docker restart "$STACK_VPN_CONTAINER" ;;
+    *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
+esac
+KIWI_STACK
+}
+
+ks_stack_units() { # the service that brings the stack up, and the two maintenance timers
+    local vpn_restart=${KS_ROLE_DAILY_VPN_RESTART:-} weekly=${KS_ROLE_WEEKLY_UPDATE:-}
+    ks_unit kiwi-stack.service <<UNIT
+[Unit]
+Description=Kiwi Server stack ($KS_ROLE: ${KS_STACK_MODULES[*]})
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/kiwi-stack start
+ExecStop=/usr/local/bin/kiwi-stack stop
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    if [[ -n $vpn_restart && -n $KS_STACK_VPN_CONTAINER ]]; then
+        ks_unit kiwi-stack-vpn-restart.service <<UNIT
+[Unit]
+Description=Kiwi Server: restart the VPN client (new exit address)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kiwi-stack vpn-restart
+UNIT
+        ks_unit kiwi-stack-vpn-restart.timer <<UNIT
+[Unit]
+Description=Kiwi Server: daily VPN client restart
+
+[Timer]
+OnCalendar=*-*-* $vpn_restart:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+UNIT
+        systemctl enable --now kiwi-stack-vpn-restart.timer
+    fi
+    if [[ -n $weekly ]]; then
+        ks_unit kiwi-stack-update.service <<UNIT
+[Unit]
+Description=Kiwi Server: pull new images and restart the stack
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kiwi-stack update
+UNIT
+        ks_unit kiwi-stack-update.timer <<UNIT
+[Unit]
+Description=Kiwi Server: weekly stack update
+
+[Timer]
+OnCalendar=$weekly:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
+UNIT
+        systemctl enable --now kiwi-stack-update.timer
+    fi
+}
+
+ks_stack_apply() {
+    (( KS_STACK )) || ks_die "ks_stack_apply called for a role without modules"
+    local u=$KS_STACK_USER unit url
+    ks_ensure_user "$u" 1000
+    ks_ensure_docker "${KS_ROLE_DOCKER_SOURCE:-ce}"
+    ks_add_to_group "$u" docker
+    ks_add_to_group "$KS_ADMIN_USER" docker
+    ks_stack_host_prep
+    ks_stack_unpack
+    ks_stack_install_cli
+    if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
+        ks_firewall_open "${KS_STACK_PORTS[@]}"
+    fi
+    systemctl daemon-reload
+    ks_say "starting the stack (${KS_STACK_MODULES[*]}) — the first start pulls every image"
+    ks_stack_units
+    systemctl enable --now kiwi-stack.service
+    for unit in "${KS_STACK_UNITS[@]}"; do
+        systemctl enable --now "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+    done
+    ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|logs"
+    for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done
+}
+
 # ---- base -----------------------------------------------------------------------------
+ks_trust_ca() { # install the fleet CA (KS_FILES[ca_cert]) into the system trust store
+    ks_has_file ca_cert || return 0
+    if [[ -d /etc/pki/ca-trust/source/anchors ]]; then
+        ks_file ca_cert /etc/pki/ca-trust/source/anchors/kiwiCA.pem 0644
+        update-ca-trust 2>/dev/null || true
+    elif [[ -d /usr/local/share/ca-certificates ]] || ks_is_debian; then
+        ks_apt ca-certificates
+        ks_file ca_cert /usr/local/share/ca-certificates/kiwiCA.crt 0644
+        update-ca-certificates >/dev/null 2>&1 || true
+    fi
+    ks_say "fleet CA trusted (kiwiCA)"
+}
+
 ks_base() {
     if [[ $(hostname) != "$KS_HOSTNAME" ]]; then
         hostnamectl set-hostname "$KS_HOSTNAME" 2>/dev/null || echo "$KS_HOSTNAME" > /etc/hostname
     fi
     timedatectl set-timezone "$KS_TIMEZONE" 2>/dev/null || true
     ks_apt_update
+    ks_trust_ca
 }
 
 ks_main() {

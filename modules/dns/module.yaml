@@ -1,0 +1,93 @@
+schema_version: "1.0"
+
+module:
+  name: dns
+  title: DNS (Pi-hole)
+  version: 1.1.0
+  description: "Pi-hole v6 — ad-blocking resolver for the mesh or the LAN, forwarding to the VPN client's DNS-over-TLS; serves the fleet's own names"
+  category: core
+
+dependencies:
+  required: []
+  optional: [vpn-client, vpn-server, reverse-proxy]
+
+network:
+  needs_vpn_dnat: false
+  # on the host only when Pi-hole has its own address; inside another
+  # container's network (the master) clients reach it through the tunnel
+  open_ports: ["{% if not network_mode %}53/tcp{% endif %}", "{% if not network_mode %}53/udp{% endif %}"]
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  custom_list: custom.list.j2
+
+outputs:
+  custom_list: { path: "{{ container_prefix }}-pihole/etc-pihole/hosts/custom.list", mode: 0644 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-pihole", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-pihole/hosts", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-dnsmasq.d", type: dir, required: true }
+
+host_integration:
+  # Fedora CoreOS / uCore run systemd-resolved's stub on 127.0.0.53:53
+  disable_resolved_stub: true
+
+urls:
+  - "Pi-hole admin: http://{{ pihole_hostname or 'pihole.' ~ hostname }}/admin (through the reverse proxy) or http://<this host>:{{ web_ui_port }}/admin (when the web UI is exposed)"
+
+nginx:
+  servers:
+    - server_name: "{{ pihole_hostname or 'pihole.' ~ hostname }}"
+      proxy_pass: "http://{{ container_prefix }}-pihole:80"
+      when: has_reverse_proxy
+      comment: Pi-hole admin
+
+settings:
+  - key: pihole_password
+    type: secret
+    required: true
+    label: Admin password
+  - key: upstream_dns
+    label: Upstream resolvers
+    help: "Semicolon separated. Empty: the VPN client's DNS-over-TLS resolver, so lookups leave through the tunnel."
+    default: ""
+  - key: network_mode
+    label: Share a container's network
+    help: "Empty: own address with ports 53 published on the host (a node). vpn-server: run inside the WireGuard server's network stack, reachable for clients at the server's mesh address (the master)."
+    default: ""
+  - key: expose_web_ui
+    type: bool
+    label: Publish the web UI on the host
+    default: false
+  - key: web_ui_port
+    type: int
+    default: 8080
+  - key: pihole_hostname
+    label: Admin hostname
+    help: "Empty: pihole.<hostname>. Served by the reverse proxy when there is one."
+    default: ""
+  - key: fleet_records
+    type: bool
+    label: Serve the fleet's names
+    help: "Local DNS records for every host and service in the fleet, at their mesh addresses (split-horizon DNS)."
+    default: true
+  - key: extra_records
+    type: map
+    label: Extra local records
+    help: name=address, added to the fleet's records.
+    default: {}
+  - key: legacy_env
+    type: bool
+    group: Advanced
+    label: Pi-hole 5 variables
+    help: Emit WEBPASSWORD / PIHOLE_DNS_ / DNSMASQ_LISTENING for a pre-6 image.
+    default: false
+  - key: image
+    group: Advanced
+    default: pihole/pihole:latest

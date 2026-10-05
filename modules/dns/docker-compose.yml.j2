@@ -1,0 +1,43 @@
+# dns (Pi-hole) — resolver for the mesh (master) or the LAN (gateway node)
+{% set upstreams = upstream_dns or vpn_client_ip or '1.1.1.1;9.9.9.9' %}
+services:
+  {{ container_prefix }}-pihole:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-pihole
+    hostname: pihole
+    environment:
+      - TZ={{ timezone }}
+      - FTLCONF_webserver_api_password={{ pihole_password }}
+      - FTLCONF_dns_upstreams={{ upstreams }}
+      - FTLCONF_dns_listeningMode=all
+      - FTLCONF_webserver_domain={{ pihole_hostname or 'pihole.' ~ hostname }}
+{% if legacy_env %}
+      - WEBPASSWORD={{ pihole_password }}
+      - PIHOLE_DNS_={{ upstreams }}
+      - DNSMASQ_LISTENING=all
+{% endif %}
+{% if network_mode %}
+    network_mode: "service:{{ container_prefix }}-{{ network_mode }}"
+{% else %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+{% if expose_web_ui %}
+      - "{{ web_ui_port }}:80/tcp"
+{% endif %}
+{% endif %}
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+      - SYS_NICE
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-pihole/etc-pihole:/etc/pihole:z
+      - {{ docker_dir }}/{{ container_prefix }}-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z

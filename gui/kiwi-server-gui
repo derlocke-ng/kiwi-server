@@ -304,7 +304,7 @@ class Form:
             return
         self.doc.set(self.scope, field["path"], value)
         self.win.mark_dirty()
-        if field["path"] == ("role",):
+        if field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] == "modules"):
             self.rebuild_role_group()
 
     def role_name(self):
@@ -463,6 +463,38 @@ class Form:
         self.rebuild_role_group()
         self.loading = False
 
+    def effective_modules(self, role):
+        """The preset's modules, or the fleet's override, with dependencies."""
+        v = self.doc.get(self.scope, (role["name"], "modules"))
+        if v is None and self.scope != "defaults":
+            v = self.doc.get("defaults", (role["name"], "modules"))
+        if isinstance(v, list):
+            wanted = [str(x) for x in v]
+        elif isinstance(v, str) and v.strip():
+            wanted = v.split()
+        else:
+            wanted = list(role.get("modules") or [])
+        out = []
+
+        def visit(m, seen):
+            if m in out or m in seen:
+                return
+            seen.add(m)
+            for d in (self.win.module_schemas.get(m) or {}).get("requires", []):
+                visit(d, seen)
+            out.append(m)
+        for m in wanted:
+            visit(m, set())
+        return out
+
+    def _field(self, path, s, default):
+        f = dict(path=path, type=s["type"], label=s["label"] + (" *" if s.get("required") else ""),
+                 help=s.get("help", ""), options=s.get("options") or [], default=default,
+                 placeholder=s.get("placeholder", ""))
+        if s.get("targets"):
+            f["help"] = (f["help"] + " (%s only)" % "/".join(s["targets"])).strip()
+        return f
+
     def rebuild_role_group(self):
         if self.role_group is not None:
             for g in self.role_group:
@@ -474,23 +506,49 @@ class Form:
             return
         was = self.loading
         self.loading = True
-        groups = {}
+        stack = bool(role.get("stack"))
+        by_group = {}
         for s in role["settings"]:
-            gname = s.get("group") or "Settings"
-            if gname not in groups:
-                g = Adw.PreferencesGroup(title="%s — %s" % (role["title"], gname))
-                if gname == list(dict.fromkeys(x.get("group") or "Settings" for x in role["settings"]))[0]:
-                    g.set_description(role["description"] + (
-                        "" if role.get("status") == "stable" else "  [%s]" % role.get("status")))
-                groups[gname] = g
+            by_group.setdefault(s.get("group") or "Settings", []).append(s)
+        first = True
+        if stack:
+            g = Adw.PreferencesGroup(title="%s — Modules" % role["title"],
+                                     description=role["description"] + (
+                                         "" if role.get("status") == "stable" else "  [%s]" % role.get("status")))
+            g.add(self.row_for(dict(
+                path=(name, "modules"), type="list", label="Modules",
+                help="Space separated. Empty: the preset — %s" % " ".join(role.get("modules") or []),
+                default=list(role.get("modules") or []), placeholder=" ".join(role.get("modules") or []))))
+            self.page.add(g)
+            self.role_group.append(g)
+            first = False
+        for gname, items in by_group.items():
+            g = Adw.PreferencesGroup(title="%s — %s" % (role["title"], gname))
+            if first:
+                g.set_description(role["description"] + (
+                    "" if role.get("status") == "stable" else "  [%s]" % role.get("status")))
+                first = False
+            for s in items:
+                g.add(self.row_for(self._field((name, s["key"]), s, s.get("default"))))
+            self.page.add(g)
+            self.role_group.append(g)
+        if stack:
+            mdefaults = role.get("module_defaults") or {}
+            for m in self.effective_modules(role):
+                schema = self.win.module_schemas.get(m)
+                if not schema:
+                    continue
+                g = Adw.PreferencesGroup(title="Module: %s" % schema["title"],
+                                         description=schema.get("description", ""))
+                n = 0
+                for s in schema["settings"]:
+                    default = (mdefaults.get(m) or {}).get(s["key"], s.get("default"))
+                    g.add(self.row_for(self._field((name, m, s["key"]), s, default)))
+                    n += 1
+                if n == 0:
+                    g.add(Adw.ActionRow(title="No settings", subtitle="This module is on or off, nothing else."))
                 self.page.add(g)
                 self.role_group.append(g)
-            field = dict(path=(name, s["key"]), type=s["type"], label=s["label"] + (" *" if s.get("required") else ""),
-                         help=s.get("help", ""), options=s.get("options") or [], default=s.get("default"),
-                         placeholder=s.get("placeholder", ""))
-            if s.get("targets"):
-                field["help"] = (field["help"] + " (%s only)" % "/".join(s["targets"])).strip()
-            groups[gname].add(self.row_for(field))
         self.loading = was
 
 
@@ -541,6 +599,7 @@ class Window(Adw.ApplicationWindow):
         self.cli = cli
         self.doc = FleetDoc()
         self.roles, self.targets = [], {}
+        self.module_schemas = {}
         self.status = {}
         self.busy = False
         self._pulse = None
@@ -621,9 +680,11 @@ class Window(Adw.ApplicationWindow):
         self.b_host_script.connect("clicked", lambda *_: self.show_script())
         self.b_host_folder = Gtk.Button(icon_name="folder-symbolic", tooltip_text="Open the output folder")
         self.b_host_folder.connect("clicked", lambda *_: self.open_folder())
+        self.b_host_stack = Gtk.Button(icon_name="view-list-symbolic", tooltip_text="Show the rendered docker-compose.yml")
+        self.b_host_stack.connect("clicked", lambda *_: self.show_stack())
         self.b_host_remove = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove this host")
         self.b_host_remove.connect("clicked", lambda *_: self.remove_host_dialog())
-        for b in (self.b_host_build, self.b_host_render, self.b_host_script, self.b_host_folder):
+        for b in (self.b_host_build, self.b_host_render, self.b_host_script, self.b_host_stack, self.b_host_folder):
             self.content_hb.pack_end(b)
         self.content_hb.pack_start(self.b_host_remove)
         content_tb.add_top_bar(self.content_hb)
@@ -671,7 +732,9 @@ class Window(Adw.ApplicationWindow):
     def load_schema(self):
         rc, out, err = run_cli(self.cli, ["roles", "--porcelain"])
         if rc == 0:
-            self.roles = json.loads(out)["roles"]
+            data = json.loads(out)
+            self.roles = data["roles"]
+            self.module_schemas = {m["name"]: m for m in data.get("modules", [])}
         else:
             self.append_log("roles: %s\n" % err)
         rc, out, err = run_cli(self.cli, ["targets", "--porcelain"])
@@ -822,6 +885,9 @@ class Window(Adw.ApplicationWindow):
             pills = Gtk.Box(spacing=4)
             pills.append(pill(tgt, "dim"))
             pills.append(pill(role, "dim"))
+            mods = st.get("modules") or []
+            if mods:
+                pills.append(pill("%d modules" % len(mods), "acc", ", ".join(mods)))
             box.append(pills)
             hn = st.get("hostname") or self.doc.get(scope, ("hostname",)) or ""
             if hn:
@@ -860,7 +926,8 @@ class Window(Adw.ApplicationWindow):
             self.editor_holder.remove(child)
             child = nxt
         is_host = scope not in (None, "defaults")
-        for b in (self.b_host_render, self.b_host_build, self.b_host_script, self.b_host_folder, self.b_host_remove):
+        for b in (self.b_host_render, self.b_host_build, self.b_host_script, self.b_host_stack,
+                  self.b_host_folder, self.b_host_remove):
             b.set_visible(is_host)
         if scope is None or not self.doc.path:
             self.editor_holder.append(self.empty)
@@ -1008,6 +1075,15 @@ class Window(Adw.ApplicationWindow):
             self.alert("Cannot render the script", err or out)
             return
         TextDialog("%s — role script" % self.current_scope, out).present(self)
+
+    def show_stack(self):
+        st = self.status.get(self.current_scope) or {}
+        p = os.path.join(st.get("dir") or "", "%s.stack" % self.current_scope, "docker-compose.yml")
+        if not st.get("dir") or not os.path.isfile(p):
+            self.toast("Render this host first — the stack is written next to its script")
+            return
+        with open(p, encoding="utf-8") as f:
+            TextDialog("%s — docker-compose.yml" % self.current_scope, f.read()).present(self)
 
     def open_folder(self):
         st = self.status.get(self.current_scope) or {}

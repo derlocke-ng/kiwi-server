@@ -1,76 +1,20 @@
-# roles/master — a kiwi-master: the public entry point.
+# roles/master — the kiwi-master: the public entry point of a Kiwi Network.
 #
-# This is a BASELINE until the modularized kiwi-master lands: wg-easy as the
-# WireGuard server, Pi-hole as the VPN's DNS, Portainer if wanted. Everything
-# but the WireGuard port stays reachable only through the tunnel.
+# Only the WireGuard port is public. Clients come in through vpn-server
+# (wg-easy), leave through vpn-client (gluetun to a commercial VPN — the
+# double hop), resolve through dns (Pi-hole on the server's network stack)
+# and can use tor as a SOCKS proxy. Exactly the live kiwi-master layout.
 name: master
 title: kiwi-master
-description: WireGuard entry point (wg-easy) with Pi-hole DNS for the VPN and optional Portainer — only the WireGuard port is public.
-status: wip
+description: WireGuard entry point with a double hop through a commercial VPN, Pi-hole DNS and a Tor SOCKS proxy for the mesh.
+status: stable
 targets: [coreos, ucore, debian]
-settings:
-  - key: wg_host
-    group: WireGuard
-    required: true
-    label: Public endpoint
-    help: Hostname or IP your clients and nodes connect to (INIT_HOST).
-    placeholder: vpn.example.org
-  - key: wg_port
-    group: WireGuard
-    type: int
-    label: WireGuard port (UDP)
-    default: 51820
-  - key: wg_cidr
-    group: WireGuard
-    label: VPN network
-    default: 10.8.0.0/24
-  - key: wg_allowed_ips
-    group: WireGuard
-    label: Allowed IPs for clients
-    help: What clients route through the tunnel. 0.0.0.0/0 is everything.
-    default: 0.0.0.0/0, ::/0
-  - key: wg_admin_user
-    group: WireGuard
-    label: wg-easy admin user
-    default: admin
-  - key: wg_admin_password
-    group: WireGuard
-    type: secret
-    required: true
-    label: wg-easy admin password
-    help: The web UI is reachable only through the tunnel, at http://<first VPN address>:51821.
-  - key: pihole_password
-    group: DNS
-    type: secret
-    required: true
-    label: Pi-hole admin password
-  - key: pihole_upstreams
-    group: DNS
-    label: Pi-hole upstream resolvers
-    default: 1.1.1.1;9.9.9.9
-  - key: docker_subnet
-    group: Stack
-    label: Docker subnet
-    help: Pi-hole gets .3 and Portainer .250 on it; VPN clients reach them directly.
-    default: 172.130.0.0/24
-  - key: docker_dir
-    group: Stack
-    label: Stack directory
-    default: /opt/kiwi-master
-  - key: portainer
-    group: Stack
-    type: bool
-    label: Run Portainer
-    default: true
-  - key: docker_source
-    group: Stack
-    type: enum
-    options: [ce, distro]
-    label: Docker packages (Debian)
-    targets: [debian]
-    default: ce
-  - key: env
-    group: Stack
-    type: map
-    label: Extra .env entries
-    default: {}
+node_type: master
+modules: [vpn-client, vpn-server, dns, tor]
+settings_include: [common/stack]
+# Pi-hole and Tor share the WireGuard server's network stack, so clients reach
+# them at the server's mesh address (10.8.0.1) — how the live master runs.
+module_defaults:
+  vpn-client: { vpn_provider: mullvad, mss_clamp: true }
+  dns: { network_mode: vpn-server }
+  tor: { network_mode: vpn-server }

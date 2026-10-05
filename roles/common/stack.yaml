@@ -1,0 +1,58 @@
+# roles/common/stack.yaml — settings every module role shares (settings_include: [common/stack]).
+settings:
+  - key: docker_dir
+    group: Stack
+    label: Stack directory
+    help: Where docker-compose.yml and the module data live. The v1 setups used /home/user/docker.
+    default: /home/user/docker
+  - key: service_user
+    group: Stack
+    label: Service user
+    help: Owns the stack directory and is in the docker group; created if missing (uid 1000 when free).
+    default: user
+  - key: docker_subnet
+    group: Stack
+    label: Docker subnet
+    help: "The stack's bridge network. Empty: 172.64.0.0/24 on a master, 172.128.0.0/24 on a node. Containers get fixed addresses in it (vpn client .2, dns .4, proxy .5, …)."
+    default: ""
+  - key: mtu
+    group: Stack
+    type: int
+    label: Network MTU
+    help: 1412 leaves room for the WireGuard headers.
+    default: 1412
+  - key: vpn_ip
+    group: Stack
+    label: Mesh address
+    help: "This machine's address inside the WireGuard mesh (10.8.0.x). Nodes need it for the DNAT rules and for the fleet's DNS records; a master gets it from its vpn-server settings."
+    placeholder: 10.8.0.25
+    default: ""
+  - key: pub_iface
+    group: Stack
+    label: LAN interface
+    help: "The physical interface facing the LAN (eth0, enp1s0). Empty: detected from the default route on first boot."
+    default: ""
+  - key: docker_source
+    group: Stack
+    type: enum
+    options: [ce, distro]
+    label: Docker packages (Debian)
+    help: ce = Docker CE from download.docker.com (docker compose included), distro = Debian's docker.io.
+    targets: [debian]
+    default: ce
+  - key: daily_vpn_restart
+    group: Maintenance
+    label: Daily VPN client restart (HH:MM)
+    help: "The v1 cron restarted the VPN client every morning for a fresh exit address. Empty: never."
+    default: "07:00"
+  - key: weekly_update
+    group: Maintenance
+    label: Weekly image update
+    help: "systemd OnCalendar day and time for `kiwi-stack update` (pull, restart, prune). Empty: never."
+    default: "Sun *-*-* 00:00"
+  - key: variables
+    group: Advanced
+    type: map
+    label: Extra template variables
+    help: Anything else the module templates should see, KEY=value — for modules you add yourself.
+    default: {}

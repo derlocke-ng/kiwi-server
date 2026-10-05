@@ -1,0 +1,18 @@
+# sftp
+services:
+  {{ container_prefix }}-sftp:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-sftp
+    command: "{{ sftp_user }}:{{ sftp_password }}:{{ sftp_uid }}"
+    volumes:
+      - {{ sftp_dir or module_config.get('downloader', {}).get('download_dir') or docker_dir ~ '/sftp' }}:/home/{{ sftp_user }}/Downloads:z
+    ports:
+      - "{{ sftp_port }}:22"
+    restart: unless-stopped
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m

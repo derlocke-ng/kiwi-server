@@ -33,11 +33,13 @@ do_install() {
     command -v python3 >/dev/null 2>&1 || { echo "error: python3 is required" >&2; exit 1; }
     python3 -c 'import yaml' 2>/dev/null ||
         warn "python3 cannot import yaml — install python3-pyyaml (rpm-ostree install python3-pyyaml, or pip install --user pyyaml)"
+    python3 -c 'import jinja2' 2>/dev/null ||
+        warn "python3 cannot import jinja2 — module roles need it (pip install --user jinja2, or rpm-ostree install python3-jinja2)"
 
     say "installing the library to $LIB"
     rm -rf "$LIB"
     mkdir -p "$LIB"
-    cp -r "$SRC/lib/kiwiserver" "$SRC/roles" "$SRC/container" "$SRC/examples" "$LIB/"
+    cp -r "$SRC/lib/kiwiserver" "$SRC/roles" "$SRC/modules" "$SRC/container" "$SRC/examples" "$LIB/"
     find "$LIB" -name '__pycache__' -type d -prune -exec rm -rf {} +
     # the example secrets dir holds only a note; the user's own files never come from here
     rm -rf "$LIB/examples/secrets"

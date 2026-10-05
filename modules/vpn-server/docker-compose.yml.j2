@@ -1,0 +1,37 @@
+# vpn-server (wg-easy) — the entry point; start.sh (WG_POST_UP) sets the double hop and the isolation rules
+services:
+  {{ container_prefix }}-vpn-server:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-vpn-server
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - WG_HOST={{ wg_host }}
+      - PASSWORD={{ wg_password }}
+      - WG_PORT={{ wg_port }}
+      - WG_POST_UP=bash /etc/wireguard/start.sh
+      - WG_PERSISTENT_KEEPALIVE=25
+      - UI_TRAFFIC_STATS={{ 'true' if ui_traffic_stats else 'false' }}
+      - WG_DEFAULT_DNS={{ server_ip }}
+      - WG_DEFAULT_ADDRESS={{ wg_default_address }}
+      - WG_MTU={{ mtu }}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    ports:
+      - "{{ public_ip ~ ':' if public_ip else '' }}{{ wg_port }}:51820/udp"
+      - "127.0.0.1:51821:51821/tcp"
+{% if has_dns and module_config.get('dns', {}).get('network_mode') == 'vpn-server' %}
+      - "127.0.0.1:8080:80/tcp"
+{% endif %}
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-vpn-server:/etc/wireguard:z

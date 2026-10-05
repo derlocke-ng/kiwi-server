@@ -1,0 +1,40 @@
+# cloud (Nextcloud AIO) — the master container; it starts the rest on the nextcloud-aio network
+services:
+  nextcloud-aio-mastercontainer:
+    image: {{ image }}
+    container_name: nextcloud-aio-mastercontainer   # AIO requires this name
+    init: true
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - SKIP_DOMAIN_VALIDATION={{ 'true' if skip_domain_validation else 'false' }}
+      - AIO_DISABLE_BACKUP_SECTION={{ 'true' if disable_backup_section else 'false' }}
+      - APACHE_PORT={{ apache_port }}
+      - APACHE_IP_BINDING={{ apache_ip_binding }}
+      - BORG_RETENTION_POLICY={{ borg_retention_policy }}
+      - NEXTCLOUD_DATADIR={{ nextcloud_datadir or docker_dir ~ '/knnc-data' }}
+      - NEXTCLOUD_UPLOAD_LIMIT={{ upload_limit }}
+      - NEXTCLOUD_MAX_TIME={{ max_time }}
+      - NEXTCLOUD_MEMORY_LIMIT={{ memory_limit }}
+      - NEXTCLOUD_STARTUP_APPS={{ startup_apps }}
+      - NEXTCLOUD_ADDITIONAL_APKS={{ additional_apks }}
+      - NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS={{ additional_php_extensions }}
+      - NEXTCLOUD_ENABLE_DRI_DEVICE={{ 'true' if enable_dri_device else 'false' }}
+      - NEXTCLOUD_KEEP_DISABLED_APPS={{ 'true' if keep_disabled_apps else 'false' }}
+      - TALK_PORT={{ talk_port }}
+      - WATCHTOWER_DOCKER_SOCKET_PATH=/var/run/docker.sock
+    volumes:
+      - nextcloud_aio_mastercontainer:/mnt/docker-aio-config   # AIO requires this name
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+volumes:
+  nextcloud_aio_mastercontainer:
+    name: nextcloud_aio_mastercontainer

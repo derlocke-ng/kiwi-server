@@ -4,9 +4,11 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 
-from . import VERSION, config, iso as isomod, roles as rolesmod, toolchain as tcmod, util
+from . import VERSION, certs, config, iso as isomod, modules as modmod, roles as rolesmod
+from . import toolchain as tcmod, util
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -43,6 +45,7 @@ class Outputs:
         self.ign = os.path.join(self.dir, n + ".ign")
         self.preseed = os.path.join(self.dir, n + ".preseed.cfg")
         self.files = os.path.join(self.dir, n + ".kiwi-server")
+        self.stack = os.path.join(self.dir, n + ".stack")
         self.iso = os.path.join(self.dir, n + ".iso")
         self.readme = os.path.join(self.dir, "README.txt")
         self.work = os.path.join(self.dir, ".work")
@@ -54,20 +57,30 @@ class Outputs:
             "script": os.path.isfile(self.script),
             "config": os.path.isfile(self.preseed if debian else self.bu),
             "ignition": (not debian) and os.path.isfile(self.ign),
+            "stack": os.path.isfile(os.path.join(self.stack, "docker-compose.yml")),
             "iso": os.path.isfile(self.iso),
             "iso_size": os.path.getsize(self.iso) if os.path.isfile(self.iso) else 0,
         }
 
 
-def host_readme(host, o):
+def host_readme(host, o, bundle=None):
     disk = host.cfg.get("disk") or "<disk: not set>"
     L = ["%s — %s" % (host.name, host.hostname),
-         "target: %s    role: %s    install disk: %s" % (host.target, host.role, disk), "",
-         "%s.role.sh" % host.name,
-         "    The first-boot script: runs once as root on the installed machine",
-         "    (kiwi-role.service). Also usable on an existing %s system:" % ("Debian" if host.target == "debian" else "CoreOS/uCore"),
-         "        scp %s.role.sh host:  &&  ssh host sudo bash %s.role.sh" % (host.name, host.name),
-         "    It contains this host's secrets — keep it private.", ""]
+         "target: %s    role: %s    install disk: %s" % (host.target, host.role, disk)]
+    if host.modules:
+        L.append("modules: %s" % ", ".join(host.modules))
+    L += ["",
+          "%s.role.sh" % host.name,
+          "    The first-boot script: runs once as root on the installed machine",
+          "    (kiwi-role.service). Also usable on an existing %s system:" % ("Debian" if host.target == "debian" else "CoreOS/uCore"),
+          "        scp %s.role.sh host:  &&  ssh host sudo bash %s.role.sh" % (host.name, host.name),
+          "    It contains this host's secrets — keep it private.", ""]
+    if bundle is not None:
+        L += ["%s.stack/" % host.name,
+              "    The rendered stack the script unpacks into %s:" % (host.role_settings.get("docker_dir") or "/home/user/docker"),
+              "    docker-compose.yml and the module configs — for review; the script carries a copy.",
+              "    Container addresses: %s" % ", ".join("%s=%s" % kv for kv in bundle.container_ips.items()),
+              "    On the machine: sudo kiwi-stack start|stop|update|status|logs", ""]
     if host.target == "debian":
         L += ["%s.preseed.cfg + %s.kiwi-server/" % (host.name, host.name),
               "    What the Debian installer reads. The preseed is written for the ISO:",
@@ -76,8 +89,7 @@ def host_readme(host, o):
         L += ["%s.bu / %s.ign" % (host.name, host.name),
               "    Butane and Ignition. The ISO embeds the Ignition for the installed system."]
         if host.target == "ucore":
-            L += ["    First boot rebases to %s (unsigned, reboot,"
-                  % host.cfg["ucore"]["image"],
+            L += ["    First boot rebases to %s (unsigned, reboot," % host.cfg["ucore"]["image"],
                   "    then signed, reboot); the role runs on the third boot."]
         L.append("")
     L += ["%s.iso" % host.name,
@@ -92,24 +104,119 @@ def host_readme(host, o):
 
 
 class Renderer:
-    def __init__(self, fleet, roles, out_dir, tc):
+    def __init__(self, fleet, roles, out_dir, tc, modset=None):
         self.fleet, self.roles, self.out_dir, self.tc = fleet, roles, out_dir, tc
+        self.ms = modset or modmod.discover()
+        self._records = None
+        self._ca = None
 
     def prepare(self, host):
         role = self.roles[host.role]
-        rolesmod.resolve_settings(role, host)
+        rolesmod.resolve_settings(role, host, self.ms)
         return role
+
+    # ---- fleet-wide knowledge ------------------------------------------------------
+    def dns_records(self):
+        """(address, name) for every mesh host and every service name its
+        reverse proxy answers for — what the dns modules serve. An invalid
+        host elsewhere in the fleet is skipped with a warning, not fatal."""
+        if self._records is not None:
+            return self._records
+        recs = []
+        for h in self.fleet.hosts.values():
+            try:
+                if h.role not in self.roles or h.validate(self.roles):
+                    continue
+                role = self.prepare(h)
+                if not role.stack:
+                    continue
+                spec = rolesmod.stack_spec(h, role)
+                if not spec.vpn_ip:
+                    continue
+                names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
+                for n in names:
+                    if "*" not in n and (spec.vpn_ip, n) not in recs:
+                        recs.append((spec.vpn_ip, n))
+            except KiwiError as e:
+                util.warn("dns records: skipping %s: %s" % (h.name, e))
+        self._records = recs
+        return recs
+
+    def tls_for(self, host):
+        tls = host.cfg.get("tls") or {}
+        if "reverse-proxy" not in host.modules or not tls.get("auto", True):
+            return
+        mf = host.module_files
+        if "reverse-proxy/tls_fullchain" in mf and "reverse-proxy/tls_privkey" in mf:
+            return
+        ca_dir = self.fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")
+        key, full = certs.ensure_host_cert(ca_dir, host.hostname, int(tls.get("days") or certs.DAYS))
+        mf["reverse-proxy/tls_fullchain"] = util.read_bytes(full)
+        mf["reverse-proxy/tls_privkey"] = util.read_bytes(key)
+        host.module_settings["reverse-proxy"]["tls_fullchain"] = "fullchain.pem"
+        host.module_settings["reverse-proxy"]["tls_privkey"] = "privkey.pem"
+
+    def ca_cert(self, host):
+        """The fleet CA, embedded so the machine trusts it — if it exists."""
+        tls = host.cfg.get("tls") or {}
+        if not tls.get("auto", True):
+            return None
+        pem = os.path.join(self.fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
+        return util.read_bytes(pem) if os.path.isfile(pem) else None
+
+    def bundle(self, host, role):
+        if not role.stack:
+            return None
+        records = self.dns_records()   # may re-resolve every host, this one included
+        self.tls_for(host)             # so the certificate files are injected afterwards
+        spec = rolesmod.stack_spec(host, role, records)
+        b = modmod.Renderer(self.ms).render(spec)
+        b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
+        return b
 
     def script(self, host):
         role = self.prepare(host)
-        return rolesmod.render_script(host, role, VERSION)
+        b = self.bundle(host, role)
+        return rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
+
+    def write_stack(self, o, bundle):
+        if os.path.isdir(o.stack):
+            shutil.rmtree(o.stack)
+        os.makedirs(o.stack, mode=0o700)
+        for rel, (content, mode) in bundle.files.items():
+            p = os.path.join(o.stack, rel)
+            if isinstance(content, bytes):
+                util.write_bytes(p, content, mode)
+            else:
+                util.write_text(p, content, mode)
+        for name, text in bundle.units.items():
+            util.write_text(os.path.join(o.stack, "host-units", name), text)
+        self.check_compose(os.path.join(o.stack, "docker-compose.yml"))
+
+    def check_compose(self, path):
+        """`docker compose config` is a real validator and needs no daemon;
+        when the plugin is around, a broken compose never leaves here."""
+        if not util.which("docker"):
+            return
+        r = subprocess.run(["docker", "compose", "-f", path, "config", "-q"],
+                           capture_output=True, text=True, env={**os.environ, "DOCKER_HOST": "unix:///nonexistent"})
+        if r.returncode != 0:
+            err = (r.stderr or "").strip()
+            if "is not a docker command" in err or "unknown command" in err:
+                return
+            raise KiwiError("rendered docker-compose.yml is invalid:\n  %s" % err.replace("\n", "\n  "))
 
     def render(self, host):
         o = Outputs(self.out_dir, host)
         os.makedirs(o.dir, exist_ok=True)
-        script = self.script(host)
+        script, bundle = self.script(host)
         util.write_text(o.script, script, 0o600)
         produced = [o.script]
+        if bundle is not None:
+            self.write_stack(o, bundle)
+            produced.append(o.stack)
+        elif os.path.isdir(o.stack):
+            shutil.rmtree(o.stack)
         if host.target == "debian":
             util.write_text(o.preseed, debian_t.preseed(host, VERSION), 0o600)
             if os.path.isdir(o.files):
@@ -136,7 +243,7 @@ class Renderer:
                     shutil.rmtree(stale)
                 elif os.path.exists(stale):
                     os.unlink(stale)
-        util.write_text(o.readme, host_readme(host, o))
+        util.write_text(o.readme, host_readme(host, o, bundle))
         return o, produced
 
     def build(self, host, cache_dir):
@@ -158,16 +265,17 @@ class Renderer:
 def load(args, need_roles=True):
     fleet = config.Fleet.load(args.fleet)
     roles = rolesmod.discover() if need_roles else None
-    return fleet, roles
+    ms = modmod.discover() if need_roles else None
+    return fleet, roles, ms
 
 
-def check(fleet, roles, hosts, porcelain=False, strict=True):
+def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = []
     for h in hosts:
         errs += h.validate(roles)
         if h.role in roles and h.target in TARGETS:
             try:
-                rolesmod.resolve_settings(roles[h.role], h)
+                rolesmod.resolve_settings(roles[h.role], h, ms)
             except KiwiError as e:
                 errs.append(str(e))
     if errs and strict:
@@ -190,9 +298,9 @@ def cmd_init(args):
 
 
 def cmd_validate(args):
-    fleet, roles = load(args)
+    fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
-    errs = check(fleet, roles, hosts, args.porcelain, strict=False)
+    errs = check(fleet, roles, ms, hosts, args.porcelain, strict=False)
     warns = ["%s: %s" % (h.name, w) for h in hosts for w in h.warnings]
     if args.porcelain:
         print(json.dumps({"ok": not errs, "errors": errs, "warnings": warns}, indent=2))
@@ -208,30 +316,31 @@ def cmd_validate(args):
 
 
 def cmd_list(args):
-    fleet, roles = load(args)
+    fleet, roles, ms = load(args)
     out_dir = out_dir_for(args, fleet)
     rows = []
     for h in fleet.hosts.values():
         errs = h.validate(roles)
         if not errs:
             try:
-                rolesmod.resolve_settings(roles[h.role], h)
+                rolesmod.resolve_settings(roles[h.role], h, ms)
             except KiwiError as e:
                 errs.append(str(e))
         o = Outputs(out_dir, h)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
-                     "disk": h.cfg.get("disk"), "address": h.cfg["network"].get("address")
-                     if not h.cfg["network"].get("dhcp", True) else "dhcp",
+                     "modules": list(h.modules), "disk": h.cfg.get("disk"),
+                     "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
+                     "vpn_ip": (h.role_settings or {}).get("vpn_ip") or "",
                      "status": o.status(), "dir": o.dir, "iso": o.iso,
                      "errors": errs, "warnings": h.warnings})
     if args.porcelain:
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "hosts": rows}, indent=2))
         return
-    fmt = "%-14s %-26s %-7s %-11s %-16s %s"
+    fmt = "%-12s %-24s %-7s %-11s %-16s %s"
     print(fmt % ("NAME", "HOSTNAME", "TARGET", "ROLE", "ADDRESS", "OUTPUT"))
     for r in rows:
         s = r["status"]
-        have = [k for k in ("script", "config", "ignition", "iso") if s.get(k)]
+        have = [k for k in ("script", "stack", "config", "ignition", "iso") if s.get(k)]
         state = "INVALID" if r["errors"] else (", ".join(have) if have else "-")
         print(fmt % (r["name"], r["hostname"], r["target"], r["role"], r["address"] or "", state))
         for e in r["errors"]:
@@ -239,17 +348,23 @@ def cmd_list(args):
 
 
 def cmd_show(args):
-    fleet, roles = load(args)
+    fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
     errs = h.validate(roles)
-    role_settings = {}
+    role_settings, module_settings = {}, {}
     if h.role in roles:
         try:
-            rolesmod.resolve_settings(roles[h.role], h)
+            rolesmod.resolve_settings(roles[h.role], h, ms)
             role_settings = dict(h.role_settings)
             for s in roles[h.role].settings:
                 if s.type == "secret":
                     role_settings[s.key] = mask(role_settings.get(s.key))
+            for m, vals in h.module_settings.items():
+                vals = dict(vals)
+                for s in ms.get(m).settings:
+                    if s.type == "secret":
+                        vals[s.key] = mask(vals.get(s.key))
+                module_settings[m] = vals
         except KiwiError as e:
             errs.append(str(e))
     cfg = json.loads(json.dumps(h.cfg))
@@ -259,7 +374,8 @@ def cmd_show(args):
     for r in roles:
         cfg.pop(r, None)
     data = {"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
-            "config": cfg, "role_settings": role_settings, "errors": errs, "warnings": h.warnings}
+            "modules": list(h.modules), "config": cfg, "role_settings": role_settings,
+            "module_settings": module_settings, "errors": errs, "warnings": h.warnings}
     if args.porcelain:
         print(json.dumps(data, indent=2))
     else:
@@ -269,18 +385,41 @@ def cmd_show(args):
 
 def cmd_roles(args):
     roles = rolesmod.discover()
+    ms = modmod.discover()
     if args.porcelain:
-        print(json.dumps({"roles": [r.as_dict() for r in roles.values()]}, indent=2))
+        print(json.dumps({"roles": [r.as_dict(ms) for r in roles.values()],
+                          "modules": [m.as_dict() for m in ms.modules.values()]}, indent=2))
         return
     for r in roles.values():
         flag = "" if r.status == "stable" else "  [%s]" % r.status
         print("%-12s %s%s" % (r.name, r.title, flag))
         print("             %s" % r.description)
         print("             targets: %s" % ", ".join(r.targets))
+        if r.stack:
+            print("             modules: %s" % ", ".join(ms.resolve(r.modules)))
         if args.verbose:
             for s in r.settings:
                 req = " (required)" if s.required else ""
-                print("               %-22s %-7s default=%r%s" % (s.key, s.type, s.default, req))
+                print("               %-24s %-7s default=%r%s" % (s.key, s.type, s.default, req))
+            for m in (ms.resolve(r.modules) if r.stack else []):
+                for s in ms.get(m).settings:
+                    req = " (required)" if s.required else ""
+                    print("               %-24s %-7s default=%r%s" % (m + "." + s.key, s.type, s.default, req))
+
+
+def cmd_modules(args):
+    ms = modmod.discover()
+    if args.porcelain:
+        print(json.dumps({"modules": [m.as_dict() for m in ms.modules.values()]}, indent=2))
+        return
+    for m in ms.modules.values():
+        print("%-14s %-12s %-12s %s" % (m.name, m.category, "/".join(m.node_types), m.description))
+        if m.requires:
+            print("               requires: %s" % ", ".join(m.requires))
+        if args.verbose:
+            for s in m.settings:
+                req = " (required)" if s.required else ""
+                print("               %-24s %-7s default=%r%s" % (s.key, s.type, s.default, req))
 
 
 def cmd_targets(args):
@@ -292,20 +431,32 @@ def cmd_targets(args):
 
 
 def cmd_script(args):
-    fleet, roles = load(args)
+    fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
-    check(fleet, roles, [h])
+    check(fleet, roles, ms, [h])
     tc = make_tc(args)
-    sys.stdout.write(Renderer(fleet, roles, out_dir_for(args, fleet), tc).script(h))
+    sys.stdout.write(Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms).script(h)[0])
+
+
+def cmd_ca(args):
+    fleet, _roles, _ms = load(args, need_roles=False)
+    tls = fleet.defaults.get("tls") or {}
+    ca_dir = fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")
+    key, pem = certs.ensure_ca(ca_dir, int(tls.get("days") or certs.DAYS))
+    if args.porcelain:
+        print(json.dumps({"key": key, "cert": pem}))
+        return
+    util.say("CA certificate: %s   (import this on your devices; keep %s private)" % (pem, key))
+    util.say("hosts that run the reverse proxy get a *.<hostname> certificate from it at render time")
 
 
 def _render_or_build(args, build):
-    fleet, roles = load(args)
+    fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
-    check(fleet, roles, hosts)
+    check(fleet, roles, ms, hosts)
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
-    r = Renderer(fleet, roles, out_dir, tc)
+    r = Renderer(fleet, roles, out_dir, tc, ms)
     failed = []
     for h in hosts:
         try:
@@ -365,6 +516,9 @@ def cmd_doctor(args):
         add("python3-pyyaml", True)
     except ImportError:
         add("python3-pyyaml", False, "install python3-pyyaml (rpm-ostree install / pip install --user pyyaml)")
+    add("python3-jinja2 (renders the modules)", modmod.jinja2 is not None,
+        "" if modmod.jinja2 else "pip install --user jinja2  or  rpm-ostree install python3-jinja2")
+    add("openssl (fleet CA and host certificates)", bool(util.which("openssl")))
     try:
         util.sha512_crypt("probe", "kiwikiwikiwikiwi")
         add("password hashing", True)
@@ -375,6 +529,11 @@ def cmd_doctor(args):
         add("roles", True, ", ".join(roles))
     except KiwiError as e:
         add("roles", False, str(e))
+    try:
+        ms = modmod.discover()
+        add("modules", True, ", ".join(ms.names()))
+    except KiwiError as e:
+        add("modules", False, str(e))
     tc = make_tc(args)
     rt = tc.runtime()
     add("container runtime", bool(rt), rt or "neither podman nor docker — native tools only")
@@ -382,6 +541,10 @@ def cmd_doctor(args):
         add("toolchain image %s" % tc.image, tc.image_present(), "" if tc.image_present() else "kiwi-server toolchain build")
     for t, (h, w) in tc.status().items():
         add(t, bool(h), h or w)
+    compose = False
+    if util.which("docker"):
+        compose = subprocess.run(["docker", "compose", "version"], capture_output=True).returncode == 0
+    add("docker compose (optional, validates rendered stacks)", compose)
     add("shellcheck (optional, lints rendered scripts)", bool(util.which("shellcheck")))
     gui = False
     try:
@@ -392,7 +555,8 @@ def cmd_doctor(args):
     except (ImportError, ValueError):
         pass
     add("GTK4 + libadwaita (for kiwi-server-gui)", gui, "" if gui else "headless is fine; the CLI does everything")
-    ok = all(c["ok"] for c in checks if not c["name"].startswith(("shellcheck", "GTK4", "container", "toolchain")))
+    optional = ("shellcheck", "GTK4", "container", "toolchain", "docker compose")
+    ok = all(c["ok"] for c in checks if not c["name"].startswith(optional))
     if args.porcelain:
         print(json.dumps({"ok": ok, "checks": checks}, indent=2))
         return
@@ -413,10 +577,12 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server validate <fleet> [host...]        check it (exit 2 on errors)
   kiwi-server list <fleet>                      hosts and what has been generated
   kiwi-server show <fleet> <host>               the effective configuration of one host
-  kiwi-server render <fleet> [host...]          role scripts + Butane/Ignition or preseed
+  kiwi-server render <fleet> [host...]          role scripts, stacks, Butane/Ignition or preseed
   kiwi-server build <fleet> [host...]           render, then the unattended ISO per host
   kiwi-server script <fleet> <host>             print the role script (run it on any machine)
-  kiwi-server roles [-v]                        what a machine can become
+  kiwi-server ca <fleet>                        the fleet CA (created on first use)
+  kiwi-server roles [-v]                        what a machine can become, and which modules that is
+  kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian
   kiwi-server toolchain [status|build]          butane / coreos-installer / xorriso, native or container
   kiwi-server doctor                            is everything here?
@@ -453,7 +619,9 @@ def build_parser():
     s = sub("render", cmd_render); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s = sub("build", cmd_build); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
+    sub("ca", cmd_ca).add_argument("fleet")
     sub("roles", cmd_roles)
+    sub("modules", cmd_modules)
     sub("targets", cmd_targets)
     sub("toolchain", cmd_toolchain).add_argument("action", nargs="?", choices=("status", "build"))
     sub("doctor", cmd_doctor)
@@ -479,4 +647,8 @@ def main(argv=None):
         return 1
     except KeyboardInterrupt:
         return 130
+    except BrokenPipeError:
+        # `kiwi-server roles -v | head`: the reader went away, which is fine
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
     return 0

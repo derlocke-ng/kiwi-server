@@ -1,0 +1,49 @@
+schema_version: "1.0"
+
+module:
+  name: portainer
+  title: Portainer
+  version: 1.0.0
+  description: "Portainer CE — a web UI for the containers on this machine; local port 9443, and portainer.<hostname> behind the reverse proxy"
+  category: system
+  node_types: [master, node]
+
+dependencies:
+  required: []
+  optional: [reverse-proxy]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  volumes: [portainer_data]
+  bind_mounts: []
+
+urls:
+  - "Portainer: https://{{ portainer_hostname or 'portainer.' ~ hostname }} or https://127.0.0.1:9443 on the machine"
+
+nginx:
+  upstream:
+    name: portainer
+    server: "{{ container_prefix }}-portainer:9000"
+  server_name: "{{ portainer_hostname or 'portainer.' ~ hostname }}"
+  proxy_pass: "http://portainer"
+  websocket: true
+  comment: Portainer
+
+settings:
+  - key: portainer_hostname
+    label: Hostname
+    help: "Empty: portainer.<hostname>."
+    default: ""
+  - key: image
+    group: Advanced
+    default: portainer/portainer-ce:latest

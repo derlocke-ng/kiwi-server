@@ -499,8 +499,9 @@ class TestIso(Base):
         os.makedirs(os.path.join(tree, "isolinux"))
         os.makedirs(os.path.join(tree, "boot", "grub"))
         write(os.path.join(tree, "install.amd", "hello"), "hi\n")
+        # (% binds tighter than +: "… % self.tmp + '/tree'" once cd'd into the wrong directory)
         subprocess.run("cd %s/install.amd && echo hello | cpio -H newc -o 2>/dev/null | gzip > initrd.gz && rm hello"
-                       % self.tmp + "/tree", shell=True, check=True)
+                       % tree, shell=True, check=True)
         write(os.path.join(tree, "isolinux", "isolinux.cfg"), "include menu.cfg\ndefault vesamenu.c32\nprompt 0\ntimeout 0\n")
         write(os.path.join(tree, "isolinux", "txt.cfg"), "label install\n\tmenu label ^Install\n\tkernel /install.amd/vmlinuz\n")
         write(os.path.join(tree, "boot", "grub", "grub.cfg"), "set theme=/boot/grub/theme/1\nmenuentry 'Install' {\n}\n")
@@ -776,7 +777,9 @@ class TestModules(Base):
         shutil.copytree(modmod.modules_dir(), mdir)
         shutil.copytree(os.path.join(mdir, "gateway"), os.path.join(mdir, "gateway2"))
         y = os.path.join(mdir, "gateway2", "module.yaml")
-        write(y, open(y).read().replace("name: gateway", "name: gateway2").replace("kiwi/gw.sh", "kiwi/gw2.sh"))
+        with open(y) as fh:
+            text = fh.read()
+        write(y, text.replace("name: gateway", "name: gateway2").replace("kiwi/gw.sh", "kiwi/gw2.sh"))
         os.makedirs(os.path.join(mdir, "broken"))
         write(os.path.join(mdir, "broken", "module.yaml"),
               "module: {name: broken}\nnginx: {servers: [{server_name: x}]}\n"

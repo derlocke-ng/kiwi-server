@@ -28,7 +28,10 @@
 defaults:
   target: ucore
   role: bare
-  domain: kiwi                      # host "sh3" becomes sh3.kiwi unless hostname: is set
+  domain: home                      # host "sh3" becomes sh3.home unless hostname: is set.
+                                    # .home is never delegated as a public TLD (.kiwi is one,
+                                    # and anyone can register sh3.kiwi); .internal is the
+                                    # reserved alternative. Names are service.hostname.home.
   timezone: Europe/Berlin
   locale: en_US.UTF-8
   keyboard: de
@@ -59,7 +62,7 @@ defaults:
   tls:                              # certificates for the reverse proxies
     auto: true                      # one fleet CA in ca_dir, a *.<hostname> cert per host,
     ca_dir: secrets/ca              # the CA trusted on every machine (import it on your devices)
-    # name_constraints: [kiwi]      # the CA may only sign names under these domains
+    name_constraints: [home]        # the CA may only sign names under the fleet's domain
     # cert_days: 825                # per-host certificate lifetime (the CA: days: 3650)
 
   ucore:
@@ -105,7 +108,7 @@ hosts:
       # master_ip: 10.8.0.1               # the master's Pi-hole is this node's DNS upstream — taken from the fleet's master
       pub_iface: eth0                     # the LAN side
       vpn-client:
-        wireguard_config: secrets/m1.kiwi.conf    # the client config wg-easy issued
+        wireguard_config: secrets/m1.home.conf    # the client config wg-easy issued
         # extra_dnat_rules: ["2222/tcp:172.128.0.1:22"]   # ssh to this node from the mesh:
         #                                 # mesh address port 2222 -> the host (docker gateway) port 22
       dns:
@@ -135,7 +138,7 @@ hosts:
       #   docker_subnet: 172.129.0.0/24
       #   kmvpn-server -> km-vpn-server, knvault -> kn-vault, kntransmission -> kn-transmission, …
       vpn-client:
-        wireguard_config: secrets/sh3.kiwi.conf
+        wireguard_config: secrets/sh3.home.conf
       cloud:
         nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data
         memory_limit: 8192M

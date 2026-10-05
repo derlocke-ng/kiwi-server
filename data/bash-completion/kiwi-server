@@ -4,8 +4,8 @@ _kiwi_server() {
     local cur prev cmds opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="init validate list show render build script ca roles modules targets toolchain doctor version help"
-    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version"
+    cmds="init validate list show render build script ca openwrt roles modules targets toolchain doctor version help"
+    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name"
 
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
@@ -16,6 +16,8 @@ _kiwi_server() {
             mapfile -t COMPREPLY < <(compgen -d -- "$cur"); return ;;
         --toolchain)
             mapfile -t COMPREPLY < <(compgen -W "auto native container" -- "$cur"); return ;;
+        --wireguard)
+            mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return ;;
         toolchain)
             mapfile -t COMPREPLY < <(compgen -W "status build" -- "$cur"); return ;;
     esac
@@ -30,7 +32,7 @@ _kiwi_server() {
     done
     case "$verb" in
         "")  mapfile -t COMPREPLY < <(compgen -W "$cmds" -- "$cur") ;;
-        validate|list|show|render|build|script|ca)
+        validate|list|show|render|build|script|ca|openwrt)
             if [[ -z $fleet ]]; then
                 mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")
             elif [[ -f $fleet ]]; then

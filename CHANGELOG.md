@@ -18,6 +18,14 @@
   pointing at itself, so backups and renewals resolve without a Pi-hole.
 - gluetun's DNS-over-TLS provider defaults to Quad9; the gateway module's
   mesh subnet defaults to the stack's.
+- **Names are `service.hostname.home`.** The example fleet moves from
+  `.kiwi`, a real public TLD anyone can register names under, to `.home`,
+  which ICANN will not delegate; the CA is constrained to it. No place label.
+- **`kiwi-server openwrt`** writes the uci script that joins an OpenWrt router
+  to the mesh: a WireGuard client with the mesh routed (or everything, with
+  `--full`), the firewall zone, and the dnsmasq forward of the fleet's names
+  to the master's Pi-hole; or, with `--via`, a static route to a gateway
+  node. [docs/routers.md](docs/routers.md) covers FritzBox and other routers.
 
 ## 2.1.1 — the review fixes
 

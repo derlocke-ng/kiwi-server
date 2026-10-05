@@ -19,7 +19,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 
 import yaml  # noqa: E402
 
-from kiwiserver import VERSION, certs, cli, config, iso, modules as modmod, roles as rolesmod  # noqa: E402
+from kiwiserver import VERSION, certs, cli, config, iso, modules as modmod, roles as rolesmod, router  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -862,6 +862,89 @@ class TestModules(Base):
             self.assertEqual(res.returncode, 0, res.stderr)
 
 
+WG_CONF = """# wg-easy client config for the router
+[Interface]
+PrivateKey = cHJpdmF0ZS1rZXktdGVzdA==
+Address = 10.8.4.2/24
+DNS = 10.8.0.1
+MTU = 1412
+
+[Peer]
+PublicKey = cHVibGljLWtleS10ZXN0
+PresharedKey = cHNrLXRlc3Q=
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+Endpoint = vpn.example.org:51820
+"""
+
+
+class TestRouter(Base):
+    def test_parse_wireguard(self):
+        wg = router.parse_wireguard(WG_CONF)
+        self.assertEqual(wg["interface"]["address"], ["10.8.4.2/24"])
+        self.assertEqual(wg["interface"]["mtu"], "1412")
+        self.assertEqual(wg["peers"][0]["endpoint"], "vpn.example.org:51820")
+        self.assertEqual(wg["peers"][0]["allowedips"], ["0.0.0.0/0", "::/0"])
+        for bad in ("hello\n", "[Interface]\nPrivateKey = x\n", "[Interface]\nPrivateKey = x\nAddress = 10.8.4.2/24\n[Peer]\nPublicKey = p\nEndpoint = host\n"):
+            with self.assertRaises(KiwiError):
+                router.parse_wireguard(bad)
+
+    def test_openwrt_scripts(self):
+        wg = router.parse_wireguard(WG_CONF)
+        split = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg)
+        for line in ("uci set network.kiwi.proto='wireguard'", "uci set network.kiwi.private_key='cHJpdmF0ZS1rZXktdGVzdA=='",
+                     "uci add_list network.kiwi.addresses='10.8.4.2/24'", "uci set network.kiwi.mtu='1412'",
+                     "uci set network.kiwi_peer=wireguard_kiwi", "uci set network.kiwi_peer.endpoint_host='vpn.example.org'",
+                     "uci set network.kiwi_peer.endpoint_port='51820'", "uci set network.kiwi_peer.preshared_key='cHNrLXRlc3Q='",
+                     "uci add_list network.kiwi_peer.allowed_ips='10.8.0.0/16'", "uci set firewall.kiwi.masq='1'",
+                     "uci set firewall.kiwi_fwd.src='lan'", "uci add_list dhcp.@dnsmasq[0].server='/home/10.8.0.1'",
+                     "uci set dhcp.@dnsmasq[0].rebind_domain='home'", "uci commit network"):
+            self.assertIn(line, split)
+        self.assertNotIn("0.0.0.0/0", split)
+        self.assertNotIn("noresolv", split)
+        full = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg, full=True)
+        self.assertIn("uci add_list network.kiwi_peer.allowed_ips='0.0.0.0/0'", full)
+        self.assertIn("uci add_list dhcp.@dnsmasq[0].server='10.8.0.1'", full)
+        self.assertIn("uci set dhcp.@dnsmasq[0].noresolv='1'", full)
+        via = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", via="192.168.1.5")
+        self.assertIn("uci set network.kiwi_route.target='10.8.0.0/16'", via)
+        self.assertIn("uci set network.kiwi_route.gateway='192.168.1.5'", via)
+        self.assertNotIn("wireguard", via)
+        self.assertIn("server='/home/10.8.0.1'", via)
+        p = os.path.join(self.tmp, "kiwi.sh")
+        write(p, split)
+        self.assertEqual(subprocess.run(["sh", "-n", p]).returncode, 0)
+        if have("shellcheck"):
+            r = subprocess.run(["shellcheck", "-S", "warning", "-s", "sh", p], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+        with self.assertRaises(KiwiError):
+            router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg, via="192.168.1.5")
+        with self.assertRaises(KiwiError):
+            router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", via="not-an-ip")
+
+    def test_openwrt_command_uses_the_fleet(self):
+        write(os.path.join(self.tmp, "secrets", "router.conf"), WG_CONF)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "m1": {"role": "node-gw", "network": {"dhcp": False, "address": "192.168.1.5/24", "gateway": "192.168.1.1"},
+                   "node-gw": self.node_gw()},
+            "d": {"role": "node-gw", "node-gw": self.node_gw()}}})
+        from io import StringIO
+        import contextlib
+        out = StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["openwrt", f.path, "--wireguard", "secrets/router.conf"]), 0)
+        self.assertIn("server='/kiwi/10.8.0.1'", out.getvalue())   # the master's address from the fleet
+        out = StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["openwrt", f.path, "--via", "m1"]), 0)
+        self.assertIn("kiwi_route.gateway='192.168.1.5'", out.getvalue())
+        err = StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["openwrt", f.path, "--via", "d"]), 1)   # d has no static LAN address
+        self.assertIn("static LAN address", err.getvalue())
+
+
 @unittest.skipUnless(have("openssl"), "openssl not installed")
 class TestCerts(Base):
     def test_ca_and_host_cert(self):
@@ -1032,8 +1115,8 @@ class TestCli(Base):
         # the example validates once its secrets exist (throw-away ones here)
         home = os.path.join(self.tmp, "home")
         write(os.path.join(home, ".ssh", "id_ed25519.pub"), KEY + "\n")
-        write(os.path.join(self.tmp, "secrets", "m1.kiwi.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n")
-        write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n")
+        write(os.path.join(self.tmp, "secrets", "m1.home.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n")
+        write(os.path.join(self.tmp, "secrets", "sh3.home.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n")
         old_home = os.environ.get("HOME")
         os.environ["HOME"] = home
         try:

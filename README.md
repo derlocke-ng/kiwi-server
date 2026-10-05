@@ -91,7 +91,7 @@ same script the ISO runs.
 defaults:                          # every host, unless it says otherwise
   target: ucore                    # coreos | ucore | debian
   role: bare                       # bare | master | node-gw | node-cloud
-  domain: kiwi                     # sh3 becomes sh3.kiwi
+  domain: home                     # sh3 becomes sh3.home
   timezone: Europe/Berlin
   disk: /dev/sda                   # WIPED by the ISO. Required for build, not for render
   admin:
@@ -117,7 +117,7 @@ hosts:
     node-gw:
       vpn_ip: 10.8.0.6
       pub_iface: eth0
-      vpn-client: { wireguard_config: secrets/m1.kiwi.conf }   # the client config wg-easy issued
+      vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued
       dns: { pihole_password: … }
       downloader: { download_dir: /mnt/data/downloads, transmission_password: … }
       sftp: { sftp_password: … }
@@ -126,7 +126,7 @@ hosts:
     ucore: { image: ghcr.io/ublue-os/ucore-hci:stable }
     node-cloud:
       vpn_ip: 10.8.0.25
-      vpn-client: { wireguard_config: secrets/sh3.kiwi.conf }
+      vpn-client: { wireguard_config: secrets/sh3.home.conf }
       cloud: { nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data, memory_limit: 8192M }
 ```
 
@@ -156,6 +156,13 @@ a fresh install, matching the containers' PUID defaults); the rendered files
 stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
 client's network namespace (Transmission, JDownloader).
+
+Names are `service.hostname.home`: the example fleet uses `.home` because it
+is one of the strings ICANN will not delegate as a public top-level domain,
+so a name can never leak to a public registry or be registered by someone
+else with a browser-trusted certificate (`.kiwi` is a real TLD, so it can).
+`.internal` is the formally reserved alternative. Routers join the mesh with
+`kiwi-server openwrt` or the steps in [docs/routers.md](docs/routers.md).
 
 DNS is one chain for the whole network: VPN clients ask the master's Pi-hole,
 a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first

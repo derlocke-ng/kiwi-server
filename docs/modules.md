@@ -141,7 +141,7 @@ hosts:
     role: node-cloud
     node-cloud:
       vpn_ip: 10.8.0.25                 # a role (stack) setting
-      vault: { vault_domain: https://pw.sh3.kiwi }   # a module setting
+      vault: { vault_domain: https://pw.sh3.home }   # a module setting
       modules: [vpn-client, reverse-proxy, vault]    # replaces the preset's list
 ```
 

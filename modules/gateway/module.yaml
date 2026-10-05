@@ -1,0 +1,48 @@
+schema_version: "1.0"
+
+module:
+  name: gateway
+  title: LAN gateway
+  version: 1.1.0
+  description: "Policy routing on the host: LAN clients that use this machine as their default gateway leave through the VPN client; they can reach the mesh but not the docker network"
+  category: network
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client]
+  optional: [dns, dhcp-relay]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  # host rules, applied by gw.sh (kn-gateway.service), not inside a container
+  scope: host
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  gateway_script: gw.sh.j2
+  systemd_service: kn-gateway.service.j2
+
+outputs:
+  gateway_script: { path: "kiwi/gw.sh", mode: 0755 }
+  systemd_service: { kind: host_unit, name: kn-gateway.service }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/kiwi", type: dir, required: true }
+
+host_integration:
+  sysctl:
+    net.ipv4.ip_forward: 1
+
+settings:
+  - key: vpn_subnet
+    label: Mesh subnets LAN clients may reach
+    default: 10.8.0.0/16
+  - key: lan_subnet
+    label: LAN subnet
+    help: "Optional, for documentation and future DHCP; routing keys on the LAN interface, not the subnet."
+    default: ""

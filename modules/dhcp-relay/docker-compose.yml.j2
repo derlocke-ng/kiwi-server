@@ -1,0 +1,16 @@
+# dhcp-relay — on the host network, forwards DHCP to Pi-hole ({{ dns_ip }})
+services:
+  {{ container_prefix }}-dhcphelper:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-dhcphelper
+    network_mode: host
+    environment:
+      IP: "{{ dns_ip }}"
+      TZ: "{{ timezone }}"
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m

@@ -1,0 +1,75 @@
+schema_version: "1.0"
+
+module:
+  name: vault
+  title: Vaultwarden
+  version: 1.1.0
+  description: "Vaultwarden — the Bitwarden-compatible password manager, behind the reverse proxy"
+  category: security
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-vault", type: dir, required: true }
+
+urls:
+  - "Vaultwarden: {{ vault_domain or 'https://vault.' ~ hostname }}"
+
+nginx:
+  upstream:
+    name: vaultwarden
+    server: "{{ container_prefix }}-vault:80"
+  server_name: "{{ (vault_domain or 'https://vault.' ~ hostname) | replace('https://', '') | replace('http://', '') }}"
+  proxy_pass: "http://vaultwarden"
+  websocket: true
+  comment: Vaultwarden
+
+settings:
+  - key: vault_domain
+    label: URL
+    help: "The full URL clients use. Empty: https://vault.<hostname>."
+    default: ""
+  - key: signups_allowed
+    type: bool
+    label: Allow signups
+    help: Turn on for the first account, then off again; invitations keep working.
+    default: false
+  - key: invitations_allowed
+    type: bool
+    default: true
+  - key: show_password_hint
+    type: bool
+    default: false
+  - key: log_level
+    type: enum
+    options: [error, warn, info, debug]
+    default: warn
+  - key: admin_token
+    type: secret
+    label: Admin panel token
+    help: "Empty: the /admin panel stays off."
+    default: ""
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    default: vaultwarden/server:latest-alpine

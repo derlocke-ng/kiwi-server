@@ -1,0 +1,23 @@
+# reverse-proxy (nginx) — TLS termination for every web service on the node
+services:
+  {{ container_prefix }}-nginx:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-nginx
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+{% if has_cloud %}
+      nextcloud-aio: {}
+{% endif %}
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z

@@ -1,0 +1,96 @@
+schema_version: "1.0"
+
+module:
+  name: vpn-server
+  title: WireGuard server (wg-easy)
+  version: 1.1.0
+  description: "wg-easy — the entry point for every client and node; its default route points at the VPN client for the double hop"
+  category: core
+  node_types: [master]
+
+dependencies:
+  required: []
+  optional: [vpn-client]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: ["{{ wg_port }}/udp"]
+
+firewall:
+  # applied inside the container by start.sh (WG_POST_UP)
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  start_script: start.sh.j2
+
+outputs:
+  start_script: { path: "{{ container_prefix }}-vpn-server/start.sh", mode: 0755 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-vpn-server", type: dir, required: true }
+
+host_integration:
+  kernel_modules: [wireguard]
+
+urls:
+  - "wg-easy admin: http://127.0.0.1:51821 on the master (ssh -L 51821:127.0.0.1:51821 {{ hostname }})"
+
+settings:
+  - key: wg_host
+    required: true
+    label: Public endpoint
+    help: The hostname or IP clients connect to (WG_HOST).
+    placeholder: vpn.example.org
+  - key: wg_password
+    type: secret
+    required: true
+    label: wg-easy admin password
+    help: The web UI listens on 127.0.0.1:51821 of the master only.
+  - key: wg_port
+    type: int
+    label: WireGuard port (UDP)
+    default: 51820
+  - key: public_ip
+    label: Bind to this address only
+    help: "Publish the WireGuard port on one host address (the live master binds its public IP). Empty: all addresses."
+    default: ""
+  - key: server_ip
+    label: Server mesh address
+    help: "The server's own address in the mesh: what clients use for DNS and Tor, and the master's mesh address for the fleet's DNS records."
+    default: 10.8.0.1
+  - key: wg_subnet
+    label: Mesh subnet
+    default: 10.8.0.0/24
+  - key: wg_default_address
+    label: Client address pattern
+    default: 10.8.0.x
+  - key: isolated_subnet
+    label: Isolated client subnet
+    help: "Clients given addresses here cannot see other clients — only the server and the fleet's nodes. Empty: off."
+    default: 10.8.1.0/24
+  - key: isolated_allow
+    type: list
+    label: Extra addresses isolated clients may reach
+    help: The server and every node with a mesh address are allowed automatically.
+    default: []
+  - key: admin_from_mesh
+    type: bool
+    label: Admin pages reachable from the mesh
+    help: "wg-easy (51821) and, when Pi-hole shares this network stack, its web UI (80) at the server's mesh address — for regular clients; isolated clients never get them. Off: only through ssh -L on the master."
+    default: true
+  - key: ui_traffic_stats
+    type: bool
+    default: true
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    help: "weejewel/wg-easy is the last line that takes WG_POST_UP and PASSWORD; ghcr.io/wg-easy/wg-easy:15 needs the INIT_* setup instead."
+    default: weejewel/wg-easy

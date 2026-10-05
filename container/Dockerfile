@@ -1,32 +1,12 @@
-FROM fedora:latest
+# The kiwi-server toolchain: the three build tools an ostree desktop does not
+# ship. kiwi-server runs ONE tool per container invocation with the output and
+# cache directories bind-mounted at the same paths, e.g.
+#   podman run --rm -v "$OUT:$OUT:z" localhost/kiwi-server-toolchain butane --strict ...
+# so the image needs no entrypoint and no scripts of its own.
+FROM registry.fedoraproject.org/fedora:latest
 
-# Install dependencies (including python3, python3-pip, python3-crypt-r, pyyaml)
-RUN sudo dnf install -y \
-    coreos-installer \
-    butane \
-    git \
-    make \
-    util-linux \
-    curl \
-    whois \
-    openssl \
-    python3 \
-    python3-pip \
-    python3-crypt-r \
-    python3-pyyaml \
-    && sudo dnf clean all
+RUN dnf -y install --setopt=install_weak_deps=False \
+        butane coreos-installer xorriso cpio gzip curl gnupg2 util-linux \
+    && dnf clean all
 
-# Create a working directory
-WORKDIR /workspace
-
-# Copy the entrypoint script, main script, and Python config generator into the container
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY generate-coreos-iso.sh /usr/local/bin/generate-coreos-iso.sh
-COPY generate-server-config.py /usr/local/bin/generate-server-config.py
-
-# Make scripts executable
-RUN sudo chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/generate-coreos-iso.sh /usr/local/bin/generate-server-config.py
-
-# Set the entrypoint
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["--help"]
+WORKDIR /work

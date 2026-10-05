@@ -1,0 +1,12 @@
+# roles/node-cloud — a kiwi-node in cloud mode: Nextcloud AIO and Vaultwarden.
+#
+# Reachable on the LAN and, through the VPN client's DNAT, at the node's mesh
+# address. Exactly the live kiwi-cloud layout, rendered from the modules.
+name: node-cloud
+title: kiwi-node (cloud)
+description: Nextcloud AIO and Vaultwarden behind nginx, reachable on the LAN and through the mesh, plus Portainer.
+status: stable
+targets: [coreos, ucore, debian]
+node_type: node
+modules: [vpn-client, reverse-proxy, cloud, vault, portainer]
+settings_include: [common/stack]

@@ -1,0 +1,28 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q shellcheck xorriso cpio python3-yaml python3-jinja2 docker-compose-v2
+          curl -fsSL -o /usr/local/bin/butane \
+            https://github.com/coreos/butane/releases/latest/download/butane-x86_64-unknown-linux-gnu
+          sudo chmod +x /usr/local/bin/butane
+      - name: shellcheck
+        run: |
+          shellcheck -S warning bin/kiwi-server install.sh data/bash-completion/kiwi-server \
+            tests/cli.sh
+          shellcheck -S warning -s bash roles/common/lib.sh roles/*/apply.sh
+      - name: python compiles
+        run: python3 -m py_compile gui/kiwi-server-gui lib/kiwiserver/*.py lib/kiwiserver/targets/*.py
+      - name: version agrees everywhere
+        run: bash tests/check-version.sh
+      - name: unit tests (rendered scripts are shellchecked, Butane validated, Debian ISO rebuilt on a mock)
+        run: python3 -m unittest discover -s tests -v
+      - name: cli smoke test
+        run: bash tests/cli.sh

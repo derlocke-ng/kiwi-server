@@ -1,0 +1,44 @@
+# shellcheck shell=bash
+# bash completion for kiwi-server — sourced, never executed
+_kiwi_server() {
+    local cur prev cmds opts
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    cmds="init validate list show render build script ca roles modules targets toolchain doctor version help"
+    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version"
+
+    if [[ $cur == -* ]]; then
+        mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
+        return
+    fi
+    case "$prev" in
+        --output-dir|--cache|-o)
+            mapfile -t COMPREPLY < <(compgen -d -- "$cur"); return ;;
+        --toolchain)
+            mapfile -t COMPREPLY < <(compgen -W "auto native container" -- "$cur"); return ;;
+        toolchain)
+            mapfile -t COMPREPLY < <(compgen -W "status build" -- "$cur"); return ;;
+    esac
+
+    local i verb="" fleet=""
+    for (( i = 1; i < COMP_CWORD; i++ )); do
+        case "${COMP_WORDS[i]}" in
+            -*) ;;
+            *) if [[ -z $verb ]]; then verb="${COMP_WORDS[i]}"
+               elif [[ -z $fleet ]]; then fleet="${COMP_WORDS[i]}"; fi ;;
+        esac
+    done
+    case "$verb" in
+        "")  mapfile -t COMPREPLY < <(compgen -W "$cmds" -- "$cur") ;;
+        validate|list|show|render|build|script|ca)
+            if [[ -z $fleet ]]; then
+                mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")
+            elif [[ -f $fleet ]]; then
+                mapfile -t COMPREPLY < <(compgen -W \
+                    "$(kiwi-server list "$fleet" --porcelain 2>/dev/null |
+                       sed -n 's/^ *"name": "\([^"]*\)".*/\1/p')" -- "$cur")
+            fi ;;
+        init) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;;
+    esac
+}
+complete -F _kiwi_server kiwi-server

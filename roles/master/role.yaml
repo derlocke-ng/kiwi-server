@@ -1,0 +1,20 @@
+# roles/master — the kiwi-master: the public entry point of a Kiwi Network.
+#
+# Only the WireGuard port is public. Clients come in through vpn-server
+# (wg-easy), leave through vpn-client (gluetun to a commercial VPN — the
+# double hop), resolve through dns (Pi-hole on the server's network stack)
+# and can use tor as a SOCKS proxy. Exactly the live kiwi-master layout.
+name: master
+title: kiwi-master
+description: WireGuard entry point with a double hop through a commercial VPN, Pi-hole DNS and a Tor SOCKS proxy for the mesh.
+status: stable
+targets: [coreos, ucore, debian]
+node_type: master
+modules: [vpn-client, vpn-server, dns, tor]
+settings_include: [common/stack]
+# Pi-hole and Tor share the WireGuard server's network stack, so clients reach
+# them at the server's mesh address (10.8.0.1) — how the live master runs.
+module_defaults:
+  vpn-client: { vpn_provider: mullvad, mss_clamp: true }
+  dns: { network_mode: vpn-server }
+  tor: { network_mode: vpn-server }

@@ -1,0 +1,147 @@
+# fleet.yaml — every machine kiwi-server should build media for.
+#
+#   defaults:   applies to every host
+#   hosts:      one entry per machine; anything here overrides the defaults
+#
+# A host has a TARGET (what gets installed) and a ROLE (what it becomes):
+#   target:  coreos  — Fedora CoreOS, stable stream
+#            ucore   — CoreOS that rebases itself onto ghcr.io/ublue-os/ucore*
+#            debian  — Debian stable (trixie) from the netinst image
+#   role:    bare | master | node-gw | node-cloud
+#            master / node-gw / node-cloud are MODULE roles: a preset list of
+#            kiwi-v2 modules (vpn-client, vpn-server, dns, reverse-proxy, cloud,
+#            vault, downloader, gateway, tor, portainer, sftp, dhcp-relay),
+#            rendered into a docker compose stack the machine starts on first boot.
+#
+# A module role's settings live under the role's name: the stack's own settings
+# (vpn_ip, docker_dir, …) at the top, each module's settings under the module's
+# name. `kiwi-server roles -v` lists every setting with its default;
+# `modules:` inside the block replaces the preset's module list.
+#
+# File settings (WireGuard configs, certificates) are paths relative to this
+# file; their CONTENT is embedded into the host's role script, so the generated
+# output contains secrets. Keep output/ and secrets/ private.
+#
+# Check what you wrote with:  kiwi-server validate fleet.yaml
+# See the effective config:   kiwi-server show fleet.yaml sh3
+
+defaults:
+  target: ucore
+  role: bare
+  domain: kiwi                      # host "sh3" becomes sh3.kiwi unless hostname: is set
+  timezone: Europe/Berlin
+  locale: en_US.UTF-8
+  keyboard: de
+  disk: /dev/sda                    # WIPED by the ISO without asking. nvme: /dev/nvme0n1
+
+  admin:
+    user: core                      # has passwordless sudo on every target
+    password: change-me             # hashed at render time; or password_hash: $6$...
+    ssh_keys:
+      - ~/.ssh/id_ed25519.pub       # a key, or a file containing keys
+    groups: [docker]
+    ssh_password_auth: false        # keys only; the password is for the console
+
+  network:
+    dhcp: true
+    # dhcp: false                   # static instead — either give address: per host
+    # gateway: 192.168.1.1          # or let iprange: hand out addresses in file order
+    # dns: [192.168.1.1, 1.1.1.1]
+    # iprange: 192.168.1.20-192.168.1.99
+    # interface: eth0               # optional; otherwise the first wired interface
+
+  updates:                          # updates install continuously; this is when a
+    enabled: true                   # REBOOT into them may happen
+    days: [Sun]                     # [] = any day
+    time: "03:30"                   # local time
+    length_minutes: 90
+
+  tls:                              # certificates for the reverse proxies
+    auto: true                      # one fleet CA in ca_dir, a *.<hostname> cert per host,
+    ca_dir: secrets/ca              # the CA trusted on every machine (import it on your devices)
+    # name_constraints: [kiwi]      # the CA may only sign names under these domains
+    # cert_days: 825                # per-host certificate lifetime (the CA: days: 3650)
+
+  ucore:
+    image: ghcr.io/ublue-os/ucore:stable     # ucore-minimal / ucore / ucore-hci (+ -nvidia, -zfs)
+
+  debian:
+    release: trixie
+    mirror: deb.debian.org
+    partitioning: lvm               # regular | lvm | crypto
+    # encrypt: true                 # full-disk LUKS — needs passphrase:
+    # passphrase: ...
+    packages: [vim, htop]
+
+  # coreos:                         # advanced, passed through to Butane
+  #   kernel_arguments: [mitigations=auto]
+  #   services: [cockpit]
+  #   boot_device: { luks: { tpm2: true } }
+
+hosts:
+  # the kiwi-master on Debian: WireGuard entry point, Mullvad exit, Pi-hole, Tor
+  gate:
+    role: master
+    target: debian
+    disk: /dev/vda
+    master:
+      vpn-client:
+        vpn_provider: mullvad
+        wireguard_private_key: "<the private key from your Mullvad WireGuard config>"
+        wireguard_addresses: 10.66.1.2/32
+        server_countries: Germany
+      vpn-server:
+        wg_host: vpn.example.org          # what clients and nodes connect to
+        wg_password: change-me-too        # wg-easy admin (127.0.0.1:51821 on the master)
+        # public_ip: 203.0.113.5          # bind the WireGuard port to one address only
+      dns:
+        pihole_password: change-me-three
+
+  # a kiwi-node in gateway mode on uCore: LAN gateway + download station
+  m1:
+    role: node-gw
+    node-gw:
+      # vpn_ip: 10.8.0.6                  # its mesh address — taken from the WireGuard config's Address
+      pub_iface: eth0                     # the LAN side
+      vpn-client:
+        wireguard_config: secrets/m1.kiwi.conf    # the client config wg-easy issued
+        # extra_dnat_rules: ["2222/tcp:172.128.0.1:22"]   # ssh to this node from the mesh:
+        #                                 # mesh address port 2222 -> the host (docker gateway) port 22
+      dns:
+        pihole_password: change-me-four
+        # dhcp_enabled: true              # Pi-hole as the LAN's DHCP server (the dhcp-relay carries
+        # dhcp_start: 192.168.1.100       # the broadcasts to it); turn the router's DHCP off
+        # dhcp_end: 192.168.1.250
+        # dhcp_router: 192.168.1.1        # or this machine's LAN address: LAN -> VPN for everyone
+      downloader:
+        download_dir: /mnt/data/downloads
+        transmission_password: change-me-five    # also JDownloader's web login unless jd_web_password is set
+      sftp:
+        sftp_password: change-me-six
+      portainer:
+        admin_password: change-me-seven   # set before the first start; no open first-run page
+
+  # a kiwi-node in cloud mode on uCore (hci): Nextcloud AIO + Vaultwarden
+  sh3:
+    role: node-cloud
+    ucore:
+      image: ghcr.io/ublue-os/ucore-hci:stable
+    node-cloud:
+      vpn_ip: 10.8.0.25
+      # Migrating a machine that ran the v1 kiwi-cloud stack in place? Keep its
+      # network and move the data directories to the new names before the first
+      # start — the containers keep their addresses and their data:
+      #   docker_subnet: 172.129.0.0/24
+      #   kmvpn-server -> km-vpn-server, knvault -> kn-vault, kntransmission -> kn-transmission, …
+      vpn-client:
+        wireguard_config: secrets/sh3.kiwi.conf
+      cloud:
+        nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data
+        memory_limit: 8192M
+      vault:
+        signups_allowed: true             # for the first account; turn it off afterwards
+
+  # just the base system
+  lab1:
+    target: coreos
+    role: bare

@@ -1,0 +1,59 @@
+schema_version: "1.0"
+
+module:
+  name: portainer
+  title: Portainer
+  version: 1.0.0
+  description: "Portainer CE — a web UI for the containers on this machine; local port 9443, and portainer.<hostname> behind the reverse proxy"
+  category: system
+  node_types: [master, node]
+
+dependencies:
+  required: []
+  optional: [reverse-proxy]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  admin_password: admin-password.j2
+
+outputs:
+  admin_password: { path: "{{ container_prefix }}-portainer/admin-password", mode: 0600 }
+
+storage:
+  volumes: [portainer_data]
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-portainer", type: dir, required: true }
+
+urls:
+  - "Portainer: https://{{ portainer_hostname or 'portainer.' ~ hostname }} or https://127.0.0.1:9443 on the machine"
+
+nginx:
+  upstream:
+    name: portainer
+    server: "{{ container_prefix }}-portainer:9000"
+  server_name: "{{ portainer_hostname or 'portainer.' ~ hostname }}"
+  proxy_pass: "http://portainer"
+  websocket: true
+  comment: Portainer
+
+settings:
+  - key: admin_password
+    type: secret
+    label: Admin password
+    help: "Set at the first start (user admin), so the first-run page never waits open on an unattended machine. Empty: Portainer asks on first visit — within five minutes of starting."
+    default: ""
+  - key: portainer_hostname
+    label: Hostname
+    help: "Empty: portainer.<hostname>."
+    default: ""
+  - key: image
+    group: Advanced
+    default: portainer/portainer-ce:latest

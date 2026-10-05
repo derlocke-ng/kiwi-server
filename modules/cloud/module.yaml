@@ -1,0 +1,122 @@
+schema_version: "1.0"
+
+module:
+  name: cloud
+  title: Nextcloud AIO
+  version: 1.1.0
+  description: "Nextcloud All-in-One — files, calendar, contacts, talk; the master container runs the rest, nginx terminates TLS in front of it"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: [dns]
+
+network:
+  needs_vpn_dnat: true
+  # Talk's TURN port; 80/443 come with the reverse proxy
+  open_ports: ["{{ talk_port }}/tcp", "{{ talk_port }}/udp"]
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  volumes: [nextcloud_aio_mastercontainer]
+  bind_mounts:
+    - { host: "{{ nextcloud_datadir or docker_dir ~ '/knnc-data' }}", type: dir, required: true }
+
+urls:
+  - "Nextcloud: https://{{ nc_hostname or 'cloud.' ~ hostname }}"
+  - "Nextcloud AIO admin (finish the setup here): https://{{ nc_admin_hostname or 'nc-admin.' ~ hostname }}"
+
+nginx:
+  servers:
+    - server_name: "{{ nc_hostname or 'cloud.' ~ hostname }}"
+      proxy_pass: "http://nextcloud-aio-apache:{{ apache_port }}"
+      comment: Nextcloud
+      hsts: true
+      client_max_body_size: "0"
+      proxy_read_timeout: 86400s
+      extra_directives:
+        - "proxy_set_header Connection $http_connection;"
+        - "proxy_redirect off;"
+        - "rewrite ^/\\.well-known/carddav https://$server_name/remote.php/dav/ redirect;"
+        - "rewrite ^/\\.well-known/caldav https://$server_name/remote.php/dav/ redirect;"
+        - "rewrite ^/\\.well-known/webfinger https://$server_name/index.php/.well-known/webfinger redirect;"
+        - "rewrite ^/\\.well-known/nodeinfo https://$server_name/index.php/.well-known/nodeinfo redirect;"
+    - server_name: "{{ nc_admin_hostname or 'nc-admin.' ~ hostname }}"
+      proxy_pass: "https://nextcloud-aio-mastercontainer:8080"
+      proxy_ssl: true
+      comment: Nextcloud AIO admin
+
+settings:
+  - key: nc_hostname
+    label: Nextcloud hostname
+    help: "Empty: cloud.<hostname>."
+    default: ""
+  - key: nc_admin_hostname
+    label: AIO admin hostname
+    help: "Empty: nc-admin.<hostname>."
+    default: ""
+  - key: nextcloud_datadir
+    label: Data directory
+    help: "Where the files live, e.g. a big disk mounted at /mnt/data/nextcloud. Empty: <stack directory>/knnc-data. Do not change after the first start."
+    default: ""
+  - key: aio_bind
+    label: AIO interface bind address
+    help: "The AIO master container's own port 8080 (it holds the docker socket): 127.0.0.1 keeps it off the LAN — nc-admin.<hostname> through the reverse proxy is the way in. Empty: all addresses."
+    default: 127.0.0.1
+  - key: apache_port
+    type: int
+    default: 11000
+  - key: apache_ip_binding
+    label: Apache bind address
+    help: nginx reaches Apache over the nextcloud-aio network, so the host binding can stay local.
+    default: 127.0.0.1
+  - key: upload_limit
+    default: 50G
+  - key: max_time
+    type: int
+    default: 360000
+  - key: memory_limit
+    default: 4096M
+  - key: startup_apps
+    label: Apps installed on first start
+    default: deck twofactor_totp tasks calendar contacts notes
+  - key: additional_apks
+    default: imagemagick
+  - key: additional_php_extensions
+    default: imagick
+  - key: enable_dri_device
+    type: bool
+    label: Hardware transcoding (/dev/dri)
+    help: Only if the host has /dev/dri; the container fails to start otherwise.
+    default: false
+  - key: keep_disabled_apps
+    type: bool
+    default: false
+  - key: talk_port
+    type: int
+    default: 3478
+  - key: disable_backup_section
+    type: bool
+    default: false
+  - key: borg_retention_policy
+    default: "--keep-within=7d --keep-weekly=4 --keep-monthly=6"
+  - key: skip_domain_validation
+    type: bool
+    help: The reverse proxy is in front, so AIO cannot validate the domain itself.
+    default: true
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the AIO master container as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    default: nextcloud/all-in-one:latest

@@ -1,0 +1,111 @@
+schema_version: "1.0"
+
+module:
+  name: vpn-client
+  title: VPN client (gluetun)
+  version: 1.1.0
+  description: "gluetun — the tunnel every node hangs off: to the master (custom WireGuard config) or to a commercial VPN (the master's exit)"
+  category: core
+
+dependencies:
+  required: []
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  # nothing inbound on the host; DNAT'd mesh traffic arrives through the tunnel
+  open_ports: []
+
+firewall:
+  # its own rules live in post-rules.txt; other modules' vpn-client rules are
+  # collected into that file by the renderer (module_rules)
+  scope: self
+  rules: []
+
+env:
+  optional:
+    DOT_PROVIDERS: "google"
+
+templates:
+  compose: docker-compose.yml.j2
+  post_rules: post-rules.txt.j2
+
+outputs:
+  post_rules: { path: "{{ container_prefix }}-vpn-client/post-rules.txt", mode: 0644 }
+  wireguard_config: { path: "{{ container_prefix }}-vpn-client/wg0.conf", mode: 0600 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-vpn-client", type: dir, required: true }
+
+host_integration:
+  kernel_modules: [tun]
+
+settings:
+  - key: vpn_provider
+    label: Provider
+    help: "custom = a WireGuard config file (a node joining the master); or a gluetun provider name — mullvad, protonvpn, airvpn, ivpn, windscribe, … (the master's exit)."
+    default: custom
+  - key: vpn_type
+    type: enum
+    options: [wireguard, openvpn]
+    default: wireguard
+  - key: wireguard_config
+    type: file
+    label: WireGuard config file
+    help: "For provider custom: the client config (wg0.conf) issued by the master's wg-easy — it holds the private key and endpoint. Embedded into the role script."
+    placeholder: secrets/sh3.conf
+  - key: wireguard_private_key
+    type: secret
+    label: WireGuard private key
+    help: For commercial providers (mullvad, …) instead of a config file.
+  - key: wireguard_addresses
+    label: WireGuard addresses
+    help: "For commercial providers: the tunnel address the provider assigned, e.g. 10.66.1.2/32."
+  - key: server_countries
+    label: Server countries
+    help: "Commercial providers: which country the exit is in, e.g. Germany. Comma separated."
+  - key: server_cities
+    label: Server cities
+    help: "Commercial providers: narrow it to cities, e.g. Frankfurt. Comma separated."
+  - key: vpn_endpoint_port
+    type: int
+    label: Endpoint port
+    help: "Commercial providers: the WireGuard endpoint port if the provider needs one (0 = provider default)."
+    default: 0
+  - key: dot_providers
+    label: DNS-over-TLS provider
+    help: "gluetun resolves through DNS-over-TLS to this provider; the dns module forwards to the container, so the whole node resolves through the tunnel."
+    default: google
+  - key: vpn_input_ports
+    label: Ports allowed in from the tunnel
+    help: "Comma separated. Ports 80 and 443 are added automatically when a module is reachable at the mesh address."
+    default: ""
+  - key: outbound_subnets
+    label: LAN subnets reachable from the tunnel namespace
+    help: "Comma separated, e.g. 192.168.2.0/24 — lets the containers that share this network namespace (downloads) reach your LAN."
+    default: ""
+  - key: published_ports
+    type: list
+    label: Published host ports
+    help: "host:container pairs published on the VPN client (so on the services sharing its namespace), e.g. 3129:3129."
+    default: []
+  - key: extra_dnat_rules
+    type: list
+    label: Extra DNAT rules
+    help: "port/proto:destination:port — forwards mesh traffic for the node's mesh address, e.g. 2224/tcp:172.128.0.251:22. The reverse proxy's 80/443 are automatic."
+    default: []
+  - key: mss_clamp
+    type: bool
+    label: Clamp TCP MSS to PMTU
+    help: Fixes stalls on paths where the WireGuard MTU bites (the live master has it on).
+    default: false
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    default: qmcgaw/gluetun

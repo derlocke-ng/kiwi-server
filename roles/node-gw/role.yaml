@@ -1,0 +1,17 @@
+# roles/node-gw — a kiwi-node in gateway mode: LAN gateway + download station.
+#
+# LAN clients use this machine as their DNS (Pi-hole, with a DHCP relay so
+# leases come from Pi-hole) and optionally as their default gateway, in which
+# case policy routing sends all their traffic through the VPN client.
+# Transmission and JDownloader run inside the VPN client's network namespace
+# (fail-closed), behind the reverse proxy. Exactly the live kiwi-node-gw.
+name: node-gw
+title: kiwi-node (gateway)
+description: LAN gateway through the VPN with Pi-hole, DHCP relay, Transmission and JDownloader behind nginx, plus Portainer and SFTP.
+status: stable
+targets: [coreos, ucore, debian]
+node_type: node
+modules: [vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp]
+settings_include: [common/stack]
+module_defaults:
+  dns: { expose_web_ui: true }

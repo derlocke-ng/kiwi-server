@@ -1,0 +1,56 @@
+schema_version: "1.0"
+
+module:
+  name: tor
+  title: Tor SOCKS proxy
+  version: 1.1.0
+  description: "A Tor SOCKS5 proxy for mesh clients, pinned to a set of countries; shares the WireGuard server's network on a master"
+  category: security
+  node_types: [master, node]
+
+dependencies:
+  required: []
+  optional: [vpn-server]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  torrc: torrc.j2
+
+outputs:
+  torrc: { path: "{{ container_prefix }}-tor/etc/torrc", mode: 0644 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-tor/etc", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-tor/var", type: dir, required: true }
+
+urls:
+  - "Tor SOCKS5 for mesh clients: {{ vpn_ip or 'this host' }}:9050"
+
+settings:
+  - key: network_mode
+    label: Share a container's network
+    help: "vpn-server: listen on the WireGuard server's mesh address (the master). Empty: own address."
+    default: ""
+  - key: socks_bind
+    label: SOCKS listen address
+    help: "Empty: the mesh address (with network_mode vpn-server) or 0.0.0.0."
+    default: ""
+  - key: socks_policy_accept
+    label: Who may use it
+    default: 10.8.0.0/16
+  - key: countries
+    label: Entry and exit countries
+    help: Comma separated ISO codes; everything else is excluded (StrictNodes).
+    default: de,ch,at,nl,fr
+  - key: image
+    group: Advanced
+    default: dockurr/tor

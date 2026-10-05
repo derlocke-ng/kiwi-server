@@ -1,0 +1,59 @@
+# downloader — both share the VPN client's network namespace (fail-closed)
+services:
+  {{ container_prefix }}-transmission:
+    image: {{ transmission_image }}
+    container_name: {{ container_prefix }}-transmission
+    network_mode: "service:{{ container_prefix }}-vpn-client"
+    depends_on:
+      - {{ container_prefix }}-vpn-client
+    environment:
+      - PUID={{ puid }}
+      - PGID={{ pgid }}
+      - TZ={{ timezone }}
+      - USER={{ transmission_user }}
+      - PASS={{ transmission_password }}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-transmission:/config:z
+      - {{ download_dir }}:/downloads:z
+{% if jdownloader %}
+
+  {{ container_prefix }}-jdownloader:
+    image: {{ jdownloader_image }}
+    container_name: {{ container_prefix }}-jdownloader
+    network_mode: "service:{{ container_prefix }}-vpn-client"
+    depends_on:
+      - {{ container_prefix }}-vpn-client
+    environment:
+      - TZ={{ timezone }}
+      - USER_ID={{ puid }}
+      - GROUP_ID={{ pgid }}
+      # the web UI asks for a login (baseimage-gui needs TLS for that; nginx talks https to it)
+      - SECURE_CONNECTION=1
+      - WEB_AUTHENTICATION=1
+      - WEB_AUTHENTICATION_USERNAME={{ jd_web_user or transmission_user }}
+      - WEB_AUTHENTICATION_PASSWORD={{ jd_web_password or transmission_password }}
+{% for k, v in jd_extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+{% if myjd_email %}
+      - MYJDOWNLOADER_EMAIL={{ myjd_email }}
+      - MYJDOWNLOADER_PASSWORD={{ myjd_password }}
+      - MYJDOWNLOADER_DEVICE_NAME={{ myjd_device_name or hostname }}
+{% endif %}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-jdownloader:/config:z
+      - {{ download_dir }}:/output:z
+{% endif %}

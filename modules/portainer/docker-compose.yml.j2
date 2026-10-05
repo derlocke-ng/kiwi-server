@@ -1,0 +1,33 @@
+# portainer
+services:
+  {{ container_prefix }}-portainer:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-portainer
+{% if admin_password %}
+    # the initial admin is set at start: the first-run page (open to anyone who gets
+    # there first, and timing out after five minutes) never shows on an unattended boot
+    command: --admin-password-file /run/kiwi/portainer-admin
+{% endif %}
+    ports:
+      - "127.0.0.1:9443:9443"
+    # the docker socket on an SELinux host (Fedora CoreOS, uCore)
+    security_opt:
+      - label:disable
+    volumes:
+      - portainer_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+{% if admin_password %}
+      - {{ docker_dir }}/{{ container_prefix }}-portainer/admin-password:/run/kiwi/portainer-admin:ro,z
+{% endif %}
+    restart: unless-stopped
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+volumes:
+  portainer_data:
+    name: portainer_data

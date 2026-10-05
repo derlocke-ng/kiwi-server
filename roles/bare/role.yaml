@@ -1,0 +1,13 @@
+# roles/bare — the base install and nothing else.
+name: bare
+title: Bare system
+description: Admin user, SSH, automatic updates — a clean machine to build on by hand.
+status: stable
+targets: [coreos, ucore, debian]
+settings:
+  - key: packages
+    type: list
+    label: Extra packages
+    help: Debian packages to install on first boot (ignored on CoreOS/uCore).
+    targets: [debian]
+    default: []

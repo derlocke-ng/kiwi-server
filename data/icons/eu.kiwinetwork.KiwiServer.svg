@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- a server: three stacked bays, kiwi green -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#4a7c2a"/>
+  <rect x="28" y="26" width="72" height="20" rx="5" fill="#eaf5dd"/>
+  <rect x="28" y="54" width="72" height="20" rx="5" fill="#eaf5dd"/>
+  <rect x="28" y="82" width="72" height="20" rx="5" fill="#eaf5dd"/>
+  <circle cx="88" cy="36" r="4" fill="#4a7c2a"/>
+  <circle cx="88" cy="64" r="4" fill="#4a7c2a"/>
+  <circle cx="88" cy="92" r="4" fill="#9ad15f"/>
+  <rect x="36" y="33" width="34" height="6" rx="3" fill="#9ad15f"/>
+  <rect x="36" y="61" width="34" height="6" rx="3" fill="#9ad15f"/>
+  <rect x="36" y="89" width="34" height="6" rx="3" fill="#9ad15f"/>
+</svg>

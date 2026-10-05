@@ -1,0 +1,19 @@
+# sftp
+services:
+  {{ container_prefix }}-sftp:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-sftp
+    volumes:
+      # user:password:uid — a file (mode 0600), not the command line `docker inspect` shows
+      - {{ docker_dir }}/{{ container_prefix }}-sftp/users.conf:/etc/sftp/users.conf:ro,z
+      - {{ sftp_dir or module_config.get('downloader', {}).get('download_dir') or docker_dir ~ '/sftp' }}:/home/{{ sftp_user }}/Downloads:z
+    ports:
+      - "{{ sftp_port }}:22"
+    restart: unless-stopped
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m

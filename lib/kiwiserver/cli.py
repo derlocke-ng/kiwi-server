@@ -144,6 +144,7 @@ class Renderer:
         self._scanned = False
         self._records = []
         self._needs_ca = False
+        self._master_ip = ""
 
     def prepare(self, host):
         role = self.roles[host.role]
@@ -162,7 +163,7 @@ class Renderer:
         if self._scanned:
             return
         self._scanned = True
-        recs, needs_ca = [], False
+        recs, needs_ca, master_ip = [], False, ""
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -174,13 +175,15 @@ class Renderer:
                 spec = rolesmod.stack_spec(h, role)
                 if not spec.vpn_ip:
                     continue
+                if role.node_type == "master" and not master_ip:
+                    master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
                 util.warn("dns records: skipping %s: %s" % (h.name, e))
-        self._records, self._needs_ca = recs, needs_ca
+        self._records, self._needs_ca, self._master_ip = recs, needs_ca, master_ip
 
     def dns_records(self):
         self.scan()
@@ -224,7 +227,7 @@ class Renderer:
             return None
         records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
-        spec = rolesmod.stack_spec(host, role, records)
+        spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip)
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b

@@ -53,8 +53,12 @@ settings:
     label: Admin password
   - key: upstream_dns
     label: Upstream resolvers
-    help: "Semicolon separated. Empty: the VPN client's DNS-over-TLS resolver, so lookups leave through the tunnel."
+    help: "Semicolon separated, overrides the chain. Empty: on a node the master's Pi-hole (stack setting master_ip), so the whole network shares one blocklist and leaves through the master's exit; on a master the VPN client's DNS-over-TLS resolver. Names under the fleet's domain always go to the master and never leave it."
     default: ""
+  - key: fallback_dns
+    label: Fallback resolvers
+    help: "Semicolon separated, tried in strict order after the first upstream. Reached directly, not through the tunnel (which is down whenever the master is), so only ever used while the master is unreachable. Empty: none."
+    default: 9.9.9.9;149.112.112.112
   - key: network_mode
     label: Share a container's network
     help: "Empty: own address with ports 53 published on the host (a node). vpn-server: run inside the WireGuard server's network stack, reachable for clients at the server's mesh address (the master)."

@@ -24,7 +24,7 @@ firewall:
 
 env:
   optional:
-    DOT_PROVIDERS: "google"
+    DOT_PROVIDERS: "quad9"
 
 templates:
   compose: docker-compose.yml.j2
@@ -75,8 +75,8 @@ settings:
     default: 0
   - key: dot_providers
     label: DNS-over-TLS provider
-    help: "gluetun resolves through DNS-over-TLS to this provider; the dns module forwards to the container, so the whole node resolves through the tunnel."
-    default: google
+    help: "gluetun resolves through DNS-over-TLS to this provider (quad9, cloudflare, google, …). On a master this is where the whole network's lookups end up, through the exit tunnel."
+    default: quad9
   - key: vpn_input_ports
     label: Ports allowed in from the tunnel
     help: "Comma separated. Ports 80 and 443 are added automatically when a module is reachable at the mesh address."

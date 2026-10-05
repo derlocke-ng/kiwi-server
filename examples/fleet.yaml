@@ -102,6 +102,7 @@ hosts:
     role: node-gw
     node-gw:
       # vpn_ip: 10.8.0.6                  # its mesh address — taken from the WireGuard config's Address
+      # master_ip: 10.8.0.1               # the master's Pi-hole is this node's DNS upstream — taken from the fleet's master
       pub_iface: eth0                     # the LAN side
       vpn-client:
         wireguard_config: secrets/m1.kiwi.conf    # the client config wg-easy issued

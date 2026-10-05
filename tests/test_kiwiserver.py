@@ -229,6 +229,8 @@ class TestRoles(Base):
         self.assertIn("\necho hi\n", s)            # pasted as written: a heredoc inside must still work
         self.assertIn("KS_STACK_USER='core'", s)    # the admin user unless service_user is set
         self.assertIn("KS_STACK_VPN_DEPENDENTS=()", s)
+        self.assertIn("KS_STACK_MESH_VIA='172.128.0.2'", s)
+        self.assertIn("KS_STACK_MESH_SUBNET='10.8.0.0/16'", s)
         self.assertTrue(s.rstrip().endswith('ks_main "$@"'))
         # the embedded file round-trips
         import base64, re
@@ -257,6 +259,7 @@ class TestRoles(Base):
         self.assertTrue(helper.startswith("#!/usr/bin/env bash"))
         self.assertIn("host_units restart --no-block", helper)   # never a blocking restart from inside kiwi-stack.service
         self.assertIn("${STACK_VPN_DEPENDENTS:-}", helper)
+        self.assertIn('ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA"', helper)
         p = os.path.join(self.tmp, "kiwi-stack")
         write(p, helper)
         self.assertEqual(subprocess.run(["bash", "-n", p], capture_output=True).returncode, 0)
@@ -556,7 +559,8 @@ class TestModules(Base):
         role = self.roles[host.role]
         rolesmod.resolve_settings(role, host, self.ms)
         return host, role, rolesmod.stack_spec(host, role, [("10.8.0.25", "sh3.kiwi"), ("10.8.0.25", "cloud.sh3.kiwi"),
-                                                            ("10.8.0.6", "m1.kiwi"), ("10.8.0.1", "gate.kiwi")])
+                                                            ("10.8.0.6", "m1.kiwi"), ("10.8.0.1", "gate.kiwi")],
+                                               master_ip="10.8.0.1")
 
     def test_loader_and_resolution(self):
         ms = self.ms
@@ -628,7 +632,13 @@ class TestModules(Base):
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
         self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2", svcs["kn-pihole"]["environment"])
+        # the master's Pi-hole first, Quad9 only while the master is unreachable; fleet names go to the master
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", svcs["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
+        self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
+        self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
+        self.assertIn(("10.8.0.25", "cloud.sh3.kiwi"), b.hosts)
+        self.assertIn('VPN_SUBNET="10.8.0.0/16"', b.files["kiwi/gw.sh"][0])
         self.assertNotIn("command", svcs["kn-sftp"])   # the password is in users.conf, not in docker inspect
         self.assertEqual(b.files["kn-sftp/users.conf"], ("user:s:1000\n", 0o600))
         self.assertIn("/home/user/docker/kn-sftp/users.conf:/etc/sftp/users.conf:ro,z", svcs["kn-sftp"]["volumes"])
@@ -673,6 +683,11 @@ class TestModules(Base):
         self.assertEqual(svcs["km-vpn-server"]["networks"]["knet-master"]["ipv4_address"], "172.64.0.3")
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["km-vpn-server"]["ports"])
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
+        # the master resolves through its exit tunnel and is the authority for the fleet's names
+        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", svcs["km-pihole"]["environment"])
+        self.assertEqual(b.mesh_via, "172.64.0.3")
+        self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
         env = svcs["km-vpn-client"]["environment"]
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)
         self.assertIn("WIREGUARD_PRIVATE_KEY=k", env)
@@ -680,6 +695,7 @@ class TestModules(Base):
         self.assertNotIn("hostname", svcs["km-pihole"])   # not allowed together with network_mode
         start = b.files["km-vpn-server/start.sh"][0]
         self.assertIn("ip route add default via 172.64.0.2", start)
+        self.assertIn("-s 172.64.0.0/24 -o wg0 -j MASQUERADE", start)
         # the isolation rules come before the wg0 accept-all, or they never match
         self.assertLess(start.index("-s 10.8.1.0/24 -d 10.8.0.0/24 -j DROP"), start.index("-A FORWARD -i wg0 -j ACCEPT"))
         self.assertIn("-i wg0 -s 10.8.1.0/24 -p tcp --dport 51821 -j DROP", start)
@@ -807,8 +823,11 @@ class TestModules(Base):
             "vpn_ip": "10.8.0.6", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
             "modules": ["vpn-client", "dns", "gateway"], "dns": {"pihole_password": "p", "expose_web_ui": False}}})
         self.assertEqual(host.modules, ["vpn-client", "dns", "gateway"])
+        spec.master_ip = ""   # no master known: the VPN client's resolver first, nothing forwarded
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
+        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
     def test_rendered_scripts_are_clean(self):
@@ -948,6 +967,12 @@ class TestCli(Base):
         self.assertNotIn(("10.8.0.25", "*.sh3.kiwi"), recs)
         m1, b = r.script(f.hosts["m1"])
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
+        # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("'10.8.0.1 gate.kiwi'", m1)
+        self.assertIn("'127.0.0.1 m1.kiwi'", m1)
+        self.assertIn("'10.8.0.25 cloud.sh3.kiwi'", m1)
         hosts = [e for e in b.compose["services"]["kn-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts=")][0]
         self.assertIn("10.8.0.25 cloud.sh3.kiwi", hosts)
         self.assertIn("10.8.0.1 gate.kiwi", hosts)

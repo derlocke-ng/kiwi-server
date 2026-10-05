@@ -157,6 +157,12 @@ stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
 client's network namespace (Transmission, JDownloader).
 
+DNS is one chain for the whole network: VPN clients ask the master's Pi-hole,
+a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
+(Quad9 only while the master is unreachable), names under the fleet's domain
+go to the master and never leave it, and every host carries the fleet's names
+in its hosts file plus a route into the mesh through its VPN client.
+
 Migrating a machine that ran a v1 stack in place: set `docker_subnet` to what
 it used and rename its data directories to the module names (`kmvpn-server` →
 `km-vpn-server`, `knvault` → `kn-vault`, …) before the first start, so wg-easy

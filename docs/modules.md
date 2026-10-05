@@ -31,6 +31,7 @@ Templates are Jinja2. Every template sees the **host context**:
 | `container_ip`, `container_ips` | this module's address on the stack network, and everyone's |
 | `docker_subnet`, `docker_subnet_base`, `docker_gateway`, `mtu` | the stack network |
 | `docker_dir`, `service_user`, `timezone` | the stack directory and its owner |
+| `master_ip`, `mesh_subnet`, `mesh_via`, `domain` | the master's mesh address, the mesh, the container the host routes it through, the fleet's domain |
 | `vpn_ip`, `pub_iface` | the host's mesh address and LAN interface |
 | `proxy_ip`, `vpn_client_ip`, `dns_ip` | the reverse proxy's, VPN client's and Pi-hole's addresses (empty when absent) |
 | `has_<module>` | `has_cloud`, `has_reverse_proxy` … for every enabled module |

@@ -42,6 +42,8 @@ iptables -A INPUT -p udp -m udp --dport 51820 -j ACCEPT
 iptables -A INPUT -p tcp -m tcp --dport 80 -j ACCEPT
 iptables -A FORWARD -i wg0 -j ACCEPT
 iptables -A FORWARD -o wg0 -j ACCEPT
+# the master itself and its containers reach the nodes as the server's mesh address
+iptables -t nat -A POSTROUTING -s {{ docker_subnet }} -o wg0 -j MASQUERADE
 {% if has_vpn_client %}
 
 # the double hop: everything leaves through the VPN client …

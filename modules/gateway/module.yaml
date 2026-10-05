@@ -40,8 +40,9 @@ host_integration:
 
 settings:
   - key: vpn_subnet
-    label: Mesh subnets LAN clients may reach
-    default: 10.8.0.0/16
+    label: Mesh subnet LAN clients may reach
+    help: "Empty: the stack's mesh_subnet."
+    default: ""
   - key: lan_subnet
     label: LAN subnet
     help: "Optional, for documentation and future DHCP; routing keys on the LAN interface, not the subnet."

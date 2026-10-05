@@ -238,6 +238,22 @@ ks_stack_dir_is_data() { # DIR   — true when no rendered file lives under it
     return 0
 }
 
+ks_stack_hosts() {
+    # The fleet's names in /etc/hosts: the host resolves every node and service
+    # without a Pi-hole (backups, certificate renewal, kiwi-stack itself). Its own
+    # names point at itself. The block is replaced on every run.
+    local begin='# >>> kiwi-server fleet names >>>' end='# <<< kiwi-server fleet names <<<' rest=''
+    [[ -f /etc/hosts ]] && rest=$(sed "/^${begin}\$/,/^${end}\$/d" /etc/hosts)
+    {
+        printf '%s\n' "$rest"
+        if [[ ${#KS_STACK_HOSTS[@]} -gt 0 ]]; then
+            echo "$begin"
+            printf '%s\n' "${KS_STACK_HOSTS[@]}"
+            echo "$end"
+        fi
+    } | ks_write /etc/hosts 0644
+}
+
 ks_stack_unpack() {
     # Everything the generator rendered (compose file, module configs, gw.sh)
     # is root's: root runs the stack and the host units execute some of these
@@ -274,6 +290,8 @@ ks_stack_unpack() {
         echo "STACK_PREFIX=$KS_STACK_PREFIX"
         echo "STACK_VPN_CONTAINER=$KS_STACK_VPN_CONTAINER"
         echo "STACK_VPN_DEPENDENTS=\"${KS_STACK_VPN_DEPENDENTS[*]}\""
+        echo "STACK_MESH_SUBNET=$KS_STACK_MESH_SUBNET"
+        echo "STACK_MESH_VIA=$KS_STACK_MESH_VIA"
         echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
         echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
     } | ks_write "$KS_STACK_ENV" 0644
@@ -294,6 +312,13 @@ compose() { docker compose --file "$STACK_DIR/docker-compose.yml" "$@"; }
 # here would wait for itself. --no-block queues the restart; systemd runs it
 # once this service is up.
 host_units() { local verb=$1 u; shift; for u in $STACK_UNITS; do systemctl "$verb" "$@" "$u" 2>/dev/null || true; done; }
+# The host and its containers reach the mesh through the VPN client (the WireGuard
+# server on a master): one route via that container's address on the stack bridge.
+# The bridge comes and goes with the stack, so the route is set after every start.
+mesh_route() {
+    [[ -n ${STACK_MESH_VIA:-} && -n ${STACK_MESH_SUBNET:-} ]] || return 0
+    ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA" 2>/dev/null || true
+}
 vpn_restart() {
     [[ -n ${STACK_VPN_CONTAINER:-} ]] || return 0
     # containers that share the VPN client's network namespace must follow it,
@@ -302,10 +327,10 @@ vpn_restart() {
     docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
 }
 case "${1:-}" in
-    start)   compose up --detach --remove-orphans; host_units restart --no-block ;;
+    start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
     stop)    host_units stop; compose down ;;
     restart) "$0" stop; "$0" start ;;
-    update)  compose pull; compose up --detach --remove-orphans; docker image prune -f >/dev/null; host_units restart --no-block ;;
+    update)  compose pull; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
     status)  compose ps; host_units status --no-pager ;;
     logs)    compose logs --follow "${@:2}" ;;
     vpn-restart) vpn_restart ;;
@@ -393,6 +418,7 @@ ks_stack_apply() {
     ks_add_to_group "$u" docker
     ks_add_to_group "$KS_ADMIN_USER" docker
     ks_stack_host_prep
+    ks_stack_hosts
     ks_stack_unpack
     ks_stack_install_cli
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then

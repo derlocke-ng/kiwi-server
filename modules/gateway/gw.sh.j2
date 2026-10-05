@@ -9,7 +9,7 @@ set -u
 PUB_IFACE="{{ pub_iface }}"
 CONTAINER_IP="{{ vpn_client_ip }}"
 DOCKER_SUBNET="{{ docker_subnet }}"
-VPN_SUBNET="{{ vpn_subnet }}"
+VPN_SUBNET="{{ vpn_subnet or mesh_subnet }}"
 BRIDGE="{{ network_name }}"
 
 if [[ -z $PUB_IFACE ]]; then

@@ -192,6 +192,7 @@ class Bundle:
         self.services = []     # container names, for the summary
         self.urls = []         # what the operator can open afterwards
         self.compose = None
+        self.vpn_dependents = []   # containers inside the VPN client's network namespace
 
     def add_file(self, rel, content, mode=0o644):
         rel = rel.strip("/")
@@ -204,10 +205,35 @@ class Bundle:
             self.dirs.append(path)
 
 
+def _subnet(cidr, what="docker_subnet"):
+    try:
+        net = ipaddress.IPv4Network(cidr, strict=False)
+    except ValueError:
+        raise KiwiError("%s: %r is not an IPv4 network like 172.128.0.0/24" % (what, cidr))
+    if net.prefixlen > 29:
+        raise KiwiError("%s: %s is too small for a stack (at most /29)" % (what, net))
+    return net
+
+
 def _subnet_parts(cidr):
-    net = ipaddress.ip_network(cidr, strict=False)
-    base = str(net.network_address).rsplit(".", 1)[0]
+    net = _subnet(cidr)
+    base = str(net.network_address).rsplit(".", 1)[0]   # ${DOCKER_SUBNET2}, the v1 convention
     return str(net), str(net.network_address + 1), base
+
+
+def _compose_safe(v):
+    """docker compose interpolates $VAR in the compose file; a password with a
+    dollar sign must reach the container intact, so $ becomes $$ for the
+    compose template only."""
+    if isinstance(v, str):
+        return v.replace("$", "$$")
+    if isinstance(v, dict):
+        return {k: _compose_safe(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_compose_safe(x) for x in v]
+    if isinstance(v, tuple):
+        return tuple(_compose_safe(x) for x in v)
+    return v
 
 
 def _lower_keys(d):
@@ -220,17 +246,36 @@ class Renderer:
         self.env = _jinja()
 
     # ---- context ----------------------------------------------------------------
-    def base_context(self, spec, ordered):
-        subnet, gateway, base = _subnet_parts(spec.docker_subnet)
-        ips = {}
+    def container_ips(self, spec, ordered):
+        """One fixed address per module: the v1 plan's offset from the network
+        address, or the host's container_ip override — checked to be inside
+        the subnet, not the gateway, and unique."""
+        net = _subnet(spec.docker_subnet)
+        ips, taken = {}, {net.network_address, net.network_address + 1, net.broadcast_address}
         for i, name in enumerate(ordered):
             cfg = spec.module_config.get(name) or {}
             if cfg.get("container_ip"):
-                ips[name] = str(cfg["container_ip"])
-            elif name in IP_PLAN:
-                ips[name] = "%s.%d" % (base, IP_PLAN[name])
+                try:
+                    ip = ipaddress.IPv4Address(str(cfg["container_ip"]))
+                except ValueError:
+                    raise KiwiError("%s.container_ip: %r is not an IPv4 address" % (name, cfg["container_ip"]))
+                if ip not in net:
+                    raise KiwiError("%s.container_ip: %s is outside the stack network %s" % (name, ip, net))
+                if ip in taken:
+                    raise KiwiError("%s.container_ip: %s is the gateway or already used by another module" % (name, ip))
             else:
-                ips[name] = "%s.%d" % (base, 100 + i)
+                off = IP_PLAN.get(name, 100 + i)
+                ip = net.network_address + off
+                if ip not in net or ip in taken:
+                    raise KiwiError("docker_subnet %s has no room for %s's address (.%d) — "
+                                    "use a /24 or set %s.container_ip" % (net, name, off, name))
+            taken.add(ip)
+            ips[name] = str(ip)
+        return ips
+
+    def base_context(self, spec, ordered):
+        subnet, gateway, base = _subnet_parts(spec.docker_subnet)
+        ips = self.container_ips(spec, ordered)
         ctx = {
             "node_name": spec.hostname, "hostname": spec.hostname, "node_type": spec.node_type,
             "container_prefix": PREFIX[spec.node_type], "network_name": NETWORK_NAME[spec.node_type],
@@ -286,6 +331,9 @@ class Renderer:
             if k == "lan_iface":
                 k = "pub_iface"
             if k not in ctx or ctx[k] in (None, ""):
+                if k == "vpn_ip":
+                    raise KiwiError("%s: ${VPN_IP} is not set — the stack setting vpn_ip "
+                                    "(this host's mesh address) is required here" % what)
                 raise KiwiError("%s: ${%s} is not set" % (what, m.group(1)))
             return str(ctx[k])
         return self.render_text(_VAR.sub(repl, str(s)), ctx, what)
@@ -298,7 +346,7 @@ class Renderer:
             text = mod.template("compose")
             if text is None:
                 continue
-            ctx = self.module_context(spec, ordered, base, name)
+            ctx = _compose_safe(self.module_context(spec, ordered, base, name))
             rendered = self.render_text(text, ctx, "modules/%s/%s" % (name, mod.templates["compose"]))
             try:
                 doc = yaml.safe_load(rendered) or {}
@@ -319,6 +367,11 @@ class Renderer:
             nets = yaml.safe_load(self.render_text(self.ms.networks_template, base, "modules/networks.yml.j2")) or {}
             for net, body in (nets.get("networks") or {}).items():
                 networks.setdefault(net, body)
+        # containers inside the VPN client's network namespace must be restarted
+        # with it (kiwi-stack vpn-restart), or they keep a namespace that is gone
+        vpn = "service:%s-vpn-client" % base["container_prefix"]
+        bundle.vpn_dependents = [str((body or {}).get("container_name") or svc)
+                                 for svc, body in services.items() if (body or {}).get("network_mode") == vpn]
         compose = {"services": services}
         if volumes:
             compose["volumes"] = volumes
@@ -335,33 +388,52 @@ class Renderer:
         upstreams, servers = [], []
         for name in ordered:
             mod = self.ms.get(name)
-            if not mod.nginx or mod.nginx.get("aggregator"):
+            if not mod.nginx or (isinstance(mod.nginx, dict) and mod.nginx.get("aggregator")):
                 continue
             ctx = self.module_context(spec, ordered, base, name)
-            what = "modules/%s nginx" % name
+            what = "modules/%s/module.yaml nginx" % name
             nx = mod.nginx
+            if not isinstance(nx, dict):
+                raise KiwiError("%s: must be a mapping" % what)
+            alias = {}
             if nx.get("upstream"):
                 u = nx["upstream"]
-                upstreams.append({"name": self.expand(u["name"], ctx, what),
-                                  "server": self.expand(u["server"], ctx, what)})
+                if not isinstance(u, dict) or not u.get("name") or not u.get("server"):
+                    raise KiwiError("%s: upstream needs name: and server:" % what)
+                uname, userver = self.expand(u["name"], ctx, what), self.expand(u["server"], ctx, what)
+                upstreams.append({"name": uname, "server": userver})
+                alias[uname] = userver
             entries = list(nx.get("servers") or [])
             if nx.get("server_name"):
                 entries.insert(0, {k: v for k, v in nx.items() if k not in ("upstream", "servers")})
             for e in entries:
+                if not isinstance(e, dict) or not e.get("server_name") or not e.get("proxy_pass"):
+                    raise KiwiError("%s: every server block needs server_name: and proxy_pass:" % what)
                 if e.get("when") and not ctx.get(str(e["when"])):
                     continue
-                s = {"server_name": self.expand(e["server_name"], ctx, what),
-                     "proxy_pass": self.expand(e["proxy_pass"], ctx, what),
-                     "websocket": bool(e.get("websocket", False)),
-                     "hsts": bool(e.get("hsts", False)),
-                     "comment": self.expand(e.get("comment") or ("%s (%s)" % (name, e["server_name"])), ctx, what),
-                     "client_max_body_size": e.get("client_max_body_size"),
-                     "proxy_read_timeout": e.get("proxy_read_timeout"),
-                     "proxy_ssl": bool(e.get("proxy_ssl", False)),
-                     "extra_directives": [self.expand(x, ctx, what) for x in (e.get("extra_directives") or [])],
-                     "extra_locations": [{"path": self.expand(x["path"], ctx, what),
-                                          "config": self.expand(x["config"], ctx, what)}
-                                         for x in (e.get("extra_locations") or [])]}
+                proxy_pass = self.expand(e["proxy_pass"], ctx, what)
+                # nginx resolves an upstream block once, at startup, and refuses to start
+                # when the name does not exist yet (Nextcloud AIO's containers appear
+                # later). The generated config resolves names per request instead, so
+                # the upstream's server goes straight into proxy_pass.
+                for uname, userver in alias.items():
+                    proxy_pass = proxy_pass.replace("://" + uname, "://" + userver)
+                hsts = e.get("hsts")
+                try:
+                    s = {"server_name": self.expand(e["server_name"], ctx, what),
+                         "proxy_pass": proxy_pass,
+                         "websocket": bool(e.get("websocket", False)),
+                         "hsts": None if hsts is None else bool(hsts),   # None: the module setting decides
+                         "comment": self.expand(e.get("comment") or ("%s (%s)" % (name, e["server_name"])), ctx, what),
+                         "client_max_body_size": e.get("client_max_body_size"),
+                         "proxy_read_timeout": e.get("proxy_read_timeout"),
+                         "proxy_ssl": bool(e.get("proxy_ssl", proxy_pass.startswith("https://"))),
+                         "extra_directives": [self.expand(x, ctx, what) for x in (e.get("extra_directives") or [])],
+                         "extra_locations": [{"path": self.expand(x["path"], ctx, what),
+                                              "config": self.expand(x["config"], ctx, what)}
+                                             for x in (e.get("extra_locations") or [])]}
+                except (KeyError, TypeError, AttributeError) as err:
+                    raise KiwiError("%s: malformed server block for %s (%s)" % (what, e.get("server_name"), err))
                 servers.append(s)
         return upstreams, servers
 
@@ -403,6 +475,13 @@ class Renderer:
         base["module_rules"] = self.vpn_rules(spec, ordered, base)
         base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and any(
             self.ms.get(n).needs_vpn_dnat for n in ordered)
+        if not spec.vpn_ip:
+            at_mesh = [n for n in ordered if self.ms.get(n).needs_vpn_dnat] if base["enable_vpn_dnat"] else []
+            if (spec.module_config.get("vpn-client") or {}).get("extra_dnat_rules"):
+                at_mesh.append("vpn-client.extra_dnat_rules")
+            if at_mesh:
+                raise KiwiError("%s: the stack setting vpn_ip (this host's mesh address) is required — "
+                                "%s are reachable at the mesh address" % (spec.hostname, ", ".join(at_mesh)))
         bundle.add_file("docker-compose.yml", self.render_compose(spec, ordered, base, bundle), 0o600)
 
         for name in ordered:
@@ -416,11 +495,14 @@ class Renderer:
                 if isinstance(out, str):
                     out = {"path": out}
                 text = self.render_text(mod.template(key), ctx, "modules/%s/%s" % (name, fname))
+                where = "modules/%s/module.yaml outputs.%s" % (name, key)
                 if out.get("kind") == "host_unit":
-                    unit = self.expand(out.get("name") or fname.replace(".j2", ""), ctx, name)
+                    unit = self.expand(out.get("name") or fname.replace(".j2", ""), ctx, where)
+                    if unit in bundle.units:
+                        raise KiwiError("two modules want to install the host unit %s" % unit)
                     bundle.units[unit] = text
                     continue
-                rel = self.expand(out.get("path") or "%s/%s" % (name, fname.replace(".j2", "")), ctx, name)
+                rel = self.expand(out.get("path") or "%s/%s" % (name, fname.replace(".j2", "")), ctx, where)
                 bundle.add_file(rel, text, int(out.get("mode", 0o644)))
             # embedded files (file-type settings): where the module says they go
             for s in mod.settings:
@@ -434,19 +516,22 @@ class Renderer:
                     raise KiwiError("modules/%s: file setting %s has no outputs: entry" % (name, s.key))
                 if isinstance(out, str):
                     out = {"path": out}
-                bundle.add_file(self.expand(out["path"], ctx, name), data, int(out.get("mode", 0o600)))
+                bundle.add_file(self.expand(out["path"], ctx, "modules/%s/module.yaml outputs.%s" % (name, s.key)),
+                                data, int(out.get("mode", 0o600)))
             # directories, ports, host integration
             for bm in mod.bind_mounts:
                 host = str(bm.get("host") or "")
                 if not host or bm.get("type", "dir") != "dir":
                     continue
                 try:
-                    bundle.add_dir(self.expand(host, ctx, "modules/%s storage" % name))
-                except KiwiError:
-                    if bm.get("required", True):
+                    bundle.add_dir(self.expand(host, ctx, "modules/%s/module.yaml storage.bind_mounts" % name))
+                except KiwiError as e:
+                    # an optional mount may point at a setting nobody set; a broken
+                    # template is an error either way
+                    if bm.get("required", True) or "is not set" not in str(e):
                         raise
             for p in mod.open_ports:
-                p = self.expand(p, ctx, name).strip()
+                p = self.expand(p, ctx, "modules/%s/module.yaml network.open_ports" % name).strip()
                 if p and p not in bundle.ports:
                     bundle.ports.append(p)
             for k, v in (mod.host.get("sysctl") or {}).items():
@@ -455,7 +540,7 @@ class Renderer:
                 if km not in bundle.kernel_modules:
                     bundle.kernel_modules.append(str(km))
             for url in mod.meta.get("urls") or []:
-                bundle.urls.append(self.expand(url, ctx, name))
+                bundle.urls.append(self.expand(url, ctx, "modules/%s/module.yaml urls" % name))
         if base["enable_vpn_dnat"] and "vpn-client" in ordered:
             bundle.ports += [p for p in ("80/tcp", "443/tcp") if p not in bundle.ports]
         # every file's parent exists before compose mounts it
@@ -475,6 +560,7 @@ class Renderer:
         bundle.dirs = sorted(dirs, key=lambda p: (os.path.isabs(p), p))
         bundle.prefix = prefix
         bundle.modules = ordered
+        bundle.vpn_dependents = list(getattr(bundle, "vpn_dependents", []))
         return bundle
 
 

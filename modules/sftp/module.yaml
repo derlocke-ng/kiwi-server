@@ -23,6 +23,10 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  users: users.conf.j2
+
+outputs:
+  users: { path: "{{ container_prefix }}-sftp/users.conf", mode: 0600 }
 
 storage:
   bind_mounts:
@@ -50,4 +54,5 @@ settings:
     default: ""
   - key: image
     group: Advanced
+    help: atmoz/sftp or a fork of it (jmcombs/sftp adds arm64) — both read /etc/sftp/users.conf.
     default: jmcombs/sftp

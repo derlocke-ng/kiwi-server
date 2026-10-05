@@ -95,7 +95,9 @@ DEFAULTS = {
         # certificate per host, the CA trusted on every machine built
         "auto": True,
         "ca_dir": "secrets/ca",
-        "days": 3650,
+        "days": 3650,          # the CA
+        "cert_days": 825,      # each host certificate (what browsers still accept)
+        "name_constraints": [],  # e.g. [kiwi]: the CA may only sign names under these domains
     },
     "post_script": "",
 }
@@ -245,6 +247,7 @@ class Host:
     # ---- validation -----------------------------------------------------
     def validate(self, roles):
         errs = []
+        self.warnings = []
         c = self.cfg
         if self.target not in TARGETS:
             errs.append("target must be one of %s (got %r)" % (", ".join(TARGETS), self.target))
@@ -315,6 +318,17 @@ class Host:
         for key in ("files", "directories", "units"):
             if not isinstance(c["coreos"].get(key) or [], list):
                 errs.append("coreos.%s must be a list" % key)
+        if "systemd_units" in c["coreos"]:
+            errs.append("coreos.systemd_units: the key is coreos.units")
+        t = c.get("tls") or {}
+        if not isinstance(t.get("name_constraints") or [], list):
+            errs.append("tls.name_constraints must be a list of domains")
+        for k in ("days", "cert_days"):
+            try:
+                if int(t.get(k) or 0) <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errs.append("tls.%s must be a positive integer" % k)
         return ["%s: %s" % (self.name, e) for e in errs]
 
 

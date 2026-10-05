@@ -25,8 +25,8 @@ warn() { printf 'warning: %s\n' "$*" >&2; }
 want_gui() {
     [[ ${KIWI_GUI:-} == 0 ]] && return 1
     [[ -n ${KIWI_GUI:-} ]] && return 0
-    [[ -e /usr/lib64/girepository-1.0/Gtk-4.0.typelib ||
-       -e /usr/lib/girepository-1.0/Gtk-4.0.typelib ]]
+    # the same import the GUI does — typelib paths differ between Fedora and Debian's multiarch
+    python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null
 }
 
 do_install() {

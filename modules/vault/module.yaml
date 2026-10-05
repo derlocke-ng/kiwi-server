@@ -64,6 +64,12 @@ settings:
     label: Admin panel token
     help: "Empty: the /admin panel stays off."
     default: ""
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
   - key: image
     group: Advanced
     default: vaultwarden/server:latest-alpine

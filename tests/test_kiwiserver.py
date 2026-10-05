@@ -182,6 +182,13 @@ class TestConfig(Base):
             rolesmod.resolve_settings(self.roles["node-cloud"], f.hosts["b"], self.ms)
         self.assertIn("file not found", str(cm.exception))
 
+    def test_old_key_and_tls_values_are_errors(self):
+        f = self.fleet({"defaults": self.base_defaults(coreos={"systemd_units": []}, tls={"cert_days": 0}),
+                        "hosts": {"a": {}}})
+        errs = f.hosts["a"].validate(self.roles)
+        self.assertTrue(any("coreos.units" in e for e in errs), errs)
+        self.assertTrue(any("tls.cert_days" in e for e in errs), errs)
+
     def test_password_hash_is_deterministic_sha512(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
         h1 = f.hosts["a"].password_hash()
@@ -219,7 +226,9 @@ class TestRoles(Base):
         self.assertIn("KS_STACK=1", s)
         self.assertIn("declare -A KS_ROLE_VARIABLES=(['FOO']='bar baz')", s)
         self.assertIn("ks_role_apply()", s)
-        self.assertIn("    echo hi", s)
+        self.assertIn("\necho hi\n", s)            # pasted as written: a heredoc inside must still work
+        self.assertIn("KS_STACK_USER='core'", s)    # the admin user unless service_user is set
+        self.assertIn("KS_STACK_VPN_DEPENDENTS=()", s)
         self.assertTrue(s.rstrip().endswith('ks_main "$@"'))
         # the embedded file round-trips
         import base64, re
@@ -241,6 +250,23 @@ class TestRoles(Base):
             if have("shellcheck"):
                 r = subprocess.run(["shellcheck", "-S", "warning", p], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_kiwi_stack_helper_parses_and_shellchecks(self):
+        lib = rolesmod.common_lib()
+        helper = lib[lib.index("<<'KIWI_STACK'\n") + len("<<'KIWI_STACK'\n"):lib.index("\nKIWI_STACK\n")]
+        self.assertTrue(helper.startswith("#!/usr/bin/env bash"))
+        self.assertIn("host_units restart --no-block", helper)   # never a blocking restart from inside kiwi-stack.service
+        self.assertIn("${STACK_VPN_DEPENDENTS:-}", helper)
+        p = os.path.join(self.tmp, "kiwi-stack")
+        write(p, helper)
+        self.assertEqual(subprocess.run(["bash", "-n", p], capture_output=True).returncode, 0)
+        if have("shellcheck"):
+            r = subprocess.run(["shellcheck", "-S", "warning", p], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+        # the library itself: a re-run restarts the stack, the docker group comes from /usr/lib/group
+        self.assertIn("systemctl restart kiwi-stack.service", lib)
+        self.assertIn("/usr/lib/group", lib)
+        self.assertNotIn("systemctl enable --now kiwi-stack.service", lib)
 
     def test_script_refuses_without_root_and_respects_marker(self):
         """Run the rendered script with a fake environment: not root -> refuses."""
@@ -307,6 +333,14 @@ class TestCoreos(Base):
         self.assertNotIn("ucore-unsigned-autorebase.service", names)
         self.assertNotIn("ConditionPathExists=/etc/ucore-autorebase",
                          [u for u in bu["systemd"]["units"] if u["name"] == "kiwi-role.service"][0]["contents"])
+
+    def test_any_day_means_every_day_inside_the_window(self):
+        _, bu = self.butane({"defaults": self.base_defaults(target="coreos", updates={"days": []}),
+                             "hosts": {"a": {}}}, "a")
+        z = [f for f in bu["storage"]["files"] if "zincati" in f["path"]][0]["contents"]["inline"]
+        self.assertIn('strategy = "periodic"', z)
+        self.assertNotIn("immediate", z)
+        self.assertIn('days = [ "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" ]', z)
 
     def test_updates_disabled(self):
         _, bu = self.butane({"defaults": self.base_defaults(target="coreos", updates={"enabled": False}),
@@ -378,6 +412,11 @@ class TestDebian(Base):
                        "d-i partman-crypto/passphrase password secret-pass"):
             self.assertIn(needle, ps)
 
+    def test_preseed_admin_groups(self):
+        _, ps, _ = self.make(admin={"groups": ["docker", "video"]})
+        # docker does not exist at install time; the role adds it once docker is installed
+        self.assertIn("d-i passwd/user-default-groups string sudo video\n", ps)
+
     def test_late_sh_is_posix_sh(self):
         _, _, files = self.make()
         p = os.path.join(self.tmp, "late.sh")
@@ -389,6 +428,10 @@ class TestDebian(Base):
 
 
 class TestIso(Base):
+    def test_other_release_needs_iso_url(self):
+        with self.assertRaisesRegex(KiwiError, "debian.iso_url"):
+            iso.debian_base_iso(None, {"release": "bookworm"}, self.tmp)
+
     def test_resolve_netinst(self):
         text = ("abc  debian-13.1.0-amd64-netinst.iso\n"
                 "def  debian-edu-13.1.0-amd64-netinst.iso\n"
@@ -549,10 +592,24 @@ class TestModules(Base):
         nginx = b.files["kn-nginx/nginx.conf"][0]
         for name in ("cloud.sh3.kiwi", "nc-admin.sh3.kiwi", "vault.sh3.kiwi", "portainer.sh3.kiwi"):
             self.assertIn("server_name %s;" % name, nginx)
-        self.assertIn("proxy_pass http://nextcloud-aio-apache:11000;", nginx)
-        self.assertIn("proxy_pass https://nextcloud-aio-mastercontainer:8080;", nginx)
+        # names resolved per request: nginx starts before AIO's containers exist
+        self.assertIn("resolver 127.0.0.11 valid=30s ipv6=off;", nginx)
+        self.assertIn("set $backend http://nextcloud-aio-apache:11000;", nginx)
+        self.assertIn("set $backend https://nextcloud-aio-mastercontainer:8080;", nginx)
+        self.assertIn("set $backend http://kn-vault:80;", nginx)   # the upstream's server, inlined
+        self.assertNotIn("upstream ", nginx)
+        self.assertNotIn("proxy_pass http", nginx)
+        self.assertIn("proxy_pass $backend;", nginx)
         self.assertIn("proxy_ssl_verify off;", nginx)
-        self.assertIn("upstream vaultwarden {", nginx)
+        self.assertEqual(nginx.count("Strict-Transport-Security"), 4)   # hsts on, every server block
+        aio = compose["services"]["nextcloud-aio-mastercontainer"]
+        self.assertEqual(aio["security_opt"], ["label:disable"])
+        self.assertEqual(aio["ports"], ["127.0.0.1:8080:8080"])
+        self.assertEqual(compose["services"]["kn-portainer"]["security_opt"], ["label:disable"])
+        self.assertNotIn("ESTABLISHED,RELATED,NEW", post)
+        self.assertIn("-i tun0 -m conntrack --ctstate DNAT -j ACCEPT", post)
+        self.assertLess(post.index("-i eth0 -o eth0 -j REJECT"), post.index("--ctstate ESTABLISHED,RELATED -j ACCEPT"))
+        self.assertEqual(b.vpn_dependents, [])
         self.assertEqual(b.files["kn-vpn-client/wg0.conf"][1], 0o600)
         self.assertIn("kn-nginx", b.dirs)
         self.assertIn("knnc-data", b.dirs)  # inside the stack dir: kept relative
@@ -567,10 +624,13 @@ class TestModules(Base):
         self.assertEqual(svcs["kn-transmission"]["network_mode"], "service:kn-vpn-client")
         self.assertEqual(svcs["kn-dhcphelper"]["network_mode"], "host")
         self.assertEqual(svcs["kn-dhcphelper"]["environment"]["IP"], "172.128.0.4")
-        self.assertIn("8080:80/tcp", svcs["kn-pihole"]["ports"])  # node-gw preset exposes the web UI
+        self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
+        self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_dns_upstreams=172.128.0.2", svcs["kn-pihole"]["environment"])
-        self.assertEqual(svcs["kn-sftp"]["command"], "user:s:1000")
+        self.assertNotIn("command", svcs["kn-sftp"])   # the password is in users.conf, not in docker inspect
+        self.assertEqual(b.files["kn-sftp/users.conf"], ("user:s:1000\n", 0o600))
+        self.assertIn("/home/user/docker/kn-sftp/users.conf:/etc/sftp/users.conf:ro,z", svcs["kn-sftp"]["volumes"])
         self.assertIn("/mnt/dl:/home/user/Downloads:z", svcs["kn-sftp"]["volumes"])
         self.assertIn("kn-gateway.service", b.units)
         self.assertIn("/home/user/docker/kiwi/gw.sh start", b.units["kn-gateway.service"])
@@ -582,8 +642,22 @@ class TestModules(Base):
         self.assertEqual(b.sysctl, {"net.ipv4.ip_forward": "1"})
         post = b.files["kn-vpn-client/post-rules.txt"][0]
         self.assertIn("--dport 2224 -j DNAT --to-destination 172.128.0.251:22", post)
-        records = b.files["kn-pihole/etc-pihole/hosts/custom.list"][0]
-        self.assertIn("10.8.0.25 cloud.sh3.kiwi", records)
+        hosts = [e for e in svcs["kn-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts=")][0]
+        self.assertIn("10.8.0.25 cloud.sh3.kiwi;", hosts)    # pihole.toml dns.hosts, not custom.list
+        self.assertNotIn("kn-pihole/etc-pihole/hosts/custom.list", b.files)
+        self.assertEqual(b.vpn_dependents, ["kn-transmission", "kn-jdownloader"])
+        jd = svcs["kn-jdownloader"]["environment"]
+        self.assertIn("WEB_AUTHENTICATION=1", jd)
+        self.assertIn("WEB_AUTHENTICATION_PASSWORD=t", jd)   # the transmission password unless set
+        self.assertIn("SECURE_CONNECTION=1", jd)
+        nginx = b.files["kn-nginx/nginx.conf"][0]
+        self.assertIn("set $backend https://kn-vpn-client:5800;", nginx)
+        self.assertIn("-i eth0 -o tun0 -j ACCEPT", post)      # LAN clients the gateway routes here
+        # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
+        inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
+        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -j DROP'), inserts)
+        self.assertEqual(b.files["kn-portainer/admin-password"][0], "")
+        self.assertNotIn("command", svcs["kn-portainer"])
         self.assertIn("2224/tcp", b.ports)
         self.assertTrue(any("dl.m1.kiwi" in s for s in [b.files["kn-nginx/nginx.conf"][0]]))
 
@@ -602,8 +676,16 @@ class TestModules(Base):
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)
         self.assertIn("WIREGUARD_PRIVATE_KEY=k", env)
         self.assertIn("SERVER_COUNTRIES=Germany", env)
+        self.assertNotIn("hostname", svcs["km-pihole"])   # not allowed together with network_mode
         start = b.files["km-vpn-server/start.sh"][0]
         self.assertIn("ip route add default via 172.64.0.2", start)
+        # the isolation rules come before the wg0 accept-all, or they never match
+        self.assertLess(start.index("-s 10.8.1.0/24 -d 10.8.0.0/24 -j DROP"), start.index("-A FORWARD -i wg0 -j ACCEPT"))
+        self.assertIn("-i wg0 -s 10.8.1.0/24 -p tcp --dport 51821 -j DROP", start)
+        self.assertNotIn("-A INPUT -i wg0 -p tcp --dport 51821 -j DROP", start)   # admin_from_mesh: true
+        post = b.files["km-vpn-client/post-rules.txt"][0]
+        self.assertNotIn("ctstate DNAT -j ACCEPT", post)   # nothing is DNAT'd on a master
+        self.assertNotIn("ESTABLISHED,RELATED,NEW", post)
         self.assertIn("-s 10.8.1.0/24 -d 10.8.0.25 -j ACCEPT", start)
         self.assertIn("-s 10.8.1.0/24 -d 10.8.0.1 -j ACCEPT", start)
         self.assertIn("-d 172.64.0.0/24 -j DROP", start)
@@ -616,6 +698,106 @@ class TestModules(Base):
         self.assertEqual(b.ports, ["51820/udp"])
         self.assertIn("wireguard", b.kernel_modules)
         self.assertEqual(b.files["docker-compose.yml"][1], 0o600)
+
+    def test_subnet_math_and_container_ip_checks(self):
+        host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": self.node_cloud(
+            docker_subnet="10.200.4.128/25", modules=["vpn-client", "reverse-proxy", "vault"])})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertEqual(b.container_ips, {"vpn-client": "10.200.4.130", "reverse-proxy": "10.200.4.133",
+                                           "vault": "10.200.4.135"})
+        self.assertEqual(b.compose["networks"]["knet-node"]["ipam"]["config"][0]["gateway"], "10.200.4.129")
+        host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": self.node_cloud(docker_subnet="10.200.4.128/25")})
+        with self.assertRaisesRegex(KiwiError, "no room for portainer"):
+            modmod.Renderer(self.ms).render(spec)
+        for bad, msg in (({"container_ip": "10.9.9.9"}, "outside"), ({"container_ip": "172.128.0.5"}, "already used"),
+                         ({"container_ip": "172.128.0.1"}, "gateway"), ({"container_ip": "nope"}, "not an IPv4")):
+            host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": self.node_cloud(vault=bad)})
+            with self.assertRaisesRegex(KiwiError, msg):
+                modmod.Renderer(self.ms).render(spec)
+        host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": self.node_cloud(docker_subnet="10.0.0.0/30")})
+        with self.assertRaisesRegex(KiwiError, "too small"):
+            modmod.Renderer(self.ms).render(spec)
+
+    def test_vpn_ip_required_derived_and_checked(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"n": {"role": "node-cloud", "node-cloud": {
+            "vpn-client": {"wireguard_config": "secrets/wg.conf"}}}}})
+        host = f.hosts["n"]
+        role = self.prepare(host)
+        self.assertEqual(host.role_settings["vpn_ip"], "")
+        with self.assertRaisesRegex(KiwiError, "vpn_ip .*cloud, vault"):
+            modmod.Renderer(self.ms).render(rolesmod.stack_spec(host, role))
+        # a wg-easy client config carries the mesh address
+        write(os.path.join(self.tmp, "secrets", "wg.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.77/24\n")
+        f = config.Fleet.load(f.path)
+        host = f.hosts["n"]
+        self.prepare(host)
+        self.assertEqual(host.role_settings["vpn_ip"], "10.8.0.77")
+        self.assertEqual(host.warnings, [])
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"n": {"role": "node-cloud", "node-cloud": self.node_cloud()}}})
+        host = f.hosts["n"]
+        self.prepare(host)
+        self.assertEqual(host.role_settings["vpn_ip"], "10.8.0.25")
+        self.assertTrue(any("Address is 10.8.0.77" in w for w in host.warnings), host.warnings)
+
+    def test_hsts_setting_is_the_fallback(self):
+        host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": self.node_cloud(**{"reverse-proxy": {"hsts": False}})})
+        nginx = modmod.Renderer(self.ms).render(spec).files["kn-nginx/nginx.conf"][0]
+        self.assertEqual(nginx.count("Strict-Transport-Security"), 1)   # only the cloud block asks for it itself
+
+    def test_null_setting_means_the_default_and_dollar_is_escaped(self):
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw(dns={"pihole_password": "pa$$w0rd", "web_ui_port": None})})
+        self.assertEqual(host.module_settings["dns"]["web_ui_port"], 8080)
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertIn("FTLCONF_webserver_api_password=pa$$$$w0rd", b.files["docker-compose.yml"][0])
+
+    def test_pihole_dhcp_and_extra_env(self):
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw(dns={
+            "pihole_password": "p", "dhcp_enabled": True, "dhcp_start": "192.168.1.100", "dhcp_end": "192.168.1.200",
+            "dhcp_router": "192.168.1.1", "extra_env": {"FTLCONF_dns_domainNeeded": "true"}})})
+        env = modmod.Renderer(self.ms).render(spec).compose["services"]["kn-pihole"]["environment"]
+        for e in ("FTLCONF_dhcp_active=true", "FTLCONF_dhcp_start=192.168.1.100", "FTLCONF_dhcp_router=192.168.1.1",
+                  "FTLCONF_dhcp_leaseTime=24h", "FTLCONF_dns_domainNeeded=true"):
+            self.assertIn(e, env)
+
+    def test_portainer_admin_password_and_master_admin_pages(self):
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw(portainer={"admin_password": "adm"})})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertEqual(b.files["kn-portainer/admin-password"], ("adm", 0o600))
+        self.assertEqual(b.compose["services"]["kn-portainer"]["command"], "--admin-password-file /run/kiwi/portainer-admin")
+        host, role, spec = self.spec("gate", role="master", **{"master": self.master(**{"vpn-server": {
+            "wg_host": "v", "wg_password": "w", "admin_from_mesh": False}})})
+        start = modmod.Renderer(self.ms).render(spec).files["km-vpn-server/start.sh"][0]
+        self.assertIn("-A INPUT -i wg0 -p tcp --dport 51821 -j DROP", start)
+
+    def test_module_errors_are_readable(self):
+        """A broken module.yaml is a KiwiError naming the place, never a traceback;
+        two modules installing the same host unit is an error like two files are."""
+        mdir = os.path.join(self.tmp, "modules")
+        shutil.copytree(modmod.modules_dir(), mdir)
+        shutil.copytree(os.path.join(mdir, "gateway"), os.path.join(mdir, "gateway2"))
+        y = os.path.join(mdir, "gateway2", "module.yaml")
+        write(y, open(y).read().replace("name: gateway", "name: gateway2").replace("kiwi/gw.sh", "kiwi/gw2.sh"))
+        os.makedirs(os.path.join(mdir, "broken"))
+        write(os.path.join(mdir, "broken", "module.yaml"),
+              "module: {name: broken}\nnginx: {servers: [{server_name: x}]}\n"
+              "storage: {bind_mounts: [{host: '{{ nope(', type: dir, required: false}]}\n")
+        ms = modmod.ModuleSet(mdir)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"n": {"role": "node-gw", "node-gw": self.node_gw()}}})
+        host = f.hosts["n"]
+        rolesmod.resolve_settings(self.roles["node-gw"], host, ms)
+        spec = rolesmod.stack_spec(host, self.roles["node-gw"])
+        spec.modules = ms.resolve(["vpn-client", "gateway", "gateway2"])
+        with self.assertRaisesRegex(KiwiError, "host unit kn-gateway.service"):
+            modmod.Renderer(ms).render(spec)
+        spec.modules = ms.resolve(["vpn-client", "reverse-proxy", "broken"])
+        with self.assertRaisesRegex(KiwiError, "modules/broken/module.yaml nginx"):
+            modmod.Renderer(ms).render(spec)
+        write(os.path.join(mdir, "broken", "module.yaml"),
+              "module: {name: broken}\nstorage: {bind_mounts: [{host: '{{ nope(', type: dir, required: false}]}\n")
+        ms = modmod.ModuleSet(mdir)
+        spec.modules = ms.resolve(["vpn-client", "broken"])
+        with self.assertRaisesRegex(KiwiError, "template error"):   # optional, but broken is broken
+            modmod.Renderer(ms).render(spec)
 
     def test_modules_override_and_module_defaults(self):
         host, role, spec = self.spec("g", role="node-gw", **{"node-gw": {
@@ -674,6 +856,17 @@ class TestCerts(Base):
         with open(full) as fh:
             self.assertEqual(fh.read().count("BEGIN CERTIFICATE"), 2)
         self.assertEqual((hkey, full), certs.ensure_host_cert(ca, "sh3.kiwi"))  # reused
+        crt = os.path.join(ca, "hosts", "sh3.kiwi", "cert.pem")
+        self.assertTrue(certs.cert_valid(crt, 800))     # 825 days, not the CA's ten years
+        self.assertFalse(certs.cert_valid(crt, 830))
+
+    def test_name_constraints(self):
+        ca = os.path.join(self.tmp, "ca2")
+        _key, pem = certs.ensure_ca(ca, name_constraints=["kiwi", ".lan"])
+        text = subprocess.run(["openssl", "x509", "-in", pem, "-noout", "-text"], capture_output=True, text=True).stdout
+        self.assertIn("Name Constraints", text)
+        self.assertIn("DNS:.kiwi", text)
+        self.assertIn("DNS:.lan", text)
 
 
 class TestCli(Base):
@@ -732,6 +925,61 @@ class TestCli(Base):
         self.assertEqual(rc, 0)
         self.assertIn("ks_role_apply", out)
 
+    def test_fleet_scan_records_ca_and_warnings(self):
+        """The fleet CA exists before the first script is rendered (whatever the
+        order), every Pi-hole gets every host's names, the master lets isolated
+        clients reach every node, and a second validation does not repeat warnings."""
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "lab": {"target": "coreos", "role": "bare", "disk": None},
+            "sh3": {"role": "node-cloud", "node-cloud": self.node_cloud()},
+            "m1": {"role": "node-gw", "node-gw": self.node_gw()},
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out"), Toolchain(mode="native"), self.ms)
+        lab, _ = r.script(f.hosts["lab"])          # rendered first, before any reverse proxy
+        self.assertIn("KS_FILES[ca_cert]=", lab)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "ca", "kiwiCA.pem")))
+        recs = r.dns_records()
+        for rec in (("10.8.0.25", "sh3.kiwi"), ("10.8.0.25", "cloud.sh3.kiwi"), ("10.8.0.25", "portainer.sh3.kiwi"),
+                    ("10.8.0.6", "m1.kiwi"), ("10.8.0.6", "pihole.m1.kiwi"), ("10.8.0.1", "gate.kiwi")):
+            self.assertIn(rec, recs)
+        self.assertNotIn(("10.8.0.25", "*.sh3.kiwi"), recs)
+        m1, b = r.script(f.hosts["m1"])
+        self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
+        hosts = [e for e in b.compose["services"]["kn-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts=")][0]
+        self.assertIn("10.8.0.25 cloud.sh3.kiwi", hosts)
+        self.assertIn("10.8.0.1 gate.kiwi", hosts)
+        sh3, _ = r.script(f.hosts["sh3"])
+        self.assertIn("KS_STACK_NO_RESOLVED_STUB=0", sh3)
+        self.assertIn("KS_FILES[stack/kn-nginx/privkey.pem]=", sh3)
+        _gate, gb = r.script(f.hosts["gate"])
+        start = gb.files["km-vpn-server/start.sh"][0]
+        self.assertIn("-s 10.8.1.0/24 -d 10.8.0.25 -j ACCEPT", start)
+        self.assertIn("-s 10.8.1.0/24 -d 10.8.0.6 -j ACCEPT", start)
+        self.assertEqual([w for w in f.hosts["lab"].warnings if "no disk" in w], ["no disk: set — configs render, but an ISO cannot be built"])
+
+    def test_tls_settings_are_validated(self):
+        write(os.path.join(self.tmp, "secrets", "full.pem"), "x")
+        f = self.fleet({"defaults": self.base_defaults(tls={"auto": False}), "hosts": {
+            "n": {"role": "node-cloud", "node-cloud": self.node_cloud()},
+            "h": {"role": "node-cloud", "node-cloud": self.node_cloud(**{"reverse-proxy": {"tls_fullchain": "secrets/full.pem"}})}}})
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, cli.EXIT_INVALID)
+        self.assertIn("n: reverse-proxy needs tls_fullchain and tls_privkey", err)
+        self.assertIn("h: reverse-proxy: tls_fullchain and tls_privkey go together", err)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "h": {"role": "node-cloud", "node-cloud": self.node_cloud(**{"reverse-proxy": {"tls_privkey": "secrets/full.pem"}})}}})
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, cli.EXIT_INVALID)
+        self.assertIn("go together", err)
+
+    def test_script_prints_only_the_script(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"n": {"role": "node-cloud", "node-cloud": self.node_cloud()}}})
+        rc, out, err = self.run_cli("script", f.path, "n")   # a fresh fleet: the CA is created on the way
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.startswith("#!/usr/bin/env bash\n"), out[:80])
+        self.assertNotIn("\n:: ", out)
+        self.assertNotIn("creating the fleet CA", out)
+
     def test_validate_exit_code_on_errors(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"target": "nope"}}})
         rc, out, err = self.run_cli("validate", f.path)
@@ -753,6 +1001,21 @@ class TestCli(Base):
         self.assertTrue(os.path.isfile(dest))
         rc, _, _ = self.run_cli("init", dest)
         self.assertEqual(rc, 1)  # never overwrites
+        # the example validates once its secrets exist (throw-away ones here)
+        home = os.path.join(self.tmp, "home")
+        write(os.path.join(home, ".ssh", "id_ed25519.pub"), KEY + "\n")
+        write(os.path.join(self.tmp, "secrets", "m1.kiwi.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n")
+        write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n")
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        try:
+            rc, out, err = self.run_cli("validate", dest, "--porcelain")
+        finally:
+            os.environ["HOME"] = old_home
+        self.assertEqual(rc, 0, err)
+        data = json.loads(out)
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(data["errors"], [])
 
 
 if __name__ == "__main__":

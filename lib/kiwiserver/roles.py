@@ -23,6 +23,7 @@ embedded files (the rendered stack among them), the common library
 inside it, so it is written mode 0600.
 """
 import os
+import re
 
 import yaml
 
@@ -103,7 +104,8 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
         if s.targets and host.target not in s.targets:
             values[s.key] = coerce(s, s.default, where)
             continue
-        v = coerce(s, block.get(s.key, s.default), where)
+        given = block.get(s.key)
+        v = coerce(s, s.default if given is None else given, where)
         if s.required and is_empty(v):
             raise KiwiError("%s.%s is required" % (where, s.key))
         if s.type == "file" and not is_empty(v):
@@ -114,6 +116,27 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
             v = os.path.basename(p)
         values[s.key] = v
     return values
+
+
+_WG_ADDRESS = re.compile(r"^\s*Address\s*=\s*([0-9.]+)(?:/\d+)?", re.M)
+
+
+def _mesh_address_from_wireguard(host, module_files, where):
+    """A node's vpn_ip is the Address of the WireGuard config wg-easy issued
+    for it: fill it in when it is empty, warn when the two disagree (the DNAT
+    rules and the fleet's DNS records would point at the wrong address)."""
+    data = module_files.get("vpn-client/wireguard_config")
+    if not data:
+        return
+    m = _WG_ADDRESS.search(data.decode("utf-8", "replace"))
+    if not m:
+        return
+    addr, vpn_ip = m.group(1), host.role_settings.get("vpn_ip") or ""
+    if not vpn_ip:
+        host.role_settings["vpn_ip"] = addr
+    elif vpn_ip != addr:
+        host.warnings.append("%s: vpn_ip is %s but the WireGuard config's Address is %s — "
+                             "mesh traffic for this host arrives at %s" % (where, vpn_ip, addr, addr))
 
 
 def resolve_settings(role, host, modset=None):
@@ -156,6 +179,7 @@ def resolve_settings(role, host, modset=None):
             if block.get("container_ip"):
                 vals["container_ip"] = str(block["container_ip"])
             host.module_settings[name] = vals
+        _mesh_address_from_wireguard(host, module_files, where)
         allowed = role_keys | {"modules"} | set(ordered)
         unknown = sorted(set(raw) - allowed)
         if unknown:
@@ -185,7 +209,14 @@ def stack_spec(host, role, dns_records=None):
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
         pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {},
         module_config=host.module_settings, files=host.module_files,
-        dns_records=dns_records or [], service_user=rs.get("service_user") or "user")
+        dns_records=dns_records or [], service_user=service_user(host))
+
+
+def service_user(host):
+    """Who owns the stack's data directories: the stack setting, or the admin
+    user — uid 1000 on a fresh CoreOS or Debian install, which is what the
+    containers that drop privileges (PUID, sftp_uid) default to."""
+    return (host.role_settings or {}).get("service_user") or host.admin["user"]
 
 
 # ---- script rendering ----------------------------------------------------------
@@ -260,7 +291,7 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
         rs = host.role_settings
         lines += [
             _bash_var("KS_STACK_DIR", rs.get("docker_dir") or "/home/user/docker"),
-            _bash_var("KS_STACK_USER", rs.get("service_user") or "user"),
+            _bash_var("KS_STACK_USER", service_user(host)),
             _bash_var("KS_STACK_PREFIX", bundle.prefix),
             _bash_var("KS_STACK_MODULES", list(bundle.modules)),
             _bash_var("KS_STACK_DIRS", list(bundle.dirs)),
@@ -272,6 +303,7 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             _bash_var("KS_STACK_SERVICES", list(bundle.services)),
             _bash_var("KS_STACK_URLS", list(bundle.urls)),
             _bash_var("KS_STACK_VPN_CONTAINER", "%s-vpn-client" % bundle.prefix if "vpn-client" in bundle.modules else ""),
+            _bash_var("KS_STACK_VPN_DEPENDENTS", list(getattr(bundle, "vpn_dependents", []))),
             _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
         ]
         for rel, (content, _mode) in sorted(bundle.files.items()):
@@ -285,6 +317,7 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
               "# ---- post script (fleet.yaml post_script) -----------------------------",
               "ks_post_script() {"]
     post = (host.cfg.get("post_script") or "").rstrip("\n")
-    lines += (["    " + ln if ln.strip() else "" for ln in post.splitlines()] if post.strip() else ["    :"])
+    # pasted as written: indenting it would break a heredoc whose terminator must start the line
+    lines += (post.splitlines() if post.strip() else ["    :"])
     lines += ["}", "", "ks_main \"$@\"", ""]
     return "\n".join(lines)

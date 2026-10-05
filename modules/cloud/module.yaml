@@ -66,6 +66,10 @@ settings:
     label: Data directory
     help: "Where the files live, e.g. a big disk mounted at /mnt/data/nextcloud. Empty: <stack directory>/knnc-data. Do not change after the first start."
     default: ""
+  - key: aio_bind
+    label: AIO interface bind address
+    help: "The AIO master container's own port 8080 (it holds the docker socket): 127.0.0.1 keeps it off the LAN — nc-admin.<hostname> through the reverse proxy is the way in. Empty: all addresses."
+    default: 127.0.0.1
   - key: apache_port
     type: int
     default: 11000
@@ -107,6 +111,12 @@ settings:
     type: bool
     help: The reverse proxy is in front, so AIO cannot validate the domain itself.
     default: true
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the AIO master container as they are.
+    default: {}
   - key: image
     group: Advanced
     default: nextcloud/all-in-one:latest

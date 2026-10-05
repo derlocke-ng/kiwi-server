@@ -39,10 +39,10 @@ nginx:
       proxy_pass: "http://{{ container_prefix }}-vpn-client:9091"
       comment: Transmission (reached through the VPN client's namespace)
     - server_name: "{{ jd_hostname or 'jd.' ~ hostname }}"
-      proxy_pass: "http://{{ container_prefix }}-vpn-client:5800"
+      proxy_pass: "https://{{ container_prefix }}-vpn-client:5800"
       websocket: true
       when: jdownloader
-      comment: JDownloader
+      comment: JDownloader (its own TLS, self-signed, behind the login)
 
 settings:
   - key: download_dir
@@ -67,6 +67,15 @@ settings:
     label: JDownloader hostname
     help: "Empty: jd.<hostname>."
     default: ""
+  - key: jd_web_user
+    label: JDownloader web login
+    help: "Empty: the Transmission user."
+    default: ""
+  - key: jd_web_password
+    type: secret
+    label: JDownloader web password
+    help: "The web UI always asks for a login. Empty: the Transmission password."
+    default: ""
   - key: myjd_email
     label: MyJDownloader account
     help: Optional remote control through my.jdownloader.org.
@@ -82,6 +91,16 @@ settings:
   - key: pgid
     type: int
     default: 1000
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra Transmission environment variables
+    default: {}
+  - key: jd_extra_env
+    type: map
+    group: Advanced
+    label: Extra JDownloader environment variables
+    default: {}
   - key: transmission_image
     group: Advanced
     default: lscr.io/linuxserver/transmission:latest

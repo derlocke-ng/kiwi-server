@@ -69,9 +69,10 @@ network:
   open_ports: ["{{ sftp_port }}/tcp"]     # what the HOST firewall must allow (templated)
 
 firewall:
-  scope: vpn-client              # where its rules apply: vpn-client (collected into gluetun's
-  rules:                         # post-rules), host (gw.sh), self (its own container)
+  scope: vpn-client              # vpn-client: the rules are collected into gluetun's post-rules.
+  rules:                         # host / self: the module applies its own rules (gw.sh, start.sh);
     - "-t nat -A PREROUTING -d ${VPN_IP} -p tcp --dport {{ sftp_port }} -j DNAT --to-destination {{ container_ip }}:22"
+                                 # rules: listed under those scopes are documentation, nothing reads them
 
 templates:
   compose: docker-compose.yml.j2 # merged into the host's compose file

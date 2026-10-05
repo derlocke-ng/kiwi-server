@@ -1407,3 +1407,77 @@ One inventory per module. These describe the *vendored v2 templates as uploaded*
 
 The research agent (Pi-hole 6, wg-easy, gluetun, Nextcloud AIO, Vaultwarden, Tor, downloader images) failed on the API outage; nothing to report.
 
+
+## 4. Status after 2.1.1
+
+Every finding above was acted on in kiwi-server 2.1.1 (the CHANGELOG lists the
+changes by area). What each number became:
+
+| # | status | what changed |
+|---|---|---|
+| 1, 11 | fixed | `kiwi-stack start`/`update` queue the host-unit restart with `systemctl --no-block`; the first boot runs `systemctl restart kiwi-stack.service` and then the host units |
+| 2 | fixed | `ks_add_to_group` copies the group line from `/usr/lib/group` into `/etc/group` before `usermod` |
+| 3 | fixed | `kiwi-server script` silences the CA/certificate notes; stdout is the script only (tested) |
+| 4 | fixed | addresses are `network_address + offset` via `ipaddress`; a subnet with no room for an offset is an error naming `container_ip` |
+| 5, 25 | fixed | `tls_problem()`: one file alone, or none with `tls.auto: false`, fails `validate` |
+| 6 | fixed | the isolation rules precede the wg0 accept-all in `start.sh` |
+| 7 | fixed | isolated clients are dropped from 80/51821 at the server's address; `admin_from_mesh: false` closes them for the whole mesh |
+| 8 | fixed | `hostname:` only without `network_mode` |
+| 9 | fixed | `resolver 127.0.0.11 valid=30s ipv6=off` + `set $backend …; proxy_pass $backend;`; upstream blocks are inlined |
+| 10, 43 | fixed | `security_opt: [label:disable]` on the AIO master container and Portainer |
+| 12 | fixed | `install.sh` probes GTK with `python3 -c 'import gi; gi.require_version(...)'` |
+| 13, 42 | fixed | `updates.days: []` renders a periodic window on all seven days |
+| 14, 24 | fixed | the fleet scan creates the CA before the first script when any host gets a certificate from it (tested with a bare host rendered first) |
+| 15 | fixed | `post_script` is pasted unindented |
+| 16, 36 | fixed | `service_user` defaults to the admin user (uid 1000 on a fresh install); the help text says what must match |
+| 17 | fixed | `systemctl enable` + `systemctl restart` for the stack service and the host units |
+| 18 | fixed | the modules row has an apply button; the form rebuilds on Enter |
+| 19 | fixed | the build dialog reads `disk` from the document |
+| 20 | fixed | the temporary window is presented before the dialog |
+| 21 | fixed | `FleetDoc.save` keeps the file's mode; a new file is 0600 |
+| 22, 60 | fixed | a missing `vpn_ip` is an error naming the stack setting and the modules that need it; `${VPN_IP}` errors say the same |
+| 23 | fixed | per-server `hsts` is `None` when unset; the template falls back to the module setting (tested) |
+| 26 | fixed | a null value takes the default |
+| 27 | fixed | `container_ip` is parsed, must be inside the subnet, not the gateway/network/broadcast, and unique |
+| 28 | fixed | the `-I` inserts are ordered so the DROP ends up first (tested) |
+| 29 | fixed | ISOs are chmod 0600 after the build |
+| 30 | fixed | JDownloader runs with `WEB_AUTHENTICATION=1` + `SECURE_CONNECTION=1`; the login defaults to the Transmission credentials; nginx proxies https with verification off |
+| 31 | fixed (partly) | `portainer.admin_password` sets the admin before the first start, so the first-run page never waits open. The admin panels behind a node's reverse proxy stay reachable from mesh clients by design (the master's `isolated_allow` decides which nodes isolated clients may reach at all) |
+| 32 | fixed | `dns.web_ui_bind` defaults to 127.0.0.1 |
+| 33 | fixed | `cloud.aio_bind` defaults to 127.0.0.1 |
+| 34 | fixed (partly) | host certificates last 825 days (`tls.cert_days`); `tls.name_constraints` adds `permitted;DNS:` constraints to the CA. The CA is still trusted on every machine of a fleet that issues certificates — that is the point of it |
+| 35, 44 | fixed | rendered files and the directories holding them are root's; data directories (and absolute ones the stack creates) belong to the service user; an existing absolute directory is left alone |
+| 37 | fixed | records go in as `FTLCONF_dns_hosts`; `custom.list` is gone |
+| 38, 41 | fixed | `kiwi-stack vpn-restart` restarts the containers whose `network_mode` is the VPN client's (the renderer lists them in `STACK_VPN_DEPENDENTS`) |
+| 39 | fixed | `dns.dhcp_enabled/dhcp_start/dhcp_end/dhcp_router/dhcp_lease_time` → `FTLCONF_dhcp_*` |
+| 40 | documented | migration note in the example fleet and the README (`docker_subnet`, directory names) |
+| 45 | fixed | a `debian.release` other than the current stable without `debian.iso_url` is an error |
+| 46 | fixed | completion knows `ca`, `modules`, `-o`, `-v` |
+| 47 | fixed | the CHANGELOG says `units`; `coreos.systemd_units` in a fleet file is a validation error |
+| 48, 61 | documented | `scope: host`/`self` rules are documentation; only `vpn-client` rules are collected |
+| 49–52 | fixed | tests for the fleet scan (records, CA, warnings), `KS_STACK_NO_RESOLVED_STUB`, the embedded CA, the extracted `kiwi-stack` helper (bash -n + shellcheck) and the example fleet (validated with throw-away secrets) |
+| 53 | fixed | `ks_parent_dir` creates a missing parent only |
+| 54 | fixed | `save()` returns success; the discard dialog keeps the changes when saving fails |
+| 55 | fixed | `set_show_content(True)` when the split view is collapsed |
+| 56 | fixed | host names are checked against the CLI's label pattern |
+| 57 | fixed | `Gio.File.new_for_path(d).get_uri()` |
+| 58 | fixed | the script renders in a thread |
+| 59 | fixed | the status refresh rebuilds the editor once |
+| 62 | fixed | `${VAR}` errors name `modules/<m>/module.yaml <section>` |
+| 63 | fixed | `validate()` resets the host's warnings |
+| 64 | fixed | malformed `nginx:` entries are KiwiErrors naming the module |
+| 65 | fixed | a duplicate host unit is an error |
+| 66 | fixed | optional bind mounts only swallow "is not set" |
+| 67 | unchanged | an invalid host is skipped with a warning on stderr; its records cannot be computed |
+| 68 | fixed | `users.conf` (0600) instead of the command line |
+| 69 | fixed | the preseed copy is 0600 in a 0700 work directory that is removed in `finally` |
+| 70, 73 | fixed | `ESTABLISHED,RELATED` only; DNAT'd new flows accepted on tun0 when DNAT is in use; the eth0 hairpin REJECT first; a gateway node accepts the LAN's forwarded flows explicitly |
+| 71 | fixed | `vpn_ip` is read from the config's `Address` when empty and a mismatch is a warning |
+| 72 | documented | `extra_dnat_rules: ["2222/tcp:172.128.0.1:22"]` in the example and the README |
+| 74 | fixed | the timers' services carry `After=docker.service kiwi-stack.service` + `Requires=docker.service` |
+| 75 | fixed | `passwd/user-default-groups` carries `admin.groups` (minus docker, which the role adds) |
+
+Still untested on real hardware: the first boot of each target. The unit tests
+and the CLI smoke test cover what can be checked without a machine (rendered
+scripts parse and pass shellcheck, Butane validates with `--strict`, compose
+files pass `docker compose config`).

@@ -1,21 +1,41 @@
 # dns (Pi-hole) — resolver for the mesh (master) or the LAN (gateway node)
 {% set upstreams = upstream_dns or vpn_client_ip or '1.1.1.1;9.9.9.9' %}
+{% set hosts = [] %}
+{% if fleet_records %}{% for ip, name in dns_records %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}{% endif %}
+{% for name, ip in extra_records.items() %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}
 services:
   {{ container_prefix }}-pihole:
     image: {{ image }}
     container_name: {{ container_prefix }}-pihole
+{% if not network_mode %}
     hostname: pihole
+{% endif %}
     environment:
       - TZ={{ timezone }}
       - FTLCONF_webserver_api_password={{ pihole_password }}
       - FTLCONF_dns_upstreams={{ upstreams }}
       - FTLCONF_dns_listeningMode=all
       - FTLCONF_webserver_domain={{ pihole_hostname or 'pihole.' ~ hostname }}
+{% if hosts %}
+      # the fleet's names at their mesh addresses (pihole.toml dns.hosts)
+      - FTLCONF_dns_hosts={{ hosts | join(';') }}
+{% endif %}
+{% if dhcp_enabled %}
+      # Pi-hole is the LAN's DHCP server; the dhcp-relay module carries the broadcasts here
+      - FTLCONF_dhcp_active=true
+      - FTLCONF_dhcp_start={{ dhcp_start }}
+      - FTLCONF_dhcp_end={{ dhcp_end }}
+      - FTLCONF_dhcp_router={{ dhcp_router }}
+      - FTLCONF_dhcp_leaseTime={{ dhcp_lease_time }}
+{% endif %}
 {% if legacy_env %}
       - WEBPASSWORD={{ pihole_password }}
       - PIHOLE_DNS_={{ upstreams }}
       - DNSMASQ_LISTENING=all
 {% endif %}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
 {% if network_mode %}
     network_mode: "service:{{ container_prefix }}-{{ network_mode }}"
 {% else %}
@@ -26,7 +46,7 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
 {% if expose_web_ui %}
-      - "{{ web_ui_port }}:80/tcp"
+      - "{{ web_ui_bind ~ ':' if web_ui_bind else '' }}{{ web_ui_port }}:80/tcp"
 {% endif %}
 {% endif %}
     cap_add:

@@ -10,18 +10,9 @@ iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --
 iptables -A FORWARD -s {{ wg_subnet }} -d {{ docker_subnet }} -j DROP
 {% if isolated_subnet %}
 iptables -A FORWARD -s {{ isolated_subnet }} -d {{ docker_subnet }} -j DROP
-{% endif %}
 
-# stock wg-easy post-up
-iptables -t nat -A POSTROUTING -s {{ wg_subnet }} -o eth0 -j MASQUERADE
-iptables -A INPUT -p udp -m udp --dport 51820 -j ACCEPT
-iptables -A INPUT -p tcp -m tcp --dport 80 -j ACCEPT
-iptables -A FORWARD -i wg0 -j ACCEPT
-iptables -A FORWARD -o wg0 -j ACCEPT
-{% if isolated_subnet %}
-
-# isolated clients ({{ isolated_subnet }}): internet and the fleet, but not each other or other clients
-iptables -t nat -A POSTROUTING -s {{ isolated_subnet }} -o eth0 -j MASQUERADE
+# isolated clients ({{ isolated_subnet }}): internet and the fleet, but not each other or other
+# clients. These rules must come BEFORE the wg0 accept-all below — iptables stops at the first match.
 iptables -A FORWARD -p icmp --icmp-type echo-request -s {{ isolated_subnet }} -j DROP
 iptables -A FORWARD -p icmp --icmp-type echo-reply -s {{ isolated_subnet }} -j DROP
 {% set allowed = [server_ip] + (mesh_ips | reject('equalto', server_ip) | list) + isolated_allow %}
@@ -30,7 +21,27 @@ iptables -A FORWARD -s {{ isolated_subnet }} -d {{ ip }} -j ACCEPT
 {% endfor %}
 iptables -A FORWARD -s {{ isolated_subnet }} -d {{ wg_subnet }} -j DROP
 iptables -A FORWARD -s {{ isolated_subnet }} -d {{ isolated_subnet }} -j DROP
+iptables -t nat -A POSTROUTING -s {{ isolated_subnet }} -o eth0 -j MASQUERADE
 {% endif %}
+
+# the admin pages on the server's own address: wg-easy (51821) and, when Pi-hole shares
+# this network stack, its web UI (80). Never for isolated clients{% if not admin_from_mesh %}; here for nobody
+# on the mesh at all (admin_from_mesh: false) — use ssh -L on the master{% endif %}.
+{% if isolated_subnet %}
+iptables -A INPUT -i wg0 -s {{ isolated_subnet }} -p tcp --dport 51821 -j DROP
+iptables -A INPUT -i wg0 -s {{ isolated_subnet }} -p tcp --dport 80 -j DROP
+{% endif %}
+{% if not admin_from_mesh %}
+iptables -A INPUT -i wg0 -p tcp --dport 51821 -j DROP
+iptables -A INPUT -i wg0 -p tcp --dport 80 -j DROP
+{% endif %}
+
+# stock wg-easy post-up
+iptables -t nat -A POSTROUTING -s {{ wg_subnet }} -o eth0 -j MASQUERADE
+iptables -A INPUT -p udp -m udp --dport 51820 -j ACCEPT
+iptables -A INPUT -p tcp -m tcp --dport 80 -j ACCEPT
+iptables -A FORWARD -i wg0 -j ACCEPT
+iptables -A FORWARD -o wg0 -j ACCEPT
 {% if has_vpn_client %}
 
 # the double hop: everything leaves through the VPN client …

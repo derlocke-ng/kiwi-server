@@ -5,8 +5,12 @@ services:
     container_name: nextcloud-aio-mastercontainer   # AIO requires this name
     init: true
     restart: always
+    # the docker socket on an SELinux host (Fedora CoreOS, uCore): without this the
+    # container is denied the socket — AIO's own compose example says the same
+    security_opt:
+      - label:disable
     ports:
-      - "8080:8080"
+      - "{{ aio_bind ~ ':' if aio_bind else '' }}8080:8080"
     environment:
       - SKIP_DOMAIN_VALIDATION={{ 'true' if skip_domain_validation else 'false' }}
       - AIO_DISABLE_BACKUP_SECTION={{ 'true' if disable_backup_section else 'false' }}
@@ -24,6 +28,9 @@ services:
       - NEXTCLOUD_KEEP_DISABLED_APPS={{ 'true' if keep_disabled_apps else 'false' }}
       - TALK_PORT={{ talk_port }}
       - WATCHTOWER_DOCKER_SOCKET_PATH=/var/run/docker.sock
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
     volumes:
       - nextcloud_aio_mastercontainer:/mnt/docker-aio-config   # AIO requires this name
       - /var/run/docker.sock:/var/run/docker.sock:ro

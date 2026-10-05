@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.1.1 — the review fixes
+
+What the 2.1.0 review ([docs/REVIEW-2.1.0.md](docs/REVIEW-2.1.0.md)) found,
+fixed. Nothing changes in the fleet file format; new settings have defaults.
+
+- **First boot** (`roles/common/lib.sh`): `kiwi-stack start` no longer
+  restarts the host units from inside its own service (a node-gw first boot
+  hung forever); the docker group is copied from `/usr/lib/group` on Fedora
+  CoreOS before `usermod`; a re-run restarts the stack instead of a no-op
+  `enable --now`; the rendered files stay root's and only the data
+  directories belong to the service user; `kiwi-stack vpn-restart` also
+  restarts the containers in the VPN client's namespace; the timers' services
+  wait for docker and the stack.
+- **Renderer**: container addresses are computed inside the network (any
+  subnet, not only /24), `container_ip` overrides are checked, a missing
+  `vpn_ip` is reported as the setting to set — and read from the WireGuard
+  config's `Address` when it is empty; `$` in settings survives compose
+  interpolation; `key:` with no value means the default; `post_script` is
+  pasted as written; the reverse-proxy `hsts` setting works; module.yaml
+  mistakes are errors with a place, not tracebacks.
+- **Stacks**: nginx resolves backends per request (`resolver` + variable), so
+  it starts before Nextcloud AIO's containers exist; Pi-hole gets the fleet's
+  names as `FTLCONF_dns_hosts` (Pi-hole 6 ignores a written `custom.list`),
+  no `hostname:` together with `network_mode`, a DHCP server (`dhcp_*`) and
+  a local-only web UI by default; the master's isolation rules come before
+  the wg0 accept-all and isolated clients never reach the admin pages
+  (`admin_from_mesh`); gw.sh's DROP is really first; gluetun's post-rules no
+  longer accept every new forwarded flow; `label:disable` on the containers
+  that mount the docker socket (SELinux); the AIO port and Pi-hole UI bind to
+  127.0.0.1; JDownloader's web UI has a login; Portainer's admin password can
+  be set before the first start; the SFTP password moved from the command line
+  to `users.conf`; `extra_env` on every service module.
+- **CLI / targets**: `script` prints only the script; TLS settings that cannot
+  work fail `validate`; the fleet CA exists before the first script is
+  rendered; host certificates last 825 days (`tls.cert_days`) and the CA can
+  carry name constraints (`tls.name_constraints`); ISOs and the preseed copy
+  are private; `updates.days: []` means every day inside the window;
+  `debian.release` other than the current stable needs `debian.iso_url`; the
+  preseed honours `admin.groups`; `service_user` defaults to the admin user.
+- **GUI**: the module list applies on Enter, the fleet file keeps its mode,
+  a failed save keeps the changes, the build dialog shows the disk from the
+  file, the narrow layout shows the form, host names are checked, the script
+  renders off the main thread, the missing-CLI dialog is visible.
+- **Docs and tests**: firewall `scope` semantics documented, migration and
+  mesh-SSH notes, bash completion for `ca`/`modules`; tests for the fleet
+  scan (DNS records, CA, warnings), the kiwi-stack helper, the example fleet
+  and every fix above.
+
 ## 2.1.0 — the kiwi-v2 modules, and GPL-3
 
 - **Modules**: the kiwi-v2 module system lives in `modules/` and the renderer
@@ -73,8 +121,8 @@ a YAML file; 2.0 builds the machines of a Kiwi Network.
 Dropped from 1.x: the `global:`/`servers:` file format, the `kiwi-server-gen.sh`
 wrapper and `iso ignition embed` (which only embedded a live config and still
 asked you to run the installer). The per-server Butane extras (`files`,
-`directories`, `systemd_units`, `services`, `kernel_arguments`, `luks`,
-`boot_device`) live on under `coreos:`.
+`directories`, `units` (was `systemd_units`), `services`, `kernel_arguments`,
+`luks`, `boot_device`) live on under `coreos:`.
 
 ## 1.0.0
 

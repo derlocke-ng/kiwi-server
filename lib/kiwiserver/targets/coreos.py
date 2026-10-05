@@ -8,6 +8,7 @@ runs — so the role script always runs on the final image.
 import yaml
 
 from .. import util
+from ..config import DAYS
 from . import ROLE_DIR, ROLE_SCRIPT, on_calendar, role_unit
 
 BUTANE_VARIANT = "fcos"
@@ -47,9 +48,8 @@ def zincati_config(host):
     u = host.updates()
     if not u["enabled"]:
         return "[updates]\nenabled = false\n"
-    if not u["days"]:
-        return "[updates]\nstrategy = \"immediate\"\n"
-    days = ", ".join('"%s"' % d for d in u["days"])
+    # an empty days list means every day — still only inside the window
+    days = ", ".join('"%s"' % d for d in (u["days"] or list(DAYS)))
     return (
         "[updates]\nstrategy = \"periodic\"\n\n"
         "[updates.periodic]\ntime_zone = \"local\"\n\n"

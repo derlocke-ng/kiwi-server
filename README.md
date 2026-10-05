@@ -149,6 +149,21 @@ Static addresses without typing them: `network: { dhcp: false, gateway: …,
 iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
 the next free address in file order; a host's own `address:` is reserved first.
 
+A node's `vpn_ip` is read from its WireGuard config's `Address` when it is
+not set; when both are given and differ, `validate` warns. The stack's data
+directories belong to `service_user` (the admin user unless set — uid 1000 on
+a fresh install, matching the containers' PUID defaults); the rendered files
+stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|logs|
+vpn-restart`; the VPN restart also restarts the containers that share the VPN
+client's network namespace (Transmission, JDownloader).
+
+Migrating a machine that ran a v1 stack in place: set `docker_subnet` to what
+it used and rename its data directories to the module names (`kmvpn-server` →
+`km-vpn-server`, `knvault` → `kn-vault`, …) before the first start, so wg-easy
+keeps its peers and the services their data. Mesh SSH to a node is one DNAT
+rule: `vpn-client: { extra_dnat_rules: ["2222/tcp:172.128.0.1:22"] }` (the
+docker gateway is the host).
+
 ## What you get
 
 `output/<host>/`:

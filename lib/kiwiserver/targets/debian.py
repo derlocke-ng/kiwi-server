@@ -68,7 +68,9 @@ def preseed(host, version):
         "d-i passwd/user-fullname string %s" % a["user"],
         "d-i passwd/username string %s" % a["user"],
         "d-i passwd/user-password-crypted password %s" % (host.password_hash() or "!"),
-        "d-i passwd/user-default-groups string sudo",
+        # admin.groups too; docker does not exist yet — the role adds it when docker is installed
+        "d-i passwd/user-default-groups string %s" % " ".join(
+            ["sudo"] + [str(g) for g in (a.get("groups") or []) if str(g) not in ("sudo", "docker")]),
         "d-i user-setup/allow-password-weak boolean true",
         "",
         "### clock",

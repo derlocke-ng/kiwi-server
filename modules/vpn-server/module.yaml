@@ -76,9 +76,20 @@ settings:
     label: Extra addresses isolated clients may reach
     help: The server and every node with a mesh address are allowed automatically.
     default: []
+  - key: admin_from_mesh
+    type: bool
+    label: Admin pages reachable from the mesh
+    help: "wg-easy (51821) and, when Pi-hole shares this network stack, its web UI (80) at the server's mesh address — for regular clients; isolated clients never get them. Off: only through ssh -L on the master."
+    default: true
   - key: ui_traffic_stats
     type: bool
     default: true
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
   - key: image
     group: Advanced
     help: "weejewel/wg-easy is the last line that takes WG_POST_UP and PASSWORD; ghcr.io/wg-easy/wg-easy:15 needs the INIT_* setup instead."

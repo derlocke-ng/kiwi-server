@@ -26,6 +26,9 @@ services:
       - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
       - DOT_PROVIDERS={{ dot_providers }}
       - BLOCK_MALICIOUS=off
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
 {% if vpn_provider != 'custom' %}
       - UPDATER_PERIOD=24h
 {% endif %}

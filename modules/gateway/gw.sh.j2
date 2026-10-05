@@ -52,11 +52,12 @@ rules_del
 ip rule add iif "$PUB_IFACE" table 128
 ip route add table 128 default via "$CONTAINER_IP"
 ip route add table 128 throw "$DOCKER_SUBNET"
-# LAN clients: no access to the docker network, mesh allowed, internet through the tunnel
-iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP
-iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
-iptables -I FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT
-iptables -I FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
+# LAN clients: no access to the docker network, mesh allowed, internet through the tunnel.
+# -I puts a rule on top, so the last one inserted is checked first: the DROP goes last.
 iptables -I INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT
+iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
+iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP
 iptables -t nat -I POSTROUTING -o "$BRIDGE" -j MASQUERADE
 echo "[kiwi-gw] LAN ($PUB_IFACE) -> $CONTAINER_IP (VPN client); mesh $VPN_SUBNET allowed"

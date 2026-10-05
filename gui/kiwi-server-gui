@@ -14,6 +14,7 @@ Comments in a fleet file are not kept when the GUI saves it.
 """
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -232,9 +233,15 @@ class FleetDoc:
         text = ("# fleet.yaml — written by kiwi-server-gui. Comments are not kept here;\n"
                 "# `kiwi-server init` writes a commented example to read along.\n"
                 + yaml.safe_dump(self.data, sort_keys=False, allow_unicode=True, default_flow_style=False))
+        try:
+            mode = os.stat(self.path).st_mode & 0o777
+        except OSError:
+            mode = 0o600   # new file: it holds secrets
         tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
+        os.chmod(tmp, mode)
         os.replace(tmp, self.path)
         self.dirty = False
 
@@ -358,7 +365,13 @@ class Form:
             btn.add_css_class("flat")
             btn.connect("clicked", lambda *_: self.pick_file(row))
             row.add_suffix(btn)
-        row.connect("changed", lambda r: self.write(field, from_text(field["type"], r.get_text())))
+        if field.get("apply"):
+            # writing this field rebuilds the form (the module list): commit on Enter
+            # or the apply button, not on every keystroke
+            row.set_show_apply_button(True)
+            row.connect("apply", lambda r: self.write(field, from_text(field["type"], r.get_text())))
+        else:
+            row.connect("changed", lambda r: self.write(field, from_text(field["type"], r.get_text())))
         return row
 
     def pick_file(self, row):
@@ -516,8 +529,8 @@ class Form:
                                      description=role["description"] + (
                                          "" if role.get("status") == "stable" else "  [%s]" % role.get("status")))
             g.add(self.row_for(dict(
-                path=(name, "modules"), type="list", label="Modules",
-                help="Space separated. Empty: the preset — %s" % " ".join(role.get("modules") or []),
+                path=(name, "modules"), type="list", label="Modules", apply=True,
+                help="Space separated, Enter applies. Empty: the preset — %s" % " ".join(role.get("modules") or []),
                 default=list(role.get("modules") or []), placeholder=" ".join(role.get("modules") or []))))
             self.page.add(g)
             self.role_group.append(g)
@@ -797,15 +810,16 @@ class Window(Adw.ApplicationWindow):
 
     def save(self):
         if not self.doc.path:
-            return
+            return False
         try:
             self.doc.save()
         except OSError as e:
             self.alert("Save failed", str(e))
-            return
+            return False
         self.mark_dirty()
         self.refresh_status()
         self.toast("Saved %s" % os.path.basename(self.doc.path))
+        return True
 
     def mark_dirty(self):
         self.title.set_title("Kiwi Server" + (" •" if self.doc.dirty else ""))
@@ -824,8 +838,8 @@ class Window(Adw.ApplicationWindow):
         dlg.set_close_response("cancel")
 
         def resp(_d, r):
-            if r == "save":
-                self.save()
+            if r == "save" and not self.save():
+                return
             if r in ("save", "discard"):
                 self.doc.dirty = False
                 then()
@@ -902,6 +916,8 @@ class Window(Adw.ApplicationWindow):
         if row is None:
             return
         self.show_editor(row.scope)
+        if self.split.get_collapsed():
+            self.split.set_show_content(True)
 
     def refresh_rows(self):
         """Re-render the rows without losing the selection."""
@@ -972,6 +988,9 @@ class Window(Adw.ApplicationWindow):
             name = entry.get_text().strip()
             if r != "add" or not name:
                 return
+            if not re.match(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", name, re.I):
+                self.toast("A host name is a DNS label: letters, digits and dashes, 63 at most")
+                return
             if name in self.doc.hosts() or name == "defaults":
                 self.toast("There is already a host called %s" % name)
                 return
@@ -1020,8 +1039,8 @@ class Window(Adw.ApplicationWindow):
 
     def apply_status(self, data):
         self.status = data
-        self.refresh_rows()
-        if self.current_scope not in (None, "defaults"):
+        self.refresh_rows()   # re-selecting the row shows the editor with the new status
+        if self.listbox.get_selected_row() is None and self.current_scope not in (None, "defaults"):
             self.show_editor(self.current_scope)
         return False
 
@@ -1036,8 +1055,8 @@ class Window(Adw.ApplicationWindow):
         if not self.doc.path:
             self.toast("Open or create a fleet first")
             return False
-        if self.doc.dirty:
-            self.save()
+        if self.doc.dirty and not self.save():
+            return False
         return True
 
     def render(self, host):
@@ -1052,8 +1071,8 @@ class Window(Adw.ApplicationWindow):
         names = [host] if host else self.doc.hosts()
         lines = []
         for n in names:
-            st = self.status.get(n) or {}
-            lines.append("%s  →  %s" % (n, st.get("disk") or "(no disk set — the build will refuse)"))
+            disk = self.doc.get(n, ("disk",)) or self.doc.get("defaults", ("disk",))
+            lines.append("%s  →  %s" % (n, disk or "(no disk set — the build will refuse)"))
         dlg = Adw.AlertDialog(
             heading="Build unattended ISO%s?" % ("" if len(names) == 1 else "s"),
             body="Each ISO installs WITHOUT ASKING and wipes the disk it is told to:\n\n%s\n\n"
@@ -1070,11 +1089,21 @@ class Window(Adw.ApplicationWindow):
     def show_script(self):
         if not self.ensure_saved():
             return
-        rc, out, err = run_cli(self.cli, ["script", self.doc.path, self.current_scope])
-        if rc != 0:
-            self.alert("Cannot render the script", err or out)
-            return
-        TextDialog("%s — role script" % self.current_scope, out).present(self)
+        scope = self.current_scope
+        self.set_busy(True, "Rendering the role script…")
+
+        def worker():
+            rc, out, err = run_cli(self.cli, ["script", self.doc.path, scope])
+            GLib.idle_add(done, rc, out, err)
+
+        def done(rc, out, err):
+            self.set_busy(False, "")
+            if rc != 0:
+                self.alert("Cannot render the script", err or out)
+            else:
+                TextDialog("%s — role script" % scope, out).present(self)
+            return False
+        threading.Thread(target=worker, daemon=True).start()
 
     def show_stack(self):
         st = self.status.get(self.current_scope) or {}
@@ -1091,7 +1120,7 @@ class Window(Adw.ApplicationWindow):
         if not d or not os.path.isdir(d):
             self.toast("Nothing rendered for this host yet")
             return
-        Gio.AppInfo.launch_default_for_uri("file://" + d, None)
+        Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(d).get_uri(), None)
 
     def spawn(self, args, msg):
         if self.busy:
@@ -1178,7 +1207,9 @@ class Application(Adw.Application):
                 dlg = Adw.AlertDialog(heading="kiwi-server not found",
                                       body="The CLI must be installed next to this GUI:\n  kiwi install kiwi-server")
                 dlg.add_response("close", "Close")
-                tmp = Adw.ApplicationWindow(application=self)
+                tmp = Adw.ApplicationWindow(application=self, title="Kiwi Server",
+                                            default_width=420, default_height=200)
+                tmp.present()
                 dlg.connect("response", lambda *_: self.quit())
                 dlg.present(tmp)
                 return

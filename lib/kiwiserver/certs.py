@@ -16,7 +16,8 @@ from . import util
 from .util import KiwiError
 
 CA_SUBJECT = "/C=NZ/ST=kiwi/L=kiwi/O=kiwi/OU=kiwi/CN=kiwiCA"
-DAYS = 3650
+DAYS = 3650        # the CA
+CERT_DAYS = 825    # a host certificate: the longest lifetime browsers still accept
 
 
 def _openssl(args, **kw):
@@ -28,8 +29,11 @@ def _openssl(args, **kw):
         raise KiwiError("openssl %s failed: %s" % (args[0], (e.stderr or "").strip().splitlines()[-1:]))
 
 
-def ensure_ca(ca_dir, days=DAYS):
-    """kiwiCA.key / kiwiCA.pem in ca_dir, created on first use."""
+def ensure_ca(ca_dir, days=DAYS, name_constraints=()):
+    """kiwiCA.key / kiwiCA.pem in ca_dir, created on first use. With name
+    constraints the CA can only sign names under the given domains — a
+    stolen kiwiCA.key is then worthless for anything else, which matters
+    because every machine built trusts it."""
     key = os.path.join(ca_dir, "kiwiCA.key")
     pem = os.path.join(ca_dir, "kiwiCA.pem")
     if os.path.isfile(key) and os.path.isfile(pem):
@@ -41,9 +45,13 @@ def ensure_ca(ca_dir, days=DAYS):
     _openssl(["genrsa", "-out", key + ".tmp", "4096"])
     os.chmod(key + ".tmp", 0o600)
     os.replace(key + ".tmp", key)
-    _openssl(["req", "-x509", "-new", "-nodes", "-key", key, "-sha256", "-days", str(days),
-              "-subj", CA_SUBJECT, "-addext", "basicConstraints=critical,CA:TRUE",
-              "-addext", "keyUsage=critical,keyCertSign,cRLSign", "-out", pem])
+    argv = ["req", "-x509", "-new", "-nodes", "-key", key, "-sha256", "-days", str(days),
+            "-subj", CA_SUBJECT, "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign"]
+    domains = [str(d).strip().lstrip(".") for d in (name_constraints or []) if str(d).strip()]
+    if domains:
+        argv += ["-addext", "nameConstraints=critical," + ",".join("permitted;DNS:." + d for d in domains)]
+    _openssl(argv + ["-out", pem])
     return key, pem
 
 
@@ -58,10 +66,10 @@ def cert_valid(pem_path, min_days=30):
     return r.returncode == 0
 
 
-def ensure_host_cert(ca_dir, hostname, days=DAYS):
+def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=()):
     """(privkey.pem, fullchain.pem) for hostname and *.hostname, reused while
     they exist, cover the names and have more than 30 days left."""
-    ca_key, ca_pem = ensure_ca(ca_dir, days)
+    ca_key, ca_pem = ensure_ca(ca_dir, ca_days, name_constraints)
     d = os.path.join(ca_dir, "hosts", hostname)
     key = os.path.join(d, "privkey.pem")
     full = os.path.join(d, "fullchain.pem")

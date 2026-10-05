@@ -59,6 +59,8 @@ defaults:
   tls:                              # certificates for the reverse proxies
     auto: true                      # one fleet CA in ca_dir, a *.<hostname> cert per host,
     ca_dir: secrets/ca              # the CA trusted on every machine (import it on your devices)
+    # name_constraints: [kiwi]      # the CA may only sign names under these domains
+    # cert_days: 825                # per-host certificate lifetime (the CA: days: 3650)
 
   ucore:
     image: ghcr.io/ublue-os/ucore:stable     # ucore-minimal / ucore / ucore-hci (+ -nvidia, -zfs)
@@ -99,17 +101,25 @@ hosts:
   m1:
     role: node-gw
     node-gw:
-      vpn_ip: 10.8.0.6                    # its address in the mesh (from the master's wg-easy)
+      # vpn_ip: 10.8.0.6                  # its mesh address — taken from the WireGuard config's Address
       pub_iface: eth0                     # the LAN side
       vpn-client:
         wireguard_config: secrets/m1.kiwi.conf    # the client config wg-easy issued
+        # extra_dnat_rules: ["2222/tcp:172.128.0.1:22"]   # ssh to this node from the mesh:
+        #                                 # mesh address port 2222 -> the host (docker gateway) port 22
       dns:
         pihole_password: change-me-four
+        # dhcp_enabled: true              # Pi-hole as the LAN's DHCP server (the dhcp-relay carries
+        # dhcp_start: 192.168.1.100       # the broadcasts to it); turn the router's DHCP off
+        # dhcp_end: 192.168.1.250
+        # dhcp_router: 192.168.1.1        # or this machine's LAN address: LAN -> VPN for everyone
       downloader:
         download_dir: /mnt/data/downloads
-        transmission_password: change-me-five
+        transmission_password: change-me-five    # also JDownloader's web login unless jd_web_password is set
       sftp:
         sftp_password: change-me-six
+      portainer:
+        admin_password: change-me-seven   # set before the first start; no open first-run page
 
   # a kiwi-node in cloud mode on uCore (hci): Nextcloud AIO + Vaultwarden
   sh3:
@@ -118,6 +128,11 @@ hosts:
       image: ghcr.io/ublue-os/ucore-hci:stable
     node-cloud:
       vpn_ip: 10.8.0.25
+      # Migrating a machine that ran the v1 kiwi-cloud stack in place? Keep its
+      # network and move the data directories to the new names before the first
+      # start — the containers keep their addresses and their data:
+      #   docker_subnet: 172.129.0.0/24
+      #   kmvpn-server -> km-vpn-server, knvault -> kn-vault, kntransmission -> kn-transmission, …
       vpn-client:
         wireguard_config: secrets/sh3.kiwi.conf
       cloud:

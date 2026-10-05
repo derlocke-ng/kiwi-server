@@ -12,6 +12,9 @@ services:
       - TZ={{ timezone }}
       - USER={{ transmission_user }}
       - PASS={{ transmission_password }}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -32,6 +35,14 @@ services:
       - TZ={{ timezone }}
       - USER_ID={{ puid }}
       - GROUP_ID={{ pgid }}
+      # the web UI asks for a login (baseimage-gui needs TLS for that; nginx talks https to it)
+      - SECURE_CONNECTION=1
+      - WEB_AUTHENTICATION=1
+      - WEB_AUTHENTICATION_USERNAME={{ jd_web_user or transmission_user }}
+      - WEB_AUTHENTICATION_PASSWORD={{ jd_web_password or transmission_password }}
+{% for k, v in jd_extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
 {% if myjd_email %}
       - MYJDOWNLOADER_EMAIL={{ myjd_email }}
       - MYJDOWNLOADER_PASSWORD={{ myjd_password }}

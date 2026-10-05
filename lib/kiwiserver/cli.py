@@ -103,26 +103,66 @@ def host_readme(host, o, bundle=None):
     return "\n".join(L)
 
 
+def tls_problem(host):
+    """Why this host's TLS settings cannot work, or None. Checked by validate,
+    so the surprise does not wait for render."""
+    if "reverse-proxy" not in host.modules:
+        return None
+    tls = host.cfg.get("tls") or {}
+    have = [k for k in ("tls_fullchain", "tls_privkey") if "reverse-proxy/" + k in host.module_files]
+    if len(have) == 1:
+        return "%s: reverse-proxy: tls_fullchain and tls_privkey go together — give both or neither" % host.name
+    if not have and not tls.get("auto", True):
+        return ("%s: reverse-proxy needs tls_fullchain and tls_privkey, or tls.auto: true "
+                "for a certificate from the fleet CA" % host.name)
+    return None
+
+
+def settings_errors(roles, ms, host):
+    """Resolve the host's role and module settings; the errors, as strings."""
+    if host.role not in roles or host.target not in TARGETS:
+        return []
+    try:
+        rolesmod.resolve_settings(roles[host.role], host, ms)
+    except KiwiError as e:
+        return [str(e)]
+    p = tls_problem(host)
+    return [p] if p else []
+
+
+def tls_needs_ca(host):
+    """Does this host get its certificate from the fleet CA?"""
+    tls = host.cfg.get("tls") or {}
+    return ("reverse-proxy" in host.modules and tls.get("auto", True)
+            and "reverse-proxy/tls_fullchain" not in host.module_files)
+
+
 class Renderer:
     def __init__(self, fleet, roles, out_dir, tc, modset=None):
         self.fleet, self.roles, self.out_dir, self.tc = fleet, roles, out_dir, tc
         self.ms = modset or modmod.discover()
-        self._records = None
-        self._ca = None
+        self._scanned = False
+        self._records = []
+        self._needs_ca = False
 
     def prepare(self, host):
         role = self.roles[host.role]
         rolesmod.resolve_settings(role, host, self.ms)
+        p = tls_problem(host)
+        if p:
+            raise KiwiError(p)
         return role
 
     # ---- fleet-wide knowledge ------------------------------------------------------
-    def dns_records(self):
-        """(address, name) for every mesh host and every service name its
-        reverse proxy answers for — what the dns modules serve. An invalid
-        host elsewhere in the fleet is skipped with a warning, not fatal."""
-        if self._records is not None:
-            return self._records
-        recs = []
+    def scan(self):
+        """Every valid host once: the fleet's DNS records — (address, name)
+        for every mesh host and every service name its reverse proxy answers
+        for — and whether any host gets a certificate from the fleet CA. An
+        invalid host elsewhere in the fleet is skipped with a warning."""
+        if self._scanned:
+            return
+        self._scanned = True
+        recs, needs_ca = [], False
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -130,6 +170,7 @@ class Renderer:
                 role = self.prepare(h)
                 if not role.stack:
                     continue
+                needs_ca = needs_ca or tls_needs_ca(h)
                 spec = rolesmod.stack_spec(h, role)
                 if not spec.vpn_ip:
                     continue
@@ -139,35 +180,49 @@ class Renderer:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
                 util.warn("dns records: skipping %s: %s" % (h.name, e))
-        self._records = recs
-        return recs
+        self._records, self._needs_ca = recs, needs_ca
+
+    def dns_records(self):
+        self.scan()
+        return self._records
+
+    def ca_dir(self, host):
+        tls = host.cfg.get("tls") or {}
+        return self.fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")
 
     def tls_for(self, host):
+        if not tls_needs_ca(host):
+            return
         tls = host.cfg.get("tls") or {}
-        if "reverse-proxy" not in host.modules or not tls.get("auto", True):
-            return
         mf = host.module_files
-        if "reverse-proxy/tls_fullchain" in mf and "reverse-proxy/tls_privkey" in mf:
-            return
-        ca_dir = self.fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")
-        key, full = certs.ensure_host_cert(ca_dir, host.hostname, int(tls.get("days") or certs.DAYS))
+        key, full = certs.ensure_host_cert(self.ca_dir(host), host.hostname,
+                                           days=int(tls.get("cert_days") or certs.CERT_DAYS),
+                                           ca_days=int(tls.get("days") or certs.DAYS),
+                                           name_constraints=tls.get("name_constraints") or [])
         mf["reverse-proxy/tls_fullchain"] = util.read_bytes(full)
         mf["reverse-proxy/tls_privkey"] = util.read_bytes(key)
         host.module_settings["reverse-proxy"]["tls_fullchain"] = "fullchain.pem"
         host.module_settings["reverse-proxy"]["tls_privkey"] = "privkey.pem"
 
     def ca_cert(self, host):
-        """The fleet CA, embedded so the machine trusts it — if it exists."""
+        """The fleet CA, embedded so the machine trusts the others' services.
+        Created here when any host in the fleet gets a certificate from it,
+        so a bare host rendered first trusts it too; a fleet that never
+        issues a certificate has no CA and embeds nothing."""
         tls = host.cfg.get("tls") or {}
         if not tls.get("auto", True):
             return None
-        pem = os.path.join(self.fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
+        self.scan()
+        pem = os.path.join(self.ca_dir(host), "kiwiCA.pem")
+        if self._needs_ca:
+            _key, pem = certs.ensure_ca(self.ca_dir(host), int(tls.get("days") or certs.DAYS),
+                                        tls.get("name_constraints") or [])
         return util.read_bytes(pem) if os.path.isfile(pem) else None
 
     def bundle(self, host, role):
         if not role.stack:
             return None
-        records = self.dns_records()   # may re-resolve every host, this one included
+        records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
         spec = rolesmod.stack_spec(host, role, records)
         b = modmod.Renderer(self.ms).render(spec)
@@ -273,11 +328,7 @@ def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = []
     for h in hosts:
         errs += h.validate(roles)
-        if h.role in roles and h.target in TARGETS:
-            try:
-                rolesmod.resolve_settings(roles[h.role], h, ms)
-            except KiwiError as e:
-                errs.append(str(e))
+        errs += settings_errors(roles, ms, h)
     if errs and strict:
         if porcelain:
             print(json.dumps({"ok": False, "errors": errs}, indent=2))
@@ -322,10 +373,7 @@ def cmd_list(args):
     for h in fleet.hosts.values():
         errs = h.validate(roles)
         if not errs:
-            try:
-                rolesmod.resolve_settings(roles[h.role], h, ms)
-            except KiwiError as e:
-                errs.append(str(e))
+            errs = settings_errors(roles, ms, h)
         o = Outputs(out_dir, h)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
@@ -355,6 +403,7 @@ def cmd_show(args):
     if h.role in roles:
         try:
             rolesmod.resolve_settings(roles[h.role], h, ms)
+            errs += [p for p in [tls_problem(h)] if p]
             role_settings = dict(h.role_settings)
             for s in roles[h.role].settings:
                 if s.type == "secret":
@@ -435,14 +484,16 @@ def cmd_script(args):
     h = fleet.select([args.host])[0]
     check(fleet, roles, ms, [h])
     tc = make_tc(args)
-    sys.stdout.write(Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms).script(h)[0])
+    util.QUIET = True   # stdout is the script; the CA / certificate notes would end up inside it
+    script, _bundle = Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms).script(h)
+    sys.stdout.write(script)
 
 
 def cmd_ca(args):
     fleet, _roles, _ms = load(args, need_roles=False)
     tls = fleet.defaults.get("tls") or {}
     ca_dir = fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")
-    key, pem = certs.ensure_ca(ca_dir, int(tls.get("days") or certs.DAYS))
+    key, pem = certs.ensure_ca(ca_dir, int(tls.get("days") or certs.DAYS), tls.get("name_constraints") or [])
     if args.porcelain:
         print(json.dumps({"key": key, "cert": pem}))
         return

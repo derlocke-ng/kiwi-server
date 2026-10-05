@@ -13,6 +13,9 @@ services:
 {% if admin_token %}
       - ADMIN_TOKEN={{ admin_token }}
 {% endif %}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}

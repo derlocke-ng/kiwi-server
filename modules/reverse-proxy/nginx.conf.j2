@@ -42,13 +42,11 @@ http {
         ""      close;
     }
 
-{% for u in upstreams %}
-    upstream {{ u.name }} {
-        zone {{ u.name }} 64k;
-        server {{ u.server }};
-        keepalive 2;
-    }
-{% endfor %}
+    # Backends are resolved per request through docker's DNS (proxy_pass with a
+    # variable): nginx starts even when a backend does not exist yet — Nextcloud
+    # AIO creates its containers after the first setup — and follows a recreated one.
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    resolver_timeout 5s;
 
     # everything on 80 goes to https
     server {
@@ -71,7 +69,7 @@ http {
         listen 443 ssl;
         http2 on;
         server_name {{ s.server_name }};
-{% if s.hsts or (hsts and s.hsts is not sameas false) %}
+{% if s.hsts or (s.hsts is none and hsts) %}
         add_header Strict-Transport-Security "max-age=15768000; includeSubDomains; preload;" always;
 {% endif %}
         add_header Referrer-Policy "no-referrer" always;
@@ -85,7 +83,8 @@ http {
 {% endif %}
 
         location / {
-            proxy_pass {{ s.proxy_pass }};
+            set $backend {{ s.proxy_pass }};
+            proxy_pass $backend;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

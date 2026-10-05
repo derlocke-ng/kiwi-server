@@ -4,10 +4,19 @@
 # MTU: clamp TCP MSS to the path MTU so the WireGuard overhead cannot stall connections
 iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 {% endif %}
-# forwarding: established flows, no hairpin on eth0, docker subnet out through the tunnel
-iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED,NEW -j ACCEPT
+{% set dnat = enable_vpn_dnat or extra_dnat_rules or module_rules %}
+# forwarding (gluetun's policy is DROP): no hairpin on eth0; replies to what went out;
+# what the DNAT rules below redirect; the docker network out through the tunnel.
 iptables -A FORWARD -i eth0 -o eth0 -j REJECT
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+{% if dnat %}
+iptables -A FORWARD -i tun0 -m conntrack --ctstate DNAT -j ACCEPT
+{% endif %}
 iptables -A FORWARD -s {{ docker_subnet }} -o tun0 -j ACCEPT
+{% if has_gateway %}
+# LAN clients the gateway module routes through this container
+iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+{% endif %}
 {% if enable_vpn_dnat %}
 # mesh access: traffic for this node's mesh address on 80/443 goes to the reverse proxy
 iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p tcp --dport 443 -j DNAT --to-destination {{ proxy_ip }}:443

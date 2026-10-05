@@ -60,6 +60,8 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
         argv += ["--dest-karg-append", str(k)]
     argv += ["-f", "-o", out_iso, base]
     tc.run(argv, mounts=[util.parent(ign_path), util.parent(out_iso), cache_dir])
+    if os.path.isfile(out_iso):
+        os.chmod(out_iso, 0o600)   # it carries the Ignition config and every secret in it
     return out_iso
 
 
@@ -74,11 +76,18 @@ def resolve_netinst(sha256sums_text):
     raise KiwiError("no *-amd64-netinst.iso in SHA256SUMS")
 
 
+CURRENT_RELEASES = ("stable", "trixie")   # what debian-cd/current/ holds
+
+
 def debian_base_iso(tc, cfg, cache_dir):
     os.makedirs(cache_dir, exist_ok=True)
     url = cfg.get("iso_url")
     if url:
         name, sha = os.path.basename(url), None
+    elif str(cfg.get("release") or "stable") not in CURRENT_RELEASES:
+        raise KiwiError("debian.release is %s but only the current stable (%s) is at %s — "
+                        "set debian.iso_url to that release's netinst image"
+                        % (cfg.get("release"), "/".join(CURRENT_RELEASES), DEBIAN_BASE))
     else:
         r = tc.run(["curl", "-fsSL", "--retry", "3", DEBIAN_BASE + "SHA256SUMS"],
                    mounts=[cache_dir], capture=True)
@@ -158,7 +167,18 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
         raise KiwiError("%s: disk: is required to build an unattended ISO" % host.name)
     if os.path.isdir(workdir):
         shutil.rmtree(workdir)
-    os.makedirs(workdir)
+    os.makedirs(workdir, mode=0o700)
+    try:
+        _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir)
+    finally:
+        # the work directory holds a copy of the preseed (password hash, LUKS passphrase)
+        shutil.rmtree(workdir, ignore_errors=True)
+    if os.path.isfile(out_iso):
+        os.chmod(out_iso, 0o600)
+    return out_iso
+
+
+def _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
     title = "Install %s (kiwi-server, unattended: wipes %s)" % (host.hostname, host.cfg["disk"])
 
     initrd_gz = os.path.join(workdir, "initrd.gz")
@@ -176,7 +196,7 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
     # preseed.cfg at the root of the initrd is read before any question is asked
     tc.run(["gzip", "-d", "-f", initrd_gz], mounts=[workdir])
     initrd = os.path.join(workdir, "initrd")
-    shutil.copyfile(preseed_path, os.path.join(workdir, "preseed.cfg"))
+    util.write_text(os.path.join(workdir, "preseed.cfg"), util.read_text(preseed_path), 0o600)
     tc.run(["sh", "-c", "echo preseed.cfg | cpio -H newc -o -A -F initrd"], mounts=[workdir], cwd=workdir)
     tc.run(["gzip", "-9", "-f", initrd], mounts=[workdir])
 
@@ -205,5 +225,3 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
         os.unlink(out_iso)
     tc.run(argv, mounts=[util.parent(base_iso), util.parent(out_iso), workdir,
                          util.parent(preseed_path), files_dir])
-    shutil.rmtree(workdir, ignore_errors=True)
-    return out_iso

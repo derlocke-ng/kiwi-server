@@ -22,10 +22,15 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  admin_password: admin-password.j2
+
+outputs:
+  admin_password: { path: "{{ container_prefix }}-portainer/admin-password", mode: 0600 }
 
 storage:
   volumes: [portainer_data]
-  bind_mounts: []
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-portainer", type: dir, required: true }
 
 urls:
   - "Portainer: https://{{ portainer_hostname or 'portainer.' ~ hostname }} or https://127.0.0.1:9443 on the machine"
@@ -40,6 +45,11 @@ nginx:
   comment: Portainer
 
 settings:
+  - key: admin_password
+    type: secret
+    label: Admin password
+    help: "Set at the first start (user admin), so the first-run page never waits open on an unattended machine. Empty: Portainer asks on first visit — within five minutes of starting."
+    default: ""
   - key: portainer_hostname
     label: Hostname
     help: "Empty: portainer.<hostname>."

@@ -23,15 +23,13 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
-  custom_list: custom.list.j2
 
-outputs:
-  custom_list: { path: "{{ container_prefix }}-pihole/etc-pihole/hosts/custom.list", mode: 0644 }
+# the fleet's DNS records go in as FTLCONF_dns_hosts (pihole.toml dns.hosts):
+# Pi-hole 6 regenerates hosts/custom.list itself, a file put there is ignored
 
 storage:
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-pihole", type: dir, required: true }
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-pihole/hosts", type: dir, required: true }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-dnsmasq.d", type: dir, required: true }
 
 host_integration:
@@ -39,7 +37,7 @@ host_integration:
   disable_resolved_stub: true
 
 urls:
-  - "Pi-hole admin: http://{{ pihole_hostname or 'pihole.' ~ hostname }}/admin (through the reverse proxy) or http://<this host>:{{ web_ui_port }}/admin (when the web UI is exposed)"
+  - "Pi-hole admin: https://{{ pihole_hostname or 'pihole.' ~ hostname }}/admin (through the reverse proxy){% if expose_web_ui %}, http://{{ web_ui_bind or '<this host>' }}:{{ web_ui_port }}/admin{% endif %}"
 
 nginx:
   servers:
@@ -64,10 +62,41 @@ settings:
   - key: expose_web_ui
     type: bool
     label: Publish the web UI on the host
+    help: "Plain HTTP on web_ui_bind:web_ui_port. The reverse proxy serves the admin page over TLS at pihole.<hostname> anyway."
     default: false
+  - key: web_ui_bind
+    label: Web UI bind address
+    help: "127.0.0.1 (reach it with ssh -L), or 0.0.0.0 for the whole LAN."
+    default: 127.0.0.1
   - key: web_ui_port
     type: int
     default: 8080
+  - key: dhcp_enabled
+    type: bool
+    group: DHCP
+    label: Be the LAN's DHCP server
+    help: "Pi-hole hands out the leases (with the dhcp-relay module, since Pi-hole sits in a bridge network). Turn the router's DHCP server off."
+    default: false
+  - key: dhcp_start
+    group: DHCP
+    label: First address
+    placeholder: 192.168.1.100
+    default: ""
+  - key: dhcp_end
+    group: DHCP
+    label: Last address
+    placeholder: 192.168.1.250
+    default: ""
+  - key: dhcp_router
+    group: DHCP
+    label: Gateway handed to clients
+    help: "The LAN router, or this machine's LAN address when the gateway module routes the LAN through the VPN."
+    placeholder: 192.168.1.1
+    default: ""
+  - key: dhcp_lease_time
+    group: DHCP
+    label: Lease time
+    default: 24h
   - key: pihole_hostname
     label: Admin hostname
     help: "Empty: pihole.<hostname>. Served by the reverse proxy when there is one."
@@ -88,6 +117,12 @@ settings:
     label: Pi-hole 5 variables
     help: Emit WEBPASSWORD / PIHOLE_DNS_ / DNSMASQ_LISTENING for a pre-6 image.
     default: false
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: "KEY=value, e.g. FTLCONF_dns_domainNeeded=true — any Pi-hole 6 setting as FTLCONF_<section>_<key>."
+    default: {}
   - key: image
     group: Advanced
     default: pihole/pihole:latest

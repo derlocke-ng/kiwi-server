@@ -16,6 +16,9 @@ services:
       - WG_DEFAULT_DNS={{ server_ip }}
       - WG_DEFAULT_ADDRESS={{ wg_default_address }}
       - WG_MTU={{ mtu }}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}

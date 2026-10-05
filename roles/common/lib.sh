@@ -40,10 +40,15 @@ ks_apt() { # package...
 }
 
 # ---- files ----------------------------------------------------------------------
+ks_parent_dir() { # PATH   — the parent exists afterwards; an existing one keeps its mode
+    local d
+    d=$(dirname "$1")
+    [[ -d $d ]] || install -d -m 0755 "$d"
+}
 ks_file() { # KEY DEST [MODE] [OWNER]   — write a file embedded by the generator
     local key=$1 dest=$2 mode=${3:-0600} owner=${4:-root:root}
     [[ -n ${KS_FILES[$key]:-} ]] || ks_die "no embedded file for setting '$key'"
-    install -d -m 0755 "$(dirname "$dest")"
+    ks_parent_dir "$dest"
     printf '%s' "${KS_FILES[$key]}" | base64 -d > "$dest.tmp"
     chmod "$mode" "$dest.tmp"
     chown "$owner" "$dest.tmp"
@@ -53,7 +58,7 @@ ks_has_file() { [[ -n ${KS_FILES[$1]:-} ]]; }
 
 ks_write() { # DEST [MODE] [OWNER]   — content on stdin
     local dest=$1 mode=${2:-0644} owner=${3:-root:root}
-    install -d -m 0755 "$(dirname "$dest")"
+    ks_parent_dir "$dest"
     cat > "$dest.tmp"
     chmod "$mode" "$dest.tmp"
     chown "$owner" "$dest.tmp"
@@ -85,6 +90,12 @@ ks_ensure_user() { # NAME [UID]
 }
 ks_add_to_group() { # USER GROUP
     getent group "$2" >/dev/null || return 0
+    # Fedora CoreOS keeps the docker group in /usr/lib/group; getent sees it
+    # (nss altfiles) but usermod only reads /etc/group — copy the line over.
+    if ! grep -q "^$2:" /etc/group && grep -q "^$2:" /usr/lib/group 2>/dev/null; then
+        grep "^$2:" /usr/lib/group >> /etc/group
+    fi
+    id -nG "$1" | tr ' ' '\n' | grep -qx "$2" && return 0
     usermod -aG "$2" "$1"
 }
 
@@ -219,19 +230,38 @@ ks_stack_host_prep() {
     fi
 }
 
+ks_stack_dir_is_data() { # DIR   — true when no rendered file lives under it
+    local entry
+    for entry in "${KS_STACK_FILES[@]}"; do
+        [[ ${entry%:*} == "$1"/* ]] && return 1
+    done
+    return 0
+}
+
 ks_stack_unpack() {
+    # Everything the generator rendered (compose file, module configs, gw.sh)
+    # is root's: root runs the stack and the host units execute some of these
+    # files. Data directories — where containers write — belong to the service
+    # user, whose uid the containers that drop privileges (PUID, sftp) use.
+    # An absolute directory that already exists (a mounted data disk) is left
+    # exactly as it is.
     local dd=$KS_STACK_DIR u=$KS_STACK_USER d entry rel mode unit
-    install -d -m 0750 "$dd"
+    install -d -m 0755 "$dd"
+    chown root:root "$dd"
     for d in "${KS_STACK_DIRS[@]}"; do
-        if [[ $d == /* ]]; then install -d -m 0755 "$d"; else install -d -m 0755 "$dd/$d"; fi
+        if [[ $d == /* ]]; then
+            [[ -d $d ]] || install -d -m 0755 -o "$u" -g "$u" "$d"
+        elif [[ -d $dd/$d ]]; then
+            ks_stack_dir_is_data "$d" && chown "$u:$u" "$dd/$d"
+        elif ks_stack_dir_is_data "$d"; then
+            install -d -m 0755 -o "$u" -g "$u" "$dd/$d"
+        else
+            install -d -m 0755 "$dd/$d"
+        fi
     done
     for entry in "${KS_STACK_FILES[@]}"; do
         rel=${entry%:*}; mode=${entry##*:}
-        ks_file "stack/$rel" "$dd/$rel" "$mode" "$u:$u"
-    done
-    chown "$u:$u" "$dd"
-    for d in "${KS_STACK_DIRS[@]}"; do
-        [[ $d == /* ]] || chown "$u:$u" "$dd/$d"
+        ks_file "stack/$rel" "$dd/$rel" "$mode" root:root
     done
     for unit in "${KS_STACK_UNITS[@]}"; do
         ks_file "unit/$unit" "/etc/systemd/system/$unit" 0644
@@ -243,6 +273,7 @@ ks_stack_unpack() {
         echo "STACK_USER=$u"
         echo "STACK_PREFIX=$KS_STACK_PREFIX"
         echo "STACK_VPN_CONTAINER=$KS_STACK_VPN_CONTAINER"
+        echo "STACK_VPN_DEPENDENTS=\"${KS_STACK_VPN_DEPENDENTS[*]}\""
         echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
         echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
     } | ks_write "$KS_STACK_ENV" 0644
@@ -258,15 +289,26 @@ set -euo pipefail
 . /etc/kiwi-server/stack.env
 cd "$STACK_DIR"
 compose() { docker compose --file "$STACK_DIR/docker-compose.yml" "$@"; }
-host_units() { local u; for u in $STACK_UNITS; do systemctl "$1" "$u" 2>/dev/null || true; done; }
+# The host units (kn-gateway.service …) are ordered After=kiwi-stack.service,
+# and `start` is kiwi-stack.service's own ExecStart: a blocking restart from
+# here would wait for itself. --no-block queues the restart; systemd runs it
+# once this service is up.
+host_units() { local verb=$1 u; shift; for u in $STACK_UNITS; do systemctl "$verb" "$@" "$u" 2>/dev/null || true; done; }
+vpn_restart() {
+    [[ -n ${STACK_VPN_CONTAINER:-} ]] || return 0
+    # containers that share the VPN client's network namespace must follow it,
+    # or they are left in a namespace that no longer exists
+    # shellcheck disable=SC2086
+    docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
+}
 case "${1:-}" in
-    start)   compose up --detach --remove-orphans; host_units restart ;;
+    start)   compose up --detach --remove-orphans; host_units restart --no-block ;;
     stop)    host_units stop; compose down ;;
     restart) "$0" stop; "$0" start ;;
-    update)  compose pull; compose up --detach --remove-orphans; docker image prune -f >/dev/null; host_units restart ;;
-    status)  compose ps; host_units status ;;
+    update)  compose pull; compose up --detach --remove-orphans; docker image prune -f >/dev/null; host_units restart --no-block ;;
+    status)  compose ps; host_units status --no-pager ;;
     logs)    compose logs --follow "${@:2}" ;;
-    vpn-restart) [[ -n ${STACK_VPN_CONTAINER:-} ]] && docker restart "$STACK_VPN_CONTAINER" ;;
+    vpn-restart) vpn_restart ;;
     *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
 esac
 KIWI_STACK
@@ -296,6 +338,8 @@ UNIT
         ks_unit kiwi-stack-vpn-restart.service <<UNIT
 [Unit]
 Description=Kiwi Server: restart the VPN client (new exit address)
+After=docker.service kiwi-stack.service
+Requires=docker.service
 
 [Service]
 Type=oneshot
@@ -318,6 +362,8 @@ UNIT
         ks_unit kiwi-stack-update.service <<UNIT
 [Unit]
 Description=Kiwi Server: pull new images and restart the stack
+After=docker.service kiwi-stack.service
+Requires=docker.service
 
 [Service]
 Type=oneshot
@@ -355,9 +401,13 @@ ks_stack_apply() {
     systemctl daemon-reload
     ks_say "starting the stack (${KS_STACK_MODULES[*]}) — the first start pulls every image"
     ks_stack_units
-    systemctl enable --now kiwi-stack.service
+    # restart, not `enable --now`: on a re-run the service is already active and
+    # the containers must pick up the replaced files (a bind mount keeps the old inode)
+    systemctl enable -q kiwi-stack.service
+    systemctl restart kiwi-stack.service
     for unit in "${KS_STACK_UNITS[@]}"; do
-        systemctl enable --now "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        systemctl enable -q "$unit"
+        systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
     done
     ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|logs"
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done

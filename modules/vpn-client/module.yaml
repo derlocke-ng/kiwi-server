@@ -100,6 +100,12 @@ settings:
     label: Clamp TCP MSS to PMTU
     help: Fixes stalls on paths where the WireGuard MTU bites (the live master has it on).
     default: false
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
   - key: image
     group: Advanced
     default: qmcgaw/gluetun

@@ -32,6 +32,9 @@ class Setting:
         # a secret the renderer makes up when it is empty: derived from the
         # fleet's seed, so every render gives the same value (see config.Fleet.seed)
         self.generate = bool(d.get("generate", False)) and self.type == "secret"
+        # a file setting that, left empty, is looked for at a conventional path
+        # ({hostname} and {name} are filled in): what `kiwi-server enroll` writes
+        self.fallback_file = str(d.get("fallback_file") or "") if self.type == "file" else ""
         if "default" in d:
             self.default = d["default"]
         else:
@@ -43,7 +46,7 @@ class Setting:
         return {"key": self.key, "type": self.type, "label": self.label, "help": self.help,
                 "required": self.required, "options": self.options, "targets": self.targets,
                 "default": self.default, "placeholder": self.placeholder, "group": self.group,
-                "generate": self.generate}
+                "generate": self.generate, "fallback_file": self.fallback_file}
 
 
 def coerce(setting, value, where):

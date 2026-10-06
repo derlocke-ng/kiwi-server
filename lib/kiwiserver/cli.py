@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import router as routermod, toolchain as tcmod, util
+from . import remote, router as routermod, toolchain as tcmod, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -124,12 +124,29 @@ def settings_errors(roles, ms, host):
     """Resolve the host's role and module settings; the errors, as strings."""
     if host.role not in roles or host.target not in TARGETS:
         return []
+    role = roles[host.role]
     try:
-        rolesmod.resolve_settings(roles[host.role], host, ms)
+        rolesmod.resolve_settings(role, host, ms)
     except KiwiError as e:
         return [str(e)]
     p = tls_problem(host)
-    return [p] if p else []
+    if p:
+        return [p]
+    return stack_errors(ms, host, role)
+
+
+def stack_errors(ms, host, role):
+    """The stack rendered once and thrown away: a module's own validate:
+    rules, a mesh address a module needs, two services on one port, a
+    compose key the quadlet converter does not know — the errors `render`
+    and `apply` would stop on, so `validate` reports them too."""
+    if not role.stack:
+        return []
+    try:
+        modmod.Renderer(ms).render(rolesmod.stack_spec(host, role))
+    except KiwiError as e:
+        return [str(e)]
+    return []
 
 
 def tls_needs_ca(host):
@@ -544,6 +561,134 @@ def cmd_openwrt(args):
     sys.stdout.write(routermod.openwrt_script(domain, master_ip, mesh, wg=wg, via=via, full=args.full, name=args.name))
 
 
+# ---- managing machines that run ----------------------------------------------------
+
+def cmd_apply(args):
+    """Re-render a host and run the role script on it: settings changed, a
+    certificate renewed, a module added — without a reinstall."""
+    fleet, roles, ms = load(args)
+    hosts = fleet.select(args.hosts)
+    if not hosts:
+        raise KiwiError("which host? kiwi-server apply <fleet> <host...>")
+    if args.ssh and len(hosts) != 1:
+        raise KiwiError("--ssh goes with exactly one host")
+    check(fleet, roles, ms, hosts)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms)
+    failed = []
+    for h in hosts:
+        tgt = remote.target(h, args.ssh)
+        try:
+            script, _b = r.script(h)
+            util.say("%s: sending the role script to %s" % (h.name, tgt))
+            remote.put(tgt, script.encode(), "/var/lib/kiwi-server/role.sh", "0700")
+            if args.no_run:
+                util.say("%s: in place at /var/lib/kiwi-server/role.sh — run it with: sudo bash /var/lib/kiwi-server/role.sh --force" % h.name)
+                continue
+            util.say("%s: applying (the output below is the machine's)" % h.name)
+            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force")
+            if rc != 0:
+                raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
+            util.say("%s: applied" % h.name)
+        except KiwiError as e:
+            failed.append(h.name)
+            print("error: %s: %s" % (h.name, e), file=sys.stderr)
+    if failed:
+        raise KiwiError("failed: %s" % ", ".join(failed))
+
+
+def cmd_status(args):
+    """What a running machine says: when its role was applied, and what its
+    stack is doing."""
+    fleet, roles, ms = load(args)
+    hosts = fleet.select(args.hosts)
+    if args.ssh and len(hosts) != 1:
+        raise KiwiError("--ssh goes with exactly one host")
+    out = []
+    for h in hosts:
+        tgt = remote.target(h, args.ssh)
+        script = ("echo \"applied: $(cat /var/lib/kiwi-server/role.done 2>/dev/null || echo never)\"; "
+                  "echo \"uptime: $(uptime -p 2>/dev/null || uptime)\"; "
+                  "if [ -x /usr/local/bin/kiwi-stack ]; then kiwi-stack status 2>&1 || true; else echo 'no stack'; fi")
+        try:
+            text = remote.run(tgt, script).decode(errors="replace")
+            out.append({"host": h.name, "target": tgt, "ok": True, "output": text})
+        except KiwiError as e:
+            out.append({"host": h.name, "target": tgt, "ok": False, "output": str(e)})
+    if args.porcelain:
+        print(json.dumps({"hosts": out}, indent=2))
+        return
+    for o in out:
+        print("== %s (%s)%s" % (o["host"], o["target"], "" if o["ok"] else " — unreachable"))
+        print("   " + o["output"].rstrip().replace("\n", "\n   "))
+
+
+def _master_of(fleet, roles, ms, name=None):
+    for h in fleet.hosts.values():
+        if name and h.name != name:
+            continue
+        if h.role in roles and roles[h.role].node_type == "master":
+            errs = h.validate(roles) or settings_errors(roles, ms, h)
+            if errs:
+                raise KiwiError("%s: the master is not valid: %s" % (h.name, "; ".join(errs)))
+            return h
+    raise KiwiError("no master in the fleet%s" % (" named %s" % name if name else ""))
+
+
+def cmd_enroll(args):
+    """A WireGuard client on the master's wg-easy, by API: a node (its config
+    lands where the fleet file looks for it), a phone, a laptop, a router."""
+    fleet, roles, ms = load(args)
+    master = _master_of(fleet, roles, ms, args.master)
+    vs = master.module_settings.get("vpn-server") or {}
+    if not vs.get("wg_password"):
+        raise KiwiError("%s: vpn-server.wg_password is needed to talk to wg-easy" % master.name)
+    name = args.name
+    host = fleet.hosts.get(name)
+    client_name = host.hostname if host else name
+    groups = vs.get("groups") or {}
+    if args.group and args.group not in groups:
+        raise KiwiError("no client group %r on %s (have: %s)" % (args.group, master.name, ", ".join(groups) or "none"))
+    mesh = (master.role_settings or {}).get("mesh_subnet") or "10.8.0.0/16"
+
+    def enroll(url):
+        api = wgeasy.WgEasy(url, vs["wg_password"]).login()
+        c = api.client(client_name)
+        if c is None:
+            util.say("creating client %s on %s" % (client_name, master.name))
+            c = api.create(client_name)
+        elif not args.existing:
+            raise KiwiError("%s already has a client named %s — --existing fetches its config" % (master.name, client_name))
+        if args.address or args.group:
+            addr = args.address or wgeasy.next_address(groups[args.group]["subnet"], [x.get("address") for x in api.clients()],
+                                                      exclude=[c.get("address")])
+            if addr != c.get("address"):
+                util.say("address %s (group %s)" % (addr, args.group or "given"))
+                api.set_address(c["id"], addr)
+        return api.configuration(c["id"])
+
+    if args.api:
+        text = enroll(args.api)
+    else:
+        with remote.Tunnel(remote.target(master, args.ssh), 51821) as url:
+            text = enroll(url)
+    if args.split:
+        text = wgeasy.split_tunnel(text, mesh)
+    if host:
+        dest = fleet.resolve_path("secrets/%s.conf" % host.hostname)
+    else:
+        dest = fleet.resolve_path("secrets/devices/%s.conf" % name)
+    util.write_text(dest, text if text.endswith("\n") else text + "\n", 0o600)
+    util.say("%s" % dest)
+    if host:
+        util.say("%s's vpn-client picks it up by itself (wireguard_config falls back to secrets/<hostname>.conf) — "
+                 "kiwi-server render %s" % (host.name, os.path.basename(fleet.path)))
+    if args.qr:
+        if util.which("qrencode"):
+            subprocess.run(["qrencode", "-t", "ansiutf8"], input=text.encode())
+        else:
+            util.warn("qrencode is not installed — the wg-easy page shows the QR code too")
+
+
 def cmd_ca(args):
     fleet, _roles, _ms = load(args, need_roles=False)
     tls = fleet.defaults.get("tls") or {}
@@ -763,6 +908,10 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
+  kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
+  kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
+  kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
+                                                a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -812,6 +961,20 @@ def build_parser():
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")
     s.add_argument("--via", metavar="NODE|IP", help="no tunnel: a static route to a gateway node on the LAN")
     s.add_argument("--name", default="kiwi", help="the interface and zone name on the router (default kiwi)")
+    s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
+    s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s = sub("status", cmd_status); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("enroll", cmd_enroll); s.add_argument("fleet"); s.add_argument("name", help="a fleet host, or a device name")
+    s.add_argument("--group", help="a client group of the master (its subnet decides the address)")
+    s.add_argument("--address", help="the mesh address to give the client")
+    s.add_argument("--split", action="store_true", help="only the mesh through the tunnel (devices that keep their own internet)")
+    s.add_argument("--existing", action="store_true", help="fetch the config of a client that already exists")
+    s.add_argument("--master", help="which master, when the fleet has more than one")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
+    s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # wg-easy reachable directly (tests)
+    s.add_argument("--qr", action="store_true", help="print the config as a QR code (qrencode)")
     s = sub("backup", cmd_backup); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")

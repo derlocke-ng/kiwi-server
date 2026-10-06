@@ -711,13 +711,20 @@ class Window(Adw.ApplicationWindow):
         self.b_host_build.connect("clicked", lambda *_: self.confirm_build(self.current_scope))
         self.b_host_script = Gtk.Button(icon_name="text-x-script-symbolic", tooltip_text="Show the role script")
         self.b_host_script.connect("clicked", lambda *_: self.show_script())
+        self.b_host_apply = Gtk.Button(icon_name="emblem-synchronizing-symbolic",
+                                       tooltip_text="Apply: send the role script to the running machine over SSH and run it")
+        self.b_host_apply.connect("clicked", lambda *_: self.confirm_apply(self.current_scope))
+        self.b_host_status = Gtk.Button(icon_name="dialog-information-symbolic",
+                                        tooltip_text="Status: what the running machine says about its stack")
+        self.b_host_status.connect("clicked", lambda *_: self.show_status())
         self.b_host_folder = Gtk.Button(icon_name="folder-symbolic", tooltip_text="Open the output folder")
         self.b_host_folder.connect("clicked", lambda *_: self.open_folder())
         self.b_host_stack = Gtk.Button(icon_name="view-list-symbolic", tooltip_text="Show the rendered docker-compose.yml")
         self.b_host_stack.connect("clicked", lambda *_: self.show_stack())
         self.b_host_remove = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove this host")
         self.b_host_remove.connect("clicked", lambda *_: self.remove_host_dialog())
-        for b in (self.b_host_build, self.b_host_render, self.b_host_script, self.b_host_stack, self.b_host_folder):
+        for b in (self.b_host_build, self.b_host_render, self.b_host_script, self.b_host_stack, self.b_host_folder,
+                  self.b_host_apply, self.b_host_status):
             self.content_hb.pack_end(b)
         self.content_hb.pack_start(self.b_host_remove)
         content_tb.add_top_bar(self.content_hb)
@@ -984,7 +991,7 @@ class Window(Adw.ApplicationWindow):
             child = nxt
         is_host = scope not in (None, "defaults")
         for b in (self.b_host_render, self.b_host_build, self.b_host_script, self.b_host_stack,
-                  self.b_host_folder, self.b_host_remove):
+                  self.b_host_folder, self.b_host_remove, self.b_host_apply, self.b_host_status):
             b.set_visible(is_host)
         if scope is None or not self.doc.path:
             self.editor_holder.append(self.empty)
@@ -1088,7 +1095,8 @@ class Window(Adw.ApplicationWindow):
     # ---- actions ----
     def set_actions_sensitive(self):
         ok = bool(self.doc.path) and not self.busy
-        for b in (self.b_build, self.b_render, self.b_host_render, self.b_host_build, self.b_host_script):
+        for b in (self.b_build, self.b_render, self.b_host_render, self.b_host_build, self.b_host_script,
+                  self.b_host_apply, self.b_host_status):
             b.set_sensitive(ok)
         self.mark_dirty()
 
@@ -1126,6 +1134,43 @@ class Window(Adw.ApplicationWindow):
                     self.spawn(["build", self.doc.path] + ([host] if host else []),
                                "Building %s…" % (host or "every host")))
         dlg.present(self)
+
+    def confirm_apply(self, host):
+        if not self.ensure_saved():
+            return
+        user = self.doc.get(host, ("admin", "user")) or self.doc.get("defaults", ("admin", "user")) or "?"
+        hostname = self.doc.get(host, ("hostname",)) or host
+        dlg = Adw.AlertDialog(
+            heading="Apply %s?" % host,
+            body="The role script is re-rendered, sent to %s@%s over SSH (your key or agent must open the "
+                 "connection; nothing asks for a password) and run as root with --force: the stack is rewritten "
+                 "and restarted. Secrets and modules that changed take effect; the disk is not touched." % (user, hostname))
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("apply", "Apply")
+        dlg.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda _d, r: r == "apply" and
+                    self.spawn(["apply", self.doc.path, host], "Applying %s…" % host))
+        dlg.present(self)
+
+    def show_status(self):
+        if not self.ensure_saved():
+            return
+        scope = self.current_scope
+        self.set_busy(True, "Asking %s…" % scope)
+
+        def worker():
+            rc, out, err = run_cli(self.cli, ["status", self.doc.path, scope])
+            GLib.idle_add(done, rc, out, err)
+
+        def done(rc, out, err):
+            self.set_busy(False, "")
+            if rc != 0 and not out.strip():
+                self.alert("Cannot reach %s" % scope, err or out)
+            else:
+                TextDialog("%s — status" % scope, out + (("\n" + err) if err.strip() else "")).present(self)
+            return False
+        threading.Thread(target=worker, daemon=True).start()
 
     def show_script(self):
         if not self.ensure_saved():

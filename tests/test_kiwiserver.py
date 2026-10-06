@@ -4,13 +4,17 @@ Anything that needs a tool (shellcheck, butane, xorriso, cpio) uses it when it
 is on $PATH and is skipped otherwise, so the suite runs anywhere; CI installs
 all of them. No test touches the network.
 """
+import http.server
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -19,7 +23,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 
 import yaml  # noqa: E402
 
-from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, roles as rolesmod, router  # noqa: E402
+from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -1190,6 +1194,352 @@ class TestBackup(Base):
             return r
         with self.assertRaisesRegex(KiwiError, "No route to host"):
             backup.store_remote(b"x", "core@m1.home", "fleet-x.tar.enc", runner=failing)
+
+
+class FakeWgEasy:
+    """The weejewel wg-easy API, as much of it as enroll uses: a session
+    cookie for the password, clients as JSON, an address change, the client
+    config as text. In-process, on a loopback port, no network."""
+
+    def __init__(self, password="w"):
+        self.password = password
+        self.clients = []
+        self.calls = []
+        fake = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_a):
+                pass
+
+            def _body(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                return json.loads(self.rfile.read(n) or b"null") if n else None
+
+            def _send(self, code, payload=b"", ctype="application/json", cookie=None):
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                if cookie:
+                    self.send_header("Set-Cookie", cookie)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def _authed(self):
+                return "connect.sid=ok" in (self.headers.get("Cookie") or "")
+
+            def do_POST(self):
+                body = self._body()
+                fake.calls.append(("POST", self.path, body))
+                if self.path == "/api/session":
+                    if (body or {}).get("password") != fake.password:
+                        return self._send(401, b'{"error":"Incorrect password"}')
+                    return self._send(200, b'{"success":true}', cookie="connect.sid=ok; Path=/; HttpOnly")
+                if not self._authed():
+                    return self._send(401, b'{"error":"Not Logged In"}')
+                if self.path == "/api/wireguard/client":
+                    n = len(fake.clients) + 2
+                    fake.clients.append({"id": "id-%d" % n, "name": body["name"], "address": "10.8.0.%d" % n,
+                                         "enabled": True, "publicKey": "PUB-%d" % n})
+                    return self._send(200, b'{"success":true}')
+                self._send(404, b'{"error":"no such route"}')
+
+            def do_GET(self):
+                fake.calls.append(("GET", self.path, None))
+                if not self._authed():
+                    return self._send(401, b'{"error":"Not Logged In"}')
+                if self.path == "/api/wireguard/client":
+                    return self._send(200, json.dumps(fake.clients).encode())
+                m = re.match(r"^/api/wireguard/client/([^/]+)/configuration$", self.path)
+                c = fake.by_id(m.group(1)) if m else None
+                if c is None:
+                    return self._send(404, b'{"error":"no such route"}')
+                text = ("[Interface]\nPrivateKey = PRIV-%s\nAddress = %s/24\nDNS = 10.8.0.1\n\n[Peer]\n"
+                        "PublicKey = SERVERPUB\nPresharedKey = PSK\nAllowedIPs = 0.0.0.0/0, ::/0\n"
+                        "PersistentKeepalive = 25\nEndpoint = vpn.example.org:51820\n") % (c["id"], c["address"])
+                self._send(200, text.encode(), ctype="text/plain")
+
+            def do_PUT(self):
+                body = self._body()
+                fake.calls.append(("PUT", self.path, body))
+                if not self._authed():
+                    return self._send(401, b'{"error":"Not Logged In"}')
+                m = re.match(r"^/api/wireguard/client/([^/]+)/address$", self.path)
+                c = fake.by_id(m.group(1)) if m else None
+                if c is None:
+                    return self._send(404, b'{"error":"no such route"}')
+                c["address"] = body["address"]
+                self._send(200, b'{"success":true}')
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def by_id(self, cid):
+        for c in self.clients:
+            if c["id"] == cid:
+                return c
+        return None
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(5)
+
+
+class TestRemote(Base):
+    class R:
+        def __init__(self, rc=0, out=b"", err=b""):
+            self.returncode, self.stdout, self.stderr = rc, out, err
+
+    def test_target_run_and_put(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        self.assertEqual(remote.target(f.hosts["a"]), "core@a.kiwi")
+        self.assertEqual(remote.target(f.hosts["a"], "root@10.0.0.5"), "root@10.0.0.5")
+        calls = []
+
+        def runner(argv, input=None, capture_output=True):
+            calls.append((argv, input))
+            return self.R(0, b"hello\n")
+        self.assertEqual(remote.run("core@a.kiwi", "echo hello", runner=runner), b"hello\n")
+        argv, data = calls[-1]
+        self.assertEqual(argv[:3], ["ssh", "-o", "BatchMode=yes"])
+        self.assertEqual(argv[-2:], ["core@a.kiwi", "sudo sh -c 'echo hello'"])
+        self.assertIsNone(data)
+        remote.put("core@a.kiwi", b"#!/bin/sh\n", "/var/lib/kiwi-server/role.sh", "0700", runner=runner)
+        argv, data = calls[-1]
+        self.assertEqual(data, b"#!/bin/sh\n")
+        script = argv[-1]
+        self.assertIn("install -d -m 0700", script)
+        self.assertIn("cat > /var/lib/kiwi-server/role.sh.tmp", script)
+        self.assertIn("chmod 0700 /var/lib/kiwi-server/role.sh.tmp", script)
+        self.assertIn("mv -f /var/lib/kiwi-server/role.sh.tmp /var/lib/kiwi-server/role.sh", script)
+
+        def failing(argv, input=None, capture_output=True):
+            return self.R(255, b"", b"ssh: connect to host a.kiwi port 22: No route to host\n")
+        with self.assertRaisesRegex(KiwiError, r"core@a\.kiwi: ssh: connect .* No route to host"):
+            remote.run("core@a.kiwi", "true", runner=failing)
+
+        def stream(argv, stdin=None):
+            calls.append((argv, stdin))
+            return self.R(3)
+        self.assertEqual(remote.run_stream("core@a.kiwi", "bash /x --force", runner=stream), 3)
+        argv, stdin = calls[-1]
+        self.assertEqual(argv[-1], "sudo sh -c 'bash /x --force'")
+        self.assertEqual(stdin, subprocess.DEVNULL)
+
+        def missing(argv, **_kw):
+            raise FileNotFoundError("ssh")
+        with self.assertRaisesRegex(KiwiError, "ssh is not installed"):
+            remote.run("core@a.kiwi", "true", runner=missing)
+
+    def test_tunnel_with_a_fake_ssh(self):
+        fakebin = os.path.join(self.tmp, "bin")
+        ssh = os.path.join(fakebin, "ssh")
+        write(ssh, "#!/usr/bin/env python3\n"
+                   "import socket, sys, time\n"
+                   "if 'denied@x' in sys.argv:\n"
+                   "    sys.stderr.write('core@x: Permission denied (publickey).\\n'); sys.exit(255)\n"
+                   "spec = sys.argv[sys.argv.index('-L') + 1]\n"
+                   "s = socket.socket(); s.bind(('127.0.0.1', int(spec.split(':')[0]))); s.listen(1)\n"
+                   "time.sleep(60)\n")
+        os.chmod(ssh, 0o755)
+        with mock.patch.dict(os.environ, {"PATH": fakebin + os.pathsep + os.environ.get("PATH", "")}):
+            with remote.Tunnel("core@x", 51821) as url:
+                self.assertRegex(url, r"^http://127\.0\.0\.1:\d+$")
+                port = int(url.rsplit(":", 1)[1])
+                socket_mod = __import__("socket")
+                c = socket_mod.create_connection(("127.0.0.1", port), timeout=2)
+                c.close()
+            with self.assertRaisesRegex(KiwiError, "tunnel to port 51821 failed: .*Permission denied"):
+                with remote.Tunnel("denied@x", 51821):
+                    pass
+
+    def test_next_address_and_split_tunnel(self):
+        self.assertEqual(wgeasy.next_address("10.8.2.0/24", []), "10.8.2.2")        # .1 is the server's
+        self.assertEqual(wgeasy.next_address("10.8.2.0/24", ["10.8.2.2/32", "10.8.2.3"]), "10.8.2.4")
+        self.assertEqual(wgeasy.next_address("10.8.2.0/24", ["10.8.2.2"], exclude=["10.8.2.3"]), "10.8.2.4")
+        with self.assertRaisesRegex(KiwiError, "no free address"):
+            wgeasy.next_address("10.8.2.0/30", ["10.8.2.2"])
+        conf = "[Interface]\nAddress = 10.8.3.2/24\n\n[Peer]\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = v:51820\n"
+        out = wgeasy.split_tunnel(conf, "10.8.0.0/16")
+        self.assertIn("AllowedIPs = 10.8.0.0/16\n", out)
+        self.assertNotIn("0.0.0.0/0", out)
+        self.assertIn("Endpoint = v:51820\n", out)
+        with self.assertRaisesRegex(KiwiError, "no AllowedIPs"):
+            wgeasy.split_tunnel("[Interface]\nAddress = 1.2.3.4\n", "10.8.0.0/16")
+
+
+class TestManage(Base):
+    """apply, status and enroll: the commands that talk to running machines,
+    here against a fake wg-easy and fake ssh runners."""
+
+    def run_cli(self, *args):
+        from io import StringIO
+        import contextlib
+        out, err = StringIO(), StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = cli.main(list(args))
+            except SystemExit as e:
+                rc = e.code
+        return rc, out.getvalue(), err.getvalue()
+
+    def manage_fleet(self, **master_over):
+        return self.fleet({"defaults": self.base_defaults(),
+                           "hosts": {"gate": {"role": "master", "master": self.master(**master_over)},
+                                     "sh3": {"role": "node", "node": {"preset": "minimal"}}}})
+
+    def test_enroll_a_node_then_devices(self):
+        api = FakeWgEasy("w")
+        self.addCleanup(api.stop)
+        f = self.manage_fleet()
+        # the node has no config yet: it does not even validate (no vpn_ip to derive)
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, cli.EXIT_INVALID)
+        self.assertIn("needs wireguard_config", err)
+        self.assertIn("kiwi-server enroll", err)
+        rc, out, err = self.run_cli("enroll", f.path, "sh3", "--api", api.url)
+        self.assertEqual(rc, 0, err)
+        dest = os.path.join(self.tmp, "secrets", "sh3.kiwi.conf")
+        self.assertTrue(os.path.isfile(dest))
+        self.assertEqual(oct(os.stat(dest).st_mode & 0o777), "0o600")
+        with open(dest) as fh:
+            conf = fh.read()
+        self.assertIn("Address = 10.8.0.2/24", conf)
+        self.assertIn("AllowedIPs = 0.0.0.0/0", conf)               # a node sends everything through the mesh
+        self.assertEqual([c["name"] for c in api.clients], ["sh3.kiwi"])   # the client is named after the host
+        self.assertEqual(api.calls[0], ("POST", "/api/session", {"password": "w"}))
+        self.assertNotIn(("PUT", "/api/wireguard/client/id-2/address", {"address": "10.8.0.2"}), api.calls)
+        # the fleet picks it up without a line in fleet.yaml: vpn_ip derived, the config embedded
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, 0, err)
+        rc, out, err = self.run_cli("script", f.path, "sh3")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("10.8.0.2", out)
+        import base64
+        self.assertIn(base64.b64encode(conf.encode()).decode(), out)
+        # twice is a mistake unless the config is only to be fetched again
+        rc, out, err = self.run_cli("enroll", f.path, "sh3", "--api", api.url)
+        self.assertEqual(rc, 1)
+        self.assertIn("already has a client named sh3.kiwi", err)
+        rc, out, err = self.run_cli("enroll", f.path, "sh3", "--api", api.url, "--existing", "--split")
+        self.assertEqual(rc, 0, err)
+        with open(dest) as fh:
+            self.assertIn("AllowedIPs = 10.8.0.0/16\n", fh.read())
+        self.assertEqual(len(api.clients), 1)
+        # a phone in the devices group gets the next address of that group's range
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--group", "devices", "--api", api.url)
+        self.assertEqual(rc, 0, err)
+        self.assertIn(("PUT", "/api/wireguard/client/id-3/address", {"address": "10.8.3.2"}), api.calls)
+        with open(os.path.join(self.tmp, "secrets", "devices", "phone.conf")) as fh:
+            self.assertIn("Address = 10.8.3.2/24", fh.read())
+        rc, out, err = self.run_cli("enroll", f.path, "laptop", "--group", "devices", "--api", api.url)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(api.by_id("id-4")["address"], "10.8.3.3")
+        rc, out, err = self.run_cli("enroll", f.path, "router", "--address", "10.8.4.10", "--api", api.url)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(api.by_id("id-5")["address"], "10.8.4.10")
+        rc, out, err = self.run_cli("enroll", f.path, "x", "--group", "nope", "--api", api.url)
+        self.assertEqual(rc, 1)
+        self.assertIn("no client group 'nope'", err)
+        self.assertIn("devices", err)
+
+    def test_enroll_refusals(self):
+        api = FakeWgEasy("other")
+        self.addCleanup(api.stop)
+        f = self.manage_fleet()
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", api.url)
+        self.assertEqual(rc, 1)
+        self.assertIn("401", err)
+        self.assertIn("Incorrect password", err)
+        self.assertEqual(api.clients, [])
+        f = self.manage_fleet(**{"vpn-server": {"wg_host": "v"}})
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", api.url)
+        self.assertEqual(rc, 1)
+        self.assertIn("wg_password", err)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", api.url)
+        self.assertEqual(rc, 1)
+        self.assertIn("no master in the fleet", err)
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", "http://127.0.0.1:1")
+        self.assertEqual(rc, 1)
+
+    def test_apply_and_status_through_fake_ssh(self):
+        write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"),
+              "[Interface]\nPrivateKey = k\nAddress = 10.8.0.7/24\n\n[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/0\nEndpoint = v:51820\n")
+        f = self.manage_fleet()
+        calls = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            calls.append(("run", tgt, script, data))
+            if "role.done" in script:
+                if tgt.endswith("gate.kiwi"):
+                    raise KiwiError("%s: ssh: connect to host gate.kiwi port 22: Connection refused" % tgt)
+                return b"applied: 2026-10-06T10:00:00Z\nuptime: up 3 days\nkiwi-stack: 2 containers running\n"
+            return b""
+
+        def fake_stream(tgt, script, runner=None):
+            calls.append(("stream", tgt, script))
+            return 0 if "--force" in script else 2
+        with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "run_stream", fake_stream):
+            rc, out, err = self.run_cli("apply", f.path, "sh3", "--no-run")
+            self.assertEqual(rc, 0, err)
+            kind, tgt, script, data = calls[-1]
+            self.assertEqual((kind, tgt), ("run", "core@sh3.kiwi"))
+            self.assertIn("/var/lib/kiwi-server/role.sh.tmp", script)
+            self.assertIn("chmod 0700", script)
+            self.assertTrue(data.startswith(b"#!/usr/bin/env bash"), data[:40])
+            self.assertIn(b"KS_HOSTNAME=", data)
+            self.assertIn("sudo bash /var/lib/kiwi-server/role.sh --force", out)
+            rc, out, err = self.run_cli("apply", f.path, "sh3", "--ssh", "admin@192.168.1.7")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(calls[-1], ("stream", "admin@192.168.1.7", "bash /var/lib/kiwi-server/role.sh --force"))
+            self.assertEqual(calls[-2][1], "admin@192.168.1.7")
+            self.assertIn("sh3: applied", out)
+            rc, out, err = self.run_cli("apply", f.path, "--ssh", "x@y")
+            self.assertEqual(rc, 1)
+            self.assertIn("exactly one host", err)
+            rc, out, err = self.run_cli("status", f.path, "--porcelain")
+            self.assertEqual(rc, 0, err)
+            data = json.loads(out)
+            byname = {h["host"]: h for h in data["hosts"]}
+            self.assertEqual(byname["gate"]["ok"], False)
+            self.assertIn("Connection refused", byname["gate"]["output"])
+            self.assertEqual(byname["sh3"]["ok"], True)
+            self.assertIn("applied: 2026-10-06T10:00:00Z", byname["sh3"]["output"])
+            self.assertEqual(byname["sh3"]["target"], "core@sh3.kiwi")
+            rc, out, err = self.run_cli("status", f.path, "sh3")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("== sh3 (core@sh3.kiwi)", out)
+            self.assertIn("   uptime: up 3 days", out)
+        # a role script that fails is reported, not swallowed
+        with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "run_stream", lambda *a, **k: 7):
+            rc, out, err = self.run_cli("apply", f.path, "sh3")
+            self.assertEqual(rc, 1)
+            self.assertIn("exited with 7", err)
+            self.assertIn("failed: sh3", err)
+
+    def test_secrets_fallback_only_when_the_file_exists(self):
+        f = self.fleet({"defaults": self.base_defaults(),
+                        "hosts": {"n": {"role": "node", "node": {"preset": "minimal", "vpn_ip": "10.8.0.9"}}}})
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, cli.EXIT_INVALID)
+        self.assertIn("needs wireguard_config", err)
+        write(os.path.join(self.tmp, "secrets", "n.kiwi.conf"), "[Interface]\nPrivateKey = k\nAddress = 10.8.0.9/24\n")
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, 0, err)
+        host = f.hosts["n"]
+        rolesmod.resolve_settings(self.roles["node"], host, self.ms)
+        self.assertEqual(host.module_settings["vpn-client"]["wireguard_config"], "n.kiwi.conf")   # a file setting keeps its basename
+        self.assertIn(b"Address = 10.8.0.9/24", host.module_files["vpn-client/wireguard_config"])
+        # the master's exit: a commercial provider needs its key and address
+        g = self.fleet({"defaults": self.base_defaults(),
+                        "hosts": {"gate": {"role": "master", "master": self.master(**{"vpn-client": {
+                            "vpn_provider": "mullvad", "wireguard_private_key": "k"}})}}})
+        rc, out, err = self.run_cli("validate", g.path)
+        self.assertEqual(rc, cli.EXIT_INVALID)
+        self.assertIn("provider mullvad needs wireguard_private_key and wireguard_addresses", err)
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")

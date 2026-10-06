@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.3.0 — the fleet talks to its machines
+
+- **`kiwi-server apply <fleet> <host…>`**: the role script re-rendered and
+  run on a running machine over SSH, as root, with `--force` — settings,
+  modules and certificates change without a reinstall. `--no-run` only puts
+  it at `/var/lib/kiwi-server/role.sh`; `--ssh USER@ADDR` reaches a machine
+  whose name does not resolve yet.
+- **`kiwi-server status`**: when the role was applied, the uptime and
+  `kiwi-stack status` of every machine; `--porcelain` for the GUI.
+- **`kiwi-server enroll <fleet> <host|name>`**: a WireGuard client on the
+  master's wg-easy through its API, over an SSH tunnel to the master. A
+  fleet host's config lands in `secrets/<hostname>.conf`, a device's in
+  `secrets/devices/<name>.conf`; `--group` places the client in a client
+  group's range, `--address` sets one, `--split` keeps a device's own
+  internet, `--qr` prints the code for a phone, `--existing` fetches a
+  config again.
+- **`secrets/<hostname>.conf` is found by itself**: `vpn-client.wireguard_config`
+  falls back to it (`fallback_file` on a file setting), so a node's block
+  needs no line for it and its mesh address comes from the config.
+- **`validate` renders the stack**: a module's `validate:` rules, a missing
+  mesh address, two services on one port are reported by `validate` instead
+  of first by `render` or `apply`. vpn-client checks that a custom provider
+  has its config and a commercial one its key and addresses.
+- GUI: Apply and Status on the host page.
+- `lib/kiwiserver/remote.py` is the one place that talks SSH (the fleet
+  backup uses it too); `lib/kiwiserver/wgeasy.py` speaks the weejewel
+  wg-easy API.
+
 ## 2.2.0 — podman, one node role, Nextcloud without the master container
 
 - **Podman quadlets** are the default runtime (`runtime: podman`): the

@@ -5,4 +5,4 @@ Targets: Fedora CoreOS, uCore (CoreOS rebased onto a ublue image), Debian stable
 Roles:   bare, node-cloud (the kiwi-cloud stack), master — plus any directory
          dropped into roles/ that follows the same two-file convention.
 """
-VERSION = "2.2.0"
+VERSION = "2.3.0"

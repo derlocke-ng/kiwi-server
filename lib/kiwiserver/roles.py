@@ -143,6 +143,10 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
         v = coerce(s, s.default if given is None else given, where)
         if is_empty(v) and getattr(s, "generate", False):
             v = host.fleet.derive_secret(host.hostname, where, s.key)
+        if is_empty(v) and getattr(s, "fallback_file", ""):
+            cand = s.fallback_file.format(hostname=host.hostname, name=host.name)
+            if os.path.isfile(host.fleet.resolve_path(cand)):
+                v = cand
         if s.required and is_empty(v):
             raise KiwiError("%s.%s is required" % (where, s.key))
         if s.type == "file" and not is_empty(v):

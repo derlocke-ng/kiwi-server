@@ -118,7 +118,8 @@ hosts:
       preset: gateway                # vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
       vpn_ip: 10.8.0.6
       pub_iface: eth0
-      vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued
+      vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued (optional:
+                                                              # secrets/<hostname>.conf is found by itself)
       dns: { pihole_password: … }
       downloader: { download_dir: /mnt/data/downloads, transmission_password: … }
       sftp: { sftp_password: … }
@@ -127,8 +128,8 @@ hosts:
     ucore: { image: ghcr.io/ublue-os/ucore-hci:stable }
     node:
       preset: cloud                  # vpn-client, reverse-proxy, cloud, vault, portainer
-      vpn_ip: 10.8.0.25
-      vpn-client: { wireguard_config: secrets/sh3.home.conf }
+      vpn_ip: 10.8.0.25              # optional too: the config's Address is the mesh address
+                                     # (no vpn-client line: `kiwi-server enroll sh3` wrote secrets/sh3.home.conf)
       cloud: { nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data, memory_limit: 8192M }
 ```
 
@@ -254,6 +255,43 @@ always runs on the final image. `sudo bash /var/lib/kiwi-server/role.sh
 
 `updates.days: []` means any day; `updates.enabled: false` turns all of it off.
 
+## Managing running machines
+
+Once a machine runs, the fleet file stays the source: change a setting, add
+a module, renew a certificate, then
+
+```bash
+kiwi-server apply fleet.yaml sh3            # re-render, send the role script over SSH, run it
+kiwi-server apply fleet.yaml sh3 --no-run   # only put it at /var/lib/kiwi-server/role.sh
+kiwi-server status fleet.yaml               # when each role was applied, uptime, kiwi-stack status
+```
+
+SSH goes to the admin user at the host's name with your key or agent
+(nothing asks for a password; the install gave the admin user passwordless
+sudo). `--ssh core@192.168.1.7` reaches a machine whose name does not resolve
+yet. The script runs with `--force`, so the stack is rewritten and restarted
+with whatever changed; the disk and the OS are not touched. The GUI has the
+same two actions on the host page.
+
+Joining the mesh is one command per client, through the master's wg-easy
+API over an SSH tunnel to the master:
+
+```bash
+kiwi-server enroll fleet.yaml sh3                     # a fleet host: secrets/sh3.home.conf, picked up at the next render
+kiwi-server enroll fleet.yaml phone --group devices --qr   # a device: secrets/devices/phone.conf, and the QR code
+kiwi-server enroll fleet.yaml laptop --group devices --split   # only the mesh through the tunnel, its own internet otherwise
+kiwi-server enroll fleet.yaml fritzbox --group routers        # for a router — see docs/routers.md
+kiwi-server enroll fleet.yaml sh3 --existing          # the config of a client that exists, again
+```
+
+`--group` moves the client into that group's range (`vpn-server.groups`,
+10.8.1.0/24 guests, 10.8.2.0/24 pentest, 10.8.3.0/24 devices, 10.8.4.0/24
+routers by default), which is what the master's firewall rules go by;
+`--address` sets one by hand. A fleet host's client is named after its
+hostname, so the wg-easy page and the fleet agree. Nodes keep everything
+in the tunnel; `--split` is for devices that should reach the network but
+keep their own exit. `vpn-server.wg_password` is what the API logs in with.
+
 ## Roles and modules
 
 | role | what the machine becomes | modules |
@@ -276,9 +314,10 @@ daily VPN restart and weekly update timers the v1 cron jobs did.
 Everything cross-host comes from the fleet file: the master's `start.sh`
 lets isolated clients reach every node, every Pi-hole serves every host and
 service name at its mesh address, and the reverse proxies' certificates come
-from one CA (`kiwi-server ca fleet.yaml` shows it). What stays manual: the
-WireGuard client configs themselves, which the master's wg-easy issues — put
-them under `secrets/` and point `vpn-client.wireguard_config` at them.
+from one CA (`kiwi-server ca fleet.yaml` shows it). The WireGuard client
+configs come from the master's wg-easy: `kiwi-server enroll <host>` fetches
+one into `secrets/<hostname>.conf`, where the vpn-client finds it without a
+line in the fleet file (or point `vpn-client.wireguard_config` at any file).
 
 [docs/modules.md](docs/modules.md) is the module reference — the context a
 template sees, every module.yaml key, how to add one. `kiwi-server modules
@@ -352,13 +391,15 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 
 ## Status
 
-2.1.0 integrates the kiwi-v2 modules; see [CHANGELOG.md](CHANGELOG.md). The
+2.3.0 manages the machines it built; see [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock
 netinst in CI). What still wants a real machine: the first boot of each
 target end to end — the stacks are the live v1 setups rendered from
-modules, verified file by file against them, not yet booted from here.
+modules, verified file by file against them, not yet booted from here —
+and `apply`, `status` and `enroll` against a live master, which are tested
+against fake SSH runners and a fake wg-easy here.
 
 ## License
 

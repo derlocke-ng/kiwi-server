@@ -21,7 +21,7 @@ import sys
 import tarfile
 import time
 
-from . import util
+from . import remote, util
 from .util import KiwiError
 
 REMOTE_DIR = "/var/lib/kiwi-server/backups"
@@ -160,20 +160,11 @@ def passphrase(fleet=None, path=None, confirm=False):
 # ---- the nodes -------------------------------------------------------------------
 
 def ssh_target(host, override=None):
-    return override or "%s@%s" % (host.admin["user"], host.hostname)
+    return remote.target(host, override)
 
 
 def _ssh(target, script, data=None, runner=subprocess.run):
-    """Run a shell script as root on a node; the admin user has sudo."""
-    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", target, "sudo sh -c " + shlex.quote(script)]
-    try:
-        r = runner(argv, input=data, capture_output=True)
-    except FileNotFoundError:
-        raise KiwiError("ssh is not installed")
-    if r.returncode != 0:
-        lines = (r.stderr or b"").decode(errors="replace").strip().splitlines() or ["ssh failed"]
-        raise KiwiError("%s: %s" % (target, lines[-1]))
-    return r.stdout
+    return remote.run(target, script, data, runner)
 
 
 def store_local(data, directory, name):

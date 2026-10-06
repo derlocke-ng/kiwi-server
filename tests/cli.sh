@@ -51,6 +51,9 @@ printf '[Interface]\nPrivateKey = x\nAddress = 10.8.4.2/24\n[Peer]\nPublicKey = 
 "$ks" openwrt fleet.yaml --wireguard secrets/router.conf | grep -q "server='/home/10.8.0.1'"
 "$ks" openwrt fleet.yaml --via 192.168.1.5 | grep -q "kiwi_route.gateway='192.168.1.5'"
 "$ks" ca fleet.yaml | grep -q kiwiCA.pem
+"$ks" help | grep -q 'kiwi-server enroll'
+if "$ks" apply fleet.yaml --ssh core@nowhere 2>"$tmp/err"; then echo "apply --ssh with every host must refuse" >&2; exit 1; fi
+grep -q 'exactly one host' "$tmp/err"
 "$ks" modules | grep -q 'vpn-client'
 "$ks" roles -v | grep -q 'vpn-server.wg_host'
 if command -v shellcheck >/dev/null; then shellcheck -S warning output/*/*.stack/kiwi/gw.sh; fi

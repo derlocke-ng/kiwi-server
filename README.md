@@ -23,13 +23,13 @@ fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash
   itself onto a `ghcr.io/ublue-os/ucore*` image, like the uCore project's own
   autorebase example), `debian` (trixie netinst, preseeded).
 - **Roles** — `bare`, `master` (WireGuard entry point with a double hop
-  through a commercial VPN, Pi-hole, Tor), `node-gw` (LAN gateway through the
-  VPN with Pi-hole, DHCP relay, Transmission, JDownloader, SFTP) and
-  `node-cloud` (Nextcloud AIO, Vaultwarden). Each is a preset of
+  through a commercial VPN, Pi-hole, Tor, nginx for the admin pages) and
+  `node` (any module set behind the VPN client: `preset: gateway` is the LAN
+  gateway and download station, `preset: cloud` is Nextcloud and Vaultwarden,
+  `preset: minimal` is a start, `modules:` is your own list). The presets are
+  the live kiwi-master, kiwi-node-gw and kiwi-cloud setups taken apart into
   **modules** — the kiwi-v2 module system (`modules/`), rendered on your
-  machine into a docker compose stack the host starts on first boot. The
-  three presets are the live kiwi-master, kiwi-node-gw and kiwi-cloud
-  setups, taken apart into modules.
+  machine into a container stack the host starts on first boot.
 - **One CA for the fleet** — hosts that run the reverse proxy get a
   `*.<hostname>` certificate signed by it, every machine built trusts it, and
   every Pi-hole in the fleet resolves every host and service name at its mesh
@@ -90,7 +90,7 @@ same script the ISO runs.
 ```yaml
 defaults:                          # every host, unless it says otherwise
   target: ucore                    # coreos | ucore | debian
-  role: bare                       # bare | master | node-gw | node-cloud
+  role: bare                       # bare | master | node
   domain: home                     # sh3 becomes sh3.home
   timezone: Europe/Berlin
   disk: /dev/sda                   # WIPED by the ISO. Required for build, not for render
@@ -113,8 +113,9 @@ hosts:
       vpn-server: { wg_host: vpn.example.org, wg_password: … }
       dns: { pihole_password: … }
   m1:                              # a gateway node
-    role: node-gw
-    node-gw:
+    role: node
+    node:
+      preset: gateway                # vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
       vpn_ip: 10.8.0.6
       pub_iface: eth0
       vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued
@@ -122,9 +123,10 @@ hosts:
       downloader: { download_dir: /mnt/data/downloads, transmission_password: … }
       sftp: { sftp_password: … }
   sh3:                             # a cloud node
-    role: node-cloud
+    role: node
     ucore: { image: ghcr.io/ublue-os/ucore-hci:stable }
-    node-cloud:
+    node:
+      preset: cloud                  # vpn-client, reverse-proxy, cloud, vault, portainer
       vpn_ip: 10.8.0.25
       vpn-client: { wireguard_config: secrets/sh3.home.conf }
       cloud: { nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data, memory_limit: 8192M }
@@ -138,12 +140,17 @@ host ends up with, secrets masked; `kiwi-server roles -v` lists every role and
 module setting with its default. The full reference is the commented
 [examples/fleet.yaml](examples/fleet.yaml).
 
-A module role's block holds the **stack settings** at the top (`vpn_ip`,
-`pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, the daily VPN
-restart and weekly update times) and **one block per module**. `modules:`
-inside it replaces the preset's list — a cloud node that also downloads is
-`modules: [vpn-client, reverse-proxy, cloud, vault, downloader]` plus the
-downloader's settings.
+A module role's block holds the **stack settings** at the top (`preset`,
+`vpn_ip`, `pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, the
+daily VPN restart and weekly update times) and **one block per module**. A
+node is any module set: `preset: gateway | cloud | minimal` picks the usual
+shape, `modules:` replaces the list outright — a cloud node that also
+downloads is `modules: [vpn-client, reverse-proxy, cloud, vault, downloader]`
+plus the downloader's settings. The renderer refuses two modules that publish
+the same host port. `node-gw` and `node-cloud` remain as names for the first
+two presets. The master runs nginx inside its WireGuard server's network
+namespace, so `wg.<hostname>` and `pihole.<hostname>` answer on the mesh
+address only, for the client groups that may see them.
 
 Static addresses without typing them: `network: { dhcp: false, gateway: …,
 iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
@@ -242,8 +249,8 @@ always runs on the final image. `sudo bash /var/lib/kiwi-server/role.sh
 |---|---|---|
 | `bare` | the base system: admin user, SSH, updates | — |
 | `master` | the kiwi-master: WireGuard entry point (wg-easy) whose default route is the VPN client (gluetun to Mullvad or any provider — the double hop), Pi-hole and Tor on the server's network stack, isolated-client subnet | vpn-client, vpn-server, dns, tor |
-| `node-gw` | a kiwi-node in gateway mode: LAN DNS (Pi-hole + DHCP relay), policy routing that sends LAN clients through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP | vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp |
-| `node-cloud` | a kiwi-node in cloud mode: Nextcloud AIO and Vaultwarden behind nginx, reachable on the LAN and at the node's mesh address | vpn-client, reverse-proxy, cloud, vault, portainer |
+| `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway and download station (Pi-hole with DHCP, policy routing through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
+| `node-gw`, `node-cloud` | the gateway and cloud presets as roles of their own, for fleet files that use them | as above |
 
 The modules are kiwi-v2's (`modules/<name>/module.yaml` plus Jinja
 templates) with the gaps filled: `start.sh` and `torrc` from the live master,

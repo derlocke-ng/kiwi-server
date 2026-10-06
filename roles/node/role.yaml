@@ -1,0 +1,35 @@
+# roles/node — a kiwi-node: any set of modules behind the VPN client.
+#
+# The presets are the usual shapes; `preset:` picks one and `modules:` in the
+# host's block replaces the list outright. node-gw and node-cloud are the same
+# two presets as roles of their own, kept for fleet files that use them.
+name: node
+title: kiwi-node
+description: A node of the network — a preset (gateway, cloud) or any module list behind the VPN client.
+status: stable
+targets: [coreos, ucore, debian]
+node_type: node
+settings_include: [common/stack]
+presets:
+  gateway:
+    title: LAN gateway and download station
+    description: The home's DNS (Pi-hole with DHCP), route into the mesh and through the VPN, Transmission and JDownloader behind nginx, Portainer, SFTP.
+    modules: [vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp]
+    module_defaults:
+      dns: { expose_web_ui: true }
+  cloud:
+    title: Cloud
+    description: Nextcloud and Vaultwarden behind nginx, reachable on the LAN and through the mesh, plus Portainer.
+    modules: [vpn-client, reverse-proxy, cloud, vault, portainer]
+  minimal:
+    title: Minimal
+    description: Only the VPN client and the reverse proxy — add modules in the host's block.
+    modules: [vpn-client, reverse-proxy]
+settings:
+  - key: preset
+    group: Stack
+    type: enum
+    options: [gateway, cloud, minimal]
+    label: Preset
+    help: "The module list to start from. modules: in this block replaces it."
+    default: gateway

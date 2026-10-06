@@ -7,11 +7,13 @@
 #   target:  coreos  — Fedora CoreOS, stable stream
 #            ucore   — CoreOS that rebases itself onto ghcr.io/ublue-os/ucore*
 #            debian  — Debian stable (trixie) from the netinst image
-#   role:    bare | master | node-gw | node-cloud
-#            master / node-gw / node-cloud are MODULE roles: a preset list of
-#            kiwi-v2 modules (vpn-client, vpn-server, dns, reverse-proxy, cloud,
-#            vault, downloader, gateway, tor, portainer, sftp, dhcp-relay),
-#            rendered into a docker compose stack the machine starts on first boot.
+#   role:    bare | master | node
+#            master and node are MODULE roles: a list of kiwi-v2 modules
+#            (vpn-client, vpn-server, dns, reverse-proxy, cloud, vault, downloader,
+#            gateway, tor, portainer, sftp, dhcp-relay) rendered into a container
+#            stack the machine starts on first boot. A node picks a preset
+#            (gateway, cloud, minimal) with `preset:`; `modules:` replaces the list.
+#            node-gw and node-cloud still work as names for the first two presets.
 #
 # A module role's settings live under the role's name: the stack's own settings
 # (vpn_ip, docker_dir, …) at the top, each module's settings under the module's
@@ -107,8 +109,9 @@ hosts:
 
   # a kiwi-node in gateway mode on uCore: LAN gateway + download station
   m1:
-    role: node-gw
-    node-gw:
+    role: node
+    node:
+      preset: gateway                     # vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
       # vpn_ip: 10.8.0.6                  # its mesh address — taken from the WireGuard config's Address
       # master_ip: 10.8.0.1               # the master's Pi-hole is this node's DNS upstream — taken from the fleet's master
       pub_iface: eth0                     # the LAN side
@@ -130,12 +133,14 @@ hosts:
       portainer:
         admin_password: change-me-seven   # set before the first start; no open first-run page
 
-  # a kiwi-node in cloud mode on uCore (hci): Nextcloud AIO + Vaultwarden
+  # a kiwi-node in cloud mode on uCore (hci): Nextcloud + Vaultwarden
   sh3:
-    role: node-cloud
+    role: node
     ucore:
       image: ghcr.io/ublue-os/ucore-hci:stable
-    node-cloud:
+    node:
+      preset: cloud                       # vpn-client, reverse-proxy, cloud, vault, portainer
+      # modules: [vpn-client, reverse-proxy, cloud, vault, portainer, downloader]   # or your own list
       vpn_ip: 10.8.0.25
       # Migrating a machine that ran the v1 kiwi-cloud stack in place? Keep its
       # network and move the data directories to the new names before the first

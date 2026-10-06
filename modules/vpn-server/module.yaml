@@ -36,7 +36,15 @@ host_integration:
   kernel_modules: [wireguard]
 
 urls:
-  - "wg-easy admin: http://127.0.0.1:51821 on the master (ssh -L 51821:127.0.0.1:51821 {{ hostname }})"
+  - "wg-easy admin: {% if has_reverse_proxy %}https://{{ wg_hostname or 'wg.' ~ hostname }} from the mesh (admin groups), or {% endif %}http://127.0.0.1:51821 on the master (ssh -L 51821:127.0.0.1:51821 {{ hostname }})"
+
+nginx:
+  servers:
+    - server_name: "{{ wg_hostname or 'wg.' ~ hostname }}"
+      proxy_pass: "http://{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ '-vpn-server' }}:51821"
+      websocket: true
+      when: has_reverse_proxy
+      comment: wg-easy (WireGuard clients)
 
 settings:
   - key: wg_host
@@ -67,20 +75,38 @@ settings:
   - key: wg_default_address
     label: Client address pattern
     default: 10.8.0.x
-  - key: isolated_subnet
-    label: Isolated client subnet
-    help: "Clients given addresses here cannot see other clients — only the server and the fleet's nodes. Empty: off."
-    default: 10.8.1.0/24
-  - key: isolated_allow
-    type: list
-    label: Extra addresses isolated clients may reach
-    help: The server and every node with a mesh address are allowed automatically.
-    default: []
+  - key: wg_hostname
+    label: wg-easy page hostname
+    help: "Empty: wg.<hostname>. Served by the reverse proxy when there is one, for admin groups only."
+    default: ""
+  - key: groups
+    type: object
+    label: Client groups
+    help: |
+      Who may reach what, by the client address range wg-easy gives them. YAML: name -> {subnet, reach, peers, internet, admin}.
+      reach: what in the mesh the group may reach — all (default), nodes (every node), host names from the fleet, addresses or subnets. The server itself is always reachable (DNS).
+      peers: may members reach other VPN clients (default true). internet: may they leave through the exit (default true). admin: may they open the admin pages wg.<hostname>, pihole.<hostname> and the wg-easy port (default false).
+      Clients outside every group are the plain mesh: everything, admin pages as admin_from_mesh says.
+    default:
+      guests:  { subnet: 10.8.1.0/24, reach: [nodes], peers: false }
+      pentest: { subnet: 10.8.2.0/24, reach: [], peers: false }
+      devices: { subnet: 10.8.3.0/24, reach: [all], admin: true }
+      routers: { subnet: 10.8.4.0/24, reach: [all] }
   - key: admin_from_mesh
     type: bool
-    label: Admin pages reachable from the mesh
-    help: "wg-easy (51821) and, when Pi-hole shares this network stack, its web UI (80) at the server's mesh address — for regular clients; isolated clients never get them. Off: only through ssh -L on the master."
+    label: Admin pages for clients outside every group
+    help: "wg-easy and Pi-hole at the server's mesh address for plain mesh clients (10.8.0.x). Off: only groups with admin: true, and ssh -L on the master."
     default: true
+  - key: isolated_subnet
+    group: Advanced
+    label: Isolated client subnet (legacy)
+    help: "The pre-groups setting: a group named isolated with reach: [nodes] + isolated_allow and peers: false. Empty: off."
+    default: ""
+  - key: isolated_allow
+    type: list
+    group: Advanced
+    label: Extra addresses isolated clients may reach (legacy)
+    default: []
   - key: ui_traffic_stats
     type: bool
     default: true

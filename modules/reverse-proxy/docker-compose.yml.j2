@@ -3,6 +3,9 @@ services:
   {{ container_prefix }}-nginx:
     image: {{ image }}
     container_name: {{ container_prefix }}-nginx
+{% if network_mode %}
+    network_mode: "service:{{ container_prefix }}-{{ network_mode }}"
+{% else %}
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
@@ -12,6 +15,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+{% endif %}
     restart: unless-stopped
     logging:
       driver: json-file

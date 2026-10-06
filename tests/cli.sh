@@ -18,6 +18,7 @@ bash install.sh install
 ks="$HOME/.local/bin/kiwi-server"
 
 "$ks" version | grep -q "^kiwi-server "
+"$ks" roles | grep -q 'preset gateway'
 "$ks" roles | grep -q node-cloud
 "$ks" targets | grep -q debian
 

@@ -258,6 +258,8 @@ def to_text(ftype, value):
         return "\n".join(str(v) for v in value) if isinstance(value, list) else str(value)
     if ftype == "map":
         return "\n".join("%s=%s" % (k, v) for k, v in value.items()) if isinstance(value, dict) else str(value)
+    if ftype == "object":
+        return yaml.safe_dump(value, sort_keys=False, default_flow_style=False).rstrip("\n") if value else ""
     return str(value)
 
 
@@ -281,6 +283,12 @@ def from_text(ftype, text):
             return int(text)
         except ValueError:
             return None
+    if ftype == "object":
+        try:
+            v = yaml.safe_load(text)
+        except yaml.YAMLError:
+            return None   # kept as typed until it parses; validate reports it
+        return v if isinstance(v, (dict, list)) and v else None
     return text
 
 
@@ -311,7 +319,7 @@ class Form:
             return
         self.doc.set(self.scope, field["path"], value)
         self.win.mark_dirty()
-        if field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] == "modules"):
+        if field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] in ("modules", "preset")):
             self.rebuild_role_group()
 
     def role_name(self):
@@ -329,7 +337,7 @@ class Form:
         t = field["type"]
         if t in ("string", "secret", "list", "int", "file"):
             return self.entry_row(field)
-        if t in ("text", "lines", "map"):
+        if t in ("text", "lines", "map", "object"):
             return self.text_row(field)
         if t == "bool":
             return self.bool_row(field)
@@ -485,6 +493,13 @@ class Form:
             wanted = [str(x) for x in v]
         elif isinstance(v, str) and v.strip():
             wanted = v.split()
+        elif role.get("presets"):
+            pr = self.doc.get(self.scope, (role["name"], "preset"))
+            if pr is None and self.scope != "defaults":
+                pr = self.doc.get("defaults", (role["name"], "preset"))
+            presets = role["presets"]
+            pr = pr if pr in presets else next(iter(presets))
+            wanted = list(presets[pr].get("modules") or [])
         else:
             wanted = list(role.get("modules") or [])
         out = []
@@ -546,7 +561,12 @@ class Form:
             self.page.add(g)
             self.role_group.append(g)
         if stack:
-            mdefaults = role.get("module_defaults") or {}
+            mdefaults = dict(role.get("module_defaults") or {})
+            if role.get("presets"):
+                pr = self.doc.get(self.scope, (role["name"], "preset")) or self.doc.get("defaults", (role["name"], "preset"))
+                pr = pr if pr in role["presets"] else next(iter(role["presets"]))
+                for m, d in (role["presets"][pr].get("module_defaults") or {}).items():
+                    mdefaults[m] = {**(mdefaults.get(m) or {}), **d}
             for m in self.effective_modules(role):
                 schema = self.win.module_schemas.get(m)
                 if not schema:

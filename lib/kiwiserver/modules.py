@@ -376,6 +376,7 @@ class Renderer:
             nets = yaml.safe_load(self.render_text(self.ms.networks_template, base, "modules/networks.yml.j2")) or {}
             for net, body in (nets.get("networks") or {}).items():
                 networks.setdefault(net, body)
+        self.check_ports(services)
         # containers inside the VPN client's network namespace must be restarted
         # with it (kiwi-stack vpn-restart), or they keep a namespace that is gone
         vpn = "service:%s-vpn-client" % base["container_prefix"]
@@ -391,6 +392,24 @@ class Renderer:
                   % (spec.hostname, spec.node_type, ", ".join(ordered)))
         bundle.compose = compose
         return header + yaml.safe_dump(compose, sort_keys=False, default_flow_style=False, width=1000)
+
+    @staticmethod
+    def check_ports(services):
+        """Two services publishing the same host port fail at the second
+        `up`, not at render — so it is an error here, naming both."""
+        seen = {}
+        for svc, body in services.items():
+            for p in (body or {}).get("ports") or []:
+                p = str(p)
+                proto = p.rsplit("/", 1)[1] if "/" in p else "tcp"
+                parts = p.rsplit("/", 1)[0].split(":")
+                host_port = parts[-2] if len(parts) >= 2 else parts[0]
+                bind = parts[0] if len(parts) == 3 else "0.0.0.0"
+                for other_bind, other in seen.get((host_port, proto), []):
+                    if bind == other_bind or "0.0.0.0" in (bind, other_bind):
+                        raise KiwiError("host port %s/%s is published by both %s and %s — change one "
+                                        "(the modules' *_port / *_bind settings)" % (host_port, proto, other, svc))
+                seen.setdefault((host_port, proto), []).append((bind, svc))
 
     # ---- nginx aggregation ---------------------------------------------------------
     def nginx_blocks(self, spec, ordered, base):

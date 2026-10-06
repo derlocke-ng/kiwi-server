@@ -458,13 +458,18 @@ def cmd_roles(args):
         print("%-12s %s%s" % (r.name, r.title, flag))
         print("             %s" % r.description)
         print("             targets: %s" % ", ".join(r.targets))
-        if r.stack:
+        if r.stack and r.modules:
             print("             modules: %s" % ", ".join(ms.resolve(r.modules)))
+        for pname, pr in r.presets.items():
+            print("             preset %-9s %s" % (pname + ":", ", ".join(ms.resolve(pr["modules"]))))
         if args.verbose:
             for s in r.settings:
                 req = " (required)" if s.required else ""
                 print("               %-24s %-7s default=%r%s" % (s.key, s.type, s.default, req))
-            for m in (ms.resolve(r.modules) if r.stack else []):
+            names = list(r.modules)
+            for pr in r.presets.values():
+                names += [m for m in pr["modules"] if m not in names]
+            for m in (ms.resolve(names) if r.stack else []):
                 for s in ms.get(m).settings:
                     req = " (required)" if s.required else ""
                     print("               %-24s %-7s default=%r%s" % (m + "." + s.key, s.type, s.default, req))

@@ -225,7 +225,15 @@ class TestConfig(Base):
 
 class TestRoles(Base):
     def test_discover(self):
-        self.assertEqual(sorted(self.roles), ["bare", "master", "node-cloud", "node-gw"])
+        self.assertEqual(sorted(self.roles), ["bare", "master", "node", "node-cloud", "node-gw"])
+        node = self.roles["node"]
+        self.assertEqual(sorted(node.presets), ["cloud", "gateway", "minimal"])
+        self.assertEqual(node.default_modules({"preset": "cloud"}), ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
+        self.assertEqual(node.default_modules({}), node.presets["gateway"]["modules"])   # the first preset
+        self.assertEqual(node.defaults_for("dns", {"preset": "gateway"}), {"expose_web_ui": True})
+        self.assertEqual(node.defaults_for("dns", {"preset": "cloud"}), {})
+        with self.assertRaisesRegex(KiwiError, "unknown preset"):
+            node.default_modules({"preset": "nope"})
         nc = self.roles["node-cloud"]
         self.assertTrue(nc.stack)
         self.assertIn("vpn_ip", [s.key for s in nc.settings])
@@ -697,8 +705,17 @@ class TestModules(Base):
         self.assertEqual(spec.vpn_ip, "10.8.0.1")
         b = modmod.Renderer(self.ms).render(spec)
         svcs = b.compose["services"]
-        self.assertEqual(set(svcs), {"km-vpn-client", "km-vpn-server", "km-pihole", "km-tor"})
+        self.assertEqual(set(svcs), {"km-vpn-client", "km-vpn-server", "km-pihole", "km-tor", "km-nginx"})
         self.assertEqual(svcs["km-pihole"]["network_mode"], "service:km-vpn-server")
+        # nginx inside the server's namespace: the admin pages by name, on the mesh address only
+        self.assertEqual(svcs["km-nginx"]["network_mode"], "service:km-vpn-server")
+        self.assertNotIn("ports", svcs["km-nginx"])
+        nginx = b.files["km-nginx/nginx.conf"][0]
+        self.assertIn("server_name wg.gate.kiwi;", nginx)
+        self.assertIn("set $backend http://127.0.0.1:51821;", nginx)
+        self.assertIn("server_name pihole.gate.kiwi;", nginx)
+        self.assertIn("set $backend http://127.0.0.1:80;", nginx)
+        self.assertEqual(modmod.Renderer(self.ms).service_names(spec), ["wg.gate.kiwi", "pihole.gate.kiwi"])
         self.assertEqual(svcs["km-tor"]["network_mode"], "service:km-vpn-server")
         self.assertEqual(svcs["km-vpn-server"]["networks"]["knet-master"]["ipv4_address"], "172.64.0.3")
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["km-vpn-server"]["ports"])
@@ -716,9 +733,14 @@ class TestModules(Base):
         start = b.files["km-vpn-server/start.sh"][0]
         self.assertIn("ip route add default via 172.64.0.2", start)
         self.assertIn("-s 172.64.0.0/24 -o wg0 -j MASQUERADE", start)
-        # the isolation rules come before the wg0 accept-all, or they never match
-        self.assertLess(start.index("-s 10.8.1.0/24 -d 10.8.0.0/24 -j DROP"), start.index("-A FORWARD -i wg0 -j ACCEPT"))
+        # the default groups: guests reach the nodes and nothing else, before the wg0 accept-all
+        self.assertLess(start.index("-s 10.8.1.0/24 -d 10.8.0.0/16 -j DROP"), start.index("-A FORWARD -i wg0 -j ACCEPT"))
         self.assertIn("-i wg0 -s 10.8.1.0/24 -p tcp --dport 51821 -j DROP", start)
+        self.assertIn("-i wg0 -s 10.8.1.0/24 -p tcp --dport 443 -j DROP", start)
+        self.assertNotIn("-i wg0 -s 10.8.3.0/24 -p tcp --dport 443 -j DROP", start)   # devices: admin: true
+        self.assertIn("-s 10.8.2.0/24 -d 10.8.0.0/16 -j DROP", start)                 # pentest: nothing in the mesh
+        self.assertNotIn("-s 10.8.2.0/24 -d 10.8.0.25 -j ACCEPT", start)
+        self.assertIn("-s 10.8.4.0/24 -o eth0 -j MASQUERADE", start)                 # routers: internet through the exit
         self.assertNotIn("-A INPUT -i wg0 -p tcp --dport 51821 -j DROP", start)   # admin_from_mesh: true
         post = b.files["km-vpn-client/post-rules.txt"][0]
         self.assertNotIn("ctstate DNAT -j ACCEPT", post)   # nothing is DNAT'd on a master
@@ -732,7 +754,7 @@ class TestModules(Base):
         self.assertIn("ExcludeNodes {ad},{ae}", torrc)
         self.assertNotIn("{de},{ch},{at},{nl},{fr},{ga}", torrc)
         self.assertIn("mss-to-pmtu", b.files["km-vpn-client/post-rules.txt"][0])
-        self.assertEqual(b.ports, ["51820/udp"])
+        self.assertEqual(b.ports, ["51820/udp"])   # nginx inside the server's namespace: nothing more on the host
         self.assertIn("wireguard", b.kernel_modules)
         self.assertEqual(b.files["docker-compose.yml"][1], 0o600)
 
@@ -805,6 +827,50 @@ class TestModules(Base):
             "wg_host": "v", "wg_password": "w", "admin_from_mesh": False}})})
         start = modmod.Renderer(self.ms).render(spec).files["km-vpn-server/start.sh"][0]
         self.assertIn("-A INPUT -i wg0 -p tcp --dport 51821 -j DROP", start)
+
+    def test_client_groups_and_legacy_isolation(self):
+        groups = {"pentest": {"subnet": "10.8.2.0/24", "reach": ["sh3", "10.8.0.99"], "peers": False, "internet": False},
+                  "family": {"subnet": "10.8.5.0/24", "reach": ["m1"], "peers": True}}
+        host, role, spec = self.spec("gate", role="master", **{"master": self.master(**{"vpn-server": {
+            "wg_host": "v", "wg_password": "w", "groups": groups, "isolated_subnet": "10.8.1.0/24", "isolated_allow": ["10.9.9.9"]}})})
+        start = modmod.Renderer(self.ms).render(spec).files["km-vpn-server/start.sh"][0]
+        self.assertIn("-s 10.8.2.0/24 -d 10.8.0.25 -j ACCEPT", start)      # sh3 by name
+        self.assertIn("-s 10.8.2.0/24 -d 10.8.0.99 -j ACCEPT", start)      # an address as written
+        self.assertIn("-s 10.8.2.0/24 -d 10.8.0.0/16 -j DROP", start)      # no other clients
+        self.assertIn("-s 10.8.2.0/24 ! -d 10.8.0.0/16 -j DROP", start)    # no internet
+        self.assertNotIn("-s 10.8.2.0/24 -o eth0 -j MASQUERADE", start)
+        # family: m1 allowed, the other nodes dropped one by one, other clients allowed
+        self.assertIn("-s 10.8.5.0/24 -d 10.8.0.6 -j ACCEPT", start)
+        self.assertIn("-s 10.8.5.0/24 -d 10.8.0.25 -j DROP", start)
+        self.assertNotIn("-s 10.8.5.0/24 -d 10.8.0.0/16 -j DROP", start)
+        # the legacy isolated subnet is one more group
+        self.assertIn("-s 10.8.1.0/24 -d 10.9.9.9 -j ACCEPT", start)
+        self.assertIn("-s 10.8.1.0/24 -d 10.8.0.0/16 -j DROP", start)
+        self.assertIn("-s 10.8.1.0/24 -d 10.8.0.1 -j ACCEPT", start)       # the server is always reachable
+        p = os.path.join(self.tmp, "start.sh")
+        write(p, start)
+        self.assertEqual(subprocess.run(["sh", "-n", p]).returncode, 0)
+        with self.assertRaisesRegex(KiwiError, "must be a mapping"):
+            self.spec("gate", role="master", **{"master": self.master(**{"vpn-server": {"wg_host": "v", "wg_password": "w", "groups": "nope"}})})
+
+    def test_node_role_presets_and_port_collisions(self):
+        host, role, spec = self.spec("n", role="node", **{"node": self.node_gw(preset="gateway")})
+        self.assertEqual(host.modules, self.roles["node"].presets["gateway"]["modules"])
+        self.assertTrue(host.module_settings["dns"]["expose_web_ui"])     # the preset's module default
+        host, role, spec = self.spec("n", role="node", **{"node": self.node_cloud(preset="cloud")})
+        self.assertEqual(host.modules, ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertIn("kn-vault", b.compose["services"])
+        # Pi-hole's web UI and the AIO interface both want 127.0.0.1:8080: an error at render, not at the second `up`
+        both = self.node_gw(preset="gateway", modules=self.roles["node"].presets["gateway"]["modules"] + ["cloud", "vault"])
+        host, role, spec = self.spec("n", role="node", **{"node": both})
+        with self.assertRaisesRegex(KiwiError, "host port 8080/tcp is published by both"):
+            modmod.Renderer(self.ms).render(spec)
+        both["dns"] = dict(both["dns"], web_ui_port=8081)
+        host, role, spec = self.spec("n", role="node", **{"node": both})
+        self.assertIn("nextcloud-aio-mastercontainer", modmod.Renderer(self.ms).render(spec).compose["services"])
+        with self.assertRaisesRegex(KiwiError, "preset must be one of gateway, cloud, minimal"):
+            self.spec("n", role="node", **{"node": self.node_gw(preset="nope")})
 
     def test_module_errors_are_readable(self):
         """A broken module.yaml is a KiwiError naming the place, never a traceback;
@@ -1066,10 +1132,13 @@ class TestCli(Base):
         rc, out, _ = self.run_cli("roles", "--porcelain")
         self.assertEqual(rc, 0)
         data = json.loads(out)
-        self.assertEqual(sorted(r["name"] for r in data["roles"]), ["bare", "master", "node-cloud", "node-gw"])
+        self.assertEqual(sorted(r["name"] for r in data["roles"]), ["bare", "master", "node", "node-cloud", "node-gw"])
+        node = [r for r in data["roles"] if r["name"] == "node"][0]
+        self.assertEqual(list(node["presets"]), ["gateway", "cloud", "minimal"])
+        self.assertIn("cloud", [m["name"] for m in node["module_schemas"]])
         self.assertIn("vpn-client", [m["name"] for m in data["modules"]])
         master = [r for r in data["roles"] if r["name"] == "master"][0]
-        self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor"])
+        self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
         self.assertEqual(len(json.loads(out)["modules"]), 12)
         rc, out, _ = self.run_cli("targets", "--porcelain")
@@ -1121,7 +1190,8 @@ class TestCli(Base):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "ca", "kiwiCA.pem")))
         recs = r.dns_records()
         for rec in (("10.8.0.25", "sh3.kiwi"), ("10.8.0.25", "cloud.sh3.kiwi"), ("10.8.0.25", "portainer.sh3.kiwi"),
-                    ("10.8.0.6", "m1.kiwi"), ("10.8.0.6", "pihole.m1.kiwi"), ("10.8.0.1", "gate.kiwi")):
+                    ("10.8.0.6", "m1.kiwi"), ("10.8.0.6", "pihole.m1.kiwi"), ("10.8.0.1", "gate.kiwi"),
+                    ("10.8.0.1", "wg.gate.kiwi"), ("10.8.0.1", "pihole.gate.kiwi")):
             self.assertIn(rec, recs)
         self.assertNotIn(("10.8.0.25", "*.sh3.kiwi"), recs)
         m1, b = r.script(f.hosts["m1"])

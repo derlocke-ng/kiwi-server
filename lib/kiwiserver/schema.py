@@ -8,7 +8,7 @@ import re
 
 from .util import KiwiError
 
-SETTING_TYPES = ("string", "text", "int", "bool", "enum", "file", "list", "map", "secret")
+SETTING_TYPES = ("string", "text", "int", "bool", "enum", "file", "list", "map", "secret", "object")
 _KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -32,7 +32,7 @@ class Setting:
         if "default" in d:
             self.default = d["default"]
         else:
-            self.default = {"int": 0, "bool": False, "list": [], "map": {}}.get(self.type, "")
+            self.default = {"int": 0, "bool": False, "list": [], "map": {}, "object": {}}.get(self.type, "")
         if self.type == "enum" and not self.options:
             raise KiwiError("%s: enum setting %s needs options" % (owner, self.key))
 
@@ -71,6 +71,10 @@ def coerce(setting, value, where):
         if not isinstance(value, dict):
             raise KiwiError("%s.%s must be a mapping" % (where, setting.key))
         return {str(k): "" if v is None else str(v) for k, v in value.items()}
+    if t == "object":
+        if not isinstance(value, (dict, list)):
+            raise KiwiError("%s.%s must be a mapping or a list" % (where, setting.key))
+        return value
     if t == "enum":
         v = str(value)
         if v not in setting.options:

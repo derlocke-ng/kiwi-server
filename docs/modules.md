@@ -130,6 +130,7 @@ settings:
     group: Advanced              # GUI grouping within the module
     targets: [debian]            # only meaningful on these targets
     placeholder: secrets/sh3.conf
+    pattern: '[a-z0-9.-]+'       # string values must match this regular expression in full (empty passes)
 ```
 
 `file` settings are paths relative to the fleet file; their content is

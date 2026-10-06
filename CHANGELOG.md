@@ -8,15 +8,24 @@
   refuses these private-range answers, so the names only resolved through the
   fallback resolvers until now. **On in the master preset**, whose exit is
   Mullvad; nodes ask the master. Set `mullvad_socks: false` in the master's
-  `dns:` block to keep it off.
+  `dns:` block to keep it off; the next apply removes the timer again.
 - A host timer (`km-mullvad-socks.timer`, every 6 hours) fetches the list from
   [mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5)
-  (`mullvad_socks_url`) and swaps the file dnsmasq watches (`hostsdir`), which
-  reloads it without a restart. Only `*.relays.mullvad.net` names at 10.x
-  addresses are taken from it, so the list can never redirect another name; a
+  (`mullvad_socks_url`) and swaps the file in `<docker_dir>/km-pihole/mullvad-socks/`,
+  which Pi-hole sees **read-only** at `/etc/mullvad-socks` (`hostsdir`) and
+  reloads without a restart. The directory is root's and outside Pi-hole's
+  writable `/etc/dnsmasq.d`, so nothing in the container can swap a file under
+  the refresh, which runs as root. Only `*.relays.mullvad.net` names at 10.x
+  addresses are taken from the list, so it can never redirect another name; a
   download that is not such a list keeps the current records.
-- Modules: `when:` on `outputs` entries and `storage.bind_mounts`, like the
-  nginx blocks have — a file, host unit or directory only while a setting is on.
+- **A re-apply removes host units it no longer renders**: a module dropped from
+  a role, or a setting turned off, no longer leaves its units running outside
+  `kiwi-stack`'s control.
+- Modules: `when:` on `outputs` entries (templates and file settings) and on
+  `storage.bind_mounts`, like the nginx blocks have; `pattern:` on a setting
+  checks a string value against a regular expression at validate time.
+- `kiwi-server roles -v` shows a role's preset value (`module_defaults`) where
+  it has one, not the module's own default.
 
 ## 2.1.2 — one resolver chain for the whole network
 

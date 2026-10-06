@@ -35,11 +35,19 @@ class Setting:
             self.default = {"int": 0, "bool": False, "list": [], "map": {}}.get(self.type, "")
         if self.type == "enum" and not self.options:
             raise KiwiError("%s: enum setting %s needs options" % (owner, self.key))
+        # a regular expression a string value must match in full; the empty value always passes
+        self.pattern = str(d.get("pattern") or "")
+        if self.pattern:
+            try:
+                re.compile(self.pattern)
+            except re.error as e:
+                raise KiwiError("%s: setting %s has a bad pattern: %s" % (owner, self.key, e))
 
     def as_dict(self):
         return {"key": self.key, "type": self.type, "label": self.label, "help": self.help,
                 "required": self.required, "options": self.options, "targets": self.targets,
-                "default": self.default, "placeholder": self.placeholder, "group": self.group}
+                "default": self.default, "placeholder": self.placeholder, "group": self.group,
+                "pattern": self.pattern}
 
 
 def coerce(setting, value, where):
@@ -76,7 +84,11 @@ def coerce(setting, value, where):
         if v not in setting.options:
             raise KiwiError("%s.%s must be one of %s" % (where, setting.key, ", ".join(setting.options)))
         return v
-    return str(value)
+    v = str(value)
+    if setting.pattern and v and not re.fullmatch(setting.pattern, v):
+        like = " (like %s)" % setting.placeholder if setting.placeholder else ""
+        raise KiwiError("%s.%s: %r is not a valid value%s" % (where, setting.key, v, like))
+    return v
 
 
 def is_empty(v):

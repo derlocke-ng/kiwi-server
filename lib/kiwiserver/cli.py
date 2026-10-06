@@ -454,9 +454,11 @@ def cmd_roles(args):
                 req = " (required)" if s.required else ""
                 print("               %-24s %-7s default=%r%s" % (s.key, s.type, s.default, req))
             for m in (ms.resolve(r.modules) if r.stack else []):
+                preset = r.module_defaults.get(m) or {}
                 for s in ms.get(m).settings:
                     req = " (required)" if s.required else ""
-                    print("               %-24s %-7s default=%r%s" % (m + "." + s.key, s.type, s.default, req))
+                    # the role's preset (module_defaults) wins over the module's own default
+                    print("               %-24s %-7s default=%r%s" % (m + "." + s.key, s.type, preset.get(s.key, s.default), req))
 
 
 def cmd_modules(args):

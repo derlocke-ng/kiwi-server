@@ -6,6 +6,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# curl gives up after its retries; this bounds anything else
+TimeoutStartSec=15min
 ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/mullvad-socks.sh
 
 [Install]

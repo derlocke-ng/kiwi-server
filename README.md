@@ -157,12 +157,29 @@ stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
 client's network namespace (Transmission, JDownloader).
 
-Names are `service.hostname.home`: the example fleet uses `.home` because it
-is one of the strings ICANN will not delegate as a public top-level domain,
-so a name can never leak to a public registry or be registered by someone
-else with a browser-trusted certificate (`.kiwi` is a real TLD, so it can).
-`.internal` is the formally reserved alternative. Routers join the mesh with
-`kiwi-server openwrt` or the steps in [docs/routers.md](docs/routers.md).
+Names are `service.hostname.domain`, and the domain is yours to choose:
+`kiwi-server init --domain …`, the GUI asks when it creates a fleet, and
+`home` is the fallback. `validate` says when a choice is a bad one. `.home`,
+`.corp` and `.mail` are strings ICANN will not delegate as public top-level
+domains, `.internal` is reserved for private use, so a name under them can
+never leak to a public registry or be registered by a stranger with a
+browser-trusted certificate. `.kiwi`, `.dev` and every two-letter domain are
+public, so they can. `.local` is mDNS and never reaches a DNS server on Apple
+devices. `.lan` is what OpenWrt and many routers call their own LAN, so a
+router then answers it itself instead of forwarding the fleet's names.
+Routers join the mesh with `kiwi-server openwrt` or the steps in
+[docs/routers.md](docs/routers.md).
+
+The fleet directory is the one thing the nodes cannot rebuild: the fleet
+file, `secrets/`, the CA. With `backup: { hosts: [m1, sh3],
+passphrase_file: ~/.config/kiwi-server/backup.pass }` in the defaults, every
+successful render or build sends it, encrypted, to those nodes
+(`/var/lib/kiwi-server/backups`, the newest ten kept); `kiwi-server backup`
+does it by hand or to a USB stick with `--local`. On a fresh machine,
+`kiwi-server restore --from core@192.168.1.5 --into ~/kiwi` brings it back
+over plain SSH, before there is any mesh. The archive is openssl AES-256 with
+a passphrase-derived key, so `openssl enc -d -aes-256-cbc -md sha256 -pbkdf2
+-iter 600000 -in FILE | tar xz` opens it without kiwi-server.
 
 DNS is one chain for the whole network: VPN clients ask the master's Pi-hole,
 a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first

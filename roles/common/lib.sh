@@ -465,7 +465,7 @@ ks_base() {
 ks_main() {
     [[ $EUID -eq 0 ]] || ks_die "this script must run as root (sudo bash $0)"
     KS_OS=$(ks_detect_os)
-    install -d -m 0700 "$KS_STATE_DIR"
+    install -d -m 0700 "$KS_STATE_DIR" "$KS_STATE_DIR/backups"   # backups/: kiwi-server backup
     exec > >(tee -a "$KS_LOG") 2>&1
     ks_say "kiwi-server $KS_VERSION — role $KS_ROLE on $KS_HOSTNAME ($KS_OS, target $KS_TARGET)"
     if [[ -f $KS_MARKER && ${1:-} != --force ]]; then

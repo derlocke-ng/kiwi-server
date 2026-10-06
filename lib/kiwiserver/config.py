@@ -31,7 +31,7 @@ DEFAULTS = {
     "target": "ucore",
     "role": "bare",
     "hostname": None,
-    "domain": "",
+    "domain": "home",      # names are <service>.<host>.<domain>; see domain_advice() for the choice
     "timezone": "UTC",
     "locale": "en_US.UTF-8",
     "keyboard": "us",
@@ -100,7 +100,54 @@ DEFAULTS = {
         "name_constraints": [],  # e.g. [kiwi]: the CA may only sign names under these domains
     },
     "post_script": "",
+    "backup": {
+        # the fleet directory itself (fleet file, secrets/, the CA), encrypted,
+        # to these hosts after every render or build — kiwi-server restore
+        # brings it back on a fresh machine
+        "hosts": [],
+        "passphrase_file": "",
+        "keep": 10,
+        "extra": [],
+    },
 }
+
+# The top-level label of the fleet's domain decides whether a name can leak or
+# be registered by a stranger:
+#   home corp mail   ICANN will not delegate these — too much private use already
+#   internal         reserved for private use (2024); arpa: home.arpa is the IETF's
+#   test             reserved for testing, never delegated
+#   local            mDNS (RFC 6762): Apple devices and systemd-resolved never ask a DNS server
+#   lan              unreserved, and what OpenWrt and many routers call their own LAN
+#   anything public  a lookup that escapes the mesh reaches the registry, and anyone can
+#                    register the name with a browser-trusted certificate (.kiwi, .dev, .box …)
+PRIVATE_TLDS = frozenset(("home", "corp", "mail", "internal", "arpa", "test"))
+PUBLIC_TLDS = frozenset(
+    "com net org io dev app page kiwi box cloud host site online tech xyz me one world link life zone "
+    "network blog shop store info biz pro name mobi tv cc co ai gg sh im".split())
+
+
+def domain_advice(domain):
+    """(level, message) about a fleet domain, or None when it is a safe choice."""
+    d = str(domain or "").strip().strip(".").lower()
+    if not d:
+        return None
+    tld = d.rsplit(".", 1)[-1]
+    if tld in PRIVATE_TLDS:
+        return None
+    if tld == "local":
+        return ("error", "domain %r: .local is mDNS — Apple devices and systemd-resolved never ask a DNS "
+                         "server for it; use .home (the default), .internal, .corp or .mail" % d)
+    if tld == "lan":
+        return ("warning", "domain %r: .lan is what OpenWrt and many routers use for their own LAN names; "
+                           "such a router answers *.lan itself and never forwards the fleet's names to the "
+                           "master unless its local domain is changed" % d)
+    if tld in PUBLIC_TLDS or len(tld) == 2:
+        return ("warning", "domain %r: .%s is a public top-level domain — a lookup that escapes the mesh "
+                           "reaches its registry, and anyone can register %s with a browser-trusted "
+                           "certificate; .home, .internal, .corp and .mail can never be delegated" % (d, tld, d))
+    return ("warning", "domain %r: .%s is not reserved for private use — if it is ever delegated as a "
+                       "public TLD the fleet's names can leak or be registered by others; .home, .internal, "
+                       ".corp and .mail are safe" % (d, tld))
 
 # Lists where a host ADDS to the defaults instead of replacing them.
 EXTEND_LISTS = {
@@ -349,6 +396,25 @@ class Fleet:
                 raise KiwiError("host name %r must be a plain DNS label (letters, digits, dashes)" % name)
             self.hosts[str(name)] = Host(self, str(name), over or {})
         self._assign_addresses()
+        # fleet-wide findings: the domain choice, the backup block
+        self.errors, self.warnings = [], []
+        for d in sorted({h.domain for h in self.hosts.values()} | {str(self.defaults.get("domain") or "")}):
+            adv = domain_advice(d)
+            if adv:
+                (self.errors if adv[0] == "error" else self.warnings).append(adv[1])
+        b = self.defaults.get("backup") or {}
+        if not isinstance(b.get("hosts") or [], list):
+            self.errors.append("backup.hosts must be a list of host names")
+        else:
+            for h in b.get("hosts") or []:
+                if str(h) not in self.hosts:
+                    self.errors.append("backup.hosts: no such host %r" % h)
+        keep = b.get("keep")
+        try:
+            if int(10 if keep is None else keep) < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            self.errors.append("backup.keep must be a positive integer")
 
     @classmethod
     def load(cls, path):

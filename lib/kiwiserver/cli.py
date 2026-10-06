@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from . import VERSION, certs, config, iso as isomod, modules as modmod, roles as rolesmod
+from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
 from . import router as routermod, toolchain as tcmod, util
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
@@ -328,7 +328,7 @@ def load(args, need_roles=True):
 
 
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
-    errs = []
+    errs = list(fleet.errors)
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
@@ -346,8 +346,19 @@ def cmd_init(args):
     dest = args.path or "fleet.yaml"
     if os.path.exists(dest):
         raise KiwiError("%s exists — not overwriting it" % dest)
-    src = os.path.join(util.home_dir(), "examples", "fleet.yaml")
-    shutil.copyfile(src, dest)
+    text = util.read_text(os.path.join(util.home_dir(), "examples", "fleet.yaml"))
+    if args.domain:
+        d = args.domain.strip().strip(".").lower()
+        if not d or not all(config._LABEL.match(x) for x in d.split(".")):
+            raise KiwiError("the domain must be DNS labels: home, internal, my.corp")
+        adv = config.domain_advice(d)
+        if adv and adv[0] == "error":
+            raise KiwiError(adv[1])
+        if adv:
+            util.warn(adv[1])
+        text = (text.replace("domain: home ", "domain: %s " % d).replace("name_constraints: [home]", "name_constraints: [%s]" % d)
+                .replace(".home.conf", ".%s.conf" % d).replace("sh3.home", "sh3.%s" % d))
+    util.write_text(dest, text, 0o600)
     util.say("wrote %s — edit it, then: kiwi-server validate %s" % (dest, dest))
 
 
@@ -355,7 +366,7 @@ def cmd_validate(args):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
     errs = check(fleet, roles, ms, hosts, args.porcelain, strict=False)
-    warns = ["%s: %s" % (h.name, w) for h in hosts for w in h.warnings]
+    warns = list(fleet.warnings) + ["%s: %s" % (h.name, w) for h in hosts for w in h.warnings]
     if args.porcelain:
         print(json.dumps({"ok": not errs, "errors": errs, "warnings": warns}, indent=2))
     else:
@@ -562,6 +573,80 @@ def _render_or_build(args, build):
         raise KiwiError("failed: %s" % ", ".join(failed))
     if build:
         util.say("done — these ISOs wipe their target disk on boot; label them")
+    if not getattr(args, "no_backup", False):
+        auto_backup(fleet)
+
+
+# ---- the fleet's own backup --------------------------------------------------------
+
+def auto_backup(fleet):
+    """After a successful render or build: the fleet directory to backup.hosts.
+    A node that is down is a warning, never a failed render."""
+    cfg = fleet.defaults.get("backup") or {}
+    targets = [str(h) for h in (cfg.get("hosts") or [])]
+    if not targets:
+        return
+    if not (cfg.get("passphrase_file") or os.environ.get("KIWI_BACKUP_PASS")):
+        util.warn("backup.hosts is set but backup.passphrase_file is not — the fleet was not backed up "
+                  "(kiwi-server backup asks for a passphrase)")
+        return
+    try:
+        pw = backupmod.passphrase(fleet)
+        data = backupmod.create(fleet, pw)
+    except KiwiError as e:
+        util.warn("fleet backup skipped: %s" % e)
+        return
+    name = backupmod.archive_name(fleet)
+    for h in fleet.select(targets):
+        try:
+            backupmod.store_remote(data, backupmod.ssh_target(h), name, int(cfg.get("keep") or 10))
+            util.say("fleet backed up to %s (%s)" % (h.name, name))
+        except KiwiError as e:
+            util.warn("fleet backup to %s failed: %s" % (h.name, e))
+
+
+def cmd_backup(args):
+    fleet, _roles, _ms = load(args, need_roles=False)
+    if fleet.errors:
+        raise KiwiError(fleet.errors[0])
+    cfg = fleet.defaults.get("backup") or {}
+    hosts = fleet.select(args.hosts or [str(h) for h in (cfg.get("hosts") or [])])
+    if args.hosts == [] and not cfg.get("hosts"):
+        hosts = []
+    if not hosts and not args.local:
+        raise KiwiError("nowhere to back up to: name hosts, set backup.hosts in the fleet, or give --local DIR")
+    if args.ssh and len(hosts) != 1:
+        raise KiwiError("--ssh goes with exactly one host")
+    pw = backupmod.passphrase(fleet, args.passphrase_file, confirm=not args.passphrase_file)
+    data = backupmod.create(fleet, pw)
+    name = backupmod.archive_name(fleet)
+    n = len(backupmod.fleet_files(fleet))
+    if args.local:
+        util.say("%s (%d files, %d KB)" % (backupmod.store_local(data, args.local, name), n, len(data) >> 10))
+    for h in hosts:
+        kept = backupmod.store_remote(data, backupmod.ssh_target(h, args.ssh), name, int(cfg.get("keep") or 10))
+        util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
+
+
+def cmd_restore(args):
+    if not args.archive and not args.ssh:
+        raise KiwiError("give an archive file, or --from user@node to fetch one from a node")
+    if args.archive:
+        name, data = os.path.basename(args.archive), util.read_bytes(args.archive)
+    else:
+        if args.list:
+            for n in backupmod.list_remote(args.ssh):
+                print(n)
+            return
+        name, data = backupmod.fetch_remote(args.ssh, args.name)
+        util.say("fetched %s from %s" % (name, args.ssh))
+    pw = backupmod.passphrase(None, args.passphrase_file)
+    into = os.path.abspath(args.into or ".")
+    files = backupmod.restore(data, pw, into)
+    util.say("restored %d files from %s into %s" % (len(files), name, into))
+    if any(f.startswith("outside/") for f in files):
+        util.say("files that lived outside the fleet directory are under %s/outside — point the settings at them" % into)
+    util.say("next: kiwi-server validate %s" % os.path.join(into, "fleet.yaml"))
 
 
 def cmd_render(args):
@@ -669,6 +754,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
+  kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
+  kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian
@@ -700,12 +787,15 @@ def build_parser():
         s.set_defaults(fn=fn)
         return s
 
-    sub("init", cmd_init).add_argument("path", nargs="?")
+    s = sub("init", cmd_init); s.add_argument("path", nargs="?")
+    s.add_argument("--domain", help="the fleet's domain (default home; .internal, .corp and .mail are the other safe ones)")
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
     s = sub("render", cmd_render); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
     s = sub("build", cmd_build); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     sub("ca", cmd_ca).add_argument("fleet")
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
@@ -713,6 +803,16 @@ def build_parser():
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")
     s.add_argument("--via", metavar="NODE|IP", help="no tunnel: a static route to a gateway node on the LAN")
     s.add_argument("--name", default="kiwi", help="the interface and zone name on the router (default kiwi)")
+    s = sub("backup", cmd_backup); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
+    s.add_argument("--passphrase-file", metavar="FILE")
+    s = sub("restore", cmd_restore); s.add_argument("archive", nargs="?")
+    s.add_argument("--from", dest="ssh", metavar="USER@ADDR", help="fetch from this node (its LAN address works before any mesh)")
+    s.add_argument("--name", help="which archive; default the newest")
+    s.add_argument("--list", action="store_true", help="only list what the node keeps")
+    s.add_argument("--into", metavar="DIR", help="where the fleet directory is recreated (default .)")
+    s.add_argument("--passphrase-file", metavar="FILE")
     sub("roles", cmd_roles)
     sub("modules", cmd_modules)
     sub("targets", cmd_targets)

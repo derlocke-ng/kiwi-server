@@ -21,6 +21,15 @@
 - **Names are `service.hostname.home`.** The example fleet moves from
   `.kiwi`, a real public TLD anyone can register names under, to `.home`,
   which ICANN will not delegate; the CA is constrained to it. No place label.
+- **The domain is a choice, `home` the fallback.** `kiwi-server init
+  --domain`, a question in the GUI's new-fleet dialog, and `validate` warns
+  about public TLDs and `.lan`, and refuses `.local`.
+- **The fleet backs itself up to its nodes.** `backup: { hosts: [...],
+  passphrase_file: ... }` sends the fleet directory (fleet file, secrets, the
+  CA — never output/ or ISOs), encrypted with openssl, to
+  `/var/lib/kiwi-server/backups` on those nodes after every render or build;
+  `kiwi-server backup` by hand or `--local` to a disk; `kiwi-server restore
+  --from user@node` gets it back on a fresh machine over plain SSH.
 - **`kiwi-server openwrt`** writes the uci script that joins an OpenWrt router
   to the mesh: a WireGuard client with the mesh routed (or everything, with
   `--full`), the firewall zone, and the dnsmasq forward of the fleet's names

@@ -19,7 +19,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 
 import yaml  # noqa: E402
 
-from kiwiserver import VERSION, certs, cli, config, iso, modules as modmod, roles as rolesmod, router  # noqa: E402
+from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, roles as rolesmod, router  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -188,6 +188,26 @@ class TestConfig(Base):
         errs = f.hosts["a"].validate(self.roles)
         self.assertTrue(any("coreos.units" in e for e in errs), errs)
         self.assertTrue(any("tls.cert_days" in e for e in errs), errs)
+
+    def test_domain_advice_and_fleet_findings(self):
+        self.assertIsNone(config.domain_advice("home"))
+        self.assertIsNone(config.domain_advice("my.internal"))
+        self.assertEqual(config.domain_advice("local")[0], "error")
+        self.assertEqual(config.domain_advice("lan")[0], "warning")
+        self.assertEqual(config.domain_advice("kiwi")[0], "warning")
+        self.assertEqual(config.domain_advice("de")[0], "warning")
+        f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {"a": {}}})
+        self.assertEqual((f.errors, f.warnings), ([], []))
+        self.assertEqual(f.hosts["a"].hostname, "a.home")
+        f = self.fleet({"defaults": self.base_defaults(domain="dev", backup={"hosts": ["nope"], "keep": 0}), "hosts": {"a": {}}})
+        self.assertTrue(any("public top-level domain" in w for w in f.warnings), f.warnings)
+        self.assertTrue(any("no such host" in e for e in f.errors), f.errors)
+        self.assertTrue(any("backup.keep" in e for e in f.errors), f.errors)
+        f = self.fleet({"defaults": self.base_defaults(domain="local"), "hosts": {"a": {}}})
+        self.assertTrue(any("mDNS" in e for e in f.errors), f.errors)
+        d = self.base_defaults(); d.pop("domain")
+        f = self.fleet({"defaults": d, "hosts": {"a": {}}})
+        self.assertEqual(f.hosts["a"].hostname, "a.home")   # the fallback
 
     def test_password_hash_is_deterministic_sha512(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
@@ -946,6 +966,62 @@ class TestRouter(Base):
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
+class TestBackup(Base):
+    def test_archive_roundtrip_and_exclusions(self):
+        write(os.path.join(self.tmp, "secrets", "ca", "kiwiCA.key"), "KEY")
+        write(os.path.join(self.tmp, "output", "x", "x.role.sh"), "no")
+        write(os.path.join(self.tmp, "big.iso"), "no")
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        names = [arc for _p, arc in backup.fleet_files(f)]
+        self.assertEqual(names, ["fleet.yaml", "secrets/ca/kiwiCA.key", "secrets/wg.conf"])
+        data = backup.create(f, "pw")
+        self.assertNotIn(b"PrivateKey", data)
+        into = os.path.join(self.tmp, "restored")
+        self.assertEqual(backup.restore(data, "pw", into), names)
+        with open(os.path.join(into, "secrets", "wg.conf")) as fh:
+            self.assertEqual(fh.read(), "[Interface]\nPrivateKey=x\n")
+        self.assertEqual(oct(os.stat(os.path.join(into, "secrets", "wg.conf")).st_mode & 0o777), "0o600")
+        with self.assertRaisesRegex(KiwiError, "passphrase"):
+            backup.restore(data, "other", os.path.join(self.tmp, "r2"))
+        with self.assertRaisesRegex(KiwiError, "not a kiwi-server"):
+            backup.restore(backup.encrypt(b"hello", "pw"), "pw", os.path.join(self.tmp, "r3"))
+        self.assertRegex(backup.archive_name(f, 0), r"^fleet-fleet-19700101T000000Z\.tar\.enc$")
+
+    def test_store_and_fetch_through_ssh(self):
+        calls = []
+
+        class R:
+            def __init__(self, out):
+                self.returncode, self.stdout, self.stderr = 0, out, b""
+
+        def runner(argv, input=None, capture_output=True):
+            calls.append((argv, input))
+            if "cat /var/lib" in argv[-1]:
+                return R(b"DATA")
+            return R(b"/var/lib/kiwi-server/backups/fleet-a.tar.enc\n/var/lib/kiwi-server/backups/fleet-b.tar.enc\n")
+        kept = backup.store_remote(b"DATA", "core@m1.home", "fleet-x.tar.enc", keep=3, runner=runner)
+        argv, data = calls[-1]
+        self.assertEqual(argv[:3], ["ssh", "-o", "BatchMode=yes"])
+        self.assertEqual(argv[-2], "core@m1.home")
+        self.assertTrue(argv[-1].startswith("sudo sh -c "))
+        self.assertIn("install -d -m 0700", argv[-1])
+        self.assertIn("tail -n +4", argv[-1])          # keep three
+        self.assertIn("fleet-x.tar.enc", argv[-1])
+        self.assertEqual(data, b"DATA")
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(backup.list_remote("core@m1.home", runner=runner), ["fleet-a.tar.enc", "fleet-b.tar.enc"])
+        self.assertEqual(backup.fetch_remote("core@m1.home", runner=runner), ("fleet-a.tar.enc", b"DATA"))
+        with self.assertRaises(KiwiError):
+            backup.fetch_remote("core@m1.home", "../etc/passwd", runner=runner)
+
+        def failing(argv, input=None, capture_output=True):
+            r = R(b""); r.returncode, r.stderr = 255, b"ssh: connect to host m1.home port 22: No route to host\n"
+            return r
+        with self.assertRaisesRegex(KiwiError, "No route to host"):
+            backup.store_remote(b"x", "core@m1.home", "fleet-x.tar.enc", runner=failing)
+
+
+@unittest.skipUnless(have("openssl"), "openssl not installed")
 class TestCerts(Base):
     def test_ca_and_host_cert(self):
         ca = os.path.join(self.tmp, "ca")
@@ -1090,6 +1166,46 @@ class TestCli(Base):
         self.assertTrue(out.startswith("#!/usr/bin/env bash\n"), out[:80])
         self.assertNotIn("\n:: ", out)
         self.assertNotIn("creating the fleet CA", out)
+
+    def test_backup_restore_and_domain_through_the_cli(self):
+        pf = os.path.join(self.tmp, "pass")
+        write(pf, "correct horse\n")
+        f = self.fleet({"defaults": self.base_defaults(backup={"hosts": []}), "hosts": {"a": {}}})
+        store = os.path.join(self.tmp, "store")
+        rc, out, err = self.run_cli("backup", f.path, "--local", store, "--passphrase-file", pf)
+        self.assertEqual(rc, 0, err)
+        archives = os.listdir(store)
+        self.assertEqual(len(archives), 1)
+        self.assertEqual(oct(os.stat(os.path.join(store, archives[0])).st_mode & 0o777), "0o600")
+        into = os.path.join(self.tmp, "fresh")
+        rc, out, err = self.run_cli("restore", os.path.join(store, archives[0]), "--into", into, "--passphrase-file", pf)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(os.path.isfile(os.path.join(into, "fleet.yaml")))
+        self.assertTrue(os.path.isfile(os.path.join(into, "secrets", "wg.conf")))
+        rc, out, err = self.run_cli("validate", os.path.join(into, "fleet.yaml"))
+        self.assertEqual(rc, 0, err)
+        rc, out, err = self.run_cli("backup", f.path)
+        self.assertEqual(rc, 1)
+        self.assertIn("nowhere to back up", err)
+        # a render with backup.hosts but no passphrase warns and still succeeds
+        f = self.fleet({"defaults": self.base_defaults(backup={"hosts": ["a"]}), "hosts": {"a": {}}})
+        rc, out, err = self.run_cli("render", f.path, "-o", os.path.join(self.tmp, "o"), "--toolchain", "native")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("passphrase_file", err)
+        # the domain: init --domain, warnings and the .local refusal
+        dest = os.path.join(self.tmp, "lan.yaml")
+        rc, out, err = self.run_cli("init", dest, "--domain", "lan")
+        self.assertEqual(rc, 0, err)
+        with open(dest) as fh:
+            self.assertIn("domain: lan", fh.read())
+        self.assertIn("OpenWrt", err)
+        rc, out, err = self.run_cli("init", os.path.join(self.tmp, "bad.yaml"), "--domain", "local")
+        self.assertEqual(rc, 1)
+        self.assertIn("mDNS", err)
+        f = self.fleet({"defaults": self.base_defaults(domain="local"), "hosts": {"a": {}}})
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, cli.EXIT_INVALID)
+        self.assertIn("mDNS", err)
 
     def test_validate_exit_code_on_errors(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"target": "nope"}}})

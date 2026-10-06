@@ -56,8 +56,8 @@ BASE_GROUPS = [
              help="What the machine becomes on first boot"),
         dict(path=("disk",), type="string", label="Install disk", default="",
              help="WIPED by the ISO without asking — /dev/sda, /dev/nvme0n1, /dev/vda"),
-        dict(path=("domain",), type="string", label="Domain", scope="defaults", default="",
-             help="Hosts are named <name>.<domain> unless they set a hostname"),
+        dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
+             help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
         dict(path=("timezone",), type="string", label="Time zone", default="UTC"),
         dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8"),
         dict(path=("keyboard",), type="string", label="Keyboard layout", default="us",
@@ -797,16 +797,37 @@ class Window(Adw.ApplicationWindow):
                 f = d.save_finish(res)
             except GLib.Error:
                 return
-            path = f.get_path()
-            if os.path.exists(path):
-                os.unlink(path)
-            rc, out, err = run_cli(self.cli, ["init", path])
-            if rc != 0:
-                self.alert("Could not create the fleet", err or out)
-                return
-            self.open_path(path)
-            self.toast("Example fleet written — edit the hosts and their secrets")
+            self.ask_domain(lambda domain: self.create_fleet(f.get_path(), domain))
         dlg.save(self, None, done)
+
+    def ask_domain(self, then):
+        dlg = Adw.AlertDialog(
+            heading="The fleet's domain",
+            body="Hosts are named <name>.<domain>, services <service>.<name>.<domain>: sh3.home, cloud.sh3.home.\n\n"
+                 ".home can never become a public top-level domain; .internal, .corp and .mail are the other "
+                 "safe choices. Not .local (that is mDNS) and not a public one like .dev or .kiwi, which anyone "
+                 "can register names under.")
+        entry = Gtk.Entry(text="home", placeholder_text="home")
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("create", "Create")
+        dlg.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("create")
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda _d, r: r == "create" and then(entry.get_text().strip() or "home"))
+        dlg.present(self)
+
+    def create_fleet(self, path, domain):
+        if os.path.exists(path):
+            os.unlink(path)
+        rc, out, err = run_cli(self.cli, ["init", path, "--domain", domain])
+        if rc != 0:
+            self.alert("Could not create the fleet", err or out)
+            return
+        if err.strip():
+            self.append_log(err)
+        self.open_path(path)
+        self.toast("Example fleet written — edit the hosts and their secrets")
 
     def save(self):
         if not self.doc.path:

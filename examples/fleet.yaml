@@ -76,6 +76,11 @@ defaults:
     # passphrase: ...
     packages: [vim, htop]
 
+  backup:                           # the fleet directory itself — fleet.yaml, secrets/, the CA —
+    hosts: []                       # encrypted, to these nodes after every render or build;
+    # passphrase_file: ~/.config/kiwi-server/backup.pass    # kiwi-server restore --from core@<node> brings it back
+    keep: 10
+
   # coreos:                         # advanced, passed through to Butane
   #   kernel_arguments: [mitigations=auto]
   #   services: [cockpit]

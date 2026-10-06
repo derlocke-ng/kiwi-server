@@ -4,8 +4,8 @@ _kiwi_server() {
     local cur prev cmds opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="init validate list show render build script ca openwrt roles modules targets toolchain doctor version help"
-    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name"
+    cmds="init validate list show render build script ca openwrt backup restore roles modules targets toolchain doctor version help"
+    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --local --ssh --passphrase-file --from --list --into"
 
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
@@ -16,8 +16,12 @@ _kiwi_server() {
             mapfile -t COMPREPLY < <(compgen -d -- "$cur"); return ;;
         --toolchain)
             mapfile -t COMPREPLY < <(compgen -W "auto native container" -- "$cur"); return ;;
-        --wireguard)
+        --wireguard|--passphrase-file)
             mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return ;;
+        --local|--into)
+            mapfile -t COMPREPLY < <(compgen -d -- "$cur"); return ;;
+        --domain)
+            mapfile -t COMPREPLY < <(compgen -W "home internal corp mail" -- "$cur"); return ;;
         toolchain)
             mapfile -t COMPREPLY < <(compgen -W "status build" -- "$cur"); return ;;
     esac
@@ -32,7 +36,7 @@ _kiwi_server() {
     done
     case "$verb" in
         "")  mapfile -t COMPREPLY < <(compgen -W "$cmds" -- "$cur") ;;
-        validate|list|show|render|build|script|ca|openwrt)
+        validate|list|show|render|build|script|ca|openwrt|backup)
             if [[ -z $fleet ]]; then
                 mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")
             elif [[ -f $fleet ]]; then
@@ -40,7 +44,7 @@ _kiwi_server() {
                     "$(kiwi-server list "$fleet" --porcelain 2>/dev/null |
                        sed -n 's/^ *"name": "\([^"]*\)".*/\1/p')" -- "$cur")
             fi ;;
-        init) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;;
+        init|restore) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;;
     esac
 }
 complete -F _kiwi_server kiwi-server

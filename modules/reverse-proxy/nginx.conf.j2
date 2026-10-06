@@ -45,7 +45,7 @@ http {
     # Backends are resolved per request through docker's DNS (proxy_pass with a
     # variable): nginx starts even when a backend does not exist yet — Nextcloud
     # AIO creates its containers after the first setup — and follows a recreated one.
-    resolver 127.0.0.11 valid=30s ipv6=off;
+    resolver {{ '127.0.0.11' if runtime == 'docker' else docker_gateway }} valid=30s ipv6=off;
     resolver_timeout 5s;
 
     # everything on 80 goes to https

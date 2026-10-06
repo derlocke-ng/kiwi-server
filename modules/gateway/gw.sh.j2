@@ -11,6 +11,12 @@ CONTAINER_IP="{{ vpn_client_ip }}"
 DOCKER_SUBNET="{{ docker_subnet }}"
 VPN_SUBNET="{{ vpn_subnet or mesh_subnet }}"
 BRIDGE="{{ network_name }}"
+# docker names the bridge after the network; podman does not — the route to the
+# stack's subnet names the interface either way
+if ! ip link show "$BRIDGE" >/dev/null 2>&1; then
+    BRIDGE=$(ip -o route show "$DOCKER_SUBNET" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+fi
+[[ -n $BRIDGE ]] || { echo "[kiwi-gw] no bridge for $DOCKER_SUBNET yet"; exit 1; }
 
 if [[ -z $PUB_IFACE ]]; then
     PUB_IFACE=$(ip -o route get 8.8.8.8 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p')

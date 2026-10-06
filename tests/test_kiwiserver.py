@@ -71,7 +71,8 @@ class Base(unittest.TestCase):
         return self._ms
 
     def node_cloud(self, **extra):
-        d = {"vpn_ip": "10.8.0.25", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        d = {"vpn_ip": "10.8.0.25", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
+             "cloud": {"admin_password": "a"}}
         d.update(extra)
         return d
 
@@ -259,6 +260,9 @@ class TestRoles(Base):
         self.assertIn("KS_STACK_VPN_DEPENDENTS=()", s)
         self.assertIn("KS_STACK_MESH_VIA='172.128.0.2'", s)
         self.assertIn("KS_STACK_MESH_SUBNET='10.8.0.0/16'", s)
+        self.assertIn("KS_STACK_RUNTIME='podman'", s)
+        self.assertIn("KS_FILES[quadlet/kn-vpn-client.container]=", s)
+        self.assertIn("KS_FILES[quadlet/kiwi-stack.target]=", s)
         self.assertTrue(s.rstrip().endswith('ks_main "$@"'))
         # the embedded file round-trips
         import base64, re
@@ -288,6 +292,8 @@ class TestRoles(Base):
         self.assertIn("host_units restart --no-block", helper)   # never a blocking restart from inside kiwi-stack.service
         self.assertIn("${STACK_VPN_DEPENDENTS:-}", helper)
         self.assertIn('ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA"', helper)
+        self.assertIn("podman auto-update", helper)
+        self.assertIn("systemctl start kiwi-stack.target", helper)
         p = os.path.join(self.tmp, "kiwi-stack")
         write(p, helper)
         self.assertEqual(subprocess.run(["bash", "-n", p], capture_output=True).returncode, 0)
@@ -609,12 +615,51 @@ class TestModules(Base):
         self.assertEqual(b.container_ips["reverse-proxy"], "172.128.0.5")
         self.assertEqual(b.container_ips["portainer"], "172.128.0.250")
         compose = b.compose
-        self.assertEqual(set(compose["services"]), {"kn-vpn-client", "kn-nginx", "nextcloud-aio-mastercontainer",
-                                                    "kn-vault", "kn-portainer"})
-        self.assertIn("nextcloud-aio", compose["networks"])
-        self.assertIn("nextcloud-aio", compose["services"]["kn-nginx"]["networks"])
-        self.assertEqual(compose["services"]["nextcloud-aio-mastercontainer"]["networks"]["knet-node"]["ipv4_address"],
-                         "172.128.0.6")
+        self.assertEqual(set(compose["services"]), {
+            "kn-vpn-client", "kn-nginx", "kn-vault", "kn-portainer", "nextcloud-aio-apache", "nextcloud-aio-database",
+            "nextcloud-aio-nextcloud", "nextcloud-aio-notify-push", "nextcloud-aio-redis", "nextcloud-aio-collabora",
+            "nextcloud-aio-imaginary"})
+        self.assertEqual(list(compose["networks"]), ["knet-node"])   # one stack network, AIO's containers on it too
+        self.assertEqual(compose["services"]["nextcloud-aio-apache"]["networks"]["knet-node"]["ipv4_address"], "172.128.0.6")
+        text = b.files["docker-compose.yml"][0]
+        self.assertNotIn("docker.sock", text.replace("/run/podman/podman.sock:/var/run/docker.sock", ""))
+        nc = compose["services"]["nextcloud-aio-nextcloud"]["environment"]
+        self.assertIn("ADMIN_PASSWORD=a", nc)
+        self.assertIn("NC_DOMAIN=cloud.sh3.kiwi", nc)
+        self.assertIn("COLLABORA_ENABLED=yes", nc)
+        self.assertIn("TALK_ENABLED=no", nc)
+        self.assertNotIn("nextcloud-aio-talk", compose["services"])
+        # generated secrets: letters and digits, the same at the next render, never in the fleet file
+        dbpw = [e for e in nc if e.startswith("POSTGRES_PASSWORD=")][0].split("=", 1)[1]
+        self.assertRegex(dbpw, r"^[A-Za-z0-9]{32}$")
+        self.assertEqual(host.module_settings["cloud"]["database_password"], dbpw)
+        host2, role2, spec2 = self.spec("sh3", role="node-cloud", **{"node-cloud": self.node_cloud()})
+        self.assertEqual(host2.module_settings["cloud"]["database_password"], dbpw)
+        self.assertNotEqual(host2.module_settings["cloud"]["redis_password"], dbpw)
+        # the podman runtime: quadlets next to the compose file
+        self.assertEqual(b.runtime, "podman")
+        for name in ("kn-vpn-client.container", "kn-nginx.container", "nextcloud-aio-nextcloud.container",
+                     "knet-node.network", "kiwi-stack.target"):
+            self.assertIn(name, b.quadlets)
+        vpn = b.quadlets["kn-vpn-client.container"]
+        self.assertIn("Network=knet-node.network", vpn)
+        self.assertIn("IP=172.128.0.2", vpn)
+        self.assertIn("AddDevice=/dev/net/tun:/dev/net/tun", vpn)
+        self.assertIn("AutoUpdate=registry", vpn)
+        self.assertIn("WantedBy=kiwi-stack.target", vpn)
+        self.assertIn("Image=docker.io/qmcgaw/gluetun", vpn)
+        ncq = b.quadlets["nextcloud-aio-nextcloud.container"]
+        self.assertIn('Environment="STARTUP_APPS=deck twofactor_totp tasks calendar contacts notes"', ncq)
+        self.assertIn("After=nextcloud-aio-database.service", ncq)
+        self.assertIn("HealthCmd=/healthcheck.sh", ncq)
+        self.assertIn("StopTimeout=600", ncq)
+        self.assertIn("ShmSize=134217728", ncq)
+        self.assertIn("Volume=/run/podman/podman.sock:/var/run/docker.sock", b.quadlets["kn-portainer.container"])
+        self.assertIn("SecurityLabelDisable=true", b.quadlets["kn-portainer.container"])
+        net = b.quadlets["knet-node.network"]
+        self.assertIn("Subnet=172.128.0.0/24", net)
+        self.assertIn("Gateway=172.128.0.1", net)
+        self.assertIn("Options=mtu=1412", net)
         env = compose["services"]["kn-vpn-client"]["environment"]
         self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443", env)
         self.assertNotIn("WIREGUARD_PRIVATE_KEY=", "\n".join(env))
@@ -623,21 +668,16 @@ class TestModules(Base):
         post = b.files["kn-vpn-client/post-rules.txt"][0]
         self.assertIn("-d 10.8.0.25 -p tcp --dport 443 -j DNAT --to-destination 172.128.0.5:443", post)
         nginx = b.files["kn-nginx/nginx.conf"][0]
-        for name in ("cloud.sh3.kiwi", "nc-admin.sh3.kiwi", "vault.sh3.kiwi", "portainer.sh3.kiwi"):
+        for name in ("cloud.sh3.kiwi", "vault.sh3.kiwi", "portainer.sh3.kiwi"):
             self.assertIn("server_name %s;" % name, nginx)
-        # names resolved per request: nginx starts before AIO's containers exist
-        self.assertIn("resolver 127.0.0.11 valid=30s ipv6=off;", nginx)
+        # names resolved per request through podman's DNS (the network's gateway)
+        self.assertIn("resolver 172.128.0.1 valid=30s ipv6=off;", nginx)
         self.assertIn("set $backend http://nextcloud-aio-apache:11000;", nginx)
-        self.assertIn("set $backend https://nextcloud-aio-mastercontainer:8080;", nginx)
         self.assertIn("set $backend http://kn-vault:80;", nginx)   # the upstream's server, inlined
         self.assertNotIn("upstream ", nginx)
         self.assertNotIn("proxy_pass http", nginx)
         self.assertIn("proxy_pass $backend;", nginx)
-        self.assertIn("proxy_ssl_verify off;", nginx)
-        self.assertEqual(nginx.count("Strict-Transport-Security"), 4)   # hsts on, every server block
-        aio = compose["services"]["nextcloud-aio-mastercontainer"]
-        self.assertEqual(aio["security_opt"], ["label:disable"])
-        self.assertEqual(aio["ports"], ["127.0.0.1:8080:8080"])
+        self.assertEqual(nginx.count("Strict-Transport-Security"), 3)   # hsts on, every server block
         self.assertEqual(compose["services"]["kn-portainer"]["security_opt"], ["label:disable"])
         self.assertNotIn("ESTABLISHED,RELATED,NEW", post)
         self.assertIn("-i tun0 -m conntrack --ctstate DNAT -j ACCEPT", post)
@@ -646,9 +686,71 @@ class TestModules(Base):
         self.assertEqual(b.files["kn-vpn-client/wg0.conf"][1], 0o600)
         self.assertIn("kn-nginx", b.dirs)
         self.assertIn("knnc-data", b.dirs)  # inside the stack dir: kept relative
-        self.assertEqual(sorted(b.ports), ["3478/tcp", "3478/udp", "443/tcp", "80/tcp"])
+        self.assertEqual(sorted(b.ports), ["443/tcp", "80/tcp"])   # Talk's TURN port only with talk: true
         self.assertEqual(b.units, {})
         self.assertEqual([n for _ip, n in spec.dns_records][:2], ["sh3.kiwi", "cloud.sh3.kiwi"])
+
+    def test_cloud_switches_and_docker_runtime(self):
+        host, role, spec = self.spec("sh3", role="node-cloud", **{"node-cloud": self.node_cloud(runtime="docker", cloud={
+            "admin_password": "a", "collabora": False, "talk": True, "fulltextsearch": True, "clamav": True})})
+        b = modmod.Renderer(self.ms).render(spec)
+        svcs = b.compose["services"]
+        self.assertIn("nextcloud-aio-talk", svcs)
+        self.assertIn("nextcloud-aio-fulltextsearch", svcs)
+        self.assertNotIn("nextcloud-aio-collabora", svcs)
+        self.assertIn("3478/udp", b.ports)
+        self.assertEqual(svcs["nextcloud-aio-talk"]["ports"], ["3478:3478/tcp", "3478:3478/udp"])
+        self.assertIn("nextcloud_aio_elasticsearch", b.compose["volumes"])
+        # the docker runtime: compose only, docker's DNS, docker's socket
+        self.assertEqual((b.runtime, b.quadlets), ("docker", {}))
+        self.assertIn("resolver 127.0.0.11 valid=30s", b.files["kn-nginx/nginx.conf"][0])
+        self.assertIn("/var/run/docker.sock:/var/run/docker.sock", svcs["kn-portainer"]["volumes"])
+        with self.assertRaisesRegex(KiwiError, "collabora and onlyoffice"):
+            host, role, spec = self.spec("sh3", role="node-cloud", **{"node-cloud": self.node_cloud(cloud={
+                "admin_password": "a", "onlyoffice": True})})
+            modmod.Renderer(self.ms).render(spec)
+        with self.assertRaisesRegex(KiwiError, "runtime must be"):
+            modmod.StackSpec("node", "x", ["vpn-client"], runtime="lxc")
+
+    def test_quadlets_from_compose(self):
+        from kiwiserver import quadlet
+        compose = {"networks": {"knet-node": {"name": "knet-node", "driver": "bridge",
+                                              "driver_opts": {"com.docker.network.driver.mtu": "1412"},
+                                              "ipam": {"config": [{"subnet": "172.128.0.0/24", "gateway": "172.128.0.1"}]}}},
+                   "services": {
+                       "a": {"image": "docker.io/x/a", "container_name": "a", "networks": {"knet-node": {"ipv4_address": "172.128.0.9"}},
+                             "environment": ["PASS=pa$$w0rd", "PCT=20%", "SP=a b"], "ports": ["127.0.0.1:8080:80/tcp"],
+                             "cap_add": ["NET_ADMIN"], "sysctls": ["net.ipv4.ip_forward=1"], "restart": "unless-stopped",
+                             "volumes": ["/data:/data:z", "vol:/v"], "security_opt": ["label:disable"], "init": True,
+                             "healthcheck": {"test": ["CMD-SHELL", "curl -f http://localhost/ || exit 1"], "interval": "30s", "retries": 3},
+                             "logging": {"driver": "json-file"}},
+                       "b": {"image": "docker.io/x/b", "network_mode": "service:a", "depends_on": ["a"], "restart": "no"},
+                       "c": {"image": "docker.io/x/c", "network_mode": "host", "environment": {"IP": "1.2.3.4"}}}}
+        q = quadlet.from_compose(compose, "test stack")
+        a = q["a.container"]
+        self.assertIn("Environment=PASS=pa$w0rd", a)      # compose's $$ is $ again
+        self.assertIn("Environment=PCT=20%%", a)           # % is a systemd specifier
+        self.assertIn('Environment="SP=a b"', a)
+        self.assertIn("PublishPort=127.0.0.1:8080:80/tcp", a)
+        self.assertIn("Sysctl=net.ipv4.ip_forward=1", a)
+        self.assertIn("Volume=vol:/v", a)
+        self.assertIn("HealthCmd=\"curl -f http://localhost/ || exit 1\"", a)
+        self.assertIn("HealthRetries=3", a)
+        self.assertIn("Restart=always", a)
+        b = q["b.container"]
+        self.assertIn("Network=container:a", b)
+        self.assertIn("Requires=a.service", b)
+        self.assertIn("Restart=no", b)
+        self.assertIn("Network=host", q["c.container"])
+        self.assertIn("Environment=IP=1.2.3.4", q["c.container"])
+        self.assertIn("NetworkName=knet-node", q["knet-node.network"])
+        self.assertIn("WantedBy=multi-user.target", q["kiwi-stack.target"])
+        bad = {"networks": {}, "services": {"x": {"image": "i", "pid": "host"}}}
+        with self.assertRaisesRegex(KiwiError, "pid"):
+            quadlet.from_compose(bad)
+        bad = {"networks": {}, "services": {"x": {"image": "i", "network_mode": "service:nope"}}}
+        with self.assertRaisesRegex(KiwiError, "not in the stack"):
+            quadlet.from_compose(bad)
 
     def test_node_gw_bundle(self):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw()})
@@ -759,8 +861,9 @@ class TestModules(Base):
         self.assertEqual(b.files["docker-compose.yml"][1], 0o600)
 
     def test_subnet_math_and_container_ip_checks(self):
-        host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": self.node_cloud(
-            docker_subnet="10.200.4.128/25", modules=["vpn-client", "reverse-proxy", "vault"])})
+        small = self.node_cloud(docker_subnet="10.200.4.128/25", modules=["vpn-client", "reverse-proxy", "vault"])
+        small.pop("cloud")
+        host, role, spec = self.spec("n", role="node-cloud", **{"node-cloud": small})
         b = modmod.Renderer(self.ms).render(spec)
         self.assertEqual(b.container_ips, {"vpn-client": "10.200.4.130", "reverse-proxy": "10.200.4.133",
                                            "vault": "10.200.4.135"})
@@ -779,7 +882,7 @@ class TestModules(Base):
 
     def test_vpn_ip_required_derived_and_checked(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"n": {"role": "node-cloud", "node-cloud": {
-            "vpn-client": {"wireguard_config": "secrets/wg.conf"}}}}})
+            "vpn-client": {"wireguard_config": "secrets/wg.conf"}, "cloud": {"admin_password": "a"}}}}})
         host = f.hosts["n"]
         role = self.prepare(host)
         self.assertEqual(host.role_settings["vpn_ip"], "")
@@ -861,14 +964,16 @@ class TestModules(Base):
         self.assertEqual(host.modules, ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
         b = modmod.Renderer(self.ms).render(spec)
         self.assertIn("kn-vault", b.compose["services"])
-        # Pi-hole's web UI and the AIO interface both want 127.0.0.1:8080: an error at render, not at the second `up`
-        both = self.node_gw(preset="gateway", modules=self.roles["node"].presets["gateway"]["modules"] + ["cloud", "vault"])
+        # Pi-hole's web UI on Portainer's port: an error at render, not at the second `up`
+        both = self.node_gw(preset="gateway", modules=self.roles["node"].presets["gateway"]["modules"] + ["cloud", "vault"],
+                            cloud={"admin_password": "a"})
+        both["dns"] = dict(both["dns"], web_ui_port=9443)
         host, role, spec = self.spec("n", role="node", **{"node": both})
-        with self.assertRaisesRegex(KiwiError, "host port 8080/tcp is published by both"):
+        with self.assertRaisesRegex(KiwiError, "host port 9443/tcp is published by both"):
             modmod.Renderer(self.ms).render(spec)
         both["dns"] = dict(both["dns"], web_ui_port=8081)
         host, role, spec = self.spec("n", role="node", **{"node": both})
-        self.assertIn("nextcloud-aio-mastercontainer", modmod.Renderer(self.ms).render(spec).compose["services"])
+        self.assertIn("nextcloud-aio-apache", modmod.Renderer(self.ms).render(spec).compose["services"])
         with self.assertRaisesRegex(KiwiError, "preset must be one of gateway, cloud, minimal"):
             self.spec("n", role="node", **{"node": self.node_gw(preset="nope")})
 

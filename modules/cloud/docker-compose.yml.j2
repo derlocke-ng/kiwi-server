@@ -1,47 +1,497 @@
-# cloud (Nextcloud AIO) — the master container; it starts the rest on the nextcloud-aio network
+# cloud — Nextcloud from the AIO project's containers (manual-install layout):
+# no master container, no docker socket. The optional services are settings.
+{% set nc_domain = nc_hostname or 'cloud.' ~ hostname %}
+{% set datadir = nextcloud_datadir or docker_dir ~ '/knnc-data' %}
+{% set img = image_prefix %}
+{% set tag = image_tag %}
+{% set hc = {'test': '/healthcheck.sh', 'interval': '30s', 'timeout': '30s', 'start_period': '0s', 'retries': 3} %}
 services:
-  nextcloud-aio-mastercontainer:
-    image: {{ image }}
-    container_name: nextcloud-aio-mastercontainer   # AIO requires this name
+  nextcloud-aio-apache:
+    image: {{ img }}aio-apache:{{ tag }}
+    container_name: nextcloud-aio-apache
     init: true
-    restart: always
-    # the docker socket on an SELinux host (Fedora CoreOS, uCore): without this the
-    # container is denied the socket — AIO's own compose example says the same
-    security_opt:
-      - label:disable
-    ports:
-      - "{{ aio_bind ~ ':' if aio_bind else '' }}8080:8080"
-    environment:
-      - SKIP_DOMAIN_VALIDATION={{ 'true' if skip_domain_validation else 'false' }}
-      - AIO_DISABLE_BACKUP_SECTION={{ 'true' if disable_backup_section else 'false' }}
-      - APACHE_PORT={{ apache_port }}
-      - APACHE_IP_BINDING={{ apache_ip_binding }}
-      - BORG_RETENTION_POLICY={{ borg_retention_policy }}
-      - NEXTCLOUD_DATADIR={{ nextcloud_datadir or docker_dir ~ '/knnc-data' }}
-      - NEXTCLOUD_UPLOAD_LIMIT={{ upload_limit }}
-      - NEXTCLOUD_MAX_TIME={{ max_time }}
-      - NEXTCLOUD_MEMORY_LIMIT={{ memory_limit }}
-      - NEXTCLOUD_STARTUP_APPS={{ startup_apps }}
-      - NEXTCLOUD_ADDITIONAL_APKS={{ additional_apks }}
-      - NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS={{ additional_php_extensions }}
-      - NEXTCLOUD_ENABLE_DRI_DEVICE={{ 'true' if enable_dri_device else 'false' }}
-      - NEXTCLOUD_KEEP_DISABLED_APPS={{ 'true' if keep_disabled_apps else 'false' }}
-      - TALK_PORT={{ talk_port }}
-      - WATCHTOWER_DOCKER_SOCKET_PATH=/var/run/docker.sock
-{% for k, v in extra_env.items() %}
-      - {{ k }}={{ v }}
-{% endfor %}
-    volumes:
-      - nextcloud_aio_mastercontainer:/mnt/docker-aio-config   # AIO requires this name
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    read_only: true
+    user: "33"
+    cap_drop: [NET_RAW]
+    tmpfs: [/run, /usr/local/apache2/logs, /tmp, /home/www-data]
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
+    depends_on:
+      - nextcloud-aio-nextcloud
+      - nextcloud-aio-notify-push
+{% if collabora %}
+      - nextcloud-aio-collabora
+{% endif %}
+{% if onlyoffice %}
+      - nextcloud-aio-onlyoffice
+{% endif %}
+{% if talk %}
+      - nextcloud-aio-talk
+{% endif %}
+{% if whiteboard %}
+      - nextcloud-aio-whiteboard
+{% endif %}
+    environment:
+      - NC_DOMAIN={{ nc_domain }}
+      - NEXTCLOUD_HOST=nextcloud-aio-nextcloud
+      - APACHE_HOST=nextcloud-aio-apache
+      - COLLABORA_HOST=nextcloud-aio-collabora
+      - TALK_HOST=nextcloud-aio-talk
+      - APACHE_PORT={{ apache_port }}
+      - AIO_LOG_LEVEL={{ log_level }}
+      - ONLYOFFICE_HOST=nextcloud-aio-onlyoffice
+      - EUROOFFICE_HOST=nextcloud-aio-eurooffice
+      - TZ={{ timezone }}
+      - APACHE_MAX_SIZE=1073741824
+      - APACHE_MAX_TIME={{ max_time }}
+      - NOTIFY_PUSH_HOST=nextcloud-aio-notify-push
+      - WHITEBOARD_HOST=nextcloud-aio-whiteboard
+      - HARP_HOST=nextcloud-aio-harp
+    volumes:
+      - nextcloud_aio_nextcloud:/var/www/html:ro
+      - nextcloud_aio_apache:/mnt/data:rw
+    healthcheck: {{ hc }}
     logging:
       driver: json-file
       options:
         max-size: 10m
 
+  nextcloud-aio-database:
+    image: {{ img }}aio-postgresql:{{ tag }}
+    container_name: nextcloud-aio-database
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "999"
+    cap_drop: [NET_RAW]
+    tmpfs: [/var/run/postgresql]
+    shm_size: 268435456
+    stop_grace_period: 1800s
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - POSTGRES_PASSWORD={{ database_password }}
+      - POSTGRES_DB=nextcloud_database
+      - POSTGRES_USER=nextcloud
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - PGTZ={{ timezone }}
+    volumes:
+      - nextcloud_aio_database:/var/lib/postgresql/data:rw
+      - nextcloud_aio_database_dump:/mnt/data:rw
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  nextcloud-aio-nextcloud:
+    image: {{ img }}aio-nextcloud:{{ tag }}
+    container_name: nextcloud-aio-nextcloud
+    init: true
+    restart: unless-stopped
+    cap_drop: [NET_RAW]
+    shm_size: 134217728
+    stop_grace_period: 600s
+    networks:
+      {{ network_name }}: {}
+    depends_on:
+      - nextcloud-aio-database
+      - nextcloud-aio-redis
+{% if clamav %}
+      - nextcloud-aio-clamav
+{% endif %}
+{% if fulltextsearch %}
+      - nextcloud-aio-fulltextsearch
+{% endif %}
+{% if talk_recording %}
+      - nextcloud-aio-talk-recording
+{% endif %}
+{% if imaginary %}
+      - nextcloud-aio-imaginary
+{% endif %}
+{% if enable_dri_device %}
+    devices:
+      - /dev/dri:/dev/dri
+{% endif %}
+    environment:
+      - NEXTCLOUD_HOST=nextcloud-aio-nextcloud
+      - POSTGRES_HOST=nextcloud-aio-database
+      - POSTGRES_PORT=5432
+      - POSTGRES_PASSWORD={{ database_password }}
+      - POSTGRES_DB=nextcloud_database
+      - POSTGRES_USER=nextcloud
+      - REDIS_HOST=nextcloud-aio-redis
+      - REDIS_PORT=6379
+      - REDIS_HOST_PASSWORD={{ redis_password }}
+      - APACHE_HOST=nextcloud-aio-apache
+      - APACHE_PORT={{ apache_port }}
+      - NC_DOMAIN={{ nc_domain }}
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD={{ admin_password }}
+      - NEXTCLOUD_DATA_DIR=/mnt/ncdata
+      - OVERWRITEHOST={{ nc_domain }}
+      - OVERWRITEPROTOCOL=https
+      - TURN_SECRET={{ turn_secret }}
+      - SIGNALING_SECRET={{ signaling_secret }}
+      - ONLYOFFICE_SECRET={{ onlyoffice_secret }}
+      - EUROOFFICE_SECRET=
+      - AIO_LOG_LEVEL={{ log_level }}
+      - NEXTCLOUD_MOUNT={{ nextcloud_mount }}
+      - CLAMAV_ENABLED={{ 'yes' if clamav else 'no' }}
+      - CLAMAV_HOST=nextcloud-aio-clamav
+      - ONLYOFFICE_ENABLED={{ 'yes' if onlyoffice else 'no' }}
+      - EUROOFFICE_ENABLED=no
+      - COLLABORA_ENABLED={{ 'yes' if collabora else 'no' }}
+      - COLLABORA_HOST=nextcloud-aio-collabora
+      - TALK_ENABLED={{ 'yes' if talk else 'no' }}
+      - ONLYOFFICE_HOST=nextcloud-aio-onlyoffice
+      - EUROOFFICE_HOST=nextcloud-aio-eurooffice
+      - UPDATE_NEXTCLOUD_APPS={{ 'yes' if update_nextcloud_apps else 'no' }}
+      - TZ={{ timezone }}
+      - TALK_PORT={{ talk_port }}
+      - IMAGINARY_ENABLED={{ 'yes' if imaginary else 'no' }}
+      - IMAGINARY_HOST=nextcloud-aio-imaginary
+      - PHP_UPLOAD_LIMIT={{ upload_limit }}
+      - PHP_MEMORY_LIMIT={{ memory_limit }}
+      - FULLTEXTSEARCH_ENABLED={{ 'yes' if fulltextsearch else 'no' }}
+      - FULLTEXTSEARCH_HOST=nextcloud-aio-fulltextsearch
+      - FULLTEXTSEARCH_PROTOCOL=http
+      - FULLTEXTSEARCH_PORT=9200
+      - FULLTEXTSEARCH_USER=elastic
+      - FULLTEXTSEARCH_INDEX=nextcloud-aio
+      - PHP_MAX_TIME={{ max_time }}
+      - TRUSTED_CACERTS_DIR=
+      - STARTUP_APPS={{ startup_apps }}
+      - ADDITIONAL_APKS={{ additional_apks }}
+      - ADDITIONAL_PHP_EXTENSIONS={{ additional_php_extensions }}
+      - INSTALL_LATEST_MAJOR={{ 'yes' if install_latest_major else 'no' }}
+      - TALK_RECORDING_ENABLED={{ 'yes' if talk_recording else 'no' }}
+      - RECORDING_SECRET={{ recording_secret }}
+      - TALK_RECORDING_HOST=nextcloud-aio-talk-recording
+      - FULLTEXTSEARCH_PASSWORD={{ fulltextsearch_password }}
+      - REMOVE_DISABLED_APPS={{ 'no' if keep_disabled_apps else 'yes' }}
+      - IMAGINARY_SECRET={{ imaginary_secret }}
+      - WHITEBOARD_SECRET={{ whiteboard_secret }}
+      - WHITEBOARD_ENABLED={{ 'yes' if whiteboard else 'no' }}
+      - HARP_ENABLED=no
+      - HP_SHARED_KEY=
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+    volumes:
+      - nextcloud_aio_nextcloud:/var/www/html:rw
+      - {{ datadir }}:/mnt/ncdata:rw
+{% if nextcloud_mount %}
+      - {{ nextcloud_mount }}:{{ nextcloud_mount }}:rw
+{% endif %}
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  nextcloud-aio-notify-push:
+    image: {{ img }}aio-notify-push:{{ tag }}
+    container_name: nextcloud-aio-notify-push
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "33"
+    cap_drop: [NET_RAW]
+    networks:
+      {{ network_name }}: {}
+    depends_on:
+      - nextcloud-aio-nextcloud
+    environment:
+      - NEXTCLOUD_HOST=nextcloud-aio-nextcloud
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+    volumes:
+      - nextcloud_aio_nextcloud:/var/www/html:ro
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  nextcloud-aio-redis:
+    image: {{ img }}aio-redis:{{ tag }}
+    container_name: nextcloud-aio-redis
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "999"
+    cap_drop: [NET_RAW]
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - REDIS_HOST_PASSWORD={{ redis_password }}
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+    volumes:
+      - nextcloud_aio_redis:/data:rw
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% if collabora %}
+
+  nextcloud-aio-collabora:
+    image: {{ img }}aio-collabora:{{ tag }}
+    container_name: nextcloud-aio-collabora
+    init: true
+    restart: unless-stopped
+    cap_drop: [NET_RAW]
+    cap_add: [SYS_ADMIN, SYS_CHROOT, FOWNER, CHOWN]
+    tmpfs: [/tmp]
+    shm_size: 268435456
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - aliasgroup1=https://{{ nc_domain }}:443,http://nextcloud-aio-apache.{{ network_name }}:23973,http://nextcloud-aio-apache:23973
+      - extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:welcome.enable=false --o:fetch_update_check=0 --o:allow_update_popup=false --o:logging.level={{ collabora_log_level }} --o:logging.level_startup={{ collabora_log_level }} --o:remote_font_config.url=https://{{ nc_domain }}/apps/richdocuments/settings/fonts.json --o:net.post_allow.host[0]=.+
+      - dictionaries={{ collabora_dictionaries }}
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - server_name={{ nc_domain }}
+      - DONT_GEN_SSL_CERT=1
+    healthcheck:
+      test: [CMD, /usr/bin/coolwsd, --probe, --use-env-vars]
+      interval: 30s
+      timeout: 30s
+      start_period: 60s
+      retries: 9
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if onlyoffice %}
+
+  nextcloud-aio-onlyoffice:
+    image: {{ img }}aio-onlyoffice:{{ tag }}
+    container_name: nextcloud-aio-onlyoffice
+    init: true
+    restart: unless-stopped
+    cap_drop: [NET_RAW]
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - AIO_LOG_LEVEL={{ log_level }}
+      - LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - JWT_ENABLED=true
+      - JWT_HEADER=AuthorizationJwt
+      - JWT_SECRET={{ onlyoffice_secret }}
+    volumes:
+      - nextcloud_aio_onlyoffice:/var/lib/onlyoffice:rw
+    healthcheck: {{ dict(hc, start_period='60s', retries=9) }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if talk %}
+
+  nextcloud-aio-talk:
+    image: {{ img }}aio-talk:{{ tag }}
+    container_name: nextcloud-aio-talk
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "1000"
+    cap_drop: [NET_RAW]
+    tmpfs: [/run, /opt/eturnal/run, /conf, /tmp]
+    networks:
+      {{ network_name }}: {}
+    ports:
+      - "{{ talk_port }}:{{ talk_port }}/tcp"
+      - "{{ talk_port }}:{{ talk_port }}/udp"
+    environment:
+      - NC_DOMAIN={{ nc_domain }}
+      - TALK_HOST=nextcloud-aio-talk
+      - TURN_SECRET={{ turn_secret }}
+      - SIGNALING_SECRET={{ signaling_secret }}
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - TALK_PORT={{ talk_port }}
+      - INTERNAL_SECRET={{ talk_internal_secret }}
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if talk_recording %}
+
+  nextcloud-aio-talk-recording:
+    image: {{ img }}aio-talk-recording:{{ tag }}
+    container_name: nextcloud-aio-talk-recording
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "122"
+    cap_drop: [NET_RAW]
+    tmpfs: [/conf]
+    shm_size: 2147483648
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - NC_DOMAIN={{ nc_domain }}
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - RECORDING_SECRET={{ recording_secret }}
+      - INTERNAL_SECRET={{ talk_internal_secret }}
+    volumes:
+      - nextcloud_aio_talk_recording:/tmp:rw
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if clamav %}
+
+  nextcloud-aio-clamav:
+    image: {{ img }}aio-clamav:{{ tag }}
+    container_name: nextcloud-aio-clamav
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "100"
+    cap_drop: [NET_RAW]
+    tmpfs: [/run, /tmp, /var/log/clamav]
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - MAX_SIZE={{ upload_limit }}
+    volumes:
+      - nextcloud_aio_clamav:/var/lib/clamav:rw
+    healthcheck: {{ dict(hc, start_period='60s', retries=9) }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if imaginary %}
+
+  nextcloud-aio-imaginary:
+    image: {{ img }}aio-imaginary:{{ tag }}
+    container_name: nextcloud-aio-imaginary
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "65534"
+    cap_drop: [NET_RAW]
+    cap_add: [SYS_NICE]
+    tmpfs: [/tmp]
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - IMAGINARY_SECRET={{ imaginary_secret }}
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if fulltextsearch %}
+
+  nextcloud-aio-fulltextsearch:
+    image: {{ img }}aio-fulltextsearch:{{ tag }}
+    container_name: nextcloud-aio-fulltextsearch
+    restart: unless-stopped
+    cap_drop: [NET_RAW]
+    networks:
+      {{ network_name }}: {}
+    environment:
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - ES_JAVA_OPTS={{ fulltextsearch_java_options }}
+      - bootstrap.memory_lock=false
+      - cluster.name=nextcloud-aio
+      - discovery.type=single-node
+      - http.port=9200
+      - xpack.license.self_generated.type=basic
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - indices.fielddata.cache.size=20%
+      - indices.memory.index_buffer_size=20%
+      - thread_pool.write.queue_size=1000
+      - ELASTIC_PASSWORD={{ fulltextsearch_password }}
+    volumes:
+      - nextcloud_aio_elasticsearch:/usr/share/elasticsearch/data:rw
+    healthcheck: {{ dict(hc, interval='10s', timeout='5s', start_period='60s', retries=5) }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+{% if whiteboard %}
+
+  nextcloud-aio-whiteboard:
+    image: {{ img }}aio-whiteboard:{{ tag }}
+    container_name: nextcloud-aio-whiteboard
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "65534"
+    cap_drop: [NET_RAW]
+    tmpfs: [/tmp]
+    networks:
+      {{ network_name }}: {}
+    depends_on:
+      - nextcloud-aio-redis
+    environment:
+      - AIO_LOG_LEVEL={{ log_level }}
+      - TZ={{ timezone }}
+      - NEXTCLOUD_URL=https://{{ nc_domain }}
+      - JWT_SECRET_KEY={{ whiteboard_secret }}
+      - STORAGE_STRATEGY=redis
+      - REDIS_HOST=nextcloud-aio-redis
+      - REDIS_PORT=6379
+      - REDIS_HOST_PASSWORD={{ redis_password }}
+      - BACKUP_DIR=/tmp
+    healthcheck: {{ hc }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}
+
 volumes:
-  nextcloud_aio_mastercontainer:
-    name: nextcloud_aio_mastercontainer
+  nextcloud_aio_nextcloud:
+    name: nextcloud_aio_nextcloud
+  nextcloud_aio_apache:
+    name: nextcloud_aio_apache
+  nextcloud_aio_database:
+    name: nextcloud_aio_database
+  nextcloud_aio_database_dump:
+    name: nextcloud_aio_database_dump
+  nextcloud_aio_redis:
+    name: nextcloud_aio_redis
+{% if onlyoffice %}
+  nextcloud_aio_onlyoffice:
+    name: nextcloud_aio_onlyoffice
+{% endif %}
+{% if talk_recording %}
+  nextcloud_aio_talk_recording:
+    name: nextcloud_aio_talk_recording
+{% endif %}
+{% if clamav %}
+  nextcloud_aio_clamav:
+    name: nextcloud_aio_clamav
+{% endif %}
+{% if fulltextsearch %}
+  nextcloud_aio_elasticsearch:
+    name: nextcloud_aio_elasticsearch
+{% endif %}

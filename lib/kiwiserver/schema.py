@@ -29,6 +29,9 @@ class Setting:
         self.targets = [str(t) for t in (d.get("targets") or [])]
         self.placeholder = str(d.get("placeholder") or "")
         self.group = str(d.get("group") or "Settings")
+        # a secret the renderer makes up when it is empty: derived from the
+        # fleet's seed, so every render gives the same value (see config.Fleet.seed)
+        self.generate = bool(d.get("generate", False)) and self.type == "secret"
         if "default" in d:
             self.default = d["default"]
         else:
@@ -39,7 +42,8 @@ class Setting:
     def as_dict(self):
         return {"key": self.key, "type": self.type, "label": self.label, "help": self.help,
                 "required": self.required, "options": self.options, "targets": self.targets,
-                "default": self.default, "placeholder": self.placeholder, "group": self.group}
+                "default": self.default, "placeholder": self.placeholder, "group": self.group,
+                "generate": self.generate}
 
 
 def coerce(setting, value, where):

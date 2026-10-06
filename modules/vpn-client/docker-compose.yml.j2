@@ -5,6 +5,8 @@ services:
     container_name: {{ container_prefix }}-vpn-client
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     environment:
       - VPN_SERVICE_PROVIDER={{ vpn_provider }}
       - VPN_TYPE={{ vpn_type }}

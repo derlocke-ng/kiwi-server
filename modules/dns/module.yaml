@@ -131,4 +131,4 @@ settings:
     default: {}
   - key: image
     group: Advanced
-    default: pihole/pihole:latest
+    default: docker.io/pihole/pihole:latest

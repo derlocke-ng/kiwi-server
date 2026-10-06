@@ -9,9 +9,6 @@ services:
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
-{% if has_cloud %}
-      nextcloud-aio: {}
-{% endif %}
     ports:
       - "80:80"
       - "443:443"

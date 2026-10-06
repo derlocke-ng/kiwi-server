@@ -29,4 +29,4 @@ storage:
 settings:
   - key: image
     group: Advanced
-    default: homeall/dhcphelper:latest
+    default: docker.io/homeall/dhcphelper:latest

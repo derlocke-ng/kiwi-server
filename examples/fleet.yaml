@@ -133,7 +133,8 @@ hosts:
       portainer:
         admin_password: change-me-seven   # set before the first start; no open first-run page
 
-  # a kiwi-node in cloud mode on uCore (hci): Nextcloud + Vaultwarden
+  # a kiwi-node in cloud mode on uCore (hci): Nextcloud + Vaultwarden.
+  # Containers run as podman quadlets (systemd units) unless runtime: docker is set.
   sh3:
     role: node
     ucore:
@@ -150,8 +151,11 @@ hosts:
       vpn-client:
         wireguard_config: secrets/sh3.home.conf
       cloud:
+        admin_password: change-me-eight     # the Nextcloud user `admin`
         nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data
         memory_limit: 8192M
+        # collabora: true  talk: false  imaginary: true  clamav: false  fulltextsearch: false  whiteboard: false
+        # database and service secrets are generated from secrets/seed — nothing to write here
       vault:
         signups_allowed: true             # for the first account; turn it off afterwards
 

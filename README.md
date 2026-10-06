@@ -140,6 +140,17 @@ host ends up with, secrets masked; `kiwi-server roles -v` lists every role and
 module setting with its default. The full reference is the commented
 [examples/fleet.yaml](examples/fleet.yaml).
 
+Containers run as **podman quadlets** by default: every service is a systemd
+unit under `/etc/containers/systemd`, ordering and restarts come from
+systemd, `podman auto-update` pulls new images, and the compose file stays
+next to them as the source and for review. `runtime: docker` in the role
+block keeps docker compose, as the v1 setups ran. The cloud preset runs
+Nextcloud from the AIO project's own containers without the AIO master
+container: no docker socket, podman-native, Collabora, Talk, Imaginary,
+ClamAV, full-text search and the whiteboard as switches, and every database
+and service secret generated from `secrets/seed` so a re-render never rotates
+a password.
+
 A module role's block holds the **stack settings** at the top (`preset`,
 `vpn_ip`, `pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, the
 daily VPN restart and weekly update times) and **one block per module**. A

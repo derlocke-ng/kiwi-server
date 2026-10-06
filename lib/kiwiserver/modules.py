@@ -21,7 +21,7 @@ import re
 
 import yaml
 
-from . import util
+from . import quadlet, util
 from .schema import load_settings
 from .util import KiwiError
 
@@ -89,6 +89,11 @@ class Module:
         self.nginx = meta.get("nginx") or None
         self.host = meta.get("host_integration") or {}
         self.dns = meta.get("dns") or {}
+        self.checks = []   # [{"when": <jinja expression>, "error": text}]
+        for c in meta.get("validate") or []:
+            if not isinstance(c, dict) or not c.get("when") or not c.get("error"):
+                raise KiwiError("modules/%s/module.yaml: every validate: entry needs when: and error:" % self.name)
+            self.checks.append({"when": str(c["when"]), "error": str(c["error"])})
 
     def template(self, key):
         name = self.templates.get(key)
@@ -161,7 +166,7 @@ class StackSpec:
     def __init__(self, node_type, hostname, modules, docker_dir="/home/user/docker",
                  docker_subnet=None, mtu=1412, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None,
-                 service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain=""):
+                 service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman"):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -181,6 +186,9 @@ class StackSpec:
         self.master_ip = master_ip or ""        # the master's mesh address: the nodes' DNS upstream
         self.mesh_subnet = mesh_subnet or "10.8.0.0/16"
         self.domain = domain or ""              # the fleet's domain: forwarded to the master, never upstream
+        if runtime not in ("podman", "docker"):
+            raise KiwiError("runtime must be podman or docker, not %r" % runtime)
+        self.runtime = runtime
 
 
 class Bundle:
@@ -199,6 +207,8 @@ class Bundle:
         self.mesh_via = ""         # the container the host routes the mesh through
         self.mesh_subnet = ""
         self.hosts = []            # (ip, name): the fleet's names for /etc/hosts
+        self.runtime = "podman"
+        self.quadlets = {}         # podman: file name -> unit text (.container, .network, the target)
 
     def add_file(self, rel, content, mode=0o644):
         rel = rel.strip("/")
@@ -297,6 +307,7 @@ class Renderer:
             "mesh_ips": sorted({ip for ip, _n in spec.dns_records}),
             "dns_records": list(spec.dns_records),
             "master_ip": spec.master_ip, "mesh_subnet": spec.mesh_subnet, "domain": spec.domain,
+            "runtime": spec.runtime,
             # the mesh is behind the WireGuard server on a master, behind the VPN client on a node
             "mesh_via": ips.get("vpn-server" if spec.node_type == "master" else "vpn-client", ""),
         }
@@ -511,10 +522,21 @@ class Renderer:
                 raise KiwiError("%s: the stack setting vpn_ip (this host's mesh address) is required — "
                                 "%s are reachable at the mesh address" % (spec.hostname, ", ".join(at_mesh)))
         bundle.add_file("docker-compose.yml", self.render_compose(spec, ordered, base, bundle), 0o600)
+        bundle.runtime = spec.runtime
+        if spec.runtime == "podman":
+            bundle.quadlets = quadlet.from_compose(bundle.compose, "Kiwi Server stack on %s (%s)" % (
+                spec.hostname, ", ".join(ordered)))
 
         for name in ordered:
             mod = self.ms.get(name)
             ctx = self.module_context(spec, ordered, base, name)
+            for c in mod.checks:
+                try:
+                    hit = self.env.compile_expression(c["when"])(**ctx)
+                except jinja2.TemplateError as e:
+                    raise KiwiError("modules/%s/module.yaml validate: %s: %s" % (name, c["when"], e))
+                if hit:
+                    raise KiwiError("%s: %s: %s" % (spec.hostname, name, self.render_text(c["error"], ctx, name)))
             # config templates (everything but compose)
             for key, fname in mod.templates.items():
                 if key in ("compose", "env_example"):

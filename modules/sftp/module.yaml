@@ -55,4 +55,4 @@ settings:
   - key: image
     group: Advanced
     help: atmoz/sftp or a fork of it (jmcombs/sftp adds arm64) — both read /etc/sftp/users.conf.
-    default: jmcombs/sftp
+    default: docker.io/jmcombs/sftp

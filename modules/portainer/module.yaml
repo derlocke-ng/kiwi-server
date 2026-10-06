@@ -56,4 +56,4 @@ settings:
     default: ""
   - key: image
     group: Advanced
-    default: portainer/portainer-ce:latest
+    default: docker.io/portainer/portainer-ce:latest

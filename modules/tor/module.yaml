@@ -53,4 +53,4 @@ settings:
     default: de,ch,at,nl,fr
   - key: image
     group: Advanced
-    default: dockurr/tor
+    default: docker.io/dockurr/tor

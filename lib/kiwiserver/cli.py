@@ -79,6 +79,8 @@ def host_readme(host, o, bundle=None):
         L += ["%s.stack/" % host.name,
               "    The rendered stack the script unpacks into %s:" % (host.role_settings.get("docker_dir") or "/home/user/docker"),
               "    docker-compose.yml and the module configs — for review; the script carries a copy.",
+              "    quadlets/: the systemd units podman runs (runtime: podman); the compose file is the source."
+              if getattr(bundle, "quadlets", None) else "    runtime: docker compose.",
               "    Container addresses: %s" % ", ".join("%s=%s" % kv for kv in bundle.container_ips.items()),
               "    On the machine: sudo kiwi-stack start|stop|update|status|logs", ""]
     if host.target == "debian":
@@ -249,6 +251,8 @@ class Renderer:
                 util.write_text(p, content, mode)
         for name, text in bundle.units.items():
             util.write_text(os.path.join(o.stack, "host-units", name), text)
+        for name, text in getattr(bundle, "quadlets", {}).items():
+            util.write_text(os.path.join(o.stack, "quadlets", name), text)
         self.check_compose(os.path.join(o.stack, "docker-compose.yml"))
 
     def check_compose(self, path):

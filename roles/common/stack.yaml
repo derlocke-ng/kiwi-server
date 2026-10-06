@@ -43,6 +43,13 @@ settings:
     label: LAN interface
     help: "The physical interface facing the LAN (eth0, enp1s0). Empty: detected from the default route on first boot."
     default: ""
+  - key: runtime
+    group: Stack
+    type: enum
+    options: [podman, docker]
+    label: Container runtime
+    help: "podman: the modules' containers run as systemd units (quadlets) — the native way on Fedora CoreOS, and what Debian trixie ships; podman auto-update pulls new images. docker: docker compose, as the v1 setups ran (uCore ships docker)."
+    default: podman
   - key: docker_source
     group: Stack
     type: enum

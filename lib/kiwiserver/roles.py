@@ -141,6 +141,8 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
             continue
         given = block.get(s.key)
         v = coerce(s, s.default if given is None else given, where)
+        if is_empty(v) and getattr(s, "generate", False):
+            v = host.fleet.derive_secret(host.hostname, where, s.key)
         if s.required and is_empty(v):
             raise KiwiError("%s.%s is required" % (where, s.key))
         if s.type == "file" and not is_empty(v):
@@ -246,7 +248,7 @@ def stack_spec(host, role, dns_records=None, master_ip=""):
         module_config=host.module_settings, files=host.module_files,
         dns_records=dns_records or [], service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",
-        domain=host.domain)
+        domain=host.domain, runtime=rs.get("runtime") or "podman")
 
 
 def service_user(host):
@@ -344,12 +346,16 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),
             _bash_var("KS_STACK_MESH_VIA", getattr(bundle, "mesh_via", "") or ""),
             _bash_var("KS_STACK_HOSTS", ["%s %s" % (ip, n) for ip, n in getattr(bundle, "hosts", [])]),
+            _bash_var("KS_STACK_RUNTIME", getattr(bundle, "runtime", "podman") or "podman"),
+            _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),
             _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
         ]
         for rel, (content, _mode) in sorted(bundle.files.items()):
             lines.append("KS_FILES[stack/%s]=%s" % (rel, _q(util.b64(content))))
         for name, text in sorted(bundle.units.items()):
             lines.append("KS_FILES[unit/%s]=%s" % (name, _q(util.b64(text))))
+        for name, text in sorted(getattr(bundle, "quadlets", {}).items()):
+            lines.append("KS_FILES[quadlet/%s]=%s" % (name, _q(util.b64(text))))
     lines += ["", "# ---- common library (roles/common/lib.sh) ------------------------------",
               lib_text.rstrip("\n"), "",
               "# ---- role: %s (roles/%s/apply.sh) --------------------------------" % (role.name, role.name),

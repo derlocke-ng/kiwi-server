@@ -108,4 +108,4 @@ settings:
     default: {}
   - key: image
     group: Advanced
-    default: qmcgaw/gluetun
+    default: docker.io/qmcgaw/gluetun

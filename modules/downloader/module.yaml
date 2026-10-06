@@ -106,4 +106,4 @@ settings:
     default: lscr.io/linuxserver/transmission:latest
   - key: jdownloader_image
     group: Advanced
-    default: jlesage/jdownloader-2:latest
+    default: docker.io/jlesage/jdownloader-2:latest

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.2.0 — podman, one node role, Nextcloud without the master container
+
+- **Podman quadlets** are the default runtime (`runtime: podman`): the
+  rendered compose file is translated into `.container` and `.network` units
+  under `/etc/containers/systemd`, started through `kiwi-stack.target`,
+  updated by `podman auto-update`; `kiwi-stack` drives systemd instead of
+  compose. `runtime: docker` keeps docker compose. Images are fully
+  qualified; nginx resolves through the network's DNS; Portainer talks to the
+  podman socket; gw.sh finds the bridge by the route.
+- **Nextcloud from AIO's own containers**, no AIO master container, no docker
+  socket: apache, nextcloud, database, redis, notify-push, and Collabora,
+  OnlyOffice, Talk, recording, Imaginary, ClamAV, full-text search and the
+  whiteboard as settings. Database and service secrets are generated from
+  `secrets/seed` (a `secret` setting with `generate: true`), the same at
+  every render. The AIO interface, its updater and its borg backup are gone;
+  kiwi-stack and the coming backup module take their place.
+- **One `node` role with presets** (`preset: gateway | cloud | minimal`;
+  `modules:` replaces the list); `node-gw` and `node-cloud` stay as aliases.
+- **The master's admin pages by name**: nginx runs inside the WireGuard
+  server's namespace, `wg.<hostname>` and `pihole.<hostname>` answer on the
+  mesh address only.
+- **Client groups** (`vpn-server.groups`: subnet, reach, peers, internet,
+  admin) replace the single isolated subnet, which stays as a legacy group.
+- The renderer refuses two services on the same host port; `validate:` checks
+  in module.yaml; an `object` setting type for structured settings.
+
 ## 2.1.2 — one resolver chain for the whole network
 
 - **Nodes resolve through the master.** A node's Pi-hole asks the master's

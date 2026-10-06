@@ -56,4 +56,4 @@ settings:
     default: true
   - key: image
     group: Advanced
-    default: nginx:latest
+    default: docker.io/library/nginx:latest

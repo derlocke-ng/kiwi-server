@@ -119,4 +119,4 @@ settings:
   - key: image
     group: Advanced
     help: "weejewel/wg-easy is the last line that takes WG_POST_UP and PASSWORD; ghcr.io/wg-easy/wg-easy:15 needs the INIT_* setup instead."
-    default: weejewel/wg-easy
+    default: docker.io/weejewel/wg-easy

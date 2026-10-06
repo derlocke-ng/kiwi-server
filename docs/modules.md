@@ -32,6 +32,7 @@ Templates are Jinja2. Every template sees the **host context**:
 | `docker_subnet`, `docker_subnet_base`, `docker_gateway`, `mtu` | the stack network |
 | `docker_dir`, `service_user`, `timezone` | the stack directory and its owner |
 | `master_ip`, `mesh_subnet`, `mesh_via`, `domain` | the master's mesh address, the mesh, the container the host routes it through, the fleet's domain |
+| `runtime` | `podman` (quadlets) or `docker` (compose) — the compose fragment is the source either way |
 | `vpn_ip`, `pub_iface` | the host's mesh address and LAN interface |
 | `proxy_ip`, `vpn_client_ip`, `dns_ip` | the reverse proxy's, VPN client's and Pi-hole's addresses (empty when absent) |
 | `has_<module>` | `has_cloud`, `has_reverse_proxy` … for every enabled module |
@@ -103,6 +104,20 @@ nginx:                           # server blocks for the reverse proxy (see belo
 settings:                        # the user-facing settings (see below)
   ...
 ```
+
+`validate:` lists checks over the module's context — `- { when: "collabora and
+onlyoffice", error: "..." }` — that fail the render with that message. A
+`secret` setting with `generate: true` is derived from the fleet's
+`secrets/seed` when the fleet file leaves it empty, the same at every render.
+
+Under `runtime: podman` the compose fragment is translated to quadlets: the
+keys `image`, `container_name`, `environment`, `volumes`, `networks` with
+`ipv4_address`, `network_mode` (`host`, `service:<name>`), `ports`, `cap_add`,
+`cap_drop`, `sysctls`, `devices`, `restart`, `security_opt` (`label:disable`),
+`init`, `read_only`, `tmpfs`, `user`, `shm_size`, `stop_grace_period`,
+`hostname`, `command`, `depends_on` and `healthcheck`. Anything else is a
+render error, so a module stays runnable on both runtimes. Images must be
+fully qualified (`docker.io/...`): podman never guesses a registry.
 
 `${VAR}` in module.yaml strings is the v2 convention and resolves against the
 context (`${VPN_IP}` → `vpn_ip`, `${DOCKERDIR}` → `docker_dir`,

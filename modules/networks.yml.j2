@@ -12,10 +12,3 @@ networks:
       config:
         - subnet: {{ docker_subnet }}
           gateway: {{ docker_gateway }}
-{% if has_cloud %}
-  # Nextcloud AIO attaches its containers to this network; the reverse proxy
-  # joins it to reach nextcloud-aio-apache. Declared here (not external) so
-  # the first `compose up` can create it.
-  nextcloud-aio:
-    name: nextcloud-aio
-{% endif %}

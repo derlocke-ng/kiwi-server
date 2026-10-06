@@ -36,6 +36,9 @@ test -f output/gate/gate.preseed.cfg
 test -f output/gate/gate.stack/km-vpn-server/start.sh
 test -f output/sh3/sh3.bu
 test -f output/sh3/sh3.stack/docker-compose.yml
+test -f output/sh3/sh3.stack/quadlets/kn-vpn-client.container
+test -f output/sh3/sh3.stack/quadlets/nextcloud-aio-nextcloud.container
+test -f secrets/seed
 test -f output/m1/m1.stack/kiwi/gw.sh
 test -f secrets/ca/kiwiCA.pem
 grep -q 'KS_FILES\[ca_cert\]' output/lab1/lab1.role.sh

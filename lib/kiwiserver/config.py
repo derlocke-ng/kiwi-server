@@ -430,6 +430,33 @@ class Fleet:
         p = os.path.expanduser(str(p))
         return p if os.path.isabs(p) else os.path.join(self.dir, p)
 
+    def seed(self):
+        """32 random bytes in secrets/seed, made on first use: what generated
+        secrets (database passwords and the like) are derived from, so every
+        render of the fleet gives the same values. Backed up with the fleet;
+        a new seed rotates every generated secret."""
+        p = self.resolve_path("secrets/seed")
+        if not os.path.isfile(p):
+            os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
+            util.write_bytes(p, os.urandom(32), 0o600)
+        data = util.read_bytes(p)
+        if len(data) < 16:
+            raise KiwiError("%s is too short to be a seed — remove it to make a new one" % p)
+        return data
+
+    def derive_secret(self, *parts, length=32):
+        """A generated secret: letters and digits only (AIO forbids @ and : in
+        passwords), stable for the same seed and the same parts."""
+        import hashlib
+        import hmac
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        out, counter = "", 0
+        while len(out) < length:
+            digest = hmac.new(self.seed(), (":".join(parts) + ":%d" % counter).encode(), hashlib.sha256).digest()
+            out += "".join(alphabet[b % len(alphabet)] for b in digest)
+            counter += 1
+        return out[:length]
+
     def names(self):
         return list(self.hosts)
 

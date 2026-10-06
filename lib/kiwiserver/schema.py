@@ -87,7 +87,8 @@ def coerce(setting, value, where):
     v = str(value)
     if setting.pattern and v and not re.fullmatch(setting.pattern, v):
         like = " (like %s)" % setting.placeholder if setting.placeholder else ""
-        raise KiwiError("%s.%s: %r is not a valid value%s" % (where, setting.key, v, like))
+        shown = "" if t == "secret" else " %r" % v      # a secret is never printed
+        raise KiwiError("%s.%s:%s is not a valid value%s" % (where, setting.key, shown, like))
     return v
 
 

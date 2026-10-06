@@ -14,6 +14,10 @@ url='{{ mullvad_socks_url | replace("'", "'\\''") }}'
 short='{{ short | replace("'", "'\\''") }}'
 dir='{{ docker_dir }}/{{ container_prefix }}-pihole/mullvad-socks'
 hosts=mullvad-socks.hosts
+if [[ ! $short =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$ ]]; then
+    echo "short names: '$short' is not a DNS domain (dns.mullvad_socks_domain, or the fleet's domain)" >&2
+    exit 1
+fi
 
 # Work only in a directory that is exactly this path (not a link to another),
 # belongs to whoever runs this and is writable by nobody else, by relative

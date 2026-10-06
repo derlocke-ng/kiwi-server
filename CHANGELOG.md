@@ -31,6 +31,9 @@
   checks a string value against a regular expression at validate time.
 - `kiwi-server roles -v` shows a role's preset value (`module_defaults`) where
   it has one, not the module's own default.
+- `dns.extra_env: { FTLCONF_misc_dnsmasq_lines: … }` is added to the module's
+  own dnsmasq lines; before, it replaced them (and with them `strict-order`
+  and the fleet's `local=`/`server=` line), since one variable is set once.
 
 ## 2.1.2 — one resolver chain for the whole network
 

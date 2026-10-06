@@ -915,12 +915,34 @@ class TestModules(Base):
             f = self.fleet({"defaults": self.base_defaults(), "hosts": {"gate": {"role": "master", "master": m}}})
             with self.assertRaisesRegex(KiwiError, "mullvad_socks_domain"):
                 rolesmod.resolve_settings(self.roles["master"], f.hosts["gate"], self.ms)
-        for bad in ("raw.githubusercontent.com/x", "https://a b", "ftp://x/y"):
+        for bad in ("raw.githubusercontent.com/x", "https://a b", "ftp://x/y", ""):
             m = self.master()
             m["dns"]["mullvad_socks_url"] = bad
             f = self.fleet({"defaults": self.base_defaults(), "hosts": {"gate": {"role": "master", "master": m}}})
             with self.assertRaisesRegex(KiwiError, "mullvad_socks_url"):
                 rolesmod.resolve_settings(self.roles["master"], f.hosts["gate"], self.ms)
+
+    def test_a_secret_is_never_echoed_by_a_pattern_error(self):
+        from kiwiserver import schema
+        s = schema.Setting("modules/x", {"key": "key", "type": "secret", "pattern": "[a-z]+"})
+        with self.assertRaises(KiwiError) as e:
+            schema.coerce(s, "S3cret-Value!", "host.x")
+        self.assertNotIn("S3cret", str(e.exception))
+        self.assertIn("host.x.key", str(e.exception))
+        s = schema.Setting("modules/x", {"key": "name", "pattern": "[a-z]+"})
+        with self.assertRaisesRegex(KiwiError, "'Not ok'"):
+            schema.coerce(s, "Not ok", "host.x")
+
+    def test_operator_dnsmasq_lines_join_the_modules(self):
+        m = self.master()
+        m["dns"]["extra_env"] = {"FTLCONF_misc_dnsmasq_lines": "rebind-domain-ok=example.org; address=/x.lan/192.168.1.5",
+                                 "FTLCONF_dns_domainNeeded": "true"}
+        host, role, spec = self.spec("gate", role="master", **{"master": m})
+        env = modmod.Renderer(self.ms).render(spec).compose["services"]["km-pihole"]["environment"]
+        lines = [e for e in env if e.upper().startswith("FTLCONF_MISC_DNSMASQ_LINES=")]
+        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks;"
+                                 "rebind-domain-ok=example.org;address=/x.lan/192.168.1.5"])
+        self.assertIn("FTLCONF_dns_domainNeeded=true", env)
 
     def mullvad_socks_script(self, **dns):
         m = self.master()

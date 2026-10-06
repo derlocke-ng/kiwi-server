@@ -140,6 +140,7 @@ settings:
   - key: mullvad_socks_url
     group: Mullvad SOCKS5
     label: Proxy list
+    required: true
     help: "One IPv4 address and one name per line, comment lines allowed; any other line rejects the whole download and the current records stay. Only *.relays.mullvad.net names at 10.x.x.x addresses are taken from it, so the list can never redirect another name."
     pattern: '(https?|file)://\S+'
     placeholder: https://raw.githubusercontent.com/derlocke-ng/mullvad-socks5/list/mullvad-socks.hosts
@@ -161,7 +162,7 @@ settings:
     type: map
     group: Advanced
     label: Extra environment variables
-    help: "KEY=value, e.g. FTLCONF_dns_domainNeeded=true — any Pi-hole 6 setting as FTLCONF_<section>_<key>."
+    help: "KEY=value, e.g. FTLCONF_dns_domainNeeded=true — any Pi-hole 6 setting as FTLCONF_<section>_<key>. FTLCONF_misc_dnsmasq_lines (';' between lines) is added to the module's own dnsmasq lines instead of replacing them."
     default: {}
   - key: image
     group: Advanced

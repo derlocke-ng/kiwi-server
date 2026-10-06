@@ -527,6 +527,8 @@ class Renderer:
                     raise KiwiError("modules/%s: file setting %s has no outputs: entry" % (name, s.key))
                 if isinstance(out, str):
                     out = {"path": out}
+                if out.get("when") and not ctx.get(str(out["when"])):
+                    continue
                 bundle.add_file(self.expand(out["path"], ctx, "modules/%s/module.yaml outputs.%s" % (name, s.key)),
                                 data, int(out.get("mode", 0o600)))
             # directories, ports, host integration

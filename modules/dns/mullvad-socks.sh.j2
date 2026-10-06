@@ -4,42 +4,49 @@
 # Run by {{ container_prefix }}-mullvad-socks.timer every 6 hours. Takes the
 # *.relays.mullvad.net names at 10.x.x.x addresses from the proxy list — nothing
 # else, so the list can never redirect another name — adds the short names
-# <cc>-<city>-<n>.{{ short or '(none)' }}, and swaps the file Pi-hole's dnsmasq
-# watches (hostsdir) in one rename; dnsmasq reloads it by itself. A download
-# that is not such a list never replaces the current records.
+# <cc>-<city>-<n>.$short (none when empty), and swaps the file in one rename. Pi-hole
+# sees the directory read-only at /etc/mullvad-socks (hostsdir) and reloads it
+# by itself. A download that is not such a list never replaces the records.
 set -euo pipefail
 umask 022
 
 url='{{ mullvad_socks_url | replace("'", "'\\''") }}'
 short='{{ short | replace("'", "'\\''") }}'
-dir='{{ docker_dir }}/{{ container_prefix }}-pihole/etc-dnsmasq.d/mullvad-socks'
+dir='{{ docker_dir }}/{{ container_prefix }}-pihole/mullvad-socks'
 hosts=mullvad-socks.hosts
-
-# Pi-hole's container writes in the directory above: work inside this one,
-# by relative names, and only when it is a directory and not a link it put there
-mkdir -p "$dir"
-cd "$dir"
-if [[ $(stat -c %d:%i .) != "$(stat -c %d:%i "$dir")" ]]; then
-    echo "$dir is not a plain directory, leaving it alone" >&2
+if [[ ! $short =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$ ]]; then
+    echo "short names: '$short' is not a DNS domain (dns.mullvad_socks_domain, or the fleet's domain)" >&2
     exit 1
 fi
-# Pi-hole reads it as its own user, whatever the umask was when it was made
-chmod 0755 .
+
+# Work only in a directory that is exactly this path (not a link to another),
+# belongs to whoever runs this and is writable by nobody else, by relative
+# names: no one else can swap a file under root's hands.
+mkdir -p "$dir"
+cd "$dir"
+if [[ $(stat -c %d:%i .) != "$(stat -c %d:%i "$dir")" || $(stat -c %u .) != "$(id -u)" ]] ||
+   (( 8#$(stat -c %a .) & 8#022 )); then
+    echo "$dir must be a directory of $(id -un)'s that nobody else can write to — leaving it alone" >&2
+    exit 1
+fi
 # dnsmasq ignores dotfiles in a hostsdir: nothing is visible before the rename
 raw=$(mktemp .download.XXXXXX)
 new=$(mktemp .hosts.XXXXXX)
 trap 'rm -f "$raw" "$new"' EXIT
-curl -fsSL --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
+curl -fsSL --proto-redir =https --max-filesize 10000000 --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
 
 if ! awk -v short="$short" '
+    BEGIN { if (short !~ /^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$/) { bad = 1; exit } }
     { sub(/\r$/, "") }
     /^[ \t]*(#|$)/ { next }
     !/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[ \t]+[A-Za-z0-9.-]+[ \t]*$/ { bad = 1; exit }
     {
         ip = $1; name = tolower($2)
-        if (ip !~ /^10\./ || name !~ /^[a-z0-9-]+\.relays\.mullvad\.net$/) next
+        # no leading zeros: some resolvers read 010 as octal
+        if (ip !~ /^10\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/) next
+        if (name !~ /^[a-z0-9-]+\.relays\.mullvad\.net$/) next
         split(ip, o, ".")
-        if (o[1] > 255 || o[2] > 255 || o[3] > 255 || o[4] > 255 || name in seen) next
+        if (o[2] > 255 || o[3] > 255 || o[4] > 255 || name in seen) next
         seen[name] = 1
         print ip " " name
         n++
@@ -57,7 +64,7 @@ if ! awk -v short="$short" '
     exit 1
 fi
 
-if cmp -s "$new" "$hosts"; then
+if [[ -f $hosts && ! -L $hosts ]] && cmp -s "$new" "$hosts"; then
     exit 0
 fi
 chmod 0644 "$new"

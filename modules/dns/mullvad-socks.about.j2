@@ -1,0 +1,4 @@
+# kiwi-server: the Mullvad SOCKS5 records Pi-hole serves on {{ hostname }} (dns.mullvad_socks).
+# {{ container_prefix }}-mullvad-socks.timer refreshes mullvad-socks.hosts here every 6 hours;
+# Pi-hole sees this directory read-only at /etc/mullvad-socks and reloads it on every change.
+# Root's: nothing else writes here. (dnsmasq skips dotfiles like this one.)

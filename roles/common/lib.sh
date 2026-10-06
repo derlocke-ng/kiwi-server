@@ -205,6 +205,7 @@ ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates e
 # configs, host units) and embeds it as KS_FILES[stack/...] / KS_FILES[unit/...]
 # with KS_STACK_* describing directories, ports, sysctls and kernel modules.
 KS_STACK_ENV=/etc/kiwi-server/stack.env
+KS_SYSTEMD_DIR=/etc/systemd/system
 
 ks_stack_host_prep() {
     local m kv
@@ -254,6 +255,24 @@ ks_stack_hosts() {
     } | ks_write /etc/hosts 0644
 }
 
+ks_stack_drop_units() {
+    # A host unit the last apply installed and this one does not (a module or a
+    # setting such as dns.mullvad_socks turned off) is stopped and removed:
+    # kiwi-stack no longer knows it, so nothing else would ever stop it.
+    local old='' unit u keep
+    [[ -f $KS_STACK_ENV ]] && old=$(sed -n 's/^STACK_UNITS="\(.*\)"$/\1/p' "$KS_STACK_ENV")
+    for unit in $old; do
+        [[ $unit =~ ^[A-Za-z0-9@._-]+\.(service|timer|path|socket)$ ]] || continue
+        keep=0
+        for u in "${KS_STACK_UNITS[@]}"; do [[ $u == "$unit" ]] && keep=1; done
+        (( keep )) && continue
+        ks_say "removing the host unit $unit — no module installs it any more"
+        systemctl disable --now "$unit" 2>/dev/null || true
+        rm -f "${KS_SYSTEMD_DIR:?}/$unit"
+    done
+    systemctl daemon-reload 2>/dev/null || true
+}
+
 ks_stack_unpack() {
     # Everything the generator rendered (compose file, module configs, gw.sh)
     # is root's: root runs the stack and the host units execute some of these
@@ -279,8 +298,9 @@ ks_stack_unpack() {
         rel=${entry%:*}; mode=${entry##*:}
         ks_file "stack/$rel" "$dd/$rel" "$mode" root:root
     done
+    ks_stack_drop_units
     for unit in "${KS_STACK_UNITS[@]}"; do
-        ks_file "unit/$unit" "/etc/systemd/system/$unit" 0644
+        ks_file "unit/$unit" "$KS_SYSTEMD_DIR/$unit" 0644
     done
     install -d -m 0755 /etc/kiwi-server
     {

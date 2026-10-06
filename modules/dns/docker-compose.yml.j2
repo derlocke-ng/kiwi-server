@@ -31,6 +31,10 @@
 {% set _ = lines.append('local=/' ~ domain ~ '/') %}
 {% endif %}
 {% endif %}
+{% if mullvad_socks %}
+{# the Mullvad SOCKS5 records, refreshed by the host timer; reloaded on every change #}
+{% set _ = lines.append('hostsdir=/etc/dnsmasq.d/mullvad-socks') %}
+{% endif %}
 {% set hosts = [] %}
 {% if fleet_records %}{% for ip, name in dns_records %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}{% endif %}
 {% for name, ip in extra_records.items() %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}

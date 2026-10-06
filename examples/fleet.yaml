@@ -99,6 +99,8 @@ hosts:
         # public_ip: 203.0.113.5          # bind the WireGuard port to one address only
       dns:
         pihole_password: change-me-three
+        # mullvad_socks: false            # on in the master preset: Mullvad's SOCKS5 proxies by name,
+        #                                 # de-fra-001.mullvad.home, refreshed every 6 hours
 
   # a kiwi-node in gateway mode on uCore: LAN gateway + download station
   m1:

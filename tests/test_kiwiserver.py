@@ -685,7 +685,8 @@ class TestModules(Base):
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
         self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", svcs["km-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/dnsmasq.d/mullvad-socks",
+                      svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
         self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
         env = svcs["km-vpn-client"]["environment"]
@@ -845,6 +846,148 @@ class TestModules(Base):
         p = os.path.join(self.tmp, "start.sh")
         write(p, b.files["km-vpn-server/start.sh"][0])
         self.assertEqual(subprocess.run(["sh", "-n", p]).returncode, 0)
+        p = os.path.join(self.tmp, "mullvad-socks.sh")
+        write(p, b.files["kiwi/mullvad-socks.sh"][0])
+        self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
+        if have("shellcheck"):
+            r = subprocess.run(["shellcheck", "-S", "warning", "-s", "bash", p], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_mullvad_socks_records_on_the_master(self):
+        host, role, spec = self.spec("gate", role="master", **{"master": self.master()})
+        b = modmod.Renderer(self.ms).render(spec)
+        env = b.compose["services"]["km-pihole"]["environment"]
+        # dnsmasq watches the directory and reloads the file by itself
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/dnsmasq.d/mullvad-socks", env)
+        self.assertIn("/home/user/docker/km-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z",
+                      b.compose["services"]["km-pihole"]["volumes"])
+        # made at unpack, before Pi-hole starts: dnsmasq only watches a directory it found
+        self.assertIn("km-pihole/etc-dnsmasq.d/mullvad-socks", b.dirs)
+        script, mode = b.files["kiwi/mullvad-socks.sh"]
+        self.assertEqual(mode, 0o755)
+        self.assertIn("url='https://raw.githubusercontent.com/derlocke-ng/mullvad-socks5/list/mullvad-socks.hosts'", script)
+        self.assertIn("short='mullvad.kiwi'", script)
+        self.assertIn("dir='/home/user/docker/km-pihole/etc-dnsmasq.d/mullvad-socks'", script)
+        self.assertEqual(sorted(b.units), ["km-mullvad-socks.service", "km-mullvad-socks.timer"])
+        self.assertIn("ExecStart=/usr/bin/bash /home/user/docker/kiwi/mullvad-socks.sh", b.units["km-mullvad-socks.service"])
+        self.assertIn("Unit=km-mullvad-socks.service", b.units["km-mullvad-socks.timer"])
+        self.assertIn("OnUnitActiveSec=6h", b.units["km-mullvad-socks.timer"])
+        # the role script carries and enables them like any host unit
+        full = rolesmod.render_script(host, role, VERSION, bundle=b)
+        self.assertIn("KS_STACK_UNITS=('km-mullvad-socks.service' 'km-mullvad-socks.timer')", full)
+        self.assertIn("'kiwi/mullvad-socks.sh:0755'", full)
+
+    def test_mullvad_socks_records_are_opt_in_elsewhere(self):
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw()})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["kn-pihole"]["environment"]))
+        self.assertNotIn("kiwi/mullvad-socks.sh", b.files)
+        self.assertEqual(sorted(b.units), ["kn-gateway.service"])
+        self.assertFalse([d for d in b.dirs if "mullvad" in d])
+        m = self.master()
+        m["dns"]["mullvad_socks"] = False
+        host, role, spec = self.spec("gate", role="master", **{"master": m})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["km-pihole"]["environment"]))
+        self.assertEqual(b.units, {})
+        self.assertNotIn("kiwi/mullvad-socks.sh", b.files)
+        self.assertFalse([d for d in b.dirs if "mullvad" in d])
+        node = self.node_gw()
+        node["dns"]["mullvad_socks"] = True
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": node})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertIn("kn-mullvad-socks.timer", b.units)
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1;hostsdir=/etc/dnsmasq.d/mullvad-socks",
+                      b.compose["services"]["kn-pihole"]["environment"])
+
+    def mullvad_socks_script(self, **dns):
+        m = self.master()
+        m["dns"].update(dns)
+        host, role, spec = self.spec("gate", role="master", **{"master": m})
+        spec.docker_dir = os.path.join(self.tmp, "docker")
+        script = modmod.Renderer(self.ms).render(spec).files["kiwi/mullvad-socks.sh"][0]
+        p = os.path.join(self.tmp, "mullvad-socks.sh")
+        write(p, script)
+        return p, os.path.join(spec.docker_dir, "km-pihole", "etc-dnsmasq.d", "mullvad-socks", "mullvad-socks.hosts")
+
+    @unittest.skipUnless(have("curl"), "curl not installed")
+    def test_mullvad_socks_script_takes_only_mullvad_names(self):
+        src = os.path.join(self.tmp, "list.hosts")
+        p, hosts = self.mullvad_socks_script(mullvad_socks_url="file://" + src)
+        write(src, "# Mullvad SOCKS5 proxies\n"
+                   "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\r\n"
+                   "10.124.0.53 de-fra-001.mullvad.home\n"           # the list's own short names: replaced
+                   "10.124.2.22 US-QAS-WG-SOCKS5-101.relays.mullvad.net\n"
+                   "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n"
+                   "10.0.0.1 bank.example.com\n"                     # never another name
+                   "203.0.113.7 se-mma-wg-socks5-001.relays.mullvad.net\n"   # never a public address
+                   "10.124.0.999 se-got-wg-socks5-001.relays.mullvad.net\n"
+                   "10.124.1.7   odd-name.relays.mullvad.net   \n"
+                   "\n")
+        r = subprocess.run(["bash", p], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(hosts) as fh:
+            self.assertEqual(fh.read(), "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n"
+                                        "10.124.2.22 us-qas-wg-socks5-101.relays.mullvad.net\n"
+                                        "10.124.1.7 odd-name.relays.mullvad.net\n"
+                                        "10.124.0.53 de-fra-001.mullvad.kiwi\n"
+                                        "10.124.2.22 us-qas-101.mullvad.kiwi\n")
+        self.assertEqual(os.stat(hosts).st_mode & 0o777, 0o644)
+        self.assertEqual(os.stat(os.path.dirname(hosts)).st_mode & 0o777, 0o755)
+        self.assertEqual(os.listdir(os.path.dirname(hosts)), ["mullvad-socks.hosts"])   # no temp files left
+        before = os.stat(hosts).st_mtime_ns
+        r = subprocess.run(["bash", p], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))          # unchanged: not rewritten
+        self.assertEqual(os.stat(hosts).st_mtime_ns, before)
+        # an error page, an empty list, a list without one Mullvad proxy: the records stay
+        for bad in ("<html>rate limited</html>\n", "", "# nothing\n", "10.0.0.1 bank.example.com\n"):
+            write(src, bad)
+            r = subprocess.run(["bash", p], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1, bad)
+            self.assertIn("keeping the current records", r.stderr)
+            self.assertEqual(os.stat(hosts).st_mtime_ns, before)
+        write(src, "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n")
+        p2, _ = self.mullvad_socks_script(mullvad_socks_url="file://" + src + ".missing")
+        self.assertNotEqual(subprocess.run(["bash", p2], capture_output=True).returncode, 0)   # curl fails: kept
+        self.assertEqual(os.stat(hosts).st_mtime_ns, before)
+
+    @unittest.skipUnless(have("curl"), "curl not installed")
+    def test_mullvad_socks_script_never_follows_a_planted_link(self):
+        # Pi-hole's container can write in etc-dnsmasq.d: a link there must not
+        # make the host's root write into, or chmod, another directory
+        src = os.path.join(self.tmp, "list.hosts")
+        write(src, "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n")
+        p, hosts = self.mullvad_socks_script(mullvad_socks_url="file://" + src)
+        target = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(target, mode=0o700)
+        os.makedirs(os.path.dirname(os.path.dirname(hosts)))
+        os.symlink(target, os.path.dirname(hosts))
+        r = subprocess.run(["bash", p], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not a plain directory", r.stderr)
+        self.assertEqual(os.listdir(target), [])
+        self.assertEqual(os.stat(target).st_mode & 0o777, 0o700)
+        # a directory where the list goes is not replaced or written into
+        os.unlink(os.path.dirname(hosts))
+        os.makedirs(hosts)
+        r = subprocess.run(["bash", p], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(os.listdir(hosts), [])
+        self.assertEqual(os.listdir(os.path.dirname(hosts)), ["mullvad-socks.hosts"])   # temp files gone
+
+    @unittest.skipUnless(have("curl"), "curl not installed")
+    def test_mullvad_socks_short_names(self):
+        src = os.path.join(self.tmp, "list.hosts")
+        write(src, "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n")
+        p, hosts = self.mullvad_socks_script(mullvad_socks_url="file://" + src, mullvad_socks_domain="Socks.Home.")
+        self.assertEqual(subprocess.run(["bash", p]).returncode, 0)
+        with open(hosts) as fh:
+            self.assertEqual(fh.read().splitlines()[-1], "10.124.0.53 de-fra-001.socks.home")
+        with open(p) as fh:
+            self.assertIn("<cc>-<city>-<n>.socks.home", fh.read())
+        p, hosts = self.mullvad_socks_script(mullvad_socks_url="file://" + src, mullvad_socks_domain="")
+        with open(p) as fh:
+            self.assertIn("short='mullvad.kiwi'", fh.read())   # empty: under the fleet's domain
 
     @unittest.skipUnless(have("docker"), "docker cli not installed")
     def test_compose_config_validates(self):

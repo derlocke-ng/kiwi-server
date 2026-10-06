@@ -170,6 +170,15 @@ a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
 go to the master and never leave it, and every host carries the fleet's names
 in its hosts file plus a route into the mesh through its VPN client.
 
+The master's Pi-hole also answers for Mullvad's SOCKS5 proxies — every
+Mullvad server runs one, reachable through the master's Mullvad exit — as
+`de-fra-wg-socks5-001.relays.mullvad.net` and `de-fra-001.mullvad.home`
+(`dns.mullvad_socks`, on in the master preset). gluetun refuses these
+private-range answers, so without the records the names would not resolve
+reliably in the mesh. A host timer refreshes them every 6 hours from the
+[mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5) list, which
+also has FoxyProxy imports that use these names.
+
 Migrating a machine that ran a v1 stack in place: set `docker_subnet` to what
 it used and rename its data directories to the module names (`kmvpn-server` →
 `km-vpn-server`, `knvault` → `kn-vault`, …) before the first start, so wg-easy

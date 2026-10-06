@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.2.0 — Mullvad's SOCKS5 proxies by name
+
+- **`dns.mullvad_socks`**: Pi-hole answers for every Mullvad SOCKS5 proxy, as
+  `de-fra-wg-socks5-001.relays.mullvad.net` and the short
+  `de-fra-001.mullvad.<domain>` (`mullvad_socks_domain` to change it). gluetun
+  refuses these private-range answers, so the names only resolved through the
+  fallback resolvers until now. **On in the master preset**, whose exit is
+  Mullvad; nodes ask the master. Set `mullvad_socks: false` in the master's
+  `dns:` block to keep it off.
+- A host timer (`km-mullvad-socks.timer`, every 6 hours) fetches the list from
+  [mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5)
+  (`mullvad_socks_url`) and swaps the file dnsmasq watches (`hostsdir`), which
+  reloads it without a restart. Only `*.relays.mullvad.net` names at 10.x
+  addresses are taken from it, so the list can never redirect another name; a
+  download that is not such a list keeps the current records.
+- Modules: `when:` on `outputs` entries and `storage.bind_mounts`, like the
+  nginx blocks have — a file, host unit or directory only while a setting is on.
+
 ## 2.1.2 — one resolver chain for the whole network
 
 - **Nodes resolve through the master.** A node's Pi-hole asks the master's

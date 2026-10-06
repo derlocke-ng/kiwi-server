@@ -63,6 +63,20 @@ if command -v butane >/dev/null; then butane --strict output/sh3/sh3.bu >/dev/nu
 if ! "$ks" build fleet.yaml lab1 --toolchain native 2>"$tmp/err"; then
     grep -qiE 'coreos-installer|not installed|missing' "$tmp/err"
 fi
+# the GUI half, as kiwi installs it on a desktop (KIWI_GUI=1): desktop entry under
+# the app id, the kiwi-icons artwork in hicolor, scalable plus the bitmaps
+app=eu.kiwinetwork.KiwiServer
+KIWI_GUI=1 bash "$repo/install.sh" install >/dev/null
+test -x "$HOME/.local/bin/kiwi-server-gui"
+grep -q "^Exec=$HOME/.local/bin/kiwi-server-gui" "$HOME/.local/share/applications/$app.desktop"
+grep -q "^Icon=$app$" "$HOME/.local/share/applications/$app.desktop"
+test -f "$HOME/.local/share/icons/hicolor/scalable/apps/$app.svg"
+for size in 48 64 128 256 512; do test -f "$HOME/.local/share/icons/hicolor/${size}x${size}/apps/$app.png"; done
+cmp -s "$repo/data/icons/$app.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/$app.svg"
 bash "$repo/install.sh" uninstall --purge >/dev/null
+test ! -e "$HOME/.local/bin/kiwi-server-gui"
+test ! -e "$HOME/.local/share/applications/$app.desktop"
+test ! -e "$HOME/.local/share/icons/hicolor/scalable/apps/$app.svg"
+test ! -e "$HOME/.local/share/icons/hicolor/256x256/apps/$app.png"
 test ! -e "$ks"
 echo "cli smoke test: ok"

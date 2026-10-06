@@ -491,9 +491,11 @@ def cmd_roles(args):
             for pr in r.presets.values():
                 names += [m for m in pr["modules"] if m not in names]
             for m in (ms.resolve(names) if r.stack else []):
+                preset = r.module_defaults.get(m) or {}
                 for s in ms.get(m).settings:
                     req = " (required)" if s.required else ""
-                    print("               %-24s %-7s default=%r%s" % (m + "." + s.key, s.type, s.default, req))
+                    # the role's preset (module_defaults) wins over the module's own default
+                    print("               %-24s %-7s default=%r%s" % (m + "." + s.key, s.type, preset.get(s.key, s.default), req))
 
 
 def cmd_modules(args):
@@ -844,6 +846,8 @@ def cmd_doctor(args):
     add("python3-jinja2 (renders the modules)", modmod.jinja2 is not None,
         "" if modmod.jinja2 else "pip install --user jinja2  or  rpm-ostree install python3-jinja2")
     add("openssl (fleet CA and host certificates)", bool(util.which("openssl")))
+    add("ssh (apply, status, enroll and the fleet backup reach the machines over it)", bool(util.which("ssh")),
+        "" if util.which("ssh") else "install openssh-clients (Fedora) / openssh-client (Debian)")
     try:
         util.sha512_crypt("probe", "kiwikiwikiwikiwi")
         add("password hashing", True)

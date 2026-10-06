@@ -1,7 +1,27 @@
 # Changelog
 
-## 2.3.0 — the fleet talks to its machines
+## 2.4.0 — the fleet talks to its machines
 
+- **A kiwi-updater app, properly**: the icon is kiwi-icons' kiwi-server
+  (`svg/classic`, plus the PNG renders at 48 to 512 px), installed into the
+  hicolor theme under the app id and shown by `kiwi-gui`, the app grid, the
+  window and a new About dialog in the GUI's primary menu; `kiwi.manifest`
+  lists `ssh` among the commands the app needs and describes what the app
+  does now. Releases are version tags (`v2.4.0`), as kiwi expects.
+- This release carries main's 2.2.0 (the Mullvad SOCKS5 records) on the
+  podman runtime: the hosts directory is a read-only quadlet volume, the
+  refresh timer is a host unit a re-apply removes again when
+  `mullvad_socks` is turned off. From the review of that work: the refresh
+  service is sandboxed (`ProtectSystem=strict`, one writable directory, no
+  new privileges) and belongs to its timer, so an apply no longer waits for
+  the download; the list URL is https (or a local file) only;
+  `mullvad_socks_url` is required only while the records are on; the
+  unchanged check uses coreutils alone; a directory that holds rendered files
+  is made root's again on every apply. `kiwi-server doctor` reports the ssh
+  client; a hand-installed Debian gets curl with podman.
+- Fixed: the gateway preset's host unit (`kn-gateway.service`) required
+  `docker.service`, which a podman node does not have, so systemd refused to
+  start the LAN routing on every boot and apply; it now follows the runtime.
 - **`kiwi-server apply <fleet> <host…>`**: the role script re-rendered and
   run on a running machine over SSH, as root, with `--force` — settings,
   modules and certificates change without a reinstall. `--no-run` only puts
@@ -28,7 +48,7 @@
   backup uses it too); `lib/kiwiserver/wgeasy.py` speaks the weejewel
   wg-easy API.
 
-## 2.2.0 — podman, one node role, Nextcloud without the master container
+## 2.3.0 — podman, one node role, Nextcloud without the master container
 
 - **Podman quadlets** are the default runtime (`runtime: podman`): the
   rendered compose file is translated into `.container` and `.network` units
@@ -53,6 +73,40 @@
   admin) replace the single isolated subnet, which stays as a legacy group.
 - The renderer refuses two services on the same host port; `validate:` checks
   in module.yaml; an `object` setting type for structured settings.
+## 2.2.0 — Mullvad's SOCKS5 proxies by name
+
+- **`dns.mullvad_socks`**: Pi-hole answers for every Mullvad SOCKS5 proxy, as
+  `de-fra-wg-socks5-001.relays.mullvad.net` and the short
+  `de-fra-001.mullvad.<domain>` (`mullvad_socks_domain` to change it). gluetun
+  refuses these private-range answers, so the names only resolved through the
+  fallback resolvers until now. **On in the master preset**, whose exit is
+  Mullvad; nodes ask the master. Set `mullvad_socks: false` in the master's
+  `dns:` block to keep it off; the next apply removes the timer again.
+  A master that got these records by hand from the mullvad-socks5 README
+  (`pihole-mullvad-socks.timer`, `FTLCONF_misc_etc_dnsmasq_d`,
+  `etc-dnsmasq.d/90-mullvad-socks.conf`) should undo that first: its
+  [upgrade steps](https://github.com/derlocke-ng/mullvad-socks5#upgrading-from-the-earlier-instructions);
+  kiwi-server does not remove units it did not install.
+- A host timer (`km-mullvad-socks.timer`, every 6 hours) fetches the list from
+  [mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5)
+  (`mullvad_socks_url`) and swaps the file in `<docker_dir>/km-pihole/mullvad-socks/`,
+  which Pi-hole sees **read-only** at `/etc/mullvad-socks` (`hostsdir`) and
+  reloads without a restart. The directory is root's and outside Pi-hole's
+  writable `/etc/dnsmasq.d`, so nothing in the container can swap a file under
+  the refresh, which runs as root. Only `*.relays.mullvad.net` names at 10.x
+  addresses are taken from the list, so it can never redirect another name; a
+  download that is not such a list keeps the current records.
+- **A re-apply removes host units it no longer renders**: a module dropped from
+  a role, or a setting turned off, no longer leaves its units running outside
+  `kiwi-stack`'s control.
+- Modules: `when:` on `outputs` entries (templates and file settings) and on
+  `storage.bind_mounts`, like the nginx blocks have; `pattern:` on a setting
+  checks a string value against a regular expression at validate time.
+- `kiwi-server roles -v` shows a role's preset value (`module_defaults`) where
+  it has one, not the module's own default.
+- `dns.extra_env: { FTLCONF_misc_dnsmasq_lines: … }` is added to the module's
+  own dnsmasq lines; before, it replaced them (and with them `strict-order`
+  and the fleet's `local=`/`server=` line), since one variable is set once.
 
 ## 2.1.2 — one resolver chain for the whole network
 

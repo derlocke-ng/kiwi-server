@@ -1,0 +1,76 @@
+{% set short = (mullvad_socks_domain or ('mullvad.' ~ domain if domain else '')).strip('.').lower() %}
+#!/usr/bin/env bash
+# kiwi-server: Pi-hole's records for the Mullvad SOCKS5 proxies ({{ hostname }}).
+# Run by {{ container_prefix }}-mullvad-socks.timer every 6 hours. Takes the
+# *.relays.mullvad.net names at 10.x.x.x addresses from the proxy list — nothing
+# else, so the list can never redirect another name — adds the short names
+# <cc>-<city>-<n>.$short (none when empty), and swaps the file in one rename. Pi-hole
+# sees the directory read-only at /etc/mullvad-socks (hostsdir) and reloads it
+# by itself. A download that is not such a list never replaces the records.
+set -euo pipefail
+umask 022
+
+url='{{ mullvad_socks_url | replace("'", "'\\''") }}'
+short='{{ short | replace("'", "'\\''") }}'
+dir='{{ docker_dir }}/{{ container_prefix }}-pihole/mullvad-socks'
+hosts=mullvad-socks.hosts
+if [[ ! $short =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$ ]]; then
+    echo "short names: '$short' is not a DNS domain (dns.mullvad_socks_domain, or the fleet's domain)" >&2
+    exit 1
+fi
+
+# Work only in a directory that is exactly this path (not a link to another),
+# belongs to whoever runs this and is writable by nobody else, by relative
+# names: no one else can swap a file under root's hands.
+mkdir -p "$dir"
+cd "$dir"
+if [[ $(stat -c %d:%i .) != "$(stat -c %d:%i "$dir")" || $(stat -c %u .) != "$(id -u)" ]] ||
+   (( 8#$(stat -c %a .) & 8#022 )); then
+    echo "$dir must be a directory of $(id -un)'s that nobody else can write to — leaving it alone" >&2
+    exit 1
+fi
+# dnsmasq ignores dotfiles in a hostsdir: nothing is visible before the rename
+raw=$(mktemp .download.XXXXXX)
+new=$(mktemp .hosts.XXXXXX)
+trap 'rm -f "$raw" "$new"' EXIT
+curl -fsSL --proto =https,file --proto-redir =https --max-filesize 10000000 --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
+
+if ! awk -v short="$short" '
+    BEGIN { if (short !~ /^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$/) { bad = 1; exit } }
+    { sub(/\r$/, "") }
+    /^[ \t]*(#|$)/ { next }
+    !/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[ \t]+[A-Za-z0-9.-]+[ \t]*$/ { bad = 1; exit }
+    {
+        ip = $1; name = tolower($2)
+        # no leading zeros: some resolvers read 010 as octal
+        if (ip !~ /^10\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/) next
+        if (name !~ /^[a-z0-9-]+\.relays\.mullvad\.net$/) next
+        split(ip, o, ".")
+        if (o[2] > 255 || o[3] > 255 || o[4] > 255 || name in seen) next
+        seen[name] = 1
+        print ip " " name
+        n++
+        if (short != "" && match(name, /^[a-z][a-z]-[a-z0-9]+-wg-socks5-[0-9]+\./)) {
+            full = substr(name, 1, RLENGTH - 1)
+            label = full
+            sub(/-wg-socks5-/, "-", label)
+            addr[n] = ip; longname[n] = full; shortname[n] = label
+            count[label]++
+        }
+    }
+    END {
+        if (bad || n == 0) exit 1
+        # never two proxies behind one short name: a clash keeps the full label (as the list generator does)
+        for (i = 1; i <= n; i++) if (i in addr) print addr[i] " " (count[shortname[i]] == 1 ? shortname[i] : longname[i]) "." short
+    }' "$raw" >"$new"; then
+    echo "$url: not a list of Mullvad SOCKS5 proxies, keeping the current records" >&2
+    exit 1
+fi
+
+# unchanged: nothing to swap (compared through stdin, so a planted link is never followed)
+if [[ -f $hosts && ! -L $hosts && $(sha256sum <"$new") == "$(sha256sum <"$hosts")" ]]; then
+    exit 0
+fi
+chmod 0644 "$new"
+mv -fT "$new" "$hosts"
+echo "$(wc -l <"$hosts") records for the Mullvad SOCKS5 proxies in $dir/$hosts"

@@ -664,9 +664,10 @@ class Window(Adw.ApplicationWindow):
         header.pack_end(self.b_render)
         self.b_log = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Show output")
         header.pack_end(self.b_log)
-        b_doc = Gtk.Button(icon_name="emblem-ok-symbolic", tooltip_text="Doctor — are the build tools here?")
-        b_doc.connect("clicked", lambda *_: DoctorDialog(self).present(self))
-        header.pack_end(b_doc)
+        menu = Gio.Menu()
+        menu.append("Doctor — are the build tools here?", "app.doctor")
+        menu.append("About Kiwi Server", "app.about")
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text="Menu", primary=True))
 
         # ---- sidebar ----
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
@@ -1273,9 +1274,46 @@ class Application(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_OPEN)
         self.path = None
+        for name, cb in (("about", self.show_about), ("doctor", self.show_doctor)):
+            act = Gio.SimpleAction(name=name)
+            act.connect("activate", lambda _a, _p, cb=cb: cb())
+            self.add_action(act)
+
+    def show_doctor(self):
+        win = self.get_active_window()
+        if win:
+            DoctorDialog(win).present(win)
+
+    def show_about(self):
+        win = self.get_active_window()
+        cli = getattr(win, "cli", None) or find_cli()
+        version = "?"
+        if cli:
+            rc, out, _err = run_cli(cli, ["version"])
+            if rc == 0 and out.split():
+                version = out.split()[-1]
+        kw = dict(application_name="Kiwi Server", application_icon=APP_ID, developer_name="derlocke-ng",
+                  version=version, website="https://github.com/derlocke-ng/kiwi-server",
+                  issue_url="https://github.com/derlocke-ng/kiwi-server/issues",
+                  license_type=Gtk.License.GPL_3_0,
+                  comments="Create and manage a kiwi-network: unattended install ISOs and first-boot scripts "
+                           "for kiwi-master and kiwi-node machines, applied and enrolled over SSH. "
+                           "Part of the Kiwi Network.")
+        dlg = Adw.AboutDialog(**kw) if hasattr(Adw, "AboutDialog") else Adw.AboutWindow(transient_for=win, **kw)
+        dlg.add_credit_section("Icon", ["kiwi-icons https://github.com/derlocke-ng/kiwi-icons"])
+        dlg.add_link("Kiwi Network", "https://github.com/derlocke-ng/kiwi-network")
+        if hasattr(Adw, "AboutDialog"):
+            dlg.present(win)
+        else:
+            dlg.present()
 
     def do_startup(self):
         Adw.Application.do_startup(self)
+        # run from a checkout, before install.sh put the icon into hicolor: the
+        # data/icons directory next to this script holds it under the app id
+        icons = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "data", "icons")
+        if os.path.isfile(os.path.join(icons, APP_ID + ".svg")):
+            Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.path.realpath(icons))
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
@@ -1293,7 +1331,7 @@ class Application(Adw.Application):
                 dlg = Adw.AlertDialog(heading="kiwi-server not found",
                                       body="The CLI must be installed next to this GUI:\n  kiwi install kiwi-server")
                 dlg.add_response("close", "Close")
-                tmp = Adw.ApplicationWindow(application=self, title="Kiwi Server",
+                tmp = Adw.ApplicationWindow(application=self, title="Kiwi Server", icon_name=APP_ID,
                                             default_width=420, default_height=200)
                 tmp.present()
                 dlg.connect("response", lambda *_: self.quit())

@@ -1,8 +1,13 @@
 [Unit]
 Description=Kiwi Network LAN gateway routing ({{ hostname }})
 Documentation=https://github.com/derlocke-ng/kiwi-server
+{% if runtime == 'docker' %}
 After=docker.service kiwi-stack.service network-online.target
 Requires=docker.service
+{% else %}
+# podman: the containers are systemd units themselves; kiwi-stack.service starts their target
+After=kiwi-stack.service network-online.target
+{% endif %}
 Wants=kiwi-stack.service
 
 [Service]

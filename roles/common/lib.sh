@@ -122,7 +122,7 @@ ks_ensure_docker() { # [ce|distro]
 ks_ensure_podman() {
     if ! command -v podman >/dev/null 2>&1; then
         case $KS_OS in
-            debian) ks_apt podman netavark aardvark-dns ;;
+            debian) ks_apt podman netavark aardvark-dns curl ;;
             ostree) ks_die "this image has no podman — every Fedora CoreOS and uCore image ships it; is this one stripped?" ;;
             *)      ks_die "podman is not installed and this is not Debian — install it first" ;;
         esac
@@ -188,7 +188,7 @@ ks_git_clone() { # URL REF DIR   — clone, or bring an existing clone to REF
 
 # ---- services / firewall --------------------------------------------------------------
 ks_unit() { # NAME   — unit file on stdin, then daemon-reload
-    ks_write "/etc/systemd/system/$1" 0644
+    ks_write "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$1" 0644
     systemctl daemon-reload
 }
 ks_firewall_open() { # PORT/PROTO...
@@ -217,6 +217,7 @@ ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates e
 # configs, host units) and embeds it as KS_FILES[stack/...] / KS_FILES[unit/...]
 # with KS_STACK_* describing directories, ports, sysctls and kernel modules.
 KS_STACK_ENV=/etc/kiwi-server/stack.env
+KS_SYSTEMD_DIR=/etc/systemd/system
 
 ks_stack_host_prep() {
     local m kv
@@ -266,6 +267,24 @@ ks_stack_hosts() {
     } | ks_write /etc/hosts 0644
 }
 
+ks_stack_drop_units() {
+    # A host unit the last apply installed and this one does not (a module or a
+    # setting such as dns.mullvad_socks turned off) is stopped and removed:
+    # kiwi-stack no longer knows it, so nothing else would ever stop it.
+    local old='' unit u keep
+    [[ -f $KS_STACK_ENV ]] && old=$(sed -n 's/^STACK_UNITS="\(.*\)"$/\1/p' "$KS_STACK_ENV")
+    for unit in $old; do
+        [[ $unit =~ ^[A-Za-z0-9@._-]+\.(service|timer|path|socket)$ ]] || continue
+        keep=0
+        for u in "${KS_STACK_UNITS[@]}"; do [[ $u == "$unit" ]] && keep=1; done
+        (( keep )) && continue
+        ks_say "removing the host unit $unit — no module installs it any more"
+        systemctl disable --now "$unit" 2>/dev/null || true
+        rm -f "${KS_SYSTEMD_DIR:?}/$unit"
+    done
+    systemctl daemon-reload 2>/dev/null || true
+}
+
 ks_stack_unpack() {
     # Everything the generator rendered (compose file, module configs, gw.sh)
     # is root's: root runs the stack and the host units execute some of these
@@ -280,7 +299,11 @@ ks_stack_unpack() {
         if [[ $d == /* ]]; then
             [[ -d $d ]] || install -d -m 0755 -o "$u" -g "$u" "$d"
         elif [[ -d $dd/$d ]]; then
-            ks_stack_dir_is_data "$d" && chown "$u:$u" "$dd/$d"
+            if ks_stack_dir_is_data "$d"; then
+                chown "$u:$u" "$dd/$d"
+            else   # rendered files live here: root's, writable by nobody else (the Mullvad refresh insists)
+                chown root:root "$dd/$d"; chmod go-w "$dd/$d"
+            fi
         elif ks_stack_dir_is_data "$d"; then
             install -d -m 0755 -o "$u" -g "$u" "$dd/$d"
         else
@@ -291,8 +314,9 @@ ks_stack_unpack() {
         rel=${entry%:*}; mode=${entry##*:}
         ks_file "stack/$rel" "$dd/$rel" "$mode" root:root
     done
+    ks_stack_drop_units
     for unit in "${KS_STACK_UNITS[@]}"; do
-        ks_file "unit/$unit" "/etc/systemd/system/$unit" 0644
+        ks_file "unit/$unit" "$KS_SYSTEMD_DIR/$unit" 0644
     done
     if [[ $KS_STACK_RUNTIME == podman ]]; then
         # the quadlets: every unit this tool wrote before goes first, so a module
@@ -302,7 +326,7 @@ ks_stack_unpack() {
         grep -lsF '# kiwi-server stack' /etc/containers/systemd/*.container /etc/containers/systemd/*.network 2>/dev/null | xargs -r rm -f
         for q in "${KS_STACK_QUADLETS[@]}"; do
             case $q in
-                *.target) ks_file "quadlet/$q" "/etc/systemd/system/$q" 0644 ;;
+                *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;
                 *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0644 ;;
             esac
         done
@@ -484,8 +508,13 @@ ks_stack_apply() {
     systemctl enable -q kiwi-stack.service
     systemctl restart kiwi-stack.service
     for unit in "${KS_STACK_UNITS[@]}"; do
-        systemctl enable -q "$unit"
-        systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
+        if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then
+            # a timer's service: run it now, but not on the apply's critical path (it may fetch from the Internet)
+            systemctl restart --no-block "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        else
+            systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        fi
     done
     ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|logs"
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done

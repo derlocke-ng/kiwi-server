@@ -544,6 +544,8 @@ class Renderer:
                 out = mod.outputs.get(key) or {}
                 if isinstance(out, str):
                     out = {"path": out}
+                if out.get("when") and not ctx.get(str(out["when"])):
+                    continue
                 text = self.render_text(mod.template(key), ctx, "modules/%s/%s" % (name, fname))
                 where = "modules/%s/module.yaml outputs.%s" % (name, key)
                 if out.get("kind") == "host_unit":
@@ -566,12 +568,16 @@ class Renderer:
                     raise KiwiError("modules/%s: file setting %s has no outputs: entry" % (name, s.key))
                 if isinstance(out, str):
                     out = {"path": out}
+                if out.get("when") and not ctx.get(str(out["when"])):
+                    continue
                 bundle.add_file(self.expand(out["path"], ctx, "modules/%s/module.yaml outputs.%s" % (name, s.key)),
                                 data, int(out.get("mode", 0o600)))
             # directories, ports, host integration
             for bm in mod.bind_mounts:
                 host = str(bm.get("host") or "")
                 if not host or bm.get("type", "dir") != "dir":
+                    continue
+                if bm.get("when") and not ctx.get(str(bm["when"])):
                     continue
                 try:
                     bundle.add_dir(self.expand(host, ctx, "modules/%s/module.yaml storage.bind_mounts" % name))

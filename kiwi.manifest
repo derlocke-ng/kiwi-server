@@ -1,19 +1,22 @@
-# kiwi.manifest — app metadata for the kiwi updater
+# kiwi.manifest — see https://github.com/derlocke-ng/kiwi-updater
 NAME=kiwi-server
-DESCRIPTION=Build first-boot scripts and unattended install ISOs that turn Fedora CoreOS, uCore or Debian machines into a kiwi-node or kiwi-master
-VERSION=2.3.0
+DESCRIPTION=Create and manage a kiwi-network — unattended install ISOs and first-boot scripts that turn CoreOS, uCore or Debian machines into a kiwi-master or kiwi-nodes, applied and enrolled over SSH
+VERSION=2.4.0
 AUTHOR=derlocke-ng
 HOMEPAGE=https://github.com/derlocke-ng/kiwi-server
 LICENSE=GPL-3.0-or-later
 
 COMPONENTS=cli gui config
 CATEGORY=System
-TAGS=coreos ucore debian iso ignition butane preseed kiwi-node kiwi-master deployment
+TAGS=coreos ucore debian iso ignition butane preseed kiwi-node kiwi-master deployment ssh wireguard fleet mesh enroll podman
 
 SCOPES=user
 
+# the app's own icon, shown by the kiwi GUI — from kiwi-icons
+# (svg/classic/kiwi-server.svg at 162cbb1, plus png/classic), installed as hicolor eu.kiwinetwork.KiwiServer
 ICON=data/icons/eu.kiwinetwork.KiwiServer.svg
 ABOUT=README.md
-DEPENDS=python3 git openssl
+# ssh: apply, status, enroll and the fleet backup reach the machines over it
+DEPENDS=python3 openssl ssh
 
 INSTALLER=install.sh

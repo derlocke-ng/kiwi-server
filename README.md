@@ -43,11 +43,24 @@ fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash
 
 ## Install
 
-Through kiwi, once it is in your catalog:
+Through [kiwi](https://github.com/derlocke-ng/kiwi-updater), with the Kiwi
+Network catalog registered:
 
 ```bash
+kiwi catalog add https://github.com/derlocke-ng/kiwi-catalog.git   # once per machine
 kiwi install kiwi-server
 ```
+
+Until the catalog lists it, track the repository directly:
+
+```bash
+kiwi add https://github.com/derlocke-ng/kiwi-server.git
+kiwi install kiwi-server
+```
+
+kiwi follows the latest version tag (`v2.4.0`), updates it in the background
+and shows the app with its icon in `kiwi-gui`. `kiwi info kiwi-server` and
+`kiwi diff kiwi-server` show what an install or update would run.
 
 Or straight from the checkout — it is the same installer kiwi runs:
 
@@ -58,7 +71,9 @@ kiwi-server doctor              # python, pyyaml, build tools, container runtime
 ```
 
 Needs `python3` with PyYAML and Jinja2 (`pip install --user jinja2` if the
-image lacks it), `openssl` and `git`. Building ISOs needs `butane`,
+image lacks it), `openssl` and `ssh` (`apply`, `status`, `enroll` and the
+fleet backup reach the machines over it); the GUI needs python3-gobject, GTK 4
+and libadwaita. Building ISOs needs `butane`,
 `coreos-installer` and `xorriso`; on a desktop that does not have them:
 
 ```bash
@@ -206,10 +221,22 @@ a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
 go to the master and never leave it, and every host carries the fleet's names
 in its hosts file plus a route into the mesh through its VPN client.
 
+The master's Pi-hole also answers for Mullvad's SOCKS5 proxies — every
+Mullvad server runs one, reachable through the master's Mullvad exit — as
+`de-fra-wg-socks5-001.relays.mullvad.net` and `de-fra-001.mullvad.home`
+(`dns.mullvad_socks`, on in the master preset). gluetun refuses these
+private-range answers, so without the records the names would not resolve
+reliably in the mesh. A host timer refreshes them every 6 hours from the
+[mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5) list, which
+also has FoxyProxy imports that use these names.
+
 Migrating a machine that ran a v1 stack in place: set `docker_subnet` to what
 it used and rename its data directories to the module names (`kmvpn-server` →
 `km-vpn-server`, `knvault` → `kn-vault`, …) before the first start, so wg-easy
-keeps its peers and the services their data. Mesh SSH to a node is one DNAT
+keeps its peers and the services their data. The default runtime is podman
+now: a machine that still runs the v1 docker compose stack either keeps it
+with `runtime: docker` in the role block, or has the old stack stopped before
+the role runs (the role script does not stop docker containers). Mesh SSH to a node is one DNAT
 rule: `vpn-client: { extra_dnat_rules: ["2222/tcp:172.128.0.1:22"] }` (the
 docker gateway is the host).
 
@@ -391,16 +418,20 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 
 ## Status
 
-2.3.0 manages the machines it built; see [CHANGELOG.md](CHANGELOG.md). The
+2.4.0 manages the machines it built; see [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock
 netinst in CI). What still wants a real machine: the first boot of each
-target end to end — the stacks are the live v1 setups rendered from
-modules, verified file by file against them, not yet booted from here —
+target end to end — the master and gateway stacks are the live v1 setups
+rendered from modules, verified file by file against them; the cloud preset
+left the AIO master container behind and follows AIO's manual install
+instead — none of it booted from here yet —
 and `apply`, `status` and `enroll` against a live master, which are tested
 against fake SSH runners and a fake wg-easy here.
 
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
+
+The icon is kiwi-server from [kiwi-icons](https://github.com/derlocke-ng/kiwi-icons).

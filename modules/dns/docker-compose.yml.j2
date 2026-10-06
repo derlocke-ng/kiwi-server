@@ -31,6 +31,14 @@
 {% set _ = lines.append('local=/' ~ domain ~ '/') %}
 {% endif %}
 {% endif %}
+{% if mullvad_socks %}
+{# the Mullvad SOCKS5 records, refreshed by the host timer; reloaded on every change #}
+{% set _ = lines.append('hostsdir=/etc/mullvad-socks') %}
+{% endif %}
+{# an operator's own FTLCONF_misc_dnsmasq_lines: one variable can only be set once #}
+{% for k, v in extra_env.items() if k | upper == 'FTLCONF_MISC_DNSMASQ_LINES' %}
+{% for l in (v | string).split(';') if l.strip() %}{% set _ = lines.append(l.strip()) %}{% endfor %}
+{% endfor %}
 {% set hosts = [] %}
 {% if fleet_records %}{% for ip, name in dns_records %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}{% endif %}
 {% for name, ip in extra_records.items() %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}
@@ -65,7 +73,7 @@ services:
       - PIHOLE_DNS_={{ upstreams }}
       - DNSMASQ_LISTENING=all
 {% endif %}
-{% for k, v in extra_env.items() %}
+{% for k, v in extra_env.items() if k | upper != 'FTLCONF_MISC_DNSMASQ_LINES' %}
       - {{ k }}={{ v }}
 {% endfor %}
 {% if network_mode %}
@@ -93,3 +101,7 @@ services:
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-pihole/etc-pihole:/etc/pihole:z
       - {{ docker_dir }}/{{ container_prefix }}-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
+{% if mullvad_socks %}
+      # root's, written by the host timer: read-only in here
+      - {{ docker_dir }}/{{ container_prefix }}-pihole/mullvad-socks:/etc/mullvad-socks:ro,z
+{% endif %}

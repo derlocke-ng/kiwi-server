@@ -106,6 +106,8 @@ hosts:
         # public_ip: 203.0.113.5          # bind the WireGuard port to one address only
       dns:
         pihole_password: change-me-three
+        # mullvad_socks: false            # on in the master preset: Mullvad's SOCKS5 proxies by name,
+        #                                 # de-fra-001.mullvad.home, refreshed every 6 hours
 
   # a kiwi-node in gateway mode on uCore: LAN gateway + download station
   m1:
@@ -145,7 +147,9 @@ hosts:
       vpn_ip: 10.8.0.25
       # Migrating a machine that ran the v1 kiwi-cloud stack in place? Keep its
       # network and move the data directories to the new names before the first
-      # start — the containers keep their addresses and their data:
+      # start — the containers keep their addresses and their data. The runtime
+      # is podman now: keep docker compose with runtime: docker, or stop the old
+      # stack first (the role script does not stop docker containers):
       #   docker_subnet: 172.129.0.0/24
       #   kmvpn-server -> km-vpn-server, knvault -> kn-vault, kntransmission -> kn-transmission, …
       vpn-client:

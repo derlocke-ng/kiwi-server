@@ -84,11 +84,14 @@ outputs:                         # where rendered templates and file settings la
   torrc: { path: "{{ container_prefix }}-tor/etc/torrc", mode: 0644 }
   systemd_service: { kind: host_unit, name: kn-gateway.service }   # a unit on the host instead
   wireguard_config: { path: "{{ container_prefix }}-vpn-client/wg0.conf", mode: 0600 }
+  refresh_timer: { kind: host_unit, name: "{{ container_prefix }}-x.timer", when: x_enabled }
+                                 # when: only rendered while that context value is truthy
 
 storage:
   volumes: [portainer_data]      # named volumes (the compose fragment may declare them too)
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-vault", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-vault/x", type: dir, when: x_enabled }   # when: as above
 
 host_integration:
   sysctl: { net.ipv4.ip_forward: 1 }
@@ -133,7 +136,7 @@ file and builds the GUI form:
 ```yaml
 settings:
   - key: vault_domain            # snake_case; becomes {{ vault_domain }} in templates
-    type: string                 # string (default) | text | int | bool | enum | file | list | map | secret
+    type: string                 # string (default) | text | int | bool | enum | file | list | map | object | secret
     label: URL
     help: "The full URL clients use. Empty: https://vault.<hostname>."
     default: ""
@@ -142,7 +145,13 @@ settings:
     group: Advanced              # GUI grouping within the module
     targets: [debian]            # only meaningful on these targets
     placeholder: secrets/sh3.conf
+    pattern: '[a-z0-9.-]+'       # string values must match this regular expression in full (empty passes)
+    fallback_file: "secrets/{hostname}.conf"   # file settings: taken when it exists and the setting is empty
+    generate: true               # secret settings: derived from secrets/seed when empty (see above)
 ```
+
+An `object` setting takes a YAML mapping as it is (`vpn-server.groups`): the
+template gets the dict and checks its shape itself.
 
 `file` settings are paths relative to the fleet file; their content is
 embedded into the role script and written to `outputs.<key>`. `secret`
@@ -218,11 +227,13 @@ carries the same files and, on first boot, `ks_stack_apply` from
 
 ## SELinux
 
-Fedora CoreOS and uCore run docker with SELinux enabled, so every bind mount
-of a config file or data directory in the templates carries the `:z` label
-(`ro,z` for read-only ones): docker relabels the host path so the container
-may read it. Docker ignores the label on Debian. A mount of
-`/var/run/docker.sock` or `/lib/modules` must never be labelled.
+Fedora CoreOS and uCore run podman (and docker under `runtime: docker`) with
+SELinux enabled, so every bind mount of a config file or data directory in
+the templates carries the `:z` label (`ro,z` for read-only ones): the runtime
+relabels the host path so the container may read it. The label is ignored on
+Debian. A mount of the podman or docker socket or of `/lib/modules` must never
+be labelled: under podman the quadlet converter emits
+`SecurityLabelDisable=true` for those containers.
 
 ## Adding a module
 

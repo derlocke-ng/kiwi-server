@@ -3,8 +3,8 @@ schema_version: "1.0"
 module:
   name: dns
   title: DNS (Pi-hole)
-  version: 1.1.0
-  description: "Pi-hole v6 — ad-blocking resolver for the mesh or the LAN, forwarding to the VPN client's DNS-over-TLS; serves the fleet's own names"
+  version: 1.2.0
+  description: "Pi-hole v6 — ad-blocking resolver for the mesh or the LAN, forwarding to the VPN client's DNS-over-TLS; serves the fleet's own names and, optionally, the Mullvad SOCKS5 proxies'"
   category: core
 
 dependencies:
@@ -21,16 +21,36 @@ firewall:
   scope: self
   rules: []
 
+validate:
+  - when: "mullvad_socks and not mullvad_socks_url"
+    error: "mullvad_socks_url is required while mullvad_socks is on"
+
 templates:
   compose: docker-compose.yml.j2
+  mullvad_socks_script: mullvad-socks.sh.j2
+  mullvad_socks_service: mullvad-socks.service.j2
+  mullvad_socks_timer: mullvad-socks.timer.j2
+  mullvad_socks_about: mullvad-socks.about.j2
 
 # the fleet's DNS records go in as FTLCONF_dns_hosts (pihole.toml dns.hosts):
-# Pi-hole 6 regenerates hosts/custom.list itself, a file put there is ignored
+# Pi-hole 6 regenerates hosts/custom.list itself, a file put there is ignored.
+# The Mullvad SOCKS5 records change without a render, so they live in a hosts
+# file of their own that a host timer refreshes; dnsmasq watches its directory
+# (hostsdir) and reloads it by itself. The directory is root's and mounted
+# read-only: root writes there every 6 hours, so nothing in the container may
+# (a rendered file in it keeps it root's, not the service user's).
+outputs:
+  mullvad_socks_script: { path: "kiwi/mullvad-socks.sh", mode: 0755, when: mullvad_socks }
+  mullvad_socks_service: { kind: host_unit, name: "{{ container_prefix }}-mullvad-socks.service", when: mullvad_socks }
+  mullvad_socks_timer: { kind: host_unit, name: "{{ container_prefix }}-mullvad-socks.timer", when: mullvad_socks }
+  mullvad_socks_about: { path: "{{ container_prefix }}-pihole/mullvad-socks/.kiwi-server", mode: 0644, when: mullvad_socks }
 
 storage:
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-pihole", type: dir, required: true }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/etc-dnsmasq.d", type: dir, required: true }
+    # exists before Pi-hole starts: dnsmasq only watches a hostsdir it found at startup
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/mullvad-socks", type: dir, required: true, when: mullvad_socks }
 
 host_integration:
   # Fedora CoreOS / uCore run systemd-resolved's stub on 127.0.0.53:53
@@ -117,6 +137,26 @@ settings:
     label: Extra local records
     help: name=address, added to the fleet's records.
     default: {}
+  - key: mullvad_socks
+    type: bool
+    group: Mullvad SOCKS5
+    label: Serve the Mullvad SOCKS5 proxies' names
+    help: "Local records for every Mullvad SOCKS5 proxy — de-fra-wg-socks5-001.relays.mullvad.net and the short de-fra-001.mullvad.<domain> — refreshed every 6 hours by a host timer. The VPN client refuses these private-range answers (DNS rebinding protection), so without the records the names only resolve through the fallback resolvers. The proxies answer through a Mullvad connection: on by default on a master, whose exit is Mullvad; nodes ask the master."
+    default: false
+  - key: mullvad_socks_url
+    group: Mullvad SOCKS5
+    label: Proxy list
+    help: "https:// (or a file:// on the machine). One IPv4 address and one name per line, comment lines allowed; any other line rejects the whole download and the current records stay. Only *.relays.mullvad.net names at 10.x.x.x addresses are taken from it, so the list can never redirect another name."
+    pattern: '(https|file)://\S+'
+    placeholder: https://raw.githubusercontent.com/derlocke-ng/mullvad-socks5/list/mullvad-socks.hosts
+    default: https://raw.githubusercontent.com/derlocke-ng/mullvad-socks5/list/mullvad-socks.hosts
+  - key: mullvad_socks_domain
+    group: Mullvad SOCKS5
+    label: Short names under
+    help: "The short names are <cc>-<city>-<n>.<this>. Empty: mullvad.<the fleet's domain>, or no short names without a fleet domain."
+    pattern: '[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.?'
+    placeholder: socks.home
+    default: ""
   - key: legacy_env
     type: bool
     group: Advanced
@@ -127,7 +167,7 @@ settings:
     type: map
     group: Advanced
     label: Extra environment variables
-    help: "KEY=value, e.g. FTLCONF_dns_domainNeeded=true — any Pi-hole 6 setting as FTLCONF_<section>_<key>."
+    help: "KEY=value, e.g. FTLCONF_dns_domainNeeded=true — any Pi-hole 6 setting as FTLCONF_<section>_<key>. FTLCONF_misc_dnsmasq_lines (';' between lines) is added to the module's own dnsmasq lines instead of replacing them."
     default: {}
   - key: image
     group: Advanced

@@ -1,0 +1,12 @@
+[Unit]
+Description=Kiwi Network: refresh the Mullvad SOCKS5 records every 6 hours ({{ hostname }})
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+RandomizedDelaySec=30min
+Unit={{ container_prefix }}-mullvad-socks.service
+
+[Install]
+WantedBy=timers.target

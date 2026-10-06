@@ -1,0 +1,57 @@
+{% set short = (mullvad_socks_domain or ('mullvad.' ~ domain if domain else '')).strip('.').lower() %}
+#!/usr/bin/env bash
+# kiwi-server: Pi-hole's records for the Mullvad SOCKS5 proxies ({{ hostname }}).
+# Run by {{ container_prefix }}-mullvad-socks.timer every 6 hours. Takes the
+# *.relays.mullvad.net names at 10.x.x.x addresses from the proxy list — nothing
+# else, so the list can never redirect another name — adds the short names
+# <cc>-<city>-<n>.{{ short or '(none)' }}, and swaps the file Pi-hole's dnsmasq
+# watches (hostsdir) in one rename; dnsmasq reloads it by itself. A download
+# that is not such a list never replaces the current records.
+set -euo pipefail
+umask 022
+
+url='{{ mullvad_socks_url | replace("'", "'\\''") }}'
+short='{{ short | replace("'", "'\\''") }}'
+dir='{{ docker_dir }}/{{ container_prefix }}-pihole/etc-dnsmasq.d/mullvad-socks'
+hosts=$dir/mullvad-socks.hosts
+
+# Pi-hole reads it as its own user, whatever the umask was when it was made
+install -d -m 0755 "$dir"
+# dnsmasq ignores dotfiles in a hostsdir: nothing is visible before the rename
+raw=$(mktemp "$dir/.download.XXXXXX")
+new=$(mktemp "$dir/.hosts.XXXXXX")
+trap 'rm -f "$raw" "$new"' EXIT
+curl -fsSL --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
+
+if ! awk -v short="$short" '
+    { sub(/\r$/, "") }
+    /^[ \t]*(#|$)/ { next }
+    !/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[ \t]+[A-Za-z0-9.-]+[ \t]*$/ { bad = 1; exit }
+    {
+        ip = $1; name = tolower($2)
+        if (ip !~ /^10\./ || name !~ /^[a-z0-9-]+\.relays\.mullvad\.net$/) next
+        split(ip, o, ".")
+        if (o[1] > 255 || o[2] > 255 || o[3] > 255 || o[4] > 255 || name in seen) next
+        seen[name] = 1
+        print ip " " name
+        n++
+        if (short != "" && match(name, /^[a-z][a-z]-[a-z0-9]+-wg-socks5-[0-9]+\./)) {
+            label = substr(name, 1, RLENGTH - 1)
+            sub(/-wg-socks5-/, "-", label)
+            alias[n] = ip " " label "." short
+        }
+    }
+    END {
+        if (bad || n == 0) exit 1
+        for (i = 1; i <= n; i++) if (i in alias) print alias[i]
+    }' "$raw" >"$new"; then
+    echo "$url: not a list of Mullvad SOCKS5 proxies, keeping the current records" >&2
+    exit 1
+fi
+
+if cmp -s "$new" "$hosts"; then
+    exit 0
+fi
+chmod 0644 "$new"
+mv -f "$new" "$hosts"
+echo "$(wc -l <"$hosts") records for the Mullvad SOCKS5 proxies in $hosts"

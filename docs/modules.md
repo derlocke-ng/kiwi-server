@@ -83,11 +83,14 @@ outputs:                         # where rendered templates and file settings la
   torrc: { path: "{{ container_prefix }}-tor/etc/torrc", mode: 0644 }
   systemd_service: { kind: host_unit, name: kn-gateway.service }   # a unit on the host instead
   wireguard_config: { path: "{{ container_prefix }}-vpn-client/wg0.conf", mode: 0600 }
+  refresh_timer: { kind: host_unit, name: "{{ container_prefix }}-x.timer", when: x_enabled }
+                                 # when: only rendered while that context value is truthy
 
 storage:
   volumes: [portainer_data]      # named volumes (the compose fragment may declare them too)
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-vault", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-vault/x", type: dir, when: x_enabled }   # when: as above
 
 host_integration:
   sysctl: { net.ipv4.ip_forward: 1 }

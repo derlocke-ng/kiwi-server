@@ -19,7 +19,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 
 import yaml  # noqa: E402
 
-from kiwiserver import VERSION, certs, cli, config, iso, modules as modmod, roles as rolesmod  # noqa: E402
+from kiwiserver import VERSION, certs, cli, config, iso, modules as modmod, roles as rolesmod, router  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -229,6 +229,8 @@ class TestRoles(Base):
         self.assertIn("\necho hi\n", s)            # pasted as written: a heredoc inside must still work
         self.assertIn("KS_STACK_USER='core'", s)    # the admin user unless service_user is set
         self.assertIn("KS_STACK_VPN_DEPENDENTS=()", s)
+        self.assertIn("KS_STACK_MESH_VIA='172.128.0.2'", s)
+        self.assertIn("KS_STACK_MESH_SUBNET='10.8.0.0/16'", s)
         self.assertTrue(s.rstrip().endswith('ks_main "$@"'))
         # the embedded file round-trips
         import base64, re
@@ -257,6 +259,7 @@ class TestRoles(Base):
         self.assertTrue(helper.startswith("#!/usr/bin/env bash"))
         self.assertIn("host_units restart --no-block", helper)   # never a blocking restart from inside kiwi-stack.service
         self.assertIn("${STACK_VPN_DEPENDENTS:-}", helper)
+        self.assertIn('ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA"', helper)
         p = os.path.join(self.tmp, "kiwi-stack")
         write(p, helper)
         self.assertEqual(subprocess.run(["bash", "-n", p], capture_output=True).returncode, 0)
@@ -556,7 +559,8 @@ class TestModules(Base):
         role = self.roles[host.role]
         rolesmod.resolve_settings(role, host, self.ms)
         return host, role, rolesmod.stack_spec(host, role, [("10.8.0.25", "sh3.kiwi"), ("10.8.0.25", "cloud.sh3.kiwi"),
-                                                            ("10.8.0.6", "m1.kiwi"), ("10.8.0.1", "gate.kiwi")])
+                                                            ("10.8.0.6", "m1.kiwi"), ("10.8.0.1", "gate.kiwi")],
+                                               master_ip="10.8.0.1")
 
     def test_loader_and_resolution(self):
         ms = self.ms
@@ -628,7 +632,13 @@ class TestModules(Base):
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
         self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2", svcs["kn-pihole"]["environment"])
+        # the master's Pi-hole first, Quad9 only while the master is unreachable; fleet names go to the master
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", svcs["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
+        self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
+        self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
+        self.assertIn(("10.8.0.25", "cloud.sh3.kiwi"), b.hosts)
+        self.assertIn('VPN_SUBNET="10.8.0.0/16"', b.files["kiwi/gw.sh"][0])
         self.assertNotIn("command", svcs["kn-sftp"])   # the password is in users.conf, not in docker inspect
         self.assertEqual(b.files["kn-sftp/users.conf"], ("user:s:1000\n", 0o600))
         self.assertIn("/home/user/docker/kn-sftp/users.conf:/etc/sftp/users.conf:ro,z", svcs["kn-sftp"]["volumes"])
@@ -673,6 +683,11 @@ class TestModules(Base):
         self.assertEqual(svcs["km-vpn-server"]["networks"]["knet-master"]["ipv4_address"], "172.64.0.3")
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["km-vpn-server"]["ports"])
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
+        # the master resolves through its exit tunnel and is the authority for the fleet's names
+        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", svcs["km-pihole"]["environment"])
+        self.assertEqual(b.mesh_via, "172.64.0.3")
+        self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
         env = svcs["km-vpn-client"]["environment"]
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)
         self.assertIn("WIREGUARD_PRIVATE_KEY=k", env)
@@ -680,6 +695,7 @@ class TestModules(Base):
         self.assertNotIn("hostname", svcs["km-pihole"])   # not allowed together with network_mode
         start = b.files["km-vpn-server/start.sh"][0]
         self.assertIn("ip route add default via 172.64.0.2", start)
+        self.assertIn("-s 172.64.0.0/24 -o wg0 -j MASQUERADE", start)
         # the isolation rules come before the wg0 accept-all, or they never match
         self.assertLess(start.index("-s 10.8.1.0/24 -d 10.8.0.0/24 -j DROP"), start.index("-A FORWARD -i wg0 -j ACCEPT"))
         self.assertIn("-i wg0 -s 10.8.1.0/24 -p tcp --dport 51821 -j DROP", start)
@@ -807,8 +823,11 @@ class TestModules(Base):
             "vpn_ip": "10.8.0.6", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
             "modules": ["vpn-client", "dns", "gateway"], "dns": {"pihole_password": "p", "expose_web_ui": False}}})
         self.assertEqual(host.modules, ["vpn-client", "dns", "gateway"])
+        spec.master_ip = ""   # no master known: the VPN client's resolver first, nothing forwarded
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
+        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
     def test_rendered_scripts_are_clean(self):
@@ -841,6 +860,89 @@ class TestModules(Base):
             res = subprocess.run(["docker", "compose", "-f", p, "config", "-q"], capture_output=True, text=True,
                                  env={**os.environ, "DOCKER_HOST": "unix:///nonexistent"})
             self.assertEqual(res.returncode, 0, res.stderr)
+
+
+WG_CONF = """# wg-easy client config for the router
+[Interface]
+PrivateKey = cHJpdmF0ZS1rZXktdGVzdA==
+Address = 10.8.4.2/24
+DNS = 10.8.0.1
+MTU = 1412
+
+[Peer]
+PublicKey = cHVibGljLWtleS10ZXN0
+PresharedKey = cHNrLXRlc3Q=
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+Endpoint = vpn.example.org:51820
+"""
+
+
+class TestRouter(Base):
+    def test_parse_wireguard(self):
+        wg = router.parse_wireguard(WG_CONF)
+        self.assertEqual(wg["interface"]["address"], ["10.8.4.2/24"])
+        self.assertEqual(wg["interface"]["mtu"], "1412")
+        self.assertEqual(wg["peers"][0]["endpoint"], "vpn.example.org:51820")
+        self.assertEqual(wg["peers"][0]["allowedips"], ["0.0.0.0/0", "::/0"])
+        for bad in ("hello\n", "[Interface]\nPrivateKey = x\n", "[Interface]\nPrivateKey = x\nAddress = 10.8.4.2/24\n[Peer]\nPublicKey = p\nEndpoint = host\n"):
+            with self.assertRaises(KiwiError):
+                router.parse_wireguard(bad)
+
+    def test_openwrt_scripts(self):
+        wg = router.parse_wireguard(WG_CONF)
+        split = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg)
+        for line in ("uci set network.kiwi.proto='wireguard'", "uci set network.kiwi.private_key='cHJpdmF0ZS1rZXktdGVzdA=='",
+                     "uci add_list network.kiwi.addresses='10.8.4.2/24'", "uci set network.kiwi.mtu='1412'",
+                     "uci set network.kiwi_peer=wireguard_kiwi", "uci set network.kiwi_peer.endpoint_host='vpn.example.org'",
+                     "uci set network.kiwi_peer.endpoint_port='51820'", "uci set network.kiwi_peer.preshared_key='cHNrLXRlc3Q='",
+                     "uci add_list network.kiwi_peer.allowed_ips='10.8.0.0/16'", "uci set firewall.kiwi.masq='1'",
+                     "uci set firewall.kiwi_fwd.src='lan'", "uci add_list dhcp.@dnsmasq[0].server='/home/10.8.0.1'",
+                     "uci set dhcp.@dnsmasq[0].rebind_domain='home'", "uci commit network"):
+            self.assertIn(line, split)
+        self.assertNotIn("0.0.0.0/0", split)
+        self.assertNotIn("noresolv", split)
+        full = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg, full=True)
+        self.assertIn("uci add_list network.kiwi_peer.allowed_ips='0.0.0.0/0'", full)
+        self.assertIn("uci add_list dhcp.@dnsmasq[0].server='10.8.0.1'", full)
+        self.assertIn("uci set dhcp.@dnsmasq[0].noresolv='1'", full)
+        via = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", via="192.168.1.5")
+        self.assertIn("uci set network.kiwi_route.target='10.8.0.0/16'", via)
+        self.assertIn("uci set network.kiwi_route.gateway='192.168.1.5'", via)
+        self.assertNotIn("wireguard", via)
+        self.assertIn("server='/home/10.8.0.1'", via)
+        p = os.path.join(self.tmp, "kiwi.sh")
+        write(p, split)
+        self.assertEqual(subprocess.run(["sh", "-n", p]).returncode, 0)
+        if have("shellcheck"):
+            r = subprocess.run(["shellcheck", "-S", "warning", "-s", "sh", p], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+        with self.assertRaises(KiwiError):
+            router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg, via="192.168.1.5")
+        with self.assertRaises(KiwiError):
+            router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", via="not-an-ip")
+
+    def test_openwrt_command_uses_the_fleet(self):
+        write(os.path.join(self.tmp, "secrets", "router.conf"), WG_CONF)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "m1": {"role": "node-gw", "network": {"dhcp": False, "address": "192.168.1.5/24", "gateway": "192.168.1.1"},
+                   "node-gw": self.node_gw()},
+            "d": {"role": "node-gw", "node-gw": self.node_gw()}}})
+        from io import StringIO
+        import contextlib
+        out = StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["openwrt", f.path, "--wireguard", "secrets/router.conf"]), 0)
+        self.assertIn("server='/kiwi/10.8.0.1'", out.getvalue())   # the master's address from the fleet
+        out = StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["openwrt", f.path, "--via", "m1"]), 0)
+        self.assertIn("kiwi_route.gateway='192.168.1.5'", out.getvalue())
+        err = StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["openwrt", f.path, "--via", "d"]), 1)   # d has no static LAN address
+        self.assertIn("static LAN address", err.getvalue())
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
@@ -948,6 +1050,12 @@ class TestCli(Base):
         self.assertNotIn(("10.8.0.25", "*.sh3.kiwi"), recs)
         m1, b = r.script(f.hosts["m1"])
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
+        # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("'10.8.0.1 gate.kiwi'", m1)
+        self.assertIn("'127.0.0.1 m1.kiwi'", m1)
+        self.assertIn("'10.8.0.25 cloud.sh3.kiwi'", m1)
         hosts = [e for e in b.compose["services"]["kn-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts=")][0]
         self.assertIn("10.8.0.25 cloud.sh3.kiwi", hosts)
         self.assertIn("10.8.0.1 gate.kiwi", hosts)
@@ -1007,8 +1115,8 @@ class TestCli(Base):
         # the example validates once its secrets exist (throw-away ones here)
         home = os.path.join(self.tmp, "home")
         write(os.path.join(home, ".ssh", "id_ed25519.pub"), KEY + "\n")
-        write(os.path.join(self.tmp, "secrets", "m1.kiwi.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n")
-        write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n")
+        write(os.path.join(self.tmp, "secrets", "m1.home.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n")
+        write(os.path.join(self.tmp, "secrets", "sh3.home.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n")
         old_home = os.environ.get("HOME")
         os.environ["HOME"] = home
         try:

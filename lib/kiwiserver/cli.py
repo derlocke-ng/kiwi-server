@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from . import VERSION, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import toolchain as tcmod, util
+from . import router as routermod, toolchain as tcmod, util
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -144,6 +144,7 @@ class Renderer:
         self._scanned = False
         self._records = []
         self._needs_ca = False
+        self._master_ip = ""
 
     def prepare(self, host):
         role = self.roles[host.role]
@@ -162,7 +163,7 @@ class Renderer:
         if self._scanned:
             return
         self._scanned = True
-        recs, needs_ca = [], False
+        recs, needs_ca, master_ip = [], False, ""
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -174,13 +175,15 @@ class Renderer:
                 spec = rolesmod.stack_spec(h, role)
                 if not spec.vpn_ip:
                     continue
+                if role.node_type == "master" and not master_ip:
+                    master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
                 util.warn("dns records: skipping %s: %s" % (h.name, e))
-        self._records, self._needs_ca = recs, needs_ca
+        self._records, self._needs_ca, self._master_ip = recs, needs_ca, master_ip
 
     def dns_records(self):
         self.scan()
@@ -224,7 +227,7 @@ class Renderer:
             return None
         records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
-        spec = rolesmod.stack_spec(host, role, records)
+        spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip)
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b
@@ -489,6 +492,38 @@ def cmd_script(args):
     sys.stdout.write(script)
 
 
+def fleet_facts(fleet, roles, ms):
+    """(domain, master's mesh address, mesh subnet): what a router needs to know."""
+    r = Renderer(fleet, roles, out_dir_for(argparse.Namespace(output_dir=None), fleet), None, ms)
+    r.scan()
+    mesh = "10.8.0.0/16"
+    for h in fleet.hosts.values():
+        if h.role in roles and roles[h.role].node_type == "master" and h.role_settings.get("mesh_subnet"):
+            mesh = h.role_settings["mesh_subnet"]
+            break
+    return str(fleet.defaults.get("domain") or ""), r._master_ip, mesh
+
+
+def cmd_openwrt(args):
+    fleet, roles, ms = load(args)
+    domain, master_ip, mesh = fleet_facts(fleet, roles, ms)
+    if not master_ip and not args.via:
+        util.warn("no master with a mesh address in the fleet — the DNS forward is left out")
+    wg = via = None
+    if args.wireguard:
+        wg = routermod.parse_wireguard(util.read_text(fleet.resolve_path(args.wireguard)))
+    if args.via:
+        via = args.via
+        if via in fleet.hosts:   # a gateway node: its static LAN address
+            addr = fleet.hosts[via].cfg["network"].get("address")
+            if fleet.hosts[via].cfg["network"].get("dhcp", True) or not addr:
+                raise KiwiError("%s has no static LAN address (network.dhcp: false + address:) — give the address instead" % via)
+            via = str(addr).split("/", 1)[0]
+    if wg is None and via is None:
+        raise KiwiError("give --wireguard <client config from the master> or --via <gateway node or its LAN address>")
+    sys.stdout.write(routermod.openwrt_script(domain, master_ip, mesh, wg=wg, via=via, full=args.full, name=args.name))
+
+
 def cmd_ca(args):
     fleet, _roles, _ms = load(args, need_roles=False)
     tls = fleet.defaults.get("tls") or {}
@@ -632,6 +667,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server build <fleet> [host...]           render, then the unattended ISO per host
   kiwi-server script <fleet> <host>             print the role script (run it on any machine)
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
+  kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
+                                                a uci script that joins an OpenWrt router to the mesh
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian
@@ -671,6 +708,11 @@ def build_parser():
     s = sub("build", cmd_build); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     sub("ca", cmd_ca).add_argument("fleet")
+    s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
+    s.add_argument("--wireguard", metavar="FILE", help="the client config the master issued for the router")
+    s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")
+    s.add_argument("--via", metavar="NODE|IP", help="no tunnel: a static route to a gateway node on the LAN")
+    s.add_argument("--name", default="kiwi", help="the interface and zone name on the router (default kiwi)")
     sub("roles", cmd_roles)
     sub("modules", cmd_modules)
     sub("targets", cmd_targets)

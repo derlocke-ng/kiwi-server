@@ -197,7 +197,7 @@ def resolve_settings(role, host, modset=None):
     return host.role_settings
 
 
-def stack_spec(host, role, dns_records=None):
+def stack_spec(host, role, dns_records=None, master_ip=""):
     rs = host.role_settings
     vpn_ip = rs.get("vpn_ip") or ""
     if not vpn_ip and "vpn-server" in host.modules:
@@ -209,7 +209,9 @@ def stack_spec(host, role, dns_records=None):
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
         pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {},
         module_config=host.module_settings, files=host.module_files,
-        dns_records=dns_records or [], service_user=service_user(host))
+        dns_records=dns_records or [], service_user=service_user(host),
+        master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",
+        domain=host.domain)
 
 
 def service_user(host):
@@ -304,6 +306,9 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             _bash_var("KS_STACK_URLS", list(bundle.urls)),
             _bash_var("KS_STACK_VPN_CONTAINER", "%s-vpn-client" % bundle.prefix if "vpn-client" in bundle.modules else ""),
             _bash_var("KS_STACK_VPN_DEPENDENTS", list(getattr(bundle, "vpn_dependents", []))),
+            _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),
+            _bash_var("KS_STACK_MESH_VIA", getattr(bundle, "mesh_via", "") or ""),
+            _bash_var("KS_STACK_HOSTS", ["%s %s" % (ip, n) for ip, n in getattr(bundle, "hosts", [])]),
             _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
         ]
         for rel, (content, _mode) in sorted(bundle.files.items()):

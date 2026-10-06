@@ -1,5 +1,36 @@
 # dns (Pi-hole) — resolver for the mesh (master) or the LAN (gateway node)
-{% set upstreams = upstream_dns or vpn_client_ip or '1.1.1.1;9.9.9.9' %}
+{#
+  Upstreams, in strict order: a node asks the master's Pi-hole first, so the whole
+  network shares one blocklist and leaves through the master's exit; the master asks
+  the VPN client's DNS-over-TLS resolver. The fallback is reached directly and only
+  answers while the master is unreachable (the tunnel is down in the same moment).
+  Names under the fleet's domain go to the master and never leave it.
+#}
+{% set chain = [] %}
+{% if upstream_dns %}
+{% set _ = chain.append(upstream_dns) %}
+{% else %}
+{% if node_type != 'master' and master_ip %}
+{% set _ = chain.append(master_ip) %}
+{% elif vpn_client_ip %}
+{% set _ = chain.append(vpn_client_ip) %}
+{% endif %}
+{% if fallback_dns %}
+{% set _ = chain.append(fallback_dns) %}
+{% endif %}
+{% endif %}
+{% if not chain %}
+{% set _ = chain.append('9.9.9.9;149.112.112.112') %}
+{% endif %}
+{% set upstreams = chain | join(';') %}
+{% set lines = ['strict-order'] %}
+{% if domain %}
+{% if node_type != 'master' and master_ip %}
+{% set _ = lines.append('server=/' ~ domain ~ '/' ~ master_ip) %}
+{% else %}
+{% set _ = lines.append('local=/' ~ domain ~ '/') %}
+{% endif %}
+{% endif %}
 {% set hosts = [] %}
 {% if fleet_records %}{% for ip, name in dns_records %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}{% endif %}
 {% for name, ip in extra_records.items() %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}
@@ -14,6 +45,7 @@ services:
       - TZ={{ timezone }}
       - FTLCONF_webserver_api_password={{ pihole_password }}
       - FTLCONF_dns_upstreams={{ upstreams }}
+      - FTLCONF_misc_dnsmasq_lines={{ lines | join(';') }}
       - FTLCONF_dns_listeningMode=all
       - FTLCONF_webserver_domain={{ pihole_hostname or 'pihole.' ~ hostname }}
 {% if hosts %}

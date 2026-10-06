@@ -24,8 +24,8 @@ ks="$HOME/.local/bin/kiwi-server"
 mkdir -p "$tmp/fleet/secrets"
 cd "$tmp/fleet"
 "$ks" init fleet.yaml
-printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n' > secrets/sh3.kiwi.conf
-printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n' > secrets/m1.kiwi.conf
+printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n' > secrets/sh3.home.conf
+printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n' > secrets/m1.home.conf
 "$ks" validate fleet.yaml
 "$ks" render fleet.yaml --toolchain native
 "$ks" list fleet.yaml | grep -q '^sh3 '
@@ -39,10 +39,13 @@ test -f output/m1/m1.stack/kiwi/gw.sh
 test -f secrets/ca/kiwiCA.pem
 grep -q 'KS_FILES\[ca_cert\]' output/lab1/lab1.role.sh
 grep -q "KS_ROLE_VPN_IP='10.8.0.6'" output/m1/m1.role.sh        # from the WireGuard config's Address
-grep -q 'FTLCONF_dns_hosts=.*10.8.0.25 cloud.sh3.kiwi' output/m1/m1.stack/docker-compose.yml
+grep -q 'FTLCONF_dns_hosts=.*10.8.0.25 cloud.sh3.home' output/m1/m1.stack/docker-compose.yml
 grep -q 'set $backend http://nextcloud-aio-apache:11000;' output/sh3/sh3.stack/kn-nginx/nginx.conf
 test -f output/m1/m1.stack/kn-sftp/users.conf
 "$ks" script fleet.yaml sh3 | head -1 | grep -q '^#!/usr/bin/env bash$'   # nothing but the script on stdout
+printf '[Interface]\nPrivateKey = x\nAddress = 10.8.4.2/24\n[Peer]\nPublicKey = y\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.org:51820\n' > secrets/router.conf
+"$ks" openwrt fleet.yaml --wireguard secrets/router.conf | grep -q "server='/home/10.8.0.1'"
+"$ks" openwrt fleet.yaml --via 192.168.1.5 | grep -q "kiwi_route.gateway='192.168.1.5'"
 "$ks" ca fleet.yaml | grep -q kiwiCA.pem
 "$ks" modules | grep -q 'vpn-client'
 "$ks" roles -v | grep -q 'vpn-server.wg_host'

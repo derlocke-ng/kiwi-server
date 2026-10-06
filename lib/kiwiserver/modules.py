@@ -161,7 +161,7 @@ class StackSpec:
     def __init__(self, node_type, hostname, modules, docker_dir="/home/user/docker",
                  docker_subnet=None, mtu=1412, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None,
-                 service_user="user"):
+                 service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain=""):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -178,6 +178,9 @@ class StackSpec:
         self.files = dict(files or {})        # "module/key" -> bytes (embedded file settings)
         self.dns_records = list(dns_records or [])  # (ip, name) pairs for the dns module
         self.service_user = service_user
+        self.master_ip = master_ip or ""        # the master's mesh address: the nodes' DNS upstream
+        self.mesh_subnet = mesh_subnet or "10.8.0.0/16"
+        self.domain = domain or ""              # the fleet's domain: forwarded to the master, never upstream
 
 
 class Bundle:
@@ -193,6 +196,9 @@ class Bundle:
         self.urls = []         # what the operator can open afterwards
         self.compose = None
         self.vpn_dependents = []   # containers inside the VPN client's network namespace
+        self.mesh_via = ""         # the container the host routes the mesh through
+        self.mesh_subnet = ""
+        self.hosts = []            # (ip, name): the fleet's names for /etc/hosts
 
     def add_file(self, rel, content, mode=0o644):
         rel = rel.strip("/")
@@ -290,6 +296,9 @@ class Renderer:
             "module_config": {m: dict(v) for m, v in spec.module_config.items()},
             "mesh_ips": sorted({ip for ip, _n in spec.dns_records}),
             "dns_records": list(spec.dns_records),
+            "master_ip": spec.master_ip, "mesh_subnet": spec.mesh_subnet, "domain": spec.domain,
+            # the mesh is behind the WireGuard server on a master, behind the VPN client on a node
+            "mesh_via": ips.get("vpn-server" if spec.node_type == "master" else "vpn-client", ""),
         }
         for n in ordered:
             ctx["has_" + n.replace("-", "_")] = True
@@ -561,6 +570,10 @@ class Renderer:
         bundle.prefix = prefix
         bundle.modules = ordered
         bundle.vpn_dependents = list(getattr(bundle, "vpn_dependents", []))
+        bundle.mesh_via = base["mesh_via"]
+        bundle.mesh_subnet = spec.mesh_subnet if base["mesh_via"] else ""
+        # the host's own names point at itself: its services are published on the host
+        bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip else ip, n) for ip, n in spec.dns_records]
         return bundle
 
 

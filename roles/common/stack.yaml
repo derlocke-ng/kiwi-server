@@ -27,6 +27,17 @@ settings:
     help: "This machine's address inside the WireGuard mesh (10.8.0.x), used for the DNAT rules and the fleet's DNS records. Empty: the Address of the vpn-client's WireGuard config file, or the vpn-server's server_ip on a master."
     placeholder: 10.8.0.25
     default: ""
+  - key: master_ip
+    group: Stack
+    label: Master's mesh address
+    help: "The master's address in the mesh: its Pi-hole is the nodes' DNS upstream and the authority for the fleet's names. Empty: the vpn-server's server_ip of the fleet's master host."
+    placeholder: 10.8.0.1
+    default: ""
+  - key: mesh_subnet
+    group: Stack
+    label: Mesh subnet
+    help: "The whole WireGuard mesh. The host routes it through its VPN client (the WireGuard server on a master), so the host and its containers reach the other nodes and the master's Pi-hole."
+    default: 10.8.0.0/16
   - key: pub_iface
     group: Stack
     label: LAN interface

@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.1.2 — one resolver chain for the whole network
+
+- **Nodes resolve through the master.** A node's Pi-hole asks the master's
+  Pi-hole first, so the network shares one blocklist and every lookup leaves
+  through the master's exit; Quad9 follows in strict order and only answers
+  while the master is unreachable (`dns.fallback_dns`). Names under the
+  fleet's domain are forwarded to the master and never leave it; the master
+  marks the domain local. The master's address comes from the fleet's master
+  host or the new stack setting `master_ip`.
+- **A route into the mesh on every host.** `kiwi-stack start` routes the mesh
+  subnet (`mesh_subnet`, default 10.8.0.0/16) through the VPN client, or
+  through the WireGuard server on a master, so the host and its containers —
+  the Pi-hole among them — reach the other nodes. The master masquerades that
+  traffic as its mesh address.
+- **The fleet's names in /etc/hosts** on every stack host, its own names
+  pointing at itself, so backups and renewals resolve without a Pi-hole.
+- gluetun's DNS-over-TLS provider defaults to Quad9; the gateway module's
+  mesh subnet defaults to the stack's.
+- **Names are `service.hostname.home`.** The example fleet moves from
+  `.kiwi`, a real public TLD anyone can register names under, to `.home`,
+  which ICANN will not delegate; the CA is constrained to it. No place label.
+- **`kiwi-server openwrt`** writes the uci script that joins an OpenWrt router
+  to the mesh: a WireGuard client with the mesh routed (or everything, with
+  `--full`), the firewall zone, and the dnsmasq forward of the fleet's names
+  to the master's Pi-hole; or, with `--via`, a static route to a gateway
+  node. [docs/routers.md](docs/routers.md) covers FritzBox and other routers.
+
 ## 2.1.1 — the review fixes
 
 What the 2.1.0 review ([docs/REVIEW-2.1.0.md](docs/REVIEW-2.1.0.md)) found,

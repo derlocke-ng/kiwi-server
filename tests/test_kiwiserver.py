@@ -952,6 +952,30 @@ class TestModules(Base):
         self.assertEqual(os.stat(hosts).st_mtime_ns, before)
 
     @unittest.skipUnless(have("curl"), "curl not installed")
+    def test_mullvad_socks_script_never_follows_a_planted_link(self):
+        # Pi-hole's container can write in etc-dnsmasq.d: a link there must not
+        # make the host's root write into, or chmod, another directory
+        src = os.path.join(self.tmp, "list.hosts")
+        write(src, "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n")
+        p, hosts = self.mullvad_socks_script(mullvad_socks_url="file://" + src)
+        target = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(target, mode=0o700)
+        os.makedirs(os.path.dirname(os.path.dirname(hosts)))
+        os.symlink(target, os.path.dirname(hosts))
+        r = subprocess.run(["bash", p], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not a plain directory", r.stderr)
+        self.assertEqual(os.listdir(target), [])
+        self.assertEqual(os.stat(target).st_mode & 0o777, 0o700)
+        # a directory where the list goes is not replaced or written into
+        os.unlink(os.path.dirname(hosts))
+        os.makedirs(hosts)
+        r = subprocess.run(["bash", p], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(os.listdir(hosts), [])
+        self.assertEqual(os.listdir(os.path.dirname(hosts)), ["mullvad-socks.hosts"])   # temp files gone
+
+    @unittest.skipUnless(have("curl"), "curl not installed")
     def test_mullvad_socks_short_names(self):
         src = os.path.join(self.tmp, "list.hosts")
         write(src, "10.124.0.53 de-fra-wg-socks5-001.relays.mullvad.net\n")

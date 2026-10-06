@@ -13,13 +13,21 @@ umask 022
 url='{{ mullvad_socks_url | replace("'", "'\\''") }}'
 short='{{ short | replace("'", "'\\''") }}'
 dir='{{ docker_dir }}/{{ container_prefix }}-pihole/etc-dnsmasq.d/mullvad-socks'
-hosts=$dir/mullvad-socks.hosts
+hosts=mullvad-socks.hosts
 
+# Pi-hole's container writes in the directory above: work inside this one,
+# by relative names, and only when it is a directory and not a link it put there
+mkdir -p "$dir"
+cd "$dir"
+if [[ $(stat -c %d:%i .) != "$(stat -c %d:%i "$dir")" ]]; then
+    echo "$dir is not a plain directory, leaving it alone" >&2
+    exit 1
+fi
 # Pi-hole reads it as its own user, whatever the umask was when it was made
-install -d -m 0755 "$dir"
+chmod 0755 .
 # dnsmasq ignores dotfiles in a hostsdir: nothing is visible before the rename
-raw=$(mktemp "$dir/.download.XXXXXX")
-new=$(mktemp "$dir/.hosts.XXXXXX")
+raw=$(mktemp .download.XXXXXX)
+new=$(mktemp .hosts.XXXXXX)
 trap 'rm -f "$raw" "$new"' EXIT
 curl -fsSL --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
 
@@ -53,5 +61,5 @@ if cmp -s "$new" "$hosts"; then
     exit 0
 fi
 chmod 0644 "$new"
-mv -f "$new" "$hosts"
-echo "$(wc -l <"$hosts") records for the Mullvad SOCKS5 proxies in $hosts"
+mv -fT "$new" "$hosts"
+echo "$(wc -l <"$hosts") records for the Mullvad SOCKS5 proxies in $dir/$hosts"

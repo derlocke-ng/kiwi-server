@@ -9,6 +9,11 @@
   fallback resolvers until now. **On in the master preset**, whose exit is
   Mullvad; nodes ask the master. Set `mullvad_socks: false` in the master's
   `dns:` block to keep it off; the next apply removes the timer again.
+  A master that got these records by hand from the mullvad-socks5 README
+  (`pihole-mullvad-socks.timer`, `FTLCONF_misc_etc_dnsmasq_d`,
+  `etc-dnsmasq.d/90-mullvad-socks.conf`) should undo that first: its
+  [upgrade steps](https://github.com/derlocke-ng/mullvad-socks5#upgrading-from-the-earlier-instructions);
+  kiwi-server does not remove units it did not install.
 - A host timer (`km-mullvad-socks.timer`, every 6 hours) fetches the list from
   [mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5)
   (`mullvad_socks_url`) and swaps the file in `<docker_dir>/km-pihole/mullvad-socks/`,

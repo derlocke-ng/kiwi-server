@@ -26,6 +26,12 @@ env:
   optional:
     DOT_PROVIDERS: "quad9"
 
+validate:
+  - when: "vpn_provider == 'custom' and not wireguard_config_present"
+    error: "provider custom needs wireguard_config, the client config the master's wg-easy issued — `kiwi-server enroll <host>` fetches it into secrets/<hostname>.conf, where it is picked up by itself"
+  - when: "vpn_provider != 'custom' and not (wireguard_private_key and wireguard_addresses)"
+    error: "provider {{ vpn_provider }} needs wireguard_private_key and wireguard_addresses from the provider's account page"
+
 templates:
   compose: docker-compose.yml.j2
   post_rules: post-rules.txt.j2
@@ -53,8 +59,9 @@ settings:
   - key: wireguard_config
     type: file
     label: WireGuard config file
-    help: "For provider custom: the client config (wg0.conf) issued by the master's wg-easy — it holds the private key and endpoint. Embedded into the role script."
-    placeholder: secrets/sh3.conf
+    help: "For provider custom: the client config issued by the master's wg-easy — it holds the private key and endpoint. Embedded into the role script. Empty: secrets/<hostname>.conf when that exists, which is where `kiwi-server enroll <host>` puts it."
+    placeholder: secrets/sh3.home.conf
+    fallback_file: "secrets/{hostname}.conf"
   - key: wireguard_private_key
     type: secret
     label: WireGuard private key
@@ -108,4 +115,4 @@ settings:
     default: {}
   - key: image
     group: Advanced
-    default: qmcgaw/gluetun
+    default: docker.io/qmcgaw/gluetun

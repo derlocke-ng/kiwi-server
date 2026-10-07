@@ -2,9 +2,9 @@ schema_version: "1.0"
 
 module:
   name: cloud
-  title: Nextcloud AIO
-  version: 1.1.0
-  description: "Nextcloud All-in-One — files, calendar, contacts, talk; the master container runs the rest, nginx terminates TLS in front of it"
+  title: Nextcloud
+  version: 2.0.0
+  description: "Nextcloud from the AIO project's containers, without the AIO master container: no docker socket, runs on podman, secrets generated at render, updates and backups through kiwi-stack. Collabora, Talk, Imaginary, ClamAV, full-text search and the whiteboard are switches."
   category: productivity
   node_types: [node]
 
@@ -14,8 +14,8 @@ dependencies:
 
 network:
   needs_vpn_dnat: true
-  # Talk's TURN port; 80/443 come with the reverse proxy
-  open_ports: ["{{ talk_port }}/tcp", "{{ talk_port }}/udp"]
+  # Talk's TURN port when Talk runs; 80/443 come with the reverse proxy
+  open_ports: ["{% if talk %}{{ talk_port }}/tcp{% endif %}", "{% if talk %}{{ talk_port }}/udp{% endif %}"]
 
 firewall:
   scope: vpn-client
@@ -25,13 +25,19 @@ templates:
   compose: docker-compose.yml.j2
 
 storage:
-  volumes: [nextcloud_aio_mastercontainer]
+  volumes: [nextcloud_aio_nextcloud, nextcloud_aio_apache, nextcloud_aio_database, nextcloud_aio_database_dump, nextcloud_aio_redis]
   bind_mounts:
     - { host: "{{ nextcloud_datadir or docker_dir ~ '/knnc-data' }}", type: dir, required: true }
+    - { host: "{{ nextcloud_mount }}", type: dir, required: false }
+
+validate:
+  - when: "collabora and onlyoffice"
+    error: "collabora and onlyoffice cannot both be on — Nextcloud takes one office server"
+  - when: "talk_recording and not talk"
+    error: "talk_recording needs talk"
 
 urls:
-  - "Nextcloud: https://{{ nc_hostname or 'cloud.' ~ hostname }}"
-  - "Nextcloud AIO admin (finish the setup here): https://{{ nc_admin_hostname or 'nc-admin.' ~ hostname }}"
+  - "Nextcloud: https://{{ nc_hostname or 'cloud.' ~ hostname }} — user admin, the cloud.admin_password setting"
 
 nginx:
   servers:
@@ -48,35 +54,73 @@ nginx:
         - "rewrite ^/\\.well-known/caldav https://$server_name/remote.php/dav/ redirect;"
         - "rewrite ^/\\.well-known/webfinger https://$server_name/index.php/.well-known/webfinger redirect;"
         - "rewrite ^/\\.well-known/nodeinfo https://$server_name/index.php/.well-known/nodeinfo redirect;"
-    - server_name: "{{ nc_admin_hostname or 'nc-admin.' ~ hostname }}"
-      proxy_pass: "https://nextcloud-aio-mastercontainer:8080"
-      proxy_ssl: true
-      comment: Nextcloud AIO admin
 
 settings:
   - key: nc_hostname
     label: Nextcloud hostname
     help: "Empty: cloud.<hostname>."
     default: ""
-  - key: nc_admin_hostname
-    label: AIO admin hostname
-    help: "Empty: nc-admin.<hostname>."
-    default: ""
+  - key: admin_password
+    type: secret
+    required: true
+    label: Admin password
+    help: The password of the Nextcloud user `admin`, set on the first start.
   - key: nextcloud_datadir
     label: Data directory
     help: "Where the files live, e.g. a big disk mounted at /mnt/data/nextcloud. Empty: <stack directory>/knnc-data. Do not change after the first start."
     default: ""
-  - key: aio_bind
-    label: AIO interface bind address
-    help: "The AIO master container's own port 8080 (it holds the docker socket): 127.0.0.1 keeps it off the LAN — nc-admin.<hostname> through the reverse proxy is the way in. Empty: all addresses."
-    default: 127.0.0.1
+  - key: nextcloud_mount
+    label: Host directory Nextcloud may reach
+    help: "For external storage inside Nextcloud, e.g. /mnt/. Must not be the data directory. Empty: none."
+    default: ""
+  - key: collabora
+    type: bool
+    group: Services
+    label: Collabora Online
+    help: Office documents in the browser. Not together with OnlyOffice.
+    default: true
+  - key: onlyoffice
+    type: bool
+    group: Services
+    label: OnlyOffice
+    default: false
+  - key: talk
+    type: bool
+    group: Services
+    label: Talk (calls)
+    help: "Publishes the TURN port (talk_port) on the host."
+    default: false
+  - key: talk_recording
+    type: bool
+    group: Services
+    label: Talk recording
+    default: false
+  - key: imaginary
+    type: bool
+    group: Services
+    label: Imaginary (previews)
+    default: true
+  - key: clamav
+    type: bool
+    group: Services
+    label: ClamAV (virus scan of uploads)
+    default: false
+  - key: fulltextsearch
+    type: bool
+    group: Services
+    label: Full-text search
+    help: Elasticsearch — needs a few GB of RAM.
+    default: false
+  - key: whiteboard
+    type: bool
+    group: Services
+    label: Whiteboard
+    default: false
   - key: apache_port
     type: int
+    group: Advanced
+    help: The port Nextcloud's apache listens on behind nginx; never published on the host.
     default: 11000
-  - key: apache_ip_binding
-    label: Apache bind address
-    help: nginx reaches Apache over the nextcloud-aio network, so the host binding can stay local.
-    default: 127.0.0.1
   - key: upload_limit
     default: 50G
   - key: max_time
@@ -88,8 +132,10 @@ settings:
     label: Apps installed on first start
     default: deck twofactor_totp tasks calendar contacts notes
   - key: additional_apks
+    group: Advanced
     default: imagemagick
   - key: additional_php_extensions
+    group: Advanced
     default: imagick
   - key: enable_dri_device
     type: bool
@@ -98,25 +144,87 @@ settings:
     default: false
   - key: keep_disabled_apps
     type: bool
+    group: Advanced
+    default: false
+  - key: install_latest_major
+    type: bool
+    group: Advanced
+    label: Install the latest major version on first start
+    default: false
+  - key: update_nextcloud_apps
+    type: bool
+    group: Advanced
+    label: Update Nextcloud apps on Saturdays
     default: false
   - key: talk_port
     type: int
+    group: Advanced
     default: 3478
-  - key: disable_backup_section
-    type: bool
-    default: false
-  - key: borg_retention_policy
-    default: "--keep-within=7d --keep-weekly=4 --keep-monthly=6"
-  - key: skip_domain_validation
-    type: bool
-    help: The reverse proxy is in front, so AIO cannot validate the domain itself.
-    default: true
+  - key: collabora_dictionaries
+    group: Advanced
+    default: de_DE en_GB en_US es_ES fr_FR it nl pt_BR pt_PT ru
+  - key: collabora_log_level
+    group: Advanced
+    default: warning
+  - key: fulltextsearch_java_options
+    group: Advanced
+    default: -Xms512M -Xmx512M
+  - key: log_level
+    type: enum
+    options: [debug, info, warn, error]
+    group: Advanced
+    default: warn
+  - key: database_password
+    type: secret
+    generate: true
+    group: Generated
+    help: "Empty: generated from the fleet's seed, the same at every render."
+  - key: redis_password
+    type: secret
+    generate: true
+    group: Generated
+  - key: turn_secret
+    type: secret
+    generate: true
+    group: Generated
+  - key: signaling_secret
+    type: secret
+    generate: true
+    group: Generated
+  - key: talk_internal_secret
+    type: secret
+    generate: true
+    group: Generated
+  - key: recording_secret
+    type: secret
+    generate: true
+    group: Generated
+  - key: onlyoffice_secret
+    type: secret
+    generate: true
+    group: Generated
+  - key: imaginary_secret
+    type: secret
+    generate: true
+    group: Generated
+  - key: fulltextsearch_password
+    type: secret
+    generate: true
+    group: Generated
+  - key: whiteboard_secret
+    type: secret
+    generate: true
+    group: Generated
   - key: extra_env
     type: map
     group: Advanced
     label: Extra environment variables
-    help: KEY=value, passed to the AIO master container as they are.
+    help: KEY=value, passed to the Nextcloud container as they are.
     default: {}
-  - key: image
+  - key: image_prefix
     group: Advanced
-    default: nextcloud/all-in-one:latest
+    help: Where the AIO containers come from; the tag applies to all of them.
+    default: ghcr.io/nextcloud-releases/
+  - key: image_tag
+    group: Advanced
+    default: latest

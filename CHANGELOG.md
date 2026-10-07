@@ -1,5 +1,78 @@
 # Changelog
 
+## 2.4.0 — the fleet talks to its machines
+
+- **A kiwi-updater app, properly**: the icon is kiwi-icons' kiwi-server
+  (`svg/classic`, plus the PNG renders at 48 to 512 px), installed into the
+  hicolor theme under the app id and shown by `kiwi-gui`, the app grid, the
+  window and a new About dialog in the GUI's primary menu; `kiwi.manifest`
+  lists `ssh` among the commands the app needs and describes what the app
+  does now. Releases are version tags (`v2.4.0`), as kiwi expects.
+- This release carries main's 2.2.0 (the Mullvad SOCKS5 records) on the
+  podman runtime: the hosts directory is a read-only quadlet volume, the
+  refresh timer is a host unit a re-apply removes again when
+  `mullvad_socks` is turned off. From the review of that work: the refresh
+  service is sandboxed (`ProtectSystem=strict`, one writable directory, no
+  new privileges) and belongs to its timer, so an apply no longer waits for
+  the download; the list URL is https (or a local file) only;
+  `mullvad_socks_url` is required only while the records are on; the
+  unchanged check uses coreutils alone; a directory that holds rendered files
+  is made root's again on every apply. `kiwi-server doctor` reports the ssh
+  client; a hand-installed Debian gets curl with podman.
+- Fixed: the gateway preset's host unit (`kn-gateway.service`) required
+  `docker.service`, which a podman node does not have, so systemd refused to
+  start the LAN routing on every boot and apply; it now follows the runtime.
+- **`kiwi-server apply <fleet> <host…>`**: the role script re-rendered and
+  run on a running machine over SSH, as root, with `--force` — settings,
+  modules and certificates change without a reinstall. `--no-run` only puts
+  it at `/var/lib/kiwi-server/role.sh`; `--ssh USER@ADDR` reaches a machine
+  whose name does not resolve yet.
+- **`kiwi-server status`**: when the role was applied, the uptime and
+  `kiwi-stack status` of every machine; `--porcelain` for the GUI.
+- **`kiwi-server enroll <fleet> <host|name>`**: a WireGuard client on the
+  master's wg-easy through its API, over an SSH tunnel to the master. A
+  fleet host's config lands in `secrets/<hostname>.conf`, a device's in
+  `secrets/devices/<name>.conf`; `--group` places the client in a client
+  group's range, `--address` sets one, `--split` keeps a device's own
+  internet, `--qr` prints the code for a phone, `--existing` fetches a
+  config again.
+- **`secrets/<hostname>.conf` is found by itself**: `vpn-client.wireguard_config`
+  falls back to it (`fallback_file` on a file setting), so a node's block
+  needs no line for it and its mesh address comes from the config.
+- **`validate` renders the stack**: a module's `validate:` rules, a missing
+  mesh address, two services on one port are reported by `validate` instead
+  of first by `render` or `apply`. vpn-client checks that a custom provider
+  has its config and a commercial one its key and addresses.
+- GUI: Apply and Status on the host page.
+- `lib/kiwiserver/remote.py` is the one place that talks SSH (the fleet
+  backup uses it too); `lib/kiwiserver/wgeasy.py` speaks the weejewel
+  wg-easy API.
+
+## 2.3.0 — podman, one node role, Nextcloud without the master container
+
+- **Podman quadlets** are the default runtime (`runtime: podman`): the
+  rendered compose file is translated into `.container` and `.network` units
+  under `/etc/containers/systemd`, started through `kiwi-stack.target`,
+  updated by `podman auto-update`; `kiwi-stack` drives systemd instead of
+  compose. `runtime: docker` keeps docker compose. Images are fully
+  qualified; nginx resolves through the network's DNS; Portainer talks to the
+  podman socket; gw.sh finds the bridge by the route.
+- **Nextcloud from AIO's own containers**, no AIO master container, no docker
+  socket: apache, nextcloud, database, redis, notify-push, and Collabora,
+  OnlyOffice, Talk, recording, Imaginary, ClamAV, full-text search and the
+  whiteboard as settings. Database and service secrets are generated from
+  `secrets/seed` (a `secret` setting with `generate: true`), the same at
+  every render. The AIO interface, its updater and its borg backup are gone;
+  kiwi-stack and the coming backup module take their place.
+- **One `node` role with presets** (`preset: gateway | cloud | minimal`;
+  `modules:` replaces the list); `node-gw` and `node-cloud` stay as aliases.
+- **The master's admin pages by name**: nginx runs inside the WireGuard
+  server's namespace, `wg.<hostname>` and `pihole.<hostname>` answer on the
+  mesh address only.
+- **Client groups** (`vpn-server.groups`: subnet, reach, peers, internet,
+  admin) replace the single isolated subnet, which stays as a legacy group.
+- The renderer refuses two services on the same host port; `validate:` checks
+  in module.yaml; an `object` setting type for structured settings.
 ## 2.2.0 — Mullvad's SOCKS5 proxies by name
 
 - **`dns.mullvad_socks`**: Pi-hole answers for every Mullvad SOCKS5 proxy, as
@@ -56,6 +129,15 @@
 - **Names are `service.hostname.home`.** The example fleet moves from
   `.kiwi`, a real public TLD anyone can register names under, to `.home`,
   which ICANN will not delegate; the CA is constrained to it. No place label.
+- **The domain is a choice, `home` the fallback.** `kiwi-server init
+  --domain`, a question in the GUI's new-fleet dialog, and `validate` warns
+  about public TLDs and `.lan`, and refuses `.local`.
+- **The fleet backs itself up to its nodes.** `backup: { hosts: [...],
+  passphrase_file: ... }` sends the fleet directory (fleet file, secrets, the
+  CA — never output/ or ISOs), encrypted with openssl, to
+  `/var/lib/kiwi-server/backups` on those nodes after every render or build;
+  `kiwi-server backup` by hand or `--local` to a disk; `kiwi-server restore
+  --from user@node` gets it back on a fresh machine over plain SSH.
 - **`kiwi-server openwrt`** writes the uci script that joins an OpenWrt router
   to the mesh: a WireGuard client with the mesh routed (or everything, with
   `--full`), the firewall zone, and the dnsmasq forward of the fleet's names

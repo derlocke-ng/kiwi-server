@@ -25,9 +25,10 @@ address. Mesh addresses only. That is by design.
 kiwi-server writes the whole configuration as a uci script:
 
 ```sh
-# the router as a mesh client — the config comes from the master's wg-easy
-kiwi-server openwrt fleet.yaml --wireguard secrets/router.conf          # split: only the mesh
-kiwi-server openwrt fleet.yaml --wireguard secrets/router.conf --full   # full: everything
+# the router as a mesh client: its config from the master's wg-easy, in the routers group
+kiwi-server enroll fleet.yaml router --group routers                            # -> secrets/devices/router.conf
+kiwi-server openwrt fleet.yaml --wireguard secrets/devices/router.conf          # split: only the mesh
+kiwi-server openwrt fleet.yaml --wireguard secrets/devices/router.conf --full   # full: everything
 
 # no tunnel on the router: a static route to the gateway node m1 (needs its static LAN address)
 kiwi-server openwrt fleet.yaml --via m1
@@ -37,7 +38,7 @@ kiwi-server openwrt fleet.yaml --via 192.168.1.5
 Copy the output to the router and run it:
 
 ```sh
-kiwi-server openwrt fleet.yaml --wireguard secrets/router.conf > kiwi.sh
+kiwi-server openwrt fleet.yaml --wireguard secrets/devices/router.conf > kiwi.sh
 scp kiwi.sh root@192.168.1.1:/tmp/ && ssh root@192.168.1.1 sh /tmp/kiwi.sh
 ```
 

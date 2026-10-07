@@ -23,13 +23,13 @@ fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash
   itself onto a `ghcr.io/ublue-os/ucore*` image, like the uCore project's own
   autorebase example), `debian` (trixie netinst, preseeded).
 - **Roles** — `bare`, `master` (WireGuard entry point with a double hop
-  through a commercial VPN, Pi-hole, Tor), `node-gw` (LAN gateway through the
-  VPN with Pi-hole, DHCP relay, Transmission, JDownloader, SFTP) and
-  `node-cloud` (Nextcloud AIO, Vaultwarden). Each is a preset of
+  through a commercial VPN, Pi-hole, Tor, nginx for the admin pages) and
+  `node` (any module set behind the VPN client: `preset: gateway` is the LAN
+  gateway and download station, `preset: cloud` is Nextcloud and Vaultwarden,
+  `preset: minimal` is a start, `modules:` is your own list). The presets are
+  the live kiwi-master, kiwi-node-gw and kiwi-cloud setups taken apart into
   **modules** — the kiwi-v2 module system (`modules/`), rendered on your
-  machine into a docker compose stack the host starts on first boot. The
-  three presets are the live kiwi-master, kiwi-node-gw and kiwi-cloud
-  setups, taken apart into modules.
+  machine into a container stack the host starts on first boot.
 - **One CA for the fleet** — hosts that run the reverse proxy get a
   `*.<hostname>` certificate signed by it, every machine built trusts it, and
   every Pi-hole in the fleet resolves every host and service name at its mesh
@@ -43,11 +43,24 @@ fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash
 
 ## Install
 
-Through kiwi, once it is in your catalog:
+Through [kiwi](https://github.com/derlocke-ng/kiwi-updater), with the Kiwi
+Network catalog registered:
 
 ```bash
+kiwi catalog add https://github.com/derlocke-ng/kiwi-catalog.git   # once per machine
 kiwi install kiwi-server
 ```
+
+Until the catalog lists it, track the repository directly:
+
+```bash
+kiwi add https://github.com/derlocke-ng/kiwi-server.git
+kiwi install kiwi-server
+```
+
+kiwi follows the latest version tag (`v2.4.0`), updates it in the background
+and shows the app with its icon in `kiwi-gui`. `kiwi info kiwi-server` and
+`kiwi diff kiwi-server` show what an install or update would run.
 
 Or straight from the checkout — it is the same installer kiwi runs:
 
@@ -58,7 +71,9 @@ kiwi-server doctor              # python, pyyaml, build tools, container runtime
 ```
 
 Needs `python3` with PyYAML and Jinja2 (`pip install --user jinja2` if the
-image lacks it), `openssl` and `git`. Building ISOs needs `butane`,
+image lacks it), `openssl` and `ssh` (`apply`, `status`, `enroll` and the
+fleet backup reach the machines over it); the GUI needs python3-gobject, GTK 4
+and libadwaita. Building ISOs needs `butane`,
 `coreos-installer` and `xorriso`; on a desktop that does not have them:
 
 ```bash
@@ -90,7 +105,7 @@ same script the ISO runs.
 ```yaml
 defaults:                          # every host, unless it says otherwise
   target: ucore                    # coreos | ucore | debian
-  role: bare                       # bare | master | node-gw | node-cloud
+  role: bare                       # bare | master | node
   domain: home                     # sh3 becomes sh3.home
   timezone: Europe/Berlin
   disk: /dev/sda                   # WIPED by the ISO. Required for build, not for render
@@ -113,20 +128,23 @@ hosts:
       vpn-server: { wg_host: vpn.example.org, wg_password: … }
       dns: { pihole_password: … }
   m1:                              # a gateway node
-    role: node-gw
-    node-gw:
+    role: node
+    node:
+      preset: gateway                # vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
       vpn_ip: 10.8.0.6
       pub_iface: eth0
-      vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued
+      vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued (optional:
+                                                              # secrets/<hostname>.conf is found by itself)
       dns: { pihole_password: … }
       downloader: { download_dir: /mnt/data/downloads, transmission_password: … }
       sftp: { sftp_password: … }
   sh3:                             # a cloud node
-    role: node-cloud
+    role: node
     ucore: { image: ghcr.io/ublue-os/ucore-hci:stable }
-    node-cloud:
-      vpn_ip: 10.8.0.25
-      vpn-client: { wireguard_config: secrets/sh3.home.conf }
+    node:
+      preset: cloud                  # vpn-client, reverse-proxy, cloud, vault, portainer
+      vpn_ip: 10.8.0.25              # optional too: the config's Address is the mesh address
+                                     # (no vpn-client line: `kiwi-server enroll sh3` wrote secrets/sh3.home.conf)
       cloud: { nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data, memory_limit: 8192M }
 ```
 
@@ -138,12 +156,28 @@ host ends up with, secrets masked; `kiwi-server roles -v` lists every role and
 module setting with its default. The full reference is the commented
 [examples/fleet.yaml](examples/fleet.yaml).
 
-A module role's block holds the **stack settings** at the top (`vpn_ip`,
-`pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, the daily VPN
-restart and weekly update times) and **one block per module**. `modules:`
-inside it replaces the preset's list — a cloud node that also downloads is
-`modules: [vpn-client, reverse-proxy, cloud, vault, downloader]` plus the
-downloader's settings.
+Containers run as **podman quadlets** by default: every service is a systemd
+unit under `/etc/containers/systemd`, ordering and restarts come from
+systemd, `podman auto-update` pulls new images, and the compose file stays
+next to them as the source and for review. `runtime: docker` in the role
+block keeps docker compose, as the v1 setups ran. The cloud preset runs
+Nextcloud from the AIO project's own containers without the AIO master
+container: no docker socket, podman-native, Collabora, Talk, Imaginary,
+ClamAV, full-text search and the whiteboard as switches, and every database
+and service secret generated from `secrets/seed` so a re-render never rotates
+a password.
+
+A module role's block holds the **stack settings** at the top (`preset`,
+`vpn_ip`, `pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, the
+daily VPN restart and weekly update times) and **one block per module**. A
+node is any module set: `preset: gateway | cloud | minimal` picks the usual
+shape, `modules:` replaces the list outright — a cloud node that also
+downloads is `modules: [vpn-client, reverse-proxy, cloud, vault, downloader]`
+plus the downloader's settings. The renderer refuses two modules that publish
+the same host port. `node-gw` and `node-cloud` remain as names for the first
+two presets. The master runs nginx inside its WireGuard server's network
+namespace, so `wg.<hostname>` and `pihole.<hostname>` answer on the mesh
+address only, for the client groups that may see them.
 
 Static addresses without typing them: `network: { dhcp: false, gateway: …,
 iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
@@ -157,12 +191,29 @@ stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
 client's network namespace (Transmission, JDownloader).
 
-Names are `service.hostname.home`: the example fleet uses `.home` because it
-is one of the strings ICANN will not delegate as a public top-level domain,
-so a name can never leak to a public registry or be registered by someone
-else with a browser-trusted certificate (`.kiwi` is a real TLD, so it can).
-`.internal` is the formally reserved alternative. Routers join the mesh with
-`kiwi-server openwrt` or the steps in [docs/routers.md](docs/routers.md).
+Names are `service.hostname.domain`, and the domain is yours to choose:
+`kiwi-server init --domain …`, the GUI asks when it creates a fleet, and
+`home` is the fallback. `validate` says when a choice is a bad one. `.home`,
+`.corp` and `.mail` are strings ICANN will not delegate as public top-level
+domains, `.internal` is reserved for private use, so a name under them can
+never leak to a public registry or be registered by a stranger with a
+browser-trusted certificate. `.kiwi`, `.dev` and every two-letter domain are
+public, so they can. `.local` is mDNS and never reaches a DNS server on Apple
+devices. `.lan` is what OpenWrt and many routers call their own LAN, so a
+router then answers it itself instead of forwarding the fleet's names.
+Routers join the mesh with `kiwi-server openwrt` or the steps in
+[docs/routers.md](docs/routers.md).
+
+The fleet directory is the one thing the nodes cannot rebuild: the fleet
+file, `secrets/`, the CA. With `backup: { hosts: [m1, sh3],
+passphrase_file: ~/.config/kiwi-server/backup.pass }` in the defaults, every
+successful render or build sends it, encrypted, to those nodes
+(`/var/lib/kiwi-server/backups`, the newest ten kept); `kiwi-server backup`
+does it by hand or to a USB stick with `--local`. On a fresh machine,
+`kiwi-server restore --from core@192.168.1.5 --into ~/kiwi` brings it back
+over plain SSH, before there is any mesh. The archive is openssl AES-256 with
+a passphrase-derived key, so `openssl enc -d -aes-256-cbc -md sha256 -pbkdf2
+-iter 600000 -in FILE | tar xz` opens it without kiwi-server.
 
 DNS is one chain for the whole network: VPN clients ask the master's Pi-hole,
 a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
@@ -182,7 +233,10 @@ also has FoxyProxy imports that use these names.
 Migrating a machine that ran a v1 stack in place: set `docker_subnet` to what
 it used and rename its data directories to the module names (`kmvpn-server` →
 `km-vpn-server`, `knvault` → `kn-vault`, …) before the first start, so wg-easy
-keeps its peers and the services their data. Mesh SSH to a node is one DNAT
+keeps its peers and the services their data. The default runtime is podman
+now: a machine that still runs the v1 docker compose stack either keeps it
+with `runtime: docker` in the role block, or has the old stack stopped before
+the role runs (the role script does not stop docker containers). Mesh SSH to a node is one DNAT
 rule: `vpn-client: { extra_dnat_rules: ["2222/tcp:172.128.0.1:22"] }` (the
 docker gateway is the host).
 
@@ -228,14 +282,51 @@ always runs on the final image. `sudo bash /var/lib/kiwi-server/role.sh
 
 `updates.days: []` means any day; `updates.enabled: false` turns all of it off.
 
+## Managing running machines
+
+Once a machine runs, the fleet file stays the source: change a setting, add
+a module, renew a certificate, then
+
+```bash
+kiwi-server apply fleet.yaml sh3            # re-render, send the role script over SSH, run it
+kiwi-server apply fleet.yaml sh3 --no-run   # only put it at /var/lib/kiwi-server/role.sh
+kiwi-server status fleet.yaml               # when each role was applied, uptime, kiwi-stack status
+```
+
+SSH goes to the admin user at the host's name with your key or agent
+(nothing asks for a password; the install gave the admin user passwordless
+sudo). `--ssh core@192.168.1.7` reaches a machine whose name does not resolve
+yet. The script runs with `--force`, so the stack is rewritten and restarted
+with whatever changed; the disk and the OS are not touched. The GUI has the
+same two actions on the host page.
+
+Joining the mesh is one command per client, through the master's wg-easy
+API over an SSH tunnel to the master:
+
+```bash
+kiwi-server enroll fleet.yaml sh3                     # a fleet host: secrets/sh3.home.conf, picked up at the next render
+kiwi-server enroll fleet.yaml phone --group devices --qr   # a device: secrets/devices/phone.conf, and the QR code
+kiwi-server enroll fleet.yaml laptop --group devices --split   # only the mesh through the tunnel, its own internet otherwise
+kiwi-server enroll fleet.yaml fritzbox --group routers        # for a router — see docs/routers.md
+kiwi-server enroll fleet.yaml sh3 --existing          # the config of a client that exists, again
+```
+
+`--group` moves the client into that group's range (`vpn-server.groups`,
+10.8.1.0/24 guests, 10.8.2.0/24 pentest, 10.8.3.0/24 devices, 10.8.4.0/24
+routers by default), which is what the master's firewall rules go by;
+`--address` sets one by hand. A fleet host's client is named after its
+hostname, so the wg-easy page and the fleet agree. Nodes keep everything
+in the tunnel; `--split` is for devices that should reach the network but
+keep their own exit. `vpn-server.wg_password` is what the API logs in with.
+
 ## Roles and modules
 
 | role | what the machine becomes | modules |
 |---|---|---|
 | `bare` | the base system: admin user, SSH, updates | — |
 | `master` | the kiwi-master: WireGuard entry point (wg-easy) whose default route is the VPN client (gluetun to Mullvad or any provider — the double hop), Pi-hole and Tor on the server's network stack, isolated-client subnet | vpn-client, vpn-server, dns, tor |
-| `node-gw` | a kiwi-node in gateway mode: LAN DNS (Pi-hole + DHCP relay), policy routing that sends LAN clients through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP | vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp |
-| `node-cloud` | a kiwi-node in cloud mode: Nextcloud AIO and Vaultwarden behind nginx, reachable on the LAN and at the node's mesh address | vpn-client, reverse-proxy, cloud, vault, portainer |
+| `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway and download station (Pi-hole with DHCP, policy routing through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
+| `node-gw`, `node-cloud` | the gateway and cloud presets as roles of their own, for fleet files that use them | as above |
 
 The modules are kiwi-v2's (`modules/<name>/module.yaml` plus Jinja
 templates) with the gaps filled: `start.sh` and `torrc` from the live master,
@@ -250,9 +341,10 @@ daily VPN restart and weekly update timers the v1 cron jobs did.
 Everything cross-host comes from the fleet file: the master's `start.sh`
 lets isolated clients reach every node, every Pi-hole serves every host and
 service name at its mesh address, and the reverse proxies' certificates come
-from one CA (`kiwi-server ca fleet.yaml` shows it). What stays manual: the
-WireGuard client configs themselves, which the master's wg-easy issues — put
-them under `secrets/` and point `vpn-client.wireguard_config` at them.
+from one CA (`kiwi-server ca fleet.yaml` shows it). The WireGuard client
+configs come from the master's wg-easy: `kiwi-server enroll <host>` fetches
+one into `secrets/<hostname>.conf`, where the vpn-client finds it without a
+line in the fleet file (or point `vpn-client.wireguard_config` at any file).
 
 [docs/modules.md](docs/modules.md) is the module reference — the context a
 template sees, every module.yaml key, how to add one. `kiwi-server modules
@@ -326,14 +418,20 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 
 ## Status
 
-2.1.0 integrates the kiwi-v2 modules; see [CHANGELOG.md](CHANGELOG.md). The
+2.4.0 manages the machines it built; see [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock
 netinst in CI). What still wants a real machine: the first boot of each
-target end to end — the stacks are the live v1 setups rendered from
-modules, verified file by file against them, not yet booted from here.
+target end to end — the master and gateway stacks are the live v1 setups
+rendered from modules, verified file by file against them; the cloud preset
+left the AIO master container behind and follows AIO's manual install
+instead — none of it booted from here yet —
+and `apply`, `status` and `enroll` against a live master, which are tested
+against fake SSH runners and a fake wg-easy here.
 
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
+
+The icon is kiwi-server from [kiwi-icons](https://github.com/derlocke-ng/kiwi-icons).

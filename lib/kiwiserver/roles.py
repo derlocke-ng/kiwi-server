@@ -46,7 +46,16 @@ class Role:
         self.targets = [str(t) for t in (meta.get("targets") or ["coreos", "ucore", "debian"])]
         self.modules = [str(m) for m in (meta.get("modules") or [])]
         self.module_defaults = {str(k): dict(v or {}) for k, v in (meta.get("module_defaults") or {}).items()}
-        self.stack = bool(self.modules)
+        # presets: named module lists (with their own module defaults) the host
+        # picks with `preset:`; `modules:` in the host's block still overrides
+        self.presets = {}
+        for pname, pdef in (meta.get("presets") or {}).items():
+            pdef = pdef or {}
+            self.presets[str(pname)] = {
+                "title": str(pdef.get("title") or pname), "description": str(pdef.get("description") or ""),
+                "modules": [str(m) for m in (pdef.get("modules") or [])],
+                "module_defaults": {str(k): dict(v or {}) for k, v in (pdef.get("module_defaults") or {}).items()}}
+        self.stack = bool(self.modules or self.presets)
         self.node_type = str(meta.get("node_type") or ("master" if "vpn-server" in self.modules else "node"))
         raw_settings = []
         for inc in meta.get("settings_include") or []:
@@ -64,11 +73,37 @@ class Role:
         d = {"name": self.name, "title": self.title, "description": self.description,
              "status": self.status, "targets": self.targets, "stack": self.stack,
              "node_type": self.node_type, "modules": self.modules,
-             "module_defaults": self.module_defaults,
+             "module_defaults": self.module_defaults, "presets": self.presets,
              "settings": [s.as_dict() for s in self.settings]}
         if self.stack and modset is not None:
-            d["module_schemas"] = [modset.get(m).as_dict() for m in modset.resolve(self.modules)]
+            names = list(self.modules)
+            for pr in self.presets.values():
+                names += [m for m in pr["modules"] if m not in names]
+            d["module_schemas"] = [modset.get(m).as_dict() for m in modset.resolve(names)]
         return d
+
+    def preset_for(self, settings):
+        """The preset a host picked (its `preset` role setting), or None."""
+        if not self.presets:
+            return None
+        name = str((settings or {}).get("preset") or "")
+        if not name:
+            name = next(iter(self.presets))
+        if name not in self.presets:
+            raise KiwiError("%s: unknown preset %r (have: %s)" % (self.name, name, ", ".join(self.presets)))
+        return self.presets[name]
+
+    def default_modules(self, settings=None):
+        pr = self.preset_for(settings)
+        return list(pr["modules"]) if pr else list(self.modules)
+
+    def defaults_for(self, name, settings=None):
+        """The module's defaults: the role's, then the preset's on top."""
+        out = dict(self.module_defaults.get(name) or {})
+        pr = self.preset_for(settings)
+        if pr:
+            out = deep_merge(out, pr["module_defaults"].get(name) or {})
+        return out
 
 
 def roles_dir():
@@ -106,6 +141,12 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
             continue
         given = block.get(s.key)
         v = coerce(s, s.default if given is None else given, where)
+        if is_empty(v) and getattr(s, "generate", False):
+            v = host.fleet.derive_secret(host.hostname, where, s.key)
+        if is_empty(v) and getattr(s, "fallback_file", ""):
+            cand = s.fallback_file.format(hostname=host.hostname, name=host.name)
+            if os.path.isfile(host.fleet.resolve_path(cand)):
+                v = cand
         if s.required and is_empty(v):
             raise KiwiError("%s.%s is required" % (where, s.key))
         if s.type == "file" and not is_empty(v):
@@ -156,7 +197,7 @@ def resolve_settings(role, host, modset=None):
         ms = modset or modmod.discover()
         wanted = raw.get("modules")
         if wanted is None:
-            wanted = role.modules
+            wanted = role.default_modules(host.role_settings)
         elif isinstance(wanted, str):
             wanted = wanted.split()
         elif not isinstance(wanted, list):
@@ -168,7 +209,7 @@ def resolve_settings(role, host, modset=None):
             block = raw.get(name) or {}
             if not isinstance(block, dict):
                 raise KiwiError("%s.%s must be a mapping" % (where, name))
-            block = deep_merge(role.module_defaults.get(name) or {}, block)
+            block = deep_merge(role.defaults_for(name, host.role_settings), block)
             keys = {s.key for s in mod.settings} | {"container_ip"}
             unknown = sorted(set(block) - keys)
             if unknown:
@@ -211,7 +252,7 @@ def stack_spec(host, role, dns_records=None, master_ip=""):
         module_config=host.module_settings, files=host.module_files,
         dns_records=dns_records or [], service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",
-        domain=host.domain)
+        domain=host.domain, runtime=rs.get("runtime") or "podman")
 
 
 def service_user(host):
@@ -309,12 +350,16 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),
             _bash_var("KS_STACK_MESH_VIA", getattr(bundle, "mesh_via", "") or ""),
             _bash_var("KS_STACK_HOSTS", ["%s %s" % (ip, n) for ip, n in getattr(bundle, "hosts", [])]),
+            _bash_var("KS_STACK_RUNTIME", getattr(bundle, "runtime", "podman") or "podman"),
+            _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),
             _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
         ]
         for rel, (content, _mode) in sorted(bundle.files.items()):
             lines.append("KS_FILES[stack/%s]=%s" % (rel, _q(util.b64(content))))
         for name, text in sorted(bundle.units.items()):
             lines.append("KS_FILES[unit/%s]=%s" % (name, _q(util.b64(text))))
+        for name, text in sorted(getattr(bundle, "quadlets", {}).items()):
+            lines.append("KS_FILES[quadlet/%s]=%s" % (name, _q(util.b64(text))))
     lines += ["", "# ---- common library (roles/common/lib.sh) ------------------------------",
               lib_text.rstrip("\n"), "",
               "# ---- role: %s (roles/%s/apply.sh) --------------------------------" % (role.name, role.name),

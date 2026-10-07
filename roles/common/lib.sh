@@ -119,6 +119,18 @@ ks_ensure_docker() { # [ce|distro]
     systemctl enable --now docker.service
     docker compose version >/dev/null 2>&1 || ks_compose_plugin
 }
+ks_ensure_podman() {
+    if ! command -v podman >/dev/null 2>&1; then
+        case $KS_OS in
+            debian) ks_apt podman netavark aardvark-dns curl ;;
+            ostree) ks_die "this image has no podman — every Fedora CoreOS and uCore image ships it; is this one stripped?" ;;
+            *)      ks_die "podman is not installed and this is not Debian — install it first" ;;
+        esac
+    fi
+    # the API socket: what Portainer (and anything else that speaks docker) talks to
+    systemctl enable --now podman.socket 2>/dev/null || true
+    install -d -m 0755 /etc/containers/systemd
+}
 ks_docker_ce() {
     ks_say "installing Docker CE from download.docker.com"
     ks_apt ca-certificates curl gnupg
@@ -176,7 +188,7 @@ ks_git_clone() { # URL REF DIR   — clone, or bring an existing clone to REF
 
 # ---- services / firewall --------------------------------------------------------------
 ks_unit() { # NAME   — unit file on stdin, then daemon-reload
-    ks_write "/etc/systemd/system/$1" 0644
+    ks_write "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$1" 0644
     systemctl daemon-reload
 }
 ks_firewall_open() { # PORT/PROTO...
@@ -287,7 +299,11 @@ ks_stack_unpack() {
         if [[ $d == /* ]]; then
             [[ -d $d ]] || install -d -m 0755 -o "$u" -g "$u" "$d"
         elif [[ -d $dd/$d ]]; then
-            ks_stack_dir_is_data "$d" && chown "$u:$u" "$dd/$d"
+            if ks_stack_dir_is_data "$d"; then
+                chown "$u:$u" "$dd/$d"
+            else   # rendered files live here: root's, writable by nobody else (the Mullvad refresh insists)
+                chown root:root "$dd/$d"; chmod go-w "$dd/$d"
+            fi
         elif ks_stack_dir_is_data "$d"; then
             install -d -m 0755 -o "$u" -g "$u" "$dd/$d"
         else
@@ -302,11 +318,26 @@ ks_stack_unpack() {
     for unit in "${KS_STACK_UNITS[@]}"; do
         ks_file "unit/$unit" "$KS_SYSTEMD_DIR/$unit" 0644
     done
+    if [[ $KS_STACK_RUNTIME == podman ]]; then
+        # the quadlets: every unit this tool wrote before goes first, so a module
+        # that left the stack takes its container with it
+        local q
+        install -d -m 0755 /etc/containers/systemd
+        grep -lsF '# kiwi-server stack' /etc/containers/systemd/*.container /etc/containers/systemd/*.network 2>/dev/null | xargs -r rm -f
+        for q in "${KS_STACK_QUADLETS[@]}"; do
+            case $q in
+                *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;
+                *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0644 ;;
+            esac
+        done
+    fi
     install -d -m 0755 /etc/kiwi-server
     {
         echo "# written by kiwi-server $KS_VERSION — read by /usr/local/bin/kiwi-stack"
         echo "STACK_DIR=$dd"
         echo "STACK_USER=$u"
+        echo "STACK_RUNTIME=$KS_STACK_RUNTIME"
+        echo "STACK_SERVICES=\"${KS_STACK_SERVICES[*]}\""
         echo "STACK_PREFIX=$KS_STACK_PREFIX"
         echo "STACK_VPN_CONTAINER=$KS_STACK_VPN_CONTAINER"
         echo "STACK_VPN_DEPENDENTS=\"${KS_STACK_VPN_DEPENDENTS[*]}\""
@@ -322,11 +353,14 @@ ks_stack_install_cli() {
 #!/usr/bin/env bash
 # kiwi-stack — run the stack kiwi-server put on this machine.
 #   kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart
+# runtime podman: the containers are systemd units (quadlets in /etc/containers/systemd)
+# runtime docker: docker compose with the rendered docker-compose.yml
 set -euo pipefail
 # shellcheck disable=SC1091
 . /etc/kiwi-server/stack.env
 cd "$STACK_DIR"
 compose() { docker compose --file "$STACK_DIR/docker-compose.yml" "$@"; }
+units() { local s; for s in $STACK_SERVICES; do printf '%s.service\n' "$s"; done; }
 # The host units (kn-gateway.service …) are ordered After=kiwi-stack.service,
 # and `start` is kiwi-stack.service's own ExecStart: a blocking restart from
 # here would wait for itself. --no-block queues the restart; systemd runs it
@@ -344,30 +378,48 @@ vpn_restart() {
     # containers that share the VPN client's network namespace must follow it,
     # or they are left in a namespace that no longer exists
     # shellcheck disable=SC2086
-    docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
+    if [[ $STACK_RUNTIME == podman ]]; then
+        local s; for s in $STACK_VPN_CONTAINER ${STACK_VPN_DEPENDENTS:-}; do systemctl restart "$s.service"; done
+    else
+        docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
+    fi
 }
-case "${1:-}" in
-    start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
-    stop)    host_units stop; compose down ;;
-    restart) "$0" stop; "$0" start ;;
-    update)  compose pull; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
-    status)  compose ps; host_units status --no-pager ;;
-    logs)    compose logs --follow "${@:2}" ;;
-    vpn-restart) vpn_restart ;;
-    *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
-esac
+if [[ $STACK_RUNTIME == podman ]]; then
+    case "${1:-}" in
+        start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; host_units restart --no-block ;;
+        stop)    host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
+        restart) "$0" stop; "$0" start ;;
+        update)  podman auto-update; podman image prune -f >/dev/null; mesh_route; host_units restart --no-block ;;
+        status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager ;;
+        logs)    if [[ -n ${2:-} ]]; then journalctl -f -u "$2.service"; else mapfile -t u < <(units); journalctl -f "${u[@]/#/-u}"; fi ;;
+        vpn-restart) vpn_restart ;;
+        *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
+    esac
+else
+    case "${1:-}" in
+        start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
+        stop)    host_units stop; compose down ;;
+        restart) "$0" stop; "$0" start ;;
+        update)  compose pull; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
+        status)  compose ps; host_units status --no-pager ;;
+        logs)    compose logs --follow "${@:2}" ;;
+        vpn-restart) vpn_restart ;;
+        *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
+    esac
+fi
 KIWI_STACK
 }
 
 ks_stack_units() { # the service that brings the stack up, and the two maintenance timers
-    local vpn_restart=${KS_ROLE_DAILY_VPN_RESTART:-} weekly=${KS_ROLE_WEEKLY_UPDATE:-}
+    local vpn_restart=${KS_ROLE_DAILY_VPN_RESTART:-} weekly=${KS_ROLE_WEEKLY_UPDATE:-} rt_unit="" rt_requires=""
+    if [[ $KS_STACK_RUNTIME == docker ]]; then rt_unit="docker.service"; rt_requires="Requires=docker.service"; fi
     ks_unit kiwi-stack.service <<UNIT
 [Unit]
-Description=Kiwi Server stack ($KS_ROLE: ${KS_STACK_MODULES[*]})
+Description=Kiwi Server stack ($KS_ROLE: ${KS_STACK_MODULES[*]}, $KS_STACK_RUNTIME)
 Documentation=https://github.com/derlocke-ng/kiwi-server
-After=docker.service network-online.target
+After=$rt_unit network-online.target
 Wants=network-online.target
-Requires=docker.service
+$rt_requires
 
 [Service]
 Type=oneshot
@@ -383,8 +435,8 @@ UNIT
         ks_unit kiwi-stack-vpn-restart.service <<UNIT
 [Unit]
 Description=Kiwi Server: restart the VPN client (new exit address)
-After=docker.service kiwi-stack.service
-Requires=docker.service
+After=$rt_unit kiwi-stack.service
+$rt_requires
 
 [Service]
 Type=oneshot
@@ -407,8 +459,8 @@ UNIT
         ks_unit kiwi-stack-update.service <<UNIT
 [Unit]
 Description=Kiwi Server: pull new images and restart the stack
-After=docker.service kiwi-stack.service
-Requires=docker.service
+After=$rt_unit kiwi-stack.service
+$rt_requires
 
 [Service]
 Type=oneshot
@@ -434,9 +486,13 @@ ks_stack_apply() {
     (( KS_STACK )) || ks_die "ks_stack_apply called for a role without modules"
     local u=$KS_STACK_USER unit url
     ks_ensure_user "$u" 1000
-    ks_ensure_docker "${KS_ROLE_DOCKER_SOURCE:-ce}"
-    ks_add_to_group "$u" docker
-    ks_add_to_group "$KS_ADMIN_USER" docker
+    if [[ $KS_STACK_RUNTIME == podman ]]; then
+        ks_ensure_podman
+    else
+        ks_ensure_docker "${KS_ROLE_DOCKER_SOURCE:-ce}"
+        ks_add_to_group "$u" docker
+        ks_add_to_group "$KS_ADMIN_USER" docker
+    fi
     ks_stack_host_prep
     ks_stack_hosts
     ks_stack_unpack
@@ -452,8 +508,13 @@ ks_stack_apply() {
     systemctl enable -q kiwi-stack.service
     systemctl restart kiwi-stack.service
     for unit in "${KS_STACK_UNITS[@]}"; do
-        systemctl enable -q "$unit"
-        systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
+        if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then
+            # a timer's service: run it now, but not on the apply's critical path (it may fetch from the Internet)
+            systemctl restart --no-block "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        else
+            systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        fi
     done
     ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|logs"
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done
@@ -485,7 +546,7 @@ ks_base() {
 ks_main() {
     [[ $EUID -eq 0 ]] || ks_die "this script must run as root (sudo bash $0)"
     KS_OS=$(ks_detect_os)
-    install -d -m 0700 "$KS_STATE_DIR"
+    install -d -m 0700 "$KS_STATE_DIR" "$KS_STATE_DIR/backups"   # backups/: kiwi-server backup
     exec > >(tee -a "$KS_LOG") 2>&1
     ks_say "kiwi-server $KS_VERSION — role $KS_ROLE on $KS_HOSTNAME ($KS_OS, target $KS_TARGET)"
     if [[ -f $KS_MARKER && ${1:-} != --force ]]; then

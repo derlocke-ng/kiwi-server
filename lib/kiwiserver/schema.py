@@ -8,7 +8,7 @@ import re
 
 from .util import KiwiError
 
-SETTING_TYPES = ("string", "text", "int", "bool", "enum", "file", "list", "map", "secret")
+SETTING_TYPES = ("string", "text", "int", "bool", "enum", "file", "list", "map", "secret", "object")
 _KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -29,10 +29,16 @@ class Setting:
         self.targets = [str(t) for t in (d.get("targets") or [])]
         self.placeholder = str(d.get("placeholder") or "")
         self.group = str(d.get("group") or "Settings")
+        # a secret the renderer makes up when it is empty: derived from the
+        # fleet's seed, so every render gives the same value (see config.Fleet.seed)
+        self.generate = bool(d.get("generate", False)) and self.type == "secret"
+        # a file setting that, left empty, is looked for at a conventional path
+        # ({hostname} and {name} are filled in): what `kiwi-server enroll` writes
+        self.fallback_file = str(d.get("fallback_file") or "") if self.type == "file" else ""
         if "default" in d:
             self.default = d["default"]
         else:
-            self.default = {"int": 0, "bool": False, "list": [], "map": {}}.get(self.type, "")
+            self.default = {"int": 0, "bool": False, "list": [], "map": {}, "object": {}}.get(self.type, "")
         if self.type == "enum" and not self.options:
             raise KiwiError("%s: enum setting %s needs options" % (owner, self.key))
         # a regular expression a string value must match in full; the empty value always passes
@@ -47,7 +53,7 @@ class Setting:
         return {"key": self.key, "type": self.type, "label": self.label, "help": self.help,
                 "required": self.required, "options": self.options, "targets": self.targets,
                 "default": self.default, "placeholder": self.placeholder, "group": self.group,
-                "pattern": self.pattern}
+                "generate": self.generate, "fallback_file": self.fallback_file, "pattern": self.pattern}
 
 
 def coerce(setting, value, where):
@@ -79,6 +85,10 @@ def coerce(setting, value, where):
         if not isinstance(value, dict):
             raise KiwiError("%s.%s must be a mapping" % (where, setting.key))
         return {str(k): "" if v is None else str(v) for k, v in value.items()}
+    if t == "object":
+        if not isinstance(value, (dict, list)):
+            raise KiwiError("%s.%s must be a mapping or a list" % (where, setting.key))
+        return value
     if t == "enum":
         v = str(value)
         if v not in setting.options:

@@ -33,7 +33,7 @@ fi
 raw=$(mktemp .download.XXXXXX)
 new=$(mktemp .hosts.XXXXXX)
 trap 'rm -f "$raw" "$new"' EXIT
-curl -fsSL --proto-redir =https --max-filesize 10000000 --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
+curl -fsSL --proto =https,file --proto-redir =https --max-filesize 10000000 --retry 3 --retry-delay 5 --max-time 120 -o "$raw" "$url"
 
 if ! awk -v short="$short" '
     BEGIN { if (short !~ /^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$/) { bad = 1; exit } }
@@ -51,20 +51,24 @@ if ! awk -v short="$short" '
         print ip " " name
         n++
         if (short != "" && match(name, /^[a-z][a-z]-[a-z0-9]+-wg-socks5-[0-9]+\./)) {
-            label = substr(name, 1, RLENGTH - 1)
+            full = substr(name, 1, RLENGTH - 1)
+            label = full
             sub(/-wg-socks5-/, "-", label)
-            alias[n] = ip " " label "." short
+            addr[n] = ip; longname[n] = full; shortname[n] = label
+            count[label]++
         }
     }
     END {
         if (bad || n == 0) exit 1
-        for (i = 1; i <= n; i++) if (i in alias) print alias[i]
+        # never two proxies behind one short name: a clash keeps the full label (as the list generator does)
+        for (i = 1; i <= n; i++) if (i in addr) print addr[i] " " (count[shortname[i]] == 1 ? shortname[i] : longname[i]) "." short
     }' "$raw" >"$new"; then
     echo "$url: not a list of Mullvad SOCKS5 proxies, keeping the current records" >&2
     exit 1
 fi
 
-if [[ -f $hosts && ! -L $hosts ]] && cmp -s "$new" "$hosts"; then
+# unchanged: nothing to swap (compared through stdin, so a planted link is never followed)
+if [[ -f $hosts && ! -L $hosts && $(sha256sum <"$new") == "$(sha256sum <"$hosts")" ]]; then
     exit 0
 fi
 chmod 0644 "$new"

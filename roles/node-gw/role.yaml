@@ -8,7 +8,7 @@
 name: node-gw
 title: kiwi-node (gateway)
 description: LAN gateway through the VPN with Pi-hole, DHCP relay, Transmission and JDownloader behind nginx, plus Portainer and SFTP.
-status: stable
+status: alias of node (preset gateway)
 targets: [coreos, ucore, debian]
 node_type: node
 modules: [vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp]

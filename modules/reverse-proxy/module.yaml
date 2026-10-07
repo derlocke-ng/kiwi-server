@@ -4,9 +4,9 @@ module:
   name: reverse-proxy
   title: Reverse proxy (nginx)
   version: 1.1.0
-  description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own"
+  description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own. On a master it lives inside the WireGuard server's network namespace: the admin pages get names, reachable from the mesh only"
   category: core
-  node_types: [node]
+  node_types: [master, node]
 
 dependencies:
   required: []
@@ -14,7 +14,9 @@ dependencies:
 
 network:
   needs_vpn_dnat: false
-  open_ports: ["80/tcp", "443/tcp"]
+  # on the host only with an address of its own; inside the WireGuard server's
+  # namespace (a master) it answers on the mesh address and nothing is published
+  open_ports: ["{% if not network_mode %}80/tcp{% endif %}", "{% if not network_mode %}443/tcp{% endif %}"]
 
 firewall:
   scope: self
@@ -37,6 +39,10 @@ nginx:
   aggregator: true
 
 settings:
+  - key: network_mode
+    label: Share a container's network
+    help: "Empty: own address, ports 80 and 443 published on the host (a node). vpn-server: inside the WireGuard server's network stack, reachable at the server's mesh address only (a master): wg.<hostname>, pihole.<hostname>."
+    default: ""
   - key: tls_fullchain
     type: file
     label: TLS certificate chain (fullchain.pem)
@@ -50,4 +56,4 @@ settings:
     default: true
   - key: image
     group: Advanced
-    default: nginx:latest
+    default: docker.io/library/nginx:latest

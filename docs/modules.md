@@ -32,6 +32,7 @@ Templates are Jinja2. Every template sees the **host context**:
 | `docker_subnet`, `docker_subnet_base`, `docker_gateway`, `mtu` | the stack network |
 | `docker_dir`, `service_user`, `timezone` | the stack directory and its owner |
 | `master_ip`, `mesh_subnet`, `mesh_via`, `domain` | the master's mesh address, the mesh, the container the host routes it through, the fleet's domain |
+| `runtime` | `podman` (quadlets) or `docker` (compose) — the compose fragment is the source either way |
 | `vpn_ip`, `pub_iface` | the host's mesh address and LAN interface |
 | `proxy_ip`, `vpn_client_ip`, `dns_ip` | the reverse proxy's, VPN client's and Pi-hole's addresses (empty when absent) |
 | `has_<module>` | `has_cloud`, `has_reverse_proxy` … for every enabled module |
@@ -107,6 +108,20 @@ settings:                        # the user-facing settings (see below)
   ...
 ```
 
+`validate:` lists checks over the module's context — `- { when: "collabora and
+onlyoffice", error: "..." }` — that fail the render with that message. A
+`secret` setting with `generate: true` is derived from the fleet's
+`secrets/seed` when the fleet file leaves it empty, the same at every render.
+
+Under `runtime: podman` the compose fragment is translated to quadlets: the
+keys `image`, `container_name`, `environment`, `volumes`, `networks` with
+`ipv4_address`, `network_mode` (`host`, `service:<name>`), `ports`, `cap_add`,
+`cap_drop`, `sysctls`, `devices`, `restart`, `security_opt` (`label:disable`),
+`init`, `read_only`, `tmpfs`, `user`, `shm_size`, `stop_grace_period`,
+`hostname`, `command`, `depends_on` and `healthcheck`. Anything else is a
+render error, so a module stays runnable on both runtimes. Images must be
+fully qualified (`docker.io/...`): podman never guesses a registry.
+
 `${VAR}` in module.yaml strings is the v2 convention and resolves against the
 context (`${VPN_IP}` → `vpn_ip`, `${DOCKERDIR}` → `docker_dir`,
 `${DOCKER_SUBNET2}` → `docker_subnet_base`); the string is Jinja-rendered
@@ -121,7 +136,7 @@ file and builds the GUI form:
 ```yaml
 settings:
   - key: vault_domain            # snake_case; becomes {{ vault_domain }} in templates
-    type: string                 # string (default) | text | int | bool | enum | file | list | map | secret
+    type: string                 # string (default) | text | int | bool | enum | file | list | map | object | secret
     label: URL
     help: "The full URL clients use. Empty: https://vault.<hostname>."
     default: ""
@@ -131,7 +146,12 @@ settings:
     targets: [debian]            # only meaningful on these targets
     placeholder: secrets/sh3.conf
     pattern: '[a-z0-9.-]+'       # string values must match this regular expression in full (empty passes)
+    fallback_file: "secrets/{hostname}.conf"   # file settings: taken when it exists and the setting is empty
+    generate: true               # secret settings: derived from secrets/seed when empty (see above)
 ```
+
+An `object` setting takes a YAML mapping as it is (`vpn-server.groups`): the
+template gets the dict and checks its shape itself.
 
 `file` settings are paths relative to the fleet file; their content is
 embedded into the role script and written to `outputs.<key>`. `secret`
@@ -207,11 +227,13 @@ carries the same files and, on first boot, `ks_stack_apply` from
 
 ## SELinux
 
-Fedora CoreOS and uCore run docker with SELinux enabled, so every bind mount
-of a config file or data directory in the templates carries the `:z` label
-(`ro,z` for read-only ones): docker relabels the host path so the container
-may read it. Docker ignores the label on Debian. A mount of
-`/var/run/docker.sock` or `/lib/modules` must never be labelled.
+Fedora CoreOS and uCore run podman (and docker under `runtime: docker`) with
+SELinux enabled, so every bind mount of a config file or data directory in
+the templates carries the `:z` label (`ro,z` for read-only ones): the runtime
+relabels the host path so the container may read it. The label is ignored on
+Debian. A mount of the podman or docker socket or of `/lib/modules` must never
+be labelled: under podman the quadlet converter emits
+`SecurityLabelDisable=true` for those containers.
 
 ## Adding a module
 

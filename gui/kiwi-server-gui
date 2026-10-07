@@ -56,8 +56,8 @@ BASE_GROUPS = [
              help="What the machine becomes on first boot"),
         dict(path=("disk",), type="string", label="Install disk", default="",
              help="WIPED by the ISO without asking — /dev/sda, /dev/nvme0n1, /dev/vda"),
-        dict(path=("domain",), type="string", label="Domain", scope="defaults", default="",
-             help="Hosts are named <name>.<domain> unless they set a hostname"),
+        dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
+             help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
         dict(path=("timezone",), type="string", label="Time zone", default="UTC"),
         dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8"),
         dict(path=("keyboard",), type="string", label="Keyboard layout", default="us",
@@ -258,6 +258,8 @@ def to_text(ftype, value):
         return "\n".join(str(v) for v in value) if isinstance(value, list) else str(value)
     if ftype == "map":
         return "\n".join("%s=%s" % (k, v) for k, v in value.items()) if isinstance(value, dict) else str(value)
+    if ftype == "object":
+        return yaml.safe_dump(value, sort_keys=False, default_flow_style=False).rstrip("\n") if value else ""
     return str(value)
 
 
@@ -281,6 +283,12 @@ def from_text(ftype, text):
             return int(text)
         except ValueError:
             return None
+    if ftype == "object":
+        try:
+            v = yaml.safe_load(text)
+        except yaml.YAMLError:
+            return None   # kept as typed until it parses; validate reports it
+        return v if isinstance(v, (dict, list)) and v else None
     return text
 
 
@@ -311,7 +319,7 @@ class Form:
             return
         self.doc.set(self.scope, field["path"], value)
         self.win.mark_dirty()
-        if field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] == "modules"):
+        if field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] in ("modules", "preset")):
             self.rebuild_role_group()
 
     def role_name(self):
@@ -329,7 +337,7 @@ class Form:
         t = field["type"]
         if t in ("string", "secret", "list", "int", "file"):
             return self.entry_row(field)
-        if t in ("text", "lines", "map"):
+        if t in ("text", "lines", "map", "object"):
             return self.text_row(field)
         if t == "bool":
             return self.bool_row(field)
@@ -485,6 +493,13 @@ class Form:
             wanted = [str(x) for x in v]
         elif isinstance(v, str) and v.strip():
             wanted = v.split()
+        elif role.get("presets"):
+            pr = self.doc.get(self.scope, (role["name"], "preset"))
+            if pr is None and self.scope != "defaults":
+                pr = self.doc.get("defaults", (role["name"], "preset"))
+            presets = role["presets"]
+            pr = pr if pr in presets else next(iter(presets))
+            wanted = list(presets[pr].get("modules") or [])
         else:
             wanted = list(role.get("modules") or [])
         out = []
@@ -546,7 +561,12 @@ class Form:
             self.page.add(g)
             self.role_group.append(g)
         if stack:
-            mdefaults = role.get("module_defaults") or {}
+            mdefaults = dict(role.get("module_defaults") or {})
+            if role.get("presets"):
+                pr = self.doc.get(self.scope, (role["name"], "preset")) or self.doc.get("defaults", (role["name"], "preset"))
+                pr = pr if pr in role["presets"] else next(iter(role["presets"]))
+                for m, d in (role["presets"][pr].get("module_defaults") or {}).items():
+                    mdefaults[m] = {**(mdefaults.get(m) or {}), **d}
             for m in self.effective_modules(role):
                 schema = self.win.module_schemas.get(m)
                 if not schema:
@@ -644,9 +664,10 @@ class Window(Adw.ApplicationWindow):
         header.pack_end(self.b_render)
         self.b_log = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Show output")
         header.pack_end(self.b_log)
-        b_doc = Gtk.Button(icon_name="emblem-ok-symbolic", tooltip_text="Doctor — are the build tools here?")
-        b_doc.connect("clicked", lambda *_: DoctorDialog(self).present(self))
-        header.pack_end(b_doc)
+        menu = Gio.Menu()
+        menu.append("Doctor — are the build tools here?", "app.doctor")
+        menu.append("About Kiwi Server", "app.about")
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text="Menu", primary=True))
 
         # ---- sidebar ----
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
@@ -691,13 +712,20 @@ class Window(Adw.ApplicationWindow):
         self.b_host_build.connect("clicked", lambda *_: self.confirm_build(self.current_scope))
         self.b_host_script = Gtk.Button(icon_name="text-x-script-symbolic", tooltip_text="Show the role script")
         self.b_host_script.connect("clicked", lambda *_: self.show_script())
+        self.b_host_apply = Gtk.Button(icon_name="emblem-synchronizing-symbolic",
+                                       tooltip_text="Apply: send the role script to the running machine over SSH and run it")
+        self.b_host_apply.connect("clicked", lambda *_: self.confirm_apply(self.current_scope))
+        self.b_host_status = Gtk.Button(icon_name="dialog-information-symbolic",
+                                        tooltip_text="Status: what the running machine says about its stack")
+        self.b_host_status.connect("clicked", lambda *_: self.show_status())
         self.b_host_folder = Gtk.Button(icon_name="folder-symbolic", tooltip_text="Open the output folder")
         self.b_host_folder.connect("clicked", lambda *_: self.open_folder())
         self.b_host_stack = Gtk.Button(icon_name="view-list-symbolic", tooltip_text="Show the rendered docker-compose.yml")
         self.b_host_stack.connect("clicked", lambda *_: self.show_stack())
         self.b_host_remove = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove this host")
         self.b_host_remove.connect("clicked", lambda *_: self.remove_host_dialog())
-        for b in (self.b_host_build, self.b_host_render, self.b_host_script, self.b_host_stack, self.b_host_folder):
+        for b in (self.b_host_build, self.b_host_render, self.b_host_script, self.b_host_stack, self.b_host_folder,
+                  self.b_host_apply, self.b_host_status):
             self.content_hb.pack_end(b)
         self.content_hb.pack_start(self.b_host_remove)
         content_tb.add_top_bar(self.content_hb)
@@ -797,16 +825,37 @@ class Window(Adw.ApplicationWindow):
                 f = d.save_finish(res)
             except GLib.Error:
                 return
-            path = f.get_path()
-            if os.path.exists(path):
-                os.unlink(path)
-            rc, out, err = run_cli(self.cli, ["init", path])
-            if rc != 0:
-                self.alert("Could not create the fleet", err or out)
-                return
-            self.open_path(path)
-            self.toast("Example fleet written — edit the hosts and their secrets")
+            self.ask_domain(lambda domain: self.create_fleet(f.get_path(), domain))
         dlg.save(self, None, done)
+
+    def ask_domain(self, then):
+        dlg = Adw.AlertDialog(
+            heading="The fleet's domain",
+            body="Hosts are named <name>.<domain>, services <service>.<name>.<domain>: sh3.home, cloud.sh3.home.\n\n"
+                 ".home can never become a public top-level domain; .internal, .corp and .mail are the other "
+                 "safe choices. Not .local (that is mDNS) and not a public one like .dev or .kiwi, which anyone "
+                 "can register names under.")
+        entry = Gtk.Entry(text="home", placeholder_text="home")
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("create", "Create")
+        dlg.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("create")
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda _d, r: r == "create" and then(entry.get_text().strip() or "home"))
+        dlg.present(self)
+
+    def create_fleet(self, path, domain):
+        if os.path.exists(path):
+            os.unlink(path)
+        rc, out, err = run_cli(self.cli, ["init", path, "--domain", domain])
+        if rc != 0:
+            self.alert("Could not create the fleet", err or out)
+            return
+        if err.strip():
+            self.append_log(err)
+        self.open_path(path)
+        self.toast("Example fleet written — edit the hosts and their secrets")
 
     def save(self):
         if not self.doc.path:
@@ -943,7 +992,7 @@ class Window(Adw.ApplicationWindow):
             child = nxt
         is_host = scope not in (None, "defaults")
         for b in (self.b_host_render, self.b_host_build, self.b_host_script, self.b_host_stack,
-                  self.b_host_folder, self.b_host_remove):
+                  self.b_host_folder, self.b_host_remove, self.b_host_apply, self.b_host_status):
             b.set_visible(is_host)
         if scope is None or not self.doc.path:
             self.editor_holder.append(self.empty)
@@ -1047,7 +1096,8 @@ class Window(Adw.ApplicationWindow):
     # ---- actions ----
     def set_actions_sensitive(self):
         ok = bool(self.doc.path) and not self.busy
-        for b in (self.b_build, self.b_render, self.b_host_render, self.b_host_build, self.b_host_script):
+        for b in (self.b_build, self.b_render, self.b_host_render, self.b_host_build, self.b_host_script,
+                  self.b_host_apply, self.b_host_status):
             b.set_sensitive(ok)
         self.mark_dirty()
 
@@ -1085,6 +1135,43 @@ class Window(Adw.ApplicationWindow):
                     self.spawn(["build", self.doc.path] + ([host] if host else []),
                                "Building %s…" % (host or "every host")))
         dlg.present(self)
+
+    def confirm_apply(self, host):
+        if not self.ensure_saved():
+            return
+        user = self.doc.get(host, ("admin", "user")) or self.doc.get("defaults", ("admin", "user")) or "?"
+        hostname = self.doc.get(host, ("hostname",)) or host
+        dlg = Adw.AlertDialog(
+            heading="Apply %s?" % host,
+            body="The role script is re-rendered, sent to %s@%s over SSH (your key or agent must open the "
+                 "connection; nothing asks for a password) and run as root with --force: the stack is rewritten "
+                 "and restarted. Secrets and modules that changed take effect; the disk is not touched." % (user, hostname))
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("apply", "Apply")
+        dlg.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda _d, r: r == "apply" and
+                    self.spawn(["apply", self.doc.path, host], "Applying %s…" % host))
+        dlg.present(self)
+
+    def show_status(self):
+        if not self.ensure_saved():
+            return
+        scope = self.current_scope
+        self.set_busy(True, "Asking %s…" % scope)
+
+        def worker():
+            rc, out, err = run_cli(self.cli, ["status", self.doc.path, scope])
+            GLib.idle_add(done, rc, out, err)
+
+        def done(rc, out, err):
+            self.set_busy(False, "")
+            if rc != 0 and not out.strip():
+                self.alert("Cannot reach %s" % scope, err or out)
+            else:
+                TextDialog("%s — status" % scope, out + (("\n" + err) if err.strip() else "")).present(self)
+            return False
+        threading.Thread(target=worker, daemon=True).start()
 
     def show_script(self):
         if not self.ensure_saved():
@@ -1187,9 +1274,46 @@ class Application(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_OPEN)
         self.path = None
+        for name, cb in (("about", self.show_about), ("doctor", self.show_doctor)):
+            act = Gio.SimpleAction(name=name)
+            act.connect("activate", lambda _a, _p, cb=cb: cb())
+            self.add_action(act)
+
+    def show_doctor(self):
+        win = self.get_active_window()
+        if win:
+            DoctorDialog(win).present(win)
+
+    def show_about(self):
+        win = self.get_active_window()
+        cli = getattr(win, "cli", None) or find_cli()
+        version = "?"
+        if cli:
+            rc, out, _err = run_cli(cli, ["version"])
+            if rc == 0 and out.split():
+                version = out.split()[-1]
+        kw = dict(application_name="Kiwi Server", application_icon=APP_ID, developer_name="derlocke-ng",
+                  version=version, website="https://github.com/derlocke-ng/kiwi-server",
+                  issue_url="https://github.com/derlocke-ng/kiwi-server/issues",
+                  license_type=Gtk.License.GPL_3_0,
+                  comments="Create and manage a kiwi-network: unattended install ISOs and first-boot scripts "
+                           "for kiwi-master and kiwi-node machines, applied and enrolled over SSH. "
+                           "Part of the Kiwi Network.")
+        dlg = Adw.AboutDialog(**kw) if hasattr(Adw, "AboutDialog") else Adw.AboutWindow(transient_for=win, **kw)
+        dlg.add_credit_section("Icon", ["kiwi-icons https://github.com/derlocke-ng/kiwi-icons"])
+        dlg.add_link("Kiwi Network", "https://github.com/derlocke-ng/kiwi-network")
+        if hasattr(Adw, "AboutDialog"):
+            dlg.present(win)
+        else:
+            dlg.present()
 
     def do_startup(self):
         Adw.Application.do_startup(self)
+        # run from a checkout, before install.sh put the icon into hicolor: the
+        # data/icons directory next to this script holds it under the app id
+        icons = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "data", "icons")
+        if os.path.isfile(os.path.join(icons, APP_ID + ".svg")):
+            Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.path.realpath(icons))
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
@@ -1207,7 +1331,7 @@ class Application(Adw.Application):
                 dlg = Adw.AlertDialog(heading="kiwi-server not found",
                                       body="The CLI must be installed next to this GUI:\n  kiwi install kiwi-server")
                 dlg.add_response("close", "Close")
-                tmp = Adw.ApplicationWindow(application=self, title="Kiwi Server",
+                tmp = Adw.ApplicationWindow(application=self, title="Kiwi Server", icon_name=APP_ID,
                                             default_width=420, default_height=200)
                 tmp.present()
                 dlg.connect("response", lambda *_: self.quit())

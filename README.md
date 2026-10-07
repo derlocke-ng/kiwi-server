@@ -51,13 +51,6 @@ kiwi catalog add https://github.com/derlocke-ng/kiwi-catalog.git   # once per ma
 kiwi install kiwi-server
 ```
 
-Until the catalog lists it, track the repository directly:
-
-```bash
-kiwi add https://github.com/derlocke-ng/kiwi-server.git
-kiwi install kiwi-server
-```
-
 kiwi follows the latest version tag (`v2.4.0`), updates it in the background
 and shows the app with its icon in `kiwi-gui`. `kiwi info kiwi-server` and
 `kiwi diff kiwi-server` show what an install or update would run.

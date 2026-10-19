@@ -18,7 +18,7 @@ KNOWN_SERVICE_KEYS = {
     "image", "container_name", "environment", "volumes", "networks", "network_mode", "ports", "expose",
     "cap_add", "cap_drop", "sysctls", "devices", "restart", "logging", "security_opt", "init", "read_only",
     "tmpfs", "user", "shm_size", "stop_grace_period", "hostname", "command", "depends_on", "healthcheck",
-    "profiles", "labels",
+    "profiles", "labels", "extra_hosts", "dns",
 }
 
 
@@ -55,8 +55,19 @@ def _unit_name(service):
     return service + ".service"
 
 
-def container_unit(service, body, networks, services):
-    """One .container quadlet for a compose service."""
+def _is_secret(value, secrets):
+    """The value is a secret, or embeds one (a database URL): a short secret
+    only counts when it is the whole value, or every value with that letter
+    in it would move."""
+    v = str(value)
+    return bool(v) and any(sec and (sec == v or (len(sec) >= 8 and sec in v)) for sec in secrets)
+
+
+def container_unit(service, body, networks, services, secrets=(), env_file=None):
+    """One .container quadlet for a compose service. Returns (unit text, env
+    file text or None): environment entries that carry a secret-typed setting
+    go into a root-only env file instead of the unit, which any local user can
+    read through systemctl show."""
     body = body or {}
     unknown = sorted(set(body) - KNOWN_SERVICE_KEYS)
     if unknown:
@@ -130,8 +141,19 @@ def container_unit(service, body, networks, services):
         container.append("ShmSize=%s" % body["shm_size"])
     if body.get("stop_grace_period"):
         container.append("StopTimeout=%d" % _seconds(body["stop_grace_period"]))
+    env_lines = []
     for k, v in _env_items(body.get("environment")):
-        container.append("Environment=%s" % _esc("%s=%s" % (k, v)))
+        if env_file and _is_secret(v, secrets):
+            env_lines.append("%s=%s" % (k, str(v).replace("$$", "$")))
+        else:
+            container.append("Environment=%s" % _esc("%s=%s" % (k, v)))
+    if env_lines:
+        container.append("EnvironmentFile=%s" % env_file)
+    for h in body.get("extra_hosts") or []:
+        container.append("AddHost=%s" % (("%s:%s" % (h, (body["extra_hosts"] or {})[h])) if isinstance(body["extra_hosts"], dict) else h))
+    dns = body.get("dns")
+    for d in ([dns] if isinstance(dns, str) else (dns or [])):
+        container.append("DNS=%s" % d)
     for v in body.get("volumes") or []:
         if isinstance(v, dict):
             raise KiwiError("quadlet: %s: long-form volumes are not translated" % service)
@@ -163,11 +185,16 @@ def container_unit(service, body, networks, services):
     restart = str(body.get("restart") or "no")
     svc.append("Restart=%s" % ("always" if restart in ("always", "unless-stopped") else
                                "on-failure" if restart.startswith("on-failure") else "no"))
+    if restart != "no":
+        svc.append("RestartSec=15")
     svc.append("TimeoutStartSec=900")
+    # a cold image pull or a dependency that is not up yet must not exhaust the
+    # start limit and leave the unit dead until the next boot
+    unit.append("StartLimitIntervalSec=0")
     text = ["# kiwi-server stack — generated; the fleet file is the place to change it",
             "[Unit]"] + unit + ["", "[Container]"] + container + ["", "[Service]"] + svc + \
            ["", "[Install]", "WantedBy=kiwi-stack.target", ""]
-    return "\n".join(text)
+    return "\n".join(text), ("\n".join(env_lines) + "\n") if env_lines else None
 
 
 def network_unit(name, body):
@@ -194,14 +221,26 @@ def target_unit(description):
             "Wants=network-online.target\n\n[Install]\nWantedBy=multi-user.target\n" % description)
 
 
-def from_compose(compose, description="Kiwi Server stack"):
-    """{file name: text} — the .container and .network quadlets plus the target."""
+def from_compose(compose, description="Kiwi Server stack", secrets=(), env_dir=""):
+    """{file name: text} — the .container and .network quadlets plus the target.
+    With secrets and env_dir, the secret-carrying environment entries are
+    returned separately: see from_compose_with_env."""
+    return from_compose_with_env(compose, description, secrets, env_dir)[0]
+
+
+def from_compose_with_env(compose, description="Kiwi Server stack", secrets=(), env_dir=""):
+    """(quadlets, env files): env files are {relative path under the stack
+    directory: text}, referenced from the units as <env_dir>/<service>.env."""
     services = compose.get("services") or {}
     networks = compose.get("networks") or {}
-    out = {}
+    out, envs = {}, {}
     for n, body in networks.items():
         out["%s.network" % n] = network_unit(n, body)
     for svc, body in services.items():
-        out["%s.container" % svc] = container_unit(svc, body, networks, services)
+        env_file = ("%s/%s.env" % (env_dir.rstrip("/"), svc)) if env_dir and secrets else None
+        text, env_text = container_unit(svc, body, networks, services, secrets, env_file)
+        out["%s.container" % svc] = text
+        if env_text:
+            envs["kiwi/env/%s.env" % svc] = env_text
     out["kiwi-stack.target"] = target_unit(description)
-    return out
+    return out, envs

@@ -3,6 +3,7 @@ with --porcelain and parses JSON, so the CLI stays the single source of truth.""
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -246,7 +247,7 @@ class Renderer:
             return None
         records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
-        spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip)
+        spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host))
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b
@@ -343,13 +344,14 @@ class Renderer:
 
 def load(args, need_roles=True):
     fleet = config.Fleet.load(args.fleet)
+    remote.configure(fleet.resolve_path("secrets/known_hosts"))
     roles = rolesmod.discover() if need_roles else None
     ms = modmod.discover() if need_roles else None
     return fleet, roles, ms
 
 
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
-    errs = list(fleet.errors)
+    errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
@@ -609,6 +611,7 @@ def cmd_status(args):
     for h in hosts:
         tgt = remote.target(h, args.ssh)
         script = ("echo \"applied: $(cat /var/lib/kiwi-server/role.done 2>/dev/null || echo never)\"; "
+                  "if [ -f /var/lib/kiwi-server/role.failed ]; then echo 'ROLE FAILED:'; sed 's/^/  /' /var/lib/kiwi-server/role.failed; fi; "
                   "echo \"uptime: $(uptime -p 2>/dev/null || uptime)\"; "
                   "if [ -x /usr/local/bin/kiwi-stack ]; then kiwi-stack status 2>&1 || true; else echo 'no stack'; fi")
         try:
@@ -646,6 +649,8 @@ def cmd_enroll(args):
         raise KiwiError("%s: vpn-server.wg_password is needed to talk to wg-easy" % master.name)
     name = args.name
     host = fleet.hosts.get(name)
+    if host is None and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", name):
+        raise KiwiError("%r is neither a fleet host nor a device name (lowercase letters, digits and dashes)" % name)
     client_name = host.hostname if host else name
     groups = vs.get("groups") or {}
     if args.group and args.group not in groups:
@@ -945,7 +950,12 @@ def build_parser():
     sp = p.add_subparsers(dest="cmd")
 
     def sub(name, fn, **kw):
-        s = sp.add_parser(name, parents=[common], add_help=False, **kw)
+        # `kiwi-server <cmd> -h` shows that command's own line and options
+        line = next((ln.strip() for ln in USAGE.splitlines() if ln.strip().startswith("kiwi-server %s " % name)
+                     or ln.strip() == "kiwi-server %s" % name), "kiwi-server %s" % name)
+        usage, _, desc = line.partition("   ")
+        s = sp.add_parser(name, parents=[common], add_help=True, usage=usage.strip() + " [options]",
+                          description=desc.strip() or None, **kw)
         s.set_defaults(fn=fn)
         return s
 

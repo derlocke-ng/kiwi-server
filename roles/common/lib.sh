@@ -9,13 +9,28 @@
 
 KS_STATE_DIR=/var/lib/kiwi-server
 KS_MARKER=$KS_STATE_DIR/role.done
+KS_FAILED=$KS_STATE_DIR/role.failed
 KS_LOG=/var/log/kiwi-server-role.log
 KS_OS=other
 KS_APT_UPDATED=0
 
-ks_say()  { printf ':: %s\n' "$*"; }
+KS_STEP=starting
+ks_say()  { KS_STEP=$*; printf ':: %s\n' "$*"; }
 ks_warn() { printf 'warning: %s\n' "$*" >&2; }
 ks_die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+ks_fail() { # EXIT LINE COMMAND — the ERR trap: say where it stopped and leave a marker status can show
+    local rc=$1 line=$2 cmd=$3
+    {
+        echo "failed: $(date -u +%FT%TZ)"
+        echo "step: $KS_STEP"
+        echo "command: $cmd (line $line, exit $rc)"
+        echo "log: $KS_LOG — last lines:"
+        tail -n 20 "$KS_LOG" 2>/dev/null | sed 's/^/  /'
+    } > "$KS_FAILED" 2>/dev/null || true
+    printf 'error: the role stopped during "%s": %s (line %s, exit %s) — see %s and %s\n' \
+        "$KS_STEP" "$cmd" "$line" "$rc" "$KS_LOG" "$KS_FAILED" >&2
+    exit "$rc"
+}
 
 ks_detect_os() { # debian | ostree | other
     if [[ -f /run/ostree-booted ]]; then echo ostree
@@ -122,10 +137,19 @@ ks_ensure_docker() { # [ce|distro]
 ks_ensure_podman() {
     if ! command -v podman >/dev/null 2>&1; then
         case $KS_OS in
-            debian) ks_apt podman netavark aardvark-dns curl ;;
+            debian) ks_apt podman netavark aardvark-dns catatonit curl ;;
             ostree) ks_die "this image has no podman — every Fedora CoreOS and uCore image ships it; is this one stripped?" ;;
             *)      ks_die "podman is not installed and this is not Debian — install it first" ;;
         esac
+    fi
+    # the modules' `init: true` needs catatonit (a Recommends on Debian, not a Depends)
+    if [[ $KS_OS == debian ]] && ! ls /usr/libexec/podman/catatonit /usr/bin/catatonit >/dev/null 2>&1; then
+        ks_apt catatonit
+    fi
+    local pv
+    pv=$(podman --version 2>/dev/null | awk '{print $NF}')
+    if [[ -n $pv ]] && [[ $(printf '%s\n4.4\n' "$pv" | sort -V | head -1) != 4.4 ]]; then
+        ks_die "podman $pv is too old for quadlets (4.4 or newer) — Debian trixie, or runtime: docker in the role block"
     fi
     # the API socket: what Portainer (and anything else that speaks docker) talks to
     systemctl enable --now podman.socket 2>/dev/null || true
@@ -198,7 +222,7 @@ ks_firewall_open() { # PORT/PROTO...
         firewall-cmd -q --reload
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
         local p
-        for p in "$@"; do ufw allow "$p" >/dev/null; done
+        for p in "$@"; do ufw allow "${p/-/:}" >/dev/null; done   # ufw spells a range a:b
     fi
 }
 
@@ -292,7 +316,40 @@ ks_stack_unpack() {
     # user, whose uid the containers that drop privileges (PUID, sftp) use.
     # An absolute directory that already exists (a mounted data disk) is left
     # exactly as it is.
-    local dd=$KS_STACK_DIR u=$KS_STACK_USER d entry rel mode unit
+    local dd=$KS_STACK_DIR u=$KS_STACK_USER d entry rel mode unit old_rt='' old_dir='' old_services='' svc keep
+    if [[ -f $KS_STACK_ENV ]]; then
+        local old_seed
+        old_seed=$(sed -n 's/^STACK_SEED_ID=//p' "$KS_STACK_ENV")
+        if [[ -n $old_seed && -n ${KS_SEED_ID:-} && $old_seed != "$KS_SEED_ID" ]]; then
+            ks_die "the fleet's seed changed ($old_seed -> $KS_SEED_ID): the generated secrets differ from the ones the" \
+                   "running databases were set up with. Restore secrets/seed from the fleet backup; to start over with" \
+                   "new secrets on an empty stack, remove $KS_STACK_ENV and the data directories first"
+        fi
+        old_rt=$(sed -n 's/^STACK_RUNTIME=//p' "$KS_STACK_ENV")
+        old_dir=$(sed -n 's/^STACK_DIR=//p' "$KS_STACK_ENV")
+        old_services=$(sed -n 's/^STACK_SERVICES="\(.*\)"$/\1/p' "$KS_STACK_ENV")
+    fi
+    if [[ -n $old_rt && ( $old_rt != "$KS_STACK_RUNTIME" || ( -n $old_dir && $old_dir != "$dd" ) ) ]] && [[ -x /usr/local/bin/kiwi-stack ]]; then
+        # the installed kiwi-stack still speaks the old runtime and directory: take that stack
+        # down before stack.env describes the new one, or both fight for the same ports
+        ks_say "the stack moves from $old_rt in $old_dir to $KS_STACK_RUNTIME in $dd — stopping the old stack first"
+        /usr/local/bin/kiwi-stack stop || ks_warn "the old stack did not stop cleanly — check with podman ps / docker ps"
+        old_services=''
+    fi
+    if [[ $KS_STACK_RUNTIME == podman && -n $old_services ]]; then
+        # a container whose module left the stack: its quadlet goes below, the running
+        # unit would stay (a target does not stop what merely wants it)
+        for svc in $old_services; do
+            keep=0
+            for u in "${KS_STACK_SERVICES[@]}"; do [[ $u == "$svc" ]] && keep=1; done
+            (( keep )) && continue
+            [[ $svc =~ ^[A-Za-z0-9_.-]+$ ]] || continue
+            ks_say "stopping $svc — no module runs it any more"
+            systemctl stop "$svc.service" 2>/dev/null || true
+            podman rm -f "$svc" >/dev/null 2>&1 || true
+        done
+    fi
+    u=$KS_STACK_USER
     install -d -m 0755 "$dd"
     chown root:root "$dd"
     for d in "${KS_STACK_DIRS[@]}"; do
@@ -327,7 +384,7 @@ ks_stack_unpack() {
         for q in "${KS_STACK_QUADLETS[@]}"; do
             case $q in
                 *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;
-                *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0644 ;;
+                *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0600 ;;
             esac
         done
     fi
@@ -345,14 +402,37 @@ ks_stack_unpack() {
         echo "STACK_MESH_VIA=$KS_STACK_MESH_VIA"
         echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
         echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
+        echo "STACK_SEED_ID=${KS_SEED_ID:-}"
     } | ks_write "$KS_STACK_ENV" 0644
+}
+
+ks_stack_pull() {
+    # Every image before the first start, one after the other with retries and a
+    # visible name: a target that starts a dozen cold pulls at once on a home
+    # uplink times units out and the stack looks up while nothing runs.
+    local img n ok
+    [[ ${#KS_STACK_IMAGES[@]} -gt 0 ]] || return 0
+    ks_say "pulling ${#KS_STACK_IMAGES[@]} images (the first run of a stack; later runs are quick)"
+    for img in "${KS_STACK_IMAGES[@]}"; do
+        ok=0
+        for n in 1 2 3; do
+            if [[ $KS_STACK_RUNTIME == podman ]]; then
+                podman pull -q "$img" >/dev/null && ok=1 && break
+            else
+                docker pull -q "$img" >/dev/null && ok=1 && break
+            fi
+            ks_warn "pull of $img failed (try $n of 3)"; sleep $((n * 10))
+        done
+        (( ok )) || ks_die "cannot pull $img — is the Internet reachable from this host?"
+        ks_say "  $img"
+    done
 }
 
 ks_stack_install_cli() {
     ks_write /usr/local/bin/kiwi-stack 0755 <<'KIWI_STACK'
 #!/usr/bin/env bash
 # kiwi-stack — run the stack kiwi-server put on this machine.
-#   kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart
+#   kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart
 # runtime podman: the containers are systemd units (quadlets in /etc/containers/systemd)
 # runtime docker: docker compose with the rendered docker-compose.yml
 set -euo pipefail
@@ -373,6 +453,25 @@ mesh_route() {
     [[ -n ${STACK_MESH_VIA:-} && -n ${STACK_MESH_SUBNET:-} ]] || return 0
     ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA" 2>/dev/null || true
 }
+verify() {
+    # every service of the stack is running, or the names of those that are not;
+    # a unit still (re)starting counts as down — a pull that cannot finish must not pass
+    local s down=() state
+    for s in $STACK_SERVICES; do
+        if [[ $STACK_RUNTIME == podman ]]; then
+            state=$(systemctl is-active "$s.service" 2>/dev/null || true)
+            [[ $state == active ]] || down+=("$s ($state)")
+        else
+            state=$(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)
+            [[ $state == running ]] || down+=("$s ($state)")
+        fi
+    done
+    if (( ${#down[@]} )); then
+        printf 'not running: %s\n' "${down[@]}" >&2
+        return 1
+    fi
+    echo "all ${STACK_SERVICES// /, } running"
+}
 vpn_restart() {
     [[ -n ${STACK_VPN_CONTAINER:-} ]] || return 0
     # containers that share the VPN client's network namespace must follow it,
@@ -390,10 +489,11 @@ if [[ $STACK_RUNTIME == podman ]]; then
         stop)    host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
         update)  podman auto-update; podman image prune -f >/dev/null; mesh_route; host_units restart --no-block ;;
-        status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager ;;
+        status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager; verify || true ;;
+        verify)  verify ;;
         logs)    if [[ -n ${2:-} ]]; then journalctl -f -u "$2.service"; else mapfile -t u < <(units); journalctl -f "${u[@]/#/-u}"; fi ;;
         vpn-restart) vpn_restart ;;
-        *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
+        *) echo "usage: kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart" >&2; exit 1 ;;
     esac
 else
     case "${1:-}" in
@@ -401,10 +501,11 @@ else
         stop)    host_units stop; compose down ;;
         restart) "$0" stop; "$0" start ;;
         update)  compose pull; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
-        status)  compose ps; host_units status --no-pager ;;
+        status)  compose ps; host_units status --no-pager; verify || true ;;
+        verify)  verify ;;
         logs)    compose logs --follow "${@:2}" ;;
         vpn-restart) vpn_restart ;;
-        *) echo "usage: kiwi-stack start|stop|restart|update|status|logs [service]|vpn-restart" >&2; exit 1 ;;
+        *) echo "usage: kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart" >&2; exit 1 ;;
     esac
 fi
 KIWI_STACK
@@ -501,12 +602,15 @@ ks_stack_apply() {
         ks_firewall_open "${KS_STACK_PORTS[@]}"
     fi
     systemctl daemon-reload
-    ks_say "starting the stack (${KS_STACK_MODULES[*]}) — the first start pulls every image"
+    ks_stack_pull
+    ks_say "starting the stack (${KS_STACK_MODULES[*]})"
     ks_stack_units
     # restart, not `enable --now`: on a re-run the service is already active and
     # the containers must pick up the replaced files (a bind mount keeps the old inode)
     systemctl enable -q kiwi-stack.service
-    systemctl restart kiwi-stack.service
+    systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
+    ks_say "checking that every container is running"
+    /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
     for unit in "${KS_STACK_UNITS[@]}"; do
         systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
         if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then
@@ -516,7 +620,7 @@ ks_stack_apply() {
             systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
         fi
     done
-    ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|logs"
+    ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|verify|logs"
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done
 }
 
@@ -553,9 +657,17 @@ ks_main() {
         ks_say "already applied on $(cat "$KS_MARKER") — run with --force to apply again"
         exit 0
     fi
+    # a failed step names itself and leaves role.failed; a success removes it
+    trap 'ks_fail $? $LINENO "$BASH_COMMAND"' ERR
+    set -E
     ks_base
     ks_role_apply
     ks_post_script
+    trap - ERR
+    rm -f "$KS_FAILED"
     date -u +%FT%TZ > "$KS_MARKER"
     ks_say "role $KS_ROLE applied — log: $KS_LOG"
+    # the script carries every secret of this host: it stays for `kiwi-stack` re-runs
+    # (apply puts a fresh copy), readable by root alone
+    chmod 0600 "$0" 2>/dev/null || true
 }

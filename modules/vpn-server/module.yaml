@@ -13,6 +13,7 @@ dependencies:
   optional: [vpn-client]
 
 network:
+  listen_ports: ["51820/udp", "51821/tcp"]
   needs_vpn_dnat: false
   open_ports: ["{{ wg_port }}/udp"]
 

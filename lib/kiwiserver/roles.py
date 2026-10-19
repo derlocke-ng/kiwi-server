@@ -142,7 +142,9 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
         given = block.get(s.key)
         v = coerce(s, s.default if given is None else given, where)
         if is_empty(v) and getattr(s, "generate", False):
-            v = host.fleet.derive_secret(host.hostname, where, s.key)
+            # hostname, module, key — never the fleet's host key or the role name, so a
+            # renamed role (node-cloud -> node) or a standalone render keeps the same secrets
+            v = host.fleet.derive_secret(host.hostname, file_prefix.rstrip("/") or "role", s.key)
         if is_empty(v) and getattr(s, "fallback_file", ""):
             cand = s.fallback_file.format(hostname=host.hostname, name=host.name)
             if os.path.isfile(host.fleet.resolve_path(cand)):
@@ -238,7 +240,7 @@ def resolve_settings(role, host, modset=None):
     return host.role_settings
 
 
-def stack_spec(host, role, dns_records=None, master_ip=""):
+def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None):
     rs = host.role_settings
     vpn_ip = rs.get("vpn_ip") or ""
     if not vpn_ip and "vpn-server" in host.modules:
@@ -252,7 +254,7 @@ def stack_spec(host, role, dns_records=None, master_ip=""):
         module_config=host.module_settings, files=host.module_files,
         dns_records=dns_records or [], service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",
-        domain=host.domain, runtime=rs.get("runtime") or "podman")
+        domain=host.domain, runtime=rs.get("runtime") or "podman", ca_cert=ca_cert)
 
 
 def service_user(host):
@@ -353,6 +355,8 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             _bash_var("KS_STACK_RUNTIME", getattr(bundle, "runtime", "podman") or "podman"),
             _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),
             _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
+            _bash_var("KS_STACK_IMAGES", list(getattr(bundle, "images", []))),
+            _bash_var("KS_SEED_ID", host.fleet.seed_id() if os.path.isfile(host.fleet.resolve_path("secrets/seed")) else ""),
         ]
         for rel, (content, _mode) in sorted(bundle.files.items()):
             lines.append("KS_FILES[stack/%s]=%s" % (rel, _q(util.b64(content))))

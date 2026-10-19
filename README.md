@@ -51,7 +51,7 @@ kiwi catalog add https://github.com/derlocke-ng/kiwi-catalog.git   # once per ma
 kiwi install kiwi-server
 ```
 
-kiwi follows the latest version tag (`v2.4.0`), updates it in the background
+kiwi follows the latest version tag (`v2.5.0`), updates it in the background
 and shows the app with its icon in `kiwi-gui`. `kiwi info kiwi-server` and
 `kiwi diff kiwi-server` show what an install or update would run.
 
@@ -180,7 +180,7 @@ A node's `vpn_ip` is read from its WireGuard config's `Address` when it is
 not set; when both are given and differ, `validate` warns. The stack's data
 directories belong to `service_user` (the admin user unless set — uid 1000 on
 a fresh install, matching the containers' PUID defaults); the rendered files
-stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|logs|
+stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|verify|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
 client's network namespace (Transmission, JDownloader).
 
@@ -408,10 +408,19 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 - A role script runs as root and does what the role says. Read
   `kiwi-server script fleet.yaml <host>` before trusting a role you did not
   write, the same way you would read an installer.
+- **The machines' SSH host keys** are kept in `secrets/known_hosts`: the first
+  contact accepts a new machine's key, a changed key (a reinstall) is refused
+  until you drop the old line (`ssh-keygen -R <host> -f secrets/known_hosts`).
+- **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the
+  step and the command, `kiwi-server status` shows it, and the marker that
+  means "applied" is only written once every container of the stack runs.
+- **The generated secrets follow `secrets/seed`**: it is made on first use and
+  backed up with the fleet; a machine refuses an apply with a different seed
+  (its databases keep the passwords they were created with).
 
 ## Status
 
-2.4.0 manages the machines it built; see [CHANGELOG.md](CHANGELOG.md). The
+2.5.0 fixes what the review of 2.4.0 found; see [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock

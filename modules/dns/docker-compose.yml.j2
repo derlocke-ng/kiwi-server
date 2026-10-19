@@ -56,6 +56,10 @@ services:
       - FTLCONF_misc_dnsmasq_lines={{ lines | join(';') }}
       - FTLCONF_dns_listeningMode=all
       - FTLCONF_webserver_domain={{ pihole_hostname or 'pihole.' ~ hostname }}
+{% if web_port_effective != '80' %}
+      # no 'o' (optional) suffix: a port that cannot be bound is an error, not silence
+      - FTLCONF_webserver_port={{ web_port_effective }}
+{% endif %}
 {% if hosts %}
       # the fleet's names at their mesh addresses (pihole.toml dns.hosts)
       - FTLCONF_dns_hosts={{ hosts | join(';') }}
@@ -86,7 +90,7 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
 {% if expose_web_ui %}
-      - "{{ web_ui_bind ~ ':' if web_ui_bind else '' }}{{ web_ui_port }}:80/tcp"
+      - "{{ web_ui_bind ~ ':' if web_ui_bind else '' }}{{ web_ui_port }}:{{ web_port_effective }}/tcp"
 {% endif %}
 {% endif %}
     cap_add:

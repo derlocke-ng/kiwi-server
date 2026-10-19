@@ -14,6 +14,11 @@
   bundle kiwi-server renders for that host (tested byte for byte).
 - The installer copies `lib/kiwimodules`; CI compiles it and shellchecks
   `roles/common/kiwi-stack`.
+- **kiwi-modules 0.1.0 and kiwi-stack 0.1.0 exist** as repositories of their
+  own, populated from this tree by `tools/split-sync.sh` (`--check` reports
+  drift): the renderer with `kiwi-modules render` and the machine side with
+  `kiwi-stack apply DIR`. kiwi-server stays the place both are developed
+  until the first hardware round; the subtree flip comes after it.
 
 ## 2.5.0 — the stack is trustworthy before anything is built on it
 

@@ -276,6 +276,15 @@ script, or from the kiwi-stack repository) does what the role script's
 first boot does for the stack: directories, units, quadlets, ports, the
 pull, the start and `kiwi-stack verify`.
 
+The same package, modules and profiles are the
+[kiwi-modules](https://github.com/derlocke-ng/kiwi-modules) repository, and
+the machine side (`roles/common/lib.sh`, `roles/common/kiwi-stack`) the
+[kiwi-stack](https://github.com/derlocke-ng/kiwi-stack) repository. This
+tree is where both are developed for now: `tools/split-sync.sh` copies the
+files into checkouts next to this one (`../kiwi-modules`, `../kiwi-stack`)
+and `tools/split-sync.sh --check` says whether they drifted. Run the check
+before a release of either.
+
 ## What the renderer adds to every stack
 
 - **Secrets stay out of the unit files.** A value of a `secret` setting never

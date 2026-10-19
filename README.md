@@ -432,6 +432,14 @@ instead — none of it booted from here yet —
 and `apply`, `status` and `enroll` against a live master, which are tested
 against fake SSH runners and a fake wg-easy here.
 
+The renderer and the machine side are also repositories of their own:
+[kiwi-modules](https://github.com/derlocke-ng/kiwi-modules) renders one
+machine's stack from a machine file without a fleet, and
+[kiwi-stack](https://github.com/derlocke-ng/kiwi-stack) applies such a bundle
+(`sudo kiwi-stack apply DIR`). Both carry what this tree has
+(`tools/split-sync.sh --check`); the stacks they produce are this tree's,
+byte for byte (tests/golden).
+
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).

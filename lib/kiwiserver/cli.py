@@ -257,7 +257,7 @@ class Renderer:
         b = self.bundle(host, role)
         return rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
 
-    def write_stack(self, o, bundle):
+    def write_stack(self, o, bundle, host, role):
         if os.path.isdir(o.stack):
             shutil.rmtree(o.stack)
         os.makedirs(o.stack, mode=0o700)
@@ -271,6 +271,7 @@ class Renderer:
             util.write_text(os.path.join(o.stack, "host-units", name), text)
         for name, text in getattr(bundle, "quadlets", {}).items():
             util.write_text(os.path.join(o.stack, "quadlets", name), text)
+        util.write_text(os.path.join(o.stack, "stack.sh"), rolesmod.stack_manifest(host, role, VERSION, bundle), 0o644)
         self.check_compose(os.path.join(o.stack, "docker-compose.yml"))
 
     def check_compose(self, path):
@@ -293,7 +294,7 @@ class Renderer:
         util.write_text(o.script, script, 0o600)
         produced = [o.script]
         if bundle is not None:
-            self.write_stack(o, bundle)
+            self.write_stack(o, bundle, host, self.roles[host.role])
             produced.append(o.stack)
         elif os.path.isdir(o.stack):
             shutil.rmtree(o.stack)

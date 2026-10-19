@@ -286,6 +286,70 @@ def _bash_var(name, value):
     return "%s=%s" % (name, _q("" if value is None else value))
 
 
+def stack_vars(host, bundle):
+    """The KS_STACK_* variables: what roles/common/lib.sh needs to put a rendered
+    stack on a machine. The same list goes into the role script and into the
+    bundle's stack.sh (kiwi-stack apply DIR)."""
+    rs = host.role_settings
+    lines = [
+            _bash_var("KS_STACK_DIR", rs.get("docker_dir") or "/home/user/docker"),
+            _bash_var("KS_STACK_USER", service_user(host)),
+            _bash_var("KS_STACK_PREFIX", bundle.prefix),
+            _bash_var("KS_STACK_MODULES", list(bundle.modules)),
+            _bash_var("KS_STACK_DIRS", list(bundle.dirs)),
+            _bash_var("KS_STACK_PORTS", list(bundle.ports)),
+            _bash_var("KS_STACK_UNITS", sorted(bundle.units)),
+            _bash_var("KS_STACK_SYSCTL", ["%s=%s" % kv for kv in sorted(bundle.sysctl.items())]),
+            _bash_var("KS_STACK_KMODS", list(bundle.kernel_modules)),
+            _bash_var("KS_STACK_FILES", ["%s:%04o" % (rel, mode) for rel, (_c, mode) in sorted(bundle.files.items())]),
+            _bash_var("KS_STACK_SERVICES", list(bundle.services)),
+            _bash_var("KS_STACK_URLS", list(bundle.urls)),
+            _bash_var("KS_STACK_VPN_CONTAINER", "%s-vpn-client" % bundle.prefix if "vpn-client" in bundle.modules else ""),
+            _bash_var("KS_STACK_VPN_DEPENDENTS", list(getattr(bundle, "vpn_dependents", []))),
+            _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),
+            _bash_var("KS_STACK_MESH_VIA", getattr(bundle, "mesh_via", "") or ""),
+            _bash_var("KS_STACK_HOSTS", ["%s %s" % (ip, n) for ip, n in getattr(bundle, "hosts", [])]),
+            _bash_var("KS_STACK_RUNTIME", getattr(bundle, "runtime", "podman") or "podman"),
+            _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),
+            _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
+            _bash_var("KS_STACK_IMAGES", list(getattr(bundle, "images", []))),
+            _bash_var("KS_STACK_DNS_IP", getattr(bundle, "dns_ip", "") or ""),
+            _bash_var("KS_STACK_AUTO_UPDATE", getattr(bundle, "auto_update", "registry") or "registry"),
+            _bash_var("KS_SEED_ID", host.fleet.seed_id() if os.path.isfile(host.fleet.resolve_path("secrets/seed")) else ""),
+        ]
+    return lines
+
+
+def stack_manifest(host, role, version, bundle):
+    """stack.sh: a bash-sourceable manifest of the bundle directory, with the
+    few base facts the machine side reads (host name, admin user, time zone,
+    the stack's own role settings) and every KS_STACK_* variable."""
+    rs = host.role_settings or {}
+    lines = ["# kiwi stack bundle for %s — sourced by `kiwi-stack apply DIR`; generated, do not edit" % host.hostname,
+             "# shellcheck disable=SC2034",
+             "KS_VERSION=%s" % _q(version),
+             _bash_var("KS_HOST", host.name),
+             _bash_var("KS_HOSTNAME", host.hostname),
+             _bash_var("KS_DOMAIN", host.domain),
+             _bash_var("KS_TARGET", host.target),
+             _bash_var("KS_ROLE", role.name),
+             _bash_var("KS_ADMIN_USER", host.admin["user"]),
+             _bash_var("KS_TIMEZONE", host.cfg["timezone"]),
+             _bash_var("KS_ROLE_PRESET", rs.get("preset") or ""),
+             _bash_var("KS_ROLE_DOCKER_SOURCE", rs.get("docker_source") or ""),
+             _bash_var("KS_ROLE_DAILY_VPN_RESTART", rs.get("daily_vpn_restart") or ""),
+             _bash_var("KS_ROLE_WEEKLY_UPDATE", rs.get("weekly_update") or ""),
+             "KS_STACK=1"]
+    return "\n".join(lines + stack_vars(host, bundle)) + "\n"
+
+
+def stack_cli(path=None):
+    p = os.path.join(path or roles_dir(), "common", "kiwi-stack")
+    if not os.path.isfile(p):
+        raise KiwiError("roles/common/kiwi-stack is missing")
+    return util.read_text(p)
+
+
 def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None):
     lib_text = lib_text if lib_text is not None else common_lib()
     body = util.read_text(role.apply_path)
@@ -334,33 +398,9 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
         lines.append(_bash_var("KS_ROLE_" + s.key.upper(), host.role_settings.get(s.key)))
     lines.append(_bash_var("KS_STACK", bool(bundle)))
     if bundle is not None:
-        rs = host.role_settings
-        lines += [
-            _bash_var("KS_STACK_DIR", rs.get("docker_dir") or "/home/user/docker"),
-            _bash_var("KS_STACK_USER", service_user(host)),
-            _bash_var("KS_STACK_PREFIX", bundle.prefix),
-            _bash_var("KS_STACK_MODULES", list(bundle.modules)),
-            _bash_var("KS_STACK_DIRS", list(bundle.dirs)),
-            _bash_var("KS_STACK_PORTS", list(bundle.ports)),
-            _bash_var("KS_STACK_UNITS", sorted(bundle.units)),
-            _bash_var("KS_STACK_SYSCTL", ["%s=%s" % kv for kv in sorted(bundle.sysctl.items())]),
-            _bash_var("KS_STACK_KMODS", list(bundle.kernel_modules)),
-            _bash_var("KS_STACK_FILES", ["%s:%04o" % (rel, mode) for rel, (_c, mode) in sorted(bundle.files.items())]),
-            _bash_var("KS_STACK_SERVICES", list(bundle.services)),
-            _bash_var("KS_STACK_URLS", list(bundle.urls)),
-            _bash_var("KS_STACK_VPN_CONTAINER", "%s-vpn-client" % bundle.prefix if "vpn-client" in bundle.modules else ""),
-            _bash_var("KS_STACK_VPN_DEPENDENTS", list(getattr(bundle, "vpn_dependents", []))),
-            _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),
-            _bash_var("KS_STACK_MESH_VIA", getattr(bundle, "mesh_via", "") or ""),
-            _bash_var("KS_STACK_HOSTS", ["%s %s" % (ip, n) for ip, n in getattr(bundle, "hosts", [])]),
-            _bash_var("KS_STACK_RUNTIME", getattr(bundle, "runtime", "podman") or "podman"),
-            _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),
-            _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
-            _bash_var("KS_STACK_IMAGES", list(getattr(bundle, "images", []))),
-            _bash_var("KS_STACK_DNS_IP", getattr(bundle, "dns_ip", "") or ""),
-            _bash_var("KS_STACK_AUTO_UPDATE", getattr(bundle, "auto_update", "registry") or "registry"),
-            _bash_var("KS_SEED_ID", host.fleet.seed_id() if os.path.isfile(host.fleet.resolve_path("secrets/seed")) else ""),
-        ]
+        lines += stack_vars(host, bundle)
+        lines.append("KS_FILES[kiwi-stack]=%s" % _q(util.b64(stack_cli())))
+        lines.append("KS_FILES[kiwi-stack-lib]=%s" % _q(util.b64(lib_text)))
         for rel, (content, _mode) in sorted(bundle.files.items()):
             lines.append("KS_FILES[stack/%s]=%s" % (rel, _q(util.b64(content))))
         for name, text in sorted(bundle.units.items()):

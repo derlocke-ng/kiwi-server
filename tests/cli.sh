@@ -37,6 +37,9 @@ test -f output/gate/gate.stack/km-vpn-server/start.sh
 test -f output/sh3/sh3.bu
 test -f output/sh3/sh3.stack/docker-compose.yml
 test -f output/sh3/sh3.stack/quadlets/kn-vpn-client.container
+test -f output/sh3/sh3.stack/stack.sh && bash -n output/sh3/sh3.stack/stack.sh
+bash -c '. output/sh3/sh3.stack/stack.sh; [[ $KS_HOSTNAME == sh3.home && ${#KS_STACK_FILES[@]} -gt 3 && $KS_STACK_RUNTIME == podman ]]'
+grep -q "KS_FILES\[kiwi-stack-lib\]" output/sh3/sh3.role.sh
 test -f output/sh3/sh3.stack/quadlets/nextcloud-aio-nextcloud.container
 test -f secrets/seed
 test -f output/m1/m1.stack/kiwi/gw.sh

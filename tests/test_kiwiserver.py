@@ -291,8 +291,11 @@ class TestRoles(Base):
 
     def test_kiwi_stack_helper_parses_and_shellchecks(self):
         lib = rolesmod.common_lib()
-        helper = lib[lib.index("<<'KIWI_STACK'\n") + len("<<'KIWI_STACK'\n"):lib.index("\nKIWI_STACK\n")]
+        helper = rolesmod.stack_cli()      # its own file since the split began: roles/common/kiwi-stack
         self.assertTrue(helper.startswith("#!/usr/bin/env bash"))
+        self.assertIn("ks_stack_standalone \"$2\"", helper)          # kiwi-stack apply DIR
+        self.assertIn("ks_file kiwi-stack /usr/local/bin/kiwi-stack 0755", lib)
+        self.assertIn("ks_file kiwi-stack-lib /usr/local/lib/kiwi-stack/lib.sh 0644", lib)
         self.assertIn("host_units restart --no-block", helper)   # never a blocking restart from inside kiwi-stack.service
         self.assertIn("${STACK_VPN_DEPENDENTS:-}", helper)
         self.assertIn('ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA"', helper)
@@ -1359,6 +1362,32 @@ class TestModules(Base):
         p, hosts = self.mullvad_socks_script(mullvad_socks_url="file://" + src, mullvad_socks_domain="")
         with open(p) as fh:
             self.assertIn("short='mullvad.kiwi'", fh.read())   # empty: under the fleet's domain
+
+    def test_bundle_directory_is_a_second_source_of_files(self):
+        # ks_file takes a key from the embedded KS_FILES, or from a bundle directory with the same layout
+        lib = rolesmod.common_lib()
+        libp = os.path.join(self.tmp, "lib.sh"); write(libp, lib)
+        bdir = os.path.join(self.tmp, "bundle")
+        write(os.path.join(bdir, "kn-nginx", "nginx.conf"), "nginx here\n")
+        write(os.path.join(bdir, "host-units", "kn-gateway.service"), "[Unit]\n")
+        write(os.path.join(bdir, "quadlets", "kn-nginx.container"), "[Container]\n")
+        write(os.path.join(bdir, "kiwi", "ca", "kiwiCA.crt"), "CA\n")
+        me = "%d:%d" % (os.getuid(), os.getgid())
+        script = ("set -euo pipefail; . %s; KS_BUNDLE_DIR=%s; "
+                  "ks_file stack/kn-nginx/nginx.conf %s/out/nginx.conf 0600 %s; "
+                  "ks_file unit/kn-gateway.service %s/out/gw.service 0644 %s; "
+                  "ks_file quadlet/kn-nginx.container %s/out/q.container 0600 %s; "
+                  "ks_has_file ca_cert && echo has-ca; ks_has_file stack/missing || echo no-missing; "
+                  "ks_file stack/missing %s/out/x 0600 %s" % (libp, bdir, self.tmp, me, self.tmp, me, self.tmp, me, self.tmp, me))
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("has-ca", r.stdout); self.assertIn("no-missing", r.stdout)
+        self.assertIn("no file for 'stack/missing'", r.stderr)
+        with open(os.path.join(self.tmp, "out", "nginx.conf")) as fh:
+            self.assertEqual(fh.read(), "nginx here\n")
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "out", "nginx.conf")).st_mode & 0o777), "0o600")
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "out", "gw.service")))
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "out", "q.container")))
 
     def test_host_units_no_longer_rendered_are_removed(self):
         """Turning dns.mullvad_socks off (or dropping a module) and applying again stops and

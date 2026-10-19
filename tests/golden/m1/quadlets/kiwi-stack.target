@@ -1,0 +1,8 @@
+# kiwi-server stack — generated
+[Unit]
+Description=Kiwi Server stack on m1.home (vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp)
+After=network-online.target
+Wants=network-online.target
+
+[Install]
+WantedBy=multi-user.target

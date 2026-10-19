@@ -1,0 +1,43 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: nextcloud-aio-collabora
+StartLimitIntervalSec=0
+
+[Container]
+Image=ghcr.io/nextcloud-releases/aio-collabora:latest
+ContainerName=nextcloud-aio-collabora
+Network=knet-node.network
+AutoUpdate=registry
+RunInit=true
+AddCapability=SYS_ADMIN
+AddCapability=SYS_CHROOT
+AddCapability=FOWNER
+AddCapability=CHOWN
+DropCapability=NET_RAW
+Tmpfs=/tmp
+ShmSize=268435456
+Environment=aliasgroup1=https://cloud.sh3.home:443,http://nextcloud-aio-apache.knet-node:23973,http://nextcloud-aio-apache:23973
+Environment="extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:welcome.enable=false --o:fetch_update_check=0 --o:allow_update_popup=false --o:logging.level=warning --o:logging.level_startup=warning --o:remote_font_config.url=https://cloud.sh3.home/apps/richdocuments/settings/fonts.json --o:net.post_allow.host[0]=.+"
+Environment="dictionaries=de_DE en_GB en_US es_ES fr_FR it nl pt_BR pt_PT ru"
+Environment=AIO_LOG_LEVEL=warn
+Environment=TZ=Europe/Berlin
+Environment=server_name=cloud.sh3.home
+Environment=DONT_GEN_SSL_CERT=1
+AddHost=sh3.home:172.128.0.5
+AddHost=cloud.sh3.home:172.128.0.5
+AddHost=vault.sh3.home:172.128.0.5
+AddHost=portainer.sh3.home:172.128.0.5
+HealthCmd="/usr/bin/coolwsd --probe --use-env-vars"
+HealthInterval=30s
+HealthTimeout=30s
+HealthStartPeriod=60s
+HealthRetries=9
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

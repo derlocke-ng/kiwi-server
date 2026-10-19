@@ -1,0 +1,30 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-sftp
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/jmcombs/sftp
+ContainerName=kn-sftp
+Network=knet-node.network
+IP=172.128.0.251
+AutoUpdate=registry
+AddHost=m1.home:172.128.0.5
+AddHost=pihole.m1.home:172.128.0.5
+AddHost=dl.m1.home:172.128.0.5
+AddHost=jd.m1.home:172.128.0.5
+AddHost=portainer.m1.home:172.128.0.5
+DNS=172.128.0.4
+DNS=9.9.9.9
+Volume=/home/user/docker/kn-sftp/users.conf:/etc/sftp/users.conf:ro,z
+Volume=/mnt/dl:/home/user/Downloads:z
+PublishPort=2224:22
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

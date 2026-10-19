@@ -1,0 +1,13 @@
+modes: docker-compose.yml:0600 kiwi/ca/kiwiCA.crt:0644 kiwi/env/km-pihole.env:0600 kiwi/env/km-vpn-client.env:0600 kiwi/env/km-vpn-server.env:0600 kiwi/mullvad-socks.sh:0755 km-nginx/fullchain.pem:0644 km-nginx/nginx.conf:0644 km-nginx/privkey.pem:0600 km-pihole/mullvad-socks/.kiwi-server:0644 km-tor/etc/torrc:0644 km-vpn-client/post-rules.txt:0644 km-vpn-server/start.sh:0755
+dirs: kiwi kiwi/ca kiwi/env km-nginx km-pihole/etc-dnsmasq.d km-pihole/etc-pihole km-pihole/mullvad-socks km-tor/etc km-tor/var km-vpn-client km-vpn-server
+ports: 51820/udp
+services: km-vpn-client km-vpn-server km-pihole km-tor km-nginx
+images: docker.io/dockurr/tor docker.io/library/nginx:1 docker.io/pihole/pihole:latest docker.io/qmcgaw/gluetun:v3 docker.io/weejewel/wg-easy:7
+urls: wg-easy admin: https://wg.gate.home from the mesh (admin groups), or http://127.0.0.1:51821 on the master (ssh -L 51821:127.0.0.1:51821 gate.home) | Pi-hole admin: https://pihole.gate.home/admin (through the reverse proxy) | Tor SOCKS5 for mesh clients: 10.8.0.1:9050
+hosts: 127.0.0.1=gate.home 127.0.0.1=wg.gate.home 127.0.0.1=pihole.gate.home 10.8.0.6=m1.home 10.8.0.6=pihole.m1.home 10.8.0.6=dl.m1.home 10.8.0.6=jd.m1.home 10.8.0.6=portainer.m1.home 10.8.0.25=sh3.home 10.8.0.25=cloud.sh3.home 10.8.0.25=vault.sh3.home 10.8.0.25=portainer.sh3.home 10.8.0.9=min.home
+vpn_dependents: 
+mesh_via: 172.64.0.3 10.8.0.0/16
+dns_ip: 172.64.0.3
+sysctl: 
+kernel_modules: tun wireguard
+auto_update: registry

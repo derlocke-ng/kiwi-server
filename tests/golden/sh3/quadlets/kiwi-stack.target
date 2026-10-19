@@ -1,0 +1,8 @@
+# kiwi-server stack — generated
+[Unit]
+Description=Kiwi Server stack on sh3.home (vpn-client, reverse-proxy, cloud, vault, portainer)
+After=network-online.target
+Wants=network-online.target
+
+[Install]
+WantedBy=multi-user.target

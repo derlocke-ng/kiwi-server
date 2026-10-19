@@ -1,0 +1,67 @@
+# kiwi-server stack for min.home (node) — modules: vpn-client, reverse-proxy
+# Generated; edit the fleet file and render again instead of this file.
+services:
+  kn-vpn-client:
+    image: docker.io/qmcgaw/gluetun:v3
+    container_name: kn-vpn-client
+    cap_add:
+    - NET_ADMIN
+    devices:
+    - /dev/net/tun:/dev/net/tun
+    environment:
+    - VPN_SERVICE_PROVIDER=custom
+    - VPN_TYPE=wireguard
+    - TZ=Europe/Berlin
+    - WIREGUARD_MTU=1412
+    - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
+    - DOT_PROVIDERS=quad9
+    - BLOCK_MALICIOUS=off
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.2
+    sysctls:
+    - net.ipv4.tcp_mtu_probing=1
+    - net.ipv4.tcp_base_mss=1024
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
+    - /home/user/docker/kn-vpn-client/wg0.conf:/gluetun/wireguard/wg0.conf:z
+    extra_hosts:
+    - min.home:172.128.0.5
+  kn-nginx:
+    image: docker.io/library/nginx:1
+    container_name: kn-nginx
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.5
+    ports:
+    - 80:80
+    - 443:443
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+    - /home/user/docker/kn-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
+    - /home/user/docker/kn-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
+    extra_hosts:
+    - min.home:172.128.0.5
+networks:
+  knet-node:
+    name: knet-node
+    driver: bridge
+    driver_opts:
+      com.docker.network.enable_ipv6: 'false'
+      com.docker.network.bridge.name: knet-node
+      com.docker.network.driver.mtu: '1412'
+    ipam:
+      driver: default
+      config:
+      - subnet: 172.128.0.0/24
+        gateway: 172.128.0.1

@@ -1,0 +1,15 @@
+[Unit]
+Description=Kiwi Network LAN gateway routing (m1.home)
+Documentation=https://github.com/derlocke-ng/kiwi-server
+# podman: the containers are systemd units themselves; kiwi-stack.service starts their target
+After=kiwi-stack.service network-online.target
+Wants=kiwi-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash /home/user/docker/kiwi/gw.sh start
+ExecStop=/usr/bin/bash /home/user/docker/kiwi/gw.sh stop
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-transmission
+Requires=kn-vpn-client.service
+After=kn-vpn-client.service
+StartLimitIntervalSec=0
+
+[Container]
+Image=lscr.io/linuxserver/transmission:latest
+ContainerName=kn-transmission
+Network=container:kn-vpn-client
+AutoUpdate=registry
+Environment=PUID=1000
+Environment=PGID=1000
+Environment=TZ=Europe/Berlin
+Environment=USER=user
+EnvironmentFile=/home/user/docker/kiwi/env/kn-transmission.env
+Volume=/home/user/docker/kn-transmission:/config:z
+Volume=/mnt/dl:/downloads:z
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

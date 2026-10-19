@@ -1,0 +1,32 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-nginx
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/library/nginx:1
+ContainerName=kn-nginx
+Network=knet-node.network
+IP=172.128.0.5
+AutoUpdate=registry
+AddHost=m1.home:172.128.0.5
+AddHost=pihole.m1.home:172.128.0.5
+AddHost=dl.m1.home:172.128.0.5
+AddHost=jd.m1.home:172.128.0.5
+AddHost=portainer.m1.home:172.128.0.5
+DNS=172.128.0.4
+DNS=9.9.9.9
+Volume=/home/user/docker/kn-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+Volume=/home/user/docker/kn-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
+Volume=/home/user/docker/kn-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
+PublishPort=80:80
+PublishPort=443:443
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

@@ -1,0 +1,31 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-vault
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/vaultwarden/server:latest-alpine
+ContainerName=kn-vault
+Network=knet-node.network
+IP=172.128.0.7
+AutoUpdate=registry
+Environment=DOMAIN=https://vault.sh3.home
+Environment=SIGNUPS_ALLOWED=false
+Environment=INVITATIONS_ALLOWED=true
+Environment=SHOW_PASSWORD_HINT=false
+Environment=LOG_LEVEL=warn
+Environment=TZ=Europe/Berlin
+AddHost=sh3.home:172.128.0.5
+AddHost=cloud.sh3.home:172.128.0.5
+AddHost=vault.sh3.home:172.128.0.5
+AddHost=portainer.sh3.home:172.128.0.5
+Volume=/home/user/docker/kn-vault:/data:z
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

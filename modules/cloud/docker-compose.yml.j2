@@ -163,7 +163,7 @@ services:
       - FULLTEXTSEARCH_USER=elastic
       - FULLTEXTSEARCH_INDEX=nextcloud-aio
       - PHP_MAX_TIME={{ max_time }}
-      - TRUSTED_CACERTS_DIR=
+      - TRUSTED_CACERTS_DIR={{ '/usr/local/share/ca-certificates' if ca_cert_dir else '' }}
       - STARTUP_APPS={{ startup_apps }}
       - ADDITIONAL_APKS={{ additional_apks }}
       - ADDITIONAL_PHP_EXTENSIONS={{ additional_php_extensions }}
@@ -183,7 +183,11 @@ services:
 {% endfor %}
     volumes:
       - nextcloud_aio_nextcloud:/var/www/html:rw
-      - {{ datadir }}:/mnt/ncdata:rw
+      - {{ datadir }}:/mnt/ncdata:rw,z
+{% if ca_cert_dir %}
+      # the fleet CA: Collabora, Talk and notify-push are reached through https://cloud.<host>
+      - {{ ca_cert_dir }}:/usr/local/share/ca-certificates:ro,z
+{% endif %}
 {% if nextcloud_mount %}
       - {{ nextcloud_mount }}:{{ nextcloud_mount }}:rw
 {% endif %}

@@ -1,5 +1,63 @@
 # Changelog
 
+## 2.5.0 — the stack is trustworthy before anything is built on it
+
+The first bug round of the roadmap (docs/ROADMAP.md), on the rendered stacks
+and the first boot; nothing here has booted on hardware yet.
+
+- **The first boot can fail now.** The role script pulls every image one by
+  one with retries before the first start, then `kiwi-stack verify` checks
+  that every container runs; a stack that is not up fails the apply with the
+  names, instead of "applied" with nothing running. A failed step leaves
+  `/var/lib/kiwi-server/role.failed` (step, command, last log lines), which
+  `kiwi-server status` shows. Quadlets have no start limit and pause 15 s
+  between restarts, so a slow pull recovers without a reboot.
+- **Secrets stay out of the unit files**: a secret-typed setting goes into a
+  root-only `kiwi/env/<service>.env` referenced by `EnvironmentFile=`; the
+  quadlets themselves are written 0600 now.
+- **The master's Pi-hole moves to port 8081** inside the WireGuard server's
+  namespace, which nginx shares and whose 80/443 it owns (`dns.web_port`,
+  `FTLCONF_webserver_port`); the renderer refuses two modules binding the
+  same port in one namespace (`network.listen_ports`, `derived:` values in
+  module.yaml).
+- **A node's own names resolve to the reverse proxy inside its containers**
+  (`AddHost=`), the containers use the stack's Pi-hole as resolver (`DNS=`),
+  the fleet CA is mounted into Nextcloud (`kiwi/ca/kiwiCA.crt`, the
+  `TRUSTED_CACERTS_DIR` AIO reads), and the Nextcloud data directory carries
+  its SELinux label. Collabora, Talk and notify-push can reach
+  `https://cloud.<host>` from inside now.
+- **No masquerade on DNAT'd mesh traffic** where the host routes the mesh back
+  through the VPN client: services see the real client address, so rate
+  limits and logs work per client.
+- **Port ranges** (`27000-27100/udp`) in `extra_dnat_rules`, `open_ports` and
+  published ports: iptables, firewalld and ufw spellings, overlap detection.
+- **Re-apply hygiene under podman**: a container whose module left the stack
+  is stopped and removed, and a changed `runtime:` or `docker_dir` stops the
+  old stack before the new one takes its ports. Debian gets `catatonit` with
+  podman (every `init: true` container needs it) and a podman older than
+  4.4, which has no quadlets, is refused with the alternative named.
+- **SSH host keys** live in `secrets/known_hosts`: accepted on first contact,
+  a changed key is refused with the line to drop; a device name given to
+  `enroll` must be a DNS label.
+- **Generated secrets derive from hostname, module and key** — no longer from
+  the fleet's host key and the role name, so `node-cloud` → `node` or a
+  standalone render keeps every password (nothing had been applied with the
+  old derivation). `secrets/seed` announces its creation, its id travels with
+  the role script, and a machine refuses an apply under a different seed.
+- **A misspelled fleet key is an error** (`rol:`, `netwrok:`, `admin.shh_keys`)
+  with a suggestion; `kiwi-server <command> -h` shows that command's own
+  usage and options.
+- The role script is left 0600 on the machine after a run.
+- **`auto_update: registry | off`** as a stack setting (default registry, as
+  before); the images this project is sure about are pinned to a line:
+  `weejewel/wg-easy:7`, `qmcgaw/gluetun:v3`, `nginx:1`,
+  `portainer-ce:lts`. The others still follow `latest` until a verified pin
+  list exists (ROADMAP, problem 13).
+- **The host resolves through its own Pi-hole** on CoreOS and uCore
+  (systemd-resolved: the stack's Pi-hole first, Quad9 behind it), so the
+  fleet's names and the blocklist hold for the host itself, not only for its
+  containers. Debian without systemd-resolved keeps its resolver.
+
 ## 2.4.0 — the fleet talks to its machines
 
 - **A kiwi-updater app, properly**: the icon is kiwi-icons' kiwi-server

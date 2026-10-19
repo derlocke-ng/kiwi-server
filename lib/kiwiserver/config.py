@@ -11,7 +11,9 @@ this module only merges those blocks; roles.py validates them.
 """
 import copy
 import ipaddress
+import difflib
 import os
+import sys
 import re
 
 import yaml
@@ -163,6 +165,35 @@ _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@", "sk-ecdsa-sha2-")
 
 
+# the blocks whose keys are fixed: a misspelled one is an error, not a silently ignored line
+_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "debian", "tls", "backup")
+
+
+def unknown_keys(block, roles, where):
+    """Keys of a fleet file block that nothing reads: a typo like `rol:` would
+    otherwise build a bare machine. Role blocks (the role's own name) and
+    their contents are checked by the role's schema instead."""
+    if not isinstance(block, dict):
+        return []
+    known = set(DEFAULTS) | set(roles or ())
+    errs = []
+    for k in block:
+        if k in known:
+            continue
+        hint = difflib.get_close_matches(str(k), sorted(known), n=1, cutoff=0.6)
+        errs.append("%s: unknown key %r%s" % (where, k, (" (did you mean %s?)" % hint[0]) if hint else ""))
+    for k in _FIXED_BLOCKS:
+        sub = block.get(k)
+        if not isinstance(sub, dict):
+            continue
+        for kk in sub:
+            if kk in DEFAULTS[k]:
+                continue
+            hint = difflib.get_close_matches(str(kk), sorted(DEFAULTS[k]), n=1, cutoff=0.6)
+            errs.append("%s.%s: unknown key %r%s" % (where, k, kk, (" (did you mean %s?)" % hint[0]) if hint else ""))
+    return errs
+
+
 def deep_merge(base, over, path=()):
     out = copy.deepcopy(base)
     for k, v in (over or {}).items():
@@ -296,6 +327,7 @@ class Host:
         errs = []
         self.warnings = []
         c = self.cfg
+        errs += unknown_keys(self.overrides, roles, "hosts.%s" % self.name)
         if self.target not in TARGETS:
             errs.append("target must be one of %s (got %r)" % (", ".join(TARGETS), self.target))
         if not self.role:
@@ -387,6 +419,7 @@ class Fleet:
         self.dir = os.path.dirname(self.path)
         self.raw = data
         self.defaults = deep_merge(DEFAULTS, data.get("defaults") or {})
+        self.defaults_raw = data.get("defaults") or {}
         hosts = data.get("hosts")
         if not isinstance(hosts, dict) or not hosts:
             raise KiwiError("%s: hosts: must be a mapping with at least one host" % path)
@@ -439,10 +472,19 @@ class Fleet:
         if not os.path.isfile(p):
             os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
             util.write_bytes(p, os.urandom(32), 0o600)
+            # stderr: `script` and --porcelain keep stdout for their payload
+            print(":: made %s — the generated secrets (database passwords and the like) derive from it; "
+                  "it is in the fleet backup, and a different seed means different secrets" % p, file=sys.stderr)
         data = util.read_bytes(p)
         if len(data) < 16:
             raise KiwiError("%s is too short to be a seed — remove it to make a new one" % p)
         return data
+
+    def seed_id(self):
+        """A short name for the seed, carried onto the machines: an apply with
+        another seed would hand running databases passwords they do not know."""
+        import hashlib
+        return hashlib.sha256(b"kiwi-seed-id:" + self.seed()).hexdigest()[:12]
 
     def derive_secret(self, *parts, length=32):
         """A generated secret: letters and digits only (AIO forbids @ and : in

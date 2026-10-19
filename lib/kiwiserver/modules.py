@@ -80,6 +80,12 @@ class Module:
         net = meta.get("network") or {}
         self.needs_vpn_dnat = bool(net.get("needs_vpn_dnat", False))
         self.open_ports = [str(p) for p in (net.get("open_ports") or [])]
+        # what the containers bind inside their network namespace (templated):
+        # two modules sharing one namespace must not bind the same port
+        self.listen_ports = [str(p) for p in (net.get("listen_ports") or [])]
+        # derived context values: name -> Jinja expression, available to every
+        # template of the module as {{ name }} (and to the renderer's checks)
+        self.derived = {str(k): str(v) for k, v in (meta.get("derived") or {}).items()}
         fw = meta.get("firewall") or {}
         self.firewall_rules = [str(r) for r in (fw.get("rules") or [])]
         self.firewall_scope = str(fw.get("scope") or "vpn-client")
@@ -160,13 +166,27 @@ class ModuleSet:
         return order
 
 
+def _port_range(text):
+    """'80' -> (80, 80); '27000-27100' -> (27000, 27100)."""
+    a, _, b = str(text).partition("-")
+    try:
+        lo = int(a)
+        hi = int(b) if b else lo
+    except ValueError:
+        raise KiwiError("%r is not a port or a port range (a-b)" % text)
+    if lo > hi:
+        raise KiwiError("port range %r runs backwards" % text)
+    return lo, hi
+
+
 class StackSpec:
     """Everything the renderer needs for one host."""
 
     def __init__(self, node_type, hostname, modules, docker_dir="/home/user/docker",
                  docker_subnet=None, mtu=1412, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None,
-                 service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman"):
+                 service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
+                 ca_cert=None, auto_update="registry"):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -189,6 +209,9 @@ class StackSpec:
         if runtime not in ("podman", "docker"):
             raise KiwiError("runtime must be podman or docker, not %r" % runtime)
         self.runtime = runtime
+        # the fleet CA (PEM) for containers that call back into the fleet over TLS
+        self.ca_cert = ca_cert.decode() if isinstance(ca_cert, bytes) else (ca_cert or "")
+        self.auto_update = auto_update or "registry"
 
 
 class Bundle:
@@ -209,6 +232,7 @@ class Bundle:
         self.hosts = []            # (ip, name): the fleet's names for /etc/hosts
         self.runtime = "podman"
         self.quadlets = {}         # podman: file name -> unit text (.container, .network, the target)
+        self.images = []           # every image the stack pulls
 
     def add_file(self, rel, content, mode=0o644):
         rel = rel.strip("/")
@@ -289,6 +313,13 @@ class Renderer:
             ips[name] = str(ip)
         return ips
 
+    @staticmethod
+    def _netns_ip(spec, ips, module):
+        if module not in ips:
+            return ""
+        mode = str((spec.module_config.get(module) or {}).get("network_mode") or "")
+        return ips.get(mode, "") if mode else ips[module]
+
     def base_context(self, spec, ordered):
         subnet, gateway, base = _subnet_parts(spec.docker_subnet)
         ips = self.container_ips(spec, ordered)
@@ -303,6 +334,10 @@ class Renderer:
             "proxy_ip": ips.get("reverse-proxy", ""),
             "vpn_client_ip": ips.get("vpn-client", ""),
             "dns_ip": ips.get("dns", ""),
+            # where Pi-hole answers on the stack network: its own address, or the
+            # address of the container whose namespace it shares (the master)
+            "dns_container_ip": self._netns_ip(spec, ips, "dns"),
+            "ca_cert_dir": (spec.docker_dir + "/kiwi/ca") if spec.ca_cert else "",
             "module_config": {m: dict(v) for m, v in spec.module_config.items()},
             "mesh_ips": sorted({ip for ip, _n in spec.dns_records}),
             "dns_records": list(spec.dns_records),
@@ -330,6 +365,8 @@ class Renderer:
             m, _, k = key.partition("/")
             if m == name:
                 ctx[k + "_present"] = True
+        for k, expr in mod.derived.items():
+            ctx[k] = self.render_text(expr, ctx, "modules/%s/module.yaml derived.%s" % (name, k)).strip()
         return ctx
 
     def render_text(self, text, ctx, what):
@@ -361,6 +398,7 @@ class Renderer:
     # ---- compose ------------------------------------------------------------------
     def render_compose(self, spec, ordered, base, bundle):
         services, volumes, networks = {}, {}, {}
+        module_services = {}
         for name in ordered:
             mod = self.ms.get(name)
             text = mod.template("compose")
@@ -377,6 +415,7 @@ class Renderer:
                     raise KiwiError("service %s is defined by two modules" % svc)
                 services[svc] = body
                 bundle.services.append(svc)
+                module_services.setdefault(name, []).append(svc)
             for vol, body in (doc.get("volumes") or {}).items():
                 volumes.setdefault(vol, body or {"name": vol})
             for vol in mod.volumes:
@@ -388,6 +427,8 @@ class Renderer:
             for net, body in (nets.get("networks") or {}).items():
                 networks.setdefault(net, body)
         self.check_ports(services)
+        self.check_listen_ports(spec, ordered, base, services, module_services)
+        self.add_host_names(spec, base, services)
         # containers inside the VPN client's network namespace must be restarted
         # with it (kiwi-stack vpn-restart), or they keep a namespace that is gone
         vpn = "service:%s-vpn-client" % base["container_prefix"]
@@ -404,11 +445,69 @@ class Renderer:
         bundle.compose = compose
         return header + yaml.safe_dump(compose, sort_keys=False, default_flow_style=False, width=1000)
 
+    def secret_values(self, spec, ordered):
+        """Every secret-typed setting value of the stack: what must not land in
+        a world-readable unit file."""
+        out = set()
+        for name in ordered:
+            cfg = spec.module_config.get(name) or {}
+            for s in self.ms.get(name).settings:
+                if s.type == "secret" and cfg.get(s.key):
+                    out.add(str(cfg[s.key]))
+        return out
+
+    def check_listen_ports(self, spec, ordered, base, services, module_services):
+        """Containers that share one network namespace (network_mode:
+        service:X) share its port space: two modules declaring the same
+        listen port there fail on the machine, so they fail here."""
+        owner = {}
+        for svc, body in services.items():
+            mode = str((body or {}).get("network_mode") or "")
+            owner[svc] = mode.split(":", 1)[1] if mode.startswith("service:") else svc
+        seen = {}
+        for name in ordered:
+            mod = self.ms.get(name)
+            if not mod.listen_ports:
+                continue
+            ctx = self.module_context(spec, ordered, base, name)
+            for svc in module_services.get(name, []):
+                ns = owner.get(svc, svc)
+                for raw in mod.listen_ports:
+                    p = self.expand(raw, ctx, "modules/%s/module.yaml network.listen_ports" % name).strip()
+                    if not p:
+                        continue
+                    port, _, proto = p.partition("/")
+                    key = (ns, port, proto or "tcp")
+                    other = seen.get(key)
+                    if other and other != name:
+                        raise KiwiError("%s: %s and %s both listen on %s/%s inside %s's network namespace — "
+                                        "give one another port" % (spec.hostname, other, name, port, proto or "tcp", ns))
+                    seen[key] = name
+
+    def add_host_names(self, spec, base, services):
+        """Inside the containers the host's own service names must reach the
+        reverse proxy on the stack network, not the host's loopback (podman
+        copies /etc/hosts) and not the mesh address (hairpin through the VPN
+        client); and lookups go to this stack's Pi-hole, when there is one,
+        with Quad9 behind it — never to the host's resolver, which podman
+        replaces with a public one when it is a loopback address."""
+        own = [(n, base["proxy_ip"]) for ip, n in spec.dns_records if spec.vpn_ip and ip == spec.vpn_ip]
+        dns_ip = base.get("dns_container_ip") or ""
+        for svc, body in services.items():
+            body = body or {}
+            if body.get("network_mode") or "networks" not in body:
+                continue    # shares another container's namespace, or host networking
+            if own and base["proxy_ip"] and "extra_hosts" not in body:
+                body["extra_hosts"] = ["%s:%s" % (n, ip) for n, ip in own]
+            if dns_ip and "dns" not in body and svc not in ("%s-pihole" % base["container_prefix"],
+                                                             "%s-vpn-client" % base["container_prefix"]):
+                body["dns"] = [dns_ip, "9.9.9.9"]
+
     @staticmethod
     def check_ports(services):
         """Two services publishing the same host port fail at the second
         `up`, not at render — so it is an error here, naming both."""
-        seen = {}
+        seen = []   # (proto, lo, hi, bind, service)
         for svc, body in services.items():
             for p in (body or {}).get("ports") or []:
                 p = str(p)
@@ -416,11 +515,14 @@ class Renderer:
                 parts = p.rsplit("/", 1)[0].split(":")
                 host_port = parts[-2] if len(parts) >= 2 else parts[0]
                 bind = parts[0] if len(parts) == 3 else "0.0.0.0"
-                for other_bind, other in seen.get((host_port, proto), []):
+                lo, hi = _port_range(host_port)
+                for o_proto, o_lo, o_hi, other_bind, other in seen:
+                    if o_proto != proto or hi < o_lo or lo > o_hi:
+                        continue
                     if bind == other_bind or "0.0.0.0" in (bind, other_bind):
                         raise KiwiError("host port %s/%s is published by both %s and %s — change one "
                                         "(the modules' *_port / *_bind settings)" % (host_port, proto, other, svc))
-                seen.setdefault((host_port, proto), []).append((bind, svc))
+                seen.append((proto, lo, hi, bind, svc))
 
     # ---- nginx aggregation ---------------------------------------------------------
     def nginx_blocks(self, spec, ordered, base):
@@ -523,9 +625,16 @@ class Renderer:
                                 "%s are reachable at the mesh address" % (spec.hostname, ", ".join(at_mesh)))
         bundle.add_file("docker-compose.yml", self.render_compose(spec, ordered, base, bundle), 0o600)
         bundle.runtime = spec.runtime
+        bundle.images = sorted({str((b or {}).get("image")) for b in bundle.compose["services"].values() if (b or {}).get("image")})
+        if spec.ca_cert:
+            bundle.add_file("kiwi/ca/kiwiCA.crt", spec.ca_cert if spec.ca_cert.endswith("\n") else spec.ca_cert + "\n", 0o644)
         if spec.runtime == "podman":
-            bundle.quadlets = quadlet.from_compose(bundle.compose, "Kiwi Server stack on %s (%s)" % (
-                spec.hostname, ", ".join(ordered)))
+            secrets = self.secret_values(spec, ordered)
+            bundle.quadlets, envs = quadlet.from_compose_with_env(
+                bundle.compose, "Kiwi Server stack on %s (%s)" % (spec.hostname, ", ".join(ordered)),
+                secrets, spec.docker_dir + "/kiwi/env", auto_update=(spec.auto_update == "registry"))
+            for rel, text in envs.items():
+                bundle.add_file(rel, text, 0o600)
 
         for name in ordered:
             mod = self.ms.get(name)
@@ -621,6 +730,9 @@ class Renderer:
         bundle.mesh_subnet = spec.mesh_subnet if base["mesh_via"] else ""
         # the host's own names point at itself: its services are published on the host
         bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip else ip, n) for ip, n in spec.dns_records]
+        # the host's own resolver: this stack's Pi-hole, when there is one
+        bundle.dns_ip = base.get("dns_container_ip") or "" if "dns" in ordered else ""
+        bundle.auto_update = spec.auto_update
         return bundle
 
 

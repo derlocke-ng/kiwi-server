@@ -100,7 +100,7 @@ settings:
   - key: extra_dnat_rules
     type: list
     label: Extra DNAT rules
-    help: "port/proto:destination:port — forwards mesh traffic for the node's mesh address, e.g. 2224/tcp:172.128.0.251:22. The reverse proxy's 80/443 are automatic."
+    help: "port/proto:destination[:port] — forwards mesh traffic for the node's mesh address, e.g. 2224/tcp:172.128.0.251:22; a range as 27000-27100/udp:172.128.0.200 (the ports stay as they are). The reverse proxy's 80/443 are automatic."
     default: []
   - key: mss_clamp
     type: bool
@@ -115,4 +115,4 @@ settings:
     default: {}
   - key: image
     group: Advanced
-    default: docker.io/qmcgaw/gluetun
+    default: docker.io/qmcgaw/gluetun:v3

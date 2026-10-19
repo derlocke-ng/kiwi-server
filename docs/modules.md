@@ -172,6 +172,17 @@ hosts:
 A role preset can seed module settings with `module_defaults:` in its
 role.yaml (the master sets `dns.network_mode: vpn-server`).
 
+### derived, listen_ports
+
+```yaml
+derived:                         # name -> Jinja expression, available to every template of the module
+  web_port_effective: "{{ web_port or (8081 if shares_namespace else 80) }}"
+network:
+  listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp"]   # what the container binds inside its
+                                 # network namespace; two modules sharing one (network_mode: service:X)
+                                 # must not bind the same port — the renderer refuses, the machine would not say
+```
+
 ### nginx
 
 A module that wants to be served by the reverse proxy announces its blocks;
@@ -224,6 +235,33 @@ carries the same files and, on first boot, `ks_stack_apply` from
 4. opens the ports in firewalld or ufw;
 5. enables `kiwi-stack.service` (compose up at boot), the daily VPN restart
    and weekly update timers the stack settings ask for, and the host units.
+
+## What the renderer adds to every stack
+
+- **Secrets stay out of the unit files.** A value of a `secret` setting never
+  lands in a `.container` quadlet (readable through `systemctl show`): it goes
+  into `kiwi/env/<service>.env`, root-only, referenced by `EnvironmentFile=`.
+  The compose file keeps it inline and is 0600 itself.
+- **The host's own names inside the containers** (`extra_hosts`, `AddHost=`)
+  point at the reverse proxy's address on the stack network, not at the
+  host's loopback (podman copies `/etc/hosts`) and not at the mesh address
+  (a hairpin the VPN client rejects); Nextcloud reaches Collabora and Talk
+  through its own URL this way.
+- **The containers' resolver** (`dns`, `DNS=`) is this stack's Pi-hole when
+  the dns module is on the host, Quad9 behind it, for every container on the
+  stack network except Pi-hole and the VPN client. Without it podman would
+  hand the containers a public resolver whenever the host's own is a loopback
+  address.
+- **The fleet CA** is written to `kiwi/ca/kiwiCA.crt` when the fleet has one;
+  a module mounts it where its software expects CA certificates (the cloud
+  module does, `ca_cert_dir` in the context).
+- **Images** are listed for the role script (`KS_STACK_IMAGES`), which pulls
+  them one by one with retries before the first start and then checks that
+  every container runs (`kiwi-stack verify`); a stack that is not up fails
+  the apply instead of being reported as applied.
+- **Port ranges** are accepted as `A-B/proto` in `extra_dnat_rules`,
+  `open_ports` and `ports:` (host firewall, DNAT and the collision check
+  understand them; gluetun's own input port list takes single ports only).
 
 ## SELinux
 

@@ -24,13 +24,17 @@ iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p tcp --dport 80 -j DNAT --to-des
 {% endif %}
 {% for r in extra_dnat_rules %}
 {% set portproto = r.split(':')[0] %}{% set dest = r.split(':', 1)[1] %}
-iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p {{ portproto.split('/')[1] if '/' in portproto else 'tcp' }} --dport {{ portproto.split('/')[0] }} -j DNAT --to-destination {{ dest }}
+{# a range A-B is --dport A:B; a destination without a port keeps the port #}
+iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p {{ portproto.split('/')[1] if '/' in portproto else 'tcp' }} --dport {{ portproto.split('/')[0] | replace('-', ':') }} -j DNAT --to-destination {{ dest }}
 {% endfor %}
 {% for rule in module_rules %}
 iptables {{ rule }}
 {% endfor %}
-# NAT: DNAT'd flows and everything leaving through the tunnel
+# NAT: everything leaving through the tunnel{% if not mesh_via %}; DNAT'd flows too, since the
+# host has no route back into the mesh for the replies{% endif %}
+{% if not mesh_via %}
 iptables -t nat -A POSTROUTING -m conntrack --ctstate DNAT -j MASQUERADE
+{% endif %}
 iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 # replies to what we sent out
 iptables -A INPUT -i tun0 -m state --state RELATED,ESTABLISHED -j ACCEPT

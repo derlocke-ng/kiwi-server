@@ -36,7 +36,7 @@ services:
 {% endif %}
 {% set inbound = [] %}
 {% if enable_vpn_dnat %}{% set _ = inbound.extend(['80', '443']) %}{% endif %}
-{% for r in extra_dnat_rules %}{% set _ = inbound.append(r.split(':')[0].split('/')[0]) %}{% endfor %}
+{% for r in extra_dnat_rules if '-' not in r.split(':')[0] %}{% set _ = inbound.append(r.split(':')[0].split('/')[0]) %}{% endfor %}
 {% if vpn_input_ports %}{% set _ = inbound.append(vpn_input_ports) %}{% endif %}
 {% if inbound %}
       - FIREWALL_VPN_INPUT_PORTS={{ inbound | join(',') }}

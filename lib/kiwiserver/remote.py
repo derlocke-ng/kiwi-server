@@ -11,6 +11,22 @@ import time
 from .util import KiwiError
 
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+KNOWN_HOSTS = ""   # the fleet's own known_hosts (secrets/known_hosts): set by configure()
+
+
+def configure(known_hosts):
+    """The fleet keeps the machines' host keys next to its other secrets: a
+    fresh machine is accepted on first contact, a changed key (a reinstall)
+    is refused with a message that says what to do."""
+    global KNOWN_HOSTS
+    KNOWN_HOSTS = known_hosts or ""
+
+
+def ssh_opts():
+    opts = list(SSH_OPTS)
+    if KNOWN_HOSTS:
+        opts += ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=%s" % KNOWN_HOSTS]
+    return opts
 
 
 def target(host, override=None):
@@ -19,13 +35,18 @@ def target(host, override=None):
 
 
 def _fail(where, r):
-    lines = (r.stderr or b"").decode(errors="replace").strip().splitlines() or ["ssh failed"]
+    text = (r.stderr or b"").decode(errors="replace")
+    lines = text.strip().splitlines() or ["ssh failed"]
+    if "REMOTE HOST IDENTIFICATION HAS CHANGED" in text or "Host key verification failed" in text:
+        host = where.rsplit("@", 1)[-1]
+        raise KiwiError("%s: the machine's SSH host key is not the one on record (reinstalled?) — when that is expected: "
+                        "ssh-keygen -R %s -f %s" % (where, host, KNOWN_HOSTS or "~/.ssh/known_hosts"))
     raise KiwiError("%s: %s" % (where, lines[-1]))
 
 
 def run(tgt, script, data=None, runner=subprocess.run):
     """A shell script as root on the machine; stdout as bytes."""
-    argv = ["ssh"] + SSH_OPTS + [tgt, "sudo sh -c " + shlex.quote(script)]
+    argv = ["ssh"] + ssh_opts() + [tgt, "sudo sh -c " + shlex.quote(script)]
     try:
         r = runner(argv, input=data, capture_output=True)
     except FileNotFoundError:
@@ -38,7 +59,7 @@ def run(tgt, script, data=None, runner=subprocess.run):
 def run_stream(tgt, script, runner=subprocess.run):
     """Like run(), but the output goes straight to the terminal (a role
     script takes minutes and talks)."""
-    argv = ["ssh"] + SSH_OPTS + [tgt, "sudo sh -c " + shlex.quote(script)]
+    argv = ["ssh"] + ssh_opts() + [tgt, "sudo sh -c " + shlex.quote(script)]
     try:
         r = runner(argv, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
@@ -73,7 +94,7 @@ class Tunnel:
         self.proc = None
 
     def __enter__(self):
-        argv = ["ssh"] + SSH_OPTS + ["-o", "ExitOnForwardFailure=yes", "-N",
+        argv = ["ssh"] + ssh_opts() + ["-o", "ExitOnForwardFailure=yes", "-N",
                                      "-L", "%d:%s:%d" % (self.port, self.remote_host, self.remote_port), self.tgt]
         try:
             self.proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

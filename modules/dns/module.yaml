@@ -11,7 +11,14 @@ dependencies:
   required: []
   optional: [vpn-client, vpn-server, reverse-proxy]
 
+# Pi-hole's web server listens on web_port_effective; in a shared namespace
+# the reverse proxy owns 80 and 443, so the effective port moves to 8081
+derived:
+  shares_proxy_namespace: "{{ 'yes' if network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else '' }}"
+  web_port_effective: "{{ web_port or (8081 if (network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode) else 80) }}"
+
 network:
+  listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp"]
   needs_vpn_dnat: false
   # on the host only when Pi-hole has its own address; inside another
   # container's network (the master) clients reach it through the tunnel
@@ -64,7 +71,7 @@ nginx:
     - server_name: "{{ pihole_hostname or 'pihole.' ~ hostname }}"
       # inside the WireGuard server's namespace Pi-hole has no name of its own: nginx
       # in the same namespace reaches it at localhost, from outside through the server
-      proxy_pass: "http://{% if network_mode %}{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else container_prefix ~ '-' ~ network_mode }}{% else %}{{ container_prefix }}-pihole{% endif %}:80"
+      proxy_pass: "http://{% if network_mode %}{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else container_prefix ~ '-' ~ network_mode }}{% else %}{{ container_prefix }}-pihole{% endif %}:{{ web_port_effective }}"
       when: has_reverse_proxy
       comment: Pi-hole admin
 
@@ -97,6 +104,12 @@ settings:
   - key: web_ui_port
     type: int
     default: 8080
+  - key: web_port
+    type: int
+    group: Advanced
+    label: Web server port inside the container
+    help: "Empty: 80, or 8081 when Pi-hole shares the WireGuard server's network namespace with the reverse proxy (the master), which owns 80 and 443 there."
+    default: 0
   - key: dhcp_enabled
     type: bool
     group: DHCP

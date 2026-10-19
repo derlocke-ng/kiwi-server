@@ -43,6 +43,13 @@ settings:
     label: LAN interface
     help: "The physical interface facing the LAN (eth0, enp1s0). Empty: detected from the default route on first boot."
     default: ""
+  - key: auto_update
+    group: Stack
+    type: enum
+    options: ["registry", "off"]   # quoted: a bare off is YAML's false
+    label: Automatic image updates
+    help: "registry: the weekly kiwi-stack update pulls newer images of the same tag (podman auto-update; compose pull). off: images change only with an apply. Pin the module image tags to a major line before relying on registry."
+    default: registry
   - key: runtime
     group: Stack
     type: enum

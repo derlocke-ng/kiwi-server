@@ -26,7 +26,7 @@ services:
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ wg_port }}:51820/udp"
       - "127.0.0.1:51821:51821/tcp"
 {% if has_dns and module_config.get('dns', {}).get('network_mode') == 'vpn-server' %}
-      - "127.0.0.1:8080:80/tcp"
+      - "127.0.0.1:8080:{{ module_config.get('dns', {}).get('web_port') or 8081 }}/tcp"
 {% endif %}
     sysctls:
       - net.ipv4.ip_forward=1

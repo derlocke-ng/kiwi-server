@@ -756,6 +756,20 @@ class TestModules(Base):
         with self.assertRaisesRegex(KiwiError, "not in the stack"):
             quadlet.from_compose(bad)
 
+    def test_auto_update_setting_and_host_resolver(self):
+        host, role, spec = self.spec("m1", role="node", **{"node": self.node_gw(preset="gateway")})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertIn("AutoUpdate=registry", b.quadlets["kn-pihole.container"])
+        self.assertEqual(b.dns_ip, b.container_ips["dns"])
+        host, role, spec = self.spec("m2", role="node", **{"node": self.node_gw(preset="gateway", auto_update="off")})
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertNotIn("AutoUpdate=", b.quadlets["kn-pihole.container"])
+        self.assertEqual(b.auto_update, "off")
+        host, role, spec = self.spec("sh3", role="node", **{"node": self.node_cloud(preset="cloud")})
+        self.assertEqual(modmod.Renderer(self.ms).render(spec).dns_ip, "")   # no dns module: the host keeps its resolver
+        host, role, spec = self.spec("gate", role="master", **{"master": self.master()})
+        self.assertEqual(modmod.Renderer(self.ms).render(spec).dns_ip, "172.64.0.3")   # Pi-hole at the WireGuard server's address
+
     def test_port_ranges(self):
         self.assertEqual(modmod._port_range("27000-27100"), (27000, 27100))
         with self.assertRaisesRegex(KiwiError, "host port 27050/udp"):

@@ -63,7 +63,7 @@ def _is_secret(value, secrets):
     return bool(v) and any(sec and (sec == v or (len(sec) >= 8 and sec in v)) for sec in secrets)
 
 
-def container_unit(service, body, networks, services, secrets=(), env_file=None):
+def container_unit(service, body, networks, services, secrets=(), env_file=None, auto_update=True):
     """One .container quadlet for a compose service. Returns (unit text, env
     file text or None): environment entries that carry a secret-typed setting
     go into a root-only env file instead of the unit, which any local user can
@@ -111,7 +111,8 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None)
         unit.append("After=%s" % _unit_name(r))
     container.insert(0, "Image=%s" % body["image"])
     container.insert(1, "ContainerName=%s" % (body.get("container_name") or service))
-    container.append("AutoUpdate=registry")
+    if auto_update:
+        container.append("AutoUpdate=registry")
     if body.get("hostname"):
         container.append("HostName=%s" % body["hostname"])
     if body.get("init"):
@@ -228,7 +229,7 @@ def from_compose(compose, description="Kiwi Server stack", secrets=(), env_dir="
     return from_compose_with_env(compose, description, secrets, env_dir)[0]
 
 
-def from_compose_with_env(compose, description="Kiwi Server stack", secrets=(), env_dir=""):
+def from_compose_with_env(compose, description="Kiwi Server stack", secrets=(), env_dir="", auto_update=True):
     """(quadlets, env files): env files are {relative path under the stack
     directory: text}, referenced from the units as <env_dir>/<service>.env."""
     services = compose.get("services") or {}
@@ -238,7 +239,7 @@ def from_compose_with_env(compose, description="Kiwi Server stack", secrets=(), 
         out["%s.network" % n] = network_unit(n, body)
     for svc, body in services.items():
         env_file = ("%s/%s.env" % (env_dir.rstrip("/"), svc)) if env_dir and secrets else None
-        text, env_text = container_unit(svc, body, networks, services, secrets, env_file)
+        text, env_text = container_unit(svc, body, networks, services, secrets, env_file, auto_update)
         out["%s.container" % svc] = text
         if env_text:
             envs["kiwi/env/%s.env" % svc] = env_text

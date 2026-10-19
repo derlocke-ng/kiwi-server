@@ -48,6 +48,15 @@ and the first boot; nothing here has booted on hardware yet.
   with a suggestion; `kiwi-server <command> -h` shows that command's own
   usage and options.
 - The role script is left 0600 on the machine after a run.
+- **`auto_update: registry | off`** as a stack setting (default registry, as
+  before); the images this project is sure about are pinned to a line:
+  `weejewel/wg-easy:7`, `qmcgaw/gluetun:v3`, `nginx:1`,
+  `portainer-ce:lts`. The others still follow `latest` until a verified pin
+  list exists (ROADMAP, problem 13).
+- **The host resolves through its own Pi-hole** on CoreOS and uCore
+  (systemd-resolved: the stack's Pi-hole first, Quad9 behind it), so the
+  fleet's names and the blocklist hold for the host itself, not only for its
+  containers. Debian without systemd-resolved keeps its resolver.
 
 ## 2.4.0 — the fleet talks to its machines
 

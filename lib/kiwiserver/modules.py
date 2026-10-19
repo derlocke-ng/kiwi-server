@@ -186,7 +186,7 @@ class StackSpec:
                  docker_subnet=None, mtu=1412, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
-                 ca_cert=None):
+                 ca_cert=None, auto_update="registry"):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -211,6 +211,7 @@ class StackSpec:
         self.runtime = runtime
         # the fleet CA (PEM) for containers that call back into the fleet over TLS
         self.ca_cert = ca_cert.decode() if isinstance(ca_cert, bytes) else (ca_cert or "")
+        self.auto_update = auto_update or "registry"
 
 
 class Bundle:
@@ -631,7 +632,7 @@ class Renderer:
             secrets = self.secret_values(spec, ordered)
             bundle.quadlets, envs = quadlet.from_compose_with_env(
                 bundle.compose, "Kiwi Server stack on %s (%s)" % (spec.hostname, ", ".join(ordered)),
-                secrets, spec.docker_dir + "/kiwi/env")
+                secrets, spec.docker_dir + "/kiwi/env", auto_update=(spec.auto_update == "registry"))
             for rel, text in envs.items():
                 bundle.add_file(rel, text, 0o600)
 
@@ -729,6 +730,9 @@ class Renderer:
         bundle.mesh_subnet = spec.mesh_subnet if base["mesh_via"] else ""
         # the host's own names point at itself: its services are published on the host
         bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip else ip, n) for ip, n in spec.dns_records]
+        # the host's own resolver: this stack's Pi-hole, when there is one
+        bundle.dns_ip = base.get("dns_container_ip") or "" if "dns" in ordered else ""
+        bundle.auto_update = spec.auto_update
         return bundle
 
 

@@ -258,11 +258,22 @@ ks_stack_host_prep() {
     # Pi-hole wants port 53 on the host; systemd-resolved's stub listener (Fedora
     # CoreOS, uCore) sits on 127.0.0.53:53 and would block it. Debian's default
     # install has no systemd-resolved, so nothing happens there.
-    if (( KS_STACK_NO_RESOLVED_STUB )) && systemctl is-active -q systemd-resolved 2>/dev/null; then
-        ks_say "turning off systemd-resolved's stub listener (port 53 goes to the dns module)"
+    if systemctl is-active -q systemd-resolved 2>/dev/null && { (( KS_STACK_NO_RESOLVED_STUB )) || [[ -n ${KS_STACK_DNS_IP:-} ]]; }; then
+        # the stub listener on 127.0.0.53:53 would block the dns module's port 53; and the
+        # host itself asks this stack's Pi-hole (Quad9 behind it while the stack is down),
+        # so the fleet's names and the blocklist hold for the host, not only its containers
+        if [[ -n ${KS_STACK_DNS_IP:-} ]]; then
+            ks_say "systemd-resolved: the host resolves through this stack's Pi-hole at $KS_STACK_DNS_IP (Quad9 while it is down); stub listener off"
+        else
+            ks_say "turning off systemd-resolved's stub listener (port 53 goes to the dns module)"
+        fi
         install -d -m 0755 /etc/systemd/resolved.conf.d
-        printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/90-kiwi-stack.conf
-        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+        {
+            echo '[Resolve]'
+            (( KS_STACK_NO_RESOLVED_STUB )) && echo 'DNSStubListener=no'
+            if [[ -n ${KS_STACK_DNS_IP:-} ]]; then echo "DNS=$KS_STACK_DNS_IP 9.9.9.9 149.112.112.112"; echo 'Domains=~.'; fi
+        } > /etc/systemd/resolved.conf.d/90-kiwi-stack.conf
+        (( KS_STACK_NO_RESOLVED_STUB )) && ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
         systemctl restart systemd-resolved
     fi
 }
@@ -403,6 +414,7 @@ ks_stack_unpack() {
         echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
         echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
         echo "STACK_SEED_ID=${KS_SEED_ID:-}"
+        echo "STACK_AUTO_UPDATE=${KS_STACK_AUTO_UPDATE:-registry}"
     } | ks_write "$KS_STACK_ENV" 0644
 }
 
@@ -488,7 +500,7 @@ if [[ $STACK_RUNTIME == podman ]]; then
         start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; host_units restart --no-block ;;
         stop)    host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
-        update)  podman auto-update; podman image prune -f >/dev/null; mesh_route; host_units restart --no-block ;;
+        update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then podman auto-update; podman image prune -f >/dev/null; else echo "auto_update is off: images change with an apply"; fi; mesh_route; host_units restart --no-block ;;
         status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager; verify || true ;;
         verify)  verify ;;
         logs)    if [[ -n ${2:-} ]]; then journalctl -f -u "$2.service"; else mapfile -t u < <(units); journalctl -f "${u[@]/#/-u}"; fi ;;
@@ -500,7 +512,7 @@ else
         start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
         stop)    host_units stop; compose down ;;
         restart) "$0" stop; "$0" start ;;
-        update)  compose pull; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
+        update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then compose pull; fi; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
         status)  compose ps; host_units status --no-pager; verify || true ;;
         verify)  verify ;;
         logs)    compose logs --follow "${@:2}" ;;

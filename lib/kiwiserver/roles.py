@@ -254,7 +254,8 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None):
         module_config=host.module_settings, files=host.module_files,
         dns_records=dns_records or [], service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",
-        domain=host.domain, runtime=rs.get("runtime") or "podman", ca_cert=ca_cert)
+        domain=host.domain, runtime=rs.get("runtime") or "podman", ca_cert=ca_cert,
+        auto_update=rs.get("auto_update") or "registry")
 
 
 def service_user(host):
@@ -356,6 +357,8 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),
             _bash_var("KS_STACK_NO_RESOLVED_STUB", bool(getattr(bundle, "no_resolved_stub", False))),
             _bash_var("KS_STACK_IMAGES", list(getattr(bundle, "images", []))),
+            _bash_var("KS_STACK_DNS_IP", getattr(bundle, "dns_ip", "") or ""),
+            _bash_var("KS_STACK_AUTO_UPDATE", getattr(bundle, "auto_update", "registry") or "registry"),
             _bash_var("KS_SEED_ID", host.fleet.seed_id() if os.path.isfile(host.fleet.resolve_path("secrets/seed")) else ""),
         ]
         for rel, (content, _mode) in sorted(bundle.files.items()):

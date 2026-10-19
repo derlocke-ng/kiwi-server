@@ -3,7 +3,8 @@
 # machines (kiwi-node, kiwi-master) on Fedora CoreOS, uCore and Debian.
 #
 # A launcher: the work is in the kiwiserver Python package next to this file
-# (a checkout: ../lib/kiwiserver; installed: ../lib/kiwi-server/kiwiserver).
+# and the kiwimodules renderer beside it (a checkout: ../lib/; installed:
+# ../lib/kiwi-server/).
 # It needs python3 with PyYAML — both in the Silverblue/Bluefin base image.
 set -euo pipefail
 

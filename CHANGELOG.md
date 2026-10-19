@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **The renderer is its own package, `lib/kiwimodules`** (modules, quadlets,
+  the settings schema, the profile loader, settings resolution, the stack
+  manifest), the third step of the split (docs/ROADMAP.md). kiwi-server
+  imports it; nothing in a rendered stack changed (tests/golden). The secret
+  derivation and the seed id live there now, shared with the fleet.
+- **`python3 -m kiwimodules render machine.yaml -o DIR`** renders one
+  machine's stack from a one-machine file, without a fleet, into a bundle
+  directory that `sudo kiwi-stack apply DIR` installs; `modules` and
+  `profiles` list what there is. The same seed and settings give the same
+  bundle kiwi-server renders for that host (tested byte for byte).
+- The installer copies `lib/kiwimodules`; CI compiles it and shellchecks
+  `roles/common/kiwi-stack`.
+
 ## 2.5.0 — the stack is trustworthy before anything is built on it
 
 The first bug round of the roadmap (docs/ROADMAP.md), on the rendered stacks

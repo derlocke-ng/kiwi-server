@@ -49,7 +49,7 @@ do_install() {
     say "installing the library to $LIB"
     rm -rf "$LIB"
     mkdir -p "$LIB"
-    cp -r "$SRC/lib/kiwiserver" "$SRC/roles" "$SRC/modules" "$SRC/container" "$SRC/examples" "$LIB/"
+    cp -r "$SRC/lib/kiwiserver" "$SRC/lib/kiwimodules" "$SRC/roles" "$SRC/modules" "$SRC/container" "$SRC/examples" "$LIB/"
     find "$LIB" -name '__pycache__' -type d -prune -exec rm -rf {} +
     # the example secrets dir holds only a note; the user's own files never come from here
     rm -rf "$LIB/examples/secrets"

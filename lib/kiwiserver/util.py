@@ -8,8 +8,7 @@ import sys
 import warnings
 
 
-class KiwiError(Exception):
-    """A user-facing error: printed as `error: ...`, exit 1, no traceback."""
+from kiwimodules.util import KiwiError, b64, deep_merge, read_bytes, read_text, write_bytes, write_text  # noqa: E402,F401
 
 
 QUIET = False
@@ -78,47 +77,6 @@ def sha512_crypt(password, salt):
         except (OSError, subprocess.CalledProcessError):
             continue
     raise KiwiError("cannot hash a password: need python crypt_r/crypt, openssl or mkpasswd")
-
-
-def b64(data):
-    if isinstance(data, str):
-        data = data.encode()
-    return base64.b64encode(data).decode()
-
-
-def read_bytes(path):
-    with open(path, "rb") as f:
-        return f.read()
-
-
-def read_text(path):
-    with open(path, encoding="utf-8") as f:
-        return f.read()
-
-
-def write_text(path, text, mode=0o644):
-    """Write a file atomically with the requested mode (secrets get 0600)."""
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
-
-
-def write_bytes(path, data, mode=0o644):
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
 
 
 def sha256_file(path):

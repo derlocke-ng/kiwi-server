@@ -143,6 +143,69 @@ class TestGolden(unittest.TestCase):
         self.assertEqual(problems, [], "\n\n".join(problems) +
                          "\n\nA deliberate change: UPDATE_GOLDEN=1 python3 -m unittest tests.test_golden, then commit tests/golden/")
 
+    def test_one_machine_file_renders_the_same_bundle(self):
+        """`python3 -m kiwimodules render` on a machine file (no fleet) must
+        produce sh3's golden bundle byte for byte: the same seed derives the
+        same secrets, the same settings give the same files."""
+        from kiwimodules import cli as kmcli
+        r = cli.Renderer(self.fleet, self.roles, os.path.join(self.tmp, "out"), Toolchain(mode="native"), self.ms)
+        r.scan()
+        records = [[ip, name] for ip, name in r.dns_records()]
+        host = FLEET["hosts"]["sh3"]
+        mdir = os.path.join(self.tmp, "machine")
+        os.makedirs(os.path.join(mdir, "secrets"), mode=0o700)
+        for fn in ("seed", "golden-fullchain.pem", "golden-privkey.pem", "sh3.home.conf"):
+            shutil.copy(os.path.join(self.tmp, "secrets", fn), os.path.join(mdir, "secrets", fn))
+        with open(os.path.join(mdir, "ca.pem"), "w") as f:
+            f.write(CA_PEM)
+        machine = {"name": "sh3", "domain": "home", "target": "ucore", "timezone": "Europe/Berlin",
+                   "admin": {"user": "core"}, "role": "node", "node": host["node"],
+                   "dns_records": records, "master_ip": r._master_ip, "ca_cert": "ca.pem", "seed": "secrets/seed"}
+        with open(os.path.join(mdir, "sh3.yaml"), "w") as f:
+            yaml.safe_dump(machine, f, sort_keys=False)
+        out = os.path.join(self.tmp, "bundle")
+        self.assertEqual(kmcli.main(["render", os.path.join(mdir, "sh3.yaml"), "-o", out]), 0)
+        gdir = os.path.join(GOLDEN, "sh3")
+        self.assertTrue(os.path.isdir(gdir), "no tests/golden/sh3 — run with UPDATE_GOLDEN=1 once")
+        problems, modes = [], []
+        for dp, _dn, fns in os.walk(gdir):
+            for fn in fns:
+                rel = os.path.relpath(os.path.join(dp, fn), gdir)
+                if rel == "meta.txt":
+                    continue
+                p = os.path.join(out, rel)
+                if not os.path.isfile(p):
+                    problems.append("%s: not rendered" % rel)
+                    continue
+                with open(os.path.join(gdir, rel)) as f:
+                    expected = f.read()
+                with open(p, "rb") as f:
+                    got = as_text(f.read())
+                if rel == "stack.sh":
+                    expected = expected.replace("KS_VERSION='VERSION'", "KS_VERSION='kiwi-modules %s'" % kmcli.VERSION)
+                if expected != got:
+                    diff = difflib.unified_diff(expected.splitlines(), got.splitlines(), "golden/sh3/" + rel,
+                                                "kiwi-modules render", lineterm="", n=2)
+                    problems.append("\n".join(list(diff)[:40]))
+        self.assertEqual(problems, [], "\n\n".join(problems))
+        for dp, _dn, fns in os.walk(out):
+            for fn in fns:
+                p = os.path.join(dp, fn)
+                rel = os.path.relpath(p, out)
+                self.assertTrue(os.path.isfile(os.path.join(gdir, rel)), "%s: rendered but not golden" % rel)
+                if not rel.startswith(("host-units/", "quadlets/")) and rel != "stack.sh":
+                    modes.append("%s:%04o" % (rel, os.stat(p).st_mode & 0o777))
+        with open(os.path.join(gdir, "meta.txt")) as f:
+            golden_modes = f.readline().strip()
+        self.assertEqual("modes: " + " ".join(sorted(modes)), golden_modes)
+        # the second run refuses to overwrite
+        self.assertEqual(kmcli.main(["render", os.path.join(mdir, "sh3.yaml"), "-o", out]), 1)
+        # no seed and a generated secret: a clear error, not a traceback
+        del machine["seed"]
+        with open(os.path.join(mdir, "noseed.yaml"), "w") as f:
+            yaml.safe_dump(machine, f, sort_keys=False)
+        self.assertEqual(kmcli.main(["render", os.path.join(mdir, "noseed.yaml"), "-o", out + "2"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

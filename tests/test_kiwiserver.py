@@ -1990,6 +1990,30 @@ class TestCerts(Base):
 
 
 class TestCli(Base):
+    def test_a_reader_that_left_is_not_an_error(self):
+        """`kiwi-server script … | head -1` under pipefail: the output still
+        buffered at exit meets a closed pipe, and the interpreter's own flush
+        used to turn that into exit 120 (CI buffers; a terminal session or
+        PYTHONUNBUFFERED hides it)."""
+        code = ("import sys, time\n"
+                "sys.path.insert(0, %r)\n"
+                "from kiwiserver import cli\n"
+                "orig = cli.cmd_targets\n"
+                "def slow(args):\n"
+                "    orig(args)\n"
+                "    time.sleep(0.5)\n"
+                "cli.cmd_targets = slow\n"
+                "sys.exit(cli.main(['targets']))\n") % os.path.join(ROOT, "lib")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+        env["KIWI_SERVER_HOME"] = ROOT
+        reader = subprocess.Popen(["true"], stdin=subprocess.PIPE)
+        writer = subprocess.Popen([sys.executable, "-c", code], stdout=reader.stdin, stderr=subprocess.PIPE, env=env)
+        reader.stdin.close()
+        reader.wait()
+        _out, err = writer.communicate(timeout=30)
+        self.assertEqual(writer.returncode, 0, err.decode())
+        self.assertNotIn(b"BrokenPipeError", err)
+
     def run_cli(self, *args):
         from io import StringIO
         import contextlib

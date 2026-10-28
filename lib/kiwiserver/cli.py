@@ -1022,6 +1022,7 @@ def main(argv=None):
     util.QUIET = bool(getattr(args, "quiet", False))
     try:
         args.fn(args)
+        sys.stdout.flush()      # a closed pipe must surface here, not in the interpreter's exit flush
     except KiwiError as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

@@ -80,9 +80,12 @@ def main(argv=None):
         return 0
     try:
         args.fn(args)
+        sys.stdout.flush()
     except KiwiError as e:
         print("error: %s" % e, file=sys.stderr)
         return 1
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     return 0
 
 

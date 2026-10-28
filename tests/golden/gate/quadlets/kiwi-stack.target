@@ -1,0 +1,8 @@
+# kiwi-server stack — generated
+[Unit]
+Description=Kiwi Server stack on gate.home (vpn-client, vpn-server, dns, tor, reverse-proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Install]
+WantedBy=multi-user.target

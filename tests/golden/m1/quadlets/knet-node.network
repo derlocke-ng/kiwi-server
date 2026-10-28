@@ -1,0 +1,7 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Network]
+NetworkName=knet-node
+Driver=bridge
+Subnet=172.128.0.0/24
+Gateway=172.128.0.1
+Options=mtu=1412

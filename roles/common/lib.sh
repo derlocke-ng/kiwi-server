@@ -60,16 +60,41 @@ ks_parent_dir() { # PATH   — the parent exists afterwards; an existing one kee
     d=$(dirname "$1")
     [[ -d $d ]] || install -d -m 0755 "$d"
 }
-ks_file() { # KEY DEST [MODE] [OWNER]   — write a file embedded by the generator
-    local key=$1 dest=$2 mode=${3:-0600} owner=${4:-root:root}
-    [[ -n ${KS_FILES[$key]:-} ]] || ks_die "no embedded file for setting '$key'"
+# Files reach the machine either embedded in the role script (KS_FILES, base64)
+# or as a bundle directory (KS_BUNDLE_DIR: what `kiwi-modules render` writes and
+# `kiwi-stack apply DIR` reads) — the same keys name the same files.
+declare -p KS_FILES >/dev/null 2>&1 || declare -gA KS_FILES=()
+ks_bundle_path() { # KEY -> path inside $KS_BUNDLE_DIR
+    local key=$1
+    case $key in
+        stack/*)        echo "$KS_BUNDLE_DIR/${key#stack/}" ;;
+        unit/*)         echo "$KS_BUNDLE_DIR/host-units/${key#unit/}" ;;
+        quadlet/*)      echo "$KS_BUNDLE_DIR/quadlets/${key#quadlet/}" ;;
+        ca_cert)        echo "$KS_BUNDLE_DIR/kiwi/ca/kiwiCA.crt" ;;
+        kiwi-stack)     echo "${KS_STACK_SELF:-/usr/local/bin/kiwi-stack}" ;;
+        kiwi-stack-lib) echo "${KS_STACK_LIB_SELF:-/usr/local/lib/kiwi-stack/lib.sh}" ;;
+        *)              echo "$KS_BUNDLE_DIR/$key" ;;
+    esac
+}
+ks_has_file() { # KEY
+    [[ -n ${KS_FILES[$1]:-} ]] && return 0
+    [[ -n ${KS_BUNDLE_DIR:-} && -f $(ks_bundle_path "$1") ]]
+}
+ks_file() { # KEY DEST [MODE] [OWNER]   — write a file the generator provided
+    local key=$1 dest=$2 mode=${3:-0600} owner=${4:-root:root} src
     ks_parent_dir "$dest"
-    printf '%s' "${KS_FILES[$key]}" | base64 -d > "$dest.tmp"
+    if [[ -n ${KS_FILES[$key]:-} ]]; then
+        printf '%s' "${KS_FILES[$key]}" | base64 -d > "$dest.tmp"
+    elif [[ -n ${KS_BUNDLE_DIR:-} ]] && src=$(ks_bundle_path "$key") && [[ -f $src ]]; then
+        [[ $src -ef $dest ]] && { rm -f "$dest.tmp" 2>/dev/null; return 0; }   # installing itself over itself
+        cp "$src" "$dest.tmp"
+    else
+        ks_die "no file for '$key' — neither embedded nor in ${KS_BUNDLE_DIR:-a bundle directory}"
+    fi
     chmod "$mode" "$dest.tmp"
     chown "$owner" "$dest.tmp"
     mv -f "$dest.tmp" "$dest"
 }
-ks_has_file() { [[ -n ${KS_FILES[$1]:-} ]]; }
 
 ks_write() { # DEST [MODE] [OWNER]   — content on stdin
     local dest=$1 mode=${2:-0644} owner=${3:-root:root}
@@ -441,86 +466,10 @@ ks_stack_pull() {
 }
 
 ks_stack_install_cli() {
-    ks_write /usr/local/bin/kiwi-stack 0755 <<'KIWI_STACK'
-#!/usr/bin/env bash
-# kiwi-stack — run the stack kiwi-server put on this machine.
-#   kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart
-# runtime podman: the containers are systemd units (quadlets in /etc/containers/systemd)
-# runtime docker: docker compose with the rendered docker-compose.yml
-set -euo pipefail
-# shellcheck disable=SC1091
-. /etc/kiwi-server/stack.env
-cd "$STACK_DIR"
-compose() { docker compose --file "$STACK_DIR/docker-compose.yml" "$@"; }
-units() { local s; for s in $STACK_SERVICES; do printf '%s.service\n' "$s"; done; }
-# The host units (kn-gateway.service …) are ordered After=kiwi-stack.service,
-# and `start` is kiwi-stack.service's own ExecStart: a blocking restart from
-# here would wait for itself. --no-block queues the restart; systemd runs it
-# once this service is up.
-host_units() { local verb=$1 u; shift; for u in $STACK_UNITS; do systemctl "$verb" "$@" "$u" 2>/dev/null || true; done; }
-# The host and its containers reach the mesh through the VPN client (the WireGuard
-# server on a master): one route via that container's address on the stack bridge.
-# The bridge comes and goes with the stack, so the route is set after every start.
-mesh_route() {
-    [[ -n ${STACK_MESH_VIA:-} && -n ${STACK_MESH_SUBNET:-} ]] || return 0
-    ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA" 2>/dev/null || true
-}
-verify() {
-    # every service of the stack is running, or the names of those that are not;
-    # a unit still (re)starting counts as down — a pull that cannot finish must not pass
-    local s down=() state
-    for s in $STACK_SERVICES; do
-        if [[ $STACK_RUNTIME == podman ]]; then
-            state=$(systemctl is-active "$s.service" 2>/dev/null || true)
-            [[ $state == active ]] || down+=("$s ($state)")
-        else
-            state=$(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)
-            [[ $state == running ]] || down+=("$s ($state)")
-        fi
-    done
-    if (( ${#down[@]} )); then
-        printf 'not running: %s\n' "${down[@]}" >&2
-        return 1
-    fi
-    echo "all ${STACK_SERVICES// /, } running"
-}
-vpn_restart() {
-    [[ -n ${STACK_VPN_CONTAINER:-} ]] || return 0
-    # containers that share the VPN client's network namespace must follow it,
-    # or they are left in a namespace that no longer exists
-    # shellcheck disable=SC2086
-    if [[ $STACK_RUNTIME == podman ]]; then
-        local s; for s in $STACK_VPN_CONTAINER ${STACK_VPN_DEPENDENTS:-}; do systemctl restart "$s.service"; done
-    else
-        docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
-    fi
-}
-if [[ $STACK_RUNTIME == podman ]]; then
-    case "${1:-}" in
-        start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; host_units restart --no-block ;;
-        stop)    host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
-        restart) "$0" stop; "$0" start ;;
-        update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then podman auto-update; podman image prune -f >/dev/null; else echo "auto_update is off: images change with an apply"; fi; mesh_route; host_units restart --no-block ;;
-        status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager; verify || true ;;
-        verify)  verify ;;
-        logs)    if [[ -n ${2:-} ]]; then journalctl -f -u "$2.service"; else mapfile -t u < <(units); journalctl -f "${u[@]/#/-u}"; fi ;;
-        vpn-restart) vpn_restart ;;
-        *) echo "usage: kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart" >&2; exit 1 ;;
-    esac
-else
-    case "${1:-}" in
-        start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
-        stop)    host_units stop; compose down ;;
-        restart) "$0" stop; "$0" start ;;
-        update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then compose pull; fi; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
-        status)  compose ps; host_units status --no-pager; verify || true ;;
-        verify)  verify ;;
-        logs)    compose logs --follow "${@:2}" ;;
-        vpn-restart) vpn_restart ;;
-        *) echo "usage: kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart" >&2; exit 1 ;;
-    esac
-fi
-KIWI_STACK
+    # the kiwi-stack CLI and this library itself, so `kiwi-stack apply DIR` can run a
+    # bundle rendered elsewhere (kiwi-modules) without a role script
+    ks_file kiwi-stack /usr/local/bin/kiwi-stack 0755
+    ks_file kiwi-stack-lib /usr/local/lib/kiwi-stack/lib.sh 0644
 }
 
 ks_stack_units() { # the service that brings the stack up, and the two maintenance timers
@@ -634,6 +583,27 @@ ks_stack_apply() {
     done
     ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|verify|logs"
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done
+}
+
+ks_stack_standalone() { # DIR   — `kiwi-stack apply DIR`: a bundle without a role script
+    local dir=$1
+    [[ $EUID -eq 0 ]] || ks_die "this must run as root"
+    [[ -f $dir/stack.sh ]] || ks_die "$dir is not a stack bundle (no stack.sh) — kiwi-modules render writes one"
+    KS_BUNDLE_DIR=$(readlink -f "$dir")
+    # shellcheck disable=SC1091
+    . "$KS_BUNDLE_DIR/stack.sh"
+    KS_OS=$(ks_detect_os)
+    install -d -m 0700 "$KS_STATE_DIR"
+    exec > >(tee -a "$KS_LOG") 2>&1
+    ks_say "kiwi-stack $KS_VERSION — stack ${KS_STACK_MODULES[*]} on $KS_HOSTNAME from $KS_BUNDLE_DIR ($KS_OS)"
+    trap 'ks_fail $? $LINENO "$BASH_COMMAND"' ERR
+    set -E
+    ks_trust_ca
+    ks_stack_apply
+    trap - ERR
+    rm -f "$KS_FAILED"
+    date -u +%FT%TZ > "$KS_STATE_DIR/stack.applied"
+    ks_say "stack applied — log: $KS_LOG"
 }
 
 # ---- base -----------------------------------------------------------------------------

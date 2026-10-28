@@ -1,0 +1,13 @@
+modes: docker-compose.yml:0600 kiwi/ca/kiwiCA.crt:0644 kiwi/env/nextcloud-aio-database.env:0600 kiwi/env/nextcloud-aio-imaginary.env:0600 kiwi/env/nextcloud-aio-nextcloud.env:0600 kiwi/env/nextcloud-aio-redis.env:0600 kiwi/env/nextcloud-aio-talk.env:0600 kn-nginx/fullchain.pem:0644 kn-nginx/nginx.conf:0644 kn-nginx/privkey.pem:0600 kn-portainer/admin-password:0600 kn-vpn-client/post-rules.txt:0644 kn-vpn-client/wg0.conf:0600
+dirs: kiwi/ca kiwi/env kn-nginx kn-portainer kn-vault kn-vpn-client knnc-data
+ports: 80/tcp 443/tcp 3478/tcp 3478/udp
+services: kn-vpn-client kn-nginx nextcloud-aio-apache nextcloud-aio-database nextcloud-aio-nextcloud nextcloud-aio-notify-push nextcloud-aio-redis nextcloud-aio-collabora nextcloud-aio-talk nextcloud-aio-imaginary kn-vault kn-portainer
+images: docker.io/library/nginx:1 docker.io/portainer/portainer-ce:lts docker.io/qmcgaw/gluetun:v3 docker.io/vaultwarden/server:latest-alpine ghcr.io/nextcloud-releases/aio-apache:latest ghcr.io/nextcloud-releases/aio-collabora:latest ghcr.io/nextcloud-releases/aio-imaginary:latest ghcr.io/nextcloud-releases/aio-nextcloud:latest ghcr.io/nextcloud-releases/aio-notify-push:latest ghcr.io/nextcloud-releases/aio-postgresql:latest ghcr.io/nextcloud-releases/aio-redis:latest ghcr.io/nextcloud-releases/aio-talk:latest
+urls: Nextcloud: https://cloud.sh3.home — user admin, the cloud.admin_password setting | Vaultwarden: https://vault.sh3.home | Portainer: https://portainer.sh3.home or https://127.0.0.1:9443 on the machine
+hosts: 10.8.0.1=gate.home 10.8.0.1=wg.gate.home 10.8.0.1=pihole.gate.home 10.8.0.6=m1.home 10.8.0.6=pihole.m1.home 10.8.0.6=dl.m1.home 10.8.0.6=jd.m1.home 10.8.0.6=portainer.m1.home 127.0.0.1=sh3.home 127.0.0.1=cloud.sh3.home 127.0.0.1=vault.sh3.home 127.0.0.1=portainer.sh3.home 10.8.0.9=min.home
+vpn_dependents: 
+mesh_via: 172.128.0.2 10.8.0.0/16
+dns_ip: 
+sysctl: 
+kernel_modules: tun
+auto_update: registry

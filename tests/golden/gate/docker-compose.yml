@@ -1,0 +1,143 @@
+# kiwi-server stack for gate.home (master) — modules: vpn-client, vpn-server, dns, tor, reverse-proxy
+# Generated; edit the fleet file and render again instead of this file.
+services:
+  km-vpn-client:
+    image: docker.io/qmcgaw/gluetun:v3
+    container_name: km-vpn-client
+    cap_add:
+    - NET_ADMIN
+    devices:
+    - /dev/net/tun:/dev/net/tun
+    environment:
+    - VPN_SERVICE_PROVIDER=mullvad
+    - VPN_TYPE=wireguard
+    - WIREGUARD_PRIVATE_KEY=golden-mullvad-key
+    - WIREGUARD_ADDRESSES=10.66.1.2/32
+    - SERVER_COUNTRIES=Germany
+    - TZ=Europe/Berlin
+    - WIREGUARD_MTU=1412
+    - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
+    - DOT_PROVIDERS=quad9
+    - BLOCK_MALICIOUS=off
+    - UPDATER_PERIOD=24h
+    networks:
+      knet-master:
+        ipv4_address: 172.64.0.2
+    sysctls:
+    - net.ipv4.tcp_mtu_probing=1
+    - net.ipv4.tcp_base_mss=1024
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/km-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
+    extra_hosts:
+    - gate.home:172.64.0.5
+    - wg.gate.home:172.64.0.5
+    - pihole.gate.home:172.64.0.5
+  km-vpn-server:
+    image: docker.io/weejewel/wg-easy:7
+    container_name: km-vpn-server
+    cap_add:
+    - NET_ADMIN
+    - SYS_MODULE
+    environment:
+    - WG_HOST=vpn.example.org
+    - PASSWORD=golden-wg-password
+    - WG_PORT=51820
+    - WG_POST_UP=bash /etc/wireguard/start.sh
+    - WG_PERSISTENT_KEEPALIVE=25
+    - UI_TRAFFIC_STATS=true
+    - WG_DEFAULT_DNS=10.8.0.1
+    - WG_DEFAULT_ADDRESS=10.8.0.x
+    - WG_MTU=1412
+    networks:
+      knet-master:
+        ipv4_address: 172.64.0.3
+    ports:
+    - 51820:51820/udp
+    - 127.0.0.1:51821:51821/tcp
+    - 127.0.0.1:8080:8081/tcp
+    sysctls:
+    - net.ipv4.ip_forward=1
+    - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/km-vpn-server:/etc/wireguard:z
+    extra_hosts:
+    - gate.home:172.64.0.5
+    - wg.gate.home:172.64.0.5
+    - pihole.gate.home:172.64.0.5
+    dns:
+    - 172.64.0.3
+    - 9.9.9.9
+  km-pihole:
+    image: docker.io/pihole/pihole:latest
+    container_name: km-pihole
+    environment:
+    - TZ=Europe/Berlin
+    - FTLCONF_webserver_api_password=golden-pihole-master
+    - FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112
+    - FTLCONF_misc_dnsmasq_lines=strict-order;local=/home/;hostsdir=/etc/mullvad-socks
+    - FTLCONF_dns_listeningMode=all
+    - FTLCONF_webserver_domain=pihole.gate.home
+    - FTLCONF_webserver_port=8081
+    - FTLCONF_dns_hosts=10.8.0.1 gate.home;10.8.0.1 wg.gate.home;10.8.0.1 pihole.gate.home;10.8.0.6 m1.home;10.8.0.6 pihole.m1.home;10.8.0.6 dl.m1.home;10.8.0.6 jd.m1.home;10.8.0.6 portainer.m1.home;10.8.0.25 sh3.home;10.8.0.25 cloud.sh3.home;10.8.0.25 vault.sh3.home;10.8.0.25 portainer.sh3.home;10.8.0.9 min.home
+    network_mode: service:km-vpn-server
+    cap_add:
+    - NET_ADMIN
+    - SYS_TIME
+    - SYS_NICE
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/km-pihole/etc-pihole:/etc/pihole:z
+    - /home/user/docker/km-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
+    - /home/user/docker/km-pihole/mullvad-socks:/etc/mullvad-socks:ro,z
+  km-tor:
+    image: docker.io/dockurr/tor
+    container_name: km-tor
+    network_mode: service:km-vpn-server
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/km-tor/etc:/etc/tor:z
+    - /home/user/docker/km-tor/var:/var/lib/tor:z
+  km-nginx:
+    image: docker.io/library/nginx:1
+    container_name: km-nginx
+    network_mode: service:km-vpn-server
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/km-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+    - /home/user/docker/km-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
+    - /home/user/docker/km-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
+networks:
+  knet-master:
+    name: knet-master
+    driver: bridge
+    driver_opts:
+      com.docker.network.enable_ipv6: 'false'
+      com.docker.network.bridge.name: knet-master
+      com.docker.network.driver.mtu: '1412'
+    ipam:
+      driver: default
+      config:
+      - subnet: 172.64.0.0/24
+        gateway: 172.64.0.1

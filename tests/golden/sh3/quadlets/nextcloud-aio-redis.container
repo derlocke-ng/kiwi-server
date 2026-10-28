@@ -1,0 +1,36 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: nextcloud-aio-redis
+StartLimitIntervalSec=0
+
+[Container]
+Image=ghcr.io/nextcloud-releases/aio-redis:latest
+ContainerName=nextcloud-aio-redis
+Network=knet-node.network
+AutoUpdate=registry
+RunInit=true
+ReadOnly=true
+User=999
+DropCapability=NET_RAW
+Environment=AIO_LOG_LEVEL=warn
+Environment=TZ=Europe/Berlin
+EnvironmentFile=/home/user/docker/kiwi/env/nextcloud-aio-redis.env
+AddHost=sh3.home:172.128.0.5
+AddHost=cloud.sh3.home:172.128.0.5
+AddHost=vault.sh3.home:172.128.0.5
+AddHost=portainer.sh3.home:172.128.0.5
+Volume=nextcloud_aio_redis:/data:rw
+HealthCmd=/healthcheck.sh
+HealthInterval=30s
+HealthTimeout=30s
+HealthStartPeriod=0s
+HealthRetries=3
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

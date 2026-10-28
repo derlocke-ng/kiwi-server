@@ -173,6 +173,15 @@ The six steps agreed with the owner, with the items above folded in.
    both as subtrees pinned by tag (submodules and pip do not survive the
    ostree desktop kiwi-updater installs onto). A golden-output test of every
    preset comes first so no machine applied by 2.4.0 changes.
+   *Status: steps one to four done after 2.5.0 — the on-disk bundle and
+   `kiwi-stack apply DIR`, the golden test, the `kiwimodules` package with
+   the one-machine render, and the two repositories populated
+   (kiwi-modules 0.1.0, kiwi-stack 0.1.0, tagged and released by each
+   repository's release workflow on the first push to main). kiwi-server is still
+   the place both are developed: `tools/split-sync.sh` copies them over and
+   `--check` reports drift. The flip to vendored subtrees pinned by tag
+   waits for the first hardware round, so a fix found there lands in one
+   tree.*
 3. **Port ranges, the `backup:` key and the game module contract.** Module
    `backup: {paths, volumes, exclude, hooks}`, the restic backup module on a
    backup node with per-node credentials from the seed, `kiwi-stack backup`

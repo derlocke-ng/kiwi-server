@@ -42,7 +42,7 @@ _VAR = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
 
 
 def modules_dir():
-    return os.environ.get("KIWI_SERVER_MODULES") or os.path.join(util.home_dir(), "modules")
+    return util.modules_root()
 
 
 def _jinja():

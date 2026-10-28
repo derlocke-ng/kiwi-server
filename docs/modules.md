@@ -236,6 +236,55 @@ carries the same files and, on first boot, `ks_stack_apply` from
 5. enables `kiwi-stack.service` (compose up at boot), the daily VPN restart
    and weekly update timers the stack settings ask for, and the host units.
 
+## Rendering one machine without a fleet: kiwi-modules
+
+The renderer is its own package, `lib/kiwimodules` (kiwi-server imports it;
+`kiwiserver.modules`, `.quadlet` and `.schema` are aliases of it). It renders
+a bundle from a one-machine file, with no fleet, no CA, no ISO:
+
+```sh
+python3 -m kiwimodules render sh3.yaml -o sh3.bundle   # files, host-units/, quadlets/, stack.sh
+python3 -m kiwimodules modules -v                      # the modules and their settings
+python3 -m kiwimodules profiles                        # master, node and its presets
+scp -r sh3.bundle sh3:/tmp/ && ssh sh3 sudo kiwi-stack apply /tmp/sh3.bundle
+```
+
+```yaml
+name: sh3                       # hostname: name.domain unless given
+domain: home
+target: ucore                   # coreos | ucore | debian — what the stack runs on
+timezone: Europe/Berlin
+admin: { user: core }           # the service user default
+role: node                      # the profile: master, or node with a preset
+node:
+  preset: cloud
+  vpn_ip: 10.8.0.25
+  cloud: { admin_password: ... }
+dns_records: [[10.8.0.1, gate.home], [10.8.0.25, sh3.home]]   # optional, the network's names
+master_ip: 10.8.0.1             # optional: DNS upstream and mesh route
+ca_cert: ca.pem                 # optional: the network's CA, trusted in the containers
+seed: secrets/seed              # 32 random bytes; generated secrets derive from it
+```
+
+Paths are relative to the file; `secrets/<hostname>.conf` is the WireGuard
+config fallback as in a fleet. The seed and the hostname decide every
+generated secret, so the same machine file and seed render the same bundle
+kiwi-server renders for that host (tests/test_golden.py checks this against
+the golden sh3). Without a seed every secret-typed setting must be given.
+`kiwi-stack apply DIR` on the machine (installed by any kiwi-server role
+script, or from the kiwi-stack repository) does what the role script's
+first boot does for the stack: directories, units, quadlets, ports, the
+pull, the start and `kiwi-stack verify`.
+
+The same package, modules and profiles are the
+[kiwi-modules](https://github.com/derlocke-ng/kiwi-modules) repository, and
+the machine side (`roles/common/lib.sh`, `roles/common/kiwi-stack`) the
+[kiwi-stack](https://github.com/derlocke-ng/kiwi-stack) repository. This
+tree is where both are developed for now: `tools/split-sync.sh` copies the
+files into checkouts next to this one (`../kiwi-modules`, `../kiwi-stack`)
+and `tools/split-sync.sh --check` says whether they drifted. Run the check
+before a release of either.
+
 ## What the renderer adds to every stack
 
 - **Secrets stay out of the unit files.** A value of a `secret` setting never

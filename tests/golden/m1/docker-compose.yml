@@ -1,0 +1,227 @@
+# kiwi-server stack for m1.home (node) — modules: vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
+# Generated; edit the fleet file and render again instead of this file.
+services:
+  kn-vpn-client:
+    image: docker.io/qmcgaw/gluetun:v3
+    container_name: kn-vpn-client
+    cap_add:
+    - NET_ADMIN
+    devices:
+    - /dev/net/tun:/dev/net/tun
+    environment:
+    - VPN_SERVICE_PROVIDER=custom
+    - VPN_TYPE=wireguard
+    - TZ=Europe/Berlin
+    - WIREGUARD_MTU=1412
+    - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
+    - DOT_PROVIDERS=quad9
+    - BLOCK_MALICIOUS=off
+    - FIREWALL_VPN_INPUT_PORTS=80,443
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.2
+    sysctls:
+    - net.ipv4.tcp_mtu_probing=1
+    - net.ipv4.tcp_base_mss=1024
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
+    - /home/user/docker/kn-vpn-client/wg0.conf:/gluetun/wireguard/wg0.conf:z
+    extra_hosts:
+    - m1.home:172.128.0.5
+    - pihole.m1.home:172.128.0.5
+    - dl.m1.home:172.128.0.5
+    - jd.m1.home:172.128.0.5
+    - portainer.m1.home:172.128.0.5
+  kn-pihole:
+    image: docker.io/pihole/pihole:latest
+    container_name: kn-pihole
+    hostname: pihole
+    environment:
+    - TZ=Europe/Berlin
+    - FTLCONF_webserver_api_password=golden-pihole-m1
+    - FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112
+    - FTLCONF_misc_dnsmasq_lines=strict-order;server=/home/10.8.0.1
+    - FTLCONF_dns_listeningMode=all
+    - FTLCONF_webserver_domain=pihole.m1.home
+    - FTLCONF_dns_hosts=10.8.0.1 gate.home;10.8.0.1 wg.gate.home;10.8.0.1 pihole.gate.home;10.8.0.6 m1.home;10.8.0.6 pihole.m1.home;10.8.0.6 dl.m1.home;10.8.0.6 jd.m1.home;10.8.0.6 portainer.m1.home;10.8.0.25 sh3.home;10.8.0.25 cloud.sh3.home;10.8.0.25 vault.sh3.home;10.8.0.25 portainer.sh3.home;10.8.0.9 min.home
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.4
+    ports:
+    - 53:53/tcp
+    - 53:53/udp
+    - 127.0.0.1:8080:80/tcp
+    cap_add:
+    - NET_ADMIN
+    - SYS_TIME
+    - SYS_NICE
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-pihole/etc-pihole:/etc/pihole:z
+    - /home/user/docker/kn-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
+    extra_hosts:
+    - m1.home:172.128.0.5
+    - pihole.m1.home:172.128.0.5
+    - dl.m1.home:172.128.0.5
+    - jd.m1.home:172.128.0.5
+    - portainer.m1.home:172.128.0.5
+  kn-dhcphelper:
+    image: docker.io/homeall/dhcphelper:latest
+    container_name: kn-dhcphelper
+    network_mode: host
+    environment:
+      IP: 172.128.0.4
+      TZ: Europe/Berlin
+    cap_add:
+    - NET_ADMIN
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+  kn-nginx:
+    image: docker.io/library/nginx:1
+    container_name: kn-nginx
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.5
+    ports:
+    - 80:80
+    - 443:443
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+    - /home/user/docker/kn-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
+    - /home/user/docker/kn-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
+    extra_hosts:
+    - m1.home:172.128.0.5
+    - pihole.m1.home:172.128.0.5
+    - dl.m1.home:172.128.0.5
+    - jd.m1.home:172.128.0.5
+    - portainer.m1.home:172.128.0.5
+    dns:
+    - 172.128.0.4
+    - 9.9.9.9
+  kn-transmission:
+    image: lscr.io/linuxserver/transmission:latest
+    container_name: kn-transmission
+    network_mode: service:kn-vpn-client
+    depends_on:
+    - kn-vpn-client
+    environment:
+    - PUID=1000
+    - PGID=1000
+    - TZ=Europe/Berlin
+    - USER=user
+    - PASS=golden-transmission
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-transmission:/config:z
+    - /mnt/dl:/downloads:z
+  kn-jdownloader:
+    image: docker.io/jlesage/jdownloader-2:latest
+    container_name: kn-jdownloader
+    network_mode: service:kn-vpn-client
+    depends_on:
+    - kn-vpn-client
+    environment:
+    - TZ=Europe/Berlin
+    - USER_ID=1000
+    - GROUP_ID=1000
+    - SECURE_CONNECTION=1
+    - WEB_AUTHENTICATION=1
+    - WEB_AUTHENTICATION_USERNAME=user
+    - WEB_AUTHENTICATION_PASSWORD=golden-transmission
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+    - /home/user/docker/kn-jdownloader:/config:z
+    - /mnt/dl:/output:z
+  kn-portainer:
+    image: docker.io/portainer/portainer-ce:lts
+    container_name: kn-portainer
+    ports:
+    - 127.0.0.1:9443:9443
+    security_opt:
+    - label:disable
+    volumes:
+    - portainer_data:/data
+    - /run/podman/podman.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.250
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    extra_hosts:
+    - m1.home:172.128.0.5
+    - pihole.m1.home:172.128.0.5
+    - dl.m1.home:172.128.0.5
+    - jd.m1.home:172.128.0.5
+    - portainer.m1.home:172.128.0.5
+    dns:
+    - 172.128.0.4
+    - 9.9.9.9
+  kn-sftp:
+    image: docker.io/jmcombs/sftp
+    container_name: kn-sftp
+    volumes:
+    - /home/user/docker/kn-sftp/users.conf:/etc/sftp/users.conf:ro,z
+    - /mnt/dl:/home/user/Downloads:z
+    ports:
+    - '2224:22'
+    restart: unless-stopped
+    networks:
+      knet-node:
+        ipv4_address: 172.128.0.251
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    extra_hosts:
+    - m1.home:172.128.0.5
+    - pihole.m1.home:172.128.0.5
+    - dl.m1.home:172.128.0.5
+    - jd.m1.home:172.128.0.5
+    - portainer.m1.home:172.128.0.5
+    dns:
+    - 172.128.0.4
+    - 9.9.9.9
+volumes:
+  portainer_data:
+    name: portainer_data
+networks:
+  knet-node:
+    name: knet-node
+    driver: bridge
+    driver_opts:
+      com.docker.network.enable_ipv6: 'false'
+      com.docker.network.bridge.name: knet-node
+      com.docker.network.driver.mtu: '1412'
+    ipam:
+      driver: default
+      config:
+      - subnet: 172.128.0.0/24
+        gateway: 172.128.0.1

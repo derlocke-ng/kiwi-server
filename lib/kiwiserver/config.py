@@ -20,6 +20,7 @@ import yaml
 
 from . import util
 from .util import KiwiError
+from kiwimodules.util import deep_merge as _deep_merge
 
 TARGETS = {
     "coreos": "Fedora CoreOS, stable stream — Zincati applies updates in your window",
@@ -195,16 +196,8 @@ def unknown_keys(block, roles, where):
 
 
 def deep_merge(base, over, path=()):
-    out = copy.deepcopy(base)
-    for k, v in (over or {}).items():
-        p = path + (k,)
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = deep_merge(out[k], v, p)
-        elif isinstance(v, list) and isinstance(out.get(k), list) and p in EXTEND_LISTS:
-            out[k] = out[k] + [x for x in v if x not in out[k]]
-        else:
-            out[k] = copy.deepcopy(v)
-    return out
+    """The fleet's merge: lists replace, except the ones in EXTEND_LISTS."""
+    return _deep_merge(base, over, path, EXTEND_LISTS)
 
 
 def ip_range(spec):
@@ -255,6 +248,7 @@ class Host:
                                             overrides.get(self.role) or {}) if self.role else {}
         self.role_settings = {}   # filled by roles.resolve_settings
         self.role_files = {}      # key -> bytes, embedded into the role script
+        self.secrets = fleet      # what the resolver asks for derived secrets, file paths and the seed
         self.modules = []         # module roles: the resolved module list
         self.module_settings = {}  # module -> {key: value}
         self.module_files = {}    # "module/key" -> bytes
@@ -480,24 +474,21 @@ class Fleet:
             raise KiwiError("%s is too short to be a seed — remove it to make a new one" % p)
         return data
 
+    def has_seed(self):
+        return os.path.isfile(self.resolve_path("secrets/seed"))
+
     def seed_id(self):
         """A short name for the seed, carried onto the machines: an apply with
         another seed would hand running databases passwords they do not know."""
-        import hashlib
-        return hashlib.sha256(b"kiwi-seed-id:" + self.seed()).hexdigest()[:12]
+        from kiwimodules.machine import seed_id
+        return seed_id(self.seed())
 
     def derive_secret(self, *parts, length=32):
-        """A generated secret: letters and digits only (AIO forbids @ and : in
-        passwords), stable for the same seed and the same parts."""
-        import hashlib
-        import hmac
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-        out, counter = "", 0
-        while len(out) < length:
-            digest = hmac.new(self.seed(), (":".join(parts) + ":%d" % counter).encode(), hashlib.sha256).digest()
-            out += "".join(alphabet[b % len(alphabet)] for b in digest)
-            counter += 1
-        return out[:length]
+        """A generated secret, stable for the same seed and the same parts:
+        the derivation lives in kiwimodules.machine, shared with the
+        standalone render."""
+        from kiwimodules.machine import derive_secret
+        return derive_secret(self.seed(), *parts, length=length)
 
     def names(self):
         return list(self.hosts)

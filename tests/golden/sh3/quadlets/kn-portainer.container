@@ -1,0 +1,28 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-portainer
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/portainer/portainer-ce:lts
+ContainerName=kn-portainer
+Network=knet-node.network
+IP=172.128.0.250
+AutoUpdate=registry
+SecurityLabelDisable=true
+AddHost=sh3.home:172.128.0.5
+AddHost=cloud.sh3.home:172.128.0.5
+AddHost=vault.sh3.home:172.128.0.5
+AddHost=portainer.sh3.home:172.128.0.5
+Volume=portainer_data:/data
+Volume=/run/podman/podman.sock:/var/run/docker.sock
+PublishPort=127.0.0.1:9443:9443
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

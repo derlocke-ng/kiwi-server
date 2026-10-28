@@ -1,0 +1,30 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-jdownloader
+Requires=kn-vpn-client.service
+After=kn-vpn-client.service
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/jlesage/jdownloader-2:latest
+ContainerName=kn-jdownloader
+Network=container:kn-vpn-client
+AutoUpdate=registry
+Environment=TZ=Europe/Berlin
+Environment=USER_ID=1000
+Environment=GROUP_ID=1000
+Environment=SECURE_CONNECTION=1
+Environment=WEB_AUTHENTICATION=1
+Environment=WEB_AUTHENTICATION_USERNAME=user
+EnvironmentFile=/home/user/docker/kiwi/env/kn-jdownloader.env
+Volume=/home/user/docker/kn-jdownloader:/config:z
+Volume=/mnt/dl:/output:z
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

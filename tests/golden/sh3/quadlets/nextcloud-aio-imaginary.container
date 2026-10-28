@@ -1,0 +1,37 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: nextcloud-aio-imaginary
+StartLimitIntervalSec=0
+
+[Container]
+Image=ghcr.io/nextcloud-releases/aio-imaginary:latest
+ContainerName=nextcloud-aio-imaginary
+Network=knet-node.network
+AutoUpdate=registry
+RunInit=true
+ReadOnly=true
+User=65534
+AddCapability=SYS_NICE
+DropCapability=NET_RAW
+Tmpfs=/tmp
+Environment=AIO_LOG_LEVEL=warn
+Environment=TZ=Europe/Berlin
+EnvironmentFile=/home/user/docker/kiwi/env/nextcloud-aio-imaginary.env
+AddHost=sh3.home:172.128.0.5
+AddHost=cloud.sh3.home:172.128.0.5
+AddHost=vault.sh3.home:172.128.0.5
+AddHost=portainer.sh3.home:172.128.0.5
+HealthCmd=/healthcheck.sh
+HealthInterval=30s
+HealthTimeout=30s
+HealthStartPeriod=0s
+HealthRetries=3
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

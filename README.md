@@ -51,7 +51,7 @@ kiwi catalog add https://github.com/derlocke-ng/kiwi-catalog.git   # once per ma
 kiwi install kiwi-server
 ```
 
-kiwi follows the latest version tag (`v2.5.0`), updates it in the background
+kiwi follows the latest version tag (`v2.6.0`), updates it in the background
 and shows the app with its icon in `kiwi-gui`. `kiwi info kiwi-server` and
 `kiwi diff kiwi-server` show what an install or update would run.
 
@@ -420,7 +420,7 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 
 ## Status
 
-2.5.0 fixes what the review of 2.4.0 found; see [CHANGELOG.md](CHANGELOG.md). The
+2.6.0 splits the renderer and the machine side out as kiwi-modules and kiwi-stack (nothing a stack renders changed); 2.5.0 fixed what the review of 2.4.0 found. See [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock
@@ -431,6 +431,14 @@ left the AIO master container behind and follows AIO's manual install
 instead — none of it booted from here yet —
 and `apply`, `status` and `enroll` against a live master, which are tested
 against fake SSH runners and a fake wg-easy here.
+
+The renderer and the machine side are also repositories of their own:
+[kiwi-modules](https://github.com/derlocke-ng/kiwi-modules) renders one
+machine's stack from a machine file without a fleet, and
+[kiwi-stack](https://github.com/derlocke-ng/kiwi-stack) applies such a bundle
+(`sudo kiwi-stack apply DIR`). Both carry what this tree has
+(`tools/split-sync.sh --check`); the stacks they produce are this tree's,
+byte for byte (tests/golden).
 
 ## License
 

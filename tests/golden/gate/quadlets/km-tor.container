@@ -1,0 +1,23 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: km-tor
+Requires=km-vpn-server.service
+After=km-vpn-server.service
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/dockurr/tor
+ContainerName=km-tor
+Network=container:km-vpn-server
+AutoUpdate=registry
+Volume=/home/user/docker/km-tor/etc:/etc/tor:z
+Volume=/home/user/docker/km-tor/var:/var/lib/tor:z
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

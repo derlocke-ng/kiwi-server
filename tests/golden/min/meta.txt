@@ -1,0 +1,13 @@
+modes: docker-compose.yml:0600 kiwi/ca/kiwiCA.crt:0644 kn-nginx/fullchain.pem:0644 kn-nginx/nginx.conf:0644 kn-nginx/privkey.pem:0600 kn-vpn-client/post-rules.txt:0644 kn-vpn-client/wg0.conf:0600
+dirs: kiwi/ca kn-nginx kn-vpn-client
+ports: 80/tcp 443/tcp
+services: kn-vpn-client kn-nginx
+images: docker.io/library/nginx:1 docker.io/qmcgaw/gluetun:v3
+urls: 
+hosts: 10.8.0.1=gate.home 10.8.0.1=wg.gate.home 10.8.0.1=pihole.gate.home 10.8.0.6=m1.home 10.8.0.6=pihole.m1.home 10.8.0.6=dl.m1.home 10.8.0.6=jd.m1.home 10.8.0.6=portainer.m1.home 10.8.0.25=sh3.home 10.8.0.25=cloud.sh3.home 10.8.0.25=vault.sh3.home 10.8.0.25=portainer.sh3.home 127.0.0.1=min.home
+vpn_dependents: 
+mesh_via: 172.128.0.2 10.8.0.0/16
+dns_ip: 
+sysctl: 
+kernel_modules: tun
+auto_update: registry

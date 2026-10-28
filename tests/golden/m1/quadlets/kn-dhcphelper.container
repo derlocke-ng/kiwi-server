@@ -1,0 +1,22 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-dhcphelper
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/homeall/dhcphelper:latest
+ContainerName=kn-dhcphelper
+Network=host
+AutoUpdate=registry
+AddCapability=NET_ADMIN
+Environment=IP=172.128.0.4
+Environment=TZ=Europe/Berlin
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

@@ -17,9 +17,9 @@ jobs:
         run: |
           shellcheck -S warning bin/kiwi-server install.sh data/bash-completion/kiwi-server \
             tests/cli.sh
-          shellcheck -S warning -s bash roles/common/lib.sh roles/*/apply.sh
+          shellcheck -S warning -s bash roles/common/lib.sh roles/common/kiwi-stack roles/*/apply.sh tests/check-version.sh
       - name: python compiles
-        run: python3 -m py_compile gui/kiwi-server-gui lib/kiwiserver/*.py lib/kiwiserver/targets/*.py
+        run: python3 -m py_compile gui/kiwi-server-gui lib/kiwiserver/*.py lib/kiwiserver/targets/*.py lib/kiwimodules/*.py tests/*.py
       - name: version agrees everywhere
         run: bash tests/check-version.sh
       - name: unit tests (rendered scripts are shellchecked, Butane validated, Debian ISO rebuilt on a mock)

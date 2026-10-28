@@ -176,8 +176,8 @@ The six steps agreed with the owner, with the items above folded in.
    *Status: steps one to four done after 2.5.0 — the on-disk bundle and
    `kiwi-stack apply DIR`, the golden test, the `kiwimodules` package with
    the one-machine render, and the two repositories populated
-   (kiwi-modules 0.1.0, kiwi-stack 0.1.0; the v0.1.0 tags are the owner's to
-   create, this session cannot push tags). kiwi-server is still
+   (kiwi-modules 0.1.0, kiwi-stack 0.1.0, tagged and released by each
+   repository's release workflow on the first push to main). kiwi-server is still
    the place both are developed: `tools/split-sync.sh` copies them over and
    `--check` reports drift. The flip to vendored subtrees pinned by tag
    waits for the first hardware round, so a fix found there lands in one

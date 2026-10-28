@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.6.0 — the renderer and the machine side as repositories of their own
 
 - **The renderer is its own package, `lib/kiwimodules`** (modules, quadlets,
   the settings schema, the profile loader, settings resolution, the stack

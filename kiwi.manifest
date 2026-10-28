@@ -1,7 +1,7 @@
 # kiwi.manifest — see https://github.com/derlocke-ng/kiwi-updater
 NAME=kiwi-server
 DESCRIPTION=Create and manage a kiwi-network — unattended install ISOs and first-boot scripts that turn CoreOS, uCore or Debian machines into a kiwi-master or kiwi-nodes, applied and enrolled over SSH
-VERSION=2.5.0
+VERSION=2.6.0
 AUTHOR=derlocke-ng
 HOMEPAGE=https://github.com/derlocke-ng/kiwi-server
 LICENSE=GPL-3.0-or-later

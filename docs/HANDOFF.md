@@ -8,14 +8,16 @@ made with the owner; do not reopen them without a reason.
 
 ## State
 
-- kiwi-server 2.5.0 is tagged; branch `claude/magical-volta-jyjhn9` carries
-  the unreleased split (kiwimodules package, `tools/split-sync.sh`).
+- kiwi-server 2.6.0 (the split: kiwimodules package, `tools/split-sync.sh`)
+  is on branch `claude/magical-volta-jyjhn9` until the owner merges it;
+  2.5.0 is the last release.
 - kiwi-modules and kiwi-stack are populated (0.1.0, untagged). kiwi-server is
   still where both are developed: after a change to `lib/kiwimodules`,
   `modules/`, `roles/*/role.yaml`, `roles/common/lib.sh` or `kiwi-stack`, run
   `tools/split-sync.sh`, commit in the two checkouts, and finish with
-  `tools/split-sync.sh --check`. Tags and releases are the owner's, made in
-  the GitHub UI (the cloud session could not push tags).
+  `tools/split-sync.sh --check`. Releases are cut by `release.yml` (in all
+  three repositories) when a push to main carries a new `VERSION` in
+  `kiwi.manifest`; the cloud session cannot push tags itself.
 - **Nothing has booted on hardware yet.** Every stack is the live v1 setup
   rendered from modules and checked file by file, but first boot, ISO
   install, `apply`, `status` and `enroll` against a live master are only

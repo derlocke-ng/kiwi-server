@@ -1,0 +1,111 @@
+# release — a merged version bump publishes itself.
+#
+# kiwi installs an app's newest version tag, so a release is exactly the tag
+# v<VERSION> for the VERSION in kiwi.manifest. On every push to main this
+# creates that tag (annotated, message = tag name) when it does not exist yet,
+# and a GitHub Release for it; a push that leaves VERSION alone does nothing.
+# The same file ships in every kiwi app (kiwi-updater: templates/release.yml);
+# keep the copies identical.
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # every tag, for the exists and older-than checks
+      - name: tag and publish the manifest version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_re='^v?[0-9]+(\.[0-9]+){0,3}$'   # what kiwi accepts as a release tag
+
+          # VERSION read the way kiwi's manifest_get reads it: the first
+          # VERSION= line, control characters and trailing whitespace dropped.
+          version="$(sed -n 's/^VERSION=//p' kiwi.manifest | head -1 | tr -d '[:cntrl:]' | sed 's/[[:space:]]*$//')"
+          tag="v$version"
+          if ! grep -qE "$release_re" <<<"$tag"; then
+              echo "::error file=kiwi.manifest::VERSION '$version' does not make a tag kiwi installs ($release_re)"
+              exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "$tag exists ($(git rev-parse --short "$tag^{commit}")), nothing to tag"
+          else
+              # A tag makes the version public, so everything that repeats it
+              # has to agree first.
+              bad=0
+              if [[ -f pyproject.toml ]]; then
+                  p="$(sed -n 's/^version *= *"\(.*\)"/\1/p' pyproject.toml | head -1)"
+                  if [[ -n $p && $p != "$version" ]]; then
+                      echo "::error file=pyproject.toml::version is $p, kiwi.manifest says $version"
+                      bad=1
+                  fi
+              fi
+              for f in src/*/__init__.py; do
+                  [[ -f $f ]] || continue
+                  p="$(sed -n 's/^__version__ *= *"\(.*\)"/\1/p' "$f" | head -1)"
+                  if [[ -n $p && $p != "$version" ]]; then
+                      echo "::error file=$f::__version__ is $p, kiwi.manifest says $version"
+                      bad=1
+                  fi
+              done
+              if [[ -f tests/check-version.sh ]]; then
+                  bash tests/check-version.sh || bad=1
+              fi
+              # kiwi installs the highest version tag; a lower one would never
+              # reach anybody.
+              latest="$(git tag -l | grep -E "$release_re" | sed 's/^v//' | sort -V | tail -1 || true)"
+              if [[ -n $latest && "$(printf '%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]]; then
+                  echo "::error file=kiwi.manifest::$version is older than the newest release, $latest"
+                  bad=1
+              fi
+              (( bad == 0 )) || exit 1
+
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git tag -a "$tag" -m "$tag" HEAD
+              git push origin "refs/tags/$tag"
+              echo "tagged $tag at $(git rev-parse --short HEAD)"
+          fi
+
+          # Also when the tag already existed: a tag made by hand, or by a run
+          # that failed after pushing it, still gets its release.
+          if gh release view "$tag" >/dev/null 2>&1; then
+              echo "release $tag exists"
+              exit 0
+          fi
+          # Notes: the CHANGELOG.md section headed "## <version>" or
+          # "## [<version>]", up to the next "## "; else GitHub's own.
+          notes="$RUNNER_TEMP/notes.md"
+          : >"$notes"
+          if [[ -f CHANGELOG.md ]]; then
+              awk -v v="$version" '
+                  /^## / {
+                      if (on) exit
+                      h = $0; sub(/^## \[?/, "", h)
+                      on = index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9.]/
+                      next
+                  }
+                  on' CHANGELOG.md >"$notes"
+          fi
+          if grep -q '[^[:space:]]' "$notes"; then
+              gh release create "$tag" --verify-tag --title "$tag" --notes-file "$notes"
+          else
+              gh release create "$tag" --verify-tag --title "$tag" --generate-notes
+          fi
+          echo "published release $tag"

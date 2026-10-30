@@ -23,9 +23,13 @@ made with the owner; do not reopen them without a reason.
   enrolled and reaching the internet through the master's exit. Found and
   fixed on the way: problems 38, 39, 41, 42, 43, 47 to 53 (the biggest:
   no NAT out of any VPN client, the gateway's DROP killing replies, the
-  IPAM collisions). Sticks must be written raw (runbook, step 4).
-  Untested still: remove and runtime switch, the dead-node drill, crumble
-  (the CoreOS master; its VPS has no `/dev/vda`). A step that fails on hardware is a finding for
+  IPAM collisions). Sticks must be written raw (runbook, step 4). **Crumble**
+  (plain Fedora CoreOS on the third VPS, disk `/dev/sda`) runs the
+  direct-exit master stack: its WireGuard server's packets leave with the
+  VPS's own address, no VPN client, no Mullvad records — the first master
+  on the CoreOS lineage and the first of the exit modes. Untested still:
+  remove and runtime switch, the dead-node drill, federation between the
+  two networks. A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep

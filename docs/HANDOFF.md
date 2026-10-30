@@ -18,9 +18,12 @@ made with the owner; do not reopen them without a reason.
   `kiwi.manifest`; the cloud session cannot push tags itself.
 - **The first machine has booted** (30 October 2026): sorbet, the test
   master's VPS, installed from bare Debian media and ran the bare role;
-  its first boot found problem 38 (apt before DNS). The master `apply`,
-  `status`, `enroll`, the CoreOS media and every stack are still untested
-  on hardware. A step that fails on hardware is a finding for
+  its first boot found problem 38 (apt before DNS). The uCore media for
+  the mini PC failed to boot from a stick written with Ventoy or Rufus
+  (`Failed to isolate default target` in the live ISO) and installed
+  cleanly in a QEMU VM the same hour: write sticks raw (runbook, step 4).
+  The master `apply`, `status`, `enroll`, a CoreOS first boot and every
+  stack are still untested on hardware. A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep

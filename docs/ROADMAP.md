@@ -321,8 +321,10 @@ Asked for by the owner in October 2026, for the test round and after:
   gateway and resolvers. A shell script, so it runs on CoreOS.
 - **cloud-init user-data** for a VPS the provider installs: today the key,
   NOPASSWD sudo and podman ≥ 4.4 (the by-hand steps behind problem 35),
-  later the join line. **`virt-install`** from `build`, so the ISO it made
-  boots in a local VM without a second tool — optional.
+  later the join line. **`build --boot`**: boot the ISO it made in a local
+  QEMU VM (UEFI, a disk device matching `disk:`) and report whether it
+  installed and powered off — the test that told a broken stick from broken
+  media on the first mini PC; by hand today (docs/testing-hardware.md).
 - **Random names** (design/control-plane.md, Names): fruit dishes for
   masters, fruits for nodes, from two lists of DNS-safe words, in `init`,
   the control plane and `enroll`; a name stays settable (part of problem 33).

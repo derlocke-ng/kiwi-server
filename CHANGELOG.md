@@ -15,10 +15,12 @@
 - **A node with only Portainer behind its proxy gets the mesh DNAT too**
   (`portainer.needs_vpn_dnat: true`, problem 58). Found with the same
   device: on uCore a mesh client's connection to a node's proxy died on the
-  host's firewall, which saw only the reply of the DNAT'd flow (problem 57).
-  With firewalld active, the role now tracks bridged container traffic
-  (`br_netfilter`, `bridge-nf-call-iptables`) and trusts the mesh subnet
-  like the stack network, so the client's own address still reaches nginx.
+  host's conntrack, which saw only the reply of the DNAT'd flow and dropped it
+  as invalid — netavark's forward chain does that on every podman host,
+  firewalld on top of it (problem 57). The role now tracks bridged container
+  traffic (`br_netfilter`, `bridge-nf-call-iptables`) on every podman host
+  with a mesh, and where firewalld runs trusts the mesh subnet like the stack
+  network, so the client's own address still reaches nginx.
 - Runbook step 5 passed on a node: a module added and removed again, the
   runtime switched to docker and back, every time with `verify` green and
   the old stack stopped first; noted that a re-apply restarts every

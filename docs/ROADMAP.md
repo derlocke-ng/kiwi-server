@@ -352,10 +352,13 @@ UX and ecosystem:
     firewalld — tested half way on papaya: bridge-nf alone turns the timeout
     into "admin prohibited", the trusted source is the second half and
     changes the host's firewall, so it waited for the owner. Done as
-    `ks_firewall_trust_mesh`: with firewalld active and a mesh routed through
+    `ks_firewall_trust_mesh`: on every podman host with a mesh routed through
     the stack, `br_netfilter` is loaded and `bridge-nf-call-iptables` set
-    (persisted), and the mesh subnet is added to the trusted zone, runtime
-    and permanent. ufw hosts are untouched for now. (roles/common/lib.sh)
+    (persisted) — netavark's own forward chain has `ct state invalid drop`,
+    so Debian without any firewall dropped the reply just the same (seen on
+    lychee) — and where firewalld runs, the mesh subnet is added to the
+    trusted zone, runtime and permanent. ufw hosts are untouched for now.
+    (roles/common/lib.sh)
 58. *Found with the first device, fixed in 2.7.1.* A node whose only web
     service was Portainer (the minimal preset plus `portainer`) had no mesh
     DNAT at all, because `enable_vpn_dnat` follows the modules'

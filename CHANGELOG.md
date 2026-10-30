@@ -7,9 +7,10 @@
   policy — and the machine comes up as `bare`; its role and every secret of
   its stack arrive afterwards with `kiwi-server apply` over SSH and stay
   0600 on the machine. For media that leave the house: a provider's ISO
-  store, a stick in the post. The per-host ISO with the stack embedded stays
-  the offline path, and the fleet file is checked with the real role first,
-  so a half-filled master is refused all the same.
+  store, a stick in the post. Only the base system is validated, so a node's
+  media can be built before the node is enrolled (its WireGuard config comes
+  with `apply`, which checks the role's settings then). The per-host ISO with
+  the stack embedded stays the offline path.
 - `tests/cli.sh` keeps the caller's Python user site, so a Jinja2 from
   `pip install --user` (the README's own line) is found.
 - docs: the design after the October talks — the control node and the

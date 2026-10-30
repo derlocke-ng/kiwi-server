@@ -712,19 +712,20 @@ def cmd_ca(args):
 def _render_or_build(args, build):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
-    check(fleet, roles, ms, hosts)
     if getattr(args, "bare", False):
         # Media without the stack: the role script carries the base system only
         # (hostname, network, the admin user, the update policy) and the machine
         # comes up as `bare`; its role and every secret of its stack arrive
-        # afterwards with `apply` over SSH. For media that leave the house (a
-        # provider's ISO store). The fleet is checked with the real role above,
-        # so a half-filled master is refused all the same.
+        # afterwards with `apply` over SSH, which checks the role's settings
+        # then. So a node's WireGuard config may still be missing here (enroll
+        # comes after the master exists) — only the base system is validated.
+        # For media that leave the house (a provider's ISO store).
         for h in hosts:
             if h.role != "bare":
                 util.say("%s: bare media — afterwards: kiwi-server apply %s %s --ssh %s@<address>"
                          % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"]))
             h.role, h.role_settings_raw, h.role_settings = "bare", {}, {}
+    check(fleet, roles, ms, hosts)
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
     r = Renderer(fleet, roles, out_dir, tc, ms)

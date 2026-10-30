@@ -97,7 +97,9 @@ Media that leave the house — a provider's ISO store, a stick in the post —
 should not carry the stack's secrets: `kiwi-server build fleet.yaml sh3
 --bare` writes an ISO with the base system only (hostname, network, the
 admin user, the update policy), and `kiwi-server apply fleet.yaml sh3 --ssh
-core@<address>` brings the role and its stack afterwards, over SSH.
+core@<address>` brings the role and its stack afterwards, over SSH. A node's
+bare media can be built before `enroll` wrote its WireGuard config; `apply`
+checks the role's settings when it brings them.
 
 ## The fleet file
 

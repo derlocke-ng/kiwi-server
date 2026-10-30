@@ -1531,8 +1531,15 @@ class TestRouter(Base):
 
     def test_bare_media_leaves_the_stack_for_apply(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
-            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "m1": {"role": "node-gw", "target": "debian",
+                   "node-gw": self.node_gw(**{"vpn-client": {"wireguard_config": "secrets/not-enrolled-yet.conf"}})}}})
         out = os.path.join(self.tmp, "out")
+        # a node whose WireGuard config does not exist yet: refused with the role, fine as bare media
+        with self.assertRaises(SystemExit) as cm:
+            cli.main(["render", f.path, "m1", "--no-backup", "-o", out])
+        self.assertEqual(cm.exception.code, cli.EXIT_INVALID)
+        self.assertEqual(cli.main(["render", f.path, "m1", "--bare", "--no-backup", "-o", out]), 0)
         self.assertEqual(cli.main(["render", f.path, "gate", "--bare", "--no-backup", "-o", out]), 0)
         with open(os.path.join(out, "gate", "gate.role.sh")) as fh:
             script = fh.read()

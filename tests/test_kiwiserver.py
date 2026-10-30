@@ -1592,6 +1592,7 @@ class TestRouter(Base):
         remote.configure("/kh", ids)
         try:
             opts = remote.ssh_opts()
+            self.assertIn("ControlMaster=no", opts)     # never through the operator's mux master (problem 54)
             self.assertIn("IdentitiesOnly=yes", opts)
             self.assertEqual(opts[opts.index("-i") + 1], ids[0])
         finally:

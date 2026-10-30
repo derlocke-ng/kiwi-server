@@ -313,6 +313,20 @@ UX and ecosystem:
     container, where the node's own names point at 127.0.0.1 (the role
     writes them so), and Pi-hole served that too. (modules.py,
     modules/dns, tests/golden/m1 and gate)
+54. *Found on hardware, fixed in 2.7.1.* With ControlMaster multiplexing in
+    the operator's `~/.ssh/config`, the enroll tunnel (`ssh -N -L` to wg-easy)
+    went through the existing mux master and ended at once with "Broken
+    pipe", exit 0 — `enroll` said "the tunnel to port 51821 failed: ssh
+    exited" although wg-easy answered on the master. kiwi-server's ssh now
+    passes `ControlMaster=no ControlPath=none`. (remote.py)
+55. A re-apply restarts every container of the stack (`systemctl restart
+    kiwi-stack.service`), not only the one whose files changed; the runbook's
+    step 5 expected "the container with the changed file restarts, the others
+    do not". Adding a module to a node restarted the VPN client, nginx and
+    Portainer along with the new one. Restart only the units whose quadlet or
+    files changed (daemon-reload, then `try-restart` of the changed ones;
+    the dependents of a restarted namespace owner follow by `BindsTo=`).
+    (roles/common/lib.sh, roles/common/kiwi-stack)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

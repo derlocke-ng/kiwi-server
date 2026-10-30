@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.7.1 — the enroll tunnel beside an operator's ssh multiplexing
+
+- **`enroll` works on an operator whose `~/.ssh/config` multiplexes sessions**:
+  the tunnel to wg-easy is a channel-less `ssh -N -L`, and through an
+  existing ControlMaster it ended at once with "Broken pipe" and exit 0, so
+  `enroll` reported "the tunnel to port 51821 failed: ssh exited" while
+  `apply` worked. Every connection kiwi-server opens now says
+  `ControlMaster=no` (problem 54, found on the first device enrolment).
+- Runbook step 5 passed on a node: a module added and removed again, the
+  runtime switched to docker and back, every time with `verify` green and
+  the old stack stopped first; noted that a re-apply restarts every
+  container of the stack, not only the changed one (problem 55).
+
 ## 2.7.0 — install media without the stack
 
 - **`kiwi-server build --bare`** (and `render --bare`): the ISO carries the

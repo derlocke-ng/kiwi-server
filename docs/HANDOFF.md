@@ -16,15 +16,16 @@ made with the owner; do not reopen them without a reason.
   `tools/split-sync.sh --check`. Releases are cut by `release.yml` (in all
   three repositories) when a push to main carries a new `VERSION` in
   `kiwi.manifest`; the cloud session cannot push tags itself.
-- **The first hardware round is under way** (30 October 2026). Booted
-  from bare media: sorbet (Debian, the VPS), papaya (uCore, the mini PC),
-  lychee (Debian with LUKS, a VM). **The master stack runs on sorbet**
-  (five applies: problems 39, 41 and 42 on the way), `enroll` works
-  against its wg-easy, **the minimal node stack runs on lychee**; papaya's
-  gateway+cloud stack found problems 48 and 49. Sticks must be written
-  raw (runbook, step 4). Untested still: a full re-apply, remove and
-  runtime switch, the dead-node drill, crumble (the CoreOS master; its
-  VPS has no `/dev/vda`). A step that fails on hardware is a finding for
+- **The first hardware round** (30 October 2026): sorbet (Debian, the
+  VPS), papaya (uCore, the mini PC) and lychee (Debian with LUKS, a VM)
+  booted from bare media; **the master stack runs on sorbet, the
+  gateway+cloud stack on papaya, the minimal stack on lychee**, both nodes
+  enrolled and reaching the internet through the master's exit. Found and
+  fixed on the way: problems 38, 39, 41, 42, 43, 47 to 53 (the biggest:
+  no NAT out of any VPN client, the gateway's DROP killing replies, the
+  IPAM collisions). Sticks must be written raw (runbook, step 4).
+  Untested still: remove and runtime switch, the dead-node drill, crumble
+  (the CoreOS master; its VPS has no `/dev/vda`). A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep

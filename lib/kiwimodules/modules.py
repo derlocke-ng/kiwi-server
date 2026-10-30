@@ -512,7 +512,10 @@ class Renderer:
             body = body or {}
             if body.get("network_mode") or "networks" not in body:
                 continue    # shares another container's namespace, or host networking
-            if own and base["proxy_ip"] and "extra_hosts" not in body:
+            # not into Pi-hole's: dnsmasq reads the container's /etc/hosts and would answer
+            # the node's own names with the proxy's container address to every LAN and mesh
+            # client (found on the first gateway node); Pi-hole serves the fleet's records
+            if own and base["proxy_ip"] and "extra_hosts" not in body and svc != "%s-pihole" % base["container_prefix"]:
                 body["extra_hosts"] = ["%s:%s" % (n, ip) for n, ip in own]
             if dns_ip and "dns" not in body and svc not in ("%s-pihole" % base["container_prefix"],
                                                              "%s-vpn-client" % base["container_prefix"]):

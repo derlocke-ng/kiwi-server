@@ -302,6 +302,14 @@ UX and ecosystem:
     DROP on top on purpose; under podman that was the bug. Proven with the
     rule's packet counter and a capture inside the VPN client's namespace.
     (modules/gateway/gw.sh.j2, tests/golden/m1)
+53. *Found on hardware, fixed in 2.7.0.* A gateway node's Pi-hole answered
+    the node's own names (`cloud.papaya.home`, `papaya.home`) with the
+    reverse proxy's *container* address, 172.128.0.5, to every LAN client:
+    the `AddHost=` entries meant for the containers went into Pi-hole's
+    container too, and dnsmasq serves its `/etc/hosts`. The master's Pi-hole
+    answered the mesh address correctly. Pi-hole's container gets no
+    `AddHost=` now and serves the fleet's records. (modules.py,
+    tests/golden/m1 and gate)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

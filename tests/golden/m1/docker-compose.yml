@@ -68,12 +68,6 @@ services:
     volumes:
     - /home/user/docker/kn-pihole/etc-pihole:/etc/pihole:z
     - /home/user/docker/kn-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
-    extra_hosts:
-    - m1.home:172.128.0.5
-    - pihole.m1.home:172.128.0.5
-    - dl.m1.home:172.128.0.5
-    - jd.m1.home:172.128.0.5
-    - portainer.m1.home:172.128.0.5
   kn-dhcphelper:
     image: docker.io/homeall/dhcphelper:latest
     container_name: kn-dhcphelper

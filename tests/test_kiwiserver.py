@@ -950,6 +950,10 @@ class TestModules(Base):
         nginx = b.files["kn-nginx/nginx.conf"][0]
         self.assertIn("set $backend https://kn-vpn-client:5800;", nginx)
         self.assertIn("-i eth0 -o tun0 -j ACCEPT", post)      # LAN clients the gateway routes here
+        # the node's own names point at the proxy inside the containers — except in Pi-hole,
+        # which would serve that container address to every client (problem 53)
+        self.assertIn("AddHost=", b.quadlets["kn-nginx.container"])
+        self.assertNotIn("AddHost=", b.quadlets["kn-pihole.container"])
         # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
         inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
         self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP'), inserts)

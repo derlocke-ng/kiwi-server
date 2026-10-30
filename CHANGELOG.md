@@ -65,6 +65,10 @@
   WireGuard answers among them, and every LAN connection to a published
   port; it now drops new, non-DNAT connections only (problem 52, found on
   the first gateway node). tests/golden/m1's gw.sh changes accordingly.
+- **Pi-hole no longer answers a node's own names with a container address**:
+  the `AddHost=` entries for the containers stay out of Pi-hole's container,
+  which serves the fleet's records (problem 53, found on the first gateway
+  node: LAN clients were sent to 172.128.0.5).
 - **The first boot waits for name resolution** (two minutes at most) before
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver

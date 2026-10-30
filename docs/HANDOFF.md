@@ -8,14 +8,17 @@ made with the owner; do not reopen them without a reason.
 
 ## State
 
-- kiwi-server 2.6.0 (the split: kiwimodules package, `tools/split-sync.sh`)
-  is merged and released; kiwi-modules 0.1.0 and kiwi-stack 0.1.0 are
-  tagged and released. kiwi-server is still where both are developed: after a change to `lib/kiwimodules`,
-  `modules/`, `roles/*/role.yaml`, `roles/common/lib.sh` or `kiwi-stack`, run
-  `tools/split-sync.sh`, commit in the two checkouts, and finish with
-  `tools/split-sync.sh --check`. Releases are cut by `release.yml` (in all
-  three repositories) when a push to main carries a new `VERSION` in
-  `kiwi.manifest`; the cloud session cannot push tags itself.
+- **The split is complete.** kiwi-modules (the renderer, the modules, the
+  profiles) and kiwi-stack (the machine side) are developed in their own
+  repositories and released by tag; kiwi-server carries them as vendored
+  copies pinned in `VENDORED` (`tools/vendor.sh` brings a release in,
+  `--check` reports a tree that differs from its pins; CI runs the check).
+  To change a module, the renderer or lib.sh: change it in kiwi-modules or
+  kiwi-stack, bump that repository's `VERSION` with a changelog entry, push
+  to main (the release workflow tags and publishes), then
+  `tools/vendor.sh kiwi-modules=vX.Y.Z` here. Releases of kiwi-server are
+  cut the same way by its own `release.yml`; the cloud session cannot push
+  tags itself.
 - **The first hardware round** (30 October 2026): sorbet (Debian, the
   VPS), papaya (uCore, the mini PC) and lychee (Debian with LUKS, a VM)
   booted from bare media; **the master stack runs on sorbet, the
@@ -177,9 +180,9 @@ its addresses and ssh aliases stay there.
 ```
 python3 -W error::ResourceWarning -m unittest discover -s tests
 bash tests/cli.sh
-shellcheck -S warning roles/common/lib.sh roles/common/kiwi-stack roles/*/apply.sh install.sh bin/kiwi-server tests/cli.sh tests/check-version.sh tools/split-sync.sh
+shellcheck -S warning roles/common/lib.sh roles/common/kiwi-stack roles/*/apply.sh install.sh bin/kiwi-server tests/cli.sh tests/check-version.sh tools/vendor.sh
 bash tests/check-version.sh
-bash tools/split-sync.sh --check
+bash tools/vendor.sh --check
 ```
 
 `tests/golden/` is the contract with machines already applied: change it

@@ -23,6 +23,12 @@
   network, so the client's own address still reaches nginx; the gateway
   module's masquerade for LAN clients leaves the stack network's and the
   mesh's traffic alone, which the tracking had exposed it to.
+- **The split's flip**: kiwi-modules and kiwi-stack are developed and
+  released in their own repositories; this tree carries them as vendored
+  copies pinned by tag in `VENDORED`. `tools/vendor.sh` brings a release in
+  (from a checkout next to this one or from github.com), `--check` reports
+  a tree that differs from its pins and runs in CI; `tools/split-sync.sh`,
+  which copied the other way, is gone.
 - Runbook step 5 passed on a node: a module added and removed again, the
   runtime switched to docker and back, every time with `verify` green and
   the old stack stopped first; noted that a re-apply restarts every

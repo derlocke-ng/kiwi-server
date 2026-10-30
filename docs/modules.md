@@ -279,11 +279,10 @@ pull, the start and `kiwi-stack verify`.
 The same package, modules and profiles are the
 [kiwi-modules](https://github.com/derlocke-ng/kiwi-modules) repository, and
 the machine side (`roles/common/lib.sh`, `roles/common/kiwi-stack`) the
-[kiwi-stack](https://github.com/derlocke-ng/kiwi-stack) repository. This
-tree is where both are developed for now: `tools/split-sync.sh` copies the
-files into checkouts next to this one (`../kiwi-modules`, `../kiwi-stack`)
-and `tools/split-sync.sh --check` says whether they drifted. Run the check
-before a release of either.
+[kiwi-stack](https://github.com/derlocke-ng/kiwi-stack) repository. Both are
+developed there and released by tag; this tree carries them as vendored
+copies pinned in `VENDORED`: `tools/vendor.sh` brings a release in,
+`tools/vendor.sh --check` says whether the tree differs from its pins.
 
 ## What the renderer adds to every stack
 

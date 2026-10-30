@@ -336,7 +336,7 @@ UX and ecosystem:
     10.9.0.x never noticed. `start.sh` now routes the whole `mesh_subnet`
     into `wg0`; the peers' AllowedIPs still decide who gets what.
     (modules/vpn-server/start.sh.j2, tests/golden/gate)
-57. *Found with the first device; open, needs a decision.* A mesh client's
+57. *Found with the first device, fixed in 2.7.1 (the owner chose b).* A mesh client's
     connection to a node's reverse proxy (the DNAT in the VPN client) never
     completes on uCore: the SYN goes VPN client → nginx directly on the
     bridge, nginx's reply goes to its gateway, the host, which routes the
@@ -351,9 +351,11 @@ UX and ecosystem:
     directions are tracked, plus the mesh subnet as a trusted source in
     firewalld — tested half way on papaya: bridge-nf alone turns the timeout
     into "admin prohibited", the trusted source is the second half and
-    changes the host's firewall, so it waits for the owner. (b) is the
-    design's intent; it belongs in lib.sh's firewalld branch next to
-    `ks_firewall_open`. (roles/common/lib.sh, modules/vpn-client)
+    changes the host's firewall, so it waited for the owner. Done as
+    `ks_firewall_trust_mesh`: with firewalld active and a mesh routed through
+    the stack, `br_netfilter` is loaded and `bridge-nf-call-iptables` set
+    (persisted), and the mesh subnet is added to the trusted zone, runtime
+    and permanent. ufw hosts are untouched for now. (roles/common/lib.sh)
 58. *Found with the first device, fixed in 2.7.1.* A node whose only web
     service was Portainer (the minimal preset plus `portainer`) had no mesh
     DNAT at all, because `enable_vpn_dnat` follows the modules'

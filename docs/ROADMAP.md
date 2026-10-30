@@ -327,6 +327,15 @@ UX and ecosystem:
     files changed (daemon-reload, then `try-restart` of the changed ones;
     the dependents of a restarted namespace owner follow by `BindsTo=`).
     (roles/common/lib.sh, roles/common/kiwi-stack)
+56. *Found on hardware, fixed in 2.7.1.* The first device enrolled into a
+    client group (`devices`, 10.9.3.0/24) handshook, and the master received
+    its packets and Pi-hole logged its queries — but every answer left
+    through the exit: inside the WireGuard server the only route into `wg0`
+    is the interface's own /24, and wg-easy adds none for the peers it
+    creates, so `ip route get 10.9.3.2` said "via the VPN client". Nodes in
+    10.9.0.x never noticed. `start.sh` now routes the whole `mesh_subnet`
+    into `wg0`; the peers' AllowedIPs still decide who gets what.
+    (modules/vpn-server/start.sh.j2, tests/golden/gate)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

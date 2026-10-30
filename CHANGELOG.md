@@ -8,6 +8,10 @@
   `enroll` reported "the tunnel to port 51821 failed: ssh exited" while
   `apply` worked. Every connection kiwi-server opens now says
   `ControlMaster=no` (problem 54, found on the first device enrolment).
+- **Clients in a group get their answers**: inside the WireGuard server the
+  whole mesh is routed into `wg0`; before, only the server's own /24 was,
+  and a device in the `devices` group received nothing back (problem 56,
+  found with the first device). tests/golden/gate: one line of `start.sh`.
 - Runbook step 5 passed on a node: a module added and removed again, the
   runtime switched to docker and back, every time with `verify` green and
   the old stack stopped first; noted that a re-apply restarts every

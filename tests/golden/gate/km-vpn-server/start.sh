@@ -61,6 +61,10 @@ iptables -A FORWARD -i wg0 -j ACCEPT
 iptables -A FORWARD -o wg0 -j ACCEPT
 # the master itself and its containers reach the nodes as the server's mesh address
 iptables -t nat -A POSTROUTING -s 172.64.0.0/24 -o wg0 -j MASQUERADE
+# the whole mesh into wg0: the interface route covers the server's own /24 only, and
+# wg-easy adds no route for the peers it creates — a client in a group's subnet got
+# its answers sent out through the exit instead (found with the first device)
+ip route replace 10.8.0.0/16 dev wg0
 
 # the double hop: everything leaves through the VPN client …
 ip route del default

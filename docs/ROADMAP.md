@@ -246,6 +246,12 @@ UX and ecosystem:
     non-removable) disk through a `--pre-install` script writing the
     installer config, and the preseed's `partman-auto/disk` from an early
     command the same way. (iso.py, targets/debian.py)
+47. When the live ISO's install fails, its emergency shell is useless: the
+    live system's root is locked and no user exists, so `lsblk` to learn the
+    disk's name is impossible at the console. Give the live environment the
+    admin user with the fleet's key and console password (`coreos-installer
+    iso customize --live-ignition`), so a stopped install can be inspected
+    at the console or over SSH. (iso.py)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

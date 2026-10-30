@@ -67,10 +67,12 @@ Only where the provider or the VM can boot a custom ISO.
 kiwi-server build fleet.yaml m1 && ls -l output/m1/m1.iso
 ```
 
-Boot it, walk away, come back: the machine reboots into the installed
-system, `kiwi-role.service` runs (`journalctl -u kiwi-role -f`), and step 3's
-checks pass. Pull the stick after the first reboot (the install guard is a
-roadmap item).
+Boot it, walk away, come back: the machine has installed and **powered
+off** (`install.on_done: poweroff`, the default). Remove the stick or detach
+the ISO, power it on: `kiwi-role.service` runs (`journalctl -u kiwi-role
+-f`), and step 3's checks pass. The install guard against a second boot of
+the media is still a roadmap item (problem 14); the power-off is what keeps a
+forgotten stick from reinstalling.
 
 ## 5. Re-apply, remove, switch
 

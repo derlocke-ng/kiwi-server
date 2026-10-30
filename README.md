@@ -84,8 +84,13 @@ kiwi-server build fleet.yaml    # + the ISOs (base images cached in ~/.cache/kiw
 sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-Boot the machine from it. CoreOS and Debian install, reboot, and run the role
-on first boot; uCore reboots twice more first (unsigned rebase, then signed).
+Boot the machine from it. CoreOS and Debian install and then **power off**
+(`install.on_done: poweroff`, the default), so you remove the stick or the
+provider's ISO before the machine ever boots again — media left first in the
+boot order would reinstall on every boot; `install: { on_done: reboot }` goes
+straight into the installed system instead. Powered on again, the machine
+runs the role on first boot; uCore reboots twice more first (unsigned rebase,
+then signed).
 Watch it with `journalctl -u kiwi-role -f`; `/var/lib/kiwi-server/role.done`
 appears when it is finished.
 

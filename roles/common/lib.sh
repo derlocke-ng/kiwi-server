@@ -629,6 +629,22 @@ ks_base() {
     ks_trust_ca
 }
 
+# network-online.target is satisfied before the resolver is (a first boot on
+# Debian saw apt fail with "Temporary failure resolving" and go on without
+# updates). Wait for names to resolve before the first apt or pull, two
+# minutes at most; a timeout is a warning, the steps that follow retry anyway.
+ks_wait_dns() {
+    local i name
+    for ((i = 0; i < 60; i++)); do
+        for name in deb.debian.org quay.io registry.fedoraproject.org; do
+            getent hosts "$name" >/dev/null 2>&1 && return 0
+        done
+        [[ $i -eq 0 ]] && ks_say "waiting for name resolution"
+        sleep 2
+    done
+    ks_warn "names do not resolve after 120 s — going on; apt and pulls retry on their own"
+}
+
 ks_main() {
     [[ $EUID -eq 0 ]] || ks_die "this script must run as root (sudo bash $0)"
     KS_OS=$(ks_detect_os)
@@ -642,6 +658,7 @@ ks_main() {
     # a failed step names itself and leaves role.failed; a success removes it
     trap 'ks_fail $? $LINENO "$BASH_COMMAND"' ERR
     set -E
+    ks_wait_dns
     ks_base
     ks_role_apply
     ks_post_script

@@ -46,6 +46,15 @@ def fcos_base_iso(tc, stream, cache_dir):
     return lines[-1]
 
 
+POWEROFF_SCRIPT = """#!/bin/bash
+# kiwi-server: the install is done — turn the machine off so the install media
+# can be removed before it boots again (install.on_done: poweroff)
+echo "kiwi-server: installed — powering off; remove the install media, then power on"
+sleep 3
+systemctl poweroff
+"""
+
+
 def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
     disk = host.cfg.get("disk")
     if not disk:
@@ -58,6 +67,14 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
         argv += ["--dest-console", str(co["console"])]
     for k in co.get("kernel_arguments") or []:
         argv += ["--dest-karg-append", str(k)]
+    if (host.cfg.get("install") or {}).get("on_done", "poweroff") == "poweroff":
+        # the live system would reboot into the installed disk — with the stick
+        # or the provider's ISO still first in the boot order, that is another
+        # install. Skip the reboot and power off from a post-install script
+        # instead; the script sits next to the Ignition, which is mounted already.
+        post = os.path.join(util.parent(ign_path), host.name + ".post-install.sh")
+        util.write_text(post, POWEROFF_SCRIPT, mode=0o700)
+        argv += ["--live-karg-append", "coreos.inst.skip_reboot", "--post-install", post]
     argv += ["-f", "-o", out_iso, base]
     tc.run(argv, mounts=[util.parent(ign_path), util.parent(out_iso), cache_dir])
     if os.path.isfile(out_iso):

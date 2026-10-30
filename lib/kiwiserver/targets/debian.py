@@ -128,8 +128,13 @@ def preseed(host, version):
         "d-i preseed/late_command string sh %s/late.sh" % CDROM_DIR,
         "d-i finish-install/reboot_in_progress note",
         "d-i cdrom-detect/eject boolean true",
-        "",
     ]
+    if (c.get("install") or {}).get("on_done", "poweroff") == "poweroff":
+        # the machine turns off when the install is done: remove the stick or
+        # the provider's ISO, then power it on — media left first in the boot
+        # order would reinstall on every boot (install.on_done: reboot keeps the reboot)
+        L.append("d-i debian-installer/exit/poweroff boolean true")
+    L.append("")
     return "\n".join(L)
 
 

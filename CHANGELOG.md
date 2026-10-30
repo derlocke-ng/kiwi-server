@@ -11,6 +11,18 @@
   media can be built before the node is enrolled (its WireGuard config comes
   with `apply`, which checks the role's settings then). The per-host ISO with
   the stack embedded stays the offline path.
+- **The install media power the machine off when the install is done**
+  (`install.on_done: poweroff`, the default; `reboot` keeps the old
+  behaviour): remove the stick or the provider's ISO, then power on. Media
+  left first in the boot order would otherwise reinstall on every boot.
+  Debian: `debian-installer/exit/poweroff`; CoreOS: the live ISO skips its
+  reboot (`coreos.inst.skip_reboot`) and a post-install script turns the
+  machine off. The install guard with a `--reinstall` override (ROADMAP,
+  problem 14) stays open.
+- **The first boot waits for name resolution** (two minutes at most) before
+  its first apt or pull: on the first machine booted from this tree, a
+  Debian VPS, `network-online.target` was satisfied before the resolver
+  was, and apt went on without updates (problem 38, found on hardware).
 - `tests/cli.sh` keeps the caller's Python user site, so a Jinja2 from
   `pip install --user` (the README's own line) is found.
 - docs: the design after the October talks — the control node and the

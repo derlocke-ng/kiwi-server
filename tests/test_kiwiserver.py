@@ -420,6 +420,12 @@ class TestDebian(Base):
         s = self.render(f, "d")
         return f.hosts["d"], debian_t.preseed(f.hosts["d"], VERSION), debian_t.iso_files(f.hosts["d"], s)
 
+    def test_preseed_powers_off_when_done(self):
+        _h, ps, _files = self.make()
+        self.assertIn("d-i debian-installer/exit/poweroff boolean true", ps)   # the default: remove the media first
+        _h, ps, _files = self.make(install={"on_done": "reboot"})
+        self.assertNotIn("exit/poweroff", ps)
+
     def test_preseed_dhcp(self):
         h, ps, files = self.make()
         for needle in ("d-i debian-installer/locale string en_US.UTF-8",
@@ -518,15 +524,30 @@ class TestIso(Base):
             def run(self, argv, **kw):
                 calls.append(list(argv))
                 return type("R", (), {"stdout": base + "\n", "stderr": ""})()
-        iso.coreos_iso(FakeTC(), f.hosts["a"], "/o/a.ign", "/o/a.iso", self.tmp)
+        ign = os.path.join(self.tmp, "o", "a.ign")
+        os.makedirs(os.path.dirname(ign))
+        iso.coreos_iso(FakeTC(), f.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
         self.assertEqual(calls[0][:4], ["coreos-installer", "download", "-s", "stable"])
         cust = calls[1]
         self.assertEqual(cust[:3], ["coreos-installer", "iso", "customize"])
         self.assertEqual(cust[cust.index("--dest-device") + 1], "/dev/sda")
-        self.assertEqual(cust[cust.index("--dest-ignition") + 1], "/o/a.ign")
+        self.assertEqual(cust[cust.index("--dest-ignition") + 1], ign)
         self.assertEqual(cust[cust.index("--dest-console") + 1], "ttyS0,115200n8")
         self.assertEqual(cust[cust.index("--dest-karg-append") + 1], "mitigations=auto")
+        # install.on_done: poweroff (the default): the live system skips its reboot and a
+        # post-install script, next to the Ignition, turns the machine off
+        self.assertEqual(cust[cust.index("--live-karg-append") + 1], "coreos.inst.skip_reboot")
+        post = cust[cust.index("--post-install") + 1]
+        self.assertEqual(os.path.dirname(post), os.path.dirname(ign))
+        with open(post) as fh:
+            self.assertIn("systemctl poweroff", fh.read())
         self.assertEqual(cust[-1], base)
+        # install.on_done: reboot keeps the live ISO's own reboot
+        f2 = self.fleet({"defaults": self.base_defaults(install={"on_done": "reboot"}), "hosts": {"a": {}}})
+        calls.clear()
+        iso.coreos_iso(FakeTC(), f2.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
+        self.assertNotIn("--post-install", calls[1])
+        self.assertNotIn("--live-karg-append", calls[1])
 
     def test_iso_needs_disk(self):
         f = self.fleet({"defaults": self.base_defaults(disk=None), "hosts": {"a": {}}})

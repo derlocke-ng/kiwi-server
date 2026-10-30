@@ -95,8 +95,12 @@ Stack and first boot:
     major upgrades on every node weekly. Pin by major tag per module, make
     auto-update a stack setting, pin `weejewel/wg-easy:7` today.
 14. The install media reinstalls the machine on every boot while the stick
-    stays first in the boot order. Add an install guard to both ISOs with a
-    `--reinstall` override.
+    stays first in the boot order. *Since 2.7.0 the media power the machine
+    off when the install is done (`install.on_done: poweroff`), so the stick
+    is removed before the next boot.* Still open: an install guard in both
+    ISOs (a fingerprint of a kiwi install on the target disk, checked by a
+    `--pre-install` script and the preseed's early command) with a
+    `--reinstall` override, for media that cannot be removed.
 15. The role script with every secret stays at /var/lib/kiwi-server/role.sh
     for the machine's lifetime; the Debian LUKS passphrase also survives in
     d-i's saved debconf database. Shred after a successful run, clean
@@ -185,6 +189,13 @@ UX and ecosystem:
     rendered into the preseed's late command, the Butane filesystems and
     the role script (mkfs only when the disk has no filesystem).
     (targets/debian.py, targets/coreos.py, roles/common/lib.sh)
+38. *Found on hardware, fixed in 2.7.0.* A first boot on Debian ran apt
+    before the resolver was ready: `network-online.target` was satisfied,
+    `apt-get update` failed with "Temporary failure resolving" and the bare
+    role went on without updates; a stack role would have hit the same wall
+    at its first pull. `ks_wait_dns` in lib.sh now waits up to two minutes
+    for a name to resolve before the first apt or pull. Open: the role unit
+    could order itself after `systemd-resolved` / `dhcpcd` where they exist.
 37. A node publishes its services on the host (80/443 of the reverse proxy,
     the sftp port, what `published_ports` lists) because a node lives on a
     LAN; on a public host that is the internet. A master is safe there (its

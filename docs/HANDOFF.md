@@ -16,10 +16,11 @@ made with the owner; do not reopen them without a reason.
   `tools/split-sync.sh --check`. Releases are cut by `release.yml` (in all
   three repositories) when a push to main carries a new `VERSION` in
   `kiwi.manifest`; the cloud session cannot push tags itself.
-- **Nothing has booted on hardware yet.** Every stack is the live v1 setup
-  rendered from modules and checked file by file, but first boot, ISO
-  install, `apply`, `status` and `enroll` against a live master are only
-  tested against fakes. A step that fails on hardware is a finding for
+- **The first machine has booted** (30 October 2026): sorbet, the test
+  master's VPS, installed from bare Debian media and ran the bare role;
+  its first boot found problem 38 (apt before DNS). The master `apply`,
+  `status`, `enroll`, the CoreOS media and every stack are still untested
+  on hardware. A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep

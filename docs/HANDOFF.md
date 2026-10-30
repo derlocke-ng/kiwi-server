@@ -24,8 +24,22 @@ made with the owner; do not reopen them without a reason.
   fixed on the way: problems 38, 39, 41, 42, 43, 47 to 53 (the biggest:
   no NAT out of any VPN client, the gateway's DROP killing replies, the
   IPAM collisions). Sticks must be written raw (runbook, step 4).
-  Untested still: remove and runtime switch, the dead-node drill, crumble
-  (the CoreOS master; its VPS has no `/dev/vda`). A step that fails on hardware is a finding for
+  Crumble (plain Fedora CoreOS on the third VPS, disk `/dev/sda`) runs the
+  direct-exit master stack. Runbook step 5 passed on lychee (problem 55:
+  every container restarts on a re-apply). **A real device is in**: a
+  Bluefin VM enrolled into the `devices` group reaches the master, the
+  names, the admin pages and every node service through the mesh with the
+  fleet CA verifying, exits through Mullvad, and nginx logs it by its own
+  mesh address (problems 54, 56, 57, 58 on the way). What a device needs
+  beyond the WireGuard config: the fleet CA in the system trust (`trust
+  anchor`), and for Firefox — a Flatpak on Bluefin, with its own
+  certificate store and DNS over HTTPS on by default, which turns `.home`
+  names into a web search — a policy that installs the CA and turns DoH
+  off, placed in
+  `/var/lib/flatpak/extension/org.mozilla.firefox.systemconfig/x86_64/stable/{policies,certificates}`
+  (it mounts at `/app/etc/firefox` in the sandbox; the enrol bundle's job).
+  Untested still: the dead-node drill, federation between the two
+  networks, the MTU on a 5G path. A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep

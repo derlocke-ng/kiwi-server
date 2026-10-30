@@ -283,6 +283,15 @@ ks_stack_host_prep() {
         printf '%s\n' "# kiwi-server stack" "${KS_STACK_SYSCTL[@]}" > /etc/sysctl.d/90-kiwi-stack.conf
         for kv in "${KS_STACK_SYSCTL[@]}"; do sysctl -q -w "$kv" || true; done
     fi
+    if [[ $KS_STACK_RUNTIME == podman && -n ${KS_STACK_DNS_IP:-} ]]; then
+        # podman's own resolver (aardvark-dns) listens on the stack network's gateway,
+        # port 53 — and a container publishing 53 on every address (Pi-hole) then fails
+        # with "address already in use". containers.conf moves aardvark to another port;
+        # podman redirects the containers' lookups there itself. Read at network start.
+        install -d -m 0755 /etc/containers/containers.conf.d
+        printf '%s\n' '# kiwi-server stack: podman'"'"'s own DNS off port 53, so the dns module may publish it' \
+            '[network]' 'dns_bind_port = 5533' > /etc/containers/containers.conf.d/50-kiwi-dns.conf
+    fi
     # Pi-hole wants port 53 on the host; systemd-resolved's stub listener (Fedora
     # CoreOS, uCore) sits on 127.0.0.53:53 and would block it. Debian's default
     # install has no systemd-resolved, so nothing happens there.

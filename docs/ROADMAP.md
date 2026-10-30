@@ -246,12 +246,13 @@ UX and ecosystem:
     non-removable) disk through a `--pre-install` script writing the
     installer config, and the preseed's `partman-auto/disk` from an early
     command the same way. (iso.py, targets/debian.py)
-47. When the live ISO's install fails, its emergency shell is useless: the
-    live system's root is locked and no user exists, so `lsblk` to learn the
-    disk's name is impossible at the console. Give the live environment the
-    admin user with the fleet's key and console password (`coreos-installer
-    iso customize --live-ignition`), so a stopped install can be inspected
-    at the console or over SSH. (iso.py)
+47. *Fixed in 2.7.0.* When the live ISO's install failed, its emergency
+    shell was useless: the live system's root is locked and no user exists.
+    The live environment now gets its own Ignition (`--live-ignition`): root
+    and the admin user with the fleet's console password and keys, and a
+    unit that prints `lsblk` to the console before the installer looks for
+    `disk:`. Open: SSH into the live system over the provider's network for
+    a VPS whose console is slow. (iso.py)
 48. *Found on hardware, fixed in 2.7.0.* On the first gateway+cloud node
     the VPN client, Pi-hole, Vaultwarden and Nextcloud's apache never
     started: "IPAM error: requested ip address 172.128.0.2 is already
@@ -271,6 +272,24 @@ UX and ecosystem:
     "active (exited)" after that and would not run again (every container
     then failed with "network not found"), it stops that unit too, so the
     start recreates the network first. (roles/common/lib.sh)
+50. *Found on hardware, fixed in 2.7.0.* Pi-hole never started on the
+    gateway+cloud node: "listen tcp4 :53: bind: address already in use".
+    podman's own resolver (aardvark-dns) listens on the stack network's
+    gateway address, port 53, and a container publishing 53 on every address
+    collides with it. When the stack runs a resolver, the role writes
+    `dns_bind_port = 5533` into `containers.conf.d`; podman moves aardvark
+    and redirects the containers' lookups itself. (roles/common/lib.sh)
+51. *Found on hardware, fixed in 2.7.0.* **Nothing behind a VPN client had
+    NAT out of the tunnel.** In `post-rules.txt.j2` the comment above the
+    masquerade ended in an inline `{% if %}…{% endif %}`, and Jinja's
+    `trim_blocks` swallowed the newline after it, so the rendered line read
+    `# NAT: … tunneliptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE` —
+    a comment. gluetun's own traffic worked (the healthcheck, DoT), every
+    forwarded packet left with a private source and never came back: on
+    the master, the nodes' and clients' internet; on a node, the LAN
+    clients the gateway routes. The golden files carried the bug, which is
+    what a golden test does; found by `wget` from inside the master's
+    WireGuard server. (modules/vpn-client/post-rules.txt.j2, tests/golden)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

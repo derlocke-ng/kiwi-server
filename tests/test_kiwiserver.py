@@ -535,8 +535,17 @@ class TestIso(Base):
         iso.coreos_iso(FakeTC(), f.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "a.iso")))
         self.assertEqual(calls[0][:4], ["coreos-installer", "download", "-s", "stable"])
-        cust = calls[1]
+        # the live environment gets its own Ignition: root and the admin may log in, the disks are printed
+        self.assertEqual(calls[1][:2], ["butane", "--strict"])
+        with open(os.path.join(self.tmp, "o", "a.live.bu")) as fh:
+            live = fh.read()
+        self.assertIn("name: root", live)
+        self.assertIn("password_hash: $6$", live)
+        self.assertIn("lsblk -d", live)
+        self.assertIn("Before=coreos-installer.service", live)
+        cust = calls[2]
         self.assertEqual(cust[:3], ["coreos-installer", "iso", "customize"])
+        self.assertTrue(cust[cust.index("--live-ignition") + 1].endswith("a.live.ign"))
         self.assertEqual(cust[cust.index("--dest-device") + 1], "/dev/sda")
         self.assertEqual(cust[cust.index("--dest-ignition") + 1], ign)
         self.assertEqual(cust[cust.index("--dest-console") + 1], "ttyS0,115200n8")
@@ -553,8 +562,8 @@ class TestIso(Base):
         f2 = self.fleet({"defaults": self.base_defaults(install={"on_done": "reboot"}), "hosts": {"a": {}}})
         calls.clear()
         iso.coreos_iso(FakeTC(), f2.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
-        self.assertNotIn("--post-install", calls[1])
-        self.assertNotIn("--live-karg-append", calls[1])
+        self.assertNotIn("--post-install", calls[2])
+        self.assertNotIn("--live-karg-append", calls[2])
 
     def test_iso_needs_disk(self):
         f = self.fleet({"defaults": self.base_defaults(disk=None), "hosts": {"a": {}}})

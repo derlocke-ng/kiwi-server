@@ -30,9 +30,13 @@ iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p {{ portproto.split('/')[1] if '
 {% for rule in module_rules %}
 iptables {{ rule }}
 {% endfor %}
-# NAT: everything leaving through the tunnel{% if not mesh_via %}; DNAT'd flows too, since the
-# host has no route back into the mesh for the replies{% endif %}
-{% if not mesh_via %}
+{# a block tag at the end of a comment line swallows the newline (trim_blocks), and the
+   rule after it became part of the comment: no NAT at all, found on the first master #}
+{% if mesh_via %}
+# NAT: everything leaving through the tunnel
+{% else %}
+# NAT: everything leaving through the tunnel; DNAT'd flows too, since the
+# host has no route back into the mesh for the replies
 iptables -t nat -A POSTROUTING -m conntrack --ctstate DNAT -j MASQUERADE
 {% endif %}
 iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE

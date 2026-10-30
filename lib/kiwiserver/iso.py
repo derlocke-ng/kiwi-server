@@ -55,6 +55,44 @@ systemctl poweroff
 """
 
 
+def live_butane(host):
+    """The live installer environment: root and the admin user with the fleet's
+    console password and keys, so a stopped install has a shell, and the
+    machine's disks printed on the console before the installer looks for
+    `disk:` (the live ISO's own root is locked and no user exists otherwise)."""
+    from .targets import coreos as coreos_t
+    users = []
+    ph = host.password_hash()
+    keys = host.ssh_keys()
+    if ph:
+        users.append({"name": "root", "password_hash": ph})
+    admin = {"name": host.admin["user"]}
+    if ph:
+        admin["password_hash"] = ph
+    if keys:
+        admin["ssh_authorized_keys"] = keys
+    users.append(admin)
+    unit = "\n".join([
+        "[Unit]",
+        "Description=kiwi-server: this machine's disks, for the console",
+        "DefaultDependencies=no",
+        "After=systemd-udev-settle.service",
+        "Before=coreos-installer.service",
+        "[Service]",
+        "Type=oneshot",
+        "StandardOutput=tty",
+        "TTYPath=/dev/console",
+        "ExecStart=/bin/sh -c 'echo \"kiwi-server: the fleet file says disk: %s — the disks here:\"; lsblk -d -o NAME,SIZE,MODEL,TRAN'"
+        % (host.cfg.get("disk") or "?"),
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+    ])
+    return coreos_t.to_yaml({"variant": coreos_t.BUTANE_VARIANT, "version": coreos_t.BUTANE_VERSION,
+                             "passwd": {"users": users},
+                             "systemd": {"units": [{"name": "kiwi-live-disks.service", "enabled": True, "contents": unit}]}})
+
+
 def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
     disk = host.cfg.get("disk")
     if not disk:
@@ -75,6 +113,12 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
         post = os.path.join(util.parent(ign_path), host.name + ".post-install.sh")
         util.write_text(post, POWEROFF_SCRIPT, mode=0o700)
         argv += ["--live-karg-append", "coreos.inst.skip_reboot", "--post-install", post]
+    from .targets import coreos as coreos_t
+    live_bu = os.path.join(util.parent(ign_path), host.name + ".live.bu")
+    live_ign = os.path.join(util.parent(ign_path), host.name + ".live.ign")
+    util.write_text(live_bu, live_butane(host), mode=0o600)
+    coreos_t.to_ignition(tc, live_bu, live_ign)
+    argv += ["--live-ignition", live_ign]
     argv += ["-f", "-o", out_iso, base]
     if os.path.exists(out_iso):
         os.unlink(out_iso)   # coreos-installer will not replace an existing output file, -f or not

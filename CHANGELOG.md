@@ -43,6 +43,22 @@
   asked for them (problem 48). A changed `.network` quadlet now has its
   podman network recreated at apply (problem 49). tests/golden: the
   network unit and the compose network of every preset gain one line.
+- **NAT out of the VPN client, at last**: in `post-rules.txt.j2` an inline
+  `{% if %}` at the end of a comment line swallowed the newline before the
+  masquerade rule, which became part of the comment in every rendered
+  stack. gluetun's own traffic worked, everything forwarded through it —
+  the mesh's internet on a master, the LAN's on a gateway node — left with
+  a private source and never came back (problem 51, found on the first
+  master with `wget` from the WireGuard server). tests/golden: the rule on
+  its own line in every preset.
+- **Pi-hole and podman's own resolver no longer fight over port 53**: with a
+  resolver in the stack the role sets `dns_bind_port = 5533` in
+  `containers.conf.d`, where podman moves aardvark-dns (problem 50).
+- **The live installer ISO has a shell and shows the disks**: its own
+  Ignition gives root and the admin user the fleet's console password and
+  keys, and prints `lsblk` before the installer looks for `disk:`; a VPS
+  whose disk is not where the fleet file says can be read at its console
+  instead of guessed (problem 47).
 - **The first boot waits for name resolution** (two minutes at most) before
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver

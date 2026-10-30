@@ -413,7 +413,21 @@ Asked for by the owner in October 2026, for the test round and after:
   `secrets/known_hosts` as `UserKnownHostsFile`) and tunnel aliases per
   service (`<host>-pihole`, `<host>-portainer`, `<host>-wg` with
   `LocalForward` to the service's localhost port), regenerated on every
-  render — the emergency path when the mesh is down.
+  render — the emergency path when the mesh is down. The owner's own ssh
+  config for the live master is the model: `<host>-portainer` and
+  `<host>-wg-easy-ui` with a `LocalForward`, `<host>-restart-vpn` with
+  `RemoteCommand kiwi-stack vpn-restart` and `RequestTTY force`.
+- **IPv6, end to end.** Today everything is IPv4: the stack network has
+  `enable_ipv6: false`, the mesh is 10.x, wg-easy 7 knows no IPv6 clients,
+  Pi-hole serves A records only. The owner has a public IPv6 prefix at home
+  and wants to expose services over it. In order: a dual-stack stack
+  network (netavark `IPv6=true`, a ULA per stack), the mesh with a ULA /48
+  beside 10.x (a newer wg-easy, or wg-easy's successor, for v6 clients),
+  Pi-hole AAAA records for the fleet's names, nginx listening on v6,
+  gluetun's IPv6 through the provider (Mullvad hands one out already), the
+  masters' public v6 as a second `wg_host`; at home, pinholes on the
+  router for the services to expose and AAAA records through dynamic DNS.
+  Each step keeps v4 working; `validate` says which hosts are dual-stack.
 - **`kiwi-server probe <ssh target>`**: what a machine is, as JSON, before
   the first apply (OS, podman or docker, catatonit, `sudo -n`, disks,
   interfaces, listening ports, running containers, a DHCP server on its

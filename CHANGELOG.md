@@ -12,6 +12,11 @@
   whole mesh is routed into `wg0`; before, only the server's own /24 was,
   and a device in the `devices` group received nothing back (problem 56,
   found with the first device). tests/golden/gate: one line of `start.sh`.
+- **A node with only Portainer behind its proxy gets the mesh DNAT too**
+  (`portainer.needs_vpn_dnat: true`, problem 58). Found with the same
+  device: on uCore a mesh client's connection to a node's proxy still dies
+  on the host's firewall (problem 57, the asymmetric reply path) — recorded
+  with its two fixes for the owner's decision.
 - Runbook step 5 passed on a node: a module added and removed again, the
   runtime switched to docker and back, every time with `verify` green and
   the old stack stopped first; noted that a re-apply restarts every

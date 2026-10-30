@@ -336,6 +336,29 @@ UX and ecosystem:
     10.9.0.x never noticed. `start.sh` now routes the whole `mesh_subnet`
     into `wg0`; the peers' AllowedIPs still decide who gets what.
     (modules/vpn-server/start.sh.j2, tests/golden/gate)
+57. *Found with the first device; open, needs a decision.* A mesh client's
+    connection to a node's reverse proxy (the DNAT in the VPN client) never
+    completes on uCore: the SYN goes VPN client → nginx directly on the
+    bridge, nginx's reply goes to its gateway, the host, which routes the
+    mesh back through the VPN client — an asymmetric path, and the host's
+    conntrack sees only the reply, so firewalld's `ct state invalid drop`
+    eats it (`SYN_SENT [UNREPLIED]` in the VPN client, nothing on the host).
+    Debian without a firewall passes it. Two fixes: (a) masquerade the
+    DNAT'd flows again (symmetric, no host involvement, but nginx logs the
+    VPN client's address for every mesh client — what 2.5.0 removed on
+    purpose); (b) keep the client's address and let the host carry the
+    reply: `net.bridge.bridge-nf-call-iptables=1` (br_netfilter) so both
+    directions are tracked, plus the mesh subnet as a trusted source in
+    firewalld — tested half way on papaya: bridge-nf alone turns the timeout
+    into "admin prohibited", the trusted source is the second half and
+    changes the host's firewall, so it waits for the owner. (b) is the
+    design's intent; it belongs in lib.sh's firewalld branch next to
+    `ks_firewall_open`. (roles/common/lib.sh, modules/vpn-client)
+58. *Found with the first device, fixed in 2.7.1.* A node whose only web
+    service was Portainer (the minimal preset plus `portainer`) had no mesh
+    DNAT at all, because `enable_vpn_dnat` follows the modules'
+    `needs_vpn_dnat` and Portainer said false. It is served by the reverse
+    proxy, so it says true now. (modules/portainer/module.yaml)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

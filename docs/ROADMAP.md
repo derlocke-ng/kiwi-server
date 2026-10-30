@@ -185,6 +185,16 @@ UX and ecosystem:
     rendered into the preseed's late command, the Butane filesystems and
     the role script (mkfs only when the disk has no filesystem).
     (targets/debian.py, targets/coreos.py, roles/common/lib.sh)
+37. A node publishes its services on the host (80/443 of the reverse proxy,
+    the sftp port, what `published_ports` lists) because a node lives on a
+    LAN; on a public host that is the internet. A master is safe there (its
+    nginx and Pi-hole live in the WireGuard server's namespace), so today
+    a VPS has to be a master. Add `reverse-proxy.network_mode: vpn-client`
+    (the proxy inside the VPN client's namespace, reachable at the mesh
+    address only, as on a master) or a stack setting `exposure: lan | mesh`
+    that binds every published port to the mesh, and let `validate` warn
+    when a node has a public address and publishes ports.
+    (modules/reverse-proxy, modules.py, roles/common/stack.yaml)
 
 ## Todo, in order
 

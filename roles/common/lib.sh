@@ -19,16 +19,19 @@ ks_say()  { KS_STEP=$*; printf ':: %s\n' "$*"; }
 ks_warn() { printf 'warning: %s\n' "$*" >&2; }
 ks_die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 ks_fail() { # EXIT LINE COMMAND — the ERR trap: say where it stopped and leave a marker status can show
-    local rc=$1 line=$2 cmd=$3
+    local rc=$1 line=$2 cmd=$3 fn=${FUNCNAME[1]:-main}
+    # KS_STEP is the last thing ks_say announced, which may be an earlier step; the
+    # function the command sits in says where it really stopped
     {
         echo "failed: $(date -u +%FT%TZ)"
         echo "step: $KS_STEP"
+        echo "function: $fn"
         echo "command: $cmd (line $line, exit $rc)"
         echo "log: $KS_LOG — last lines:"
         tail -n 20 "$KS_LOG" 2>/dev/null | sed 's/^/  /'
     } > "$KS_FAILED" 2>/dev/null || true
-    printf 'error: the role stopped during "%s": %s (line %s, exit %s) — see %s and %s\n' \
-        "$KS_STEP" "$cmd" "$line" "$rc" "$KS_LOG" "$KS_FAILED" >&2
+    printf 'error: the role stopped during "%s", in %s: %s (line %s, exit %s) — see %s and %s\n' \
+        "$KS_STEP" "$fn" "$cmd" "$line" "$rc" "$KS_LOG" "$KS_FAILED" >&2
     exit "$rc"
 }
 
@@ -416,7 +419,11 @@ ks_stack_unpack() {
         # that left the stack takes its container with it
         local q
         install -d -m 0755 /etc/containers/systemd
-        grep -lsF '# kiwi-server stack' /etc/containers/systemd/*.container /etc/containers/systemd/*.network 2>/dev/null | xargs -r rm -f
+        # one file at a time: on a fresh machine the globs match nothing, and a grep
+        # over the literal patterns exits 2, which pipefail turned into a failed apply
+        for q in /etc/containers/systemd/*.container /etc/containers/systemd/*.network; do
+            if [[ -f $q ]] && grep -qsF '# kiwi-server stack' "$q"; then rm -f "$q"; fi
+        done
         for q in "${KS_STACK_QUADLETS[@]}"; do
             case $q in
                 *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;

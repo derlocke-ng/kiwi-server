@@ -203,6 +203,14 @@ UX and ecosystem:
     `remote.configure` now takes the private keys found next to the
     `admin.ssh_keys` `.pub` files and uses them exclusively. (remote.py,
     cli.py)
+41. *Found on hardware, fixed in 2.7.0.* The first podman apply on a fresh
+    machine failed in the quadlet cleanup: `grep -l … /etc/containers/systemd/*.container
+    | xargs -r rm -f` ran over globs that matched nothing, grep exited 2 on
+    the literal patterns, and `pipefail` made that a failed apply — reported
+    as "fleet CA trusted", the last step announced, with `xargs` as the
+    culprit. Now one file at a time, and `role.failed` names the function
+    the command sat in. Open: a test that *executes* lib.sh's functions in
+    a scratch root (the library is parsed and shellchecked, never run).
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

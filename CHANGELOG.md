@@ -19,6 +19,11 @@
   reboot (`coreos.inst.skip_reboot`) and a post-install script turns the
   machine off. The install guard with a `--reinstall` override (ROADMAP,
   problem 14) stays open.
+- **The first podman apply on a fresh machine no longer fails in the quadlet
+  cleanup**: a grep over globs that matched nothing exited 2 and `pipefail`
+  stopped the role (problem 41, found on hardware). `role.failed` and the
+  error line now name the function the failing command sat in, not only
+  the last step announced.
 - **The first boot waits for name resolution** (two minutes at most) before
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver

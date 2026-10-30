@@ -420,6 +420,12 @@ class TestDebian(Base):
         s = self.render(f, "d")
         return f.hosts["d"], debian_t.preseed(f.hosts["d"], VERSION), debian_t.iso_files(f.hosts["d"], s)
 
+    def test_preseed_powers_off_when_done(self):
+        _h, ps, _files = self.make()
+        self.assertIn("d-i debian-installer/exit/poweroff boolean true", ps)   # the default: remove the media first
+        _h, ps, _files = self.make(install={"on_done": "reboot"})
+        self.assertNotIn("exit/poweroff", ps)
+
     def test_preseed_dhcp(self):
         h, ps, files = self.make()
         for needle in ("d-i debian-installer/locale string en_US.UTF-8",
@@ -455,6 +461,11 @@ class TestDebian(Base):
                        "d-i partman-auto/method string crypto",
                        "d-i partman-crypto/passphrase password secret-pass"):
             self.assertIn(needle, ps)
+        late = debian_t.late_script(h)
+        self.assertIn("KEYMAP=y", late)                  # the LUKS prompt in the installed system's own layout
+        self.assertIn("in-target update-initramfs -u", late)
+        h2, _ps, _ = self.make()
+        self.assertNotIn("KEYMAP", debian_t.late_script(h2))
 
     def test_preseed_admin_groups(self):
         _, ps, _ = self.make(admin={"groups": ["docker", "video"]})
@@ -518,15 +529,41 @@ class TestIso(Base):
             def run(self, argv, **kw):
                 calls.append(list(argv))
                 return type("R", (), {"stdout": base + "\n", "stderr": ""})()
-        iso.coreos_iso(FakeTC(), f.hosts["a"], "/o/a.ign", "/o/a.iso", self.tmp)
+        ign = os.path.join(self.tmp, "o", "a.ign")
+        os.makedirs(os.path.dirname(ign))
+        write(os.path.join(self.tmp, "o", "a.iso"), "stale")   # a rebuild: the old ISO must go first
+        iso.coreos_iso(FakeTC(), f.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "a.iso")))
         self.assertEqual(calls[0][:4], ["coreos-installer", "download", "-s", "stable"])
-        cust = calls[1]
+        # the live environment gets its own Ignition: root and the admin may log in, the disks are printed
+        self.assertEqual(calls[1][:2], ["butane", "--strict"])
+        with open(os.path.join(self.tmp, "o", "a.live.bu")) as fh:
+            live = fh.read()
+        self.assertIn("name: root", live)
+        self.assertIn("password_hash: $6$", live)
+        self.assertIn("lsblk -d", live)
+        self.assertIn("Before=coreos-installer.service", live)
+        cust = calls[2]
         self.assertEqual(cust[:3], ["coreos-installer", "iso", "customize"])
+        self.assertTrue(cust[cust.index("--live-ignition") + 1].endswith("a.live.ign"))
         self.assertEqual(cust[cust.index("--dest-device") + 1], "/dev/sda")
-        self.assertEqual(cust[cust.index("--dest-ignition") + 1], "/o/a.ign")
+        self.assertEqual(cust[cust.index("--dest-ignition") + 1], ign)
         self.assertEqual(cust[cust.index("--dest-console") + 1], "ttyS0,115200n8")
         self.assertEqual(cust[cust.index("--dest-karg-append") + 1], "mitigations=auto")
+        # install.on_done: poweroff (the default): the live system skips its reboot and a
+        # post-install script, next to the Ignition, turns the machine off
+        self.assertEqual(cust[cust.index("--live-karg-append") + 1], "coreos.inst.skip_reboot")
+        post = cust[cust.index("--post-install") + 1]
+        self.assertEqual(os.path.dirname(post), os.path.dirname(ign))
+        with open(post) as fh:
+            self.assertIn("systemctl poweroff", fh.read())
         self.assertEqual(cust[-1], base)
+        # install.on_done: reboot keeps the live ISO's own reboot
+        f2 = self.fleet({"defaults": self.base_defaults(install={"on_done": "reboot"}), "hosts": {"a": {}}})
+        calls.clear()
+        iso.coreos_iso(FakeTC(), f2.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
+        self.assertNotIn("--post-install", calls[2])
+        self.assertNotIn("--live-karg-append", calls[2])
 
     def test_iso_needs_disk(self):
         f = self.fleet({"defaults": self.base_defaults(disk=None), "hosts": {"a": {}}})
@@ -666,7 +703,14 @@ class TestModules(Base):
         net = b.quadlets["knet-node.network"]
         self.assertIn("Subnet=172.128.0.0/24", net)
         self.assertIn("Gateway=172.128.0.1", net)
+        self.assertIn("IPRange=172.128.0.128/26", net)     # the AIO containers draw from here, not from .2 upwards
+        self.assertEqual(compose["networks"]["knet-node"]["ipam"]["config"][0]["ip_range"], "172.128.0.128/26")
         self.assertIn("Options=mtu=1412", net)
+        # a fixed address inside the dynamic range is refused
+        host, role, spec = self.spec("sh3", role="node-cloud",
+                                     **{"node-cloud": self.node_cloud(vault={"container_ip": "172.128.0.130"})})
+        with self.assertRaises(KiwiError):
+            modmod.Renderer(self.ms).render(spec)
         env = compose["services"]["kn-vpn-client"]["environment"]
         self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443", env)
         self.assertNotIn("WIREGUARD_PRIVATE_KEY=", "\n".join(env))
@@ -869,7 +913,7 @@ class TestModules(Base):
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
         # the master's Pi-hole first, Quad9 only while the master is unreachable; fleet names go to the master
         self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", svcs["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
         self.assertIn(("10.8.0.25", "cloud.sh3.kiwi"), b.hosts)
@@ -906,9 +950,15 @@ class TestModules(Base):
         nginx = b.files["kn-nginx/nginx.conf"][0]
         self.assertIn("set $backend https://kn-vpn-client:5800;", nginx)
         self.assertIn("-i eth0 -o tun0 -j ACCEPT", post)      # LAN clients the gateway routes here
+        # the node's own names point at the proxy inside the containers — except in Pi-hole,
+        # which would serve that container address to every client (problem 53)
+        self.assertIn("AddHost=", b.quadlets["kn-nginx.container"])
+        self.assertNotIn("AddHost=", b.quadlets["kn-pihole.container"])
         # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
         inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
-        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -j DROP'), inserts)
+        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP'), inserts)
+        # … and, standing on top, it must spare the replies to what the containers started
+        # (the VPN client's handshake) and the LAN's connections to published ports
         self.assertEqual(b.files["kn-portainer/admin-password"][0], "")
         self.assertNotIn("command", svcs["kn-portainer"])
         self.assertIn("2224/tcp", b.ports)
@@ -942,7 +992,7 @@ class TestModules(Base):
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
         self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks",
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
         self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
@@ -1137,7 +1187,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
         self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
     def test_rendered_scripts_are_clean(self):
@@ -1167,7 +1217,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         env = b.compose["services"]["km-pihole"]["environment"]
         # dnsmasq watches the directory and reloads the file by itself
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks", env)
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks", env)
         vols = b.compose["services"]["km-pihole"]["volumes"]
         # root writes there: read-only for the container, outside its writable /etc/dnsmasq.d
         self.assertIn("/home/user/docker/km-pihole/mullvad-socks:/etc/mullvad-socks:ro,z", vols)
@@ -1214,7 +1264,7 @@ class TestModules(Base):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": node})
         b = modmod.Renderer(self.ms).render(spec)
         self.assertIn("kn-mullvad-socks.timer", b.units)
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1;hostsdir=/etc/mullvad-socks",
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1;hostsdir=/etc/mullvad-socks",
                       b.compose["services"]["kn-pihole"]["environment"])
 
     def test_mullvad_socks_settings_are_checked(self):
@@ -1257,7 +1307,7 @@ class TestModules(Base):
         host, role, spec = self.spec("gate", role="master", **{"master": m})
         env = modmod.Renderer(self.ms).render(spec).compose["services"]["km-pihole"]["environment"]
         lines = [e for e in env if e.upper().startswith("FTLCONF_MISC_DNSMASQ_LINES=")]
-        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks;"
+        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks;"
                                  "rebind-domain-ok=example.org;address=/x.lan/192.168.1.5"])
         self.assertIn("FTLCONF_dns_domainNeeded=true", env)
 
@@ -1528,6 +1578,51 @@ class TestRouter(Base):
         with contextlib.redirect_stderr(err):
             self.assertEqual(cli.main(["openwrt", f.path, "--via", "d"]), 1)   # d has no static LAN address
         self.assertIn("static LAN address", err.getvalue())
+
+    def test_apply_uses_the_fleets_own_key(self):
+        # admin.ssh_keys names secrets/admin.pub and the private key lies next to it:
+        # ssh offers that key and no other (the agent may hold keys the machines never saw)
+        write(os.path.join(self.tmp, "secrets", "admin.pub"), KEY)
+        write(os.path.join(self.tmp, "secrets", "admin"), "private")
+        f = self.fleet({"defaults": self.base_defaults(admin={"user": "core", "password": "pw",
+                                                             "ssh_keys": ["secrets/admin.pub", KEY]}),
+                        "hosts": {"a": {}}})
+        ids = cli.fleet_identities(f)
+        self.assertEqual(ids, [os.path.join(self.tmp, "secrets", "admin")])
+        remote.configure("/kh", ids)
+        try:
+            opts = remote.ssh_opts()
+            self.assertIn("IdentitiesOnly=yes", opts)
+            self.assertEqual(opts[opts.index("-i") + 1], ids[0])
+        finally:
+            remote.configure("")
+        self.assertNotIn("-i", remote.ssh_opts())
+        # a .pub without its private key, or a literal key: nothing to offer, the agent decides
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        self.assertEqual(cli.fleet_identities(f), [])
+
+    def test_bare_media_leaves_the_stack_for_apply(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "m1": {"role": "node-gw", "target": "debian",
+                   "node-gw": self.node_gw(**{"vpn-client": {"wireguard_config": "secrets/not-enrolled-yet.conf"}})}}})
+        out = os.path.join(self.tmp, "out")
+        # a node whose WireGuard config does not exist yet: refused with the role, fine as bare media
+        with self.assertRaises(SystemExit) as cm:
+            cli.main(["render", f.path, "m1", "--no-backup", "-o", out])
+        self.assertEqual(cm.exception.code, cli.EXIT_INVALID)
+        self.assertEqual(cli.main(["render", f.path, "m1", "--bare", "--no-backup", "-o", out]), 0)
+        self.assertEqual(cli.main(["render", f.path, "gate", "--bare", "--no-backup", "-o", out]), 0)
+        with open(os.path.join(out, "gate", "gate.role.sh")) as fh:
+            script = fh.read()
+        self.assertIn("KS_STACK=0", script)
+        self.assertNotIn("KS_FILES[stack/docker-compose.yml]=", script)   # no compose file, no wg-easy password on the media
+        self.assertNotIn("KS_FILES[kiwi-stack]=", script)
+        self.assertEqual(cli.main(["render", f.path, "gate", "--no-backup", "-o", out]), 0)
+        with open(os.path.join(out, "gate", "gate.role.sh")) as fh:
+            script = fh.read()
+        self.assertIn("KS_STACK=1", script)                  # the real role again, same output directory
+        self.assertIn("KS_FILES[stack/docker-compose.yml]=", script)
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
@@ -2095,7 +2190,7 @@ class TestCli(Base):
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
         # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
         self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)
         self.assertIn("'10.8.0.25 cloud.sh3.kiwi'", m1)

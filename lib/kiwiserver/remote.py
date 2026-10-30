@@ -12,20 +12,29 @@ from .util import KiwiError
 
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
 KNOWN_HOSTS = ""   # the fleet's own known_hosts (secrets/known_hosts): set by configure()
+IDENTITIES = []    # private keys of the fleet's admin.ssh_keys that exist next to their .pub
 
 
-def configure(known_hosts):
+def configure(known_hosts, identities=()):
     """The fleet keeps the machines' host keys next to its other secrets: a
     fresh machine is accepted on first contact, a changed key (a reinstall)
-    is refused with a message that says what to do."""
-    global KNOWN_HOSTS
+    is refused with a message that says what to do. The machines trust the
+    keys in admin.ssh_keys; when the private key of one lies next to its .pub
+    (a key made for the fleet, under its directory), ssh uses those keys and
+    no other — the operator's agent may hold keys the machines never saw."""
+    global KNOWN_HOSTS, IDENTITIES
     KNOWN_HOSTS = known_hosts or ""
+    IDENTITIES = [str(i) for i in identities]
 
 
 def ssh_opts():
     opts = list(SSH_OPTS)
     if KNOWN_HOSTS:
         opts += ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=%s" % KNOWN_HOSTS]
+    if IDENTITIES:
+        opts += ["-o", "IdentitiesOnly=yes"]
+        for i in IDENTITIES:
+            opts += ["-i", i]
     return opts
 
 

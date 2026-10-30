@@ -9,19 +9,23 @@ made with the owner; do not reopen them without a reason.
 ## State
 
 - kiwi-server 2.6.0 (the split: kiwimodules package, `tools/split-sync.sh`)
-  is on branch `claude/magical-volta-jyjhn9` until the owner merges it;
-  2.5.0 is the last release.
-- kiwi-modules and kiwi-stack are populated (0.1.0, untagged). kiwi-server is
-  still where both are developed: after a change to `lib/kiwimodules`,
+  is merged and released; kiwi-modules 0.1.0 and kiwi-stack 0.1.0 are
+  tagged and released. kiwi-server is still where both are developed: after a change to `lib/kiwimodules`,
   `modules/`, `roles/*/role.yaml`, `roles/common/lib.sh` or `kiwi-stack`, run
   `tools/split-sync.sh`, commit in the two checkouts, and finish with
   `tools/split-sync.sh --check`. Releases are cut by `release.yml` (in all
   three repositories) when a push to main carries a new `VERSION` in
   `kiwi.manifest`; the cloud session cannot push tags itself.
-- **Nothing has booted on hardware yet.** Every stack is the live v1 setup
-  rendered from modules and checked file by file, but first boot, ISO
-  install, `apply`, `status` and `enroll` against a live master are only
-  tested against fakes. A step that fails on hardware is a finding for
+- **The first hardware round** (30 October 2026): sorbet (Debian, the
+  VPS), papaya (uCore, the mini PC) and lychee (Debian with LUKS, a VM)
+  booted from bare media; **the master stack runs on sorbet, the
+  gateway+cloud stack on papaya, the minimal stack on lychee**, both nodes
+  enrolled and reaching the internet through the master's exit. Found and
+  fixed on the way: problems 38, 39, 41, 42, 43, 47 to 53 (the biggest:
+  no NAT out of any VPN client, the gateway's DROP killing replies, the
+  IPAM collisions). Sticks must be written raw (runbook, step 4).
+  Untested still: remove and runtime switch, the dead-node drill, crumble
+  (the CoreOS master; its VPS has no `/dev/vda`). A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep
@@ -33,9 +37,16 @@ made with the owner; do not reopen them without a reason.
   Quad9. The master's Pi-hole listens on 8081 inside the WireGuard server's
   namespace, nginx owns 80/443.
 - Rootful podman with quadlets now, rootless maybe later. Full disk
-  encryption everywhere with Tang/Clevis (nested Shamir), no TPM,
-  reverse-tunnel unlock; this is not built yet, so test machines run
-  without LUKS.
+  encryption everywhere with Tang/Clevis (nested Shamir), no TPM; the
+  unlock is the rings and the netfilter relay of
+  `docs/design/control-plane.md` (Unlock), which replaced the earlier
+  reverse-tunnel idea. Not built yet, so test machines run without LUKS
+  (the VM excepted, to test the preseed).
+- One bootc image for every CoreOS-lineage machine, built in the
+  phoenix-server repository (empty today; phoenix-desktop and phoenix-docs
+  follow, phoenix-main goes); the role arrives at first boot. See
+  `docs/design/control-plane.md`, The image. Masters are named after fruit
+  dishes, nodes after fruits (Names).
 - Control plane: one full admin for all nodes plus admins for their own
   nodes; both ISO paths (generic ISO with a join token as the default,
   per-host ISO with embedded secrets for offline); FastAPI, Jinja, HTMX;
@@ -54,27 +65,83 @@ CA are the fleet: back them up, never commit them.
 ## Order of work
 
 1. **Operator machine**: install, `kiwi-server doctor`, a fleet file with
-   the master on the first VPS (Debian 13 or Ubuntu 24.04, podman 4.4 or
-   newer with catatonit, root over SSH).
-2. **Master on the VPS** with `apply` (runbook step 2). Expect real
-   findings here: image pulls, the Pi-hole port, the Mullvad exit,
-   `kiwi-stack verify`. Fix in this tree, sync, re-apply.
+   the master on the test VPS (Debian 13 or Ubuntu 24.04, podman 4.4 or
+   newer with catatonit, root over SSH), on the test network below.
+2. **Master on the VPS from bare media**: `build --bare`, boot the ISO
+   through the provider's panel (it carries no stack and no secret of it),
+   then `apply … --ssh core@<address>` and runbook step 2's checks. Expect
+   real findings here: the preseed on a VPS, image pulls, the Pi-hole port,
+   the Mullvad exit, `kiwi-stack verify`. Fix in this tree, sync, re-apply.
 3. **A node on the mini PC** (a Debian install by hand, or the ISO), then
    `enroll` to fetch its WireGuard config and `apply`.
 4. **The bridged VM** for the unattended ISO install path: build the ISO,
    boot it, read `/var/lib/kiwi-server/role.failed` if it stops.
 5. Re-apply, remove, switch runtime, and the dead-node drill from the
    runbook; record results in the README status section.
-6. Only then the second VPS and the ARM boards.
+6. Only then the ARM boards.
 
-## Open questions for the owner
+## The test network (answered by the owner, October 2026)
 
-- Is the second VPS a standby master, a node, or a Tang server? The plan
-  says standby master later; a Tang server is needed before FDE exists.
-- Which provider and exit country for the master's VPN client?
-- The TLD for the test network (`.home` unless told otherwise).
-- Do the LAN machines get static addresses or DHCP from the gateway
-  node's Pi-hole?
+The test round runs beside the owner's live v1 network, which must not
+notice it.
+
+- **The live network is off limits.** The first VPS is the live v1 master
+  (mesh 10.8.0.0/16, TLD `.kiwi`) and an old kiwi-node serves DHCP on the
+  owner's LAN. Never apply to, enroll against or restart anything of it.
+- **The second VPS is the test master**, for development and these
+  hardware rounds. The standby master and a Tang server come later, on
+  other machines.
+- **Mesh 10.9.0.0/16, TLD `.home`**, so a device in both meshes can tell
+  them apart: 10.9.0.0/24 master and nodes, .1 guests, .2 pentest,
+  .3 devices, .4 routers. The fleet file sets every setting that carries
+  the subnet (`mesh_subnet`, the vpn-server's `server_ip`, `wg_subnet`,
+  `wg_default_address`, `groups`, tor's `socks_policy_accept`); see
+  ROADMAP.md, problem 32.
+- **Exit through Mullvad in Switzerland.**
+- **LAN machines get static addresses.** No test node serves DHCP on the
+  owner's LAN (no dhcp-relay, no Pi-hole DHCP).
+- **Masters are named after fruit dishes, nodes after fruits**, the rule
+  that is now general (design/control-plane.md, Names).
+
+## Test machines (October 2026)
+
+The fleet file is `~/kiwi/fleet.yaml` on the operator machine, outside git;
+its addresses and ssh aliases stay there.
+
+- **sorbet**, the master: the second VPS (2 CPUs, 1.9 GiB, 20 GB,
+  `/dev/vda`), **reinstalled from bare media** (`build --bare`) as Debian
+  trixie with podman, the master role applied over SSH afterwards; the
+  provider boots a custom ISO, and that ISO holds no secret of the stack.
+  The Ubuntu 22.04 it came with (podman 3.4, docker 29, a sudo that asks
+  for a password) is gone with the reinstall, and with it the `runtime:
+  docker` variant.
+- **papaya**, gateway and cloud on one node: the mini PC, no OS yet, a big
+  NVMe for the system and a 1 TB SATA SSD for the data at `/mnt/data`.
+  The data disk is formatted and mounted by hand before the first apply
+  (problem 36). Modules: the gateway preset without dhcp-relay, plus
+  cloud and vault. uCore from bare media too (`build --bare`, so the ISO
+  needs no WireGuard config yet), `enroll` and `apply` once sorbet is up.
+- **lychee**, the ISO path: a bridged VM, Debian with a LUKS-encrypted
+  disk (`debian.encrypt`, the passphrase typed at the console on every
+  boot until Tang exists), the minimal stack plus Portainer.
+- **A third network in a VM** is the owner's idea for federation tests
+  beyond two parties: a master in a bridged VM at home (`~/kiwi3`, a dish
+  name, mesh 10.11.0.0/16, TLD `.corp`), which also exercises a master
+  behind NAT — `wg_host` is the home's public name and UDP 51820 must be
+  forwarded to the VM. Not created yet.
+- **crumble**, the master of a **second test network** (`~/kiwi2`: its own
+  seed and CA, mesh 10.10.0.0/16, TLD `.internal`), on the owner's third
+  VPS, plain Fedora CoreOS from bare media: the master stack's first boot
+  on the CoreOS lineage, and later the other side of federation. One
+  master per network is a decision, so a second master is a second fleet
+  file. It is a master and not a node because a node publishes its
+  services on the host, which on a VPS is the internet (problem 37). It is
+  a **direct-exit master** (`modules:` without vpn-client, `mullvad_socks`
+  off; design/control-plane.md, Exits): its clients leave through the VPS's
+  own uplink, so it needs no Mullvad device, and it is the first test of
+  that mode. Its VPS has no `/dev/vda` (the live ISO stopped there on the
+  first try; the same ISO installs in a VM with 1.5 GiB and a virtio disk):
+  set `disk:` from `lsblk` at the emergency shell and rebuild (problem 46).
 
 ## ARM boards (checked against the tree, not on hardware)
 

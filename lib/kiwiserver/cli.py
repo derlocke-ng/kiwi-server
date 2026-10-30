@@ -345,7 +345,7 @@ class Renderer:
 
 def load(args, need_roles=True):
     fleet = config.Fleet.load(args.fleet)
-    remote.configure(fleet.resolve_path("secrets/known_hosts"))
+    remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
     roles = rolesmod.discover() if need_roles else None
     ms = modmod.discover() if need_roles else None
     return fleet, roles, ms
@@ -534,6 +534,23 @@ def cmd_script(args):
     sys.stdout.write(script)
 
 
+def fleet_identities(fleet):
+    """The private keys the fleet itself holds for its machines: every
+    admin.ssh_keys entry that is a path to a .pub with the private key next
+    to it (secrets/admin_ed25519.pub -> secrets/admin_ed25519)."""
+    out = []
+    blocks = [fleet.defaults.get("admin") or {}] + [h.admin for h in fleet.hosts.values()]
+    for a in blocks:
+        for k in a.get("ssh_keys") or []:
+            k = str(k)
+            if config.is_ssh_key(k) or not k.endswith(".pub"):
+                continue
+            priv = fleet.resolve_path(k[:-4])
+            if os.path.isfile(priv) and priv not in out:
+                out.append(priv)
+    return out
+
+
 def fleet_facts(fleet, roles, ms):
     """(domain, master's mesh address, mesh subnet): what a router needs to know."""
     r = Renderer(fleet, roles, out_dir_for(argparse.Namespace(output_dir=None), fleet), None, ms)
@@ -712,6 +729,19 @@ def cmd_ca(args):
 def _render_or_build(args, build):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
+    if getattr(args, "bare", False):
+        # Media without the stack: the role script carries the base system only
+        # (hostname, network, the admin user, the update policy) and the machine
+        # comes up as `bare`; its role and every secret of its stack arrive
+        # afterwards with `apply` over SSH, which checks the role's settings
+        # then. So a node's WireGuard config may still be missing here (enroll
+        # comes after the master exists) — only the base system is validated.
+        # For media that leave the house (a provider's ISO store).
+        for h in hosts:
+            if h.role != "bare":
+                util.say("%s: bare media — afterwards: kiwi-server apply %s %s --ssh %s@<address>"
+                         % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"]))
+            h.role, h.role_settings_raw, h.role_settings = "bare", {}, {}
     check(fleet, roles, ms, hosts)
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
@@ -913,7 +943,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server list <fleet>                      hosts and what has been generated
   kiwi-server show <fleet> <host>               the effective configuration of one host
   kiwi-server render <fleet> [host...]          role scripts, stacks, Butane/Ignition or preseed
-  kiwi-server build <fleet> [host...]           render, then the unattended ISO per host
+  kiwi-server build <fleet> [host...]           render, then the unattended ISO per host (--bare: without the stack)
   kiwi-server script <fleet> <host>             print the role script (run it on any machine)
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
@@ -965,10 +995,11 @@ def build_parser():
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
-    s = sub("render", cmd_render); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
-    s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
-    s = sub("build", cmd_build); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
-    s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
+    for name, fn in (("render", cmd_render), ("build", cmd_build)):
+        s = sub(name, fn); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+        s.add_argument("--bare", action="store_true",
+                       help="the base system only: the role and its stack's secrets come later with apply (media that leave the house)")
+        s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     sub("ca", cmd_ca).add_argument("fleet")
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")

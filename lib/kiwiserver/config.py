@@ -65,6 +65,14 @@ DEFAULTS = {
         "time": "03:30",
         "length_minutes": 90,
     },
+    "install": {
+        # What the install media do when the install is finished. poweroff: the
+        # machine turns off, so the stick or the provider's ISO can be removed
+        # before it ever boots again — media that stay first in the boot order
+        # would otherwise reinstall on every boot. reboot: straight into the
+        # installed system (a VM whose ISO you detach by hand).
+        "on_done": "poweroff",
+    },
     "coreos": {
         "stream": "stable",
         "console": None,
@@ -341,6 +349,8 @@ class Host:
             errs.append("admin: give password OR password_hash, not both")
         if a.get("password_hash") and not str(a["password_hash"]).startswith("$"):
             errs.append("admin.password_hash does not look like a crypt hash")
+        if str((c.get("install") or {}).get("on_done") or "poweroff") not in ("poweroff", "reboot"):
+            errs.append("install.on_done must be poweroff or reboot (got %r)" % c["install"]["on_done"])
         try:
             keys = self.ssh_keys()
         except KiwiError as e:

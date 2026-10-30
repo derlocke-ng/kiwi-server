@@ -19,16 +19,19 @@ ks_say()  { KS_STEP=$*; printf ':: %s\n' "$*"; }
 ks_warn() { printf 'warning: %s\n' "$*" >&2; }
 ks_die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 ks_fail() { # EXIT LINE COMMAND — the ERR trap: say where it stopped and leave a marker status can show
-    local rc=$1 line=$2 cmd=$3
+    local rc=$1 line=$2 cmd=$3 fn=${FUNCNAME[1]:-main}
+    # KS_STEP is the last thing ks_say announced, which may be an earlier step; the
+    # function the command sits in says where it really stopped
     {
         echo "failed: $(date -u +%FT%TZ)"
         echo "step: $KS_STEP"
+        echo "function: $fn"
         echo "command: $cmd (line $line, exit $rc)"
         echo "log: $KS_LOG — last lines:"
         tail -n 20 "$KS_LOG" 2>/dev/null | sed 's/^/  /'
     } > "$KS_FAILED" 2>/dev/null || true
-    printf 'error: the role stopped during "%s": %s (line %s, exit %s) — see %s and %s\n' \
-        "$KS_STEP" "$cmd" "$line" "$rc" "$KS_LOG" "$KS_FAILED" >&2
+    printf 'error: the role stopped during "%s", in %s: %s (line %s, exit %s) — see %s and %s\n' \
+        "$KS_STEP" "$fn" "$cmd" "$line" "$rc" "$KS_LOG" "$KS_FAILED" >&2
     exit "$rc"
 }
 
@@ -280,6 +283,15 @@ ks_stack_host_prep() {
         printf '%s\n' "# kiwi-server stack" "${KS_STACK_SYSCTL[@]}" > /etc/sysctl.d/90-kiwi-stack.conf
         for kv in "${KS_STACK_SYSCTL[@]}"; do sysctl -q -w "$kv" || true; done
     fi
+    if [[ $KS_STACK_RUNTIME == podman && -n ${KS_STACK_DNS_IP:-} ]]; then
+        # podman's own resolver (aardvark-dns) listens on the stack network's gateway,
+        # port 53 — and a container publishing 53 on every address (Pi-hole) then fails
+        # with "address already in use". containers.conf moves aardvark to another port;
+        # podman redirects the containers' lookups there itself. Read at network start.
+        install -d -m 0755 /etc/containers/containers.conf.d
+        printf '%s\n' '# kiwi-server stack: podman'"'"'s own DNS off port 53, so the dns module may publish it' \
+            '[network]' 'dns_bind_port = 5533' > /etc/containers/containers.conf.d/50-kiwi-dns.conf
+    fi
     # Pi-hole wants port 53 on the host; systemd-resolved's stub listener (Fedora
     # CoreOS, uCore) sits on 127.0.0.53:53 and would block it. Debian's default
     # install has no systemd-resolved, so nothing happens there.
@@ -414,14 +426,41 @@ ks_stack_unpack() {
     if [[ $KS_STACK_RUNTIME == podman ]]; then
         # the quadlets: every unit this tool wrote before goes first, so a module
         # that left the stack takes its container with it
-        local q
+        local q netname
+        declare -A old_net=()
         install -d -m 0755 /etc/containers/systemd
-        grep -lsF '# kiwi-server stack' /etc/containers/systemd/*.container /etc/containers/systemd/*.network 2>/dev/null | xargs -r rm -f
+        # a .network quadlet only creates its network when it is missing: remember what
+        # the installed ones said, so a changed one gets its network recreated below
+        for q in /etc/containers/systemd/*.network; do
+            [[ -f $q ]] && old_net[$(basename "$q")]=$(sha256sum < "$q")
+        done
+        # one file at a time: on a fresh machine the globs match nothing, and a grep
+        # over the literal patterns exits 2, which pipefail turned into a failed apply
+        for q in /etc/containers/systemd/*.container /etc/containers/systemd/*.network; do
+            if [[ -f $q ]] && grep -qsF '# kiwi-server stack' "$q"; then rm -f "$q"; fi
+        done
         for q in "${KS_STACK_QUADLETS[@]}"; do
             case $q in
                 *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;
                 *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0600 ;;
             esac
+        done
+        for q in "${KS_STACK_QUADLETS[@]}"; do
+            [[ $q == *.network ]] || continue
+            netname=$(sed -n 's/^NetworkName=//p' "/etc/containers/systemd/$q")
+            [[ -n $netname ]] || continue
+            if [[ -n ${old_net[$q]:-} && ${old_net[$q]} != "$(sha256sum < "/etc/containers/systemd/$q")" ]] \
+               && podman network exists "$netname" 2>/dev/null; then
+                ks_say "the stack network $netname changed — stopping the stack and recreating it"
+                systemctl stop kiwi-stack.service 2>/dev/null || true
+                podman network rm -f "$netname" >/dev/null || ks_warn "could not remove network $netname — podman network rm -f $netname by hand"
+            fi
+            # the quadlet's generated oneshot (knet-node-network.service) stays "active (exited)"
+            # after the network is gone and would not run again: stop it, so the start recreates
+            # the network before the containers ask for it
+            if ! podman network exists "$netname" 2>/dev/null; then
+                systemctl stop "${q%.network}-network.service" 2>/dev/null || true
+            fi
         done
     fi
     install -d -m 0755 /etc/kiwi-server
@@ -629,6 +668,22 @@ ks_base() {
     ks_trust_ca
 }
 
+# network-online.target is satisfied before the resolver is (a first boot on
+# Debian saw apt fail with "Temporary failure resolving" and go on without
+# updates). Wait for names to resolve before the first apt or pull, two
+# minutes at most; a timeout is a warning, the steps that follow retry anyway.
+ks_wait_dns() {
+    local i name
+    for ((i = 0; i < 60; i++)); do
+        for name in deb.debian.org quay.io registry.fedoraproject.org; do
+            getent hosts "$name" >/dev/null 2>&1 && return 0
+        done
+        [[ $i -eq 0 ]] && ks_say "waiting for name resolution"
+        sleep 2
+    done
+    ks_warn "names do not resolve after 120 s — going on; apt and pulls retry on their own"
+}
+
 ks_main() {
     [[ $EUID -eq 0 ]] || ks_die "this script must run as root (sudo bash $0)"
     KS_OS=$(ks_detect_os)
@@ -642,6 +697,7 @@ ks_main() {
     # a failed step names itself and leaves role.failed; a success removes it
     trap 'ks_fail $? $LINENO "$BASH_COMMAND"' ERR
     set -E
+    ks_wait_dns
     ks_base
     ks_role_apply
     ks_post_script

@@ -61,6 +61,11 @@ defaults:
     time: "03:30"                   # local time
     length_minutes: 90
 
+  install:
+    on_done: poweroff               # the media turn the machine off when the install is done:
+                                    # remove the stick / the provider's ISO, then power on.
+                                    # reboot: straight into the installed system
+
   tls:                              # certificates for the reverse proxies
     auto: true                      # one fleet CA in ca_dir, a *.<hostname> cert per host,
     ca_dir: secrets/ca              # the CA trusted on every machine (import it on your devices)

@@ -23,7 +23,9 @@
 {% set _ = chain.append('9.9.9.9;149.112.112.112') %}
 {% endif %}
 {% set upstreams = chain | join(';') %}
-{% set lines = ['strict-order'] %}
+{# no-hosts: podman copies the host's /etc/hosts into the container, where the node's
+   own names point at 127.0.0.1 — dnsmasq would serve that to every client #}
+{% set lines = ['strict-order', 'no-hosts'] %}
 {% if domain %}
 {% if node_type != 'master' and master_ip %}
 {% set _ = lines.append('server=/' ~ domain ~ '/' ~ master_ip) %}

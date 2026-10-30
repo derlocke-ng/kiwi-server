@@ -261,6 +261,16 @@ def _subnet_parts(cidr):
     return str(net), str(net.network_address + 1), base
 
 
+def _dynamic_range(net):
+    """Where containers without a fixed address get theirs: the third quarter
+    of the stack network (172.128.0.128/26 of a /24). The fixed addresses live
+    below it (.2 to .10, then .100 upwards) and above it (.250, .251); without
+    this range netavark hands the first free addresses — .2, .3, .4 … — to
+    whichever container starts first, and the fixed ones then fail with
+    "already allocated" (found on the first gateway+cloud node)."""
+    return list(net.subnets(prefixlen_diff=2))[2]
+
+
 def _compose_safe(v):
     """docker compose interpolates $VAR in the compose file; a password with a
     dollar sign must reach the container intact, so $ becomes $$ for the
@@ -291,6 +301,7 @@ class Renderer:
         address, or the host's container_ip override — checked to be inside
         the subnet, not the gateway, and unique."""
         net = _subnet(spec.docker_subnet)
+        dyn = _dynamic_range(net)
         ips, taken = {}, {net.network_address, net.network_address + 1, net.broadcast_address}
         for i, name in enumerate(ordered):
             cfg = spec.module_config.get(name) or {}
@@ -303,10 +314,13 @@ class Renderer:
                     raise KiwiError("%s.container_ip: %s is outside the stack network %s" % (name, ip, net))
                 if ip in taken:
                     raise KiwiError("%s.container_ip: %s is the gateway or already used by another module" % (name, ip))
+                if ip in dyn:
+                    raise KiwiError("%s.container_ip: %s lies in %s, the range containers without a fixed "
+                                    "address draw from — pick one outside it" % (name, ip, dyn))
             else:
                 off = IP_PLAN.get(name, 100 + i)
                 ip = net.network_address + off
-                if ip not in net or ip in taken:
+                if ip not in net or ip in taken or ip in dyn:
                     raise KiwiError("docker_subnet %s has no room for %s's address (.%d) — "
                                     "use a /24 or set %s.container_ip" % (net, name, off, name))
             taken.add(ip)
@@ -322,11 +336,12 @@ class Renderer:
 
     def base_context(self, spec, ordered):
         subnet, gateway, base = _subnet_parts(spec.docker_subnet)
+        ip_range = str(_dynamic_range(_subnet(spec.docker_subnet)))
         ips = self.container_ips(spec, ordered)
         ctx = {
             "node_name": spec.hostname, "hostname": spec.hostname, "node_type": spec.node_type,
             "container_prefix": PREFIX[spec.node_type], "network_name": NETWORK_NAME[spec.node_type],
-            "docker_subnet": subnet, "docker_gateway": gateway, "docker_subnet_base": base,
+            "docker_subnet": subnet, "docker_gateway": gateway, "docker_subnet_base": base, "docker_ip_range": ip_range,
             "docker_dir": spec.docker_dir, "mtu": str(spec.mtu), "timezone": spec.timezone,
             "vpn_ip": spec.vpn_ip, "pub_iface": spec.pub_iface, "service_user": spec.service_user,
             "container_ips": ips, "modules": list(ordered),
@@ -497,7 +512,10 @@ class Renderer:
             body = body or {}
             if body.get("network_mode") or "networks" not in body:
                 continue    # shares another container's namespace, or host networking
-            if own and base["proxy_ip"] and "extra_hosts" not in body:
+            # not into Pi-hole's: dnsmasq reads the container's /etc/hosts and would answer
+            # the node's own names with the proxy's container address to every LAN and mesh
+            # client (found on the first gateway node); Pi-hole serves the fleet's records
+            if own and base["proxy_ip"] and "extra_hosts" not in body and svc != "%s-pihole" % base["container_prefix"]:
                 body["extra_hosts"] = ["%s:%s" % (n, ip) for n, ip in own]
             if dns_ip and "dns" not in body and svc not in ("%s-pihole" % base["container_prefix"],
                                                              "%s-vpn-client" % base["container_prefix"]):

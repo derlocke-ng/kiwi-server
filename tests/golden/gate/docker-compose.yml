@@ -48,6 +48,7 @@ services:
     - PASSWORD=golden-wg-password
     - WG_PORT=51820
     - WG_POST_UP=bash /etc/wireguard/start.sh
+    - WG_POST_DOWN=true
     - WG_PERSISTENT_KEEPALIVE=25
     - UI_TRAFFIC_STATS=true
     - WG_DEFAULT_DNS=10.8.0.1
@@ -84,7 +85,7 @@ services:
     - TZ=Europe/Berlin
     - FTLCONF_webserver_api_password=golden-pihole-master
     - FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112
-    - FTLCONF_misc_dnsmasq_lines=strict-order;local=/home/;hostsdir=/etc/mullvad-socks
+    - FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/home/;hostsdir=/etc/mullvad-socks
     - FTLCONF_dns_listeningMode=all
     - FTLCONF_webserver_domain=pihole.gate.home
     - FTLCONF_webserver_port=8081
@@ -141,3 +142,4 @@ networks:
       config:
       - subnet: 172.64.0.0/24
         gateway: 172.64.0.1
+        ip_range: 172.64.0.128/26

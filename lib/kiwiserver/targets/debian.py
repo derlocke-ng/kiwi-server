@@ -128,8 +128,13 @@ def preseed(host, version):
         "d-i preseed/late_command string sh %s/late.sh" % CDROM_DIR,
         "d-i finish-install/reboot_in_progress note",
         "d-i cdrom-detect/eject boolean true",
-        "",
     ]
+    if (c.get("install") or {}).get("on_done", "poweroff") == "poweroff":
+        # the machine turns off when the install is done: remove the stick or
+        # the provider's ISO, then power it on — media left first in the boot
+        # order would reinstall on every boot (install.on_done: reboot keeps the reboot)
+        L.append("d-i debian-installer/exit/poweroff boolean true")
+    L.append("")
     return "\n".join(L)
 
 
@@ -167,6 +172,15 @@ def late_script(host):
             "cp $S/20auto-upgrades $T/etc/apt/apt.conf.d/20auto-upgrades",
             "cp $S/52kiwi-updates $T/etc/apt/apt.conf.d/52kiwi-updates",
             "in-target systemctl enable kiwi-reboot-if-required.timer",
+        ]
+    d = host.cfg["debian"]
+    if d.get("encrypt") or d.get("partitioning") == "crypto":
+        # the LUKS prompt lives in the initramfs, which does not load the console
+        # keymap unless told: a German keyboard typed its passphrase as US (y/z
+        # swapped, no dash) on the first encrypted VM
+        L += [
+            "sed -i 's/^KEYMAP=.*/KEYMAP=y/' $T/etc/initramfs-tools/initramfs.conf",
+            "in-target update-initramfs -u",
         ]
     L += ["in-target systemctl enable kiwi-role.service", "exit 0", ""]
     return "\n".join(L)

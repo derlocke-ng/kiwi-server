@@ -84,14 +84,27 @@ kiwi-server build fleet.yaml    # + the ISOs (base images cached in ~/.cache/kiw
 sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-Boot the machine from it. CoreOS and Debian install, reboot, and run the role
-on first boot; uCore reboots twice more first (unsigned rebase, then signed).
+Boot the machine from it. CoreOS and Debian install and then **power off**
+(`install.on_done: poweroff`, the default), so you remove the stick or the
+provider's ISO before the machine ever boots again — media left first in the
+boot order would reinstall on every boot; `install: { on_done: reboot }` goes
+straight into the installed system instead. Powered on again, the machine
+runs the role on first boot; uCore reboots twice more first (unsigned rebase,
+then signed).
 Watch it with `journalctl -u kiwi-role -f`; `/var/lib/kiwi-server/role.done`
 appears when it is finished.
 
 Or skip the ISO: `kiwi-server script fleet.yaml sh3 > sh3.sh`, copy it to any
 installed Debian / CoreOS / uCore machine and `sudo bash sh3.sh`. It is the
 same script the ISO runs.
+
+Media that leave the house — a provider's ISO store, a stick in the post —
+should not carry the stack's secrets: `kiwi-server build fleet.yaml sh3
+--bare` writes an ISO with the base system only (hostname, network, the
+admin user, the update policy), and `kiwi-server apply fleet.yaml sh3 --ssh
+core@<address>` brings the role and its stack afterwards, over SSH. A node's
+bare media can be built before `enroll` wrote its WireGuard config; `apply`
+checks the role's settings when it brings them.
 
 ## The fleet file
 
@@ -286,9 +299,10 @@ kiwi-server apply fleet.yaml sh3 --no-run   # only put it at /var/lib/kiwi-serve
 kiwi-server status fleet.yaml               # when each role was applied, uptime, kiwi-stack status
 ```
 
-SSH goes to the admin user at the host's name with your key or agent
-(nothing asks for a password; the install gave the admin user passwordless
-sudo). `--ssh core@192.168.1.7` reaches a machine whose name does not resolve
+SSH goes to the admin user at the host's name with the fleet's own key when
+there is one — an `admin.ssh_keys` entry like `secrets/admin_ed25519.pub`
+whose private key lies next to it — and with your agent otherwise (nothing
+asks for a password; the install gave the admin user passwordless sudo). `--ssh core@192.168.1.7` reaches a machine whose name does not resolve
 yet. The script runs with `--force`, so the stack is rewritten and restarted
 with whatever changed; the disk and the OS are not touched. The GUI has the
 same two actions on the host page.
@@ -420,7 +434,7 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 
 ## Status
 
-2.6.0 splits the renderer and the machine side out as kiwi-modules and kiwi-stack (nothing a stack renders changed); 2.5.0 fixed what the review of 2.4.0 found. See [CHANGELOG.md](CHANGELOG.md). The
+2.7.0 adds install media without the stack (`build --bare`) and the design after the October talks; 2.6.0 split the renderer and the machine side out as kiwi-modules and kiwi-stack (nothing a stack renders changed); 2.5.0 fixed what the review of 2.4.0 found. See [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock

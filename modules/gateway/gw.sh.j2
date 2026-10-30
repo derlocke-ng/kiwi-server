@@ -24,7 +24,8 @@ fi
 [[ -n $PUB_IFACE ]] || { echo "[kiwi-gw] no LAN interface found"; exit 1; }
 
 rules_del() {
-    iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP 2>/dev/null || true
+    iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP 2>/dev/null || true
+    iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP 2>/dev/null || true   # the rule of earlier versions
     iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
@@ -64,6 +65,10 @@ iptables -I INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT
 iptables -I FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
 iptables -I FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT
 iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
-iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP
+# LAN clients must not reach the containers' own addresses — but this rule sits above
+# everything else, so it must spare the replies to what the containers themselves
+# started (the VPN client's WireGuard handshake came in on the LAN side and died here)
+# and the connections netavark DNATs to published ports (Pi-hole, nginx from the LAN)
+iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP
 iptables -t nat -I POSTROUTING -o "$BRIDGE" -j MASQUERADE
 echo "[kiwi-gw] LAN ($PUB_IFACE) -> $CONTAINER_IP (VPN client); mesh $VPN_SUBNET allowed"

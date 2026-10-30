@@ -65,12 +65,33 @@ Only where the provider or the VM can boot a custom ISO.
 
 ```bash
 kiwi-server build fleet.yaml m1 && ls -l output/m1/m1.iso
+sudo dd if=output/m1/m1.iso of=/dev/sdX bs=4M status=progress oflag=sync   # a raw copy, nothing else
 ```
 
-Boot it, walk away, come back: the machine reboots into the installed
-system, `kiwi-role.service` runs (`journalctl -u kiwi-role -f`), and step 3's
-checks pass. Pull the stick after the first reboot (the install guard is a
-roadmap item).
+Write the stick **raw** (`dd`, GNOME's Disk Image Writer, Fedora Media
+Writer). Ventoy, Rufus in ISO mode and similar tools rewrite the image, and
+the Fedora CoreOS live system then cannot find its root: the console ends in
+`Failed to isolate default target` before anything is installed (found on
+the first mini PC, 30 October 2026; the same ISO installed cleanly in a
+QEMU VM). Before blaming the media, boot the ISO in a VM:
+
+```bash
+qemu-img create -f qcow2 disk.qcow2 20G
+qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 -machine q35 \
+  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+  -drive file=disk.qcow2,if=none,id=d0 -device nvme,drive=d0,serial=test \
+  -cdrom output/m1/m1.iso -netdev user,id=n0 -device virtio-net-pci,netdev=n0
+```
+
+(an `nvme` device when the host's `disk:` is `/dev/nvme0n1`, `virtio-blk`
+for `/dev/vda`). A good run installs and powers off within a minute.
+
+Boot it, walk away, come back: the machine has installed and **powered
+off** (`install.on_done: poweroff`, the default). Remove the stick or detach
+the ISO, power it on: `kiwi-role.service` runs (`journalctl -u kiwi-role
+-f`), and step 3's checks pass. The install guard against a second boot of
+the media is still a roadmap item (problem 14); the power-off is what keeps a
+forgotten stick from reinstalling.
 
 ## 5. Re-apply, remove, switch
 

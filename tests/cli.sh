@@ -7,6 +7,8 @@ repo=$PWD
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# keep the caller's user site: jinja2 is often a pip --user install
+export PYTHONUSERBASE="${PYTHONUSERBASE:-$(python3 -m site --user-base)}"
 export HOME="$tmp/home" KIWI_GUI=0
 mkdir -p "$HOME/.ssh"
 if command -v ssh-keygen >/dev/null; then
@@ -29,6 +31,9 @@ printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n' > secrets/sh3.hom
 printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n' > secrets/m1.home.conf
 "$ks" validate fleet.yaml
 "$ks" render fleet.yaml --toolchain native
+"$ks" render fleet.yaml sh3 --bare --no-backup --toolchain native -o "$tmp/bare" 2>&1 | grep -q 'bare media'
+grep -q 'KS_STACK=0' "$tmp/bare/sh3/sh3.role.sh"
+if grep -q 'KS_FILES\[stack/docker-compose.yml\]=' "$tmp/bare/sh3/sh3.role.sh"; then echo "--bare must not embed the stack" >&2; exit 1; fi
 "$ks" list fleet.yaml | grep -q '^sh3 '
 "$ks" list fleet.yaml --porcelain | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["hosts"])==4; assert all(not h["errors"] for h in d["hosts"])'
 "$ks" script fleet.yaml gate | bash -n

@@ -1,5 +1,95 @@
 # Changelog
 
+## 2.7.0 — install media without the stack
+
+- **`kiwi-server build --bare`** (and `render --bare`): the ISO carries the
+  base system only — hostname, network, the admin user and keys, the update
+  policy — and the machine comes up as `bare`; its role and every secret of
+  its stack arrive afterwards with `kiwi-server apply` over SSH and stay
+  0600 on the machine. For media that leave the house: a provider's ISO
+  store, a stick in the post. Only the base system is validated, so a node's
+  media can be built before the node is enrolled (its WireGuard config comes
+  with `apply`, which checks the role's settings then). The per-host ISO with
+  the stack embedded stays the offline path.
+- **The install media power the machine off when the install is done**
+  (`install.on_done: poweroff`, the default; `reboot` keeps the old
+  behaviour): remove the stick or the provider's ISO, then power on. Media
+  left first in the boot order would otherwise reinstall on every boot.
+  Debian: `debian-installer/exit/poweroff`; CoreOS: the live ISO skips its
+  reboot (`coreos.inst.skip_reboot`) and a post-install script turns the
+  machine off. The install guard with a `--reinstall` override (ROADMAP,
+  problem 14) stays open.
+- **The first podman apply on a fresh machine no longer fails in the quadlet
+  cleanup**: a grep over globs that matched nothing exited 2 and `pipefail`
+  stopped the role (problem 41, found on hardware). `role.failed` and the
+  error line now name the function the failing command sat in, not only
+  the last step announced.
+- **The master's WireGuard server comes up on an nf_tables host**: its
+  `start.sh` uses `iptables-nft` where the image has it — inside the wg-easy
+  container the legacy xtables fail with "Permission denied" on Debian 13 and
+  Fedora hosts whatever modules are loaded (problem 42, found on the first
+  master) — and `WG_POST_DOWN` is a no-op instead of wg-easy's legacy
+  default. tests/golden/gate changes accordingly: two lines of `start.sh`
+  and one environment line; nothing a client sees.
+- **An encrypted Debian loads the console keymap into its initramfs**
+  (`KEYMAP=y`, `update-initramfs -u` in the late command), so the LUKS
+  prompt reads the keyboard the fleet file says, not US (problem 43, found
+  on the first encrypted VM).
+- **Containers without a fixed address no longer take the fixed ones**: the
+  stack network has an `IPRange` (172.128.0.128/26 of a /24; the compose
+  file's `ip_range`) for them, and a fixed address inside it is refused. On
+  the first gateway+cloud node the Nextcloud AIO containers had taken .2,
+  .4, .6 and .7 before the VPN client, Pi-hole, apache and Vaultwarden
+  asked for them (problem 48). A changed `.network` quadlet now has its
+  podman network recreated at apply (problem 49). tests/golden: the
+  network unit and the compose network of every preset gain one line.
+- **NAT out of the VPN client, at last**: in `post-rules.txt.j2` an inline
+  `{% if %}` at the end of a comment line swallowed the newline before the
+  masquerade rule, which became part of the comment in every rendered
+  stack. gluetun's own traffic worked, everything forwarded through it —
+  the mesh's internet on a master, the LAN's on a gateway node — left with
+  a private source and never came back (problem 51, found on the first
+  master with `wget` from the WireGuard server). tests/golden: the rule on
+  its own line in every preset.
+- **Pi-hole and podman's own resolver no longer fight over port 53**: with a
+  resolver in the stack the role sets `dns_bind_port = 5533` in
+  `containers.conf.d`, where podman moves aardvark-dns (problem 50).
+- **The live installer ISO has a shell and shows the disks**: its own
+  Ignition gives root and the admin user the fleet's console password and
+  keys, and prints `lsblk` before the installer looks for `disk:`; a VPS
+  whose disk is not where the fleet file says can be read at its console
+  instead of guessed (problem 47).
+- **A gateway node's VPN client can finish its handshake**: the gateway
+  module's host rule that keeps LAN clients off the containers' addresses
+  dropped every reply to what the containers started, the master's
+  WireGuard answers among them, and every LAN connection to a published
+  port; it now drops new, non-DNAT connections only (problem 52, found on
+  the first gateway node). tests/golden/m1's gw.sh changes accordingly.
+- **Pi-hole no longer answers a node's own names with a container address**:
+  the `AddHost=` entries for the containers stay out of Pi-hole's container,
+  which serves the fleet's records with `no-hosts` (problem 53, found on the
+  first gateway node: LAN clients were sent to 172.128.0.5, then to the
+  host's 127.0.0.1 entries podman had copied in).
+- **The first boot waits for name resolution** (two minutes at most) before
+  its first apt or pull: on the first machine booted from this tree, a
+  Debian VPS, `network-online.target` was satisfied before the resolver
+  was, and apt went on without updates (problem 38, found on hardware).
+- **`apply`, `status`, `enroll` and the backup use the fleet's own key**:
+  an `admin.ssh_keys` entry that is a `.pub` with its private key next to it
+  (`secrets/admin_ed25519.pub`) is offered to the machines, and no other
+  key then (`IdentitiesOnly`). Before, ssh offered whatever the operator's
+  agent held, and the first apply to a VPS failed with "Permission denied
+  (publickey)" because the fleet's key was not in the agent (problem 39,
+  found on hardware).
+- `tests/cli.sh` keeps the caller's Python user site, so a Jinja2 from
+  `pip install --user` (the README's own line) is found.
+- docs: the design after the October talks — the control node and the
+  replaceable master, the bootc image (phoenix-server), names, the unlock
+  with Tang rings and a netfilter relay, managed masters — in
+  docs/design/control-plane.md; the test network and its machines in
+  docs/HANDOFF.md; problems 32 to 36 and the owner's module wishes in
+  docs/ROADMAP.md.
+
 ## 2.6.0 — the renderer and the machine side as repositories of their own
 
 - **The renderer is its own package, `lib/kiwimodules`** (modules, quadlets,

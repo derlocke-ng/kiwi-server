@@ -16,6 +16,7 @@ Sysctl=net.ipv4.conf.all.src_valid_mark=1
 Environment=WG_HOST=vpn.example.org
 Environment=WG_PORT=51820
 Environment="WG_POST_UP=bash /etc/wireguard/start.sh"
+Environment=WG_POST_DOWN=true
 Environment=WG_PERSISTENT_KEEPALIVE=25
 Environment=UI_TRAFFIC_STATS=true
 Environment=WG_DEFAULT_DNS=10.8.0.1

@@ -526,7 +526,9 @@ class TestIso(Base):
                 return type("R", (), {"stdout": base + "\n", "stderr": ""})()
         ign = os.path.join(self.tmp, "o", "a.ign")
         os.makedirs(os.path.dirname(ign))
+        write(os.path.join(self.tmp, "o", "a.iso"), "stale")   # a rebuild: the old ISO must go first
         iso.coreos_iso(FakeTC(), f.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "a.iso")))
         self.assertEqual(calls[0][:4], ["coreos-installer", "download", "-s", "stable"])
         cust = calls[1]
         self.assertEqual(cust[:3], ["coreos-installer", "iso", "customize"])

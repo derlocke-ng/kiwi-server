@@ -76,6 +76,8 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
         util.write_text(post, POWEROFF_SCRIPT, mode=0o700)
         argv += ["--live-karg-append", "coreos.inst.skip_reboot", "--post-install", post]
     argv += ["-f", "-o", out_iso, base]
+    if os.path.exists(out_iso):
+        os.unlink(out_iso)   # coreos-installer will not replace an existing output file, -f or not
     tc.run(argv, mounts=[util.parent(ign_path), util.parent(out_iso), cache_dir])
     if os.path.isfile(out_iso):
         os.chmod(out_iso, 0o600)   # it carries the Ignition config and every secret in it

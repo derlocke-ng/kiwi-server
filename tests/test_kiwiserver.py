@@ -1552,6 +1552,28 @@ class TestRouter(Base):
             self.assertEqual(cli.main(["openwrt", f.path, "--via", "d"]), 1)   # d has no static LAN address
         self.assertIn("static LAN address", err.getvalue())
 
+    def test_apply_uses_the_fleets_own_key(self):
+        # admin.ssh_keys names secrets/admin.pub and the private key lies next to it:
+        # ssh offers that key and no other (the agent may hold keys the machines never saw)
+        write(os.path.join(self.tmp, "secrets", "admin.pub"), KEY)
+        write(os.path.join(self.tmp, "secrets", "admin"), "private")
+        f = self.fleet({"defaults": self.base_defaults(admin={"user": "core", "password": "pw",
+                                                             "ssh_keys": ["secrets/admin.pub", KEY]}),
+                        "hosts": {"a": {}}})
+        ids = cli.fleet_identities(f)
+        self.assertEqual(ids, [os.path.join(self.tmp, "secrets", "admin")])
+        remote.configure("/kh", ids)
+        try:
+            opts = remote.ssh_opts()
+            self.assertIn("IdentitiesOnly=yes", opts)
+            self.assertEqual(opts[opts.index("-i") + 1], ids[0])
+        finally:
+            remote.configure("")
+        self.assertNotIn("-i", remote.ssh_opts())
+        # a .pub without its private key, or a literal key: nothing to offer, the agent decides
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        self.assertEqual(cli.fleet_identities(f), [])
+
     def test_bare_media_leaves_the_stack_for_apply(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
             "gate": {"role": "master", "target": "debian", "master": self.master()},

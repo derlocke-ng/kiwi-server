@@ -196,6 +196,20 @@ UX and ecosystem:
     at its first pull. `ks_wait_dns` in lib.sh now waits up to two minutes
     for a name to resolve before the first apt or pull. Open: the role unit
     could order itself after `systemd-resolved` / `dhcpcd` where they exist.
+39. *Found on hardware, fixed in 2.7.0.* `apply` offered the operator's
+    agent keys to the machine, not the key the fleet gave it: the first
+    apply to the VPS failed with "Permission denied (publickey)" because the
+    test network's own key lived in `secrets/` and not in the agent.
+    `remote.configure` now takes the private keys found next to the
+    `admin.ssh_keys` `.pub` files and uses them exclusively. (remote.py,
+    cli.py)
+40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
+    IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
+    Measure instead of guessing: a path-MTU probe in `enroll` and in the
+    client config it writes (`--mtu`, a lower default such as 1280 for
+    phones), MSS clamping to the path MTU on the master's `wg0` forward
+    chain so TCP works whatever the client's MTU, and `kiwi-stack health`
+    reporting fragmentation. (modules/vpn-server, cli.py enroll, routers.md)
 37. A node publishes its services on the host (80/443 of the reverse proxy,
     the sftp port, what `published_ports` lists) because a node lives on a
     LAN; on a public host that is the internet. A master is safe there (its

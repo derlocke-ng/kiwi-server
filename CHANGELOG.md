@@ -23,6 +23,13 @@
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver
   was, and apt went on without updates (problem 38, found on hardware).
+- **`apply`, `status`, `enroll` and the backup use the fleet's own key**:
+  an `admin.ssh_keys` entry that is a `.pub` with its private key next to it
+  (`secrets/admin_ed25519.pub`) is offered to the machines, and no other
+  key then (`IdentitiesOnly`). Before, ssh offered whatever the operator's
+  agent held, and the first apply to a VPS failed with "Permission denied
+  (publickey)" because the fleet's key was not in the agent (problem 39,
+  found on hardware).
 - `tests/cli.sh` keeps the caller's Python user site, so a Jinja2 from
   `pip install --user` (the README's own line) is found.
 - docs: the design after the October talks — the control node and the

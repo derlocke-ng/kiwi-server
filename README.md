@@ -299,9 +299,10 @@ kiwi-server apply fleet.yaml sh3 --no-run   # only put it at /var/lib/kiwi-serve
 kiwi-server status fleet.yaml               # when each role was applied, uptime, kiwi-stack status
 ```
 
-SSH goes to the admin user at the host's name with your key or agent
-(nothing asks for a password; the install gave the admin user passwordless
-sudo). `--ssh core@192.168.1.7` reaches a machine whose name does not resolve
+SSH goes to the admin user at the host's name with the fleet's own key when
+there is one — an `admin.ssh_keys` entry like `secrets/admin_ed25519.pub`
+whose private key lies next to it — and with your agent otherwise (nothing
+asks for a password; the install gave the admin user passwordless sudo). `--ssh core@192.168.1.7` reaches a machine whose name does not resolve
 yet. The script runs with `--force`, so the stack is rewritten and restarted
 with whatever changed; the disk and the OS are not touched. The GUI has the
 same two actions on the host page.

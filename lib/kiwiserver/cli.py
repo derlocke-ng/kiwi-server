@@ -345,7 +345,7 @@ class Renderer:
 
 def load(args, need_roles=True):
     fleet = config.Fleet.load(args.fleet)
-    remote.configure(fleet.resolve_path("secrets/known_hosts"))
+    remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
     roles = rolesmod.discover() if need_roles else None
     ms = modmod.discover() if need_roles else None
     return fleet, roles, ms
@@ -532,6 +532,23 @@ def cmd_script(args):
     util.QUIET = True   # stdout is the script; the CA / certificate notes would end up inside it
     script, _bundle = Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms).script(h)
     sys.stdout.write(script)
+
+
+def fleet_identities(fleet):
+    """The private keys the fleet itself holds for its machines: every
+    admin.ssh_keys entry that is a path to a .pub with the private key next
+    to it (secrets/admin_ed25519.pub -> secrets/admin_ed25519)."""
+    out = []
+    blocks = [fleet.defaults.get("admin") or {}] + [h.admin for h in fleet.hosts.values()]
+    for a in blocks:
+        for k in a.get("ssh_keys") or []:
+            k = str(k)
+            if config.is_ssh_key(k) or not k.endswith(".pub"):
+                continue
+            priv = fleet.resolve_path(k[:-4])
+            if os.path.isfile(priv) and priv not in out:
+                out.append(priv)
+    return out
 
 
 def fleet_facts(fleet, roles, ms):

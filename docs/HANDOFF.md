@@ -122,6 +122,11 @@ its addresses and ssh aliases stay there.
 - **lychee**, the ISO path: a bridged VM, Debian with a LUKS-encrypted
   disk (`debian.encrypt`, the passphrase typed at the console on every
   boot until Tang exists), the minimal stack plus Portainer.
+- **A third network in a VM** is the owner's idea for federation tests
+  beyond two parties: a master in a bridged VM at home (`~/kiwi3`, a dish
+  name, mesh 10.11.0.0/16, TLD `.corp`), which also exercises a master
+  behind NAT — `wg_host` is the home's public name and UDP 51820 must be
+  forwarded to the VM. Not created yet.
 - **crumble**, the master of a **second test network** (`~/kiwi2`: its own
   seed and CA, mesh 10.10.0.0/16, TLD `.internal`), on the owner's third
   VPS, plain Fedora CoreOS from bare media: the master stack's first boot

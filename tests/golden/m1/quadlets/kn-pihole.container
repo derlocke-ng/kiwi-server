@@ -15,7 +15,7 @@ AddCapability=SYS_TIME
 AddCapability=SYS_NICE
 Environment=TZ=Europe/Berlin
 Environment=FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112
-Environment=FTLCONF_misc_dnsmasq_lines=strict-order;server=/home/10.8.0.1
+Environment=FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/home/10.8.0.1
 Environment=FTLCONF_dns_listeningMode=all
 Environment=FTLCONF_webserver_domain=pihole.m1.home
 Environment="FTLCONF_dns_hosts=10.8.0.1 gate.home;10.8.0.1 wg.gate.home;10.8.0.1 pihole.gate.home;10.8.0.6 m1.home;10.8.0.6 pihole.m1.home;10.8.0.6 dl.m1.home;10.8.0.6 jd.m1.home;10.8.0.6 portainer.m1.home;10.8.0.25 sh3.home;10.8.0.25 cloud.sh3.home;10.8.0.25 vault.sh3.home;10.8.0.25 portainer.sh3.home;10.8.0.9 min.home"

@@ -308,8 +308,11 @@ UX and ecosystem:
     the `AddHost=` entries meant for the containers went into Pi-hole's
     container too, and dnsmasq serves its `/etc/hosts`. The master's Pi-hole
     answered the mesh address correctly. Pi-hole's container gets no
-    `AddHost=` now and serves the fleet's records. (modules.py,
-    tests/golden/m1 and gate)
+    `AddHost=` now and serves the fleet's records — and dnsmasq runs with
+    `no-hosts`, because podman copies the *host's* `/etc/hosts` into the
+    container, where the node's own names point at 127.0.0.1 (the role
+    writes them so), and Pi-hole served that too. (modules.py,
+    modules/dns, tests/golden/m1 and gate)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

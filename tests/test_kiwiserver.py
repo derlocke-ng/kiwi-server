@@ -913,7 +913,7 @@ class TestModules(Base):
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
         # the master's Pi-hole first, Quad9 only while the master is unreachable; fleet names go to the master
         self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", svcs["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
         self.assertIn(("10.8.0.25", "cloud.sh3.kiwi"), b.hosts)
@@ -992,7 +992,7 @@ class TestModules(Base):
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
         self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks",
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
         self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
@@ -1187,7 +1187,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
         self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
     def test_rendered_scripts_are_clean(self):
@@ -1217,7 +1217,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         env = b.compose["services"]["km-pihole"]["environment"]
         # dnsmasq watches the directory and reloads the file by itself
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks", env)
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks", env)
         vols = b.compose["services"]["km-pihole"]["volumes"]
         # root writes there: read-only for the container, outside its writable /etc/dnsmasq.d
         self.assertIn("/home/user/docker/km-pihole/mullvad-socks:/etc/mullvad-socks:ro,z", vols)
@@ -1264,7 +1264,7 @@ class TestModules(Base):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": node})
         b = modmod.Renderer(self.ms).render(spec)
         self.assertIn("kn-mullvad-socks.timer", b.units)
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1;hostsdir=/etc/mullvad-socks",
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1;hostsdir=/etc/mullvad-socks",
                       b.compose["services"]["kn-pihole"]["environment"])
 
     def test_mullvad_socks_settings_are_checked(self):
@@ -1307,7 +1307,7 @@ class TestModules(Base):
         host, role, spec = self.spec("gate", role="master", **{"master": m})
         env = modmod.Renderer(self.ms).render(spec).compose["services"]["km-pihole"]["environment"]
         lines = [e for e in env if e.upper().startswith("FTLCONF_MISC_DNSMASQ_LINES=")]
-        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;local=/kiwi/;hostsdir=/etc/mullvad-socks;"
+        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks;"
                                  "rebind-domain-ok=example.org;address=/x.lan/192.168.1.5"])
         self.assertIn("FTLCONF_dns_domainNeeded=true", env)
 
@@ -2190,7 +2190,7 @@ class TestCli(Base):
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
         # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
         self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)
         self.assertIn("'10.8.0.25 cloud.sh3.kiwi'", m1)

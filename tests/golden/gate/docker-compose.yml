@@ -85,7 +85,7 @@ services:
     - TZ=Europe/Berlin
     - FTLCONF_webserver_api_password=golden-pihole-master
     - FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112
-    - FTLCONF_misc_dnsmasq_lines=strict-order;local=/home/;hostsdir=/etc/mullvad-socks
+    - FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/home/;hostsdir=/etc/mullvad-socks
     - FTLCONF_dns_listeningMode=all
     - FTLCONF_webserver_domain=pihole.gate.home
     - FTLCONF_webserver_port=8081

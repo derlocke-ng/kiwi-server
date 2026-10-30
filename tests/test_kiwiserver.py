@@ -952,7 +952,9 @@ class TestModules(Base):
         self.assertIn("-i eth0 -o tun0 -j ACCEPT", post)      # LAN clients the gateway routes here
         # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
         inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
-        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -j DROP'), inserts)
+        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP'), inserts)
+        # … and, standing on top, it must spare the replies to what the containers started
+        # (the VPN client's handshake) and the LAN's connections to published ports
         self.assertEqual(b.files["kn-portainer/admin-password"][0], "")
         self.assertNotIn("command", svcs["kn-portainer"])
         self.assertIn("2224/tcp", b.ports)

@@ -7,4 +7,4 @@ file, podman quadlets, the module configs, the host units and a stack.sh
 manifest — that `kiwi-stack apply DIR` puts on the machine. kiwi-server
 embeds this package and adds the fleet: hosts, targets, ISOs, the CA, enroll.
 """
-VERSION = "0.2.0"
+VERSION = "0.2.1"

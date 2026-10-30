@@ -267,7 +267,10 @@ UX and ecosystem:
     nothing on the machine: its generated service only creates the network
     when it is missing. The apply now remembers the installed network
     units' checksums and, when one changes, stops the stack and removes the
-    podman network so the start recreates it. (roles/common/lib.sh)
+    podman network; and because the quadlet's generated oneshot stays
+    "active (exited)" after that and would not run again (every container
+    then failed with "network not found"), it stops that unit too, so the
+    start recreates the network first. (roles/common/lib.sh)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

@@ -437,13 +437,20 @@ ks_stack_unpack() {
             esac
         done
         for q in "${KS_STACK_QUADLETS[@]}"; do
-            [[ $q == *.network && -n ${old_net[$q]:-} ]] || continue
-            [[ ${old_net[$q]} != "$(sha256sum < "/etc/containers/systemd/$q")" ]] || continue
+            [[ $q == *.network ]] || continue
             netname=$(sed -n 's/^NetworkName=//p' "/etc/containers/systemd/$q")
-            if [[ -n $netname ]] && podman network exists "$netname" 2>/dev/null; then
+            [[ -n $netname ]] || continue
+            if [[ -n ${old_net[$q]:-} && ${old_net[$q]} != "$(sha256sum < "/etc/containers/systemd/$q")" ]] \
+               && podman network exists "$netname" 2>/dev/null; then
                 ks_say "the stack network $netname changed — stopping the stack and recreating it"
                 systemctl stop kiwi-stack.service 2>/dev/null || true
                 podman network rm -f "$netname" >/dev/null || ks_warn "could not remove network $netname — podman network rm -f $netname by hand"
+            fi
+            # the quadlet's generated oneshot (knet-node-network.service) stays "active (exited)"
+            # after the network is gone and would not run again: stop it, so the start recreates
+            # the network before the containers ask for it
+            if ! podman network exists "$netname" 2>/dev/null; then
+                systemctl stop "${q%.network}-network.service" 2>/dev/null || true
             fi
         done
     fi

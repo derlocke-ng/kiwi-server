@@ -290,6 +290,18 @@ UX and ecosystem:
     clients the gateway routes. The golden files carried the bug, which is
     what a golden test does; found by `wget` from inside the master's
     WireGuard server. (modules/vpn-client/post-rules.txt.j2, tests/golden)
+52. *Found on hardware, fixed in 2.7.0.* On the gateway node the VPN client
+    never got past its handshake: the master's replies arrived on the LAN
+    NIC and were dropped by the gateway module's own host rule, `-I FORWARD
+    -i <LAN> -d <docker subnet> -j DROP`, which stands above the
+    established-accept and so killed every reply to every connection a
+    container started — and every connection netavark DNATs from the LAN
+    to a published port (Pi-hole, nginx). The rule meant "LAN clients may
+    not reach the containers' own addresses"; it now matches
+    `--ctstate NEW ! --ctstatus DNAT` only. Review finding R28 had put the
+    DROP on top on purpose; under podman that was the bug. Proven with the
+    rule's packet counter and a capture inside the VPN client's namespace.
+    (modules/gateway/gw.sh.j2, tests/golden/m1)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

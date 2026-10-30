@@ -59,6 +59,12 @@
   keys, and prints `lsblk` before the installer looks for `disk:`; a VPS
   whose disk is not where the fleet file says can be read at its console
   instead of guessed (problem 47).
+- **A gateway node's VPN client can finish its handshake**: the gateway
+  module's host rule that keeps LAN clients off the containers' addresses
+  dropped every reply to what the containers started, the master's
+  WireGuard answers among them, and every LAN connection to a published
+  port; it now drops new, non-DNAT connections only (problem 52, found on
+  the first gateway node). tests/golden/m1's gw.sh changes accordingly.
 - **The first boot waits for name resolution** (two minutes at most) before
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver

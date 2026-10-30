@@ -694,7 +694,14 @@ class TestModules(Base):
         net = b.quadlets["knet-node.network"]
         self.assertIn("Subnet=172.128.0.0/24", net)
         self.assertIn("Gateway=172.128.0.1", net)
+        self.assertIn("IPRange=172.128.0.128/26", net)     # the AIO containers draw from here, not from .2 upwards
+        self.assertEqual(compose["networks"]["knet-node"]["ipam"]["config"][0]["ip_range"], "172.128.0.128/26")
         self.assertIn("Options=mtu=1412", net)
+        # a fixed address inside the dynamic range is refused
+        host, role, spec = self.spec("sh3", role="node-cloud",
+                                     **{"node-cloud": self.node_cloud(vault={"container_ip": "172.128.0.130"})})
+        with self.assertRaises(KiwiError):
+            modmod.Renderer(self.ms).render(spec)
         env = compose["services"]["kn-vpn-client"]["environment"]
         self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443", env)
         self.assertNotIn("WIREGUARD_PRIVATE_KEY=", "\n".join(env))

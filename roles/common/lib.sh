@@ -417,8 +417,14 @@ ks_stack_unpack() {
     if [[ $KS_STACK_RUNTIME == podman ]]; then
         # the quadlets: every unit this tool wrote before goes first, so a module
         # that left the stack takes its container with it
-        local q
+        local q netname
+        declare -A old_net=()
         install -d -m 0755 /etc/containers/systemd
+        # a .network quadlet only creates its network when it is missing: remember what
+        # the installed ones said, so a changed one gets its network recreated below
+        for q in /etc/containers/systemd/*.network; do
+            [[ -f $q ]] && old_net[$(basename "$q")]=$(sha256sum < "$q")
+        done
         # one file at a time: on a fresh machine the globs match nothing, and a grep
         # over the literal patterns exits 2, which pipefail turned into a failed apply
         for q in /etc/containers/systemd/*.container /etc/containers/systemd/*.network; do
@@ -429,6 +435,16 @@ ks_stack_unpack() {
                 *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;
                 *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0600 ;;
             esac
+        done
+        for q in "${KS_STACK_QUADLETS[@]}"; do
+            [[ $q == *.network && -n ${old_net[$q]:-} ]] || continue
+            [[ ${old_net[$q]} != "$(sha256sum < "/etc/containers/systemd/$q")" ]] || continue
+            netname=$(sed -n 's/^NetworkName=//p' "/etc/containers/systemd/$q")
+            if [[ -n $netname ]] && podman network exists "$netname" 2>/dev/null; then
+                ks_say "the stack network $netname changed — stopping the stack and recreating it"
+                systemctl stop kiwi-stack.service 2>/dev/null || true
+                podman network rm -f "$netname" >/dev/null || ks_warn "could not remove network $netname — podman network rm -f $netname by hand"
+            fi
         done
     fi
     install -d -m 0755 /etc/kiwi-server

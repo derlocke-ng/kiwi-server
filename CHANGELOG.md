@@ -35,6 +35,14 @@
   (`KEYMAP=y`, `update-initramfs -u` in the late command), so the LUKS
   prompt reads the keyboard the fleet file says, not US (problem 43, found
   on the first encrypted VM).
+- **Containers without a fixed address no longer take the fixed ones**: the
+  stack network has an `IPRange` (172.128.0.128/26 of a /24; the compose
+  file's `ip_range`) for them, and a fixed address inside it is refused. On
+  the first gateway+cloud node the Nextcloud AIO containers had taken .2,
+  .4, .6 and .7 before the VPN client, Pi-hole, apache and Vaultwarden
+  asked for them (problem 48). A changed `.network` quadlet now has its
+  podman network recreated at apply (problem 49). tests/golden: the
+  network unit and the compose network of every preset gain one line.
 - **The first boot waits for name resolution** (two minutes at most) before
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver

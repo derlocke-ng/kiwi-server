@@ -12,3 +12,4 @@ networks:
       config:
         - subnet: {{ docker_subnet }}
           gateway: {{ docker_gateway }}
+          ip_range: {{ docker_ip_range }}     # containers without a fixed address: never one of the fixed ones

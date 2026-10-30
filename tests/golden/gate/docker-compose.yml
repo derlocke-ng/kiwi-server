@@ -142,3 +142,4 @@ networks:
       config:
       - subnet: 172.64.0.0/24
         gateway: 172.64.0.1
+        ip_range: 172.64.0.128/26

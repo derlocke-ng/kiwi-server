@@ -16,14 +16,15 @@ made with the owner; do not reopen them without a reason.
   `tools/split-sync.sh --check`. Releases are cut by `release.yml` (in all
   three repositories) when a push to main carries a new `VERSION` in
   `kiwi.manifest`; the cloud session cannot push tags itself.
-- **The first machine has booted** (30 October 2026): sorbet, the test
-  master's VPS, installed from bare Debian media and ran the bare role;
-  its first boot found problem 38 (apt before DNS). The uCore media for
-  the mini PC failed to boot from a stick written with Ventoy or Rufus
-  (`Failed to isolate default target` in the live ISO) and installed
-  cleanly in a QEMU VM the same hour: write sticks raw (runbook, step 4).
-  The master `apply`, `status`, `enroll`, a CoreOS first boot and every
-  stack are still untested on hardware. A step that fails on hardware is a finding for
+- **The first hardware round is under way** (30 October 2026). Booted
+  from bare media: sorbet (Debian, the VPS), papaya (uCore, the mini PC),
+  lychee (Debian with LUKS, a VM). **The master stack runs on sorbet**
+  (five applies: problems 39, 41 and 42 on the way), `enroll` works
+  against its wg-easy, **the minimal node stack runs on lychee**; papaya's
+  gateway+cloud stack found problems 48 and 49. Sticks must be written
+  raw (runbook, step 4). Untested still: a full re-apply, remove and
+  runtime switch, the dead-node drill, crumble (the CoreOS master; its
+  VPS has no `/dev/vda`). A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 
 ## Decisions to keep

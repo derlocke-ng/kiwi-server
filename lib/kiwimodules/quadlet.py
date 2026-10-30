@@ -208,6 +208,8 @@ def network_unit(name, body):
             lines.append("Subnet=%s" % cfg["subnet"])
         if cfg.get("gateway"):
             lines.append("Gateway=%s" % cfg["gateway"])
+        if cfg.get("ip_range"):
+            lines.append("IPRange=%s" % cfg["ip_range"])
     opts = body.get("driver_opts") or {}
     if str(opts.get("com.docker.network.enable_ipv6", "")).lower() in ("true", "1"):
         lines.append("IPv6=true")

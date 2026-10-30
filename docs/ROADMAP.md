@@ -252,6 +252,22 @@ UX and ecosystem:
     admin user with the fleet's key and console password (`coreos-installer
     iso customize --live-ignition`), so a stopped install can be inspected
     at the console or over SSH. (iso.py)
+48. *Found on hardware, fixed in 2.7.0.* On the first gateway+cloud node
+    the VPN client, Pi-hole, Vaultwarden and Nextcloud's apache never
+    started: "IPAM error: requested ip address 172.128.0.2 is already
+    allocated". The Nextcloud AIO containers have no fixed address, so
+    netavark gave them the first free ones, .2, .3, .4, .6, .7, .8 — the
+    very addresses the modules reserve — and whichever started first won.
+    The stack network now has an `IPRange` (the third quarter of the
+    subnet, 172.128.0.128/26 of a /24) that containers without a fixed
+    address draw from, the renderer refuses a fixed address inside it, and
+    the compose file carries the same `ip_range`. (modules.py,
+    quadlet.py, modules/networks.yml.j2)
+49. *Found with 48, fixed in 2.7.0.* A changed `.network` quadlet changed
+    nothing on the machine: its generated service only creates the network
+    when it is missing. The apply now remembers the installed network
+    units' checksums and, when one changes, stops the stack and removes the
+    podman network so the start recreates it. (roles/common/lib.sh)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

@@ -254,6 +254,30 @@ ks_firewall_open() { # PORT/PROTO...
     fi
 }
 
+ks_firewall_trust_mesh() { # the mesh is as trusted as the stack network itself
+    [[ -n ${KS_STACK_MESH_SUBNET:-} && -n ${KS_STACK_MESH_VIA:-} && $KS_STACK_RUNTIME == podman ]] || return 0
+    # A mesh client's connection to a service here is DNAT'd inside the VPN client
+    # and goes to the container straight over the bridge; the container answers
+    # through its gateway, the host, which routes the mesh back into the VPN
+    # client. The host's conntrack saw only the reply and dropped it as invalid —
+    # netavark's own forward chain does that on every podman host, firewalld on
+    # top where it runs (found with the first device, problem 57). So the host
+    # tracks the bridged traffic too, and where firewalld is, the mesh is a
+    # trusted source like the stack network netavark already put there.
+    modprobe br_netfilter 2>/dev/null || true
+    install -d -m 0755 /etc/modules-load.d /etc/sysctl.d
+    echo br_netfilter > /etc/modules-load.d/kiwi-br_netfilter.conf
+    printf '%s\n' '# kiwi-server stack: the host tracks bridged container traffic (problem 57)' \
+        'net.bridge.bridge-nf-call-iptables = 1' > /etc/sysctl.d/91-kiwi-mesh.conf
+    sysctl -q -w net.bridge.bridge-nf-call-iptables=1 2>/dev/null || true
+    systemctl is-active -q firewalld 2>/dev/null || return 0
+    if ! firewall-cmd -q --zone=trusted --query-source="$KS_STACK_MESH_SUBNET" 2>/dev/null; then
+        ks_say "firewalld: the mesh $KS_STACK_MESH_SUBNET is trusted like the stack network"
+        firewall-cmd -q --permanent --zone=trusted --add-source="$KS_STACK_MESH_SUBNET"
+        firewall-cmd -q --zone=trusted --add-source="$KS_STACK_MESH_SUBNET"
+    fi
+}
+
 ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates exist
     local cert=$1 key=$2 cn=$3
     ks_say "no TLS certificate given — generating a self-signed one for $cn and *.$cn"
@@ -598,6 +622,7 @@ ks_stack_apply() {
     ks_stack_hosts
     ks_stack_unpack
     ks_stack_install_cli
+    ks_firewall_trust_mesh
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
         ks_firewall_open "${KS_STACK_PORTS[@]}"
     fi

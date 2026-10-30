@@ -10,7 +10,11 @@ import time
 
 from .util import KiwiError
 
-SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+# ControlMaster=no: an operator's ~/.ssh/config often multiplexes sessions, and a
+# channel-less `ssh -N -L` through an existing mux master ended with "Broken pipe"
+# and exit 0 — the enroll tunnel died silently (found on hardware). Every
+# connection kiwi-server opens is its own.
+SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ControlMaster=no", "-o", "ControlPath=none"]
 KNOWN_HOSTS = ""   # the fleet's own known_hosts (secrets/known_hosts): set by configure()
 IDENTITIES = []    # private keys of the fleet's admin.ssh_keys that exist next to their .pub
 

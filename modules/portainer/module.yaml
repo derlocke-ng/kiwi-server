@@ -13,7 +13,7 @@ dependencies:
   optional: [reverse-proxy]
 
 network:
-  needs_vpn_dnat: false
+  needs_vpn_dnat: true     # served by the reverse proxy: the mesh must reach it (problem 58)
   open_ports: []
 
 firewall:

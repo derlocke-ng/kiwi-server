@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.7.1 — the enroll tunnel beside an operator's ssh multiplexing
+
+- **`enroll` works on an operator whose `~/.ssh/config` multiplexes sessions**:
+  the tunnel to wg-easy is a channel-less `ssh -N -L`, and through an
+  existing ControlMaster it ended at once with "Broken pipe" and exit 0, so
+  `enroll` reported "the tunnel to port 51821 failed: ssh exited" while
+  `apply` worked. Every connection kiwi-server opens now says
+  `ControlMaster=no` (problem 54, found on the first device enrolment).
+- **Clients in a group get their answers**: inside the WireGuard server the
+  whole mesh is routed into `wg0`; before, only the server's own /24 was,
+  and a device in the `devices` group received nothing back (problem 56,
+  found with the first device). tests/golden/gate: one line of `start.sh`.
+- **A node with only Portainer behind its proxy gets the mesh DNAT too**
+  (`portainer.needs_vpn_dnat: true`, problem 58). Found with the same
+  device: on uCore a mesh client's connection to a node's proxy died on the
+  host's conntrack, which saw only the reply of the DNAT'd flow and dropped it
+  as invalid — netavark's forward chain does that on every podman host,
+  firewalld on top of it (problem 57). The role now tracks bridged container
+  traffic (`br_netfilter`, `bridge-nf-call-iptables`) on every podman host
+  with a mesh, and where firewalld runs trusts the mesh subnet like the stack
+  network, so the client's own address still reaches nginx; the gateway
+  module's masquerade for LAN clients leaves the stack network's and the
+  mesh's traffic alone, which the tracking had exposed it to.
+- **The split's flip**: kiwi-modules and kiwi-stack are developed and
+  released in their own repositories; this tree carries them as vendored
+  copies pinned by tag in `VENDORED`. `tools/vendor.sh` brings a release in
+  (from a checkout next to this one or from github.com), `--check` reports
+  a tree that differs from its pins and runs in CI; `tools/split-sync.sh`,
+  which copied the other way, is gone.
+- Runbook step 5 passed on a node: a module added and removed again, the
+  runtime switched to docker and back, every time with `verify` green and
+  the old stack stopped first; noted that a re-apply restarts every
+  container of the stack, not only the changed one (problem 55).
+
 ## 2.7.0 — install media without the stack
 
 - **`kiwi-server build --bare`** (and `render --bare`): the ISO carries the

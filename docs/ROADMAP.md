@@ -313,6 +313,60 @@ UX and ecosystem:
     container, where the node's own names point at 127.0.0.1 (the role
     writes them so), and Pi-hole served that too. (modules.py,
     modules/dns, tests/golden/m1 and gate)
+54. *Found on hardware, fixed in 2.7.1.* With ControlMaster multiplexing in
+    the operator's `~/.ssh/config`, the enroll tunnel (`ssh -N -L` to wg-easy)
+    went through the existing mux master and ended at once with "Broken
+    pipe", exit 0 — `enroll` said "the tunnel to port 51821 failed: ssh
+    exited" although wg-easy answered on the master. kiwi-server's ssh now
+    passes `ControlMaster=no ControlPath=none`. (remote.py)
+55. A re-apply restarts every container of the stack (`systemctl restart
+    kiwi-stack.service`), not only the one whose files changed; the runbook's
+    step 5 expected "the container with the changed file restarts, the others
+    do not". Adding a module to a node restarted the VPN client, nginx and
+    Portainer along with the new one. Restart only the units whose quadlet or
+    files changed (daemon-reload, then `try-restart` of the changed ones;
+    the dependents of a restarted namespace owner follow by `BindsTo=`).
+    (roles/common/lib.sh, roles/common/kiwi-stack)
+56. *Found on hardware, fixed in 2.7.1.* The first device enrolled into a
+    client group (`devices`, 10.9.3.0/24) handshook, and the master received
+    its packets and Pi-hole logged its queries — but every answer left
+    through the exit: inside the WireGuard server the only route into `wg0`
+    is the interface's own /24, and wg-easy adds none for the peers it
+    creates, so `ip route get 10.9.3.2` said "via the VPN client". Nodes in
+    10.9.0.x never noticed. `start.sh` now routes the whole `mesh_subnet`
+    into `wg0`; the peers' AllowedIPs still decide who gets what.
+    (modules/vpn-server/start.sh.j2, tests/golden/gate)
+57. *Found with the first device, fixed in 2.7.1 (the owner chose b).* A mesh client's
+    connection to a node's reverse proxy (the DNAT in the VPN client) never
+    completes on uCore: the SYN goes VPN client → nginx directly on the
+    bridge, nginx's reply goes to its gateway, the host, which routes the
+    mesh back through the VPN client — an asymmetric path, and the host's
+    conntrack sees only the reply, so firewalld's `ct state invalid drop`
+    eats it (`SYN_SENT [UNREPLIED]` in the VPN client, nothing on the host).
+    Debian without a firewall passes it. Two fixes: (a) masquerade the
+    DNAT'd flows again (symmetric, no host involvement, but nginx logs the
+    VPN client's address for every mesh client — what 2.5.0 removed on
+    purpose); (b) keep the client's address and let the host carry the
+    reply: `net.bridge.bridge-nf-call-iptables=1` (br_netfilter) so both
+    directions are tracked, plus the mesh subnet as a trusted source in
+    firewalld — tested half way on papaya: bridge-nf alone turns the timeout
+    into "admin prohibited", the trusted source is the second half and
+    changes the host's firewall, so it waited for the owner. Done as
+    `ks_firewall_trust_mesh`: on every podman host with a mesh routed through
+    the stack, `br_netfilter` is loaded and `bridge-nf-call-iptables` set
+    (persisted) — netavark's own forward chain has `ct state invalid drop`,
+    so Debian without any firewall dropped the reply just the same (seen on
+    lychee) — and where firewalld runs, the mesh subnet is added to the
+    trusted zone, runtime and permanent. ufw hosts are untouched for now.
+    With bridged traffic tracked, the gateway module's `-o bridge
+    MASQUERADE` for LAN clients caught the containers' and the mesh's traffic
+    too (nginx logged every mesh client as 172.128.0.1); it now excludes the
+    stack network and the mesh. (roles/common/lib.sh, modules/gateway)
+58. *Found with the first device, fixed in 2.7.1.* A node whose only web
+    service was Portainer (the minimal preset plus `portainer`) had no mesh
+    DNAT at all, because `enable_vpn_dnat` follows the modules'
+    `needs_vpn_dnat` and Portainer said false. It is served by the reverse
+    proxy, so it says true now. (modules/portainer/module.yaml)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the
@@ -348,15 +402,12 @@ The six steps agreed with the owner, with the items above folded in.
    both as subtrees pinned by tag (submodules and pip do not survive the
    ostree desktop kiwi-updater installs onto). A golden-output test of every
    preset comes first so no machine applied by 2.4.0 changes.
-   *Status: steps one to four done after 2.5.0 — the on-disk bundle and
-   `kiwi-stack apply DIR`, the golden test, the `kiwimodules` package with
-   the one-machine render, and the two repositories populated
-   (kiwi-modules 0.1.0, kiwi-stack 0.1.0, tagged and released by each
-   repository's release workflow on the first push to main). kiwi-server is still
-   the place both are developed: `tools/split-sync.sh` copies them over and
-   `--check` reports drift. The flip to vendored subtrees pinned by tag
-   waits for the first hardware round, so a fix found there lands in one
-   tree.*
+   *Status: done. The bundle and `kiwi-stack apply DIR`, the golden test,
+   the `kiwimodules` package, the two repositories (kiwi-modules 0.2.3,
+   kiwi-stack 0.2.2 after the first hardware round), and since 2.7.1 the
+   flip: kiwi-server carries both as vendored copies pinned by tag in
+   `VENDORED` (`tools/vendor.sh`), developed and released in their own
+   repositories.*
 3. **Port ranges, the `backup:` key and the game module contract.** Module
    `backup: {paths, volumes, exclude, hooks}`, the restic backup module on a
    backup node with per-node credentials from the seed, `kiwi-stack backup`

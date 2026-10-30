@@ -475,6 +475,30 @@ Asked for by the owner in October 2026, for the test round and after:
   multi-hop through another network's master and waits for federation's
   cross-network enrolment. Together with federation and the orchard: a VPN
   service of one's own.
+- **netcup as the first provider API** (`kiwi-server vps …`, later the
+  orchard's driver). Read from the SCP REST API's OpenAPI spec
+  (`https://www.servercontrolpanel.de/scp-core/api/v1/openapi`, OAS 3.1,
+  Bearer tokens from Keycloak's device flow: `client_id=scp`,
+  `scope=offline_access openid`, a refresh token that lives while it is used
+  once in 30 days — kept in `secrets/netcup.token`, revocable). What the
+  round did by hand is all there: **upload an ISO** (`POST
+  /users/{id}/isos/{key}?multipart=true`, presigned S3 part URLs, `PUT …/{uploadId}`
+  with the ETags), **attach it** (`POST /servers/{id}/iso` with
+  `changeBootDeviceToCdrom`), **detach**, **power** (`PATCH /servers/{id}`
+  with `state: ON|OFF`, `stateOption=POWEROFF|RESET`), **boot order**
+  (`HDD|CDROM|NETWORK`), **UEFI**, and — what would have spared crumble two
+  tries — **the disks** (`GET /servers/{id}/disks`: name, size,
+  `storageDriver` VIRTIO→`/dev/vda`, VIRTIO_SCSI/SATA→`/dev/sda`), the
+  **rescue system** on and off, **snapshots** (create, revert, export),
+  **user images** (`POST /users/{id}/images/{key}` upload, `POST
+  /servers/{id}/user-image` installs one: the path for a
+  bootc-image-builder disk image, no ISO at all), the provider's
+  **firewall policies** per interface, rDNS, and `GET /tasks/{uuid}` to
+  wait for any of it. The API also serves an MCP endpoint
+  (`POST /api/v1/openapi/mcp`). First commands: `kiwi-server vps login`
+  (the device flow), `vps probe <server>` (disks → `disk:`, architecture,
+  state), `vps install <host>` (upload the media, attach, boot from CD-ROM,
+  wait for the power-off, detach, power on), `vps rescue on|off`.
 - **The phoenix-server repository** for the bootc image: Containerfile, CI build,
   cosign signing, published to ghcr.io; kiwi-server pins it by tag like
   kiwi-stack and kiwi-modules (todo step 5).

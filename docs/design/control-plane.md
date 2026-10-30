@@ -87,7 +87,14 @@ asks for a password, disks, interfaces and routes, listening ports, running
 containers, whether a DHCP server answers on its LAN) as JSON, and the fleet
 file's `disk`, `pub_iface` and `address` are filled from it; `init` runs the
 same probe locally for the LAN's subnet, gateway and resolvers. It is a
-shell script, so it runs on CoreOS without Python.
+shell script, so it runs on CoreOS without Python. Where the provider has
+an API, the probe needs no SSH at all: netcup's SCP API names a server's
+disks with their driver (VIRTIO is `/dev/vda`, VIRTIO_SCSI or SATA is
+`/dev/sda`), uploads and attaches an ISO, sets the boot order, powers the
+machine, and installs a disk image — everything the first hardware round
+did by hand in a panel. `kiwi-server vps` wraps it for one machine; the
+orchard's provider driver is the same client used for many (ROADMAP, the
+netcup item).
 
 ## The image
 

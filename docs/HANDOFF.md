@@ -124,8 +124,11 @@ its addresses and ssh aliases stay there.
   on the CoreOS lineage, and later the other side of federation. One
   master per network is a decision, so a second master is a second fleet
   file. It is a master and not a node because a node publishes its
-  services on the host, which on a VPS is the internet (problem 37). It
-  needs a Mullvad device key of its own.
+  services on the host, which on a VPS is the internet (problem 37). It is
+  a **direct-exit master** (`modules:` without vpn-client, `mullvad_socks`
+  off; design/control-plane.md, Exits): its clients leave through the VPS's
+  own uplink, so it needs no Mullvad device, and it is the first test of
+  that mode.
 
 ## ARM boards (checked against the tree, not on hardware)
 

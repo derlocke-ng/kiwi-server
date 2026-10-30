@@ -190,6 +190,38 @@ default is a random, unused pick from two lists of DNS-safe single words, in
 `init`, in the control plane when a tenant creates a node, in `enroll` for
 a device without a name. The kind of a machine is readable in every log line.
 
+## Exits
+
+A master is a WireGuard server with an exit, and the exit has three modes.
+The first two exist today; the setting that names them does not yet.
+
+- **`provider`**, today's master: the VPN client (gluetun) holds a
+  commercial provider's WireGuard config, the server's default route is the
+  client, the double hop. `dns.mullvad_socks` makes sense here only.
+- **`direct`**: no VPN client; the server's clients leave through the host's
+  own uplink. This renders today with `modules: [vpn-server, dns, tor,
+  reverse-proxy]` in the master's block (the double-hop block of `start.sh`
+  is skipped, the client groups are masqueraded out of `eth0`, the Pi-hole
+  asks its fallback resolvers directly). A VPS that is only a VPN server.
+- **`master`**: the VPN client holds a WireGuard config that *another
+  network's master* issued, in a client group of that master that may reach
+  the internet and nothing else (`reach: []`, `peers: false`). A client of
+  the first master leaves the internet at the second: **multi-hop**, and the
+  second master sees only the first. This is a `custom` provider today;
+  what is missing is the enrolment across networks, which is federation.
+
+`master.exit: provider | direct | master` is the setting to add: it drops
+or configures the VPN client, ties `mullvad_socks` to the provider being
+Mullvad, and lets `validate` say what a master's clients will exit through.
+Every master also carries Tor's SOCKS5 on the mesh (`tor.socks_policy_accept`)
+and, with the records, a provider's own SOCKS5 proxies by name.
+
+A set of such masters run by one operator, federated, is a VPN service of
+one's own: entry masters in one country, exit masters in others, multi-hop
+between them, Tor inside, the devices enrolled through the control plane and
+the masters themselves through the orchard. Nothing in it is a new component;
+it is the three exit modes, federation and the orchard used together.
+
 ## Unlock
 
 Full disk encryption everywhere, with Tang and Clevis and nested Shamir

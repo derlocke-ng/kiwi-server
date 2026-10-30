@@ -315,6 +315,15 @@ Asked for by the owner in October 2026, for the test round and after:
 - **Random names** (design/control-plane.md, Names): fruit dishes for
   masters, fruits for nodes, from two lists of DNS-safe words, in `init`,
   the control plane and `enroll`; a name stays settable (part of problem 33).
+- **Exit modes for a master** (design/control-plane.md, Exits):
+  `master.exit: provider | direct | master`. `direct` works today with
+  `modules: [vpn-server, dns, tor, reverse-proxy]` (the double hop is
+  skipped, groups masquerade out of `eth0`, Pi-hole asks its fallbacks); the
+  setting names it, turns `mullvad_socks` off when the provider is not
+  Mullvad, and `validate` says where a master's clients exit. `master` is
+  multi-hop through another network's master and waits for federation's
+  cross-network enrolment. Together with federation and the orchard: a VPN
+  service of one's own.
 - **The phoenix-server repository** for the bootc image: Containerfile, CI build,
   cosign signing, published to ghcr.io; kiwi-server pins it by tag like
   kiwi-stack and kiwi-modules (todo step 5).

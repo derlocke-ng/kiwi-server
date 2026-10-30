@@ -358,7 +358,10 @@ UX and ecosystem:
     so Debian without any firewall dropped the reply just the same (seen on
     lychee) — and where firewalld runs, the mesh subnet is added to the
     trusted zone, runtime and permanent. ufw hosts are untouched for now.
-    (roles/common/lib.sh)
+    With bridged traffic tracked, the gateway module's `-o bridge
+    MASQUERADE` for LAN clients caught the containers' and the mesh's traffic
+    too (nginx logged every mesh client as 172.128.0.1); it now excludes the
+    stack network and the mesh. (roles/common/lib.sh, modules/gateway)
 58. *Found with the first device, fixed in 2.7.1.* A node whose only web
     service was Portainer (the minimal preset plus `portainer`) had no mesh
     DNAT at all, because `enable_vpn_dnat` follows the modules'

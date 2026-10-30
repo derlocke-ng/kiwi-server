@@ -30,7 +30,8 @@ rules_del() {
     iptables -D FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
     iptables -D INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    iptables -t nat -D POSTROUTING -o "$BRIDGE" -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -o "$BRIDGE" ! -s "$DOCKER_SUBNET" ! -s "$VPN_SUBNET" -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -o "$BRIDGE" -j MASQUERADE 2>/dev/null || true   # the rule of earlier versions
     ip route flush table 128 2>/dev/null || true
     while ip rule del iif "$PUB_IFACE" table 128 2>/dev/null; do :; done
 }
@@ -70,5 +71,9 @@ iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
 # started (the VPN client's WireGuard handshake came in on the LAN side and died here)
 # and the connections netavark DNATs to published ports (Pi-hole, nginx from the LAN)
 iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP
-iptables -t nat -I POSTROUTING -o "$BRIDGE" -j MASQUERADE
+# LAN clients appear to the VPN client as the host; the containers' own traffic and
+# the mesh's keep their addresses — with bridged traffic tracked by the host (lib.sh,
+# problem 57) a bare "-o bridge" masquerade caught those too, and nginx logged every
+# mesh client as 172.128.0.1
+iptables -t nat -I POSTROUTING -o "$BRIDGE" ! -s "$DOCKER_SUBNET" ! -s "$VPN_SUBNET" -j MASQUERADE
 echo "[kiwi-gw] LAN ($PUB_IFACE) -> $CONTAINER_IP (VPN client); mesh $VPN_SUBNET allowed"

@@ -20,7 +20,9 @@
   firewalld on top of it (problem 57). The role now tracks bridged container
   traffic (`br_netfilter`, `bridge-nf-call-iptables`) on every podman host
   with a mesh, and where firewalld runs trusts the mesh subnet like the stack
-  network, so the client's own address still reaches nginx.
+  network, so the client's own address still reaches nginx; the gateway
+  module's masquerade for LAN clients leaves the stack network's and the
+  mesh's traffic alone, which the tracking had exposed it to.
 - Runbook step 5 passed on a node: a module added and removed again, the
   runtime switched to docker and back, every time with `verify` green and
   the old stack stopped first; noted that a re-apply restarts every

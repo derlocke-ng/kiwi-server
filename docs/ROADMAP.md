@@ -237,6 +237,15 @@ UX and ecosystem:
     gateway module's `gw.sh` runs on the host and uses it. Install
     `iptables` (nft-backed) with the gateway module on Debian, or write
     `gw.sh` in nft. Not hit yet: the gateway node of the round is uCore.
+46. `disk:` is a guess until the machine is seen: the third VPS had no
+    `/dev/vda` (another virtualization than its sibling at the same
+    provider) and coreos-installer stopped in the live ISO with "getting
+    absolute path of /dev/vda: No such file or directory". `kiwi-server
+    probe` would have told; for media that cannot be probed first, a
+    `disk: auto` that lets the live ISO pick the only (or the largest
+    non-removable) disk through a `--pre-install` script writing the
+    installer config, and the preseed's `partman-auto/disk` from an early
+    command the same way. (iso.py, targets/debian.py)
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

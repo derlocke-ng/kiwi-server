@@ -137,7 +137,9 @@ its addresses and ssh aliases stay there.
   a **direct-exit master** (`modules:` without vpn-client, `mullvad_socks`
   off; design/control-plane.md, Exits): its clients leave through the VPS's
   own uplink, so it needs no Mullvad device, and it is the first test of
-  that mode.
+  that mode. Its VPS has no `/dev/vda` (the live ISO stopped there on the
+  first try; the same ISO installs in a VM with 1.5 GiB and a virtio disk):
+  set `disk:` from `lsblk` at the emergency shell and rebuild (problem 46).
 
 ## ARM boards (checked against the tree, not on hardware)
 

@@ -461,6 +461,11 @@ class TestDebian(Base):
                        "d-i partman-auto/method string crypto",
                        "d-i partman-crypto/passphrase password secret-pass"):
             self.assertIn(needle, ps)
+        late = debian_t.late_script(h)
+        self.assertIn("KEYMAP=y", late)                  # the LUKS prompt in the installed system's own layout
+        self.assertIn("in-target update-initramfs -u", late)
+        h2, _ps, _ = self.make()
+        self.assertNotIn("KEYMAP", debian_t.late_script(h2))
 
     def test_preseed_admin_groups(self):
         _, ps, _ = self.make(admin={"groups": ["docker", "video"]})

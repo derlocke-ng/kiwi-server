@@ -24,6 +24,17 @@
   stopped the role (problem 41, found on hardware). `role.failed` and the
   error line now name the function the failing command sat in, not only
   the last step announced.
+- **The master's WireGuard server comes up on an nf_tables host**: its
+  `start.sh` uses `iptables-nft` where the image has it — inside the wg-easy
+  container the legacy xtables fail with "Permission denied" on Debian 13 and
+  Fedora hosts whatever modules are loaded (problem 42, found on the first
+  master) — and `WG_POST_DOWN` is a no-op instead of wg-easy's legacy
+  default. tests/golden/gate changes accordingly: two lines of `start.sh`
+  and one environment line; nothing a client sees.
+- **An encrypted Debian loads the console keymap into its initramfs**
+  (`KEYMAP=y`, `update-initramfs -u` in the late command), so the LUKS
+  prompt reads the keyboard the fleet file says, not US (problem 43, found
+  on the first encrypted VM).
 - **The first boot waits for name resolution** (two minutes at most) before
   its first apt or pull: on the first machine booted from this tree, a
   Debian VPS, `network-online.target` was satisfied before the resolver

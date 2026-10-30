@@ -211,6 +211,32 @@ UX and ecosystem:
     culprit. Now one file at a time, and `role.failed` names the function
     the command sat in. Open: a test that *executes* lib.sh's functions in
     a scratch root (the library is parsed and shellchecked, never run).
+42. *Found on hardware, fixed in 2.7.0.* On the first master (Debian 13, an
+    nf_tables host) wg-easy's `wg-quick up` failed: every `iptables` call of
+    the master's `start.sh` is the image's *legacy* xtables, and inside the
+    container those return "Permission denied (you must be root)" on every
+    table, whatever modules the host has loaded, while `iptables-nft` in
+    the same image works. `start.sh` now uses `iptables-nft` where the
+    image has it, and `WG_POST_DOWN` is a no-op instead of wg-easy's
+    legacy default. gluetun was never affected: it picks nft itself.
+43. *Found on hardware, fixed in 2.7.0.* The LUKS prompt of an encrypted
+    Debian read a German keyboard as US (y/z swapped, no dash): the
+    initramfs does not load the console keymap unless
+    `KEYMAP=y` in `initramfs.conf`. The late command sets it and rebuilds
+    the initramfs when the disk is encrypted.
+44. `kiwi-stack verify` ran right after the start and passed while wg-easy
+    was still about to fail its `wg-quick up`; a minute later three
+    containers were down and the role had said "applied". Verify should
+    look twice, with a grace period (30 s) and `RestartCount` in between;
+    and when the container that owns a shared namespace restarts, podman's
+    `--replace` fails while the dependents still run ("has dependent
+    containers which must be removed before it") until systemd has stopped
+    them — `BindsTo=` on the dependents, or stopping them first, would make
+    the restart clean. (roles/common/kiwi-stack, lib/kiwimodules/quadlet.py)
+45. A Debian host has no `iptables` command (trixie installs none); the
+    gateway module's `gw.sh` runs on the host and uses it. Install
+    `iptables` (nft-backed) with the gateway module on Debian, or write
+    `gw.sh` in nft. Not hit yet: the gateway node of the round is uCore.
 40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
     IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
     Measure instead of guessing: a path-MTU probe in `enroll` and in the

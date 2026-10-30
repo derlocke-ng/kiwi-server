@@ -48,6 +48,7 @@ services:
     - PASSWORD=golden-wg-password
     - WG_PORT=51820
     - WG_POST_UP=bash /etc/wireguard/start.sh
+    - WG_POST_DOWN=true
     - WG_PERSISTENT_KEEPALIVE=25
     - UI_TRAFFIC_STATS=true
     - WG_DEFAULT_DNS=10.8.0.1

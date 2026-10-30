@@ -8,6 +8,10 @@
 {% if isolated_subnet %}{% set _ = all_groups.update({'isolated': {'subnet': isolated_subnet, 'reach': ['nodes'] + isolated_allow, 'peers': false}}) %}{% endif %}
 {% set host_ips = {} %}
 {% for ip, name in dns_records %}{% set _ = host_ips.update({name: ip, name.split('.')[0]: ip}) %}{% endfor %}
+# iptables-nft where the image has it: on an nf_tables host (Debian 13, Fedora) the
+# legacy xtables calls fail inside the container with "Permission denied" on every
+# table, the nft ones work — found on the first master (kiwi-server, problem 42)
+if command -v iptables-nft >/dev/null 2>&1; then iptables() { command iptables-nft "$@"; }; fi
 sleep 2
 
 # MTU: clamp TCP MSS to the path MTU so WireGuard's overhead cannot stall connections

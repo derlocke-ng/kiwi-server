@@ -11,6 +11,7 @@ services:
       - PASSWORD={{ wg_password }}
       - WG_PORT={{ wg_port }}
       - WG_POST_UP=bash /etc/wireguard/start.sh
+      - WG_POST_DOWN=true
       - WG_PERSISTENT_KEEPALIVE=25
       - UI_TRAFFIC_STATS={{ 'true' if ui_traffic_stats else 'false' }}
       - WG_DEFAULT_DNS={{ server_ip }}

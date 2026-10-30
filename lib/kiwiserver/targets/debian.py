@@ -173,6 +173,15 @@ def late_script(host):
             "cp $S/52kiwi-updates $T/etc/apt/apt.conf.d/52kiwi-updates",
             "in-target systemctl enable kiwi-reboot-if-required.timer",
         ]
+    d = host.cfg["debian"]
+    if d.get("encrypt") or d.get("partitioning") == "crypto":
+        # the LUKS prompt lives in the initramfs, which does not load the console
+        # keymap unless told: a German keyboard typed its passphrase as US (y/z
+        # swapped, no dash) on the first encrypted VM
+        L += [
+            "sed -i 's/^KEYMAP=.*/KEYMAP=y/' $T/etc/initramfs-tools/initramfs.conf",
+            "in-target update-initramfs -u",
+        ]
     L += ["in-target systemctl enable kiwi-role.service", "exit 0", ""]
     return "\n".join(L)
 

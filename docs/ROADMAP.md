@@ -155,6 +155,36 @@ UX and ecosystem:
     undocumented. The API in the control plane design replaces this.
 30. docs/REVIEW-2.1.0.md should be retired to its status table.
 31. The kiwi-network site describes 2.2.0 (tracked in a separate report).
+32. The mesh subnet is spread over six settings that do not follow each
+    other: the stack's `mesh_subnet`, the vpn-server's `server_ip`,
+    `wg_subnet`, `wg_default_address` and `groups` ranges, and tor's
+    `socks_policy_accept`, all defaulting to 10.8.x. A network beside
+    another one (the test network on 10.9.0.0/16 next to a live 10.8) has to
+    set all six by hand, and one that is missed leaves part of the stack on
+    10.8. Derive them from `mesh_subnet` (the server at .0.1, the groups at
+    .1 to .4) unless set, and let `validate` refuse a setting outside it.
+    (roles/common/stack.yaml, modules/vpn-server, modules/tor, resolver.py)
+33. `init` writes `~/.ssh/id_ed25519.pub` into the fleet file whether or not
+    it exists; an operator whose keys live only in an agent gets a file that
+    fails its first `validate`. Pick a key that exists (`ssh-add -L`, any
+    `~/.ssh/*.pub`) or write a clear placeholder. (cli.py, the init
+    template; part of problem 27)
+34. `validate` accepts `wg_host: TODO-vps.invalid` and
+    `wireguard_addresses: TODO/32`: strings are not checked for shape, so a
+    passing `validate` does not mean the placeholders are filled in. Check
+    addresses, subnets, hostnames and `x.x.x.x/nn` settings by type.
+    (schema.py, modules.py)
+35. `apply` runs `sudo sh -c` under `BatchMode=yes`: an admin user whose
+    sudo wants a password (an Ubuntu VPS set up by a provider) fails with
+    sudo's prompt in the error, not with what to do. Probe `sudo -n true`
+    first and name the sudoers line. (remote.py)
+36. No `disks:` setting: a node with a system disk and a data disk (the mini
+    PC: NVMe plus a 1 TB SATA SSD) has to get the second disk formatted,
+    mounted and in fstab by hand before the first apply, and the ISO path
+    cannot do it at all. A per-host list of {device, mount, fs, options},
+    rendered into the preseed's late command, the Butane filesystems and
+    the role script (mkfs only when the disk has no filesystem).
+    (targets/debian.py, targets/coreos.py, roles/common/lib.sh)
 
 ## Todo, in order
 
@@ -191,20 +221,31 @@ The six steps agreed with the owner, with the items above folded in.
    core, Jinja pages with HTMX, packaged as a container module that runs on
    a node with the fleet directory as its data; users with two roles (fleet
    admin, node admin bound to hosts); the GTK app and the CLI as clients.
-5. **Join tokens and generic ISOs.** One bootstrap ISO per target published
-   by CI, a one-time token that lets a machine fetch its role at first boot,
-   `curl … | sudo bash` for hand-installed machines; per-host ISOs stay for
-   offline installs.
+5. **The image and the join token.** One bootc image in the phoenix-server
+   repository (plain uCore plus kiwi-stack, kiwimodules and dracut-sshd,
+   signed with cosign), installed from the stock Fedora CoreOS live ISO with
+   an Ignition that writes the policy and switches once, from a
+   bootc-image-builder disk image where a provider imports one, or from a
+   rescue system; a one-time token that lets a machine fetch its role at
+   first boot, `curl … | sudo bash` (from cloud-init user-data on a VPS) for
+   hand-installed machines; per-host ISOs stay for offline installs.
+   (design/control-plane.md, The image)
 6. **Workloads.** Runtime management of containers through podman's remote
    API over SSH (docker likewise), the kiwi-game plugin (catalog, idle
    shutdown, wake on first packet), the GTK app talking to the API.
 
-After that, in the order the owner set: Tang/Clevis nested SSS with the
-reverse-tunnel unlock and `kiwi-server unlock`; the standby master (needs
+After that, in the order the owner set: the unlock (design/control-plane.md,
+Unlock: the `tang` module with rings, `vpn-server.published_ports` and
+`unlock_relay:` with the endpoint gate in `start.sh`, the house share
+written by `kiwi-server openwrt`, the `unlock:` block rendered into Clevis
+trees for Ignition and the Debian role script, `kiwi-server tang serve`,
+`kiwi-server unlock --manual` over dracut-sshd and dropbear-initramfs, the
+leash timer, ring rotation as a controller job); the standby master (needs
 the wg-easy peer database in the backup module and `wg_host` as a name);
 rootless podman for the minimal preset only; the OpenWrt package once the
-endpoint is a name; federation; the Bluefin client (first step: an enrol
-bundle for the desktop apps).
+endpoint is a name; federation; the orchard (design/control-plane.md,
+Managed masters); the Bluefin client (first step: an enrol bundle for the
+desktop apps, which also binds a desktop's disk to its rings).
 
 ## New items worth adding
 
@@ -226,3 +267,58 @@ non-expert":
 - Pi-hole DNSSEC as a one-line setting.
 - Image digests recorded per render (`images.lock`) so a restore reproduces
   what it backs up.
+
+Asked for by the owner in October 2026, for the test round and after:
+
+- **NFSv4 with kernel TLS instead of the sftp container** for the file
+  shares: a native mount on every Linux client, the fleet CA's certificates
+  for the transport (RFC 9289, `xprtsec=mtls`, `tlshd` from ktls-utils on
+  both sides, kernel 6.5 or newer), far faster than SFTP and settable per
+  export. nfsd lives in the kernel, so this is the first module that is a
+  host unit and an exports file rather than a container (the gateway's
+  `kn-gateway.service` is the pattern); the sftp module stays for
+  non-Linux clients.
+- **OpenCloud** as a second cloud module, beside or instead of Nextcloud: the
+  owner's own configs and Flatpak data, code and Documents from the phone;
+  one Go binary, little RAM, WebDAV. The `cloud` module's names are
+  Nextcloud's; a `cloud:` kind or a module of its own.
+- **Immich** for photos (its ML container wants RAM; a node setting to turn
+  it off), **Paperless-ngx** for OCR, scans and documents, with a consume
+  folder and the archive reachable from Nextcloud and OpenCloud (external
+  storage or WebDAV) — the office and small-business side.
+- **`kiwi-server ssh-config`**: an `Include`d file under `~/.ssh/config.d/`
+  with a `Host` per machine (admin user, port, `IdentityFile`, the fleet's
+  `secrets/known_hosts` as `UserKnownHostsFile`) and tunnel aliases per
+  service (`<host>-pihole`, `<host>-portainer`, `<host>-wg` with
+  `LocalForward` to the service's localhost port), regenerated on every
+  render — the emergency path when the mesh is down.
+- **`kiwi-server probe <ssh target>`**: what a machine is, as JSON, before
+  the first apply (OS, podman or docker, catatonit, `sudo -n`, disks,
+  interfaces, listening ports, running containers, a DHCP server on its
+  LAN); fills `disk`, `pub_iface` and `address`, warns about problems 35
+  and 36 before they bite. `init` runs it locally for the LAN's subnet,
+  gateway and resolvers. A shell script, so it runs on CoreOS.
+- **cloud-init user-data** for a VPS the provider installs: today the key,
+  NOPASSWD sudo and podman ≥ 4.4 (the by-hand steps behind problem 35),
+  later the join line. **`virt-install`** from `build`, so the ISO it made
+  boots in a local VM without a second tool — optional.
+- **Random names** (design/control-plane.md, Names): fruit dishes for
+  masters, fruits for nodes, from two lists of DNS-safe words, in `init`,
+  the control plane and `enroll`; a name stays settable (part of problem 33).
+- **The phoenix-server repository** for the bootc image: Containerfile, CI build,
+  cosign signing, published to ghcr.io; kiwi-server pins it by tag like
+  kiwi-stack and kiwi-modules (todo step 5).
+- **Two-factor codes with a phone app and a web UI.** Vaultwarden already
+  does it: the Bitwarden apps generate TOTP codes and sync them, the web
+  vault shows them, and Bitwarden Authenticator imports an Aegis export.
+  Beside it, a module for people who keep 2FA apart from passwords: Ente
+  Auth (self-hostable server, Android, iOS and web, imports Aegis) or
+  2FAuth (web only, imports Aegis); either way Aegis's own encrypted
+  auto-backup goes into a folder the cloud module syncs, which is the
+  backup. More server-and-app pairs worth a module when someone asks:
+  Immich and Paperless-ngx (above), ntfy (alerting, already planned),
+  Jellyfin, Navidrome, Audiobookshelf (media), Linkwarden (bookmarks),
+  Memos or Joplin Server (notes), Miniflux (feeds), Vikunja (tasks),
+  Syncthing (sync without a cloud), Home Assistant (home). Each is a
+  compose fragment and a module.yaml; the catalog decides which are
+  presets.

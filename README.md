@@ -93,6 +93,12 @@ Or skip the ISO: `kiwi-server script fleet.yaml sh3 > sh3.sh`, copy it to any
 installed Debian / CoreOS / uCore machine and `sudo bash sh3.sh`. It is the
 same script the ISO runs.
 
+Media that leave the house — a provider's ISO store, a stick in the post —
+should not carry the stack's secrets: `kiwi-server build fleet.yaml sh3
+--bare` writes an ISO with the base system only (hostname, network, the
+admin user, the update policy), and `kiwi-server apply fleet.yaml sh3 --ssh
+core@<address>` brings the role and its stack afterwards, over SSH.
+
 ## The fleet file
 
 ```yaml
@@ -420,7 +426,7 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 
 ## Status
 
-2.6.0 splits the renderer and the machine side out as kiwi-modules and kiwi-stack (nothing a stack renders changed); 2.5.0 fixed what the review of 2.4.0 found. See [CHANGELOG.md](CHANGELOG.md). The
+2.7.0 adds install media without the stack (`build --bare`) and the design after the October talks; 2.6.0 split the renderer and the machine side out as kiwi-modules and kiwi-stack (nothing a stack renders changed); 2.5.0 fixed what the review of 2.4.0 found. See [CHANGELOG.md](CHANGELOG.md). The
 generators are tested (every rendered script is shellchecked, every Butane
 config validated with `butane --strict`, every preset's compose file checked
 with `docker compose config`, the Debian ISO rebuild runs against a mock

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.7.0 — install media without the stack
+
+- **`kiwi-server build --bare`** (and `render --bare`): the ISO carries the
+  base system only — hostname, network, the admin user and keys, the update
+  policy — and the machine comes up as `bare`; its role and every secret of
+  its stack arrive afterwards with `kiwi-server apply` over SSH and stay
+  0600 on the machine. For media that leave the house: a provider's ISO
+  store, a stick in the post. The per-host ISO with the stack embedded stays
+  the offline path, and the fleet file is checked with the real role first,
+  so a half-filled master is refused all the same.
+- `tests/cli.sh` keeps the caller's Python user site, so a Jinja2 from
+  `pip install --user` (the README's own line) is found.
+- docs: the design after the October talks — the control node and the
+  replaceable master, the bootc image (phoenix-server), names, the unlock
+  with Tang rings and a netfilter relay, managed masters — in
+  docs/design/control-plane.md; the test network and its machines in
+  docs/HANDOFF.md; problems 32 to 36 and the owner's module wishes in
+  docs/ROADMAP.md.
+
 ## 2.6.0 — the renderer and the machine side as repositories of their own
 
 - **The renderer is its own package, `lib/kiwimodules`** (modules, quadlets,

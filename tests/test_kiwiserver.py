@@ -1529,6 +1529,22 @@ class TestRouter(Base):
             self.assertEqual(cli.main(["openwrt", f.path, "--via", "d"]), 1)   # d has no static LAN address
         self.assertIn("static LAN address", err.getvalue())
 
+    def test_bare_media_leaves_the_stack_for_apply(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        out = os.path.join(self.tmp, "out")
+        self.assertEqual(cli.main(["render", f.path, "gate", "--bare", "--no-backup", "-o", out]), 0)
+        with open(os.path.join(out, "gate", "gate.role.sh")) as fh:
+            script = fh.read()
+        self.assertIn("KS_STACK=0", script)
+        self.assertNotIn("KS_FILES[stack/docker-compose.yml]=", script)   # no compose file, no wg-easy password on the media
+        self.assertNotIn("KS_FILES[kiwi-stack]=", script)
+        self.assertEqual(cli.main(["render", f.path, "gate", "--no-backup", "-o", out]), 0)
+        with open(os.path.join(out, "gate", "gate.role.sh")) as fh:
+            script = fh.read()
+        self.assertIn("KS_STACK=1", script)                  # the real role again, same output directory
+        self.assertIn("KS_FILES[stack/docker-compose.yml]=", script)
+
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
 class TestBackup(Base):

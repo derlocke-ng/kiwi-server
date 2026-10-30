@@ -713,6 +713,18 @@ def _render_or_build(args, build):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
     check(fleet, roles, ms, hosts)
+    if getattr(args, "bare", False):
+        # Media without the stack: the role script carries the base system only
+        # (hostname, network, the admin user, the update policy) and the machine
+        # comes up as `bare`; its role and every secret of its stack arrive
+        # afterwards with `apply` over SSH. For media that leave the house (a
+        # provider's ISO store). The fleet is checked with the real role above,
+        # so a half-filled master is refused all the same.
+        for h in hosts:
+            if h.role != "bare":
+                util.say("%s: bare media — afterwards: kiwi-server apply %s %s --ssh %s@<address>"
+                         % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"]))
+            h.role, h.role_settings_raw, h.role_settings = "bare", {}, {}
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
     r = Renderer(fleet, roles, out_dir, tc, ms)
@@ -913,7 +925,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server list <fleet>                      hosts and what has been generated
   kiwi-server show <fleet> <host>               the effective configuration of one host
   kiwi-server render <fleet> [host...]          role scripts, stacks, Butane/Ignition or preseed
-  kiwi-server build <fleet> [host...]           render, then the unattended ISO per host
+  kiwi-server build <fleet> [host...]           render, then the unattended ISO per host (--bare: without the stack)
   kiwi-server script <fleet> <host>             print the role script (run it on any machine)
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
@@ -965,10 +977,11 @@ def build_parser():
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
-    s = sub("render", cmd_render); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
-    s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
-    s = sub("build", cmd_build); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
-    s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
+    for name, fn in (("render", cmd_render), ("build", cmd_build)):
+        s = sub(name, fn); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+        s.add_argument("--bare", action="store_true",
+                       help="the base system only: the role and its stack's secrets come later with apply (media that leave the house)")
+        s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     sub("ca", cmd_ca).add_argument("fleet")
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")

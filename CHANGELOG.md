@@ -25,6 +25,8 @@
   interface's MTU, not whatever an older client config says.
 - tests/golden: the MTU lines of every stack, `ip link set dev wg0` in the
   master's `start.sh`, the clamp in m1's `post-rules.txt`.
+- Carries kiwi-modules 0.3.0 (`VENDORED`), where the renderer and module
+  side of this change is developed.
 
 ## 2.7.1 — the enroll tunnel beside an operator's ssh multiplexing
 

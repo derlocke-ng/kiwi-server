@@ -13,6 +13,8 @@ same facts as instructions (docs/routers.md).
 import ipaddress
 import re
 
+from kiwimodules.modules import DEFAULT_WG_MTU
+
 from .util import KiwiError
 
 _LIST_KEYS = ("address", "allowedips", "dns")
@@ -58,9 +60,10 @@ def _q(v):
     return "'" + str(v).replace("'", "'\\''") + "'"
 
 
-def openwrt_script(domain, master_ip, mesh_subnet, wg=None, via=None, full=False, name="kiwi"):
+def openwrt_script(domain, master_ip, mesh_subnet, wg=None, via=None, full=False, name="kiwi", wg_mtu=None):
     """A POSIX sh script of uci commands. Re-runnable: every section it
-    creates is named, deleted first and written again."""
+    creates is named, deleted first and written again. The tunnel's MTU is
+    the fleet's wg_mtu (the master's wg0) when known, else the config's."""
     if not re.match(r"^[a-z][a-z0-9_]{0,14}$", name):
         raise KiwiError("the interface name must be a short lowercase word: %r" % name)
     if (wg is None) == (via is None):
@@ -89,7 +92,10 @@ def openwrt_script(domain, master_ip, mesh_subnet, wg=None, via=None, full=False
               "uci set network.%s.private_key=%s" % (name, _q(i["privatekey"]))]
         for a in i["address"]:
             L.append("uci add_list network.%s.addresses=%s" % (name, _q(a)))
-        L.append("uci set network.%s.mtu=%s" % (name, _q(i.get("mtu") or "1412")))
+        mtu = str(wg_mtu or i.get("mtu") or DEFAULT_WG_MTU)
+        if i.get("mtu") and str(i["mtu"]) != mtu:
+            L.append("# the config says MTU %s; the fleet's wg_mtu, the master's wg0, is %s" % (i["mtu"], mtu))
+        L.append("uci set network.%s.mtu=%s" % (name, _q(mtu)))
         L += ["uci set network.%s_peer=wireguard_%s" % (name, name),
               "uci set network.%s_peer.description='kiwi master'" % name,
               "uci set network.%s_peer.public_key=%s" % (name, _q(p["publickey"]))]

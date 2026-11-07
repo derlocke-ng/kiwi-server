@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- **The stack network and the tunnels have an MTU each** (problem 40):
+  `bridge_mtu` (default 1500) for the stack's bridge and `wg_mtu` (default
+  1380) for gluetun's `WIREGUARD_MTU`, wg-easy's `WG_MTU` and the server's
+  own `wg0`. One `mtu` of 1412 for all three split every full-size tunnel
+  packet in two on the bridge, which carries the encrypted packet, 60 bytes
+  bigger over IPv4 (80 over IPv6) — TLS stalls and stuttering streams through
+  the VPN on the v1 fleet. 1380 fits a WireGuard packet into a 1460-byte path
+  (DS-Lite, PPPoE). `validate` refuses `wg_mtu` above `bridge_mtu - 80` or
+  below 1280. A fleet that still sets `mtu` gets it as `wg_mtu`, the bridge
+  at 1500, and a warning to rename it; `mtu` and `wg_mtu` together are an
+  error.
+- **The WireGuard server's `wg0` is set to `wg_mtu`** in `start.sh`, before
+  the MSS clamp: wg-quick sized it from the bridge (1332 under a 1412 bridge),
+  while the clients were told another MTU and the clamp reads the interface
+  a SYN leaves by.
+- **A node with the gateway module clamps the TCP MSS** in its VPN client
+  by default (`vpn-client.mss_clamp`, as on a master): LAN clients routed
+  through it advertise MSS 1460, more than the tunnel carries. The host's
+  own `mss_clamp: false` still wins.
+- `kiwi-server openwrt` writes the master's `wg_mtu` as the router
+  interface's MTU, not whatever an older client config says.
+- tests/golden: the MTU lines of every stack, `ip link set dev wg0` in the
+  master's `start.sh`, the clamp in m1's `post-rules.txt`.
+
 ## 2.7.1 — the enroll tunnel beside an operator's ssh multiplexing
 
 - **`enroll` works on an operator whose `~/.ssh/config` multiplexes sessions**:

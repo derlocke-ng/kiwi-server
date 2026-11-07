@@ -38,6 +38,9 @@ IP_PLAN = {
 DEFAULT_SUBNET = {"master": "172.64.0.0/24", "node": "172.128.0.0/24"}
 NETWORK_NAME = {"master": "knet-master", "node": "knet-node"}
 PREFIX = {"master": "km", "node": "kn"}
+# the tunnels' MTU and the stack network's (StackSpec): WireGuard adds 60 bytes
+# over IPv4 and 80 over IPv6, and the bridge carries the encrypted packets
+DEFAULT_WG_MTU, DEFAULT_BRIDGE_MTU, WG_OVERHEAD = 1380, 1500, 80
 _VAR = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
 
 
@@ -183,10 +186,10 @@ class StackSpec:
     """Everything the renderer needs for one host."""
 
     def __init__(self, node_type, hostname, modules, docker_dir="/home/user/docker",
-                 docker_subnet=None, mtu=1412, timezone="UTC", vpn_ip="", pub_iface="",
+                 docker_subnet=None, mtu=None, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
-                 ca_cert=None, auto_update="registry"):
+                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -194,7 +197,20 @@ class StackSpec:
         self.modules = list(modules)
         self.docker_dir = docker_dir.rstrip("/")
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
-        self.mtu = int(mtu)
+        # two MTUs, not one: the tunnels' (gluetun, wg-easy's wg0 and the configs it
+        # issues) and the bridge's, which carries the tunnels' encrypted packets —
+        # 60 bytes bigger over IPv4, 80 over IPv6. One value for both split every
+        # full-size tunnel packet in two on the bridge. `mtu` is the old single
+        # setting, taken as the tunnels' MTU.
+        self.wg_mtu = int(wg_mtu or mtu or DEFAULT_WG_MTU)
+        self.bridge_mtu = int(bridge_mtu or DEFAULT_BRIDGE_MTU)
+        if self.wg_mtu > self.bridge_mtu - WG_OVERHEAD:
+            raise KiwiError("%s: wg_mtu %d does not fit the stack network: the bridge (bridge_mtu %d) carries "
+                            "the tunnels' packets with up to %d bytes of WireGuard headers on top — wg_mtu at "
+                            "most %d, or a bigger bridge_mtu" % (hostname, self.wg_mtu, self.bridge_mtu,
+                                                                 WG_OVERHEAD, self.bridge_mtu - WG_OVERHEAD))
+        if self.wg_mtu < 1280:
+            raise KiwiError("%s: wg_mtu %d is below 1280, the smallest MTU IPv6 works with" % (hostname, self.wg_mtu))
         self.timezone = timezone
         self.vpn_ip = vpn_ip or ""
         self.pub_iface = pub_iface or ""
@@ -342,7 +358,8 @@ class Renderer:
             "node_name": spec.hostname, "hostname": spec.hostname, "node_type": spec.node_type,
             "container_prefix": PREFIX[spec.node_type], "network_name": NETWORK_NAME[spec.node_type],
             "docker_subnet": subnet, "docker_gateway": gateway, "docker_subnet_base": base, "docker_ip_range": ip_range,
-            "docker_dir": spec.docker_dir, "mtu": str(spec.mtu), "timezone": spec.timezone,
+            "docker_dir": spec.docker_dir, "bridge_mtu": str(spec.bridge_mtu), "wg_mtu": str(spec.wg_mtu),
+            "timezone": spec.timezone,
             "vpn_ip": spec.vpn_ip, "pub_iface": spec.pub_iface, "service_user": spec.service_user,
             "container_ips": ips, "modules": list(ordered),
             "has_nextcloud": "cloud" in ordered,

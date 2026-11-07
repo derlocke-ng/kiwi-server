@@ -29,7 +29,8 @@ Templates are Jinja2. Every template sees the **host context**:
 | `hostname`, `node_type` | the host; `master` or `node` |
 | `container_prefix`, `network_name` | `km` / `knet-master` on a master, `kn` / `knet-node` on a node |
 | `container_ip`, `container_ips` | this module's address on the stack network, and everyone's |
-| `docker_subnet`, `docker_subnet_base`, `docker_gateway`, `mtu` | the stack network |
+| `docker_subnet`, `docker_subnet_base`, `docker_gateway`, `bridge_mtu` | the stack network |
+| `wg_mtu` | the tunnels' MTU: gluetun's, wg-easy's `wg0` and the client configs it issues |
 | `docker_dir`, `service_user`, `timezone` | the stack directory and its owner |
 | `master_ip`, `mesh_subnet`, `mesh_via`, `domain` | the master's mesh address, the mesh, the container the host routes it through, the fleet's domain |
 | `runtime` | `podman` (quadlets) or `docker` (compose) — the compose fragment is the source either way |
@@ -307,6 +308,17 @@ copies pinned in `VENDORED`: `tools/vendor.sh` brings a release in,
   them one by one with retries before the first start and then checks that
   every container runs (`kiwi-stack verify`); a stack that is not up fails
   the apply instead of being reported as applied.
+- **Two MTUs, not one.** `wg_mtu` (1380) is the tunnels': gluetun's
+  `WIREGUARD_MTU`, wg-easy's `WG_MTU` for the client configs, and the
+  server's own `wg0`, which `start.sh` sets before the MSS clamp (left alone,
+  wg-quick sizes it from the bridge). `bridge_mtu` (1500) is the stack
+  network's, which carries the tunnels' *encrypted* packets — 60 bytes bigger
+  over IPv4, 80 over IPv6 — so `validate` refuses a `wg_mtu` above
+  `bridge_mtu - 80`. 1380 fits a WireGuard packet into a 1460-byte path
+  (DS-Lite, PPPoE). The old single `mtu` setting is read as `wg_mtu`, with a
+  warning. A node with the gateway module clamps the TCP MSS in its VPN
+  client by default (`vpn-client.mss_clamp`), as the master does: LAN clients
+  routed through it advertise MSS 1460.
 - **Port ranges** are accepted as `A-B/proto` in `extra_dnat_rules`,
   `open_ports` and `ports:` (host firewall, DNAT and the collision check
   understand them; gluetun's own input port list takes single ports only).

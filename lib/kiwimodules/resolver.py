@@ -62,6 +62,37 @@ def _mesh_address_from_wireguard(host, module_files, where):
                              "mesh traffic for this host arrives at %s" % (where, vpn_ip, addr, addr))
 
 
+def _warn(host, msg):
+    if msg not in host.warnings:    # settings are resolved more than once per command
+        host.warnings.append(msg)
+
+
+def _legacy_mtu(host, raw, where, block):
+    """`mtu` was one value for the stack network and the tunnels both. What
+    fleets set it to was meant for the tunnels; the bridge carries the
+    tunnels' encrypted packets and keeps its own bridge_mtu (1500)."""
+    old = host.role_settings.get("mtu")
+    if not old:
+        return
+    if raw.get("wg_mtu") is not None:
+        raise KiwiError("%s: mtu and wg_mtu are both set — mtu is the old name of wg_mtu; "
+                        "drop it (the stack network is bridge_mtu)" % where)
+    host.role_settings["wg_mtu"] = old
+    # kiwi-server puts the host's name in front of a warning; a machine file is one host
+    _warn(host, "%s.mtu is the old name of wg_mtu — taken as wg_mtu %s, the tunnels' MTU; the stack "
+                "network has its own bridge_mtu (%s). Rename it; 1380 fits a 1460-byte path (DS-Lite, PPPoE)"
+                % (block, old, host.role_settings.get("bridge_mtu") or 1500))
+
+
+def _implied_module_defaults(name, ordered):
+    """Defaults one module takes from another being enabled — below the
+    role's and the host's, which still decide."""
+    if name == "vpn-client" and "gateway" in ordered:
+        # LAN clients routed through the node advertise MSS 1460, more than the tunnel carries
+        return {"mss_clamp": True}
+    return {}
+
+
 def resolve_settings(role, host, modset=None):
     """Fill defaults, coerce and check the host's block for this role, and
     for a module role the block of every enabled module. File settings are
@@ -74,6 +105,7 @@ def resolve_settings(role, host, modset=None):
     role_keys = {s.key for s in role.settings}
     files, module_files = {}, {}
     host.role_settings = _resolve_block(role.settings, raw, host, where, files, "")
+    _legacy_mtu(host, raw, where, role.name)
     host.modules, host.module_settings = [], {}
     if role.stack:
         ms = modset or modmod.discover()
@@ -91,7 +123,8 @@ def resolve_settings(role, host, modset=None):
             block = raw.get(name) or {}
             if not isinstance(block, dict):
                 raise KiwiError("%s.%s must be a mapping" % (where, name))
-            block = deep_merge(role.defaults_for(name, host.role_settings), block)
+            block = deep_merge(deep_merge(_implied_module_defaults(name, ordered),
+                                          role.defaults_for(name, host.role_settings)), block)
             keys = {s.key for s in mod.settings} | {"container_ip"}
             unknown = sorted(set(block) - keys)
             if unknown:
@@ -128,7 +161,8 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None):
     return modmod.StackSpec(
         node_type=role.node_type, hostname=host.hostname, modules=host.modules,
         docker_dir=rs.get("docker_dir") or "/home/user/docker",
-        docker_subnet=rs.get("docker_subnet") or None, mtu=rs.get("mtu") or 1412,
+        docker_subnet=rs.get("docker_subnet") or None,
+        wg_mtu=rs.get("wg_mtu") or None, bridge_mtu=rs.get("bridge_mtu") or None,
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
         pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {},
         module_config=host.module_settings, files=host.module_files,

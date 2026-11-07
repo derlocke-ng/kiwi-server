@@ -367,13 +367,27 @@ UX and ecosystem:
     DNAT at all, because `enable_vpn_dnat` follows the modules'
     `needs_vpn_dnat` and Portainer said false. It is served by the reverse
     proxy, so it says true now. (modules/portainer/module.yaml)
-40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
-    IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
-    Measure instead of guessing: a path-MTU probe in `enroll` and in the
-    client config it writes (`--mtu`, a lower default such as 1280 for
-    phones), MSS clamping to the path MTU on the master's `wg0` forward
-    chain so TCP works whatever the client's MTU, and `kiwi-stack health`
-    reporting fragmentation. (modules/vpn-server, cli.py enroll, routers.md)
+40. **MTU.** *The generator's half fixed (unreleased).* One `mtu` (1412)
+    was the stack network's, gluetun's and wg-easy's at once, but the bridge
+    carries the tunnels' *encrypted* packets, 60 bytes bigger over IPv4, so
+    every full-size tunnel packet was split in two on it — measured on the v1
+    fleet (7 November 2026): 54 M fragments in m1's gluetun, 502 M on the
+    master's host. The server's own `wg0` was never set: wg-quick made it
+    bridge - 80 (1332) while the clients were told 1412, and the MSS clamp,
+    which reads the interface a SYN leaves by, promised more than `wg0`
+    carried back. And m1's path to the master carries 1452 only (DS-Lite), too
+    small for a 1412 tunnel whatever the bridge. Now `wg_mtu` (1380, the
+    tunnels: gluetun, wg-easy's configs, `wg0` set in `start.sh` before the
+    clamp) and `bridge_mtu` (1500) are two stack settings; `validate` refuses
+    `wg_mtu > bridge_mtu - 80`; the old `mtu` is read as `wg_mtu` with a
+    warning; a node with the gateway module clamps the MSS in its VPN client
+    by default (LAN clients advertise 1460); `kiwi-server openwrt` writes
+    `wg_mtu`. Still open: on 5G and other mobile paths (often IPv6-only with
+    464XLAT, nested encapsulation) the owner sees it fail. Measure instead of
+    guessing: a path-MTU probe in `enroll` and in the client config it
+    writes (`--mtu`, a lower default such as 1280 for phones), and
+    `kiwi-stack health` reporting fragmentation. (modules/vpn-server, cli.py
+    enroll, routers.md)
 37. A node publishes its services on the host (80/443 of the reverse proxy,
     the sftp port, what `published_ports` lists) because a node lives on a
     LAN; on a public host that is the internet. A master is safe there (its

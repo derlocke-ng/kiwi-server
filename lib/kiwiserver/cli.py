@@ -552,20 +552,22 @@ def fleet_identities(fleet):
 
 
 def fleet_facts(fleet, roles, ms):
-    """(domain, master's mesh address, mesh subnet): what a router needs to know."""
+    """(domain, master's mesh address, mesh subnet, the master's wg_mtu or None):
+    what a router needs to know."""
     r = Renderer(fleet, roles, out_dir_for(argparse.Namespace(output_dir=None), fleet), None, ms)
     r.scan()
-    mesh = "10.8.0.0/16"
+    mesh, wg_mtu = "10.8.0.0/16", None
     for h in fleet.hosts.values():
         if h.role in roles and roles[h.role].node_type == "master" and h.role_settings.get("mesh_subnet"):
             mesh = h.role_settings["mesh_subnet"]
+            wg_mtu = h.role_settings.get("wg_mtu") or None
             break
-    return str(fleet.defaults.get("domain") or ""), r._master_ip, mesh
+    return str(fleet.defaults.get("domain") or ""), r._master_ip, mesh, wg_mtu
 
 
 def cmd_openwrt(args):
     fleet, roles, ms = load(args)
-    domain, master_ip, mesh = fleet_facts(fleet, roles, ms)
+    domain, master_ip, mesh, wg_mtu = fleet_facts(fleet, roles, ms)
     if not master_ip and not args.via:
         util.warn("no master with a mesh address in the fleet — the DNS forward is left out")
     wg = via = None
@@ -580,7 +582,8 @@ def cmd_openwrt(args):
             via = str(addr).split("/", 1)[0]
     if wg is None and via is None:
         raise KiwiError("give --wireguard <client config from the master> or --via <gateway node or its LAN address>")
-    sys.stdout.write(routermod.openwrt_script(domain, master_ip, mesh, wg=wg, via=via, full=args.full, name=args.name))
+    sys.stdout.write(routermod.openwrt_script(domain, master_ip, mesh, wg=wg, via=via, full=args.full,
+                                              name=args.name, wg_mtu=wg_mtu))
 
 
 # ---- managing machines that run ----------------------------------------------------

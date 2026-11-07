@@ -105,7 +105,7 @@ settings:
   - key: mss_clamp
     type: bool
     label: Clamp TCP MSS to PMTU
-    help: Fixes stalls on paths where the WireGuard MTU bites (the live master has it on).
+    help: "Fixes stalls on paths where the WireGuard MTU bites. On by default on a master (its role) and on a node with the gateway module: LAN clients routed through it advertise MSS 1460, more than the tunnel carries."
     default: false
   - key: extra_env
     type: map

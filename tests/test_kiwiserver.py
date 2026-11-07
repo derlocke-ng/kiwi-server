@@ -705,7 +705,8 @@ class TestModules(Base):
         self.assertIn("Gateway=172.128.0.1", net)
         self.assertIn("IPRange=172.128.0.128/26", net)     # the AIO containers draw from here, not from .2 upwards
         self.assertEqual(compose["networks"]["knet-node"]["ipam"]["config"][0]["ip_range"], "172.128.0.128/26")
-        self.assertIn("Options=mtu=1412", net)
+        self.assertIn("Options=mtu=1500", net)     # the bridge carries the tunnel's packets plus their headers
+        self.assertIn("WIREGUARD_MTU=1380", compose["services"]["kn-vpn-client"]["environment"])
         # a fixed address inside the dynamic range is refused
         host, role, spec = self.spec("sh3", role="node-cloud",
                                      **{"node-cloud": self.node_cloud(vault={"container_ip": "172.128.0.130"})})
@@ -1190,6 +1191,75 @@ class TestModules(Base):
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
+    def test_bridge_and_tunnel_mtus_are_two_settings(self):
+        # the defaults: the bridge at 1500 carries the 1380 tunnels with their headers
+        host, role, spec = self.spec("gate", role="master", target="debian", master=self.master())
+        self.assertEqual((spec.bridge_mtu, spec.wg_mtu), (1500, 1380))
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertEqual(b.compose["networks"]["knet-master"]["driver_opts"]["com.docker.network.driver.mtu"], "1500")
+        self.assertIn("WIREGUARD_MTU=1380", b.compose["services"]["km-vpn-client"]["environment"])
+        self.assertIn("WG_MTU=1380", b.compose["services"]["km-vpn-server"]["environment"])
+        start = b.files["km-vpn-server/start.sh"][0]
+        # wg0 is set before the MSS clamp, which reads it
+        self.assertLess(start.index("ip link set dev wg0 mtu 1380"), start.index("--clamp-mss-to-pmtu"))
+        self.assertLess(start.index("iptables-nft"), start.index("ip link set dev wg0 mtu"))
+        self.assertEqual(host.warnings, [])
+        # both set explicitly
+        host, role, spec = self.spec("gate", role="master", target="debian",
+                                     master=self.master(bridge_mtu=9000, wg_mtu=1420))
+        self.assertEqual((spec.bridge_mtu, spec.wg_mtu), (9000, 1420))
+        self.assertIn("ip link set dev wg0 mtu 1420", modmod.Renderer(self.ms).render(spec).files["km-vpn-server/start.sh"][0])
+        # the old single setting is the tunnels' MTU; the bridge keeps 1500, and a warning says so
+        host, role, spec = self.spec("sh3", role="node-cloud", **{"node-cloud": self.node_cloud(mtu=1412)})
+        self.assertEqual((spec.bridge_mtu, spec.wg_mtu), (1500, 1412))
+        self.assertEqual(len(host.warnings), 1)
+        self.assertIn("mtu is the old name of wg_mtu", host.warnings[0])
+        rolesmod.resolve_settings(role, host, self.ms)   # resolved again: still one warning
+        self.assertEqual(len(host.warnings), 1)
+        b = modmod.Renderer(self.ms).render(spec)
+        self.assertIn("Options=mtu=1500", b.quadlets["knet-node.network"])
+        self.assertIn("Environment=WIREGUARD_MTU=1412", b.quadlets["kn-vpn-client.container"])
+        # the old name and the new one together: which one is meant is not clear
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "sh3": {"role": "node-cloud", "node-cloud": self.node_cloud(mtu=1412, wg_mtu=1380)}}})
+        errs = cli.settings_errors(self.roles, self.ms, f.hosts["sh3"])
+        self.assertEqual(len(errs), 1)
+        self.assertIn("mtu and wg_mtu are both set", errs[0])
+        # a tunnel that does not fit the bridge with its headers is an error `validate` reports
+        for over, ok in (({"wg_mtu": 1420}, True), ({"wg_mtu": 1421}, False),
+                         ({"bridge_mtu": 1412, "wg_mtu": 1412}, False), ({"mtu": 1412, "bridge_mtu": 1412}, False),
+                         ({"wg_mtu": 1200}, False)):
+            f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+                "sh3": {"role": "node-cloud", "node-cloud": self.node_cloud(**over)}}})
+            errs = cli.settings_errors(self.roles, self.ms, f.hosts["sh3"])
+            self.assertEqual(not errs, ok, (over, errs))
+            if over.get("bridge_mtu") == 1412:
+                self.assertIn("wg_mtu 1412 does not fit the stack network", errs[0])
+                self.assertIn("at most 1332", errs[0])
+        with self.assertRaisesRegex(KiwiError, "x: wg_mtu 1500 does not fit"):
+            modmod.StackSpec("node", "x", ["vpn-client"], wg_mtu=1500)
+        self.assertEqual(modmod.StackSpec("node", "x", ["vpn-client"], mtu=1400).wg_mtu, 1400)   # the old keyword
+
+    def test_gateway_nodes_clamp_the_mss_by_default(self):
+        # LAN clients routed through a gateway node advertise MSS 1460, more than the tunnel carries
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw()})
+        self.assertTrue(host.module_settings["vpn-client"]["mss_clamp"])
+        self.assertIn("--clamp-mss-to-pmtu", modmod.Renderer(self.ms).render(spec).files["kn-vpn-client/post-rules.txt"][0])
+        # the node role with the gateway module in its own list, no preset
+        host, role, spec = self.spec("m2", role="node", node={
+            "vpn_ip": "10.8.0.7", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
+            "modules": ["vpn-client", "dns", "gateway"], "dns": {"pihole_password": "p"}})
+        self.assertTrue(host.module_settings["vpn-client"]["mss_clamp"])
+        # the host still decides
+        gw = self.node_gw()
+        gw["vpn-client"] = dict(gw["vpn-client"], mss_clamp=False)
+        host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": gw})
+        self.assertFalse(host.module_settings["vpn-client"]["mss_clamp"])
+        self.assertNotIn("--clamp-mss-to-pmtu", modmod.Renderer(self.ms).render(spec).files["kn-vpn-client/post-rules.txt"][0])
+        # a node without the gateway module keeps the setting's default
+        host, role, spec = self.spec("sh3", role="node-cloud", **{"node-cloud": self.node_cloud()})
+        self.assertFalse(host.module_settings["vpn-client"]["mss_clamp"])
+
     def test_rendered_scripts_are_clean(self):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw()})
         b = modmod.Renderer(self.ms).render(spec)
@@ -1537,6 +1607,13 @@ class TestRouter(Base):
             self.assertIn(line, split)
         self.assertNotIn("0.0.0.0/0", split)
         self.assertNotIn("noresolv", split)
+        self.assertNotIn("# the config says MTU", split)
+        # the fleet's wg_mtu (the master's wg0) wins over what an older config says
+        fleet_mtu = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg, wg_mtu=1380)
+        self.assertIn("uci set network.kiwi.mtu='1380'", fleet_mtu)
+        self.assertIn("# the config says MTU 1412; the fleet's wg_mtu, the master's wg0, is 1380", fleet_mtu)
+        no_mtu = router.parse_wireguard(WG_CONF.replace("MTU = 1412\n", ""))
+        self.assertIn("uci set network.kiwi.mtu='1380'", router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=no_mtu))
         full = router.openwrt_script("home", "10.8.0.1", "10.8.0.0/16", wg=wg, full=True)
         self.assertIn("uci add_list network.kiwi_peer.allowed_ips='0.0.0.0/0'", full)
         self.assertIn("uci add_list dhcp.@dnsmasq[0].server='10.8.0.1'", full)
@@ -1570,6 +1647,7 @@ class TestRouter(Base):
         with contextlib.redirect_stdout(out):
             self.assertEqual(cli.main(["openwrt", f.path, "--wireguard", "secrets/router.conf"]), 0)
         self.assertIn("server='/kiwi/10.8.0.1'", out.getvalue())   # the master's address from the fleet
+        self.assertIn("network.kiwi.mtu='1380'", out.getvalue())   # the master's wg_mtu, not the config's 1412
         out = StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cli.main(["openwrt", f.path, "--via", "m1"]), 0)

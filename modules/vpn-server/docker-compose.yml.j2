@@ -16,7 +16,7 @@ services:
       - UI_TRAFFIC_STATS={{ 'true' if ui_traffic_stats else 'false' }}
       - WG_DEFAULT_DNS={{ server_ip }}
       - WG_DEFAULT_ADDRESS={{ wg_default_address }}
-      - WG_MTU={{ mtu }}
+      - WG_MTU={{ wg_mtu }}
 {% for k, v in extra_env.items() %}
       - {{ k }}={{ v }}
 {% endfor %}

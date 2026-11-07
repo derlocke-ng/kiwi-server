@@ -12,7 +12,7 @@ services:
     - VPN_SERVICE_PROVIDER=custom
     - VPN_TYPE=wireguard
     - TZ=Europe/Berlin
-    - WIREGUARD_MTU=1412
+    - WIREGUARD_MTU=1380
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
     - DOT_PROVIDERS=quad9
     - BLOCK_MALICIOUS=off
@@ -506,7 +506,7 @@ networks:
     driver_opts:
       com.docker.network.enable_ipv6: 'false'
       com.docker.network.bridge.name: knet-node
-      com.docker.network.driver.mtu: '1412'
+      com.docker.network.driver.mtu: '1500'
     ipam:
       driver: default
       config:

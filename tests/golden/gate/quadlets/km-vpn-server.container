@@ -21,7 +21,7 @@ Environment=WG_PERSISTENT_KEEPALIVE=25
 Environment=UI_TRAFFIC_STATS=true
 Environment=WG_DEFAULT_DNS=10.8.0.1
 Environment=WG_DEFAULT_ADDRESS=10.8.0.x
-Environment=WG_MTU=1412
+Environment=WG_MTU=1380
 EnvironmentFile=/home/user/docker/kiwi/env/km-vpn-server.env
 AddHost=gate.home:172.64.0.5
 AddHost=wg.gate.home:172.64.0.5

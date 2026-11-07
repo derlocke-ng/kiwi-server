@@ -101,6 +101,23 @@ forgotten stick from reinstalling.
   and gone from `podman ps`, its ports free.
 - Set `runtime: docker` (or back), `apply`: the old stack stops before the new
   one starts; no port conflict.
+- Change `wg_mtu` on a running master, `apply`: wg-easy is recreated (its
+  `WG_MTU` changed), and Pi-hole, Tor and nginx, which live in its network
+  namespace, must follow — a re-apply restarts the whole stack (problem 55),
+  and so does `kiwi-stack restart`; by hand,
+  never `docker compose up --no-deps` them (compose 2.21 gave them the literal
+  network mode `service:kmvpn-server` and docker refused to start them: the
+  v1 master's Pi-hole, every VPN client's DNS, was down ten minutes);
+  `docker rm` them and `docker compose up -d`. Client configs already issued
+  keep their old `MTU =` until they are downloaded again from wg-easy (or the
+  line edited); apply the nodes too, their gluetun takes `wg_mtu` from their
+  own stack, and re-run `kiwi-server openwrt` for a router.
+- Fragmentation check, per network namespace, around a 50 MB download and a
+  15 MB upload through the whole chain: `FragOKs`, `FragCreates`, `ReasmOKs`
+  and `ReasmFails` from the `Ip:` lines of `/proc/net/snmp` on the host and
+  inside each VPN container (`nsenter -t <pid> -n cat /proc/net/snmp`,
+  `podman`/`docker exec <c> cat /proc/net/snmp`), before and after. Every
+  difference is zero when the MTUs are right.
 
 ## 6. The dead-node drill
 

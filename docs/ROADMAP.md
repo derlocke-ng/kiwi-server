@@ -367,13 +367,52 @@ UX and ecosystem:
     DNAT at all, because `enable_vpn_dnat` follows the modules'
     `needs_vpn_dnat` and Portainer said false. It is served by the reverse
     proxy, so it says true now. (modules/portainer/module.yaml)
-40. **MTU.** The stack's 1412 fits DSL; on 5G and other mobile paths (often
-    IPv6-only with 464XLAT, nested encapsulation) the owner sees it fail.
-    Measure instead of guessing: a path-MTU probe in `enroll` and in the
-    client config it writes (`--mtu`, a lower default such as 1280 for
-    phones), MSS clamping to the path MTU on the master's `wg0` forward
-    chain so TCP works whatever the client's MTU, and `kiwi-stack health`
-    reporting fragmentation. (modules/vpn-server, cli.py enroll, routers.md)
+40. **MTU.** *Found on hardware (the v1 fleet, 7 November 2026); the
+    generator's half fixed (unreleased, kiwi-modules 0.3.0).* Symptoms: TLS
+    stalls and stuttering streams through the VPN. One `mtu` (1412) was the
+    stack network's, gluetun's and wg-easy's at once, but the bridge carries
+    the tunnels' *encrypted* packets, 60 bytes bigger over IPv4, so every
+    full-size tunnel packet was split in two on it. The server's own `wg0`
+    was never set (wg-quick made it bridge - 80, 1332, while the clients were
+    told 1412), and m1's path to the master carries 1452 only (DS-Lite), too
+    small for a 1412 tunnel whatever the bridge. Fixing it live (bridge 1412,
+    m1's gluetun 1352, the master's wg0 1352, its exit tunnel 1344 with
+    `--set-mss 1304`) found two more:
+    - **WireGuard's padding**: a packet is padded to a multiple of 16 as far
+      as the *sending* peer's MTU allows. Mullvad's MTU is bigger, so it
+      padded the master's 1352-byte packets to 1360: 1420 bytes on the 1412
+      bridge, about 40 000 split per 50 MB. At 1344 (84 x 16): none.
+    - **`--clamp-mss-to-pmtu` works one way**: it clamps a SYN or SYN-ACK to
+      the interface it leaves by. The way back to the clients (wg0, 1352) was
+      wider than the exit (1344), clients got MSS 1312 against a 1344 tunnel,
+      and every connection's first full-size upload segment bounced.
+    - Recreating Pi-hole and Tor with `docker compose up -d --force-recreate
+      --no-deps` (compose 2.21) gave them the literal network mode
+      `service:kmvpn-server`; docker refused to start them and the master's
+      Pi-hole, every VPN client's DNS, was down ten minutes.
+
+    Measured with the `Ip:` counters of `/proc/net/snmp` on the host and in
+    each VPN container's namespace, before and after a 50 MB download and a
+    15 MB upload through the whole chain. Before: m1's gluetun split 54 M
+    packets; the master's host split 502 M and reassembled 449 M; wg-easy
+    split 27 M, with 164 K failed reassemblies. After: zero everywhere.
+
+    Now: `wg_mtu` (1376, a multiple of 16; gluetun, wg-easy's configs, `wg0`
+    set in `start.sh`) and `bridge_mtu` (1500) are two stack settings;
+    `validate` refuses a `wg_mtu` whose padded packet plus 80 bytes does not
+    fit the bridge; the old `mtu` is read as `wg_mtu` with a warning, refused
+    at 1412; the MSS is `--set-mss wg_mtu - 40` both ways in wg-easy and in
+    the VPN client (`mss_clamp`, on for a master and by default for a node
+    with the gateway module); `kiwi-server openwrt` writes `wg_mtu`; a test
+    keeps `--no-deps` out of the machine side, and the runbook says how to
+    recreate a namespace sharer by hand. Still open: on 5G and other mobile
+    paths (often IPv6-only with 464XLAT, nested encapsulation) the owner sees
+    it fail. Measure instead of guessing: a path-MTU probe in `enroll` and in
+    the client config it writes (`--mtu`, a lower default such as 1280 for
+    phones), and `kiwi-stack health` reporting fragmentation — the snmp
+    counters above, per namespace (`nsenter -t <pid> -n`), sampled across a
+    transfer; any growth of `FragCreates` or `ReasmOKs` is a warning.
+    (kiwi-stack, modules/vpn-server, cli.py enroll, routers.md)
 37. A node publishes its services on the host (80/443 of the reverse proxy,
     the sftp port, what `published_ports` lists) because a node lives on a
     LAN; on a public host that is the internet. A master is safe there (its

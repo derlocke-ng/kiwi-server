@@ -174,16 +174,16 @@ and service secret generated from `secrets/seed` so a re-render never rotates
 a password.
 
 A module role's block holds the **stack settings** at the top (`preset`,
-`vpn_ip`, `pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, the
-daily VPN restart and weekly update times) and **one block per module**. A
-node is any module set: `preset: gateway | cloud | minimal` picks the usual
-shape, `modules:` replaces the list outright — a cloud node that also
-downloads is `modules: [vpn-client, reverse-proxy, cloud, vault, downloader]`
-plus the downloader's settings. The renderer refuses two modules that publish
-the same host port. `node-gw` and `node-cloud` remain as names for the first
-two presets. The master runs nginx inside its WireGuard server's network
-namespace, so `wg.<hostname>` and `pihole.<hostname>` answer on the mesh
-address only, for the client groups that may see them.
+`vpn_ip`, `pub_iface`, `docker_dir`, `service_user`, `docker_subnet`, `wg_mtu`
+and `bridge_mtu`, the daily VPN restart and weekly update times) and **one
+block per module**. A node is any module set: `preset: gateway | cloud |
+minimal` picks the usual shape, `modules:` replaces the list outright — a
+cloud node that also downloads is `modules: [vpn-client, reverse-proxy, cloud,
+vault, downloader]` plus the downloader's settings. The renderer refuses two
+modules that publish the same host port. `node-gw` and `node-cloud` remain as
+names for the first two presets. The master runs nginx inside its WireGuard
+server's network namespace, so `wg.<hostname>` and `pihole.<hostname>` answer
+on the mesh address only, for the client groups that may see them.
 
 Static addresses without typing them: `network: { dhcp: false, gateway: …,
 iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
@@ -195,7 +195,12 @@ directories belong to `service_user` (the admin user unless set — uid 1000 on
 a fresh install, matching the containers' PUID defaults); the rendered files
 stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|verify|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
-client's network namespace (Transmission, JDownloader).
+client's network namespace (Transmission, JDownloader). By hand, never
+recreate a container that shares another's network namespace (Pi-hole, Tor
+and nginx on a master, the downloaders on a node) with `docker compose up
+--no-deps`: compose then gives it the literal network mode
+`service:km-vpn-server`, which docker refuses to start. `docker rm` it and run
+`docker compose up -d` without `--no-deps`, or `kiwi-stack restart`.
 
 Names are `service.hostname.domain`, and the domain is yours to choose:
 `kiwi-server init --domain …`, the GUI asks when it creates a fleet, and

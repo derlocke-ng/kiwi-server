@@ -24,7 +24,7 @@ services:
       - VPN_ENDPOINT_PORT={{ vpn_endpoint_port }}
 {% endif %}
       - TZ={{ timezone }}
-      - WIREGUARD_MTU={{ mtu }}
+      - WIREGUARD_MTU={{ wg_mtu }}
       - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
       - DOT_PROVIDERS={{ dot_providers }}
       - BLOCK_MALICIOUS=off

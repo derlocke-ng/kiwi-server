@@ -6,7 +6,7 @@ networks:
     driver_opts:
       com.docker.network.enable_ipv6: "false"
       com.docker.network.bridge.name: {{ network_name }}
-      com.docker.network.driver.mtu: "{{ mtu }}"
+      com.docker.network.driver.mtu: "{{ bridge_mtu }}"   # the tunnels' packets plus their WireGuard headers
     ipam:
       driver: default
       config:

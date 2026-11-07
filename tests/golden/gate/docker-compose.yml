@@ -15,7 +15,7 @@ services:
     - WIREGUARD_ADDRESSES=10.66.1.2/32
     - SERVER_COUNTRIES=Germany
     - TZ=Europe/Berlin
-    - WIREGUARD_MTU=1412
+    - WIREGUARD_MTU=1376
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
     - DOT_PROVIDERS=quad9
     - BLOCK_MALICIOUS=off
@@ -53,7 +53,7 @@ services:
     - UI_TRAFFIC_STATS=true
     - WG_DEFAULT_DNS=10.8.0.1
     - WG_DEFAULT_ADDRESS=10.8.0.x
-    - WG_MTU=1412
+    - WG_MTU=1376
     networks:
       knet-master:
         ipv4_address: 172.64.0.3
@@ -136,7 +136,7 @@ networks:
     driver_opts:
       com.docker.network.enable_ipv6: 'false'
       com.docker.network.bridge.name: knet-master
-      com.docker.network.driver.mtu: '1412'
+      com.docker.network.driver.mtu: '1500'
     ipam:
       driver: default
       config:

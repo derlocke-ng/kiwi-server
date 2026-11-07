@@ -15,12 +15,24 @@ settings:
     label: Docker subnet
     help: "The stack's bridge network. Empty: 172.64.0.0/24 on a master, 172.128.0.0/24 on a node. Containers get fixed addresses in it (vpn client .2, dns .4, proxy .5, …)."
     default: ""
-  - key: mtu
+  - key: wg_mtu
     group: Stack
     type: int
-    label: Network MTU
-    help: 1412 leaves room for the WireGuard headers.
-    default: 1412
+    label: WireGuard MTU
+    help: "The tunnels' MTU: the VPN client's (WIREGUARD_MTU), the WireGuard server's wg0 and the client configs wg-easy issues (WG_MTU); TCP through the tunnels uses MSS wg_mtu - 40. The tunnel adds 60 bytes over IPv4, 80 over IPv6, and WireGuard pads a packet to a multiple of 16 when the peer's MTU is bigger — pick a multiple of 16 when the bridge or the uplink is tight. 1376 (86 x 16) fits a 1452-byte DS-Lite path over IPv4 and a 1460-byte one over IPv6. At most bridge_mtu - 80, rounded down to a multiple of 16 (1408 under a 1500 bridge)."
+    default: 1376
+  - key: bridge_mtu
+    group: Stack
+    type: int
+    label: Stack network MTU
+    help: "The stack's bridge network. It carries the tunnels' encrypted packets, which are 60 to 80 bytes bigger than what goes into the tunnel, so it stays at the Ethernet 1500: a bridge as small as the tunnel splits every full-size tunnel packet in two."
+    default: 1500
+  - key: mtu
+    group: Advanced
+    type: int
+    label: Network MTU (old name)
+    help: "Replaced by wg_mtu and bridge_mtu. A value here is taken as wg_mtu, with a warning; the bridge stays at bridge_mtu. 0: not set."
+    default: 0
   - key: vpn_ip
     group: Stack
     label: Mesh address

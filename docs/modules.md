@@ -308,17 +308,27 @@ copies pinned in `VENDORED`: `tools/vendor.sh` brings a release in,
   them one by one with retries before the first start and then checks that
   every container runs (`kiwi-stack verify`); a stack that is not up fails
   the apply instead of being reported as applied.
-- **Two MTUs, not one.** `wg_mtu` (1380) is the tunnels': gluetun's
+- **Two MTUs, not one.** `wg_mtu` (1376) is the tunnels': gluetun's
   `WIREGUARD_MTU`, wg-easy's `WG_MTU` for the client configs, and the
-  server's own `wg0`, which `start.sh` sets before the MSS clamp (left alone,
-  wg-quick sizes it from the bridge). `bridge_mtu` (1500) is the stack
-  network's, which carries the tunnels' *encrypted* packets — 60 bytes bigger
-  over IPv4, 80 over IPv6 — so `validate` refuses a `wg_mtu` above
-  `bridge_mtu - 80`. 1380 fits a WireGuard packet into a 1460-byte path
-  (DS-Lite, PPPoE). The old single `mtu` setting is read as `wg_mtu`, with a
-  warning. A node with the gateway module clamps the TCP MSS in its VPN
-  client by default (`vpn-client.mss_clamp`), as the master does: LAN clients
-  routed through it advertise MSS 1460.
+  server's own `wg0`, which `start.sh` sets (left alone, wg-quick sizes it
+  from the bridge). `bridge_mtu` (1500) is the stack network's, which carries
+  the tunnels' *encrypted* packets — 60 bytes bigger over IPv4, 80 over IPv6.
+  WireGuard also pads a packet to a multiple of 16, as far as the *sending*
+  peer's MTU allows, so a peer with a bigger MTU (the commercial exit) grows
+  a 1352-byte packet to 1360. `validate` refuses a `wg_mtu` whose padded
+  packet plus 80 bytes does not fit `bridge_mtu` (at most 1408 under 1500).
+  **Pick a multiple of 16 when the bridge or the uplink is tight**: it never
+  grows. 1376 is one: 1436 bytes over IPv4 fits a 1452-byte DS-Lite path,
+  1456 over IPv6 a 1460 one. The old single `mtu` setting is read as
+  `wg_mtu`, with a warning, and refused when it does not fit (the usual 1412).
+- **The MSS is set, not clamped to the path.** The WireGuard server's
+  `start.sh`, and the VPN client's post-rules where `mss_clamp` is on (a
+  master, and by default a node with the gateway module, whose LAN clients
+  advertise MSS 1460), set every forwarded SYN to `wg_mtu - 40` with
+  `--set-mss`, which never raises a smaller MSS. `--clamp-mss-to-pmtu` reads
+  only the interface a SYN leaves by: on the v1 master the way back (wg0,
+  1352) was wider than the exit tunnel (1344), and every connection's first
+  full-size upload segment bounced.
 - **Port ranges** are accepted as `A-B/proto` in `extra_dnat_rules`,
   `open_ports` and `ports:` (host firewall, DNAT and the collision check
   understand them; gluetun's own input port list takes single ports only).

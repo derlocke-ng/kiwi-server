@@ -12,7 +12,7 @@ services:
     - VPN_SERVICE_PROVIDER=custom
     - VPN_TYPE=wireguard
     - TZ=Europe/Berlin
-    - WIREGUARD_MTU=1380
+    - WIREGUARD_MTU=1376
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
     - DOT_PROVIDERS=quad9
     - BLOCK_MALICIOUS=off

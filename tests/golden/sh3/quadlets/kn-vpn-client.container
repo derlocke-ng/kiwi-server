@@ -16,7 +16,7 @@ AddDevice=/dev/net/tun:/dev/net/tun
 Environment=VPN_SERVICE_PROVIDER=custom
 Environment=VPN_TYPE=wireguard
 Environment=TZ=Europe/Berlin
-Environment=WIREGUARD_MTU=1380
+Environment=WIREGUARD_MTU=1376
 Environment=WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
 Environment=DOT_PROVIDERS=quad9
 Environment=BLOCK_MALICIOUS=off

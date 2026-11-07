@@ -7,14 +7,16 @@
 if command -v iptables-nft >/dev/null 2>&1; then iptables() { command iptables-nft "$@"; }; fi
 sleep 2
 
-# MTU: wg0 carries what the client configs say (WG_MTU). Left alone, wg-quick
-# sizes it from the stack network (bridge - 80), and the MSS clamp below, which
-# reads the interface a SYN leaves by, would let the answers to the clients be
-# bigger than their tunnels carry.
-ip link set dev wg0 mtu 1380
+# MTU: wg0 carries what the client configs say (WG_MTU); left alone, wg-quick
+# sizes it from the stack network (bridge - 80).
+ip link set dev wg0 mtu 1376
 
-# clamp TCP MSS to the path MTU so WireGuard's overhead cannot stall connections
-iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+# no TCP segment bigger than the tunnels carry: their MTU less 40 bytes of IPv4 and
+# TCP headers, on every SYN both ways. Not --clamp-mss-to-pmtu: it reads only the
+# interface a SYN leaves by, and the way back can be narrower (the v1 master: wg0
+# 1352, the exit tunnel 1344, every first full-size upload segment bounced).
+# --set-mss never raises a smaller MSS.
+iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1336
 
 # clients never reach the docker network behind the server
 iptables -A FORWARD -s 10.8.0.0/16 -d 172.64.0.0/24 -j DROP

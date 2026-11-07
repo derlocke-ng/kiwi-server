@@ -77,11 +77,20 @@ def _legacy_mtu(host, raw, where, block):
     if raw.get("wg_mtu") is not None:
         raise KiwiError("%s: mtu and wg_mtu are both set — mtu is the old name of wg_mtu; "
                         "drop it (the stack network is bridge_mtu)" % where)
+    bridge = host.role_settings.get("bridge_mtu") or modmod.DEFAULT_BRIDGE_MTU
+    if old > modmod.wg_mtu_limit(bridge):
+        # 1412, what fleets set, was the bridge's MTU too; as the tunnels' it does not fit a
+        # 1500 bridge once WireGuard pads it (1424 + 80), nor a 1452-byte DS-Lite path
+        raise KiwiError("%s: mtu %s is the old name of wg_mtu, and as the tunnels' MTU it does not fit the "
+                        "stack network (bridge_mtu %s, at most %d once WireGuard pads it) — drop mtu; the "
+                        "default wg_mtu %d fits a DS-Lite or PPPoE path" % (where, old, bridge,
+                                                                          modmod.wg_mtu_limit(bridge),
+                                                                          modmod.DEFAULT_WG_MTU))
     host.role_settings["wg_mtu"] = old
     # kiwi-server puts the host's name in front of a warning; a machine file is one host
     _warn(host, "%s.mtu is the old name of wg_mtu — taken as wg_mtu %s, the tunnels' MTU; the stack "
-                "network has its own bridge_mtu (%s). Rename it; 1380 fits a 1460-byte path (DS-Lite, PPPoE)"
-                % (block, old, host.role_settings.get("bridge_mtu") or 1500))
+                "network has its own bridge_mtu (%s). Rename it; %d fits a DS-Lite or PPPoE path"
+                % (block, old, bridge, modmod.DEFAULT_WG_MTU))
 
 
 def _implied_module_defaults(name, ordered):

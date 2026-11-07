@@ -52,7 +52,7 @@ script again replaces what it wrote before.
 
 The same by hand, for reference: `network.kiwi` is an interface with
 `proto='wireguard'`, `private_key`, `addresses` and `mtu` (the fleet's `wg_mtu`,
-1380 by default, the MTU of the master's `wg0`; the config's own `MTU` only
+1376 by default, the MTU of the master's `wg0`; the config's own `MTU` only
 when the fleet has no master); `network.kiwi_peer`
 is a `wireguard_kiwi` section with `public_key`, `endpoint_host`,
 `endpoint_port`, `persistent_keepalive='25'`, `route_allowed_ips='1'` and

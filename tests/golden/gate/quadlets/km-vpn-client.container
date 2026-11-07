@@ -18,7 +18,7 @@ Environment=VPN_TYPE=wireguard
 Environment=WIREGUARD_ADDRESSES=10.66.1.2/32
 Environment=SERVER_COUNTRIES=Germany
 Environment=TZ=Europe/Berlin
-Environment=WIREGUARD_MTU=1380
+Environment=WIREGUARD_MTU=1376
 Environment=WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
 Environment=DOT_PROVIDERS=quad9
 Environment=BLOCK_MALICIOUS=off

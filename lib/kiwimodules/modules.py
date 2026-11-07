@@ -39,8 +39,21 @@ DEFAULT_SUBNET = {"master": "172.64.0.0/24", "node": "172.128.0.0/24"}
 NETWORK_NAME = {"master": "knet-master", "node": "knet-node"}
 PREFIX = {"master": "km", "node": "kn"}
 # the tunnels' MTU and the stack network's (StackSpec): WireGuard adds 60 bytes
-# over IPv4 and 80 over IPv6, and the bridge carries the encrypted packets
-DEFAULT_WG_MTU, DEFAULT_BRIDGE_MTU, WG_OVERHEAD = 1380, 1500, 80
+# over IPv4 and 80 over IPv6, and the bridge carries the encrypted packets.
+# WireGuard also pads a packet to a multiple of 16, as far as the *sending*
+# peer's MTU allows: a peer with a bigger MTU (a commercial exit) grows a
+# 1352-byte packet to 1360. 1376 is a multiple of 16, so it never grows.
+DEFAULT_WG_MTU, DEFAULT_BRIDGE_MTU, WG_OVERHEAD, WG_PADDING = 1376, 1500, 80, 16
+
+
+def wg_padded(wg_mtu):
+    """The biggest a tunnel packet of wg_mtu gets once WireGuard has padded it."""
+    return -(-int(wg_mtu) // WG_PADDING) * WG_PADDING
+
+
+def wg_mtu_limit(bridge_mtu):
+    """The biggest wg_mtu whose padded, encrypted packets fit the bridge."""
+    return (int(bridge_mtu) - WG_OVERHEAD) // WG_PADDING * WG_PADDING
 _VAR = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
 
 
@@ -199,16 +212,17 @@ class StackSpec:
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
         # two MTUs, not one: the tunnels' (gluetun, wg-easy's wg0 and the configs it
         # issues) and the bridge's, which carries the tunnels' encrypted packets —
-        # 60 bytes bigger over IPv4, 80 over IPv6. One value for both split every
-        # full-size tunnel packet in two on the bridge. `mtu` is the old single
-        # setting, taken as the tunnels' MTU.
+        # padded to a multiple of 16, then 60 bytes bigger over IPv4, 80 over IPv6.
+        # One value for both split every full-size tunnel packet in two on the
+        # bridge. `mtu` is the old single setting, taken as the tunnels' MTU.
         self.wg_mtu = int(wg_mtu or mtu or DEFAULT_WG_MTU)
         self.bridge_mtu = int(bridge_mtu or DEFAULT_BRIDGE_MTU)
-        if self.wg_mtu > self.bridge_mtu - WG_OVERHEAD:
-            raise KiwiError("%s: wg_mtu %d does not fit the stack network: the bridge (bridge_mtu %d) carries "
-                            "the tunnels' packets with up to %d bytes of WireGuard headers on top — wg_mtu at "
-                            "most %d, or a bigger bridge_mtu" % (hostname, self.wg_mtu, self.bridge_mtu,
-                                                                 WG_OVERHEAD, self.bridge_mtu - WG_OVERHEAD))
+        if wg_padded(self.wg_mtu) + WG_OVERHEAD > self.bridge_mtu:
+            raise KiwiError("%s: wg_mtu %d does not fit the stack network: WireGuard pads its packets to %d "
+                            "(a multiple of %d) when the peer's MTU is bigger, and the bridge (bridge_mtu %d) "
+                            "carries them with up to %d bytes of headers on top — wg_mtu at most %d, or a "
+                            "bigger bridge_mtu" % (hostname, self.wg_mtu, wg_padded(self.wg_mtu), WG_PADDING,
+                                                   self.bridge_mtu, WG_OVERHEAD, wg_mtu_limit(self.bridge_mtu)))
         if self.wg_mtu < 1280:
             raise KiwiError("%s: wg_mtu %d is below 1280, the smallest MTU IPv6 works with" % (hostname, self.wg_mtu))
         self.timezone = timezone

@@ -195,7 +195,12 @@ directories belong to `service_user` (the admin user unless set — uid 1000 on
 a fresh install, matching the containers' PUID defaults); the rendered files
 stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|verify|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
-client's network namespace (Transmission, JDownloader).
+client's network namespace (Transmission, JDownloader). By hand, never
+recreate a container that shares another's network namespace (Pi-hole, Tor
+and nginx on a master, the downloaders on a node) with `docker compose up
+--no-deps`: compose then gives it the literal network mode
+`service:km-vpn-server`, which docker refuses to start. `docker rm` it and run
+`docker compose up -d` without `--no-deps`, or `kiwi-stack restart`.
 
 Names are `service.hostname.domain`, and the domain is yours to choose:
 `kiwi-server init --domain …`, the GUI asks when it creates a fleet, and

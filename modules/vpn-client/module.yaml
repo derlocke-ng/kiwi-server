@@ -104,8 +104,8 @@ settings:
     default: []
   - key: mss_clamp
     type: bool
-    label: Clamp TCP MSS to PMTU
-    help: "Fixes stalls on paths where the WireGuard MTU bites. On by default on a master (its role) and on a node with the gateway module: LAN clients routed through it advertise MSS 1460, more than the tunnel carries."
+    label: Clamp TCP MSS to the tunnel
+    help: "Sets the MSS of every TCP connection forwarded through the VPN client to wg_mtu - 40, both ways, so no segment is bigger than the tunnel carries. On by default on a master (its role) and on a node with the gateway module: LAN clients routed through it advertise MSS 1460."
     default: false
   - key: extra_env
     type: map

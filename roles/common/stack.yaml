@@ -19,8 +19,8 @@ settings:
     group: Stack
     type: int
     label: WireGuard MTU
-    help: "The tunnels' MTU: the VPN client's (WIREGUARD_MTU), the WireGuard server's wg0 and the client configs wg-easy issues (WG_MTU). 1380 fits a WireGuard packet into a 1460-byte path (DS-Lite, PPPoE): the tunnel adds 60 bytes over IPv4, 80 over IPv6. At most bridge_mtu - 80."
-    default: 1380
+    help: "The tunnels' MTU: the VPN client's (WIREGUARD_MTU), the WireGuard server's wg0 and the client configs wg-easy issues (WG_MTU); TCP through the tunnels uses MSS wg_mtu - 40. The tunnel adds 60 bytes over IPv4, 80 over IPv6, and WireGuard pads a packet to a multiple of 16 when the peer's MTU is bigger — pick a multiple of 16 when the bridge or the uplink is tight. 1376 (86 x 16) fits a 1452-byte DS-Lite path over IPv4 and a 1460-byte one over IPv6. At most bridge_mtu - 80, rounded down to a multiple of 16 (1408 under a 1500 bridge)."
+    default: 1376
   - key: bridge_mtu
     group: Stack
     type: int

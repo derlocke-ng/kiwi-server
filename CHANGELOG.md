@@ -4,23 +4,44 @@
 
 - **The stack network and the tunnels have an MTU each** (problem 40):
   `bridge_mtu` (default 1500) for the stack's bridge and `wg_mtu` (default
-  1380) for gluetun's `WIREGUARD_MTU`, wg-easy's `WG_MTU` and the server's
+  1376) for gluetun's `WIREGUARD_MTU`, wg-easy's `WG_MTU` and the server's
   own `wg0`. One `mtu` of 1412 for all three split every full-size tunnel
   packet in two on the bridge, which carries the encrypted packet, 60 bytes
   bigger over IPv4 (80 over IPv6) — TLS stalls and stuttering streams through
-  the VPN on the v1 fleet. 1380 fits a WireGuard packet into a 1460-byte path
-  (DS-Lite, PPPoE). `validate` refuses `wg_mtu` above `bridge_mtu - 80` or
-  below 1280. A fleet that still sets `mtu` gets it as `wg_mtu`, the bridge
-  at 1500, and a warning to rename it; `mtu` and `wg_mtu` together are an
-  error.
-- **The WireGuard server's `wg0` is set to `wg_mtu`** in `start.sh`, before
-  the MSS clamp: wg-quick sized it from the bridge (1332 under a 1412 bridge),
-  while the clients were told another MTU and the clamp reads the interface
-  a SYN leaves by.
-- **A node with the gateway module clamps the TCP MSS** in its VPN client
-  by default (`vpn-client.mss_clamp`, as on a master): LAN clients routed
+  the VPN on the v1 fleet.
+- **WireGuard's padding counts**: a packet is padded to a multiple of 16 as
+  far as the sending peer's MTU allows, so a peer with a bigger MTU (the
+  commercial exit) grows it; on the v1 master 1352 became 1360 and 1420
+  bytes on a 1412 bridge. `validate` refuses a `wg_mtu` whose padded packet
+  plus 80 bytes does not fit `bridge_mtu` (at most 1408 under 1500), or one
+  below 1280. 1376 is a multiple of 16: 1436 bytes over IPv4 fits a
+  1452-byte DS-Lite path, 1456 over IPv6 a 1460 one.
+- **The old `mtu`**: a fleet that still sets it gets it as `wg_mtu`, the
+  bridge at 1500, and a warning to rename it; `mtu` and `wg_mtu` together
+  are an error, and so is the usual `mtu: 1412`, which no longer fits once
+  padded — drop it.
+- **The WireGuard server's `wg0` is set to `wg_mtu`** in `start.sh`, after
+  the iptables-nft shim: wg-quick sized it from the bridge (1332 under a 1412
+  bridge) while the clients were told another MTU.
+- **The MSS is set, both ways**: wg-easy's `start.sh` and the VPN client's
+  post-rules set every forwarded SYN to `wg_mtu - 40` (`--set-mss`, which
+  never raises a smaller one) instead of `--clamp-mss-to-pmtu`, which reads
+  only the interface a SYN leaves by — on the v1 master the way back was
+  wider than the exit and every first full-size upload segment bounced.
+- **A node with the gateway module sets the TCP MSS** in its VPN client by
+  default (`vpn-client.mss_clamp`, as on a master): LAN clients routed
   through it advertise MSS 1460, more than the tunnel carries. The host's
   own `mss_clamp: false` still wins.
+- **Namespace sharers are never recreated alone**: a test keeps `--no-deps`
+  out of kiwi-stack, lib.sh and the rendered stack (compose 2.21 gave a
+  sharer the literal network mode `service:kmvpn-server`, and the v1
+  master's Pi-hole stayed down ten minutes); the README and the runbook say
+  how to recreate one by hand.
+- **Upgrading a running master**: the new `wg_mtu` recreates wg-easy, and
+  Pi-hole, Tor and nginx in its namespace with it (the apply restarts the
+  whole stack). Client configs already issued keep their old `MTU =` until
+  downloaded again from wg-easy; apply the nodes too, and re-run
+  `kiwi-server openwrt` for a router.
 - `kiwi-server openwrt` writes the master's `wg_mtu` as the router
   interface's MTU, not whatever an older client config says.
 - tests/golden: the MTU lines of every stack, `ip link set dev wg0` in the

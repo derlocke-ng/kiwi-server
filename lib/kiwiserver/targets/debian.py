@@ -8,6 +8,7 @@ readable — and the same directory is what `render` leaves next to it.
 """
 import ipaddress
 
+from .. import luks
 from . import ROLE_DIR, ROLE_SCRIPT, on_calendar, role_unit
 
 CDROM_DIR = "/cdrom/kiwi-server"
@@ -94,9 +95,10 @@ def preseed(host, version):
         "d-i partman-efi/non_efi_system boolean true",
     ]
     if d.get("encrypt") or d["partitioning"] == "crypto":
+        key = d.get("passphrase") or luks.install_key(host)
         L += [
-            "d-i partman-crypto/passphrase password %s" % d["passphrase"],
-            "d-i partman-crypto/passphrase-again password %s" % d["passphrase"],
+            "d-i partman-crypto/passphrase password %s" % key,
+            "d-i partman-crypto/passphrase-again password %s" % key,
             "d-i partman-auto-crypto/erase_disks boolean false",
         ]
     pkgs = ["sudo", "curl", "ca-certificates", "git", "gnupg", "openssh-server"]

@@ -95,7 +95,8 @@ DEFAULTS = {
         "packages": [],
         "partitioning": "lvm",
         "encrypt": False,
-        "passphrase": None,
+        "passphrase": None,      # empty: a one-time key, replaced at the first apply
+        "reencrypt": None,       # a new volume key at that apply; empty: on a master
         "kernel_arguments": [],
         "non_free_firmware": True,
         "iso_url": None,
@@ -394,8 +395,11 @@ class Host:
         d = c["debian"]
         if d.get("partitioning") not in ("regular", "lvm", "crypto"):
             errs.append("debian.partitioning must be regular, lvm or crypto")
-        if (d.get("encrypt") or d.get("partitioning") == "crypto") and not d.get("passphrase"):
-            errs.append("debian.encrypt needs debian.passphrase")
+        if (d.get("encrypt") or d.get("partitioning") == "crypto") and d.get("passphrase"):
+            self.warnings.append("debian.passphrase is in the fleet file and on every ISO, and nothing replaces it: "
+                                 "without it kiwi-server makes a one-time key and replaces it at the first apply")
+        if d.get("reencrypt") not in (None, True, False):
+            errs.append("debian.reencrypt must be true or false")
         if self.target == "ucore" and "/" not in str(c["ucore"].get("image") or ""):
             errs.append("ucore.image must be a full image reference like ghcr.io/ublue-os/ucore:stable")
         for key in ("files", "directories", "units"):

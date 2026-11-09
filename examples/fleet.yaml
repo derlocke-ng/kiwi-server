@@ -79,8 +79,8 @@ defaults:
     release: trixie
     mirror: deb.debian.org
     partitioning: lvm               # regular | lvm | crypto
-    # encrypt: true                 # full-disk LUKS — needs passphrase:
-    # passphrase: ...
+    # encrypt: true                 # full-disk LUKS, with a one-time key the first apply replaces
+    # reencrypt: true               # also a new volume key at that apply (default: on a master)
     packages: [vim, htop]
 
   backup:                           # the fleet directory itself — fleet.yaml, secrets/, the CA —

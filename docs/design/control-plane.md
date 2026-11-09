@@ -374,12 +374,12 @@ or encrypted once written. Until the controller exists, `build` makes bare
 media by default and `apply` plays the controller's part, pushing the role
 over SSH.
 
-**The one-time LUKS key.** A random key per build, short and free of
+**The one-time LUKS key.** A random key per install, short and free of
 layout-sensitive characters because someone may type it at a console, kept
-in the secret store until it is replaced. At first contact the role replaces
-it: `clevis luks bind` with the device's tree where a ring exists (Unlock,
-Binding); a passphrase the owner chooses, or a generated recovery key in the
-secret store, where none does. Then the old keyslot goes and the copies are
+in the secret store until it is replaced. At first contact it is replaced:
+`clevis luks bind` with the device's tree where a ring exists (Unlock,
+Binding); a generated key, as easy to type, kept with the fleet's secrets
+where none does. Then the old keyslot goes and the copies are
 shredded (ROADMAP, problem 15). Where Ignition binds Tang during the install
 there is no key to carry.
 

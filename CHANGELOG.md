@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.11.0 — a disk key that outlives nothing
+
+- **`debian.encrypt` needs no passphrase**: kiwi-server makes a short one-time
+  key per install (`secrets/luks/<host>.once`), typed at the first boot, and
+  the first `apply` replaces it with a generated one
+  (`secrets/luks/<host>.key`) before the role's secrets reach the machine. The
+  keys travel on stdin and live on tmpfs on the way. A run that is cut off can
+  be repeated.
+- **A master also gets a new volume key** at that apply (`cryptsetup
+  reencrypt`, some minutes; `debian.reencrypt` for any host). Replacing a
+  passphrase keeps the volume key, so someone who held the ISO and the disk
+  during the install could otherwise still decrypt later snapshots.
+- A literal `debian.passphrase` still works, unchanged, and `validate` now
+  warns that it is in the fleet file and on every ISO.
+
 ## 2.10.0 — install media carry no stack unless asked to
 
 - **`build` and `script` make the base system by default**: hostname, network,

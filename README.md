@@ -430,6 +430,12 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 - **The output holds secrets**: password hashes, WireGuard keys, TLS keys, the
   LUKS passphrase. Files are written 0600 and `output/` is in `.gitignore`;
   treat the ISOs the same way.
+- **Encrypted Debian disks** install with a one-time key: type the one in
+  `secrets/luks/<host>.once` at the first boot, and the first `apply` replaces
+  it before anything secret reaches the machine. From then on the disk asks for
+  `secrets/luks/<host>.key`; losing that file locks the disk, so keep the fleet
+  backed up. A master also gets a new volume key at that apply, which takes
+  some minutes (`debian.reencrypt`).
 - A role script runs as root and does what the role says. Read
   `kiwi-server script fleet.yaml <host> --offline` before trusting a role you did not
   write, the same way you would read an installer.

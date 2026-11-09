@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.23.0 — folders the apps share
+
+- kiwi-modules 0.13.0. **`cloud.shared_folders`** and **`cloud.read_only_folders`** put
+  folders into every user's Nextcloud that other apps on the host can use.
+  **`immich.external_dirs`** mounts one read-only for an External Library.
+  **`paperless.user_id`** lets Paperless share a consume folder with Nextcloud, and
+  **`paperless.filename_format`** gives its archive readable names.
+- kiwi-modules 0.12.1: Paperless's login page no longer answers 403.
+
 ## 2.22.0 — OpenCloud, Immich and Paperless-ngx to try out
 
 - kiwi-modules 0.12.0: three new modules for a node, `opencloud`, `immich` and

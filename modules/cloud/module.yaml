@@ -24,21 +24,34 @@ firewall:
 templates:
   compose: docker-compose.yml.j2
   kiwi_config: kiwi.config.php.j2
+  folders_script: cloud-folders.sh.j2
+  folders_service: kn-cloud-folders.service.j2
+
+derived:
+  has_folders: "{{ 'yes' if shared_folders or read_only_folders else '' }}"
 
 outputs:
   kiwi_config: { path: "nextcloud-aio-nextcloud/kiwi.config.php", mode: 0644 }
+  folders_script: { path: "kiwi/cloud-folders.sh", mode: 0755, when: has_folders }
+  folders_service: { kind: host_unit, name: kn-cloud-folders.service, when: has_folders }
 
 storage:
   volumes: [nextcloud_aio_nextcloud, nextcloud_aio_apache, nextcloud_aio_database, nextcloud_aio_database_dump, nextcloud_aio_redis]
   bind_mounts:
     - { host: "{{ nextcloud_datadir or docker_dir ~ '/knnc-data' }}", type: dir, required: true }
     - { host: "{{ nextcloud_mount }}", type: dir, required: false }
+    - { each: shared_folders, type: dir }
+    - { each: read_only_folders, type: dir }
 
 validate:
   - when: "collabora and onlyoffice"
     error: "collabora and onlyoffice cannot both be on — Nextcloud takes one office server"
   - when: "talk_recording and not talk"
     error: "talk_recording needs talk"
+  - when: "shared_folders.keys() | select('in', read_only_folders.keys()) | list"
+    error: "a name in shared_folders is in read_only_folders too — Nextcloud shows one folder per name"
+  - when: "nextcloud_datadir and nextcloud_datadir in shared_folders.values()"
+    error: "shared_folders must not hold the data directory: Nextcloud's own files are not a shared folder"
 
 urls:
   - "Nextcloud: https://{{ nc_hostname or 'cloud.' ~ hostname }} — user admin, the cloud.admin_password setting"
@@ -83,6 +96,20 @@ settings:
     label: Host directory Nextcloud may reach
     help: "For external storage inside Nextcloud, e.g. /mnt/. Must not be the data directory. Empty: none."
     default: ""
+  - key: shared_folders
+    type: map
+    label: Folders everyone can see
+    help: "Name=host path, e.g. Photos=/mnt/data/shared/Photos: a folder in every user's Nextcloud, which other apps on this host can use as well. It becomes the property of Nextcloud's user (uid 33). An entry taken out again stays in Nextcloud until an admin removes it under Administration, External storage."
+    default: {}
+    key_pattern: '[A-Za-z0-9_-]+'
+    pattern: '/[A-Za-z0-9._/-]+'
+  - key: read_only_folders
+    type: map
+    label: Folders everyone can read
+    help: "The same, but nothing can be changed through Nextcloud and the owner stays as it is: uid 33 must be able to read them. For what another app produces."
+    default: {}
+    key_pattern: '[A-Za-z0-9_-]+'
+    pattern: '/[A-Za-z0-9._/-]+'
   - key: collabora
     type: bool
     group: Services

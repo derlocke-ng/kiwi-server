@@ -43,9 +43,11 @@ class Setting:
             raise KiwiError("%s: enum setting %s needs options" % (owner, self.key))
         # a regular expression a string value must match in full; the empty value always passes
         self.pattern = str(d.get("pattern") or "")
-        if self.pattern:
+        # for a map: the pattern is for its values, this one for its keys
+        self.key_pattern = str(d.get("key_pattern") or "")
+        for pattern in (self.pattern, self.key_pattern):
             try:
-                re.compile(self.pattern)
+                re.compile(pattern)
             except re.error as e:
                 raise KiwiError("%s: setting %s has a bad pattern: %s" % (owner, self.key, e))
 
@@ -89,7 +91,13 @@ def coerce(setting, value, where):
     if t == "map":
         if not isinstance(value, dict):
             raise KiwiError("%s.%s must be a mapping" % (where, setting.key))
-        return {str(k): "" if v is None else str(v) for k, v in value.items()}
+        items = {str(k): "" if v is None else str(v) for k, v in value.items()}
+        for k, v in items.items():
+            if setting.key_pattern and not re.fullmatch(setting.key_pattern, k):
+                raise KiwiError("%s.%s: %r is not a valid name" % (where, setting.key, k))
+            if setting.pattern and not re.fullmatch(setting.pattern, v):
+                raise KiwiError("%s.%s: %r is not a valid value" % (where, setting.key, v))
+        return items
     if t == "object":
         if not isinstance(value, (dict, list)):
             raise KiwiError("%s.%s must be a mapping or a list" % (where, setting.key))

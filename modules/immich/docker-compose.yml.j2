@@ -32,6 +32,9 @@ services:
         max-size: 10m
     volumes:
       - {{ library_path }}:/data:z
+{% for path in external_dirs %}
+      - {{ path }}:{{ path }}:ro,z
+{% endfor %}
 {% if machine_learning %}
 
   {{ container_prefix }}-immich-ml:

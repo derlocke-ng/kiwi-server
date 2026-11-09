@@ -3,7 +3,7 @@
 {% if (s.hsts or (s.hsts is none and hsts)) and not (s.public and acme_staging) %}
 {{ pad }}add_header Strict-Transport-Security "max-age=15768000; includeSubDomains; preload;" always;
 {% endif %}
-{{ pad }}add_header Referrer-Policy "no-referrer" always;
+{{ pad }}add_header Referrer-Policy "{{ s.referrer_policy or 'no-referrer' }}" always;
 {{ pad }}add_header X-Content-Type-Options "nosniff" always;
 {{ pad }}add_header X-Frame-Options "SAMEORIGIN" always;
 {{ pad }}add_header X-Robots-Tag "noindex, nofollow" always;

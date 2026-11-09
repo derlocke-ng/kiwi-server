@@ -780,8 +780,12 @@ Asked for by the owner in November 2026:
 - **Nextcloud with end-to-end encryption on by default**, and **OpenCloud,
   Immich and Paperless-ngx as modules to try out** (the October list below), so
   the owner can judge them and work out how they should fit together.
-  Done in kiwi-modules 0.12.0 and running on a test node. Still open: how they fit
-  together, such as Paperless's archive reachable from Nextcloud and OpenCloud.
+  Done in kiwi-modules 0.12.0 and running on a test node. Nextcloud, Immich and
+  Paperless share folders since kiwi-modules 0.13.0: `cloud.shared_folders`,
+  `cloud.read_only_folders`, `immich.external_dirs`, `paperless.user_id`. Nextcloud
+  holds the files, Immich reads photos from it, Paperless takes scans from it and
+  hands its archive back read-only. Still open: OpenCloud, for which nobody documents
+  such a setup, and only one of the two clouds should own the files.
 
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node

@@ -1,0 +1,50 @@
+#!/usr/bin/bash
+# The folders {{ hostname }}'s Nextcloud shows to all its users (cloud.shared_folders and
+# cloud.read_only_folders): its "local" external storage. kn-cloud-folders.service runs
+# this after every start of the stack and keeps it running for the read-only ones.
+set -euo pipefail
+
+WWW_DATA=33
+occ() { {{ runtime }} exec --user "$WWW_DATA" nextcloud-aio-nextcloud php /var/www/html/occ "$@"; }
+
+# Nextcloud needs its folders to be its own, also what came in from outside (sftp, a restore)
+{% for path in shared_folders.values() %}
+find {{ path }} ! -uid "$WWW_DATA" -exec chown -h "$WWW_DATA:$WWW_DATA" {} +
+{% endfor %}
+
+# Up in a minute after a restart, up to half an hour on the very first start
+for _ in {1..360}; do
+    status=$(occ status --output=json 2>/dev/null || true)
+    [[ $status == *'"installed":true'*'"maintenance":false'*'"needsDbUpgrade":false'* ]] && break
+    sleep 5
+done
+
+occ app:enable files_external >/dev/null
+mounts=$(occ files_external:list --output=json)
+
+folder() { # NAME PATH READ_ONLY
+    local id
+    id=$(grep -E "\"mount_point\":\"\\\\?/$1\"" <<<"${mounts//'{"mount_id":'/$'\n'}" | cut -d, -f1 || true)
+    [[ -n $id ]] || id=$(occ files_external:create "/$1" local null::null --config "datadir=$2" | grep -oE '[0-9]+$')
+    occ files_external:config "$id" datadir "$2" >/dev/null
+    occ files_external:option "$id" readonly "$3" >/dev/null
+    # as the admin page sets it: other apps change these folders, so look when one is opened
+    occ files_external:option "$id" filesystem_check_changes 1 >/dev/null
+}
+
+{% for name, path in shared_folders.items() %}
+folder {{ name }} {{ path }} false
+{% endfor %}
+{% for name, path in read_only_folders.items() %}
+folder {{ name }} {{ path }} true
+{% endfor %}
+{% if read_only_folders %}
+
+# Nextcloud sees what another app changed when someone opens the folder. A sync client
+# only asks whether anything changed, so these get looked at regularly.
+while sleep 900; do
+{% for name in read_only_folders %}
+    occ files:scan --path="admin/files/{{ name }}" >/dev/null 2>&1 || true
+{% endfor %}
+done
+{% endif %}

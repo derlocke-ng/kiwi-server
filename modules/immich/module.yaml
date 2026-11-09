@@ -31,6 +31,7 @@ storage:
   volumes: [immich_db, immich_model_cache]
   bind_mounts:
     - { host: "{{ library_path }}", type: dir, required: true }
+    - { each: external_dirs, type: dir }
 
 urls:
   - "Immich: https://{{ immich_host }} — the first person to sign up becomes the admin"
@@ -56,6 +57,12 @@ settings:
     label: Library directory
     help: "Where photos and videos live, e.g. a big disk mounted at /mnt/data/immich. Empty: under the stack directory."
     default: ""
+  - key: external_dirs
+    type: list
+    label: Folders with photos already on this host
+    help: "Immich reads them and never changes them, e.g. a folder Nextcloud holds. Each one appears inside Immich at the same path: an admin adds that path as an import path of an External Library. Moving a photo there counts as a delete and a new file, and loses what Immich knows about it."
+    default: []
+    pattern: '/[A-Za-z0-9._/-]+'
   - key: machine_learning
     type: bool
     label: Machine learning

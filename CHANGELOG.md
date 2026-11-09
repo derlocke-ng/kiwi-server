@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.13.0 — a server at netcup without the web panel
+
+- **`kiwi-server vps`** drives netcup's Server Control Panel API. `vps login`
+  signs in through the device flow, so no password passes through here, and
+  keeps a refresh token in `secrets/netcup.token`. `vps list` shows your
+  servers, and `vps probe` what one really is, the `disk:` it needs among it.
+- **`vps install <host>`** does what the first hardware round did by hand:
+  upload the built ISO, boot it, wait for the installer's power-off, detach it,
+  put the disk first again, remove the ISO from netcup's store, power on, and
+  forget the machine's old SSH host keys. It asks before wiping, and refuses
+  an ISO that carries the role's secrets or a `disk:` that is not the server's.
+- A host names its server with `vps: { server: ... }`; a master is found by its
+  `wg_host`.
+
 ## 2.12.0 — service passwords no longer have to be written down
 
 - **Service passwords left out of the fleet file are generated** from

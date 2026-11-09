@@ -73,6 +73,11 @@ DEFAULTS = {
         # installed system (a VM whose ISO you detach by hand).
         "on_done": "poweroff",
     },
+    "vps": {
+        # the machine at a provider, for `kiwi-server vps`: netcup's id, name or
+        # nickname of the server. Empty: looked up by a master's wg_host.
+        "server": None,
+    },
     "coreos": {
         "stream": "stable",
         "console": None,
@@ -176,7 +181,7 @@ _KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@", "
 
 
 # the blocks whose keys are fixed: a misspelled one is an error, not a silently ignored line
-_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "debian", "tls", "backup")
+_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "debian", "tls", "backup", "vps")
 
 
 def unknown_keys(block, roles, where):

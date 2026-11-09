@@ -1114,6 +1114,53 @@ def cmd_backup(args):
         util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
 
 
+def cmd_prune(args):
+    """Old snapshots off the backup nodes. A machine can only add to its backups, so this
+    is done from here, where the seed is."""
+    fleet, roles, ms = load(args)
+    if fleet.errors:
+        raise KiwiError(fleet.errors[0])
+    by_hostname, servers = {}, []
+    for h in fleet.hosts.values():
+        try:
+            rolesmod.resolve_settings(roles[h.role], h, ms)
+        except KiwiError as e:
+            util.warn("%s is left out: %s" % (h.name, e))
+            continue
+        by_hostname[h.hostname] = h
+    servers = [h for h in fleet.select(args.hosts) if h.hostname in by_hostname and "backup-server" in h.modules]
+    if not servers:
+        raise KiwiError("none of these hosts runs the backup-server module")
+    if args.ssh and len(servers) != 1:
+        raise KiwiError("--ssh goes with exactly one host")
+    keep = {"daily": args.keep_daily, "weekly": args.keep_weekly, "monthly": args.keep_monthly}
+    if not any(keep.values()):
+        raise KiwiError("--keep-daily, --keep-weekly and --keep-monthly are all 0: that would keep nothing")
+    failed = []
+    for h in servers:
+        cfg = h.module_settings["backup-server"]
+        data = cfg.get("data_dir") or "%s/kn-backup-server/data" % (h.role_settings.get("docker_dir") or "/home/user/docker")
+        tgt = remote.reach(h, args.ssh)
+        for name in cfg.get("clients") or []:
+            client = by_hostname.get(name)
+            if client is None or "backup" not in client.modules:
+                util.warn("%s: %s is not a machine of this fleet with the backup module, so its password is not here" % (h.name, name))
+                continue
+            b = client.module_settings["backup"]
+            try:
+                r = backupmod.prune_repository(tgt, h.role_settings.get("runtime") or "podman", "%s/%s" % (data, name),
+                                               b["image"], b["repo_password"], keep, args.dry_run)
+            except KiwiError as e:
+                util.warn("%s: %s: %s" % (h.name, name, e))
+                failed.append(name)
+                continue
+            freed = ", freed %s" % r["freed"] if r["freed"] else ""
+            util.say("%s: %s: %d snapshots kept, %d %s%s" % (h.name, name, r["kept"], r["removed"],
+                                                             "would go" if args.dry_run else "removed", freed))
+    if failed:
+        raise KiwiError("not pruned: %s" % ", ".join(failed))
+
+
 def cmd_restore(args):
     if not args.archive and not args.ssh:
         raise KiwiError("give an archive file, or --from user@node to fetch one from a node")
@@ -1254,6 +1301,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
+  kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian
@@ -1342,6 +1390,12 @@ def build_parser():
     s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--passphrase-file", metavar="FILE")
+    s = sub("prune", cmd_prune); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--keep-daily", type=int, default=backupmod.KEEP["daily"], metavar="N", help="days with a snapshot to keep (default %(default)s)")
+    s.add_argument("--keep-weekly", type=int, default=backupmod.KEEP["weekly"], metavar="N", help="weeks (default %(default)s)")
+    s.add_argument("--keep-monthly", type=int, default=backupmod.KEEP["monthly"], metavar="N", help="months (default %(default)s)")
+    s.add_argument("--dry-run", action="store_true", help="only say what would go")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s = sub("restore", cmd_restore); s.add_argument("archive", nargs="?")
     s.add_argument("--from", dest="ssh", metavar="USER@ADDR", help="fetch from this node (its LAN address works before any mesh)")
     s.add_argument("--name", help="which archive; default the newest")

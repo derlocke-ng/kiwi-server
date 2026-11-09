@@ -281,6 +281,24 @@ over plain SSH, before there is any mesh. The archive is openssl AES-256 with
 a passphrase-derived key, so `openssl enc -d -aes-256-cbc -md sha256 -pbkdf2
 -iter 600000 -in FILE | tar xz` opens it without kiwi-server.
 
+A machine's own data is the job of two modules. `backup-server` on a node with
+a big disk stores it; `backup` on a machine sends it there with restic,
+encrypted, every night and on `sudo kiwi-stack backup`:
+
+```yaml
+    lychee: { node: { modules: [vpn-client, reverse-proxy, backup-server],
+                      backup-server: { clients: [papaya.home], data_dir: /mnt/backups } } }
+    papaya: { node: { modules: [vpn-client, cloud, backup],
+                      backup: { server: https://backup.lychee.home } } }
+```
+
+`sudo kiwi-stack snapshots` lists what is stored and `sudo kiwi-stack restore
+vault cloud` puts the newest back, stopping only those modules. The passwords
+derive from the seed, so the seed brings the backups back. A machine can add to
+its backups but not delete them, so one that is taken over cannot destroy them;
+`kiwi-server prune <fleet>` removes old snapshots (seven days, four weeks and six
+months are kept) from the operator's machine, which is where the keys are.
+
 DNS is one chain for the whole network: VPN clients ask the master's Pi-hole,
 a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
 (Quad9 only while the master is unreachable), names under the fleet's domain

@@ -248,7 +248,7 @@ A node's `vpn_ip` is read from its WireGuard config's `Address` when it is
 not set; when both are given and differ, `validate` warns. The stack's data
 directories belong to `service_user` (the admin user unless set — uid 1000 on
 a fresh install, matching the containers' PUID defaults); the rendered files
-stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|verify|logs|
+stay root's. On the machine: `sudo kiwi-stack start|stop|update|status|verify|backup|snapshots|restore|logs|
 vpn-restart`; the VPN restart also restarts the containers that share the VPN
 client's network namespace (Transmission, JDownloader). By hand, never
 recreate a container that shares another's network namespace (Pi-hole, Tor

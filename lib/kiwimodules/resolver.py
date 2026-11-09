@@ -4,6 +4,8 @@ The machine is any object with: name, hostname, target, cfg (timezone),
 role_settings_raw, admin, and a `secrets` with derive_secret(*parts),
 resolve_path(p), seed_id() — kiwi-server's Host (its fleet is the secrets
 source) or the standalone Machine."""
+import base64
+import hashlib
 import os
 import re
 
@@ -11,6 +13,12 @@ from . import modules as modmod
 from .schema import coerce, is_empty
 from . import util
 from .util import KiwiError, deep_merge
+
+
+def _htpasswd_sha(secret):
+    """htpasswd's {SHA}, which is unsalted and fast. That costs nothing here: what it hashes
+    is a generated 32-character secret, and the same render must give the same file."""
+    return "{SHA}" + base64.b64encode(hashlib.sha1(secret.encode()).digest()).decode()
 
 
 def _resolve_block(settings, block, host, where, files, file_prefix):
@@ -25,6 +33,9 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
             # hostname, module, key — never the fleet's host key or the role name, so a
             # renamed role (node-cloud -> node) or a standalone render keeps the same secrets
             v = host.secrets.derive_secret(host.hostname, file_prefix.rstrip("/") or "role", s.key)
+        if is_empty(v) and getattr(s, "generate_each", ""):
+            module, _, key = s.generate_hash_of.partition("/")
+            v = {h: _htpasswd_sha(host.secrets.derive_secret(h, module, key)) for h in values.get(s.generate_each) or []}
         if is_empty(v) and getattr(s, "fallback_file", ""):
             cand = s.fallback_file.format(hostname=host.hostname, name=host.name)
             if os.path.isfile(host.secrets.resolve_path(cand)):

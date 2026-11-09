@@ -667,7 +667,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 17)
+        self.assertEqual(len(ms.names()), 19)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -3072,7 +3072,7 @@ class TestCli(Base):
         master = [r for r in data["roles"] if r["name"] == "master"][0]
         self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 17)
+        self.assertEqual(len(json.loads(out)["modules"]), 19)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian"})
 

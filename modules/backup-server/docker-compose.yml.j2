@@ -1,0 +1,21 @@
+# backup-server (restic's REST server)
+services:
+  {{ container_prefix }}-backup-server:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-backup-server
+    environment:
+      - DATA_DIRECTORY=/data
+      - PASSWORD_FILE=/kiwi/htpasswd
+      - OPTIONS=--private-repos --append-only
+      - TZ={{ timezone }}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ data_path }}:/data:z
+      - {{ docker_dir }}/{{ container_prefix }}-backup-server/htpasswd:/kiwi/htpasswd:ro,z

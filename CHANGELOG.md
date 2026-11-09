@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.24.0 — backups of a machine's data
+
+- kiwi-modules 0.14.0 and kiwi-stack 0.3.0. The module **`backup`** keeps a machine's
+  data with restic, encrypted, on a node running the new module **`backup-server`**:
+  every night and with `kiwi-stack backup`. `kiwi-stack restore MODULE...` puts the
+  newest back and stops only those modules; `kiwi-stack snapshots` lists what is stored.
+- Each machine has its own repository and can add to it but not delete. Passwords come
+  from the fleet's seed, so the seed brings the backups back.
+- A module says what it wants kept in a `backup:` block (docs/modules.md).
+
 ## 2.23.0 — folders the apps share
 
 - kiwi-modules 0.13.0. **`cloud.shared_folders`** and **`cloud.read_only_folders`** put

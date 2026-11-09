@@ -39,6 +39,11 @@ nginx:
   websocket: true
   comment: Vaultwarden
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-vault"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-vault"]
+
 settings:
   - key: vault_domain
     label: URL

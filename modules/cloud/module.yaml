@@ -78,6 +78,16 @@ nginx:
         - "rewrite ^/\\.well-known/webfinger https://$server_name/index.php/.well-known/webfinger redirect;"
         - "rewrite ^/\\.well-known/nodeinfo https://$server_name/index.php/.well-known/nodeinfo redirect;"
 
+backup:
+  frozen:
+    containers: [nextcloud-aio-database]
+    volumes: [nextcloud_aio_database]
+  paths:
+    - "{{ nextcloud_datadir or docker_dir ~ '/knnc-data' }}"
+    - { each: shared_folders }
+  volumes: [nextcloud_aio_nextcloud]
+  exclude: ["appdata_*/preview"]
+
 settings:
   - key: nc_hostname
     label: Nextcloud hostname

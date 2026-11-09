@@ -52,6 +52,13 @@ nginx:
   # no-referrer makes a browser send "Origin: null" with a form, and Django's CSRF check refuses that
   referrer_policy: same-origin
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-paperless-db"]
+    volumes: [paperless_db]
+  paths: ["{{ store_path }}/data", "{{ store_path }}/media"]
+  exclude: ["{{ store_path }}/data/log"]
+
 settings:
   - key: paperless_domain
     label: Name

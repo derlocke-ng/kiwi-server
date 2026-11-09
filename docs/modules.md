@@ -93,6 +93,18 @@ storage:
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-vault", type: dir, required: true }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-vault/x", type: dir, when: x_enabled }   # when: as above
+    - { each: shared_folders, type: dir }   # one directory per value of a list or map setting
+
+backup:                          # what the backup module keeps; a module without this block has nothing worth keeping
+  frozen:                        # read with these containers paused: a database's files, a consistent copy without a dump
+    containers: ["{{ container_prefix }}-db"]
+    volumes: [app_db]
+    paths: []
+  paths:                         # read with everything running, however long that takes
+    - "{{ data_path }}"
+    - { each: shared_folders }
+  volumes: []
+  exclude: ["{{ data_path }}/thumbs", "appdata_*/preview"]   # absolute: a path on the host; else a restic pattern
 
 host_integration:
   sysctl: { net.ipv4.ip_forward: 1 }

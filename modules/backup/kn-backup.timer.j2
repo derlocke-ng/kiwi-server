@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly backup of {{ hostname }}
+
+[Timer]
+OnCalendar=*-*-* {{ at }}:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

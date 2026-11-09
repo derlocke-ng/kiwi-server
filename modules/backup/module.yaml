@@ -1,0 +1,57 @@
+schema_version: "1.0"
+
+module:
+  name: backup
+  title: Backups
+  version: 1.0.0
+  description: "This machine's data with restic, encrypted, to a node running backup-server: every night, and with kiwi-stack backup. What is kept is what each module declares in its backup: block."
+  category: storage
+
+dependencies:
+  required: []
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  backup_script: backup.sh.j2
+  restic_env: restic.env.j2
+  backup_service: kn-backup.service.j2
+  backup_timer: kn-backup.timer.j2
+
+outputs:
+  backup_script: { path: "kiwi/backup.sh", mode: 0700 }
+  restic_env: { path: "kiwi/backup/restic.env", mode: 0600 }
+  backup_service: { kind: host_unit, name: kn-backup.service }
+  backup_timer: { kind: host_unit, name: kn-backup.timer }
+
+settings:
+  - key: server
+    required: true
+    label: Backup server
+    help: "https://backup.<node> of a node running backup-server, whose clients list has this machine's full name."
+    placeholder: https://backup.lychee.home
+    pattern: 'https://[a-z0-9.-]+(:[0-9]+)?'
+  - key: at
+    label: Time of day
+    help: "When the nightly run starts, within a quarter of an hour."
+    default: "03:00"
+    pattern: '([01][0-9]|2[0-3]):[0-5][0-9]'
+  - key: repo_password
+    type: secret
+    generate: true
+    group: Generated
+    help: "Encrypts this machine's backups. Empty: generated from the fleet's seed, so the seed brings them back."
+  - key: server_password
+    type: secret
+    generate: true
+    group: Generated
+  - key: image
+    group: Advanced
+    default: docker.io/restic/restic:0.19.1

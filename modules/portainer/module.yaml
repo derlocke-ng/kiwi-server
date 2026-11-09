@@ -44,6 +44,11 @@ nginx:
   websocket: true
   comment: Portainer
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-portainer"]
+    volumes: [portainer_data]
+
 settings:
   - key: admin_password
     type: secret

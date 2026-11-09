@@ -1,0 +1,17 @@
+[Unit]
+Description=Backup of {{ hostname }} to {{ server }}
+Documentation=https://github.com/derlocke-ng/kiwi-server
+{% if runtime == 'docker' %}
+After=docker.service kiwi-stack.service network-online.target
+Requires=docker.service
+{% else %}
+After=kiwi-stack.service network-online.target
+{% endif %}
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh due
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh backup
+Nice=10
+IOSchedulingClass=idle

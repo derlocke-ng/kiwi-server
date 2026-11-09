@@ -47,6 +47,14 @@ nginx:
   proxy_read_timeout: 600s
   comment: Immich
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-immich-db"]
+    volumes: [immich_db]
+  paths: ["{{ library_path }}"]
+  # made again from the originals
+  exclude: ["{{ library_path }}/thumbs", "{{ library_path }}/encoded-video"]
+
 settings:
   - key: immich_domain
     label: Name

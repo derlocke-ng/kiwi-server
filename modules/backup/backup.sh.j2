@@ -1,0 +1,145 @@
+#!/usr/bin/bash
+# {{ hostname }}'s data to {{ server }} with restic, which runs in a container. What is kept is
+# what each module declares in the backup: block of its module.yaml.
+#   kiwi-stack backup               one run now (kn-backup.timer does it at {{ at }})
+#   kiwi-stack snapshots            what is stored
+#   kiwi-stack restore MODULE...    put the newest back; those modules stop around it
+set -uo pipefail
+
+DIR={{ docker_dir }}/kiwi/backup
+HOST={{ hostname }}
+IMAGE={{ image }}
+
+MODULES=({{ backup_sources | map(attribute='name') | join(' ') }})
+declare -A FREEZE FROZEN BULK EXCLUDE SERVICES
+{% for s in backup_sources %}
+FREEZE[{{ s.name }}]="{{ s.freeze | join(' ') }}"
+FROZEN[{{ s.name }}]="{{ s.frozen | join(' ') }}"
+BULK[{{ s.name }}]="{{ s.bulk | join(' ') }}"
+EXCLUDE[{{ s.name }}]="{{ s.exclude | join(' ') }}"
+SERVICES[{{ s.name }}]="{{ s.services | join(' ') }}"
+{% endfor %}
+
+restic() { # MOUNT... -- ARGUMENT...
+    local mounts=()
+    while [[ $1 != -- ]]; do mounts+=(-v "$1"); shift; done
+    shift
+    {{ runtime }} run --rm --network host --security-opt label=disable --env-file "$DIR/restic.env" \
+        -v {{ docker_dir }}/kiwi/ca:/kiwi-ca:ro -v kiwi_restic_cache:/cache "${mounts[@]}" \
+        "$IMAGE" --cacert /kiwi-ca/kiwiCA.crt --cache-dir /cache "$@"
+}
+
+excludes() { # MODULE: sets the array EXCLUDES
+    local list e
+    EXCLUDES=()
+    read -ra list <<<"${EXCLUDE[$1]}"
+    for e in "${list[@]}"; do EXCLUDES+=(--exclude "$e"); done
+}
+
+store() { # MODULE KIND MOUNTS
+    local module=$1 kind=$2 m list mounts=() paths=()
+    read -ra list <<<"$3"
+    for m in "${list[@]}"; do
+        if [[ ${m:0:1} == / && ! -e ${m%%:*} ]]; then
+            echo "backup: ${m%%:*} is missing, left out" >&2
+            continue
+        fi
+        mounts+=("$m:ro")
+        paths+=("${m##*:}")
+    done
+    [[ -n ${paths[*]:-} ]] || return 0
+    excludes "$module"
+    restic "${mounts[@]}" -- backup --host "$HOST" --tag "$module,$kind" "${EXCLUDES[@]}" "${paths[@]}"
+}
+
+# A database must not change while restic reads it. Frozen, its files are what a power cut
+# would leave, which is what it recovers from at its next start. It stays frozen for its own
+# files only; the big ones are read with everything running.
+FROZEN_NOW=()
+thaw() {
+    local c
+    for c in "${FROZEN_NOW[@]}"; do
+        {{ runtime }} unpause "$c" >/dev/null || echo "backup: $c could not be unpaused" >&2
+    done
+    FROZEN_NOW=()
+}
+trap thaw EXIT
+trap 'exit 143' TERM INT
+
+backup() {
+    local m c list ok failed=()
+    restic -- cat config >/dev/null 2>&1 || restic -- init || return 1
+    for m in "${MODULES[@]}"; do
+        ok=1
+        read -ra list <<<"${FREEZE[$m]}"
+        for c in "${list[@]}"; do
+            # not running: its files are not changing either
+            if {{ runtime }} pause "$c" >/dev/null 2>&1; then FROZEN_NOW+=("$c"); fi
+        done
+        store "$m" frozen "${FROZEN[$m]}" || ok=0
+        thaw
+        store "$m" bulk "${BULK[$m]}" || ok=0
+        (( ok )) || failed+=("$m")
+    done
+    if [[ -n ${failed[*]:-} ]]; then
+        echo "backup: failed: ${failed[*]}" >&2
+        return 1
+    fi
+    date -u +%FT%TZ > "$DIR/last-success"
+    echo "backup: ${MODULES[*]} stored at {{ server }}"
+}
+
+put_back() { # MODULE KIND MOUNTS
+    local module=$1 kind=$2 m list mounts=()
+    read -ra list <<<"$3"
+    [[ -n ${list[*]:-} ]] || return 0
+    for m in "${list[@]}"; do
+        [[ ${m:0:1} != / ]] || mkdir -p "${m%%:*}"
+        mounts+=("${m%%:*}:/restore${m##*:}")
+    done
+    excludes "$module"
+    # --delete empties the target of what the snapshot does not hold: it must hold nothing but these
+    restic "${mounts[@]}" -- restore latest --host "$HOST" --tag "$module,$kind" --target /restore --delete "${EXCLUDES[@]}"
+}
+
+service() { # stop|start SERVICE...
+    local verb=$1 s
+    shift
+    for s; do
+{% if runtime == 'podman' %}
+        systemctl "$verb" "$s.service"
+{% else %}
+        docker "$verb" "$s" >/dev/null
+{% endif %}
+    done
+}
+
+restore() { # MODULE...
+    local m list rc=0
+    (( $# )) || { echo "usage: kiwi-stack restore MODULE...   (${MODULES[*]})" >&2; return 1; }
+    for m; do
+        [[ -v "BULK[$m]" ]] || { echo "backup: no module $m here (${MODULES[*]})" >&2; return 1; }
+    done
+    for m; do
+        read -ra list <<<"${SERVICES[$m]}"
+        service stop "${list[@]}"
+        put_back "$m" frozen "${FROZEN[$m]}" || { echo "backup: $m: its frozen part did not come back" >&2; rc=1; }
+        put_back "$m" bulk "${BULK[$m]}" || { echo "backup: $m: its files did not come back" >&2; rc=1; }
+        service start "${list[@]}"
+    done
+    return "$rc"
+}
+
+# a re-apply and a stack start restart host units: this keeps that from being a backup
+due() {
+    [[ ! -f $DIR/last-success ]] || (( $(date +%s) - $(stat -c %Y "$DIR/last-success") > 20 * 3600 ))
+}
+
+exec 9>"$DIR/lock"
+case "${1:-}" in
+    due)        due ;;
+    backup)     flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; backup ;;
+    snapshots)  restic -- snapshots --host "$HOST" ;;
+    restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; restore "$@" ;;
+    *)          echo "usage: kiwi-stack backup|snapshots|restore MODULE..." >&2; exit 1 ;;
+esac

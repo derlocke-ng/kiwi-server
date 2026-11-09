@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -2361,6 +2362,63 @@ class TestUnlock(Base):
     def test_the_threshold_has_to_fit_the_rings(self):
         f = self.unlock_fleet(threshold=2)
         self.assertTrue([e for e in f.hosts["lychee"].validate(self.roles) if "unlock.threshold must be between 1" in e])
+
+
+class TestKeepWireguard(Base):
+    STATE = b'{"server":{"privateKey":"K","publicKey":"P"},"clients":{}}'
+
+    def host(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"m": {"role": "master", "master": self.master()}}})
+        h = f.hosts["m"]
+        rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        return f, h
+
+    def run_with(self, out):
+        sent = []
+
+        def runner(argv, input=None, capture_output=True):
+            sent.append((argv[-1], input))
+            return subprocess.CompletedProcess(argv, 0, out, b"")
+        return sent, runner
+
+    def test_a_master_is_kept_and_only_when_it_changed(self):
+        f, h = self.host()
+        self.assertTrue(backup.carries_wireguard(h))
+        _s, runner = self.run_with(self.STATE)
+        self.assertTrue(backup.keep_wireguard(h, "core@m", runner=runner))
+        path = f.resolve_path("secrets/wg-easy/m.json")
+        self.assertEqual(util.read_bytes(path), self.STATE)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertFalse(backup.keep_wireguard(h, "core@m", runner=runner))
+
+    def test_what_is_not_a_server_state_is_not_kept(self):
+        f, h = self.host()
+        for out in (b"", b"not json", b'{"server":{}}'):
+            _s, runner = self.run_with(out)
+            self.assertFalse(backup.keep_wireguard(h, "core@m", runner=runner))
+        self.assertFalse(os.path.exists(f.resolve_path("secrets/wg-easy/m.json")))
+
+    def test_it_goes_back_on_stdin_and_only_if_the_machine_has_none(self):
+        f, h = self.host()
+        write(f.resolve_path("secrets/wg-easy/m.json"), self.STATE.decode())
+        sent, runner = self.run_with(b"restored\n")
+        self.assertTrue(backup.put_back_wireguard(h, "core@m", runner=runner))
+        self.assertEqual(sent[0][1], self.STATE)
+        self.assertNotIn("privateKey", sent[0][0])
+        self.assertIn("echo present; exit 0", sent[0][0])
+        self.assertLess(sent[0][0].index("echo present"), sent[0][0].index("mv "))
+
+    def test_a_machine_that_has_its_own_stays_as_it_is(self):
+        f, h = self.host()
+        write(f.resolve_path("secrets/wg-easy/m.json"), self.STATE.decode())
+        _s, runner = self.run_with(b"present\n")
+        self.assertFalse(backup.put_back_wireguard(h, "core@m", runner=runner))
+
+    def test_no_copy_yet_is_nothing_to_do(self):
+        _f, h = self.host()
+        sent, runner = self.run_with(b"")
+        self.assertFalse(backup.put_back_wireguard(h, "core@m", runner=runner))
+        self.assertEqual(sent, [])
 
 
 class TestRemote(Base):

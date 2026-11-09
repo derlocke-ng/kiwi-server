@@ -11,13 +11,14 @@ HOST={{ hostname }}
 IMAGE={{ image }}
 
 MODULES=({{ backup_sources | map(attribute='name') | join(' ') }})
-declare -A FREEZE FROZEN BULK EXCLUDE SERVICES
+declare -A FREEZE FROZEN BULK EXCLUDE SERVICES NO_RESTORE
 {% for s in backup_sources %}
 FREEZE[{{ s.name }}]="{{ s.freeze | join(' ') }}"
 FROZEN[{{ s.name }}]="{{ s.frozen | join(' ') }}"
 BULK[{{ s.name }}]="{{ s.bulk | join(' ') }}"
 EXCLUDE[{{ s.name }}]="{{ s.exclude | join(' ') }}"
 SERVICES[{{ s.name }}]="{{ s.services | join(' ') }}"
+NO_RESTORE[{{ s.name }}]="{{ s.no_restore }}"
 {% endfor %}
 
 restic() { # MOUNT... -- ARGUMENT...
@@ -119,6 +120,7 @@ restore() { # MODULE...
     (( $# )) || { echo "usage: kiwi-stack restore MODULE...   (${MODULES[*]})" >&2; return 1; }
     for m; do
         [[ -v "BULK[$m]" ]] || { echo "backup: no module $m here (${MODULES[*]})" >&2; return 1; }
+        [[ -z ${NO_RESTORE[$m]} ]] || { echo "backup: $m is not restored from here: ${NO_RESTORE[$m]}" >&2; return 1; }
     done
     for m; do
         read -ra list <<<"${SERVICES[$m]}"
@@ -127,6 +129,8 @@ restore() { # MODULE...
         put_back "$m" bulk "${BULK[$m]}" || { echo "backup: $m: its files did not come back" >&2; rc=1; }
         service start "${list[@]}"
     done
+    # a container in another's network namespace stops with it and nothing else brings it back
+    /usr/local/bin/kiwi-stack start >/dev/null 2>&1 || rc=1
     return "$rc"
 }
 

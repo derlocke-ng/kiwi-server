@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.31.0 — a master comes back with its identity
+
+- A master's WireGuard state is kept with the fleet's secrets, refreshed by `apply` and
+  `enroll`, and put back on a machine that has none before its stack starts. A rebuilt
+  master keeps its server key and every peer, with nobody re-enrolling. Its data backup
+  could not do that: it goes over the mesh, and the mesh is that identity.
+- kiwi-modules 0.17.0: `kiwi-stack restore vpn-server` says why it will not, and a
+  restore starts the whole stack again afterwards.
+
 ## 2.30.0 — an encrypted install with no console
 
 - A Debian host with `unlock.ssh` and `debian.encrypt` has SSH in its initramfs from the

@@ -57,6 +57,11 @@ nginx:
   client_max_body_size: "1m"
   comment: Nostr relay (strfry)
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-nostr-relay"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-nostr-relay/db"]
+
 settings:
   - key: relay_domain
     label: Name

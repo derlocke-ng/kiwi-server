@@ -47,6 +47,11 @@ nginx:
       when: has_reverse_proxy
       comment: wg-easy (WireGuard clients)
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-vpn-server"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-vpn-server"]
+
 settings:
   - key: wg_host
     required: true

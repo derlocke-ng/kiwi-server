@@ -35,6 +35,10 @@ storage:
 urls:
   - "SFTP: sftp -P {{ sftp_port }} {{ sftp_user }}@{{ hostname }}"
 
+backup:
+  # only a folder of its own: without sftp_dir it serves the downloads
+  paths: ["{{ sftp_dir }}"]
+
 settings:
   - key: sftp_user
     default: user

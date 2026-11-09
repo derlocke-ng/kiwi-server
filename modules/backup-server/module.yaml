@@ -1,0 +1,80 @@
+schema_version: "1.0"
+
+module:
+  name: backup-server
+  title: Backup server
+  version: 1.0.0
+  description: "Where the backup module of other machines stores its data: restic's REST server behind the reverse proxy at backup.<hostname>. Each machine reaches only its own repository, and can add to it but not delete."
+  category: storage
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  htpasswd: htpasswd.j2
+
+outputs:
+  htpasswd: { path: "{{ container_prefix }}-backup-server/htpasswd", mode: 0600 }
+
+derived:
+  backup_host: "{{ backup_domain or 'backup.' ~ hostname }}"
+  data_path: "{{ data_dir or docker_dir ~ '/' ~ container_prefix ~ '-backup-server/data' }}"
+
+storage:
+  bind_mounts:
+    - { host: "{{ data_path }}", type: dir, required: true }
+
+urls:
+  - "Backup server: https://{{ backup_host }} — for the backup module of: {{ clients | join(', ') or 'nobody yet (backup-server.clients)' }}"
+
+nginx:
+  upstream:
+    name: backup-server
+    server: "{{ container_prefix }}-backup-server:8000"
+  server_name: "{{ backup_host }}"
+  proxy_pass: "http://backup-server"
+  client_max_body_size: "0"
+  proxy_read_timeout: 600s
+  comment: Backups
+  extra_directives:
+    - "proxy_request_buffering off;"
+
+settings:
+  - key: clients
+    type: list
+    label: Machines that back up here
+    help: "Full names, e.g. papaya.home. Each gets its own repository and, from the fleet's seed, its own password."
+    default: []
+    pattern: '[a-z0-9.-]+'
+  - key: data_dir
+    label: Where the backups live
+    help: "A big disk, not the one the data comes from. Empty: under the stack directory."
+    default: ""
+    pattern: '(/[A-Za-z0-9._/-]+)?'
+  - key: backup_domain
+    label: Name
+    help: "Empty: backup.<hostname>."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: client_hashes
+    type: map
+    group: Generated
+    label: Password hashes of the clients
+    help: "Filled in from the fleet's seed."
+    default: {}
+    generate_each: clients
+    generate_hash_of: backup/server_password
+  - key: image
+    group: Advanced
+    default: docker.io/restic/rest-server:0.14.0

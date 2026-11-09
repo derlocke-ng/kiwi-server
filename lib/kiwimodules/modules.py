@@ -108,6 +108,7 @@ class Module:
         st = meta.get("storage") or {}
         self.bind_mounts = list(st.get("bind_mounts") or [])
         self.volumes = [str(v) for v in (st.get("volumes") or [])]
+        self.backup = meta.get("backup") or None     # what restic keeps of this module
         self.nginx = meta.get("nginx") or None
         self.host = meta.get("host_integration") or {}
         self.dns = meta.get("dns") or {}
@@ -264,6 +265,7 @@ class Bundle:
         self.runtime = "podman"
         self.quadlets = {}         # podman: file name -> unit text (.container, .network, the target)
         self.images = []           # every image the stack pulls
+        self.module_services = {}  # module -> its containers
 
     def add_file(self, rel, content, mode=0o644):
         rel = rel.strip("/")
@@ -444,6 +446,41 @@ class Renderer:
         return self.render_text(_VAR.sub(repl, str(s)), ctx, what)
 
     # ---- compose ------------------------------------------------------------------
+    def backup_sources(self, spec, ordered, base, bundle):
+        """The modules' `backup:` blocks, for the backup module's script: what restic mounts,
+        as host-path:/source/host-path and volume:/volume/name."""
+        def values(items, ctx, where):
+            out = []
+            for item in items or []:
+                if isinstance(item, dict):      # { each: a list or map setting }
+                    v = ctx.get(str(item.get("each"))) or []
+                    out += [str(x) for x in (v.values() if isinstance(v, dict) else v)]
+                else:
+                    x = self.expand(str(item), ctx, where).strip()
+                    if x:                       # a template may come out empty: not set here
+                        out.append(x)
+            return out
+
+        def mounts(block, ctx, where):
+            return (["%s:/source%s" % (p, p) for p in values(block.get("paths"), ctx, where)]
+                    + ["%s:/volume/%s" % (v, v) for v in values(block.get("volumes"), ctx, where)])
+
+        sources = []
+        for name in ordered:
+            b = self.ms.get(name).backup
+            if not b:
+                continue
+            ctx, where = self.module_context(spec, ordered, base, name), "modules/%s/module.yaml backup" % name
+            frozen = b.get("frozen") or {}
+            sources.append({
+                "name": name, "services": bundle.module_services.get(name) or [],
+                "freeze": values(frozen.get("containers"), ctx, where),
+                "frozen": mounts(frozen, ctx, where), "bulk": mounts(b, ctx, where),
+                # an absolute exclude is a path on the host; restic sees it under /source
+                "exclude": [("/source" + e) if e.startswith("/") else e for e in values(b.get("exclude"), ctx, where)],
+            })
+        return sources
+
     def render_compose(self, spec, ordered, base, bundle):
         services, volumes, networks = {}, {}, {}
         module_services = {}
@@ -474,6 +511,7 @@ class Renderer:
             nets = yaml.safe_load(self.render_text(self.ms.networks_template, base, "modules/networks.yml.j2")) or {}
             for net, body in (nets.get("networks") or {}).items():
                 networks.setdefault(net, body)
+        bundle.module_services = module_services
         self.check_ports(services)
         self.check_listen_ports(spec, ordered, base, services, module_services)
         self.add_host_names(spec, base, services)
@@ -710,6 +748,8 @@ class Renderer:
         for name in ordered:
             mod = self.ms.get(name)
             ctx = self.module_context(spec, ordered, base, name)
+            if name == "backup":
+                ctx["backup_sources"] = self.backup_sources(spec, ordered, base, bundle)
             for c in mod.checks:
                 try:
                     hit = self.env.compile_expression(c["when"])(**ctx)

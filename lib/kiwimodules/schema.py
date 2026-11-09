@@ -32,6 +32,11 @@ class Setting:
         # a secret the renderer makes up when it is empty: derived from the
         # fleet's seed, so every render gives the same value (see config.Fleet.seed)
         self.generate = bool(d.get("generate", False)) and self.type == "secret"
+        # a map of password hashes, one per value of the list setting `generate_each`, for
+        # the secret each of those machines derives for itself as `generate_hash_of`
+        # ("<module>/<key>"): what a server keeps of its clients' passwords
+        self.generate_each = str(d.get("generate_each") or "") if self.type == "map" else ""
+        self.generate_hash_of = str(d.get("generate_hash_of") or "")
         # a file setting that, left empty, is looked for at a conventional path
         # ({hostname} and {name} are filled in): what `kiwi-server enroll` writes
         self.fallback_file = str(d.get("fallback_file") or "") if self.type == "file" else ""

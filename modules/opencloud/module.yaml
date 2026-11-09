@@ -53,6 +53,11 @@ nginx:
     - "proxy_buffering off;"
     - "proxy_request_buffering off;"
 
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-opencloud"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-opencloud/config", "{{ data_path }}"]
+
 settings:
   - key: opencloud_domain
     label: Name

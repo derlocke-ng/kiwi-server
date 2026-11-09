@@ -35,6 +35,9 @@ storage:
 urls:
   - "Tor SOCKS5 for mesh clients: {{ vpn_ip or 'this host' }}:9050"
 
+backup:
+  paths: ["${DOCKERDIR}/{{ container_prefix }}-tor/var"]
+
 settings:
   - key: network_mode
     label: Share a container's network

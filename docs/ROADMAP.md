@@ -574,6 +574,12 @@ The six steps agreed with the owner, with the items above folded in.
    backup node with per-node credentials from the seed, `kiwi-stack backup`
    and `restore`, restore on first boot for a rebuilt node; then the `game`
    module that reserves ports, addresses, names, data and the socket.
+   *Status: the `backup:` key, the `backup` and `backup-server` modules and
+   `kiwi-stack backup|snapshots|restore` are done (kiwi-modules 0.14.0,
+   kiwi-stack 0.3.0), with a restore drill from papaya to lychee. A
+   machine can add to its repository but not delete, so old snapshots are
+   pruned from the operator's machine, which is still to come. Open: that
+   prune, restore on first boot, port ranges and the `game` module.*
 4. **The control module.** `kiwi-server serve`: FastAPI over the existing
    core, Jinja pages with HTMX, packaged as a container module that runs on
    a node with the fleet directory as its data; users with two roles (fleet

@@ -99,6 +99,19 @@ def install_key(host):
     return key
 
 
+def current_key(host):
+    """The key that opens the disk now, if there is one on record."""
+    return _read(_path(host.fleet, host.name, "key")) or str(host.cfg["debian"].get("passphrase") or "")
+
+
+def key_file(host):
+    return _path(host.fleet, host.name, "key")
+
+
+def make_key(host):
+    return _make(key_file(host), KEY_LENGTH)
+
+
 def wants_reencrypt(host):
     setting = host.cfg["debian"].get("reencrypt")
     return host.role == "master" if setting is None else bool(setting)

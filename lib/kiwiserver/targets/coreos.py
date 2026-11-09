@@ -5,9 +5,12 @@ two autorebase units from the uCore project (unsigned image first, then the
 signed one), and the role unit waits for the second rebase to finish before it
 runs — so the role script always runs on the final image.
 """
+import ipaddress
+
 import yaml
 
 from .. import util
+from ..util import KiwiError
 from ..config import DAYS
 from . import ROLE_DIR, ROLE_SCRIPT, on_calendar, role_unit
 
@@ -131,8 +134,22 @@ def _file(path, contents, mode=0o644, overwrite=True):
     return {"path": path, "mode": mode, "overwrite": overwrite, "contents": {"inline": contents}}
 
 
+def _unlock_kargs(host, pins):
+    """A disk that needs Tang needs the network before the root is there."""
+    if not pins:
+        return []
+    net = host.static_network()
+    if not net:
+        return ["rd.neednet=1"]
+    if not net["interface"]:
+        raise KiwiError("%s: a static address and unlock: need network.interface, the initramfs must know which one" % host.name)
+    addr = ipaddress.ip_interface(net["address"])
+    return ["rd.neednet=1", "ip=%s::%s:%s::%s:none" % (addr.ip, net["gateway"] or "", addr.netmask, net["interface"])]
+
+
 def build_butane(host, role_script):
     c = host.cfg
+    pins = getattr(host, "unlock_pins", None)
     ucore = host.target == "ucore"
     files, dirs, links, units = [], [], [], []
 
@@ -219,11 +236,14 @@ def build_butane(host, role_script):
         storage["luks"] = co["luks"] if isinstance(co["luks"], list) else [co["luks"]]
     bu["storage"] = storage
     bu["systemd"] = {"units": units}
-    kargs = [str(k) for k in (co.get("kernel_arguments") or [])]
+    kargs = [str(k) for k in (co.get("kernel_arguments") or [])] + _unlock_kargs(host, pins)
     if kargs:
         bu["kernel_arguments"] = {"should_exist": kargs}
     if co.get("boot_device"):
         bu["boot_device"] = co["boot_device"]
+    elif pins:
+        bu["boot_device"] = {"luks": {"tang": [{"url": p["url"], "thumbprint": p["thp"], "advertisement": p["adv"]} for p in pins],
+                                      "threshold": int(c["unlock"]["threshold"]), "discard": True}}
     return bu
 
 

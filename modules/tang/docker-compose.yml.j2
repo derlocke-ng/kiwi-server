@@ -1,0 +1,20 @@
+# tang: one container per ring, its keys in a directory of its own
+services:
+{% for ring, port in rings.items() %}
+  {{ container_prefix }}-tang-{{ ring }}:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-tang-{{ ring }}
+    environment:
+      - TZ={{ timezone }}
+    networks:
+      {{ network_name }}: {}
+    ports:
+      - "{{ port }}:7500"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-tang/{{ ring }}:/db:z
+{% endfor %}

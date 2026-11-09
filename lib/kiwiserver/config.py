@@ -106,6 +106,13 @@ DEFAULTS = {
         "non_free_firmware": True,
         "iso_url": None,
     },
+    "unlock": {
+        # the Tang rings that may open this machine's disk at boot (the tang module serves them)
+        "rings": [],
+        "threshold": 1,
+        "via": {},        # ring -> URL, where the LAN is not the way to it
+        "ssh": False,     # an SSH server in the initramfs, for `kiwi-server unlock`
+    },
     "tls": {
         # certificates for hosts that run the reverse proxy and bring none:
         # one fleet CA in ca_dir (next to the fleet file), one wildcard
@@ -181,7 +188,7 @@ _KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@", "
 
 
 # the blocks whose keys are fixed: a misspelled one is an error, not a silently ignored line
-_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "debian", "tls", "backup", "vps")
+_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "debian", "unlock", "tls", "backup", "vps")
 
 
 def unknown_keys(block, roles, where):
@@ -405,6 +412,14 @@ class Host:
                                  "without it kiwi-server makes a one-time key and replaces it at the first apply")
         if d.get("reencrypt") not in (None, True, False):
             errs.append("debian.reencrypt must be true or false")
+        u = c["unlock"]
+        if not isinstance(u.get("rings"), list):
+            errs.append("unlock.rings must be a list of ring names")
+        elif u["rings"]:
+            if not isinstance(u.get("threshold"), int) or not 1 <= u["threshold"] <= len(u["rings"]):
+                errs.append("unlock.threshold must be between 1 and the number of rings")
+            if self.target == "debian" and not (d.get("encrypt") or d.get("partitioning") == "crypto"):
+                errs.append("unlock.rings is set but debian.encrypt is off: there is no disk to bind")
         if self.target == "ucore" and "/" not in str(c["ucore"].get("image") or ""):
             errs.append("ucore.image must be a full image reference like ghcr.io/ublue-os/ucore:stable")
         for key in ("files", "directories", "units"):

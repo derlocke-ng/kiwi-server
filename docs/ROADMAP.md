@@ -782,7 +782,25 @@ Asked for by the owner in November 2026:
 - **Production test use needs the unlock**, raised 9 November 2026: Tang, and
   every running OS encrypted with LUKS with a proper way to unlock it (Unlock,
   in design/control-plane.md, comes forward; sorbet and crumble are not
-  encrypted today, and a CoreOS machine has no LUKS yet).
+  encrypted today). Since 2.26.0: the `tang` module, `unlock:` for Debian and for
+  CoreOS at install, and `kiwi-server unlock` through SSH in Debian's initramfs. Tried
+  on lychee (Debian, its ring on uCore) and a CoreOS VM (its ring on Debian), each
+  with the ring up, with the ring down and with the key at the console. Open: SSH in
+  CoreOS's initramfs, the relay on the master for NATed nodes, rings on more than one
+  host, rotation, the leash, and reinstalling the real machines.
+- **A node that sleeps, keeps the backups and can stand in**, raised
+  9 November 2026; not built. As a backup node it wakes for the night: by its own
+  RTC alarm (nobody has to be awake to send anything) and by Wake-on-LAN when
+  something wants it sooner, such as `prune`; WOL does not cross the mesh or NAT, so
+  the sender is a machine on its LAN. It powers off when no backup has written for a
+  while. Its disk must open by itself when it wakes, so it needs a ring on its LAN
+  (Unlock in design/control-plane.md) and comes after that. As a fallback it restores
+  one module from the snapshots it already holds (`kiwi-stack restore vault`) and
+  takes over the name in DNS. It is then as old as the last backup; it has to hold
+  that machine's repository key, which is a deliberate choice per service; and when
+  the original returns the two have diverged, so a person decides first
+  (`kiwi-server failover <module> <host>`) and automation comes later if at all.
+  Overlaps with the standby master.
 - **Nextcloud with end-to-end encryption on by default**, and **OpenCloud,
   Immich and Paperless-ngx as modules to try out** (the October list below), so
   the owner can judge them and work out how they should fit together.

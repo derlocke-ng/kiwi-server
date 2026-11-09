@@ -2359,6 +2359,63 @@ class TestUnlock(Base):
         with self.assertRaisesRegex(KiwiError, "nothing to forward"):
             unlock.forwarded_ring(f.hosts["lychee"])
 
+    def fake_podman(self, keys_exist=True):
+        calls = []
+
+        def run(argv, capture_output=True):
+            calls.append(argv)
+            if argv[1:3] == ["exec", "kiwi-tang-operator-5555"] and "tang-show-keys" in argv:
+                return subprocess.CompletedProcess(argv, 0, b"OPTHUMB\n", b"")
+            if "curl" in argv:
+                return subprocess.CompletedProcess(argv, 0, b'{"payload":"op"}\n', b"")
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        return calls, run
+
+    def operator_ring(self, f):
+        calls, run = self.fake_podman()
+        return calls, unlock.OperatorRing(f, run=run)
+
+    def test_the_operator_ring_makes_its_keys_once_and_stays_on_loopback(self):
+        f = self.unlock_fleet()
+        calls, ring = self.operator_ring(f)
+        with mock.patch.object(remote, "free_port", lambda: 5555), mock.patch.object(remote, "_answers", lambda a, p=22, timeout=2: True), mock.patch.object(unlock.atexit, "register"):
+            self.assertEqual(ring.start(), 5555)
+            self.assertEqual(ring.start(), 5555)
+        started = [c for c in calls if "-d" in c]
+        self.assertEqual(len(started), 1)
+        self.assertIn("127.0.0.1:5555:7500", started[0])
+        self.assertIn("%s:/db" % f.resolve_path("secrets/tang/operator"), started[0])
+        made = [c for c in calls if any("tangd-keygen" in x for x in c)]
+        self.assertEqual(len(made), 1)
+        self.assertIn("chown -R 0:0 /db", made[0][-1])       # the store has to be able to read them
+        self.assertEqual(ring.thumbprint(), "OPTHUMB")
+        ring.stop()
+        self.assertEqual(calls[-1], ["podman", "rm", "-f", "kiwi-tang-operator-5555"])
+
+    def test_existing_keys_are_not_made_again(self):
+        f = self.unlock_fleet()
+        write(os.path.join(f.resolve_path("secrets/tang/operator"), "abc.jwk"), "{}")
+        calls, ring = self.operator_ring(f)
+        with mock.patch.object(remote, "free_port", lambda: 5555), mock.patch.object(remote, "_answers", lambda a, p=22, timeout=2: True), mock.patch.object(unlock.atexit, "register"):
+            ring.start()
+        self.assertFalse([c for c in calls if any("tangd-keygen" in x for x in c)])
+
+    def test_the_operator_ring_is_forwarded_from_its_own_loopback(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        h.cfg["unlock"].update(rings=["operator"], via={"operator": "http://127.0.0.1:7500"})
+        _calls, ring = self.operator_ring(f)
+        with mock.patch.object(remote, "free_port", lambda: 5555), mock.patch.object(remote, "_answers", lambda a, p=22, timeout=2: True), mock.patch.object(unlock.atexit, "register"):
+            self.assertEqual(unlock._forward(h, {"operator": (ring, 0)})[1], "127.0.0.1:7500:127.0.0.1:5555")
+
+    def test_the_operator_ring_needs_a_way_in(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        h.cfg["unlock"]["rings"] = ["operator"]
+        _calls, ring = self.operator_ring(f)
+        with self.assertRaisesRegex(KiwiError, "unlock.via needs it"):
+            unlock.pins(h, {"operator": (ring, 0)})
+
     def test_the_threshold_has_to_fit_the_rings(self):
         f = self.unlock_fleet(threshold=2)
         self.assertTrue([e for e in f.hosts["lychee"].validate(self.roles) if "unlock.threshold must be between 1" in e])
@@ -3103,6 +3160,7 @@ class FakeNetcup:
     def __init__(self, driver="SATA"):
         self.driver, self.calls, self.uploaded = driver, [], 0
         self.state, self.attached, self.polls_pending, self.polls_running = "RUNNING", None, 1, 0
+        self.memory = 2048
         self.fail_task, self.refresh = False, "refresh-1"
         self.bootorder = ["CDROM", "HDD", "NETWORK"]
         fake = self
@@ -3131,7 +3189,7 @@ class FakeNetcup:
             def _server(self):
                 return {"id": 7, "name": "v2202", "hostname": "crumble.internal", "nickname": "crumble", "architecture": "AMD64",
                         "rescueSystemActive": False, "ipv4Addresses": [{"ip": "203.0.113.9"}],
-                        "serverLiveInfo": {"state": fake.state, "uefi": False, "cpuCount": 2, "maxServerMemoryInMiB": 2048,
+                        "serverLiveInfo": {"state": fake.state, "uefi": False, "cpuCount": 2, "maxServerMemoryInMiB": fake.memory,
                                            "bootorder": fake.bootorder}}
 
             def do_POST(self):
@@ -3219,9 +3277,20 @@ class FakeNetcup:
         return [(m, p.split("/api/v1")[-1].split("?")[0]) for m, p, _b in self.calls]
 
 
+class TestIsoName(unittest.TestCase):
+    def test_every_upload_has_a_name_of_its_own(self):
+        host = mock.Mock()
+        host.name = "x"
+        with mock.patch.object(cli.time, "time", side_effect=[1000, 1001]):
+            self.assertNotEqual(cli._iso_key(host), cli._iso_key(host))
+
+
 class TestVps(Base):
     def setUp(self):
         super().setUp()
+        key = mock.patch.object(cli, "_iso_key", lambda host: "kiwi-%s.iso" % host.name)
+        key.start()
+        self.addCleanup(key.stop)
         self.api = FakeNetcup()
         self.addCleanup(self.api.close)
         patcher = mock.patch("kiwiserver.netcup.time.sleep", lambda _s: None)
@@ -3291,6 +3360,29 @@ class TestVps(Base):
         rc, out, err = self.run_cli("vps", "probe", f.path, "nosuch")
         self.assertEqual(rc, 1)
         self.assertIn("names no netcup server", err)
+
+    def coreos_vps(self):
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "target": "coreos", "disk": "/dev/sda", "vps": {"server": 7},
+                  "unlock": {"rings": ["operator"], "via": {"operator": "http://127.0.0.1:7500"}}}}})
+
+    def test_a_coreos_disk_is_not_encrypted_on_too_little_memory(self):
+        f = self.coreos_vps()
+        self.logged_in()
+        self.built()
+        self.api.memory = 2048
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("about 4 GiB", err)
+        self.assertNotIn(("POST", "/users/94774/isos/kiwi-x.iso"), self.api.seen())
+
+    def test_enough_memory_goes_ahead(self):
+        f = self.coreos_vps()
+        self.logged_in()
+        self.built()
+        self.api.memory = 8192
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
 
     def test_install_runs_the_whole_sequence(self):
         f = self.vps_fleet()

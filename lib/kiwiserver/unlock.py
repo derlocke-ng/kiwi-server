@@ -8,6 +8,7 @@ The thumbprint comes from the ring's host over SSH, so the machine being bound d
 have to trust whatever answered at that address. Design: docs/design/control-plane.md,
 Unlock.
 """
+import atexit
 import ipaddress
 import json
 import os
@@ -175,14 +176,83 @@ def ssh_port(host):
     return SSH_PORT.get(host.target, 22)
 
 
+OPERATOR = "operator"
+OPERATOR_IMAGE = "ghcr.io/derlocke-ng/tang:15-kiwi2"
+
+
+class OperatorRing:
+    """The ring on the operator's own machine, for what nothing else can open: a master that
+    has no other machine it could rely on, the machine that serves the other rings. Its keys
+    are in the secret store. It runs only while kiwi-server needs it, on a port of its own,
+    so it answers nobody else, and a store that is locked means it cannot run at all."""
+    name = "this machine"
+
+    def __init__(self, fleet, run=subprocess.run):
+        self.fleet, self.run, self.port, self.container = fleet, run, None, None
+
+    def _db(self):
+        return self.fleet.resolve_path("secrets/tang/operator")
+
+    def start(self):
+        if self.port:
+            return self.port
+        db = self._db()
+        os.makedirs(db, mode=0o700, exist_ok=True)
+        # root in a rootless container is this user: the keys stay readable for the store
+        base = ["podman", "run", "--rm", "--security-opt", "label=disable", "-v", "%s:/db" % db]
+        if not [f for f in os.listdir(db) if not f.startswith(".")]:
+            # tangd-keygen gives the keys to the image's tang user, whom this user cannot read as
+            r = self.run(base + ["--entrypoint", "/bin/sh", OPERATOR_IMAGE, "-c", "/usr/libexec/tangd-keygen /db && chown -R 0:0 /db"],
+                         capture_output=True)
+            if r.returncode != 0:
+                raise KiwiError("the operator ring's keys could not be made: %s" % r.stderr.decode(errors="replace").strip()[-200:])
+        port = remote.free_port()
+        name = "kiwi-tang-operator-%d" % port
+        r = self.run(base[:2] + ["-d", "--name", name, "-p", "127.0.0.1:%d:7500" % port] + base[2:]
+                     + ["--entrypoint", "/usr/libexec/tangd", OPERATOR_IMAGE, "-l", "-p", "7500", "/db"], capture_output=True)
+        if r.returncode != 0:
+            raise KiwiError("the operator ring did not start: %s" % r.stderr.decode(errors="replace").strip()[-200:])
+        self.container, self.port = name, port
+        atexit.register(self.stop)
+        for _ in range(40):
+            if remote._answers("127.0.0.1", port) and self.advertisement(quiet=True):
+                return port
+            time.sleep(0.25)
+        raise KiwiError("the operator ring started but does not answer")
+
+    def stop(self):
+        if self.container:
+            self.run(["podman", "rm", "-f", self.container], capture_output=True)
+            self.container, self.port = None, None
+
+    def _exec(self, *command):
+        return self.run(["podman", "exec", self.container, *command], capture_output=True)
+
+    def thumbprint(self):
+        out = self._exec("tang-show-keys", "7500").stdout.decode(errors="replace").split()
+        if not out:
+            raise KiwiError("the operator ring reports no key")
+        return out[0]
+
+    def advertisement(self, quiet=False):
+        text = self._exec("curl", "-sf", "http://localhost:7500/adv").stdout.decode(errors="replace").strip()
+        try:
+            json.loads(text)
+        except ValueError:
+            if quiet:
+                return ""
+            raise KiwiError("the operator ring gave no advertisement")
+        return text
+
+
 def wanted(host):
     return bool(host.cfg["unlock"].get("rings"))
 
 
 def ring_servers(fleet, resolve):
-    """ring -> (host, port), for every ring a host of this fleet serves. `resolve(host)`
-    fills in its settings; a host that cannot be resolved serves nothing."""
-    out = {}
+    """ring -> (host, port), for every ring a host of this fleet serves, and the operator's.
+    `resolve(host)` fills in its settings; a host that cannot be resolved serves nothing."""
+    out = {OPERATOR: (OperatorRing(fleet), 0)}
     for h in fleet.hosts.values():
         try:
             resolve(h)
@@ -251,6 +321,12 @@ def pins(host, servers):
         if ring not in servers:
             raise KiwiError("%s: no host of this fleet serves the ring %s (the tang module's rings)" % (host.name, ring))
         server, port = servers[ring]
+        if isinstance(server, OperatorRing):
+            if not (host.cfg["unlock"].get("via") or {}).get(ring):
+                raise KiwiError("%s: the operator ring is reached through a forwarded port: unlock.via needs it" % host.name)
+            server.start()
+            out.append({"url": url(host, ring, server, port), "thp": server.thumbprint(), "adv": server.advertisement()})
+            continue
         if server is host:
             raise KiwiError("%s cannot be opened by the ring %s: it serves that ring itself" % (host.name, ring))
         out.append({"url": url(host, ring, server, port), "thp": thumbprint(server, ring, port), "adv": advertisement(server, ring)})
@@ -413,6 +489,8 @@ def _forward(host, servers, ring=None):
     if name not in servers:
         raise KiwiError("no host of this fleet serves the ring %s" % name)
     server, port = servers[name]
+    if isinstance(server, OperatorRing):
+        return name, "127.0.0.1:%d:127.0.0.1:%d" % (inside, server.start())
     ring_at = next((a for a in remote.addresses(server) if remote._answers(a, port)), None)
     if not ring_at:
         raise KiwiError("the ring %s on %s does not answer from this machine" % (name, server.name))

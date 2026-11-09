@@ -58,8 +58,10 @@ made with the owner; do not reopen them without a reason.
   encryption everywhere with Tang/Clevis (nested Shamir), no TPM; the
   unlock is the rings and the netfilter relay of
   `docs/design/control-plane.md` (Unlock), which replaced the earlier
-  reverse-tunnel idea. Not built yet, so test machines run without LUKS
-  (the VM excepted, to test the preseed).
+  reverse-tunnel idea. Built in 2.26 to 2.32: `tang` rings, `unlock:`, the relay, SSH in
+  the initramfs with `kiwi-server unlock`. A public master has no ring it can reach at
+  boot, so it waits for that command: an encrypted master does not reboot by itself.
+  sorbet and lychee are encrypted; papaya needs a stick by hand.
 - One bootc image for every CoreOS-lineage machine, built in the
   phoenix-server repository (empty today; phoenix-desktop and phoenix-docs
   follow, phoenix-main goes); the role arrives at first boot. See

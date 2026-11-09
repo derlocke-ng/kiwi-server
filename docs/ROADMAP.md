@@ -466,9 +466,10 @@ UX and ecosystem:
     keeps `--no-deps` out of the machine side, and the runbook says how to
     recreate a namespace sharer by hand. Still open: on 5G and other mobile
     paths (often IPv6-only with 464XLAT, nested encapsulation) the owner sees
-    it fail. Measure instead of guessing: a path-MTU probe in `enroll` and in
-    the client config it writes (`--mtu`, a lower default such as 1280 for
-    phones), and `kiwi-stack health` reporting fragmentation — the snmp
+    it fail. `kiwi-server mtu` (2.14.0) measures a connected node or device
+    from the right end. Still to add: `--mtu` on `enroll`, with a lower
+    default such as 1280 for phones, and `kiwi-stack health` reporting
+    fragmentation — the snmp
     counters above, per namespace (`nsenter -t <pid> -n`), sampled across a
     transfer; any growth of `FragCreates` or `ReasmOKs` is a warning.
     (kiwi-stack, modules/vpn-server, cli.py enroll, routers.md)
@@ -705,7 +706,7 @@ Asked for by the owner in November 2026:
   certificate for its public name.
 - **An MTU probe people run themselves** (problem 40): measure a node's or a
   device's real path, then set the fleet's values from the result instead of
-  guessing them.
+  guessing them. Done in 2.14.0: `kiwi-server mtu`.
 
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node

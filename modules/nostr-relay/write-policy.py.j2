@@ -1,14 +1,69 @@
 #!/usr/bin/env python3
-# Who may post to the relay of {{ hostname }}: its own mesh, and the keys listed
-# in nostr-relay.write_pubkeys. strfry hands over one JSON request per line and
-# reads one answer per line; anything that cannot be understood is refused.
+# Who may post to the relay of {{ hostname }}. strfry hands over one JSON request per
+# line and reads one answer per line; anything that cannot be understood is refused.
+#
+#   the mesh                                     everything
+#   an admin (nostr-relay.write_pubkeys)         everything
+#   a connection proven (NIP-42) to be a member  everything it sends, whoever signed it:
+#                                                boards, groups and gift wraps are not
+#                                                signed by the person's own key
+#   anyone                                       a gift wrap to a member; a sign-up with
+#                                                proof of work
+#
+# A member is a key with an account here (members: registered) or on the list an admin
+# signs (members: approved). What the plugin knows comes from the events passing through
+# it, and at its start from the store.
 import ipaddress
 import json
+import shutil
+import subprocess
 import sys
+import time
 
 MESH = ipaddress.ip_network("{{ mesh_subnet }}")
-KEYS = set({{ write_pubkeys | tojson }})
-REFUSED = "blocked: this relay takes posts from its own network and its listed keys"
+ADMINS = set({{ write_pubkeys | tojson }})
+MODE = "{{ members }}"
+REGISTER_POW = {{ register_pow }}
+SIGNUPS_PER_HOUR = {{ register_per_hour }}
+CONFIG = "{{ config_path }}"
+ACCOUNT, PEOPLE_LIST, GIFT_WRAP = 30790, 30000, 1059
+
+accounts = {}                                   # key: (created_at, has a live account)
+lists = {"members": (0, set()), "banned": (0, set())}   # newest list an admin signed
+signups = {}                                    # address: times of its recent sign-ups
+
+
+def tag_values(event, name):
+    return [t[1] for t in event["tags"] if len(t) > 1 and t[0] == name]
+
+
+def live_account(event):
+    return ("2" in tag_values(event, "v") and bool(event["content"]) and "1" not in tag_values(event, "retired"))
+
+
+def learn(event):
+    created, key = event.get("created_at", 0), event["pubkey"]
+    if event["kind"] == ACCOUNT:
+        if created >= accounts.get(key, (0, False))[0]:
+            accounts[key] = (created, live_account(event))
+    elif event["kind"] == PEOPLE_LIST and key in ADMINS:
+        for name in tag_values(event, "d")[:1]:
+            if name in lists and created >= lists[name][0]:
+                lists[name] = (created, set(tag_values(event, "p")))
+
+
+def banned(key):
+    return key in lists["banned"][1]
+
+
+def member(key):
+    if banned(key):
+        return False
+    return key in lists["members"][1] if MODE == "approved" else accounts.get(key, (0, False))[1]
+
+
+def reachable(key):
+    return key in ADMINS or member(key)
 
 
 def from_mesh(request):
@@ -18,13 +73,80 @@ def from_mesh(request):
         return False
 
 
+def proof_of_work(event_id):
+    bits = 0
+    for digit in event_id:
+        value = int(digit, 16)
+        bits += 4 - value.bit_length()
+        if value:
+            break
+    return bits
+
+
+def signup_refusal(request):
+    """Why this account entry may not be stored, or None."""
+    if proof_of_work(request["event"]["id"]) < REGISTER_POW:
+        return "pow: a new account here needs %d bits of proof of work" % REGISTER_POW
+    now, address = time.time(), request.get("sourceInfo", "")
+    for known in list(signups):
+        signups[known] = [t for t in signups[known] if now - t < 3600]
+        if not signups[known]:
+            del signups[known]
+    if len(signups.get(address, [])) >= SIGNUPS_PER_HOUR:
+        return "rate-limited: too many new accounts from this address, try again later"
+    signups.setdefault(address, []).append(now)
+    return None
+
+
+def refusal(request):
+    """Why this event may not be stored, or None."""
+    if request.get("type") != "new":
+        return "invalid: not a request this relay understands"
+    event, authed = request["event"], request.get("authed") or ""
+    if from_mesh(request) or event["pubkey"] in ADMINS or authed in ADMINS:
+        return None
+    if banned(authed) or banned(event["pubkey"]):
+        return "restricted: this key is banned from this relay"
+    if authed and member(authed):
+        return None
+    if event["kind"] == GIFT_WRAP and any(reachable(p) for p in tag_values(event, "p")):
+        return None
+    if event["kind"] == ACCOUNT and live_account(event):
+        return signup_refusal(request)
+    if authed:
+        return "restricted: this key may not write here"
+    return "auth-required: this relay takes posts from its members"
+
+
+def load():
+    """What the store already knows. Failing this keeps the door shut, not open."""
+    binary = shutil.which("strfry") or "/app/strfry"
+    try:
+        scan = subprocess.run([binary, "--config=" + CONFIG, "scan", json.dumps({"kinds": [ACCOUNT, PEOPLE_LIST]})],
+                              capture_output=True, text=True, timeout=120)
+        lines = scan.stdout.splitlines()
+    except (OSError, subprocess.SubprocessError) as e:
+        print("write policy: could not read the store: %s" % e, file=sys.stderr, flush=True)
+        return
+    for line in lines:
+        try:
+            learn(json.loads(line))
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError):
+            continue
+    print("write policy: %d accounts, %d approved, %d banned, members: %s"
+          % (sum(1 for _c, live in accounts.values() if live), len(lists["members"][1]), len(lists["banned"][1]), MODE),
+          file=sys.stderr, flush=True)
+
+
+load()
 for line in sys.stdin:
     event_id = ""
     try:
         request = json.loads(line)
-        event = request["event"]
-        event_id = event["id"]
-        allowed = request.get("type") == "new" and (event["pubkey"] in KEYS or from_mesh(request))
-    except (ValueError, KeyError, TypeError, AttributeError):
-        allowed = False
-    print(json.dumps({"id": event_id, "action": "accept" if allowed else "reject", "msg": "" if allowed else REFUSED}), flush=True)
+        event_id = request["event"]["id"]
+        message = refusal(request)
+        if message is None:
+            learn(request["event"])
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError):
+        message = "invalid: this relay could not read that"
+    print(json.dumps({"id": event_id, "action": "reject" if message else "accept", "msg": message or ""}), flush=True)

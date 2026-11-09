@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.19.0 — a public relay knows its members
+
+- kiwi-modules 0.9.0: `nostr-relay` authenticates connections (NIP-42), and who
+  counts as a member is a setting, `members: approved | registered`. A signed-in
+  member may post what other keys signed, as a hub's boards, groups and gift wraps
+  are; anyone may send a gift wrap to a member or sign up with proof of work; bans
+  beat membership. It runs our own strfry image, release 1.1.3 with a small patch,
+  because stock strfry does not tell the write policy who a connection is.
+- kiwi-stack 0.2.4: behind chrony a stack waits with `chrony-wait.service`.
+  `systemd-time-wait-sync` sat out its 90 seconds at every boot there and failed.
+
 ## 2.18.0 — the app shows what the machines say
 
 - **The app has an overview**: machines online, services running, what needs a

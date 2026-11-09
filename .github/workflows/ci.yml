@@ -10,9 +10,10 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q shellcheck xorriso cpio python3-yaml python3-jinja2 docker-compose-v2 age
-          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o /usr/local/bin/butane \
-            https://github.com/coreos/butane/releases/latest/download/butane-x86_64-unknown-linux-gnu
-          sudo chmod +x /usr/local/bin/butane
+          # out of the project's own image: GitHub's release downloads kept answering 504
+          docker create --name butane quay.io/coreos/butane:release
+          sudo docker cp butane:/usr/local/bin/butane /usr/local/bin/butane
+          docker rm butane
       - name: shellcheck
         run: |
           shellcheck -S warning bin/kiwi-server install.sh data/bash-completion/kiwi-server \

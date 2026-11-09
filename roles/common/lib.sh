@@ -540,10 +540,21 @@ ks_time_sync_at_boot() {
     # tunnel opened before NTP steps a fast clock back shuts the machine out until real time
     # catches up. A stack with a VPN client waits for the clock at boot, bounded so a machine
     # without NTP still comes up.
-    [[ -n ${KS_STACK_VPN_CONTAINER:-} && -x /usr/lib/systemd/systemd-time-wait-sync ]] || return 0
+    [[ -n ${KS_STACK_VPN_CONTAINER:-} ]] || return 0
+    local wait=systemd-time-wait-sync.service
+    # systemd's waiter only wakes when the clock is stepped or timesyncd says so. chrony
+    # trims a clock that is already close, so behind chrony it sits out its whole timeout
+    # and fails, at every boot. chrony brings its own waiter.
+    if systemctl is-enabled -q chronyd.service 2>/dev/null && systemctl cat chrony-wait.service >/dev/null 2>&1; then
+        systemctl disable -q "$wait" 2>/dev/null || true
+        systemctl reset-failed "$wait" 2>/dev/null || true
+        wait=chrony-wait.service
+    elif [[ ! -x /usr/lib/systemd/systemd-time-wait-sync ]]; then
+        return 0
+    fi
     printf '%s\n' '[Service]' 'TimeoutStartSec=90' |
-        ks_unit systemd-time-wait-sync.service.d/90-kiwi.conf
-    systemctl enable -q systemd-time-wait-sync.service
+        ks_unit "$wait.d/90-kiwi.conf"
+    systemctl enable -q "$wait"
 }
 
 ks_stack_units() { # the service that brings the stack up, and the two maintenance timers

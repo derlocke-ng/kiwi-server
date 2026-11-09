@@ -47,6 +47,13 @@ relay {
         plugin = "{{ '' if open_writes else '/app/kiwi-write-policy.py' }}"
     }
 
+    # NIP-42. The image's patch challenges a connection when it first writes, and tells the
+    # write policy which key it proved (images/strfry).
+    auth {
+        enabled = {{ 'false' if open_writes else 'true' }}
+        serviceUrl = "{{ '' if open_writes else 'wss://' ~ relay_host }}"
+    }
+
     compression {
         enabled = true
         slidingWindow = true

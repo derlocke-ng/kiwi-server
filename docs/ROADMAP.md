@@ -440,6 +440,24 @@ UX and ecosystem:
     since October. With chrony's own `chrony-wait.service` the same machine
     reaches userspace in 25 seconds instead of 94, the wait takes 18, and
     the stack still starts after it. (lib.sh ks_time_sync_at_boot)
+63. *Found on hardware (9 November 2026), fixed in kiwi-modules 0.9.1.* The `gateway`
+    module had never worked for a real LAN client. Two of its iptables rules were
+    invalid and refused at every start, unseen in the journal (`--ctstatus DNAT`; two
+    `-s` in one rule), so LAN clients were not masqueraded and the rule keeping them off
+    the container network was missing. On top of that firewalld refuses forwarded LAN
+    traffic without a policy. The policy takes a reload, and a reload forgets what
+    netavark trusted at runtime, which cut the containers off from each other (the
+    first attempt at the fix did that on a test node), so the stack's network is
+    trusted permanently first. `verify` passed all along: nothing tests the path of a
+    LAN client. (modules/gateway/gw.sh.j2)
+64. *Found on hardware (9 November 2026), fixed in kiwi-modules 0.10.0.* A LAN client
+    got every name at its mesh address, so traffic between machines on one switch
+    went through the tunnel to the master and back: 176 ms for a page that takes 48 ms
+    directly, and all of a local cloud's sync through the VPS. A node's Pi-hole and
+    hosts file now answer with the LAN address of the nodes on its LAN, as the first
+    kiwi network did. Still through the master: a device with its tunnel on at home.
+    Two sites using the same subnet would be taken for one; that needs a per-site
+    setting if it ever happens. (modules/dns, modules.py, cli.py lan_addresses)
 40. **MTU.** *Found on hardware (the v1 fleet, 7 November 2026); the
     generator's half fixed in 2.8.0 (kiwi-modules 0.3.0).* Symptoms: TLS
     stalls and stuttering streams through the VPN. One `mtu` (1412) was the

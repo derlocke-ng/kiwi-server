@@ -287,6 +287,13 @@ a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
 go to the master and never leave it, and every host carries the fleet's names
 in its hosts file plus a route into the mesh through its VPN client.
 
+A node's Pi-hole and hosts file answer with the LAN address of the nodes on its own
+LAN: a machine with a static address in the node's subnet. A client at home reaches
+`cloud.papaya.home` across the switch and not through the master, and a device on the
+mesh, which asks the master's Pi-hole, gets the mesh address wherever it is. A device
+with its tunnel on at home therefore still goes through the master. Names of masters,
+and of nodes on DHCP or another LAN, stay at their mesh addresses.
+
 The master's Pi-hole also answers for Mullvad's SOCKS5 proxies — every
 Mullvad server runs one, reachable through the master's Mullvad exit — as
 `de-fra-wg-socks5-001.relays.mullvad.net` and `de-fra-001.mullvad.home`

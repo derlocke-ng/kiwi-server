@@ -7,6 +7,7 @@ all of them. No test touches the network.
 import contextlib
 import http.server
 import io
+import ipaddress
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import types
 import unittest
 import urllib.parse
 from unittest import mock
@@ -980,7 +982,7 @@ class TestModules(Base):
         self.assertNotIn("AddHost=", b.quadlets["kn-pihole.container"])
         # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
         inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
-        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP'), inserts)
+        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP'), inserts)
         # … and, standing on top, it must spare the replies to what the containers started
         # (the VPN client's handshake) and the LAN's connections to published ports
         self.assertRegex(b.files["kn-portainer/admin-password"][0], r"^[A-Za-z0-9]{32}\s*$")   # left out: generated, no open first-run page
@@ -2962,6 +2964,33 @@ peers=4 3
             self.assertEqual(r.returncode, 0, r.stdout)
         self.assertNotIn("dump", facts.SCRIPT)
         self.assertIn("latest-handshakes", facts.SCRIPT)
+
+
+class TestLanAddresses(Base):
+    @staticmethod
+    def host(**network):
+        return types.SimpleNamespace(cfg={"network": network})
+
+    def view(self, host, node_type="node"):
+        r = cli.Renderer.__new__(cli.Renderer)
+        r._scanned = True
+        r._node_lan = [("10.9.0.2", ipaddress.ip_address("192.168.2.30")), ("10.9.0.3", ipaddress.ip_address("192.168.2.61")),
+                       ("10.9.0.4", ipaddress.ip_address("10.20.0.5"))]
+        return r.lan_addresses(host, types.SimpleNamespace(node_type=node_type))
+
+    def test_only_nodes_on_this_lan_get_their_lan_address(self):
+        self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.30/16")),
+                         {"10.9.0.2": "192.168.2.30", "10.9.0.3": "192.168.2.61"})
+
+    def test_a_master_answers_mesh_clients_and_keeps_the_mesh_addresses(self):
+        self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.30/16"), "master"), {})
+
+    def test_a_machine_with_no_known_lan_has_no_lan_view(self):
+        self.assertEqual(self.view(self.host(dhcp=True)), {})
+        self.assertEqual(self.view(self.host(dhcp=False, address=None)), {})
+
+    def test_a_bare_address_has_no_neighbours(self):
+        self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.30")), {"10.9.0.2": "192.168.2.30"})
 
 
 class TestReach(Base):

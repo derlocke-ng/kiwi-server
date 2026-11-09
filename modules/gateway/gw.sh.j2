@@ -11,6 +11,8 @@ CONTAINER_IP="{{ vpn_client_ip }}"
 DOCKER_SUBNET="{{ docker_subnet }}"
 VPN_SUBNET="{{ vpn_subnet or mesh_subnet }}"
 BRIDGE="{{ network_name }}"
+OWN_MESH_IP="{{ vpn_ip }}"
+PROXY_IP="{{ proxy_ip }}"
 # docker names the bridge after the network; podman does not — the route to the
 # stack's subnet names the interface either way
 if ! ip link show "$BRIDGE" >/dev/null 2>&1; then
@@ -24,13 +26,18 @@ fi
 [[ -n $PUB_IFACE ]] || { echo "[kiwi-gw] no LAN interface found"; exit 1; }
 
 rules_del() {
-    iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP 2>/dev/null || true
+    iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP 2>/dev/null || true   # the rule of earlier versions
     iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
     iptables -D INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    iptables -t nat -D POSTROUTING -o "$BRIDGE" ! -s "$DOCKER_SUBNET" ! -s "$VPN_SUBNET" -j MASQUERADE 2>/dev/null || true
+    if [[ -n $OWN_MESH_IP && -n $PROXY_IP ]]; then
+        iptables -t nat -D PREROUTING -i "$PUB_IFACE" -d "$OWN_MESH_IP" -p tcp -m multiport --dports 80,443 -j DNAT --to-destination "$PROXY_IP" 2>/dev/null || true
+    fi
+    iptables -t nat -D POSTROUTING -o "$BRIDGE" -j KIWI_GW_NAT 2>/dev/null || true
+    iptables -t nat -F KIWI_GW_NAT 2>/dev/null || true
+    iptables -t nat -X KIWI_GW_NAT 2>/dev/null || true
     iptables -t nat -D POSTROUTING -o "$BRIDGE" -j MASQUERADE 2>/dev/null || true   # the rule of earlier versions
     ip route flush table 128 2>/dev/null || true
     while ip rule del iif "$PUB_IFACE" table 128 2>/dev/null; do :; done
@@ -56,6 +63,22 @@ if ! ping -c 1 -W 2 "$CONTAINER_IP" >/dev/null 2>&1; then
 fi
 
 rules_del
+if systemctl is-active -q firewalld 2>/dev/null; then
+    # netavark marks the stack's network as trusted only at runtime, and a reload forgets
+    # that: containers could no longer reach each other. Made permanent before any reload.
+    firewall-cmd -q --permanent --zone=trusted --query-source="$DOCKER_SUBNET" || firewall-cmd -q --permanent --zone=trusted --add-source="$DOCKER_SUBNET"
+    firewall-cmd -q --zone=trusted --query-source="$DOCKER_SUBNET" || firewall-cmd -q --zone=trusted --add-source="$DOCKER_SUBNET"
+    # firewalld judges forwarded packets itself, whatever the rules below say, and refuses
+    # LAN clients unless a policy lets them through. Made once: it takes a reload.
+    if ! firewall-cmd -q --permanent --info-policy=kiwi-lan-gateway >/dev/null 2>&1; then
+        zone=$(firewall-cmd --get-zone-of-interface="$PUB_IFACE" 2>/dev/null) || zone=$(firewall-cmd --get-default-zone)
+        firewall-cmd -q --permanent --new-policy=kiwi-lan-gateway
+        firewall-cmd -q --permanent --policy=kiwi-lan-gateway --add-ingress-zone="$zone"
+        firewall-cmd -q --permanent --policy=kiwi-lan-gateway --add-egress-zone=ANY
+        firewall-cmd -q --permanent --policy=kiwi-lan-gateway --set-target=ACCEPT
+        firewall-cmd -q --reload
+    fi
+fi
 # policy routing: what comes in on the LAN interface leaves via the VPN client
 ip rule add iif "$PUB_IFACE" table 128
 ip route add table 128 default via "$CONTAINER_IP"
@@ -70,10 +93,20 @@ iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
 # everything else, so it must spare the replies to what the containers themselves
 # started (the VPN client's WireGuard handshake came in on the LAN side and died here)
 # and the connections netavark DNATs to published ports (Pi-hole, nginx from the LAN)
-iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP
+iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP
+# This node's own names resolve to its mesh address, which lives inside the VPN client
+# and only takes connections from the tunnel: a LAN client goes straight to the proxy.
+if [[ -n $OWN_MESH_IP && -n $PROXY_IP ]]; then
+    iptables -t nat -I PREROUTING -i "$PUB_IFACE" -d "$OWN_MESH_IP" -p tcp -m multiport --dports 80,443 -j DNAT --to-destination "$PROXY_IP"
+fi
 # LAN clients appear to the VPN client as the host; the containers' own traffic and
 # the mesh's keep their addresses — with bridged traffic tracked by the host (lib.sh,
 # problem 57) a bare "-o bridge" masquerade caught those too, and nginx logged every
 # mesh client as 172.128.0.1
-iptables -t nat -I POSTROUTING -o "$BRIDGE" ! -s "$DOCKER_SUBNET" ! -s "$VPN_SUBNET" -j MASQUERADE
+# (a chain, because iptables takes only one -s per rule)
+iptables -t nat -N KIWI_GW_NAT
+iptables -t nat -A KIWI_GW_NAT -s "$DOCKER_SUBNET" -j RETURN
+iptables -t nat -A KIWI_GW_NAT -s "$VPN_SUBNET" -j RETURN
+iptables -t nat -A KIWI_GW_NAT -j MASQUERADE
+iptables -t nat -I POSTROUTING -o "$BRIDGE" -j KIWI_GW_NAT
 echo "[kiwi-gw] LAN ($PUB_IFACE) -> $CONTAINER_IP (VPN client); mesh $VPN_SUBNET allowed"

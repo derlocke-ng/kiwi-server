@@ -200,7 +200,7 @@ class StackSpec:
 
     def __init__(self, node_type, hostname, modules, docker_dir="/home/user/docker",
                  docker_subnet=None, mtu=None, timezone="UTC", vpn_ip="", pub_iface="",
-                 variables=None, module_config=None, files=None, dns_records=None,
+                 variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
                  ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None):
         if node_type not in ("master", "node"):
@@ -232,6 +232,7 @@ class StackSpec:
         self.module_config = {k: dict(v or {}) for k, v in (module_config or {}).items()}
         self.files = dict(files or {})        # "module/key" -> bytes (embedded file settings)
         self.dns_records = list(dns_records or [])  # (ip, name) pairs for the dns module
+        self.lan_addresses = dict(lan_addresses or {})  # mesh address: LAN address, of the nodes on this one's LAN
         self.service_user = service_user
         self.master_ip = master_ip or ""        # the master's mesh address: the nodes' DNS upstream
         self.mesh_subnet = mesh_subnet or "10.8.0.0/16"
@@ -387,6 +388,7 @@ class Renderer:
             "module_config": {m: dict(v) for m, v in spec.module_config.items()},
             "mesh_ips": sorted({ip for ip, _n in spec.dns_records}),
             "dns_records": list(spec.dns_records),
+            "lan_addresses": dict(spec.lan_addresses),
             "master_ip": spec.master_ip, "mesh_subnet": spec.mesh_subnet, "domain": spec.domain,
             "runtime": spec.runtime,
             # the mesh is behind the WireGuard server on a master, behind the VPN client on a node
@@ -784,7 +786,8 @@ class Renderer:
         bundle.mesh_via = base["mesh_via"]
         bundle.mesh_subnet = spec.mesh_subnet if base["mesh_via"] else ""
         # the host's own names point at itself: its services are published on the host
-        bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip else ip, n) for ip, n in spec.dns_records]
+        bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip else spec.lan_addresses.get(ip, ip), n)
+                        for ip, n in spec.dns_records]
         # the host's own resolver: this stack's Pi-hole, when there is one
         bundle.dns_ip = base.get("dns_container_ip") or "" if "dns" in ordered else ""
         bundle.auto_update = spec.auto_update

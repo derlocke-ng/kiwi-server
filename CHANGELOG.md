@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.20.0 — local traffic stays local
+
+- **A node's Pi-hole and hosts file answer with the LAN address of the nodes on its
+  own LAN**: machines with a static address in its subnet, worked out from the fleet
+  file. A client at home went through the tunnel to the master and back to reach a
+  machine on its own switch; on the test network a page went from 176 ms to 48 ms.
+  Mesh clients still ask the master's Pi-hole and get mesh addresses.
+- kiwi-modules 0.10.0, and with it 0.9.1: **the `gateway` module works for LAN
+  clients**. Two of its rules were invalid and firewalld refused forwarded traffic, so
+  it had never carried a real LAN client, and the rule keeping LAN clients off the
+  container network was missing. A health check of the form `[CMD, ...]` now runs
+  without a shell, so Collabora no longer reports unhealthy while working.
+
 ## 2.19.0 — a public relay knows its members
 
 - kiwi-modules 0.9.0: `nostr-relay` authenticates connections (NIP-42), and who

@@ -2,6 +2,7 @@
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
 import concurrent.futures
+import ipaddress
 import json
 import os
 import re
@@ -35,6 +36,17 @@ def make_tc(args):
 
 def mask(value):
     return "********" if value else value
+
+
+def static_lan(host):
+    """The host's static LAN address as an interface (address and network), or None."""
+    net = host.cfg["network"]
+    if net.get("dhcp", True) or not net.get("address"):
+        return None
+    try:
+        return ipaddress.ip_interface(str(net["address"]))
+    except ValueError:
+        return None
 
 
 class Outputs:
@@ -165,6 +177,7 @@ class Renderer:
         self.ms = modset or modmod.discover()
         self._scanned = False
         self._records = []
+        self._node_lan = []
         self._needs_ca = False
         self._master_ip = ""
 
@@ -185,7 +198,7 @@ class Renderer:
         if self._scanned:
             return
         self._scanned = True
-        recs, needs_ca, master_ip = [], False, ""
+        recs, needs_ca, master_ip, node_lan = [], False, "", []
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -199,17 +212,31 @@ class Renderer:
                     continue
                 if role.node_type == "master" and not master_ip:
                     master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
+                lan = static_lan(h)
+                if lan and role.node_type != "master":      # a master's stack lives on the mesh, not its LAN
+                    node_lan.append((spec.vpn_ip, lan.ip))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
                 util.warn("dns records: skipping %s: %s" % (h.name, e))
-        self._records, self._needs_ca, self._master_ip = recs, needs_ca, master_ip
+        self._records, self._needs_ca, self._master_ip, self._node_lan = recs, needs_ca, master_ip, node_lan
 
     def dns_records(self):
         self.scan()
         return self._records
+
+    def lan_addresses(self, host, role):
+        """{mesh address: LAN address} of the fleet's nodes on this node's own LAN.
+        Its Pi-hole and hosts file answer with those, so machines on one switch
+        reach each other across it and not through the master. A master's Pi-hole
+        answers mesh clients, who are anywhere: it keeps the mesh addresses."""
+        self.scan()
+        own = static_lan(host)
+        if not own or role.node_type == "master":
+            return {}
+        return {mesh: str(ip) for mesh, ip in self._node_lan if ip in own.network}
 
     def ca_dir(self, host):
         tls = host.cfg.get("tls") or {}
@@ -249,7 +276,8 @@ class Renderer:
             return None
         records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
-        spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host))
+        spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
+                                   lan_addresses=self.lan_addresses(host, role))
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b

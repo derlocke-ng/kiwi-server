@@ -38,7 +38,8 @@ def cmd_render(args):
         raise KiwiError("%s: profile %s has no stack to render" % (m.name, m.role))
     ms = modmod.discover()
     resolver.resolve_settings(profile, m, ms)
-    spec = resolver.stack_spec(m, profile, m.dns_records, master_ip=m.master_ip, ca_cert=m.ca_cert)
+    spec = resolver.stack_spec(m, profile, m.dns_records, master_ip=m.master_ip, ca_cert=m.ca_cert,
+                              lan_addresses=m.lan_addresses)
     bundle = modmod.Renderer(ms).render(spec)
     write_bundle(args.output, m, profile, bundle)
     print("%s: %s -> %s (%s)" % (m.name, ", ".join(bundle.modules), args.output, bundle.runtime))

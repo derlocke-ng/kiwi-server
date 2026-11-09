@@ -27,7 +27,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import luks  # noqa: E402
+from kiwiserver import luks, mtu  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -2305,6 +2305,135 @@ class TestManage(Base):
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
+class TestMtu(Base):
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = cli.main(list(args))
+            except SystemExit as e:
+                rc = e.code
+        return rc, out.getvalue(), err.getvalue()
+
+    def mtu_fleet(self):
+        write(os.path.join(self.tmp, "secrets", "n.conf"),
+              "[Interface]\nPrivateKey = k\nAddress = 10.8.0.7/24\n\n[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/0\nEndpoint = v:51820\n")
+        write(os.path.join(self.tmp, "secrets", "devices", "phone.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.3.5/24\n")
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "n": {"role": "node", "target": "debian", "node": {"modules": ["vpn-client"], "vpn-client": {"wireguard_config": "secrets/n.conf"}}}}})
+        return f
+
+    def measure(self, f, *args, whole_up_to=1376, split_above=None, answers=True):
+        calls = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            size = int(re.search(r"-s (\d+) ", script).group(1)) + 28
+            calls.append((tgt, script, size))
+            if not answers or size > whole_up_to:
+                return b"received=0 reassembled=0\n"
+            if split_above and size > split_above:
+                return b"received=3 reassembled=3\n"
+            return b"received=3 reassembled=0\n"
+        with mock.patch.object(remote, "run", fake_run):
+            rc, out, err = self.run_cli("mtu", f.path, *args)
+        return rc, out, err, calls
+
+    def test_a_device_that_fits_is_measured_from_the_master(self):
+        rc, out, err, calls = self.measure(self.mtu_fleet(), "phone", "--ssh", "core@1.2.3.4")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("1376 fits", out)
+        tgt, script, size = calls[0]
+        self.assertEqual((tgt, size), ("core@1.2.3.4", 84))
+        self.assertIn("km-vpn-server", script)
+        self.assertIn("10.8.3.5", script)
+
+    def test_a_device_on_a_small_path_changes_only_itself(self):
+        f = self.mtu_fleet()
+        with open(f.path) as fh:
+            before = fh.read()
+        rc, out, err, _calls = self.measure(f, "phone", "--ssh", "c@h", "--write", whole_up_to=1320)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("MTU = 1312", out)
+        with open(f.path) as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_a_node_is_measured_from_its_own_side(self):
+        rc, out, err, calls = self.measure(self.mtu_fleet(), "n", "--ssh", "core@5.6.7.8")
+        self.assertEqual(rc, 0, err)
+        tgt, script, _size = calls[0]
+        self.assertEqual(tgt, "core@5.6.7.8")
+        self.assertIn("kn-vpn-client", script)
+        self.assertIn("10.8.0.1", script)                    # the master, which answers
+
+    def test_a_reassembled_reply_does_not_count_as_fitting(self):
+        rc, out, err, _calls = self.measure(self.mtu_fleet(), "phone", "--ssh", "c@h", split_above=1344)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("MTU = 1344", out)
+        self.assertIn("reassembled on the way", out)
+
+    def test_every_size_tried_is_a_multiple_of_16(self):
+        _rc, _out, _err, calls = self.measure(self.mtu_fleet(), "phone", "--ssh", "c@h", whole_up_to=1300)
+        self.assertTrue(all(c[2] % 16 == 0 for c in calls[1:]), [c[2] for c in calls])
+
+    def test_a_node_result_is_written_only_when_asked(self):
+        f = self.mtu_fleet()
+        with open(f.path) as fh:
+            before = fh.read()
+        rc, out, err, _calls = self.measure(f, "n", "--ssh", "c@h", whole_up_to=1360)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("--write", out)
+        with open(f.path) as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_write_sets_the_node_and_the_master_and_still_validates(self):
+        f = self.mtu_fleet()
+        rc, out, err, _calls = self.measure(f, "n", "--ssh", "c@h", "--write", whole_up_to=1360)
+        self.assertEqual(rc, 0, err)
+        with open(f.path) as fh:
+            data = yaml.safe_load(fh)
+        self.assertEqual(data["hosts"]["n"]["node"]["wg_mtu"], 1360)
+        self.assertEqual(data["hosts"]["gate"]["master"]["wg_mtu"], 1360)
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, 0, err)
+
+    def test_set_wg_mtu_keeps_the_rest_of_the_file(self):
+        text = ("hosts:\n  a:\n    node:\n      # why\n      wg_mtu: 1376   # measured\n      x: 1\n  b:\n    node:\n      y: 2\n")
+        self.assertEqual(mtu.set_wg_mtu(text, "a", "node", 1344).split("\n")[4], "      wg_mtu: 1344   # measured")
+        out = mtu.set_wg_mtu(text, "b", "node", 1344)
+        self.assertEqual(yaml.safe_load(out)["hosts"]["b"]["node"], {"wg_mtu": 1344, "y": 2})
+        self.assertEqual(yaml.safe_load(out)["hosts"]["a"]["node"]["wg_mtu"], 1376)
+        self.assertIsNone(mtu.set_wg_mtu(text, "nosuch", "node", 1344))
+        self.assertIsNone(mtu.set_wg_mtu("hosts:\n  a:\n    node: { x: 1 }\n", "a", "node", 1344))
+
+    def test_nobody_answering_says_so(self):
+        rc, _out, err, _calls = self.measure(self.mtu_fleet(), "phone", "--ssh", "c@h", answers=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("no answer", err)
+
+    def test_a_master_is_not_something_to_measure(self):
+        rc, _out, err, _calls = self.measure(self.mtu_fleet(), "gate", "--ssh", "c@h")
+        self.assertEqual(rc, 1)
+        self.assertIn("not a node", err)
+
+    def test_an_unknown_target(self):
+        rc, _out, err, _calls = self.measure(self.mtu_fleet(), "nobody", "--ssh", "c@h")
+        self.assertEqual(rc, 1)
+        self.assertIn("neither a host", err)
+
+    def test_nothing_fits_even_at_1280(self):
+        rc, _out, err, _calls = self.measure(self.mtu_fleet(), "phone", "--ssh", "c@h", whole_up_to=1200)
+        self.assertEqual(rc, 1)
+        self.assertIn("even 1280", err)
+
+    @unittest.skipUnless(have("shellcheck"), "shellcheck not installed")
+    def test_the_measuring_script_passes_shellcheck(self):
+        path = os.path.join(self.tmp, "probe.sh")
+        write(path, "#!/bin/sh\n" + mtu._SCRIPT % {"container": "km-vpn-server", "addr": "10.8.0.1", "payload": 1000})
+        r = subprocess.run(["shellcheck", "-S", "warning", path], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+
 class FakeNetcup:
     """netcup's Keycloak and SCP API, as much as `kiwi-server vps` uses, plus the
     presigned storage URL. In-process, on a loopback port, no network."""

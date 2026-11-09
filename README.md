@@ -130,6 +130,19 @@ secrets, and one built for a different `disk:` than the server really has. It
 removes the ISO from netcup's store when it is done, and forgets the machine's
 old SSH host keys.
 
+To find out what a path really carries, connect the node or device and measure:
+
+```bash
+kiwi-server mtu fleet.yaml m1 --ssh core@<address>          # a node
+kiwi-server mtu fleet.yaml phone --ssh core@<master>        # a device from secrets/devices/
+```
+
+It sends don't-fragment pings through the tunnel and reports the largest size
+that arrives whole. If a device's path is small, change that device's own
+config and leave everyone else alone. If a node's is, `wg_mtu` has to come down
+on it and its master; `--write` puts that in the fleet file. A packet split on
+the way out and put together by the far end cannot be seen from here.
+
 ## The fleet file
 
 ```yaml

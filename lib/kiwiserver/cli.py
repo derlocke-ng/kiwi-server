@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import luks, netcup, remote, router as routermod, toolchain as tcmod, util, wgeasy
+from . import luks, mtu, netcup, remote, router as routermod, toolchain as tcmod, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -659,6 +659,63 @@ def cmd_vps(args):
             print_probe(netcup.probe(client, server))
 
 
+def cmd_mtu(args):
+    """How big a packet really gets through one tunnel, and what to set."""
+    fleet, roles, ms = load(args)
+    _domain, master_ip, _mesh, master_mtu = fleet_facts(fleet, roles, ms)
+    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"]
+    if args.master:
+        masters = [h for h in masters if h.name == args.master]
+    if not masters:
+        raise KiwiError("no master in the fleet" if not args.master else "%s is not a master of the fleet" % args.master)
+    master = masters[0]
+    host = fleet.hosts.get(args.target)
+    if host is not None:
+        if host.role not in roles or roles[host.role].node_type != "node":
+            raise KiwiError("%s is not a node: this measures the tunnel of a node or a device" % host.name)
+        rolesmod.resolve_settings(roles[host.role], host, ms)
+        tgt, addr, cap = remote.target(host, args.ssh), master_ip, int(host.role_settings.get("wg_mtu") or 1376)
+        container = "%s-vpn-client" % modmod.PREFIX["node"]
+    else:
+        addr = args.target
+        conf = fleet.resolve_path("secrets/devices/%s.conf" % args.target)
+        if os.path.isfile(conf):
+            m = re.search(r"^\s*Address\s*=\s*([0-9.]+)", util.read_text(conf), re.M)
+            if not m:
+                raise KiwiError("%s has no Address line" % conf)
+            addr = m.group(1)
+        elif not re.fullmatch(r"[0-9.]+", args.target):
+            raise KiwiError("%s is neither a host of the fleet, a device in secrets/devices/, nor a mesh address" % args.target)
+        tgt, cap = remote.target(master, args.ssh), int(master_mtu or 1376)
+        container = "%s-vpn-server" % modmod.PREFIX["master"]
+    util.say("%s: measuring through the tunnel to %s (MTU %d)" % (args.target, addr, cap))
+    largest, tried = mtu.search(lambda size: mtu.send(tgt, container, addr, size), cap, util.say)
+    if args.porcelain:
+        print(json.dumps({"target": args.target, "largest": largest, "wg_mtu": cap, "tried": tried}, indent=2))
+        return
+    if largest is None:
+        raise KiwiError("%s: even 1280 bytes do not get through whole: this path needs a look by hand" % args.target)
+    if largest + mtu.STEP > cap:
+        util.say("%s: %d fits, the tunnel's MTU is right for this path" % (args.target, cap))
+        return
+    if host is None:
+        util.say("%s: use %d: set MTU = %d in this device's WireGuard config; nothing else has to change" % (args.target, largest, largest))
+        return
+    util.say("%s: use %d: this node's path is permanent, so wg_mtu has to be %d on it and on the master" % (args.target, largest, largest))
+    text = util.read_text(fleet.path)
+    new = mtu.set_wg_mtu(mtu.set_wg_mtu(text, host.name, host.role, largest) or "", master.name, master.role, largest)
+    if not args.write or not new:
+        util.say("  in %s, under %s's %s: and %s's %s:, wg_mtu: %d%s"
+                 % (os.path.basename(fleet.path), host.name, host.role, master.name, master.role, largest,
+                    "" if args.write else " (or run this again with --write)"))
+        if args.write:
+            raise KiwiError("%s is not laid out so that one line can change: set it by hand" % fleet.path)
+        return
+    util.write_text(fleet.path, new, 0o600)
+    util.say("  wrote wg_mtu: %d for %s and %s; next: kiwi-server apply %s %s %s"
+             % (largest, host.name, master.name, os.path.basename(fleet.path), master.name, host.name))
+
+
 def cmd_secrets(args):
     """The secrets a host's role resolved to, generated or written down, read
     from the fleet on this machine: nothing is asked of the host."""
@@ -1103,6 +1160,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
+  kiwi-server mtu <fleet> <node|device|address> [--write]   measure a tunnel's real MTU; say what to set
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
   kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
@@ -1162,6 +1220,10 @@ def build_parser():
     sub("ca", cmd_ca).add_argument("fleet")
     s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show"]); s.add_argument("fleet")
     s.add_argument("host"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
+    s = sub("mtu", cmd_mtu); s.add_argument("fleet"); s.add_argument("target", help="a node, a device in secrets/devices/, or a mesh address")
+    s.add_argument("--master", help="which master, when the fleet has more than one")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")
+    s.add_argument("--write", action="store_true", help="a node's result: write wg_mtu into the fleet file")
     s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install"]); s.add_argument("fleet")
     s.add_argument("target", nargs="?", help="a fleet host, or a server's id, address, name or nickname")
     s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")

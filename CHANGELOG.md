@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.14.0 — measure the MTU instead of guessing it
+
+- **`kiwi-server mtu <fleet> <node|device|address>`** sends don't-fragment
+  pings through a tunnel and finds the largest multiple of 16 that arrives
+  whole. A node measures from its own VPN client, because the client's firewall
+  drops pings coming in; a device is measured from the WireGuard server.
+- A reply that had to be reassembled does not count as fitting: WireGuard's
+  outer packets may be split on the way even when the ping comes back.
+- It says what to set. For a device, that device's own `MTU =`, with nobody
+  else affected. For a node, `wg_mtu` on it and on its master; `--write` puts
+  that in the fleet file, changing only those lines.
+
 ## 2.13.0 — a server at netcup without the web panel
 
 - **`kiwi-server vps`** drives netcup's Server Control Panel API. `vps login`

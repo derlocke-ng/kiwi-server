@@ -732,6 +732,15 @@ Asked for by the owner in November 2026:
   with NIP-42, because boards, groups and gift wraps are not signed by the
   person's key; `nostr-relay.members: registered | approved`, `write_pubkeys`
   stays for admins, bans as a list an admin keeps.
+  **Blocked, found 9 November 2026 on the test hub:** strfry, master included,
+  gives the write plugin the proven key only for a NIP-70 protected event by that
+  same key, so a member's boards, groups and sealed notes are still refused. It
+  also sends a challenge only for a protected event (1.1.3) or a restricted read
+  (master). Everything else in the rules worked live: `auth-required:`, proof of
+  work, gift wraps to members, admins' lists, the store read back after a restart.
+  The module is on the `relay-members` branch of kiwi-modules. It needs a strfry
+  that passes the key on for every event (a small patch, untried, in an image of
+  our own or upstream), or a gate in front of it.
 - **Production test use needs the unlock**, raised 9 November 2026: Tang, and
   every running OS encrypted with LUKS with a proper way to unlock it (Unlock,
   in design/control-plane.md, comes forward; sorbet and crumble are not

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.27.0 — CoreOS through the tunnel too
+
+- `unlock.ssh` works on CoreOS: `dracut-sshd`, layered, with a host key of its own, and
+  `kiwi-server unlock` forwards a ring in through it. Its host key goes on record at the
+  apply, and the reboot after that apply is the first with SSH in the initramfs.
+- A CoreOS machine whose ring is only reached through a forwarded port can install:
+  Ignition sizes the root partition, because the growing at the first boot takes a ring
+  that is not there yet, and the ring is forwarded in to add the key for the console.
+- `kiwi-server unlock` knows it got in from what the session prints, not from how long
+  it lasted; `--port` is for an initramfs reached through another port.
+
 ## 2.26.0 — a disk that opens by itself
 
 - kiwi-modules 0.15.0: the **`tang`** module serves rings.

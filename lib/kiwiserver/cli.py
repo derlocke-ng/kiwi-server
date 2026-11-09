@@ -894,6 +894,8 @@ def cmd_apply(args):
     for h in hosts:
         tgt = remote.reach(h, args.ssh)
         try:
+            if servers is None and unlock.wanted(h):
+                servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
             script, _b = r.script(h)
@@ -907,8 +909,6 @@ def cmd_apply(args):
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
             if unlock.wanted(h):
-                if servers is None:
-                    servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
                 unlock.bind(h, tgt, servers)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
@@ -1130,7 +1130,7 @@ def cmd_unlock(args):
         unlock.type_key(hosts[0], address=args.address, timeout=args.timeout)
         return
     servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
-    unlock.open_disk(hosts[0], servers, ring=args.ring, address=args.address, timeout=args.timeout)
+    unlock.open_disk(hosts[0], servers, ring=args.ring, address=args.address, port=args.port, timeout=args.timeout)
 
 
 def cmd_prune(args):
@@ -1414,6 +1414,7 @@ def build_parser():
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")
     s.add_argument("--address", metavar="ADDR", help="where the machine answers, instead of the fleet's addresses for it")
+    s.add_argument("--port", type=int, metavar="N", help="the initramfs's SSH port, where something forwards it elsewhere")
     s.add_argument("--timeout", type=int, default=300, metavar="SECONDS", help="how long to wait for its initramfs (default %(default)s)")
     s = sub("prune", cmd_prune); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--keep-daily", type=int, default=backupmod.KEEP["daily"], metavar="N", help="days with a snapshot to keep (default %(default)s)")

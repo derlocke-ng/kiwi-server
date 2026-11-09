@@ -104,9 +104,9 @@ def _fail(where, r):
     raise KiwiError("%s: %s" % (where, lines[-1]))
 
 
-def run(tgt, script, data=None, runner=subprocess.run):
-    """A shell script as root on the machine; stdout as bytes."""
-    argv = ["ssh"] + ssh_opts() + [tgt, "sudo sh -c " + shlex.quote(script)]
+def run(tgt, script, data=None, runner=subprocess.run, options=()):
+    """A shell script as root on the machine; stdout as bytes. `options` are more for ssh."""
+    argv = ["ssh"] + ssh_opts() + list(options) + [tgt, "sudo sh -c " + shlex.quote(script)]
     try:
         r = runner(argv, input=data, capture_output=True)
     except FileNotFoundError:

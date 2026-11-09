@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.9.0 — a hub and its relay
+
+- **A hub and its relay** (kiwi-modules 0.4.2): the `nostr-relay` module
+  (strfry behind the reverse proxy at `relay.<host>`, a mesh name the
+  fleet's DNS resolves and the fleet CA signs) and the `hub` module (a
+  distribution built with kiwi-framework's `container/Dockerfile`, Armory's
+  `ghcr.io/derlocke-ng/armory` by default, behind the proxy at
+  `hub.<host>`; its relays, policy and public area set from the module's
+  settings and written to the page's `hub.local.json` at start). The node
+  role's `hub` preset is the two behind the VPN client: a private hub as it
+  comes, semi-public with `public_relays` and `public_mounts` under `hub`.
+  `hub` also has `account_mounts` and `require_account` (mounts that ask for
+  an account, a username and password, not a key alone; for kiwi-framework
+  0.19) and `space_relays` (a space's own relays).
+- **`tests/check-version.sh` also compares the vendored kiwi-modules** with
+  the package's own version: kiwi-modules 0.4.0 and 0.4.1 went out with the
+  two disagreeing, and vendoring either would have carried that here.
+
 ## 2.8.0 — the stack network and the tunnels get an MTU each
 
 - **The stack network and the tunnels have an MTU each** (problem 40):

@@ -7,3 +7,9 @@ p=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' lib/kiwiserver/__init__.py)
 c=$(grep -m1 -oE '^## \[?[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 echo "manifest=$m package=$p changelog=$c"
 [[ $m == "$p" && $m == "$c" ]] || { echo "version mismatch" >&2; exit 1; }
+
+# the vendored renderer says the release VENDORED pins
+v=$(sed -n 's/^kiwi-modules=v//p' VENDORED)
+k=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' lib/kiwimodules/__init__.py)
+echo "vendored kiwi-modules=$v package=$k"
+[[ $v == "$k" ]] || { echo "kiwi-modules version mismatch" >&2; exit 1; }

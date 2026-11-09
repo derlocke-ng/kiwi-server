@@ -281,6 +281,23 @@ over plain SSH, before there is any mesh. The archive is openssl AES-256 with
 a passphrase-derived key, so `openssl enc -d -aes-256-cbc -md sha256 -pbkdf2
 -iter 600000 -in FILE | tar xz` opens it without kiwi-server.
 
+A disk can open itself at boot. The `tang` module on one node serves a *ring*, and
+another machine's `unlock:` block binds its disk to it:
+
+```yaml
+    papaya: { node: { modules: [vpn-client, tang] } }          # serves the ring infra on port 7500
+    lychee: { debian: { encrypt: true }, unlock: { rings: [infra], ssh: true } }
+```
+
+On a Debian machine `apply` does the binding; a CoreOS machine is bound by Ignition, so
+build its ISO with the ring running. Its key stays in another keyslot, in
+`secrets/luks/<host>.key`, so a ring that is gone costs a console and not the disk. A
+machine that cannot reach the ring at boot, such as a master on the Internet, is bound
+through `via: { infra: "http://127.0.0.1:7500" }` and opened with `kiwi-server unlock
+<fleet> <host>`, which forwards the ring in over SSH in its initramfs (`--manual`
+hands over the key instead). A machine cannot serve its own ring. Back up the rings'
+keys: the `backup` module keeps them.
+
 A machine's own data is the job of two modules. `backup-server` on a node with
 a big disk stores it; `backup` on a machine sends it there with restic,
 encrypted, every night and on `sudo kiwi-stack backup`:

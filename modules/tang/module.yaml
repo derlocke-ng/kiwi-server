@@ -1,0 +1,45 @@
+schema_version: "1.0"
+
+module:
+  name: tang
+  title: Tang
+  version: 1.0.0
+  description: "Tang servers, which let the fleet's encrypted machines unlock at boot without anyone typing a key. A ring is one server with its own keys; the host's unlock: block says which rings may open its disk."
+  category: security
+  node_types: [node]
+
+dependencies:
+  required: []
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  # Tang's exchange is safe in the clear, and what a machine reaches at boot is this host's plain port
+  open_ports: ["{% for port in rings.values() %}{{ port }}/tcp {% endfor %}"]
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  bind_mounts:
+    - { each: rings, host: "${DOCKERDIR}/{{ container_prefix }}-tang/{{ item }}", type: dir }
+
+backup:
+  # without these keys the machines bound to them need their passphrase
+  paths: ["${DOCKERDIR}/{{ container_prefix }}-tang"]
+
+settings:
+  - key: rings
+    type: map
+    label: Rings
+    help: "Name=port: one Tang server each, with keys of its own. A machine bound to a ring can be opened by it and by no other."
+    default: { infra: "7500" }
+    key_pattern: '[a-z0-9-]+'
+    pattern: '[0-9]+'
+  - key: image
+    group: Advanced
+    default: ghcr.io/derlocke-ng/tang:15-kiwi2

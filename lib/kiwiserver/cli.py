@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import facts, luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, util, wgeasy
+from . import facts, luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -340,6 +340,9 @@ class Renderer:
                 if os.path.exists(stale):
                     os.unlink(stale)
         else:
+            if unlock.wanted(host):      # the thumbprints go into the Ignition: Ignition binds the disk
+                host.unlock_pins = unlock.pins(host, unlock.ring_servers(
+                    self.fleet, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms)))
             util.write_text(o.bu, coreos_t.render(host, script), 0o600)
             produced.append(o.bu)
             how, why = self.tc.how("butane")
@@ -887,6 +890,7 @@ def cmd_apply(args):
     check(fleet, roles, ms, hosts)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms)
     failed = []
+    servers = None
     for h in hosts:
         tgt = remote.reach(h, args.ssh)
         try:
@@ -902,6 +906,10 @@ def cmd_apply(args):
             rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force")
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
+            if unlock.wanted(h):
+                if servers is None:
+                    servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+                unlock.bind(h, tgt, servers)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             failed.append(h.name)
@@ -1114,6 +1122,17 @@ def cmd_backup(args):
         util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
 
 
+def cmd_unlock(args):
+    """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
+    fleet, roles, ms = load(args)
+    hosts = fleet.select([args.host])
+    if args.manual:
+        unlock.type_key(hosts[0], address=args.address, timeout=args.timeout)
+        return
+    servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+    unlock.open_disk(hosts[0], servers, ring=args.ring, address=args.address, timeout=args.timeout)
+
+
 def cmd_prune(args):
     """Old snapshots off the backup nodes. A machine can only add to its backups, so this
     is done from here, where the seed is."""
@@ -1302,6 +1321,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
+  kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian
@@ -1390,6 +1410,11 @@ def build_parser():
     s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--passphrase-file", metavar="FILE")
+    s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
+    s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")
+    s.add_argument("--address", metavar="ADDR", help="where the machine answers, instead of the fleet's addresses for it")
+    s.add_argument("--timeout", type=int, default=300, metavar="SECONDS", help="how long to wait for its initramfs (default %(default)s)")
     s = sub("prune", cmd_prune); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--keep-daily", type=int, default=backupmod.KEEP["daily"], metavar="N", help="days with a snapshot to keep (default %(default)s)")
     s.add_argument("--keep-weekly", type=int, default=backupmod.KEEP["weekly"], metavar="N", help="weeks (default %(default)s)")

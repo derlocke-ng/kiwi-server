@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.26.0 — a disk that opens by itself
+
+- kiwi-modules 0.15.0: the **`tang`** module serves rings.
+- A host's **`unlock:`** block names the rings that may open its disk. On Debian `apply`
+  binds the disk with Clevis and gives the initramfs network; its key stays in another
+  keyslot for the console. On CoreOS Ignition binds it at install, and the first `apply`
+  adds a key for the console.
+- `unlock.via` names the way to a ring that is not on the LAN. `unlock.ssh` puts an SSH
+  server in the initramfs (Debian), with its host key pinned while the machine can vouch
+  for it. **`kiwi-server unlock <fleet> <host>`** forwards a ring in through it, and
+  `--manual` hands over the disk's key instead.
+
 ## 2.25.0 — old backups go
 
 - **`kiwi-server prune <fleet>`** removes old snapshots from the backup nodes and frees

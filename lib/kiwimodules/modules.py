@@ -796,6 +796,10 @@ class Renderer:
             for bm in mod.bind_mounts:
                 if bm.get("each"):      # one directory per value of a list or map setting
                     values = ctx.get(str(bm["each"])) or []
+                    if bm.get("host"):  # or per key of a map, as {{ item }} in a path around it
+                        for k in values:
+                            bundle.add_dir(self.expand(str(bm["host"]), dict(ctx, item=k), "modules/%s/module.yaml storage.bind_mounts" % name))
+                        continue
                     for v in values.values() if isinstance(values, dict) else values:
                         bundle.add_dir(str(v))
                     continue
@@ -811,10 +815,10 @@ class Renderer:
                     # template is an error either way
                     if bm.get("required", True) or "is not set" not in str(e):
                         raise
-            for p in mod.open_ports:
-                p = self.expand(p, ctx, "modules/%s/module.yaml network.open_ports" % name).strip()
-                if p and p not in bundle.ports:
-                    bundle.ports.append(p)
+            for entry in mod.open_ports:         # a template may come out as several, or none
+                for p in self.expand(entry, ctx, "modules/%s/module.yaml network.open_ports" % name).split():
+                    if p not in bundle.ports:
+                        bundle.ports.append(p)
             for k, v in (mod.host.get("sysctl") or {}).items():
                 bundle.sysctl[str(k)] = str(v)
             for km in mod.host.get("kernel_modules") or []:

@@ -30,9 +30,10 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import facts, luks, mtu, store  # noqa: E402
+from kiwiserver import facts, luks, mtu, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
+from kiwiserver import util  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEh+test+kiwi+server+key+0000000000000000000 test@kiwi"
@@ -667,7 +668,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 19)
+        self.assertEqual(len(ms.names()), 20)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -1989,6 +1990,228 @@ class TestPrune(Base):
                          {"kept": 0, "removed": 0, "freed": ""})
 
 
+class TestUnlock(Base):
+    def unlock_fleet(self, rings=("infra",), threshold=1, lychee_net=None):
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        d = self.base_defaults(network={"dhcp": False, "gateway": "192.168.2.1", "dns": ["9.9.9.9"]})
+        write(os.path.join(self.tmp, "secrets", "luks", "lychee.key"), "thediskkey\n")
+        return self.fleet({"defaults": d, "hosts": {
+            "papaya": {"network": {"address": "192.168.2.30/16"}, "disk": "/dev/sda", "role": "node",
+                       "node": dict(node, modules=["vpn-client", "reverse-proxy", "tang"])},
+            "lychee": {"target": "debian", "network": lychee_net or {"address": "192.168.2.61/16"}, "disk": "/dev/sda",
+                       "debian": {"encrypt": True}, "unlock": {"rings": list(rings), "threshold": threshold},
+                       "role": "node", "node": dict(node, preset="minimal")}}})
+
+    def servers(self, f):
+        return unlock.ring_servers(f, lambda h: rolesmod.resolve_settings(self.roles[h.role], h, self.ms))
+
+    def fake_remote(self, listing="device /dev/vda5\n"):
+        calls = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            calls.append((tgt, script, data))
+            if "tang-show-keys" in script:
+                return b"THUMBPRINT\n"
+            if "/adv" in script:
+                return b'{"payload":"x"}\n'
+            if "clevis luks list" in script:
+                return listing.encode()
+            return b"updated\n" if "update-initramfs" in script else b""
+        return calls, mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@%s" % h.name)
+
+    def test_it_binds_with_the_thumbprint_the_rings_own_host_reports(self):
+        f = self.unlock_fleet()
+        calls, a, b = self.fake_remote()
+        with a, b:
+            self.assertTrue(unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f)))
+        self.assertEqual(calls[0][0], "core@papaya")
+        self.assertIn("kn-tang-infra tang-show-keys", calls[0][1])
+        key, dev, tree, old = calls[-1][2].decode().splitlines()
+        self.assertEqual((key, dev, old), ("thediskkey", "/dev/vda5", ""))
+        self.assertEqual(json.loads(tree), {"t": 1, "pins": {"tang": [{"url": "http://192.168.2.30:7500", "adv": {"payload": "x"}}]}})
+
+    def test_the_initramfs_gets_the_hosts_own_address(self):
+        f = self.unlock_fleet()
+        calls, a, b = self.fake_remote()
+        with a, b:
+            unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
+        prepare = next(c for c in calls if "update-initramfs" in c[1])
+        self.assertEqual(prepare[2], b"192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n")
+        self.assertIn("clevis-initramfs", prepare[1])
+
+    def test_what_is_already_bound_stays(self):
+        f = self.unlock_fleet()
+        calls, a, b = self.fake_remote("device /dev/vda5\n1: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.30:7500\"}]}}'\n")
+        with a, b:
+            self.assertFalse(unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f)))
+        self.assertFalse([c for c in calls if "luks bind" in c[1]])
+
+    def test_another_binding_goes_after_the_new_one_is_in(self):
+        f = self.unlock_fleet()
+        calls, a, b = self.fake_remote("device /dev/vda5\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://10.0.0.1:7500\"}]}}'\n")
+        with a, b:
+            self.assertTrue(unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f)))
+        script, data = calls[-1][1], calls[-1][2].decode().splitlines()
+        self.assertEqual(data[3], "2")
+        self.assertLess(script.index("luks bind"), script.index("luks unbind"))
+
+    def test_the_disk_key_never_lands_on_a_command_line(self):
+        f = self.unlock_fleet()
+        calls, a, b = self.fake_remote()
+        with a, b:
+            unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
+        self.assertFalse([c for c in calls if "thediskkey" in c[1]])
+
+    def test_a_ring_nobody_serves_is_named(self):
+        f = self.unlock_fleet(rings=("nope",))
+        _calls, a, b = self.fake_remote()
+        with a, b, self.assertRaisesRegex(KiwiError, "no host of this fleet serves the ring nope"):
+            unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
+
+    def test_a_ring_out_of_reach_is_named(self):
+        f = self.unlock_fleet(lychee_net={"address": "10.20.0.5/24", "gateway": "10.20.0.1"})
+        _calls, a, b = self.fake_remote()
+        with a, b, self.assertRaisesRegex(KiwiError, "cannot reach the ring on papaya"):
+            unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
+
+    def coreos_host(self, network=None):
+        write(os.path.join(self.tmp, "secrets", "x"), "")
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"plum": {
+            "disk": "/dev/vda", "unlock": {"rings": ["house"], "via": {"house": "http://192.168.2.61:7500"}},
+            "network": network or {"dhcp": True}}}})
+        h = f.hosts["plum"]
+        h.unlock_pins = [{"url": "http://192.168.2.61:7500", "thp": "THP", "adv": '{"payload":"x"}'}]
+        return h
+
+    def test_ignition_binds_a_coreos_disk_to_the_ring(self):
+        bu = coreos_t.build_butane(self.coreos_host(), "#!/bin/sh\n")
+        self.assertEqual(bu["boot_device"]["luks"]["tang"], [{"url": "http://192.168.2.61:7500", "thumbprint": "THP", "advertisement": '{"payload":"x"}'}])
+        self.assertEqual(bu["boot_device"]["luks"]["threshold"], 1)
+        self.assertEqual(bu["kernel_arguments"]["should_exist"], ["rd.neednet=1"])
+
+    def test_a_static_coreos_host_gets_its_address_in_the_initramfs(self):
+        h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1", "interface": "eno1"})
+        bu = coreos_t.build_butane(h, "#!/bin/sh\n")
+        self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0::eno1:none", bu["kernel_arguments"]["should_exist"])
+
+    def test_a_static_coreos_host_has_to_name_its_interface(self):
+        h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1"})
+        with self.assertRaisesRegex(KiwiError, "need network.interface"):
+            coreos_t.build_butane(h, "#!/bin/sh\n")
+
+    def test_a_coreos_disk_gets_a_key_for_the_console_from_its_own_binding(self):
+        h = self.coreos_host()
+        sent = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            sent.append((script, data))
+            return b"added /dev/vda4\n"
+        with mock.patch.object(remote, "run", fake_run):
+            self.assertTrue(unlock.bind(h, "core@plum", {}))
+        key = util.read_bytes(luks.key_file(h)).decode().strip()
+        self.assertEqual(sent[0][1], (key + "\n").encode())
+        self.assertNotIn(key, sent[0][0])
+        self.assertIn("clevis luks pass", sent[0][0])
+
+    def test_via_names_the_way_to_a_ring_off_the_lan(self):
+        f = self.unlock_fleet()
+        h, srv = f.hosts["lychee"], f.hosts["papaya"]
+        h.cfg["unlock"]["via"] = {"infra": "http://127.0.0.1:7500"}
+        self.assertEqual(unlock.url(h, "infra", srv, 7500), "http://127.0.0.1:7500")
+
+    def tunnel_host(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        h.cfg["unlock"].update(via={"infra": "http://127.0.0.1:7500"}, ssh=True)
+        return f, h
+
+    def test_the_initramfs_key_goes_on_record_while_the_machine_can_vouch_for_it(self):
+        f, h = self.tunnel_host()
+        self.addCleanup(lambda: None)
+
+        def fake_run(tgt, script, data=None, runner=None):
+            return b"ssh-ed25519 AAAAhostkey\n"
+        with mock.patch.object(remote, "run", fake_run):
+            unlock._initramfs_ssh(h, "core@lychee")
+        text = util.read_bytes(f.resolve_path("secrets/known_hosts.initramfs")).decode()
+        self.assertIn("[192.168.2.61]:2222 ssh-ed25519 AAAAhostkey", text)
+
+    def test_a_changed_initramfs_key_replaces_the_old_one(self):
+        f, h = self.tunnel_host()
+        write(f.resolve_path("secrets/known_hosts.initramfs"), "[192.168.2.61]:2222 ssh-ed25519 OLD\n")
+        with mock.patch.object(remote, "run", lambda t, s, data=None, runner=None: b"ssh-ed25519 NEW\n"):
+            unlock._initramfs_ssh(h, "core@lychee")
+        text = util.read_bytes(f.resolve_path("secrets/known_hosts.initramfs")).decode()
+        self.assertNotIn("OLD", text)
+        self.assertIn("[192.168.2.61]:2222 ssh-ed25519 NEW", text)
+
+    def test_the_ring_is_forwarded_and_the_host_key_must_match(self):
+        f, h = self.tunnel_host()
+        calls, a, b = self.fake_remote()
+        now = [0.0]
+
+        def runner(argv, stdin=None):
+            calls.append(("ssh", argv))
+            now[0] += 30        # held for half a minute: the initramfs went away with the disk open
+        with a, b, mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: addr == "192.168.2.61" or addr == "192.168.2.30"):
+            self.assertTrue(unlock.open_disk(h, self.servers(f), runner=runner, clock=lambda: now[0], sleep=lambda s: None))
+        argv = [c[1] for c in calls if c[0] == "ssh"][0]
+        self.assertIn("127.0.0.1:7500:192.168.2.30:7500", argv)
+        self.assertIn("root@192.168.2.61", argv)
+        self.assertEqual(argv[argv.index("-p") + 1], "2222")
+        self.assertIn("StrictHostKeyChecking=yes", argv)
+        self.assertLess(argv.index("StrictHostKeyChecking=yes"), argv.index("BatchMode=yes"))     # the first one given counts
+
+    def test_a_short_connection_is_not_an_open_disk(self):
+        f, h = self.tunnel_host()
+        _calls, a, b = self.fake_remote()
+        now = [0.0]
+
+        def runner(argv, stdin=None):
+            now[0] += 1
+
+        def sleeper(s):
+            now[0] += s
+        with a, b, mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True), self.assertRaisesRegex(KiwiError, "no initramfs answered"):
+            unlock.open_disk(h, self.servers(f), timeout=20, runner=runner, clock=lambda: now[0], sleep=sleeper)
+
+    def test_the_key_goes_over_ssh_without_a_line_end(self):
+        f, h = self.tunnel_host()
+        seen = []
+
+        def runner(argv, input=None, capture_output=True):
+            seen.append((argv, input))
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True):
+            self.assertTrue(unlock.type_key(h, runner=runner, sleep=lambda s: None))
+        self.assertEqual(seen[0][1], b"thediskkey")
+        self.assertEqual(seen[0][0][-1], "cryptroot-unlock")
+        self.assertNotIn("thediskkey", " ".join(seen[0][0]))
+
+    def test_a_refused_key_is_not_tried_again(self):
+        f, h = self.tunnel_host()
+        count = []
+
+        def runner(argv, input=None, capture_output=True):
+            count.append(1)
+            return subprocess.CompletedProcess(argv, 1, b"", b"")
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True), self.assertRaisesRegex(KiwiError, "counts tries"):
+            unlock.type_key(h, runner=runner, sleep=lambda s: None)
+        self.assertEqual(len(count), 1)
+
+    def test_the_initramfs_brings_up_its_loopback(self):
+        self.assertIn("ip link set lo up", unlock.PREPARE_DROPBEAR)
+
+    def test_nothing_to_forward_is_said(self):
+        f = self.unlock_fleet()
+        with self.assertRaisesRegex(KiwiError, "nothing to forward"):
+            unlock.forwarded_ring(f.hosts["lychee"])
+
+    def test_the_threshold_has_to_fit_the_rings(self):
+        f = self.unlock_fleet(threshold=2)
+        self.assertTrue([e for e in f.hosts["lychee"].validate(self.roles) if "unlock.threshold must be between 1" in e])
+
+
 class TestRemote(Base):
     class R:
         def __init__(self, rc=0, out=b"", err=b""):
@@ -3145,7 +3368,7 @@ class TestCli(Base):
         master = [r for r in data["roles"] if r["name"] == "master"][0]
         self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 19)
+        self.assertEqual(len(json.loads(out)["modules"]), 20)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian"})
 

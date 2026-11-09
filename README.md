@@ -299,7 +299,9 @@ hands over the key instead, on Debian). The key that does this, `secrets/unlock_
 opens no running machine and can only run the unlock; on CoreOS `unlock.ssh_from` also says
 where from. A machine behind NAT that nobody can reach at boot asks its master instead:
 `vpn-server.unlock_relay: { "7500": "<mesh address>:7500" }` there, and
-`via: { infra: "http://<master>:7500" }` on the machine. A machine cannot serve its own ring. Back up the rings'
+`via: { infra: "http://<master>:7500" }` on the machine. A machine cannot serve its own ring; the ring named `operator` is served from the machine
+running kiwi-server while it is needed, for what no other machine can open. Encrypting a
+CoreOS root takes about 4 GiB of memory at the first boot: on less, use `target: debian`. Back up the rings'
 keys: the `backup` module keeps them.
 
 A machine's own data is the job of two modules. `backup-server` on a node with

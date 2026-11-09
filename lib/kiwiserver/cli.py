@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
 from . import facts, luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, unlock, util, wgeasy
@@ -634,10 +635,23 @@ def vps_server(client, fleet, name, override):
                        or (h.role_settings_raw.get("vpn-server") or {}).get("wg_host") or h.name)
 
 
+COREOS_LUKS_MIB = 3500
+
+
+def _iso_key(host):
+    """A name of its own for every upload: netcup booted the previous ISO of the same name."""
+    return "kiwi-%s-%d.iso" % (host.name, time.time())
+
+
 def vps_install(args, fleet, client, server):
     h = fleet.hosts.get(args.target)
     if h is None:
         raise KiwiError("vps install needs a host of the fleet; %s is not one" % args.target)
+    memory = (server.get("serverLiveInfo") or {}).get("maxServerMemoryInMiB") or 0
+    if h.target != "debian" and unlock.wanted(h) and memory and memory < COREOS_LUKS_MIB:
+        raise KiwiError("%s has %d MiB of memory, and encrypting a CoreOS root copies the whole root into memory at the first boot: "
+                        "it runs out and stops in emergency mode, with nothing to see from here. Give it about 4 GiB, or target: debian"
+                        % (h.name, memory))
     disks = client.disks(server["id"])
     want = netcup.device_for(disks[0]) if disks else None
     if want and h.cfg.get("disk") != want:
@@ -655,7 +669,7 @@ def vps_install(args, fleet, client, server):
             raise KiwiError("this wipes %s: add --yes to go ahead" % label)
         if input("This wipes the disk of %s. Type its name to go ahead: " % label).strip() != label:
             raise KiwiError("not confirmed, nothing touched")
-    netcup.install(client, server, base + ".iso", "kiwi-%s.iso" % h.name, lambda m: util.say("%s: %s" % (h.name, m)))
+    netcup.install(client, server, base + ".iso", _iso_key(h), lambda m: util.say("%s: %s" % (h.name, m)))
     addresses = [a["ip"] for a in server.get("ipv4Addresses") or []]
     known = fleet.resolve_path("secrets/known_hosts")
     if os.path.isfile(known):                          # the reinstall made new host keys, and this is why

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.32.0 — a ring on this machine
+
+- The ring named **`operator`** is served by kiwi-server itself, from the operator's machine,
+  only while it is needed and only on that machine's loopback, with its keys in the secret
+  store. It is for what no other machine can open: a fleet with one master, the machine
+  that serves the other rings. `unlock.via` forwards it in.
+- `kiwi-server vps install` gives every upload a name of its own: netcup booted the previous
+  ISO of the same name, so a machine came up without the encryption it was built with.
+- It also refuses to encrypt a CoreOS root on a server with too little memory. The first
+  boot copies the whole root into memory, about 4 GiB is needed, and with 2 GiB it stops in
+  emergency mode with nothing to see from outside.
+
 ## 2.31.0 — a master comes back with its identity
 
 - A master's WireGuard state is kept with the fleet's secrets, refreshed by `apply` and

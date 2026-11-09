@@ -788,9 +788,12 @@ Asked for by the owner in November 2026:
   with the ring up, with the ring down and with the key at the console. Since 2.27.0
   also SSH in CoreOS's initramfs, with `dracut-sshd` layered until the phoenix image
   has it. Since 2.28.0 a key for the initramfs alone; since 2.29.0 the relay on the
-  master for NATed nodes, tried from behind NAT on the home connection. Open: a NATed
-  node on another network, `from=` on Debian (Dropbear has none), rings on more than one
-  host, rotation, the leash, and reinstalling the real machines.
+  master for NATed nodes, tried from behind NAT on the home connection. sorbet was
+  reinstalled encrypted that way on 9 November (no console, its WireGuard identity kept).
+  Since 2.32.0 the `operator` ring on the operator's machine. CoreOS needs about 4 GiB to
+  encrypt its root, so a 2 GiB VPS stays on Debian. Open: a NATed node on another network,
+  `from=` on Debian (Dropbear has none), rings on more than one host, rotation, the leash,
+  and papaya, which needs a stick by hand and a third share.
 - **A node that sleeps, keeps the backups and can stand in**, raised
   9 November 2026; not built. As a backup node it wakes for the night: by its own
   RTC alarm (nobody has to be awake to send anything) and by Wake-on-LAN when

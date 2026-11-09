@@ -41,7 +41,8 @@ made with the owner; do not reopen them without a reason.
   off, placed in
   `/var/lib/flatpak/extension/org.mozilla.firefox.systemconfig/x86_64/stable/{policies,certificates}`
   (it mounts at `/app/etc/firefox` in the sandbox; the enrol bundle's job).
-  Untested still: the dead-node drill, federation between the two
+  The dead-node drill passed on 9 November 2026 (ROADMAP, Proven on hardware).
+  Untested still: federation between the two
   networks, the MTU on a 5G path. A step that fails on hardware is a finding for
   `docs/ROADMAP.md`, not something to work around.
 

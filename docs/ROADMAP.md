@@ -31,13 +31,36 @@ rest comes.
 - Every decision about addressing, naming, DNS, podman and enrollment is
   implemented. 72 of the 75 findings of the 2.1.0 review are closed.
 
-## Not yet proven
+## Proven on hardware
 
-No target has booted end to end from this pipeline on real hardware, and
-the first-boot library is parsed and shellchecked but never executed by the
-tests. Everything under "Problems" that concerns the machine side was found
-by reading, not by booting. A real first boot of each target and a
-dead-node drill come before any new feature.
+The first hardware round (October and November 2026) booted Debian, uCore and
+Fedora CoreOS end to end from this pipeline, on two VPSes, a mini PC and a VM.
+The first-boot library is still only parsed and shellchecked by the tests; the
+machines are what ran it. Problems found by booting say so.
+
+**The dead-node drill, 9 November 2026.** A Debian VM with LUKS and the
+minimal stack plus Portainer, destroyed and rebuilt from a fresh base-system
+ISO with a one-time disk key. The ISO was built beforehand (6 seconds with the
+base image cached).
+
+| From the destroy | |
+|---|---|
+| 6 min | the installer has powered the VM off |
+| 8 min | one-time key typed, SSH answers, base system done |
+| 14 min | `apply` finished: key swapped, new volume key on the 20 GB disk, stack running |
+
+The manual steps were: attach the ISO and boot from it; after the power-off
+detach it and restore the boot order; type the one-time key at the console;
+remove the old host key from `secrets/known_hosts`, as `apply` asks after a
+reinstall; run `apply`. No re-enrollment: the node's WireGuard config was in
+`secrets/`. Lost: Portainer's data, which the backup module will cover.
+
+A reboot afterwards unlocked with the generated key, the clock wait succeeded,
+the VPN client forwarded, and the exit was up 46 seconds after the key, without
+a tunnel restart.
+
+Not proven yet: federation, a phone on 5G, a public hub, a restore of a node's
+data.
 
 ## Problems
 

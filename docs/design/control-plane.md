@@ -409,7 +409,8 @@ diffable:
 encrypted (`fleet.yaml.age`, opened like the store), so the file needs
 unlocking exactly when plaintext is in it.
 
-**The secret store** holds what cannot be hashed or generated: the seed, the
+**The secret store** (the file, the keyring and recovery identities, `secrets
+unlock|lock|status` exist since 2.17.0) holds what cannot be hashed or generated: the seed, the
 CA key, WireGuard configurations, any admin SSH key kept with the fleet, the
 one-time keys. One file per fleet, `secrets.age`, a tar of what is `secrets/`
 today, which nothing but `age` and `tar` opens by hand, as `openssl` and

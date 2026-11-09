@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import luks, mtu, netcup, remote, router as routermod, toolchain as tcmod, util, wgeasy
+from . import luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -344,6 +344,9 @@ class Renderer:
 # ---- commands -----------------------------------------------------------------------
 
 def load(args, need_roles=True):
+    st = store.Store.for_fleet(args.fleet)
+    if st.locked():      # before anything looks in secrets/: a missing seed would be made anew
+        raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % args.fleet)
     fleet = config.Fleet.load(args.fleet)
     remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
     roles = rolesmod.discover() if need_roles else None
@@ -716,9 +719,41 @@ def cmd_mtu(args):
              % (largest, host.name, master.name, os.path.basename(fleet.path), master.name, host.name))
 
 
+def secrets_store(args):
+    st = store.Store.for_fleet(args.fleet)
+    if args.action == "init":
+        recovery, saved = st.init()
+        util.say("secrets/ is now %s, and open in memory" % store.FILE)
+        if not saved:
+            util.warn("no keyring took the desktop key: unlocking will ask for the recovery key below")
+        print("\nYour recovery key. Save it somewhere safe now, on paper or in a password manager.\n"
+              "It is shown once, and without it a lost keyring means lost secrets:\n\n  %s\n" % recovery)
+    elif not st.exists():
+        if args.action == "status":
+            print("no secret store: secrets/ is plain files (kiwi-server secrets init %s)" % args.fleet)
+            return
+        raise KiwiError("this fleet has no secret store: kiwi-server secrets init %s" % args.fleet)
+    elif args.action == "unlock":
+        if not st.is_open():
+            st.unlock(st.identity(args.identity))
+        timed = store.schedule_lock(st, args.fleet, getattr(args, "for"))
+        util.say("the secret store is open%s" % (" for %s" % getattr(args, "for") if timed else ""))
+    elif args.action == "lock":
+        st.lock()
+        util.say("the secret store is locked")
+    else:
+        with open(st.recipients) as f:
+            names = [line[1:].split("(")[0].strip() for line in f if line.startswith("# ") and "who can" not in line]
+        print("%s; opens with: %s" % ("open" if st.is_open() else "locked", ", ".join(names)))
+
+
 def cmd_secrets(args):
     """The secrets a host's role resolved to, generated or written down, read
     from the fleet on this machine: nothing is asked of the host."""
+    if args.action != "show":
+        return secrets_store(args)
+    if not args.host:
+        raise KiwiError("which host? kiwi-server secrets show <fleet> <host> [setting]")
     fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
     util.QUIET = True           # stdout is the value
@@ -1160,6 +1195,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
+  kiwi-server secrets init|unlock|lock|status <fleet>  secrets/ as one encrypted file, opened into memory
   kiwi-server mtu <fleet> <node|device|address> [--write]   measure a tunnel's real MTU; say what to set
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
   kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
@@ -1218,8 +1254,10 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show"]); s.add_argument("fleet")
-    s.add_argument("host"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status"]); s.add_argument("fleet")
+    s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
+    s.add_argument("--for", default="8h", metavar="TIME", help="unlock: lock again after this long (default 8h; 0: stay open)")
+    s.add_argument("--identity", metavar="FILE", help="unlock: a file with the age secret key, instead of the keyring")
     s = sub("mtu", cmd_mtu); s.add_argument("fleet"); s.add_argument("target", help="a node, a device in secrets/devices/, or a mesh address")
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")
@@ -1268,6 +1306,18 @@ def build_parser():
     return p
 
 
+def save_store(args):
+    """What this command changed in an open store, encrypted before it exits:
+    a disk key that exists only in memory is gone with the next power cut."""
+    fleet = getattr(args, "fleet", None)
+    if not fleet:
+        return
+    try:
+        store.Store.for_fleet(fleet).sync()
+    except (KiwiError, OSError) as e:
+        print("warning: changes in secrets/ were not saved to %s: %s" % (store.FILE, e), file=sys.stderr)
+
+
 def main(argv=None):
     p = build_parser()
     args = p.parse_args(argv)
@@ -1290,4 +1340,6 @@ def main(argv=None):
         # `kiwi-server roles -v | head`: the reader went away, which is fine
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
+    finally:
+        save_store(args)
     return 0

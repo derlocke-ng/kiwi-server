@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -27,7 +28,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import luks, mtu  # noqa: E402
+from kiwiserver import luks, mtu, store  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -2305,6 +2306,148 @@ class TestManage(Base):
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestStore(Base):
+    def setUp(self):
+        super().setUp()
+        self.run_dir, self.keyring, fakebin = [os.path.join(self.tmp, d) for d in ("run", "keyring", "bin")]
+        for d in (self.run_dir, self.keyring, fakebin):
+            os.makedirs(d)
+        tool = os.path.join(fakebin, "secret-tool")
+        write(tool, '#!/bin/sh\n[ -e "$FAKE_KEYRING/broken" ] && exit 1\ncase $1 in\n'
+                    '  store) cat > "$FAKE_KEYRING/item" ;;\n'
+                    '  lookup) [ -f "$FAKE_KEYRING/item" ] && cat "$FAKE_KEYRING/item" ;;\nesac\n')
+        os.chmod(tool, 0o755)
+        env = mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.run_dir, "FAKE_KEYRING": self.keyring,
+                                           "PATH": fakebin + os.pathsep + os.environ.get("PATH", "")})
+        env.start()
+        self.addCleanup(env.stop)
+        timer = mock.patch.object(store, "schedule_lock", lambda *_a: False)
+        timer.start()
+        self.addCleanup(timer.stop)
+        cancel = mock.patch.object(store, "cancel_lock", lambda *_a: None)
+        cancel.start()
+        self.addCleanup(cancel.stop)
+        self.f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        self.secrets = os.path.join(self.tmp, "secrets")
+        write(os.path.join(self.secrets, "seed"), "S" * 32)
+        write(os.path.join(self.secrets, "deep", "key"), "private")
+        os.chmod(os.path.join(self.secrets, "deep", "key"), 0o600)
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = cli.main(list(args))
+            except SystemExit as e:
+                rc = e.code
+        return rc, out.getvalue(), err.getvalue()
+
+    def init(self):
+        rc, out, err = self.run_cli("secrets", "init", self.f.path)
+        self.assertEqual(rc, 0, err)
+        return re.search(r"AGE-SECRET-KEY-1\S+", out).group(0)
+
+    def read_secret(self, *path):
+        with open(os.path.join(self.secrets, *path)) as fh:
+            return fh.read()
+
+    def test_init_moves_secrets_into_the_store(self):
+        self.init()
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets.age")))
+        self.assertTrue(os.path.islink(self.secrets))                  # no plaintext left in the fleet directory
+        self.assertTrue(os.path.realpath(self.secrets).startswith(os.path.realpath(self.run_dir)))
+        self.assertEqual(self.read_secret("deep", "key"), "private")
+        self.assertEqual(oct(os.stat(os.path.join(self.secrets, "deep", "key")).st_mode & 0o777), "0o600")
+        with open(os.path.join(self.tmp, "secrets.age"), "rb") as fh:
+            self.assertNotIn(b"private", fh.read())
+        with open(os.path.join(self.tmp, "secrets.recipients")) as fh:
+            self.assertEqual(len([ln for ln in fh if ln.startswith("age1")]), 2)
+
+    def test_a_locked_store_stops_commands_and_makes_no_new_seed(self):
+        self.init()
+        rc, out, err = self.run_cli("secrets", "lock", self.f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(os.path.lexists(self.secrets))
+        self.assertEqual(os.listdir(self.run_dir), [])                 # nothing left in memory
+        rc, out, err = self.run_cli("validate", self.f.path)
+        self.assertEqual(rc, 1)
+        self.assertIn("locked", err)
+        self.assertFalse(os.path.lexists(self.secrets))
+
+    def test_unlock_from_the_keyring_brings_every_file_back(self):
+        self.init()
+        self.run_cli("secrets", "lock", self.f.path)
+        rc, out, err = self.run_cli("secrets", "unlock", self.f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read_secret("seed"), "S" * 32)
+        self.assertEqual(self.read_secret("deep", "key"), "private")
+        self.assertEqual(oct(os.stat(os.path.join(self.secrets, "deep", "key")).st_mode & 0o777), "0o600")
+
+    def test_the_recovery_key_opens_it_without_the_keyring(self):
+        recovery = self.init()
+        self.run_cli("secrets", "lock", self.f.path)
+        os.remove(os.path.join(self.keyring, "item"))
+        key = os.path.join(self.tmp, "recovery.txt")
+        write(key, "# saved\n%s\n" % recovery)
+        rc, out, err = self.run_cli("secrets", "unlock", self.f.path, "--identity", key)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read_secret("seed"), "S" * 32)
+
+    def test_a_change_is_saved_by_the_command_that_made_it(self):
+        self.init()
+        write(os.path.join(self.secrets, "luks", "a.key"), "only here")
+        rc, out, err = self.run_cli("validate", self.f.path)
+        self.assertEqual(rc, 0, err)
+        shutil.rmtree(self.run_dir)                                    # a power cut: memory is gone
+        os.makedirs(self.run_dir)
+        rc, out, err = self.run_cli("secrets", "unlock", self.f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read_secret("luks", "a.key"), "only here")
+
+    def test_without_a_keyring_it_says_so_and_asks_for_the_key(self):
+        write(os.path.join(self.keyring, "broken"), "")
+        self.init()
+        self.run_cli("secrets", "lock", self.f.path)
+        with mock.patch("sys.stdin", io.StringIO("")):
+            rc, out, err = self.run_cli("secrets", "unlock", self.f.path)
+        self.assertEqual(rc, 1)
+        self.assertIn("--identity", err)
+
+    def test_the_wrong_key_opens_nothing(self):
+        self.init()
+        self.run_cli("secrets", "lock", self.f.path)
+        key = os.path.join(self.tmp, "other.txt")
+        write(key, store.keygen()[0] + "\n")
+        rc, out, err = self.run_cli("secrets", "unlock", self.f.path, "--identity", key)
+        self.assertEqual(rc, 1)
+        self.assertIn("does not open", err)
+        self.assertFalse(os.path.lexists(self.secrets))
+
+    def test_init_twice_is_refused_and_status_reports(self):
+        rc, out, err = self.run_cli("secrets", "status", self.f.path)
+        self.assertIn("no secret store", out)
+        self.init()
+        rc, out, err = self.run_cli("secrets", "init", self.f.path)
+        self.assertEqual(rc, 1)
+        self.assertIn("already exists", err)
+        rc, out, err = self.run_cli("secrets", "status", self.f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("open; opens with: desktop, recovery", out)
+        self.run_cli("secrets", "lock", self.f.path)
+        rc, out, err = self.run_cli("secrets", "status", self.f.path)
+        self.assertIn("locked", out)
+
+    def test_a_tar_that_escapes_is_refused(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            info = tarfile.TarInfo("../evil")
+            info.size = 1
+            tar.addfile(info, io.BytesIO(b"x"))
+        with self.assertRaisesRegex(KiwiError, "not allowed"):
+            store.extract(buf.getvalue(), os.path.join(self.tmp, "x"))
+
+
 class TestMtu(Base):
     def run_cli(self, *args):
         out, err = io.StringIO(), io.StringIO()

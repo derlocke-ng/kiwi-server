@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.17.0 — secrets/ as one encrypted file
+
+- **`kiwi-server secrets init|unlock|lock|status <fleet>`**: `secrets/` becomes
+  `secrets.age`, encrypted with `age` to one key in the GNOME Keyring and one
+  recovery key shown once. `init` checks that both open the file before it
+  removes the plain files.
+- `unlock` opens it into memory, in `$XDG_RUNTIME_DIR`, with `secrets` a link
+  there, so everything else works as before. A timer locks it again after 8 hours
+  (`--for`). A command that changed something saves it before it exits, so a
+  power cut cannot take a new disk key with it.
+- **A locked store stops every command that reads the fleet**, so nothing can
+  make a new seed in place of the one locked away.
+- Stores nothing by itself: a fleet stays plain files until `secrets init`.
+- Not yet: `output/` in memory, an encrypted fleet file, adding a way of
+  unlocking to an existing store, and the fleet backup in `age`.
+
 ## 2.16.0 — a public hub, and nothing else public with it
 
 Carries kiwi-modules 0.8.0.

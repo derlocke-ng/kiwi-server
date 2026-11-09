@@ -1,0 +1,261 @@
+"""The secret store: secrets/ as one age-encrypted file, opened into tmpfs.
+
+secrets.age is a tar of what secrets/ holds; secrets.recipients lists the public
+keys it is encrypted to, one per way of opening it. While it is open, `secrets`
+in the fleet directory is a symlink into $XDG_RUNTIME_DIR, so everything that
+reads or writes secrets/ goes on working unchanged, and every command saves what
+it changed before it exits: a disk key that exists only in tmpfs would be lost
+with the next power cut. Nothing but age and tar is needed to open it by hand.
+
+Design: docs/design/control-plane.md, Secrets.
+"""
+import getpass
+import hashlib
+import io
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+
+from .util import KiwiError
+
+FILE = "secrets.age"
+RECIPIENTS = "secrets.recipients"
+_BREW = "/home/linuxbrew/.linuxbrew/bin"     # not on PATH for a desktop launcher or a timer
+_KEYRING = ("service", "kiwi-server", "store")
+
+
+def _tool(name):
+    path = shutil.which(name) or shutil.which(name, path=_BREW)
+    if not path:
+        raise KiwiError("%s is not installed: brew install age, or your distribution's age package" % name)
+    return path
+
+
+def keygen():
+    """(secret key, public key) of a new age identity."""
+    out = subprocess.run([_tool("age-keygen")], capture_output=True, text=True, check=True).stdout
+    secret = next(line for line in out.splitlines() if line.startswith("AGE-SECRET-KEY-"))
+    public = next(line.split(": ", 1)[1] for line in out.splitlines() if line.startswith("# public key:"))
+    return secret, public
+
+
+def snapshot(root):
+    """The tree as a tar, byte for byte the same while the tree is the same."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tar:
+        for here, dirs, files in os.walk(root):
+            dirs.sort()
+            for name in sorted(dirs + files):
+                path = os.path.join(here, name)
+                info = tar.gettarinfo(path, arcname=os.path.relpath(path, root))
+                info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, "", ""
+                if info.isreg():
+                    with open(path, "rb") as f:
+                        tar.addfile(info, f)
+                else:
+                    tar.addfile(info)
+    return buf.getvalue()
+
+
+def extract(data, target):
+    os.makedirs(target, mode=0o700, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r") as tar:
+        for m in tar.getmembers():
+            if os.path.isabs(m.name) or ".." in m.name.split("/"):
+                raise KiwiError("the store holds a path that is not allowed: %s" % m.name)
+            dest = os.path.join(target, m.name)
+            if m.isdir():
+                os.makedirs(dest, mode=0o700, exist_ok=True)
+            elif m.issym():
+                os.symlink(m.linkname, dest)
+            elif m.isreg():
+                os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as out:
+                    shutil.copyfileobj(tar.extractfile(m), out)
+                os.chmod(dest, m.mode & 0o777)
+            else:
+                raise KiwiError("the store holds something that is not a file: %s" % m.name)
+
+
+def keyring_put(store_id, secret):
+    tool = shutil.which("secret-tool")
+    if not tool:
+        return False
+    try:
+        r = subprocess.run([tool, "store", "--label=kiwi-server secret store %s" % store_id, *_KEYRING, store_id],
+                           input=secret, text=True, capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False
+    return r.returncode == 0
+
+
+def keyring_get(store_id):
+    tool = shutil.which("secret-tool")
+    if not tool:
+        return None
+    try:
+        r = subprocess.run([tool, "lookup", *_KEYRING, store_id], text=True, capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return None
+    return (r.stdout.strip() or None) if r.returncode == 0 else None
+
+
+class Store:
+    def __init__(self, fleet_dir):
+        self.dir = os.path.abspath(fleet_dir)
+        self.file = os.path.join(self.dir, FILE)
+        self.recipients = os.path.join(self.dir, RECIPIENTS)
+        self.link = os.path.join(self.dir, "secrets")
+
+    @classmethod
+    def for_fleet(cls, fleet_path):
+        return cls(os.path.dirname(os.path.abspath(fleet_path)))
+
+    def exists(self):
+        return os.path.isfile(self.file)
+
+    def store_id(self):
+        with open(self.recipients) as f:
+            keys = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        return hashlib.sha256(keys[0].encode()).hexdigest()[:16]
+
+    def runtime(self):
+        base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"
+        return os.path.join(base, "kiwi-server-%s" % self.store_id())
+
+    def _tree(self):
+        return os.path.join(self.runtime(), "secrets")
+
+    def _digest_file(self):
+        return os.path.join(self.runtime(), "digest")
+
+    def is_open(self):
+        return self.exists() and os.path.islink(self.link) and os.path.isdir(self.link)
+
+    def locked(self):
+        return self.exists() and not self.is_open()
+
+    def _encrypt(self, data):
+        tmp = self.file + ".tmp"
+        r = subprocess.run([_tool("age"), "-e", "-R", self.recipients, "-o", tmp], input=data, capture_output=True)
+        if r.returncode != 0:
+            raise KiwiError("age could not encrypt the store: %s" % r.stderr.decode(errors="replace").strip()[:200])
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.file)
+
+    def _decrypt(self, identity):
+        r = subprocess.run([_tool("age"), "-d", "-i", "-", self.file], input=identity.encode() + b"\n", capture_output=True)
+        if r.returncode != 0:
+            raise KiwiError("that key does not open this store")
+        return r.stdout
+
+    def _open(self, data):
+        shutil.rmtree(self.runtime(), ignore_errors=True)
+        os.makedirs(self.runtime(), mode=0o700)
+        extract(data, self._tree())
+        with open(self._digest_file(), "w") as f:
+            f.write(hashlib.sha256(snapshot(self._tree())).hexdigest())
+
+    def init(self):
+        """secrets/ into the store. Returns (recovery key, whether the keyring took the desktop key).
+        The plaintext goes only after both keys have been seen to open the file."""
+        if self.exists():
+            raise KiwiError("%s already exists" % self.file)
+        if os.path.islink(self.link) or not os.path.isdir(self.link):
+            raise KiwiError("there is no secrets/ directory in %s" % self.dir)
+        desktop, recovery = keygen(), keygen()
+        fd = os.open(self.recipients, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        with os.fdopen(fd, "w") as f:
+            f.write("# who can open secrets.age: one public key per way of unlocking it\n"
+                    "# desktop (its secret key is in the keyring)\n%s\n# recovery\n%s\n" % (desktop[1], recovery[1]))
+        data = snapshot(self.link)
+        try:
+            self._encrypt(data)
+            for secret, _public in (desktop, recovery):
+                if self._decrypt(secret) != data:
+                    raise KiwiError("the store did not decrypt to what went in; nothing was removed")
+        except KiwiError:
+            for leftover in (self.file, self.recipients):
+                if os.path.exists(leftover):
+                    os.remove(leftover)
+            raise
+        saved = keyring_put(self.store_id(), desktop[0])
+        self._open(data)
+        aside = self.link + ".replaced"
+        os.rename(self.link, aside)
+        os.symlink(self._tree(), self.link)
+        shutil.rmtree(aside)
+        return recovery[0], saved
+
+    def unlock(self, identity):
+        self._open(self._decrypt(identity))
+        if os.path.islink(self.link):
+            os.remove(self.link)
+        elif os.path.exists(self.link):
+            raise KiwiError("%s exists and is not the store's link: move it away first" % self.link)
+        os.symlink(self._tree(), self.link)
+
+    def sync(self):
+        """Encrypt what changed. Needs only the public keys, so it works from any command."""
+        if not self.is_open():
+            return False
+        data = snapshot(self._tree())
+        digest = hashlib.sha256(data).hexdigest()
+        with open(self._digest_file()) as f:
+            if f.read() == digest:
+                return False
+        self._encrypt(data)
+        with open(self._digest_file(), "w") as f:
+            f.write(digest)
+        return True
+
+    def lock(self):
+        self.sync()
+        cancel_lock(self)
+        if os.path.islink(self.link):
+            os.remove(self.link)
+        shutil.rmtree(self.runtime(), ignore_errors=True)
+
+    def identity(self, path=None):
+        """The key to open it with: a file named, the keyring, or typed."""
+        if path:
+            with open(path) as f:
+                keys = [line.strip() for line in f if line.startswith("AGE-SECRET-KEY-")]
+            if not keys:
+                raise KiwiError("%s holds no age secret key" % path)
+            return keys[0]
+        key = keyring_get(self.store_id())
+        if key:
+            return key
+        if not sys.stdin.isatty():
+            raise KiwiError("no key in the keyring and nobody to ask: give the recovery key with --identity FILE")
+        key = getpass.getpass("Recovery key (AGE-SECRET-KEY-...): ").strip()
+        if not key:
+            raise KiwiError("no key given")
+        return key
+
+
+def _lock_unit(store):
+    return "kiwi-lock-%s" % store.store_id()
+
+
+def cancel_lock(store):
+    if shutil.which("systemctl"):
+        subprocess.run(["systemctl", "--user", "stop", _lock_unit(store) + ".timer"], capture_output=True)
+
+
+def schedule_lock(store, fleet_path, after):
+    """A user timer that locks the store again. False where there is none to set."""
+    if not re.fullmatch(r"\d+[smhd]?", after):
+        raise KiwiError("--for takes a time like 8h, 30m or 0 (stay open)")
+    cancel_lock(store)
+    if re.fullmatch(r"0+[smhd]?", after) or not shutil.which("systemd-run"):
+        return False
+    me = shutil.which("kiwi-server") or os.path.abspath(sys.argv[0])
+    r = subprocess.run(["systemd-run", "--user", "--quiet", "--unit", _lock_unit(store), "--on-active", after,
+                        me, "secrets", "lock", os.path.abspath(fleet_path)], capture_output=True)
+    return r.returncode == 0

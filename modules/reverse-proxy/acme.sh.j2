@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Let's Encrypt certificates for the public names of {{ hostname }}: asks for one
+# when it is missing or within 30 days of expiring, and has nginx reload when one
+# changed. A name that cannot be issued yet (no DNS record, say) is reported and
+# tried again at the next run.
+set -u
+dir={{ docker_dir }}/{{ container_prefix }}-nginx
+rt={{ runtime }}
+changed=0
+
+# nginx has to be answering before Let's Encrypt comes to look
+for _ in $(seq 1 30); do
+    "$rt" exec {{ container_prefix }}-nginx test -f /etc/nginx/nginx.conf 2>/dev/null && break
+    sleep 2
+done
+
+for name in {{ public_names | join(' ') }}; do
+{% if not acme_staging %}
+    # certbot would keep a certificate from the test service until it expires
+    if grep -qs 'acme-staging' "$dir/letsencrypt/renewal/$name.conf"; then
+        rm -rf "$dir/letsencrypt/live/$name" "$dir/letsencrypt/archive/$name" "$dir/letsencrypt/renewal/$name.conf"
+    fi
+{% endif %}
+    if ! "$rt" run --rm --network host \
+        -v "$dir/letsencrypt:/etc/letsencrypt:z" -v "$dir/www:/var/www/acme:z" {{ acme_image }} \
+        certonly --non-interactive --agree-tos --keep-until-expiring \
+{% if acme_email %}
+        --email {{ acme_email }} \
+{% else %}
+        --register-unsafely-without-email \
+{% endif %}
+{% if acme_staging %}
+        --staging \
+{% endif %}
+        --webroot -w /var/www/acme --cert-name "$name" -d "$name"; then
+        echo "no certificate for $name yet: does its DNS record point at this machine?"
+        continue
+    fi
+    src=$dir/letsencrypt/live/$name
+    dest=$dir/acme/$name
+    if [[ -f $src/fullchain.pem ]] && ! cmp -s "$src/fullchain.pem" "$dest/fullchain.pem"; then
+        mkdir -p "$dest"
+        cp -L "$src/fullchain.pem" "$dest/fullchain.pem"
+        cp -L "$src/privkey.pem" "$dest/privkey.pem"
+        chmod 600 "$dest/privkey.pem"
+        changed=1
+    fi
+done
+if [[ $changed == 1 ]]; then
+    "$rt" exec {{ container_prefix }}-nginx nginx -s reload
+fi
+exit 0

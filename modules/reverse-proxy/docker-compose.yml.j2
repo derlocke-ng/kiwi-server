@@ -22,3 +22,9 @@ services:
       - {{ docker_dir }}/{{ container_prefix }}-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
+{% if public_names %}
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/start.sh:/etc/nginx/start.sh:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/acme:/etc/nginx/acme:z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/www:/var/www/acme:z
+    command: /bin/sh /etc/nginx/start.sh
+{% endif %}

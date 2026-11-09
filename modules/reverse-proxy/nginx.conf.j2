@@ -52,7 +52,19 @@ http {
     server {
         listen 80 default_server;
         server_name _;
+{% if public_names %}
+
+        # Let's Encrypt asks for its challenge here
+        location /.well-known/acme-challenge/ {
+            root /var/www/acme;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+{% else %}
         return 301 https://$host$request_uri;
+{% endif %}
     }
 
     # a name no module announced: close the connection instead of serving the first block
@@ -69,7 +81,15 @@ http {
         listen 443 ssl;
         http2 on;
         server_name {{ s.server_name }};
-{% if s.hsts or (s.hsts is none and hsts) %}
+{% if s.public %}
+        ssl_certificate     /etc/nginx/acme/{{ s.server_name }}/fullchain.pem;
+        ssl_certificate_key /etc/nginx/acme/{{ s.server_name }}/privkey.pem;
+{% elif public_names %}
+        # 443 is open to the internet on this machine; this site is not for it
+        allow {{ mesh_subnet }};
+        deny all;
+{% endif %}
+{% if (s.hsts or (s.hsts is none and hsts)) and not (s.public and acme_staging) %}
         add_header Strict-Transport-Security "max-age=15768000; includeSubDomains; preload;" always;
 {% endif %}
         add_header Referrer-Policy "no-referrer" always;

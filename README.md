@@ -143,6 +143,24 @@ config and leave everyone else alone. If a node's is, `wg_mtu` has to come down
 on it and its master; `--write` puts that in the fleet file. A packet split on
 the way out and put together by the far end cannot be seen from here.
 
+A hub belongs on a master. As a private hub it needs only the two modules. To
+make it public, give it public names, point their DNS records at the master
+(DNS only, if the provider proxies), and open the proxy:
+
+```yaml
+master:
+  modules: [vpn-client, vpn-server, dns, tor, reverse-proxy, nostr-relay, hub]
+  reverse-proxy: { public: true, acme_email: you@example.org }
+  hub: { hub_domain: hub.example.org }
+  nostr-relay: { relay_domain: relay.example.org, write_pubkeys: [<64 hex characters>] }
+```
+
+That publishes 80 and 443. The public names get Let's Encrypt certificates, which
+a timer renews; `acme_staging: true` tries it out on the test service first.
+Every other site on the master, the admin pages among them, keeps answering
+the mesh only. Anyone may read the relay; the mesh may post, and from the
+internet only the keys in `write_pubkeys`.
+
 ## The fleet file
 
 ```yaml

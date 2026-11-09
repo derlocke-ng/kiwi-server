@@ -1,0 +1,9 @@
+[Unit]
+Description=Kiwi Network: Let's Encrypt certificates for the public names of {{ hostname }}
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=network-online.target kiwi-stack.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/acme.sh

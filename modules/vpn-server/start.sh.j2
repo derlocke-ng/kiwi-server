@@ -111,4 +111,8 @@ ip route flush cache
 iptables -t mangle -A OUTPUT -p udp --sport 51820 -j MARK --set-mark 65
 iptables -t mangle -A OUTPUT -p tcp --sport 51821 -j MARK --set-mark 65
 iptables -t mangle -A OUTPUT -p tcp --sport 80 -j MARK --set-mark 65
+{% if public_names %}
+# a public site's replies to the internet; its replies to the mesh stay on wg0
+iptables -t mangle -A OUTPUT -p tcp --sport 443 ! -d {{ mesh_subnet }} -j MARK --set-mark 65
+{% endif %}
 {% endif %}

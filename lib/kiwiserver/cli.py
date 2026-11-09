@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import remote, router as routermod, toolchain as tcmod, util, wgeasy
+from . import luks, remote, router as routermod, toolchain as tcmod, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -630,6 +630,8 @@ def cmd_apply(args):
     for h in hosts:
         tgt = remote.target(h, args.ssh)
         try:
+            if not args.no_run:
+                luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
             script, _b = r.script(h)
             util.say("%s: sending the role script to %s" % (h.name, tgt))
             remote.put(tgt, script.encode(), "/var/lib/kiwi-server/role.sh", "0700")
@@ -775,6 +777,8 @@ def _render_or_build(args, build):
                 util.say("building %s (%s, %s) -> %s" % (h.name, h.target, h.role, out_dir))
                 o = r.build(h, cache_dir_for(args))
                 util.say("%s: %s (%d MB)" % (h.name, o.iso, os.path.getsize(o.iso) >> 20))
+                if luks.uses_one_time_key(h):
+                    util.say("%s: at its first boot the disk asks for the key in %s" % (h.name, luks.once_file(h)))
             else:
                 o, produced = r.render(h)
                 util.say("%s: %s" % (h.name, ", ".join(os.path.basename(p) for p in produced)))

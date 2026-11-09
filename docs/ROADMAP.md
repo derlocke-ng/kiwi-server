@@ -664,7 +664,7 @@ Asked for by the owner in November 2026:
 - **Secrets off the media and encrypted at rest** (design/control-plane.md,
   Secrets). First, with no controller: `build` and `script` bare by default,
   `--offline` and a warning for media that carry secrets (done in 2.10.0); a one-time LUKS key
-  per build, replaced at first contact, `cryptsetup reencrypt` on a master;
+  per install, replaced at first contact, `cryptsetup reencrypt` on a master (done in 2.11.0);
   the fleet file's literals gone to hashes and seed-generated values,
   `validate` refusing what is left unless the file is encrypted. Then the
   `age` secret store and `kiwi-server secrets unlock|lock|status|show`, with

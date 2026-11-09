@@ -24,6 +24,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
+from kiwiserver import luks  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -419,6 +420,24 @@ class TestDebian(Base):
                                                        debian={"packages": ["vim"]}), "hosts": {"d": host}})
         s = self.render(f, "d")
         return f.hosts["d"], debian_t.preseed(f.hosts["d"], VERSION), debian_t.iso_files(f.hosts["d"], s)
+
+    def test_one_time_key_without_a_passphrase(self):
+        h, ps, _files = self.make(debian={"encrypt": True})
+        path = luks.once_file(h)
+        with open(path) as fh:
+            key = fh.read()
+        self.assertRegex(key, r"^[a-kmnp-x2-9]{14}$")        # typed at a console: no y/z, l/1, o/0
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+        self.assertIn("d-i partman-crypto/passphrase password %s\n" % key, ps)
+        self.assertIn("d-i partman-crypto/passphrase-again password %s\n" % key, ps)
+        _h, ps, _files = self.make(debian={"encrypt": True})  # the same until the machine's first apply
+        self.assertIn("d-i partman-crypto/passphrase password %s\n" % key, ps)
+
+    def test_literal_passphrase_is_kept_and_warned_about(self):
+        h, ps, _files = self.make(debian={"encrypt": True, "passphrase": "secret-pass"})
+        self.assertIn("d-i partman-crypto/passphrase password secret-pass\n", ps)
+        self.assertFalse(os.path.exists(luks.once_file(h)))
+        self.assertTrue(any("debian.passphrase" in w for w in h.warnings), h.warnings)
 
     def test_preseed_powers_off_when_done(self):
         _h, ps, _files = self.make()
@@ -2096,6 +2115,114 @@ class TestManage(Base):
         self.assertIn("no master in the fleet", err)
         rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", "http://127.0.0.1:1")
         self.assertEqual(rc, 1)
+
+    ONCE = "abcdefghijk234"
+
+    def luks_host(self, role="bare", **debian):
+        host = {"role": role, "target": "debian", "debian": dict({"encrypt": True}, **debian)}
+        if role == "master":
+            host["master"] = self.master()
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {"d": host}})
+
+    def luks_file(self, kind):
+        return os.path.join(self.tmp, "secrets", "luks", "d." + kind)
+
+    def luks_apply(self, f, state="swapped /dev/vda5\n", reencrypt_fails=False, pending=True, flags=()):
+        if pending:
+            write(self.luks_file("once"), self.ONCE)
+        calls = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            calls.append((script, data))
+            if "luksChangeKey" in script:
+                return state.encode()
+            if "cryptsetup reencrypt" in script and reencrypt_fails:
+                raise KiwiError("the reencrypt was cut off")
+            return b""
+        with mock.patch.object(remote, "run", fake_run), \
+                mock.patch.object(remote, "run_stream", lambda *a, **k: 0):
+            rc, out, err = self.run_cli("apply", f.path, "d", "--ssh", "core@1.2.3.4", *flags)
+        return rc, out, err, calls
+
+    def sent_role(self, calls):
+        return any("role.sh.tmp" in script for script, _data in calls)
+
+    def test_apply_swaps_the_one_time_key_before_the_role_arrives(self):
+        rc, out, err, calls = self.luks_apply(self.luks_host())
+        self.assertEqual(rc, 0, err)
+        script, data = calls[0]
+        self.assertIn("luksChangeKey", script)
+        self.assertNotIn(self.ONCE, script)                  # on stdin, never on a command line
+        once, new, current = data.decode().split("\n")[:3]
+        self.assertEqual((once, current), (self.ONCE, ""))
+        self.assertRegex(new, r"^[a-kmnp-x2-9]{16}$")
+        self.assertIn("role.sh.tmp", calls[1][0])            # the secrets come after the swap
+        self.assertEqual(len(calls), 2)                      # and no new volume key on a non-master
+        with open(self.luks_file("key")) as fh:
+            self.assertEqual(fh.read(), new)
+        self.assertEqual(oct(os.stat(self.luks_file("key")).st_mode & 0o777), "0o600")
+        self.assertFalse(os.path.exists(self.luks_file("once")))
+        self.assertFalse(os.path.exists(self.luks_file("next")))
+
+    def test_a_master_gets_a_new_volume_key_before_the_role(self):
+        rc, out, err, calls = self.luks_apply(self.luks_host(role="master"))
+        self.assertEqual(rc, 0, err)
+        new = calls[0][1].decode().split("\n")[1]
+        self.assertIn("cryptsetup reencrypt", calls[1][0])
+        self.assertNotIn("exec cryptsetup", calls[1][0])     # the EXIT trap removes the key; exec would skip it
+        self.assertEqual(calls[1][1].decode(), "%s\n/dev/vda5\n" % new)
+        self.assertIn("role.sh.tmp", calls[2][0])
+
+    @unittest.skipUnless(have("shellcheck"), "shellcheck not installed")
+    def test_luks_scripts_pass_shellcheck(self):
+        for name, text in (("swap", luks.SWAP_SCRIPT), ("reencrypt", luks.REENCRYPT_SCRIPT)):
+            path = os.path.join(self.tmp, name + ".sh")
+            write(path, "#!/bin/sh\n" + text)
+            r = subprocess.run(["shellcheck", "-S", "warning", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_reencrypt_setting_beats_the_default(self):
+        _rc, _out, _err, calls = self.luks_apply(self.luks_host(role="master", reencrypt=False))
+        self.assertFalse(any("cryptsetup reencrypt" in c[0] for c in calls))
+        _rc, _out, _err, calls = self.luks_apply(self.luks_host(reencrypt=True))
+        self.assertTrue(any("cryptsetup reencrypt" in c[0] for c in calls))
+
+    def test_a_cut_off_run_sends_no_secrets_and_can_be_repeated(self):
+        f = self.luks_host(role="master")
+        rc, _out, err, calls = self.luks_apply(f, reencrypt_fails=True)
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.sent_role(calls))
+        self.assertTrue(os.path.exists(self.luks_file("once")))
+        new = calls[0][1].decode().split("\n")[1]
+        rc, _out, err, calls = self.luks_apply(f, state="already /dev/vda5\n")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(calls[0][1].decode().split("\n")[1], new)   # the same new key, not another
+        self.assertTrue(self.sent_role(calls))
+        self.assertFalse(os.path.exists(self.luks_file("once")))
+
+    def test_no_disk_that_opens_stops_before_the_role(self):
+        rc, _out, err, calls = self.luks_apply(self.luks_host(), state="none\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("older ISO", err)
+        self.assertFalse(self.sent_role(calls))
+        self.assertTrue(os.path.exists(self.luks_file("once")))
+
+    def test_a_key_made_for_a_later_install_is_left_alone(self):
+        rc, _out, err, calls = self.luks_apply(self.luks_host(), state="current /dev/vda5\n")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.sent_role(calls))
+        self.assertTrue(os.path.exists(self.luks_file("once")))
+        self.assertFalse(os.path.exists(self.luks_file("next")))
+
+    def test_nothing_to_swap(self):
+        swapped = lambda calls: any("luksChangeKey" in c[0] for c in calls)   # noqa: E731
+        _rc, _out, _err, calls = self.luks_apply(self.luks_host(), pending=False)   # replaced already
+        self.assertFalse(swapped(calls))
+        self.assertFalse(os.path.exists(self.luks_file("once")))     # and apply makes no new one
+        _rc, _out, _err, calls = self.luks_apply(self.luks_host(), flags=("--no-run",))
+        self.assertFalse(swapped(calls))
+        _rc, _out, _err, calls = self.luks_apply(self.luks_host(passphrase="literal"))
+        self.assertFalse(swapped(calls))
 
     def test_apply_and_status_through_fake_ssh(self):
         write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"),

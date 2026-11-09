@@ -367,8 +367,32 @@ UX and ecosystem:
     DNAT at all, because `enable_vpn_dnat` follows the modules'
     `needs_vpn_dnat` and Portainer said false. It is served by the reverse
     proxy, so it says true now. (modules/portainer/module.yaml)
+59. *Found on hardware (9 November 2026), open.* Tor's first start can fail
+    when the WireGuard server's namespace is new, at a boot and at a re-apply
+    that recreates the network: `Could not bind to <mesh address>:9050:
+    Address not available`. `After=km-vpn-server.service` is met as soon as
+    the container runs, before `start.sh` has brought `wg0` up. It is a race
+    (the Mullvad master lost it twice, the direct-exit master won its one
+    re-apply), and systemd's restart recovers it, so the trace is
+    `NRestarts=1`, and an apply that prints `all … running` while `verify`
+    seconds later says `km-tor (activating)`. Fix: Tor waits for the address,
+    or the server's unit reports ready only once `wg0` is up.
+    (modules/tor, modules/vpn-server)
+60. *Found on hardware (9 November 2026), open.* A machine that boots with
+    its clock ahead shuts itself out of the mesh until real time catches up.
+    WireGuard's responder ignores a handshake whose timestamp is not newer
+    than the newest it has seen from that peer. A node VM's RTC was 23
+    minutes fast; it shook hands with the master, timesyncd stepped the clock
+    back, and from then on the master dropped every handshake in silence:
+    gluetun restarted its tunnel every six seconds, the node's conntrack
+    showed `[UNREPLIED]`, the master's peer no new handshake, and nothing
+    logged why. It heals when the clock passes the poisoned timestamp or the
+    master's WireGuard restarts. Fix: the VPN client's unit waits for
+    `time-sync.target` (`systemd-time-wait-sync`) with a timeout, so a node
+    without NTP still comes up; `kiwi-stack health` reports a backwards clock
+    step next to a stale handshake. (roles/common/lib.sh, modules/vpn-client)
 40. **MTU.** *Found on hardware (the v1 fleet, 7 November 2026); the
-    generator's half fixed (unreleased, kiwi-modules 0.3.0).* Symptoms: TLS
+    generator's half fixed in 2.8.0 (kiwi-modules 0.3.0).* Symptoms: TLS
     stalls and stuttering streams through the VPN. One `mtu` (1412) was the
     stack network's, gluetun's and wg-easy's at once, but the bridge carries
     the tunnels' *encrypted* packets, 60 bytes bigger over IPv4, so every
@@ -413,6 +437,22 @@ UX and ecosystem:
     counters above, per namespace (`nsenter -t <pid> -n`), sampled across a
     transfer; any growth of `FragCreates` or `ReasmOKs` is a warning.
     (kiwi-stack, modules/vpn-server, cli.py enroll, routers.md)
+
+    On the test fleet (9 November 2026; two masters and a node re-applied
+    from main, kiwi-modules 0.3.0): bridge 1500, `wg0` and gluetun 1376,
+    `--set-mss 1336`, up on the first apply. A 50 MB download and a 15 MB
+    upload from a real device, through the mesh and the commercial exit,
+    split no packet on the device, the master's host or either VPN
+    namespace, and the same transfer from inside the node's VPN client split
+    none on the node or the master. The old values hardly split on this chain either (12 on the
+    host, 4 in gluetun): `wg0` at 1332 kept TCP small enough to fit the 1412
+    bridge. So the test fleet shows the new values do no harm; the evidence
+    that they cure anything is the v1 fleet's numbers above. A device
+    enrolled before the change keeps `MTU = 1412` and still works: the MSS
+    covers TCP, and a 1412-byte packet with DF set is refused with
+    fragmentation-needed, after which the device's kernel uses 1376. Not
+    measured: a device actually configured at 1376, a client through the
+    direct-exit master (its network has no device yet), a phone on 5G.
 37. A node publishes its services on the host (80/443 of the reverse proxy,
     the sftp port, what `published_ports` lists) because a node lives on a
     LAN; on a public host that is the internet. A master is safe there (its

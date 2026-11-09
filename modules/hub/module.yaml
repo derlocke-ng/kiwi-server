@@ -6,7 +6,7 @@ module:
   version: 1.1.0
   description: "A hub built on kiwi-framework (Armory, or your fork) as a container behind the reverse proxy at hub.<hostname>: its relays, policy and public area set here, so a private hub inside the VPN, a semi-public one with a public chat, or a public one come from the same image"
   category: productivity
-  node_types: [node, master]
+  node_types: [master]
 
 dependencies:
   required: [reverse-proxy]

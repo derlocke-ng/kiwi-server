@@ -6,7 +6,7 @@ module:
   version: 1.0.0
   description: "strfry, a nostr relay, behind the reverse proxy at relay.<hostname>: the relay a hub built on kiwi-framework keeps its events on. Reachable through the mesh (TLS from the fleet CA); public when the host publishes 443 under a public name with a certificate for it"
   category: network
-  node_types: [node, master]
+  node_types: [master]
 
 dependencies:
   required: [reverse-proxy]

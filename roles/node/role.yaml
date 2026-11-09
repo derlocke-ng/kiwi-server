@@ -25,15 +25,11 @@ presets:
     title: Minimal
     description: Only the VPN client and the reverse proxy — add modules in the host's block.
     modules: [vpn-client, reverse-proxy]
-  hub:
-    title: Hub
-    description: A nostr relay and a hub built on kiwi-framework behind nginx, behind the VPN client — a private hub as it comes; public_relays and public_mounts under hub make it semi-public.
-    modules: [vpn-client, reverse-proxy, nostr-relay, hub]
 settings:
   - key: preset
     group: Stack
     type: enum
-    options: [gateway, cloud, minimal, hub]
+    options: [gateway, cloud, minimal]
     label: Preset
     help: "The module list to start from. modules: in this block replaces it."
     default: gateway

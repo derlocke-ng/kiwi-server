@@ -1,0 +1,85 @@
+schema_version: "1.0"
+
+module:
+  name: immich
+  title: Immich
+  version: 1.0.0
+  description: "Immich, photos and videos from your phone, behind the reverse proxy at immich.<hostname>"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  immich_host: "{{ immich_domain or 'immich.' ~ hostname }}"
+  library_path: "{{ library_dir or docker_dir ~ '/' ~ container_prefix ~ '-immich/library' }}"
+
+storage:
+  volumes: [immich_db, immich_model_cache]
+  bind_mounts:
+    - { host: "{{ library_path }}", type: dir, required: true }
+
+urls:
+  - "Immich: https://{{ immich_host }} — the first person to sign up becomes the admin"
+
+nginx:
+  upstream:
+    name: immich
+    server: "{{ container_prefix }}-immich:2283"
+  server_name: "{{ immich_host }}"
+  proxy_pass: "http://immich"
+  websocket: true
+  client_max_body_size: "0"
+  proxy_read_timeout: 600s
+  comment: Immich
+
+settings:
+  - key: immich_domain
+    label: Name
+    help: "Empty: immich.<hostname>."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: library_dir
+    label: Library directory
+    help: "Where photos and videos live, e.g. a big disk mounted at /mnt/data/immich. Empty: under the stack directory."
+    default: ""
+  - key: machine_learning
+    type: bool
+    label: Machine learning
+    help: "Face recognition and search by content. Its container wants a few GB of memory; off, the rest of Immich still works."
+    default: true
+  - key: db_password
+    type: secret
+    generate: true
+    group: Generated
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the server as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    default: ghcr.io/immich-app/immich-server:v3
+  - key: ml_image
+    group: Advanced
+    default: ghcr.io/immich-app/immich-machine-learning:v3
+  - key: db_image
+    group: Advanced
+    default: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+  - key: redis_image
+    group: Advanced
+    default: docker.io/valkey/valkey:9

@@ -146,7 +146,7 @@ settings:
     default: 4096M
   - key: startup_apps
     label: Apps installed on first start
-    default: deck twofactor_totp tasks calendar contacts notes
+    default: deck twofactor_totp tasks calendar contacts notes end_to_end_encryption
   - key: additional_apks
     group: Advanced
     default: imagemagick

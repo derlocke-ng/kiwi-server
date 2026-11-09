@@ -1,0 +1,110 @@
+schema_version: "1.0"
+
+module:
+  name: paperless
+  title: Paperless-ngx
+  version: 1.0.0
+  description: "Paperless-ngx, scanned documents with OCR and full-text search, behind the reverse proxy at paperless.<hostname>"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  paperless_host: "{{ paperless_domain or 'paperless.' ~ hostname }}"
+  store_path: "{{ store_dir or docker_dir ~ '/' ~ container_prefix ~ '-paperless' }}"
+  consume_path: "{{ consume_dir or store_path ~ '/consume' }}"
+
+storage:
+  volumes: [paperless_db, paperless_redis]
+  bind_mounts:
+    - { host: "{{ store_path }}/data", type: dir, required: true }
+    - { host: "{{ store_path }}/media", type: dir, required: true }
+    - { host: "{{ store_path }}/export", type: dir, required: true }
+    - { host: "{{ consume_path }}", type: dir, required: true }
+
+urls:
+  - "Paperless-ngx: https://{{ paperless_host }} — user admin, the paperless.admin_password setting"
+
+nginx:
+  upstream:
+    name: paperless
+    server: "{{ container_prefix }}-paperless:8000"
+  server_name: "{{ paperless_host }}"
+  proxy_pass: "http://paperless"
+  websocket: true
+  client_max_body_size: "0"
+  proxy_read_timeout: 300s
+  comment: Paperless-ngx
+
+settings:
+  - key: paperless_domain
+    label: Name
+    help: "Empty: paperless.<hostname>."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: admin_password
+    type: secret
+    generate: true
+    label: Admin password
+    help: "The password of the Paperless user `admin`, set on the first start. Empty: generated from the seed."
+  - key: ocr_language
+    label: OCR language
+    help: "The language of most documents, e.g. deu or deu+eng. The image has English, German, Italian, Spanish and French."
+    default: eng
+    pattern: '[a-z_]+(\+[a-z_]+)*'
+  - key: store_dir
+    label: Storage directory
+    help: "Where documents and the search index live, e.g. a big disk mounted at /mnt/data/paperless. Empty: under the stack directory."
+    default: ""
+  - key: consume_dir
+    label: Consume folder
+    help: "Files put here are imported and removed: point a scanner or a share at it. Empty: consume under the storage directory."
+    default: ""
+  - key: office_documents
+    type: bool
+    label: Office documents and email
+    help: "Word, Excel and .eml files, through Tika and Gotenberg: two more containers."
+    default: true
+  - key: secret_key
+    type: secret
+    generate: true
+    group: Generated
+  - key: db_password
+    type: secret
+    generate: true
+    group: Generated
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to Paperless as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    default: ghcr.io/paperless-ngx/paperless-ngx:latest
+  - key: db_image
+    group: Advanced
+    default: docker.io/library/postgres:18
+  - key: redis_image
+    group: Advanced
+    default: docker.io/valkey/valkey:9-alpine
+  - key: gotenberg_image
+    group: Advanced
+    default: docker.io/gotenberg/gotenberg:8.38
+  - key: tika_image
+    group: Advanced
+    default: docker.io/apache/tika:3.3.1.0

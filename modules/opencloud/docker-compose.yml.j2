@@ -1,0 +1,32 @@
+# opencloud
+services:
+  {{ container_prefix }}-opencloud:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-opencloud
+    # the image's user; the stack user, who owns these directories, is uid 1000 too
+    user: "1000:1000"
+    entrypoint: ["/bin/sh"]
+    command: ["/kiwi-start.sh"]
+    environment:
+      - OC_URL=https://{{ opencloud_host }}
+      - OC_INSECURE={{ 'true' if insecure else 'false' }}
+      - PROXY_TLS=false
+      - OC_LOG_LEVEL={{ log_level }}
+      - IDM_CREATE_DEMO_USERS=false
+      - IDM_ADMIN_PASSWORD={{ admin_password }}
+      - TZ={{ timezone }}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-opencloud/start.sh:/kiwi-start.sh:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-opencloud/config:/etc/opencloud:z
+      - {{ data_path }}:/var/lib/opencloud:z

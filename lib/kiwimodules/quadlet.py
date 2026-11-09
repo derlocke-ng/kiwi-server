@@ -19,7 +19,7 @@ KNOWN_SERVICE_KEYS = {
     "image", "container_name", "environment", "volumes", "networks", "network_mode", "ports", "expose",
     "cap_add", "cap_drop", "sysctls", "devices", "restart", "logging", "security_opt", "init", "read_only",
     "tmpfs", "user", "shm_size", "stop_grace_period", "hostname", "command", "depends_on", "healthcheck",
-    "profiles", "labels", "extra_hosts", "dns",
+    "profiles", "labels", "extra_hosts", "dns", "entrypoint",
 }
 
 
@@ -162,6 +162,13 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
         container.append("Volume=%s" % v)
     for p in body.get("ports") or []:
         container.append("PublishPort=%s" % p)
+    entrypoint = body.get("entrypoint")
+    if isinstance(entrypoint, list) and len(entrypoint) == 1:
+        entrypoint = entrypoint[0]
+    if isinstance(entrypoint, list):
+        raise KiwiError("quadlet: %s: an entrypoint of several words is not translated; put them in command" % service)
+    if entrypoint:
+        container.append("PodmanArgs=--entrypoint=%s" % entrypoint)
     if body.get("command"):
         cmd = body["command"]
         container.append("Exec=%s" % (" ".join(cmd) if isinstance(cmd, list) else cmd))

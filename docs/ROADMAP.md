@@ -780,6 +780,8 @@ Asked for by the owner in November 2026:
 - **Nextcloud with end-to-end encryption on by default**, and **OpenCloud,
   Immich and Paperless-ngx as modules to try out** (the October list below), so
   the owner can judge them and work out how they should fit together.
+  Done in kiwi-modules 0.12.0 and running on a test node. Still open: how they fit
+  together, such as Paperless's archive reachable from Nextcloud and OpenCloud.
 
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node

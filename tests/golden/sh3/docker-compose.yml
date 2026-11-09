@@ -219,7 +219,7 @@ services:
     - FULLTEXTSEARCH_INDEX=nextcloud-aio
     - PHP_MAX_TIME=360000
     - TRUSTED_CACERTS_DIR=/usr/local/share/ca-certificates
-    - STARTUP_APPS=deck twofactor_totp tasks calendar contacts notes
+    - STARTUP_APPS=deck twofactor_totp tasks calendar contacts notes end_to_end_encryption
     - ADDITIONAL_APKS=imagemagick
     - ADDITIONAL_PHP_EXTENSIONS=imagick
     - INSTALL_LATEST_MAJOR=no

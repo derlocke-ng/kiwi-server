@@ -1,0 +1,4 @@
+#!/bin/sh
+# The first start writes /etc/opencloud; after that init declines and the server starts.
+opencloud init || true
+exec opencloud server

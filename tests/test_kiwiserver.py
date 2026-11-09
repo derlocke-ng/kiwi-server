@@ -2103,11 +2103,11 @@ class TestUnlock(Base):
         h = self.coreos_host()
         sent = []
 
-        def fake_run(tgt, script, data=None, runner=None):
+        def fake_run(tgt, script, data=None, runner=None, options=()):
             sent.append((script, data))
             return b"added /dev/vda4\n"
         with mock.patch.object(remote, "run", fake_run):
-            self.assertTrue(unlock.bind(h, "core@plum", {}))
+            self.assertTrue(unlock._coreos_key(h, "core@plum", {}))
         key = util.read_bytes(luks.key_file(h)).decode().strip()
         self.assertEqual(sent[0][1], (key + "\n").encode())
         self.assertNotIn(key, sent[0][0])
@@ -2148,27 +2148,27 @@ class TestUnlock(Base):
     def test_the_ring_is_forwarded_and_the_host_key_must_match(self):
         f, h = self.tunnel_host()
         calls, a, b = self.fake_remote()
-        now = [0.0]
 
-        def runner(argv, stdin=None):
+        def runner(argv, stdin=None, capture_output=True):
             calls.append(("ssh", argv))
-            now[0] += 30        # held for half a minute: the initramfs went away with the disk open
+            return subprocess.CompletedProcess(argv, 255, b"kiwi-unlock-connected\n", b"Connection reset")
         with a, b, mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: addr == "192.168.2.61" or addr == "192.168.2.30"):
-            self.assertTrue(unlock.open_disk(h, self.servers(f), runner=runner, clock=lambda: now[0], sleep=lambda s: None))
+            self.assertTrue(unlock.open_disk(h, self.servers(f), runner=runner, clock=lambda: 0.0, sleep=lambda s: None))
         argv = [c[1] for c in calls if c[0] == "ssh"][0]
         self.assertIn("127.0.0.1:7500:192.168.2.30:7500", argv)
-        self.assertIn("root@192.168.2.61", argv)
+        self.assertEqual(argv[-2], "root@192.168.2.61")
         self.assertEqual(argv[argv.index("-p") + 1], "2222")
         self.assertIn("StrictHostKeyChecking=yes", argv)
         self.assertLess(argv.index("StrictHostKeyChecking=yes"), argv.index("BatchMode=yes"))     # the first one given counts
 
-    def test_a_short_connection_is_not_an_open_disk(self):
+    def test_a_session_that_never_got_in_is_not_an_open_disk(self):
         f, h = self.tunnel_host()
         _calls, a, b = self.fake_remote()
         now = [0.0]
 
-        def runner(argv, stdin=None):
+        def runner(argv, stdin=None, capture_output=True):
             now[0] += 1
+            return subprocess.CompletedProcess(argv, 255, b"", b"Permission denied")
 
         def sleeper(s):
             now[0] += s
@@ -2201,6 +2201,42 @@ class TestUnlock(Base):
 
     def test_the_initramfs_brings_up_its_loopback(self):
         self.assertIn("ip link set lo up", unlock.PREPARE_DROPBEAR)
+
+    def test_ignition_sizes_the_root_when_the_ring_is_only_forwarded(self):
+        h = self.coreos_host()
+        h.cfg["unlock"]["via"] = {"house": "http://127.0.0.1:7500"}
+        bu = coreos_t.build_butane(h, "#!/bin/sh\n")
+        self.assertEqual(bu["boot_device"]["luks"]["tang"][0]["url"], "http://192.168.2.61:7500")
+        self.assertEqual(bu["storage"]["disks"][0]["partitions"], [{"label": "root", "number": 4, "size_mib": 0, "resize": True}])
+
+    def test_a_reachable_ring_leaves_the_partition_to_coreos(self):
+        self.assertNotIn("disks", coreos_t.build_butane(self.coreos_host(), "#!/bin/sh\n")["storage"])
+
+    def test_a_ring_only_we_reach_is_forwarded_to_read_the_coreos_key(self):
+        f = self.unlock_fleet()
+        h = f.hosts["papaya"]
+        h.target = "coreos"
+        srv = f.hosts["lychee"]
+        h.cfg["unlock"].update(rings=["house"], via={"house": "http://127.0.0.1:7500"})
+        seen = []
+
+        def fake_run(tgt, script, data=None, runner=None, options=()):
+            seen.append(list(options))
+            return b"added /dev/vda4\n"
+        with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "_answers", lambda a, p=22, timeout=2: True), \
+                mock.patch.object(remote, "addresses", lambda x: ["192.168.2.61"]):
+            self.assertTrue(unlock._coreos_key(h, "core@papaya", {"house": (srv, 7500)}))
+        self.assertEqual(seen[0], ["-R", "127.0.0.1:7500:192.168.2.61:7500"])
+
+    def test_coreos_gets_dracut_sshd_with_a_host_key_of_its_own(self):
+        self.assertIn("dracut-sshd", unlock.PREPARE_DRACUT_SSHD)
+        self.assertIn("/etc/ssh/dracut_ssh_host_ed25519_key", unlock.PREPARE_DRACUT_SSHD)
+        self.assertNotIn("/etc/ssh/ssh_host", unlock.PREPARE_DRACUT_SSHD)
+
+    def test_coreos_root_may_log_in_to_the_initramfs_with_a_key(self):
+        self.assertIn("root:*:", unlock.PREPARE_DRACUT_SSHD)
+        self.assertIn("--include --arg=$d/kiwi-sshd.conf", unlock.PREPARE_DRACUT_SSHD)
+        self.assertNotIn("usermod", unlock.PREPARE_DRACUT_SSHD)       # the host's own root stays locked
 
     def test_nothing_to_forward_is_said(self):
         f = self.unlock_fleet()

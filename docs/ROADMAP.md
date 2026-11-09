@@ -785,9 +785,10 @@ Asked for by the owner in November 2026:
   encrypted today). Since 2.26.0: the `tang` module, `unlock:` for Debian and for
   CoreOS at install, and `kiwi-server unlock` through SSH in Debian's initramfs. Tried
   on lychee (Debian, its ring on uCore) and a CoreOS VM (its ring on Debian), each
-  with the ring up, with the ring down and with the key at the console. Open: SSH in
-  CoreOS's initramfs, the relay on the master for NATed nodes, rings on more than one
-  host, rotation, the leash, and reinstalling the real machines.
+  with the ring up, with the ring down and with the key at the console. Since 2.27.0
+  also SSH in CoreOS's initramfs, with `dracut-sshd` layered until the phoenix image
+  has it. Open: the relay on the master for NATed nodes, rings on more than one host,
+  rotation, the leash, and reinstalling the real machines.
 - **A node that sleeps, keeps the backups and can stand in**, raised
   9 November 2026; not built. As a backup node it wakes for the night: by its own
   RTC alarm (nobody has to be awake to send anything) and by Wake-on-LAN when

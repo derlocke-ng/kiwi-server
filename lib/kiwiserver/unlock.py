@@ -111,6 +111,35 @@ fi
 dropbearkey -y -f $d/dropbear_ed25519_host_key | grep '^ssh-ed25519' | cut -d' ' -f1,2
 '''
 
+# The same on CoreOS: dracut-sshd, layered, with a host key of its own since the boot
+# partition is not encrypted. stdin: the keys that may log in. Takes effect at the next boot.
+# sshd refuses a key for an account it takes as locked, and the initramfs's /etc/shadow has
+# no root in it. dracut will not overwrite that file, so the line goes in under another
+# name and sshd's unit adds it at the start. `*` is no password at all, without being locked.
+PREPARE_DRACUT_SSHD = r'''
+set -eu
+keys=$(cat)
+d=/etc/dracut-sshd
+mkdir -p $d; chmod 0700 $d
+k=/etc/ssh/dracut_ssh_host_ed25519_key
+[ -f $k ] || ssh-keygen -q -t ed25519 -N '' -f $k
+if [ "$(cat $d/authorized_keys 2>/dev/null)" != "$keys" ]; then
+    printf '%s\n' "$keys" > $d/authorized_keys; chmod 0600 $d/authorized_keys
+    echo changed >&2
+fi
+printf 'root:*:19000:0:99999:7:::\n' > $d/kiwi-shadow; chmod 0600 $d/kiwi-shadow
+cat > $d/kiwi-sshd.conf <<'UNIT'
+[Service]
+ExecStartPre=/bin/sh -c 'grep -q ^root: /etc/shadow || cat /etc/kiwi-shadow >> /etc/shadow'
+UNIT
+rpm-ostree install --idempotent --allow-inactive dracut-sshd >/dev/null
+rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled' ||
+    rpm-ostree initramfs --enable --arg=--include --arg=$d/kiwi-shadow --arg=/etc/kiwi-shadow \
+        --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf >/dev/null
+cut -d' ' -f1,2 $k.pub
+'''
+
+_CONNECTED = "kiwi-unlock-connected"
 SSH_PORT = {"debian": 2222}      # else 22: CoreOS's initramfs sshd takes the normal port
 
 
@@ -232,7 +261,8 @@ def _known_hosts(host):
 def _initramfs_ssh(host, tgt):
     """SSH in the initramfs, and its host key on record while the machine can vouch for it:
     the boot partition is not encrypted, so that key is the only proof of who answers."""
-    out = remote.run(tgt, PREPARE_DROPBEAR % ssh_port(host), ("\n".join(host.ssh_keys()) + "\n").encode())
+    script = PREPARE_DROPBEAR % ssh_port(host) if host.target == "debian" else PREPARE_DRACUT_SSHD
+    out = remote.run(tgt, script, ("\n".join(host.ssh_keys()) + "\n").encode())
     key = out.decode(errors="replace").strip()
     if not key.startswith("ssh-ed25519 "):
         raise KiwiError("%s: the initramfs has no SSH host key" % host.name)
@@ -244,11 +274,13 @@ def _initramfs_ssh(host, tgt):
     util.write_bytes(path, ("\n".join(lines) + "\n").encode(), 0o600)
 
 
-def _coreos_key(host, tgt):
+def _coreos_key(host, tgt, servers):
     """A CoreOS disk was bound at install; what it lacks is a key for the console. It is
-    written here before the machine changes, so a run that is cut off can be repeated."""
+    written here before the machine changes, so a run that is cut off can be repeated.
+    Reading the binding takes the ring, so a ring only we can reach is forwarded in."""
     key = luks.current_key(host) or luks.make_key(host)
-    out = remote.run(tgt, ADD_KEY_SCRIPT, (key + "\n").encode()).decode(errors="replace").split()
+    options = ["-R", _forward(host, servers)[1]] if _forwarded_rings(host) else []
+    out = remote.run(tgt, ADD_KEY_SCRIPT, (key + "\n").encode(), options=options).decode(errors="replace").split()
     state = out[0] if out else "none"
     if state == "added":
         util.say("%s: the disk has a key for the console now, in %s" % (host.name, luks.key_file(host)))
@@ -259,16 +291,24 @@ def _coreos_key(host, tgt):
 
 def bind(host, tgt, servers):
     """Bind the disk to the host's rings; what is already right stays as it is."""
-    if host.target != "debian":
-        return _coreos_key(host, tgt)
+    coreos = host.target != "debian"
+    if coreos:
+        _coreos_key(host, tgt, servers)
     key = luks.current_key(host)
     if not key:
         raise KiwiError("%s: unlock: is set but the disk's key is not on record (secrets/luks/%s.key)" % (host.name, host.name))
     wanted_tree = tree(host, servers)
-    if b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
+    if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
+    changed = _rebind(host, tgt, key, wanted_tree)
     if host.cfg["unlock"].get("ssh"):
         _initramfs_ssh(host, tgt)
+        if coreos:
+            util.say("%s: SSH in the initramfs comes with the next boot" % host.name)
+    return changed
+
+
+def _rebind(host, tgt, key, wanted_tree):
     listing = remote.run(tgt, LIST_SCRIPT, (key + "\n").encode()).decode(errors="replace")
     if not listing.startswith("device "):
         raise KiwiError("%s: no disk on the machine opens with the key on record" % host.name)
@@ -286,10 +326,32 @@ def bind(host, tgt, servers):
 
 
 
+def forwarded(host):
+    """Is any ring reached only through a port someone forwards in? It cannot help a first boot."""
+    return bool(_forwarded_rings(host))
+
+
+def _forwarded_rings(host):
+    via = host.cfg["unlock"].get("via") or {}
+    return [r for r in host.cfg["unlock"]["rings"] if str(via.get(r) or "").startswith("http://127.0.0.1:")]
+
+
+def _forward(host, servers, ring=None):
+    """(ring, what ssh -R needs) for a ring this operator's machine can reach."""
+    name, inside = forwarded_ring(host, ring)
+    if name not in servers:
+        raise KiwiError("no host of this fleet serves the ring %s" % name)
+    server, port = servers[name]
+    ring_at = next((a for a in remote.addresses(server) if remote._answers(a, port)), None)
+    if not ring_at:
+        raise KiwiError("the ring %s on %s does not answer from this machine" % (name, server.name))
+    return name, "127.0.0.1:%d:%s:%d" % (inside, ring_at, port)
+
+
 def forwarded_ring(host, ring=None):
     """(ring, port inside the initramfs) of a ring reached through a forwarded port."""
     via = host.cfg["unlock"].get("via") or {}
-    choices = [r for r in host.cfg["unlock"]["rings"] if str(via.get(r) or "").startswith("http://127.0.0.1:")]
+    choices = _forwarded_rings(host)
     if ring and ring not in choices:
         raise KiwiError("%s: unlock.via does not forward the ring %s to 127.0.0.1" % (host.name, ring))
     if not choices:
@@ -301,7 +363,7 @@ def forwarded_ring(host, ring=None):
 def _initramfs_ssh_argv(host, address, options=(), command=()):
     """ssh into the initramfs: its own known_hosts, and the first option given is the one that counts."""
     return (["ssh", "-o", "UserKnownHostsFile=%s" % _known_hosts(host), "-o", "StrictHostKeyChecking=yes"] + remote.ssh_opts()
-            + ["-p", str(ssh_port(host))] + list(options) + ["root@%s" % address] + list(command))
+            + list(options or ["-p", str(ssh_port(host))]) + ["root@%s" % address] + list(command))
 
 
 def type_key(host, address=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
@@ -328,29 +390,26 @@ def type_key(host, address=None, timeout=300, runner=subprocess.run, clock=time.
     raise KiwiError("%s: no initramfs answered within %d s" % (host.name, timeout))
 
 
-def open_disk(host, servers, ring=None, address=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
+def open_disk(host, servers, ring=None, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
     """Forward a ring into a machine's initramfs and stay until the disk has opened, which
     is when the initramfs and its SSH server go away. The machine learns nothing it can
     use, and needs no key or tunnel of its own on the unencrypted boot partition."""
-    name, inside = forwarded_ring(host, ring)
-    if name not in servers:
-        raise KiwiError("no host of this fleet serves the ring %s" % name)
-    server, port = servers[name]
-    ring_at = next((a for a in remote.addresses(server) if remote._answers(a, port)), None)
-    if not ring_at:
-        raise KiwiError("the ring %s on %s does not answer from this machine" % (name, server.name))
-    util.say("%s: waiting for its initramfs; the ring %s is at %s:%d" % (host.name, name, ring_at, port))
+    name, forward = _forward(host, servers, ring)
+    util.say("%s: waiting for its initramfs; forwarding the ring %s" % (host.name, name))
     addresses = [address] if address else remote.addresses(host)
-    extra = ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
-             "-R", "127.0.0.1:%d:%s:%d" % (inside, ring_at, port)]
+    sshport = port or ssh_port(host)
+    options = ["-p", str(sshport), "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+               "-R", forward]
+    # The session prints this once it is in and the port is forwarded. It ends when the
+    # initramfs does, which can be seconds later: how long it lasted says nothing.
+    command = ["echo %s; sleep 900" % _CONNECTED]
     deadline = clock() + timeout
     while clock() < deadline:
         for a in addresses:
-            if not remote._answers(a, ssh_port(host)):
+            if not remote._answers(a, sshport):
                 continue
-            started = clock()
-            runner(_initramfs_ssh_argv(host, a, extra), stdin=subprocess.DEVNULL)
-            if clock() - started >= 5:          # it held: the initramfs is gone because the disk opened
+            r = runner(_initramfs_ssh_argv(host, a, options, command), stdin=subprocess.DEVNULL, capture_output=True)
+            if _CONNECTED.encode() in r.stdout:
                 util.say("%s: the disk is open; the machine goes on booting" % host.name)
                 return True
         sleep(3)

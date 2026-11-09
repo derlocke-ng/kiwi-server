@@ -9,7 +9,7 @@ import ipaddress
 
 import yaml
 
-from .. import util
+from .. import unlock, util
 from ..util import KiwiError
 from ..config import DAYS
 from . import ROLE_DIR, ROLE_SCRIPT, on_calendar, role_unit
@@ -134,6 +134,14 @@ def _file(path, contents, mode=0o644, overwrite=True):
     return {"path": path, "mode": mode, "overwrite": overwrite, "contents": {"inline": contents}}
 
 
+def _sized_by_ignition():
+    """The first boot grows the root partition, and growing a LUKS root takes the ring. A
+    ring behind a forwarded port is not there yet, so Ignition sizes the partition instead,
+    and the growing steps aside."""
+    return [{"device": "/dev/disk/by-id/coreos-boot-disk",
+             "partitions": [{"label": "root", "number": 4, "size_mib": 0, "resize": True}]}]
+
+
 def _unlock_kargs(host, pins):
     """A disk that needs Tang needs the network before the root is there."""
     if not pins:
@@ -244,6 +252,8 @@ def build_butane(host, role_script):
     elif pins:
         bu["boot_device"] = {"luks": {"tang": [{"url": p["url"], "thumbprint": p["thp"], "advertisement": p["adv"]} for p in pins],
                                       "threshold": int(c["unlock"]["threshold"]), "discard": True}}
+        if unlock.forwarded(host):
+            storage["disks"] = _sized_by_ignition()
     return bu
 
 

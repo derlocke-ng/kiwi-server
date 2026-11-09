@@ -367,7 +367,7 @@ UX and ecosystem:
     DNAT at all, because `enable_vpn_dnat` follows the modules'
     `needs_vpn_dnat` and Portainer said false. It is served by the reverse
     proxy, so it says true now. (modules/portainer/module.yaml)
-59. *Found on hardware (9 November 2026), open.* Tor's first start can fail
+59. *Found on hardware (9 November 2026), fixed in 2.9.1.* Tor's first start could fail
     when the WireGuard server's namespace is new, at a boot and at a re-apply
     that recreates the network: `Could not bind to <mesh address>:9050:
     Address not available`. `After=km-vpn-server.service` is met as soon as
@@ -375,10 +375,10 @@ UX and ecosystem:
     (the Mullvad master lost it twice, the direct-exit master won its one
     re-apply), and systemd's restart recovers it, so the trace is
     `NRestarts=1`, and an apply that prints `all … running` while `verify`
-    seconds later says `km-tor (activating)`. Fix: Tor waits for the address,
-    or the server's unit reports ready only once `wg0` is up.
-    (modules/tor, modules/vpn-server)
-60. *Found on hardware (9 November 2026), open.* A machine that boots with
+    seconds later says `km-tor (activating)`. The namespace now has
+    `net.ipv4.ip_nonlocal_bind=1`, so Tor may bind the address before it
+    exists: no failure in 11 starts on two masters. (modules/vpn-server)
+60. *Found on hardware (9 November 2026), fixed in 2.9.1.* A machine that boots with
     its clock ahead shuts itself out of the mesh until real time catches up.
     WireGuard's responder ignores a handshake whose timestamp is not newer
     than the newest it has seen from that peer. A node VM's RTC was 23
@@ -387,10 +387,22 @@ UX and ecosystem:
     gluetun restarted its tunnel every six seconds, the node's conntrack
     showed `[UNREPLIED]`, the master's peer no new handshake, and nothing
     logged why. It heals when the clock passes the poisoned timestamp or the
-    master's WireGuard restarts. Fix: the VPN client's unit waits for
-    `time-sync.target` (`systemd-time-wait-sync`) with a timeout, so a node
-    without NTP still comes up; `kiwi-stack health` reports a backwards clock
-    step next to a stale handshake. (roles/common/lib.sh, modules/vpn-client)
+    master's WireGuard restarts. `kiwi-stack.service` now starts after
+    `time-sync.target`, and a stack with a VPN client enables
+    `systemd-time-wait-sync`, bounded at 90 seconds so a machine without NTP
+    still comes up. Not tried: a boot with a deliberately fast clock. Still
+    open: `kiwi-stack health` reporting a backwards clock step next to a
+    stale handshake. (roles/common/lib.sh)
+61. *Found on hardware (9 November 2026), fixed in 2.9.1.* After a reboot a
+    master's mesh clients reached the master and its DNS but not the
+    internet. A new network namespace copies the host's `ip_forward` when it
+    is made, and at boot on podman the VPN client's is made before the
+    host's forwarding is on, so gluetun received the clients' packets and
+    did not forward them (0 in the namespace, its FORWARD counters still). A
+    restart or a re-apply hid it, the host's value being 1 by then, so
+    nothing showed until a device was connected after a reboot; the
+    unattended reboot after an update would have caused it. `vpn-client`
+    sets the sysctl itself now. (modules/vpn-client)
 40. **MTU.** *Found on hardware (the v1 fleet, 7 November 2026); the
     generator's half fixed in 2.8.0 (kiwi-modules 0.3.0).* Symptoms: TLS
     stalls and stuttering streams through the VPN. One `mtu` (1412) was the
@@ -667,6 +679,9 @@ Asked for by the owner in November 2026:
   needs 443 published from the WireGuard server's namespace
   (`vpn-server.published_ports`, which the unlock relay needs too) and a
   certificate for its public name.
+- **An MTU probe people run themselves** (problem 40): measure a node's or a
+  device's real path, then set the fleet's values from the result instead of
+  guessing them.
 
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node

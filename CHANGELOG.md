@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.9.1 — what a reboot exposed
+
+- **A master's mesh clients have internet after a reboot** (problem 61): the
+  VPN client's namespace copied the host's `ip_forward` while it was still 0,
+  so nothing could leave through it until the stack was restarted.
+  `vpn-client` sets the sysctl itself. A master applied with an earlier
+  version needs one re-apply.
+- **Tor no longer races the tunnel** (problem 59): where it shares the
+  WireGuard server's namespace, it may bind the mesh address before `wg0` has
+  it.
+- **The stack waits for the clock at boot** (problem 60): a machine that came
+  up with its clock ahead and opened its tunnel before NTP stepped it back
+  was shut out of the mesh until real time caught up. `kiwi-stack.service`
+  starts after `time-sync.target`, bounded at 90 seconds where there is a VPN
+  client.
+- Carries kiwi-modules 0.4.3 and kiwi-stack 0.2.3 (`VENDORED`).
+
 ## 2.9.0 — a hub and its relay
 
 - **A hub and its relay** (kiwi-modules 0.4.2): the `nostr-relay` module

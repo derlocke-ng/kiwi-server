@@ -10,6 +10,7 @@ Network=knet-master.network
 IP=172.64.0.2
 AutoUpdate=registry
 AddCapability=NET_ADMIN
+Sysctl=net.ipv4.ip_forward=1
 Sysctl=net.ipv4.tcp_mtu_probing=1
 Sysctl=net.ipv4.tcp_base_mss=1024
 AddDevice=/dev/net/tun:/dev/net/tun

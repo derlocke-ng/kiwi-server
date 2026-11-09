@@ -693,7 +693,9 @@ Asked for by the owner in November 2026:
   the fleet file's literals gone to hashes and seed-generated values (done in 2.12.0, `validate` warning for now),
   `validate` refusing what is left unless the file is encrypted. Then the
   `age` secret store and `kiwi-server secrets unlock|lock|status|show`, with
-  an identity in the GNOME Keyring, one sealed to the control node's rings
+  an identity in the GNOME Keyring (done in 2.17.0, with a recovery key;
+  still to do: `output/` in tmpfs, an encrypted fleet file so `validate` can
+  refuse literals, adding a recipient, a hardware key), one sealed to the control node's rings
   and a recovery one; the fleet backup moves to it (problem 21). A join
   medium that carries only the token, the CA certificate, the one-time key
   and hashes comes with step 5.

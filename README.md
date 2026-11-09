@@ -479,6 +479,14 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 - **The output holds secrets**: password hashes, WireGuard keys, TLS keys, the
   LUKS passphrase. Files are written 0600 and `output/` is in `.gitignore`;
   treat the ISOs the same way.
+- **The secret store** keeps `secrets/` encrypted when you are not using it.
+  `kiwi-server secrets init fleet.yaml` turns it into `secrets.age`, puts one key
+  in the GNOME Keyring and shows you a recovery key once: save that one somewhere
+  safe. After that `secrets unlock` opens it into memory for 8 hours (`--for`,
+  `--identity FILE` for the recovery key), `secrets lock` closes it, and a command
+  run while it is locked refuses and says so. It needs `age`
+  (`brew install age`); `age` and `tar` alone can open it by hand. While it is
+  open, anything running as you can read it.
 - **Service passwords you leave out are generated** from `secrets/seed`, the
   same at every render, so the fleet file need not hold them.
   `kiwi-server secrets show fleet.yaml <host> [setting]` prints one. `validate`

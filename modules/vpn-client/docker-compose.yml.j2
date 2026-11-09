@@ -54,6 +54,8 @@ services:
 {% endfor %}
 {% endif %}
     sysctls:
+{# never inherited: at boot this namespace is made before the host's forwarding is on #}
+      - net.ipv4.ip_forward=1
       - net.ipv4.tcp_mtu_probing=1
       - net.ipv4.tcp_base_mss=1024
     restart: unless-stopped

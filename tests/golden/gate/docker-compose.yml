@@ -24,6 +24,7 @@ services:
       knet-master:
         ipv4_address: 172.64.0.2
     sysctls:
+    - net.ipv4.ip_forward=1
     - net.ipv4.tcp_mtu_probing=1
     - net.ipv4.tcp_base_mss=1024
     restart: unless-stopped
@@ -64,6 +65,7 @@ services:
     sysctls:
     - net.ipv4.ip_forward=1
     - net.ipv4.conf.all.src_valid_mark=1
+    - net.ipv4.ip_nonlocal_bind=1
     restart: unless-stopped
     logging:
       driver: json-file

@@ -535,6 +535,17 @@ ks_stack_install_cli() {
     ks_file kiwi-stack-lib /usr/local/lib/kiwi-stack/lib.sh 0644
 }
 
+ks_time_sync_at_boot() {
+    # WireGuard ignores a handshake older than the newest it has seen from that peer, so a
+    # tunnel opened before NTP steps a fast clock back shuts the machine out until real time
+    # catches up. A stack with a VPN client waits for the clock at boot, bounded so a machine
+    # without NTP still comes up.
+    [[ -n ${KS_STACK_VPN_CONTAINER:-} && -x /usr/lib/systemd/systemd-time-wait-sync ]] || return 0
+    printf '%s\n' '[Service]' 'TimeoutStartSec=90' |
+        ks_unit systemd-time-wait-sync.service.d/90-kiwi.conf
+    systemctl enable -q systemd-time-wait-sync.service
+}
+
 ks_stack_units() { # the service that brings the stack up, and the two maintenance timers
     local vpn_restart=${KS_ROLE_DAILY_VPN_RESTART:-} weekly=${KS_ROLE_WEEKLY_UPDATE:-} rt_unit="" rt_requires=""
     if [[ $KS_STACK_RUNTIME == docker ]]; then rt_unit="docker.service"; rt_requires="Requires=docker.service"; fi
@@ -542,7 +553,7 @@ ks_stack_units() { # the service that brings the stack up, and the two maintenan
 [Unit]
 Description=Kiwi Server stack ($KS_ROLE: ${KS_STACK_MODULES[*]}, $KS_STACK_RUNTIME)
 Documentation=https://github.com/derlocke-ng/kiwi-server
-After=$rt_unit network-online.target
+After=$rt_unit network-online.target time-sync.target
 Wants=network-online.target
 $rt_requires
 
@@ -623,6 +634,7 @@ ks_stack_apply() {
     ks_stack_unpack
     ks_stack_install_cli
     ks_firewall_trust_mesh
+    ks_time_sync_at_boot
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
         ks_firewall_open "${KS_STACK_PORTS[@]}"
     fi

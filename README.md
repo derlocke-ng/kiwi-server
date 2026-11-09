@@ -23,10 +23,10 @@ fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash
   itself onto a `ghcr.io/ublue-os/ucore*` image, like the uCore project's own
   autorebase example), `debian` (trixie netinst, preseeded).
 - **Roles** — `bare`, `master` (WireGuard entry point with a double hop
-  through a commercial VPN, Pi-hole, Tor, nginx for the admin pages) and
+  through a commercial VPN, Pi-hole, Tor, nginx for the admin pages, and a nostr relay and a hub built on
+  kiwi-framework if its `modules:` list them) and
   `node` (any module set behind the VPN client: `preset: gateway` is the LAN
   gateway and download station, `preset: cloud` is Nextcloud and Vaultwarden,
-  `preset: hub` is a nostr relay and a hub built on kiwi-framework,
   `preset: minimal` is a start, `modules:` is your own list). The presets are
   the live kiwi-master, kiwi-node-gw and kiwi-cloud setups taken apart into
   **modules** — the kiwi-v2 module system (`modules/`), rendered on your
@@ -374,7 +374,7 @@ keep their own exit. `vpn-server.wg_password` is what the API logs in with.
 |---|---|---|
 | `bare` | the base system: admin user, SSH, updates | — |
 | `master` | the kiwi-master: WireGuard entry point (wg-easy) whose default route is the VPN client (gluetun to Mullvad or any provider — the double hop), Pi-hole and Tor on the server's network stack, isolated-client subnet | vpn-client, vpn-server, dns, tor |
-| `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway and download station (Pi-hole with DHCP, policy routing through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: hub` is a nostr relay (strfry, `relay.<host>`) and a hub built on [kiwi-framework](https://github.com/derlocke-ng/kiwi-framework) (Armory's image or a fork's, `hub.<host>`), a private hub inside the mesh as it comes, semi-public with `public_relays` and `public_mounts` under `hub`; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
+| `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway and download station (Pi-hole with DHCP, policy routing through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
 | `node-gw`, `node-cloud` | the gateway and cloud presets as roles of their own, for fleet files that use them | as above |
 
 The modules are kiwi-v2's (`modules/<name>/module.yaml` plus Jinja

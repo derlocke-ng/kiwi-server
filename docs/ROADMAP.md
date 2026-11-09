@@ -698,12 +698,15 @@ Asked for by the owner in November 2026:
   medium that carries only the token, the CA certificate, the one-time key
   and hashes comes with step 5.
 - **Hubs live on masters**, not nodes: a hub may be public, and a master is
-  the machine made to face the internet (problem 37). A master with
-  `nostr-relay` and `hub` in its `modules:` renders today, reachable through
-  the mesh. Still to do: the node role's `hub` preset goes, and a public hub
-  needs 443 published from the WireGuard server's namespace
+  the machine made to face the internet (problem 37). Done in 2.15.0: a
+  master with `nostr-relay` and `hub` in its `modules:` works through the
+  mesh, run on a test master, and a node is refused them. Still to do for a
+  public hub: nginx has no per-site access rules, because a master's 443 was
+  never public, so every site that is not meant to be public needs mesh-only
+  rules first, or `wg.` and `pihole.` answer anyone who sends the right
+  `Host` header. Then 443 published from the WireGuard server's namespace
   (`vpn-server.published_ports`, which the unlock relay needs too) and a
-  certificate for its public name.
+  Let's Encrypt certificate for its public name (the owner's choice).
 - **An MTU probe people run themselves** (problem 40): measure a node's or a
   device's real path, then set the fleet's values from the result instead of
   guessing them. Done in 2.14.0: `kiwi-server mtu`.

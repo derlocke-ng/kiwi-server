@@ -236,7 +236,7 @@ class TestRoles(Base):
     def test_discover(self):
         self.assertEqual(sorted(self.roles), ["bare", "master", "node", "node-cloud", "node-gw"])
         node = self.roles["node"]
-        self.assertEqual(sorted(node.presets), ["cloud", "gateway", "hub", "minimal"])
+        self.assertEqual(sorted(node.presets), ["cloud", "gateway", "minimal"])
         self.assertEqual(node.default_modules({"preset": "cloud"}), ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
         self.assertEqual(node.default_modules({}), node.presets["gateway"]["modules"])   # the first preset
         self.assertEqual(node.defaults_for("dns", {"preset": "gateway"}), {"expose_web_ui": True})
@@ -2762,7 +2762,7 @@ class TestCli(Base):
         data = json.loads(out)
         self.assertEqual(sorted(r["name"] for r in data["roles"]), ["bare", "master", "node", "node-cloud", "node-gw"])
         node = [r for r in data["roles"] if r["name"] == "node"][0]
-        self.assertEqual(list(node["presets"]), ["gateway", "cloud", "minimal", "hub"])
+        self.assertEqual(list(node["presets"]), ["gateway", "cloud", "minimal"])
         self.assertIn("cloud", [m["name"] for m in node["module_schemas"]])
         self.assertIn("vpn-client", [m["name"] for m in data["modules"]])
         master = [r for r in data["roles"] if r["name"] == "master"][0]

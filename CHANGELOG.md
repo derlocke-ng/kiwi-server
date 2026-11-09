@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.15.0 — hubs live on masters
+
+- **`hub` and `nostr-relay` are for masters now** (kiwi-modules 0.6.0): a hub may
+  be public, and a master is the machine made to face the internet. A node that
+  lists them is refused, and the node role's `hub` preset is gone; a master
+  lists them in its `modules:`.
+- Run on a test master: a device on the mesh gets the hub's page and config, the
+  relay's NIP-11 document and a websocket, with the fleet CA verifying.
+- Public hubs are not here yet: they need mesh-only rules on the master's other
+  sites before 443 can be published (ROADMAP).
+
 ## 2.14.0 — measure the MTU instead of guessing it
 
 - **`kiwi-server mtu <fleet> <node|device|address>`** sends don't-fragment

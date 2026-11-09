@@ -1930,12 +1930,13 @@ class TestPrune(Base):
             return subprocess.CompletedProcess(argv, 0, out, b"")
         r = backup.prune_repository("core@n.kiwi", "podman", "/data/papaya.kiwi", "restic:1", "s3cret", runner=runner)
         self.assertEqual(r, {"kept": 3, "removed": 3, "freed": "3 blobs / 1.5 MiB"})
-        self.assertEqual([c[1] for c in calls], [b"s3cret\n", b"s3cret\n"])
+        self.assertEqual([c[1] for c in calls], [b"s3cret\n"] * 3)
         self.assertNotIn("s3cret", " ".join(c[0] for c in calls))
-        self.assertIn("--network none", calls[0][0])
-        self.assertIn("--group-by host,tags", calls[0][0])
-        self.assertIn("--keep-daily 7 --keep-weekly 4 --keep-monthly 6", calls[0][0])
-        self.assertIn(" prune", calls[1][0])
+        self.assertIn(" unlock", calls[0][0])                # what a killed restic left must not stop this
+        self.assertIn("--network none", calls[1][0])
+        self.assertIn("--group-by host,tags", calls[1][0])
+        self.assertIn("--keep-daily 7 --keep-weekly 4 --keep-monthly 6", calls[1][0])
+        self.assertIn(" prune", calls[2][0])
 
     def test_a_dry_run_frees_nothing(self):
         calls = []
@@ -2162,6 +2163,27 @@ class TestUnlock(Base):
         self.assertEqual(argv[argv.index("-p") + 1], "2222")
         self.assertIn("StrictHostKeyChecking=yes", argv)
         self.assertLess(argv.index("StrictHostKeyChecking=yes"), argv.index("BatchMode=yes"))     # the first one given counts
+
+    def test_a_machine_is_waiting_only_when_it_shows_the_initramfs_key(self):
+        f, h = self.tunnel_host()
+        h.cfg["unlock"]["ssh"] = True
+        path = f.resolve_path("secrets/known_hosts.initramfs")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as out:
+            out.write("[lychee.home]:2222 ssh-ed25519 PINNED\n")
+        seen = []
+
+        def scan(shown):
+            def runner(argv, capture_output=True):
+                seen.append(argv)
+                return subprocess.CompletedProcess(argv, 0, ("# a comment\n192.168.2.61 ssh-ed25519 %s\n" % shown).encode(), b"")
+            return runner
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: addr == "192.168.2.61"):
+            self.assertEqual(unlock.waiting_at(h, runner=scan("PINNED")), "192.168.2.61")
+            self.assertIsNone(unlock.waiting_at(h, runner=scan("SOMEONE-ELSE")))
+        self.assertEqual(seen[0][seen[0].index("-p") + 1], "2222")
+        h.cfg["unlock"]["ssh"] = False
+        self.assertIsNone(unlock.waiting_at(h, runner=scan("PINNED")))
 
     def test_a_session_that_never_got_in_is_not_an_open_disk(self):
         f, h = self.tunnel_host()
@@ -3534,6 +3556,23 @@ peers=4 3
         self.assertIn("failed units: kiwi-backup.service", texts)
         self.assertIn("/var/mnt/data is 96% full", texts)
         self.assertEqual(notes, ["kn-cloud is still starting"])
+
+    def test_a_certificate_that_is_not_being_renewed_is_a_problem(self):
+        base = "now=1000\napplied=x\nos=Debian\nclock=yes\nuptime=9999\n"
+        day = 86400
+
+        def assessed(left):
+            return facts.assess(facts.parse(base + "certificate=hub.example.org %d\n" % (1000 + left * day), local_now=1000))
+        state, problems, notes = assessed(60)
+        self.assertEqual((state, problems), ("ok", []))
+        self.assertEqual(notes, ["certificates good for 60 days"])
+        self.assertEqual(assessed(20)[0], "warn")
+        self.assertIn("should have been renewed", assessed(20)[1][0]["text"])
+        self.assertEqual(assessed(3)[0], "bad")
+        self.assertIn("has expired", assessed(-1)[1][0]["text"])
+        # a file the probe could not read says nothing rather than something wrong
+        f = facts.parse(base + "certificate=hub.example.org \n", local_now=1000)
+        self.assertEqual(facts.assess(f), ("ok", [], []))
 
     def test_a_healthy_machine_has_nothing_to_say(self):
         f = facts.parse("applied=x\nos=Debian\nclock=yes\nuptime=5\nservice=a active\ncontainer=a|running|Up 1 hour|i\n"

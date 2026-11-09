@@ -56,7 +56,7 @@ nginx:
 
 backup:
   # a public site's certificates and its ACME account: asking again is limited to a few a week
-  paths: ["${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt", "${DOCKERDIR}/{{ container_prefix }}-nginx/acme"]
+  paths: ["{% if public_names %}${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt{% endif %}", "{% if public_names %}${DOCKERDIR}/{{ container_prefix }}-nginx/acme{% endif %}"]
 
 settings:
   - key: network_mode

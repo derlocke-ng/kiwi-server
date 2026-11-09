@@ -8,10 +8,16 @@ Requires=docker.service
 After=kiwi-stack.service network-online.target
 {% endif %}
 Wants=network-online.target
+# for a server that is rebooting, say; the night's run is over before the next one is due
+StartLimitIntervalSec=12h
+StartLimitBurst=6
 
 [Service]
 Type=oneshot
+Restart=on-failure
+RestartSec=1h
 ExecCondition=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh due
 ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh backup
+ExecStopPost=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh thaw
 Nice=10
 IOSchedulingClass=idle

@@ -219,6 +219,10 @@ def prune_repository(tgt, runtime, repo, image, password, keep=None, dry_run=Fal
     script = "[ -d %s ] || { echo '[]'; exit 0; }\n%s forget --json --group-by host,tags %s%s" % (
         shlex.quote(repo), restic, rules, " --dry-run" if dry_run else "")
     data = (password + "\n").encode()
+    if not dry_run:
+        # A restic killed half way, a power cut say, leaves its lock and this would wait on it
+        # for nothing. Only those go: a lock in use is refreshed and is never old enough.
+        remote.run(tgt, "[ -d %s ] || exit 0\n%s unlock" % (shlex.quote(repo), restic), data, runner=runner)
     lines = remote.run(tgt, script, data, runner=runner).decode(errors="replace").splitlines()
     try:
         groups = json.loads(next((ln for ln in reversed(lines) if ln.startswith("[")), "[]"))

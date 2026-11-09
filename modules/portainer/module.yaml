@@ -47,8 +47,9 @@ nginx:
 settings:
   - key: admin_password
     type: secret
+    generate: true
     label: Admin password
-    help: "Set at the first start (user admin), so the first-run page never waits open on an unattended machine. Empty: Portainer asks on first visit — within five minutes of starting."
+    help: "Set at the first start (user admin), so the first-run page never waits open on an unattended machine. Empty: generated from the fleet's seed."
     default: ""
   - key: portainer_hostname
     label: Hostname

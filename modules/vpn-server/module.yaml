@@ -55,9 +55,9 @@ settings:
     placeholder: vpn.example.org
   - key: wg_password
     type: secret
-    required: true
+    generate: true
     label: wg-easy admin password
-    help: The web UI listens on 127.0.0.1:51821 of the master only.
+    help: "The web UI listens on 127.0.0.1:51821 of the master only. Empty: generated from the fleet's seed."
   - key: wg_port
     type: int
     label: WireGuard port (UDP)

@@ -179,11 +179,11 @@ class TestConfig(Base):
 
     def test_required_role_setting_and_missing_file(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
-            "a": {"role": "master", "master": {"vpn-server": {"wg_host": "x"}, "dns": {"pihole_password": "p"}}},
+            "a": {"role": "master", "master": {"vpn-server": {}, "dns": {"pihole_password": "p"}}},
             "b": {"role": "node-cloud", "node-cloud": self.node_cloud(**{"vpn-client": {"wireguard_config": "nope.conf"}})}}})
         with self.assertRaises(KiwiError) as cm:
             rolesmod.resolve_settings(self.roles["master"], f.hosts["a"], self.ms)
-        self.assertIn("vpn-server.wg_password is required", str(cm.exception))
+        self.assertIn("vpn-server.wg_host is required", str(cm.exception))
         with self.assertRaises(KiwiError) as cm:
             rolesmod.resolve_settings(self.roles["node-cloud"], f.hosts["b"], self.ms)
         self.assertIn("file not found", str(cm.exception))
@@ -979,8 +979,8 @@ class TestModules(Base):
         self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP'), inserts)
         # … and, standing on top, it must spare the replies to what the containers started
         # (the VPN client's handshake) and the LAN's connections to published ports
-        self.assertEqual(b.files["kn-portainer/admin-password"][0], "")
-        self.assertNotIn("command", svcs["kn-portainer"])
+        self.assertRegex(b.files["kn-portainer/admin-password"][0], r"^[A-Za-z0-9]{32}\s*$")   # left out: generated, no open first-run page
+        self.assertIn("--admin-password-file", svcs["kn-portainer"]["command"])
         self.assertIn("2224/tcp", b.ports)
         self.assertTrue(any("dl.m1.kiwi" in s for s in [b.files["kn-nginx/nginx.conf"][0]]))
 
@@ -2105,10 +2105,10 @@ class TestManage(Base):
         self.assertIn("401", err)
         self.assertIn("Incorrect password", err)
         self.assertEqual(api.clients, [])
-        f = self.manage_fleet(**{"vpn-server": {"wg_host": "v"}})
+        f = self.manage_fleet(**{"vpn-server": {"wg_host": "v"}})   # no password written down: the generated one is tried
         rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", api.url)
         self.assertEqual(rc, 1)
-        self.assertIn("wg_password", err)
+        self.assertIn("401", err)
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
         rc, out, err = self.run_cli("enroll", f.path, "phone", "--api", api.url)
         self.assertEqual(rc, 1)
@@ -2566,6 +2566,40 @@ class TestCli(Base):
         rc, out, err = self.run_cli("build", f.path, "-o", os.path.join(self.tmp, "o"), "--toolchain", "native")
         self.assertEqual(rc, 1)
         self.assertIn("disk", err)
+
+    def unwritten_fleet(self):
+        m = self.master(**{"vpn-server": {"wg_host": "vpn.example.org"}, "dns": {}})   # no passwords written down
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {"gate": {"role": "master", "target": "debian", "master": m}}})
+
+    def test_passwords_left_out_are_generated_and_can_be_read(self):
+        f = self.unwritten_fleet()
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate")
+        self.assertEqual(rc, 0, err)
+        names = out.split()
+        self.assertIn("vpn-server.wg_password", names)
+        self.assertIn("dns.pihole_password", names)
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "vpn-server.wg_password")
+        self.assertEqual(rc, 0, err)
+        value = out.strip()
+        self.assertRegex(value, r"^[A-Za-z0-9]{32}$")
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "wg_password")   # the same, the same every time
+        self.assertEqual((rc, out.strip()), (0, value))
+
+    def test_secrets_show_gives_a_written_password_and_refuses_an_unknown_name(self):
+        f = self.media_fleet()
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "wg_password")
+        self.assertEqual((rc, out.strip()), (0, "w"), err)
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "nope")
+        self.assertEqual(rc, 1)
+        self.assertIn("no secret of this host", err)
+
+    def test_validate_warns_about_passwords_that_need_not_be_written(self):
+        rc, out, err = self.run_cli("validate", self.media_fleet().path)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("vpn-server.wg_password, dns.pihole_password: literal", err)
+        rc, out, err = self.run_cli("validate", self.unwritten_fleet().path)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("literal in the fleet file, and generated", err)
 
     def media_fleet(self):
         return self.fleet({"defaults": self.base_defaults(), "hosts": {

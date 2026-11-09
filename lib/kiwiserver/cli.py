@@ -351,11 +351,31 @@ def load(args, need_roles=True):
     return fleet, roles, ms
 
 
+def warn_literal_secrets(h, ms):
+    """Passwords written in the fleet file that need not be there. A warning,
+    not an error, until there is a secret store to put the rest in (ROADMAP)."""
+    msgs = []
+    if h.cfg["admin"].get("password"):
+        msgs.append("admin.password is a literal in the fleet file: password_hash keeps it out (openssl passwd -6)")
+    names = []
+    for m in h.modules:
+        given = h.role_settings_raw.get(m) or {}
+        names += ["%s.%s" % (m, s.key) for s in ms.get(m).settings if s.generate and given.get(s.key)]
+    if names:
+        msgs.append("%s: literal in the fleet file, and generated from the seed when left out "
+                    "(kiwi-server secrets show); leaving one out on a running machine changes that password"
+                    % ", ".join(names))
+    for msg in msgs:
+        if msg not in h.warnings:      # settings are checked more than once per command
+            h.warnings.append(msg)
+
+
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
+        warn_literal_secrets(h, ms)
     if errs and strict:
         if porcelain:
             print(json.dumps({"ok": False, "errors": errs}, indent=2))
@@ -561,6 +581,32 @@ def cmd_script(args):
     sys.stdout.write(script)
 
 
+def cmd_secrets(args):
+    """The secrets a host's role resolved to, generated or written down, read
+    from the fleet on this machine: nothing is asked of the host."""
+    fleet, roles, ms = load(args)
+    h = fleet.select([args.host])[0]
+    util.QUIET = True           # stdout is the value
+    check(fleet, roles, ms, [h])
+    if h.role not in roles:
+        raise KiwiError("%s: role %s is unknown" % (h.name, h.role))
+    rolesmod.resolve_settings(roles[h.role], h, ms)
+    found = {}
+    for m, vals in h.module_settings.items():
+        for s in ms.get(m).settings:
+            if s.type == "secret" and vals.get(s.key):
+                found["%s.%s" % (m, s.key)] = str(vals[s.key])
+    if not args.setting:
+        for name in sorted(found):
+            print(name)
+        return
+    matches = [n for n in found if args.setting in (n, n.split(".", 1)[1])]
+    if len(matches) != 1:
+        raise KiwiError("%s: %s names %s" % (
+            h.name, args.setting, "several secrets: %s" % ", ".join(sorted(matches)) if matches else "no secret of this host"))
+    print(found[matches[0]])
+
+
 def fleet_identities(fleet):
     """The private keys the fleet itself holds for its machines: every
     admin.ssh_keys entry that is a path to a .pub with the private key next
@@ -695,8 +741,6 @@ def cmd_enroll(args):
     fleet, roles, ms = load(args)
     master = _master_of(fleet, roles, ms, args.master)
     vs = master.module_settings.get("vpn-server") or {}
-    if not vs.get("wg_password"):
-        raise KiwiError("%s: vpn-server.wg_password is needed to talk to wg-easy" % master.name)
     name = args.name
     host = fleet.hosts.get(name)
     if host is None and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", name):
@@ -980,6 +1024,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
+  kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -1034,6 +1079,8 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show"]); s.add_argument("fleet")
+    s.add_argument("host"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
     s.add_argument("--wireguard", metavar="FILE", help="the client config the master issued for the router")
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")

@@ -62,9 +62,9 @@ settings:
     default: ""
   - key: admin_password
     type: secret
-    required: true
+    generate: true
     label: Admin password
-    help: The password of the Nextcloud user `admin`, set on the first start.
+    help: "The password of the Nextcloud user `admin`, set on the first start. Empty: generated from the fleet's seed."
   - key: nextcloud_datadir
     label: Data directory
     help: "Where the files live, e.g. a big disk mounted at /mnt/data/nextcloud. Empty: <stack directory>/knnc-data. Do not change after the first start."

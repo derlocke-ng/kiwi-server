@@ -155,6 +155,7 @@ services:
   kn-portainer:
     image: docker.io/portainer/portainer-ce:lts
     container_name: kn-portainer
+    command: --admin-password-file /run/kiwi/portainer-admin
     ports:
     - 127.0.0.1:9443:9443
     security_opt:
@@ -162,6 +163,7 @@ services:
     volumes:
     - portainer_data:/data
     - /run/podman/podman.sock:/var/run/docker.sock
+    - /home/user/docker/kn-portainer/admin-password:/run/kiwi/portainer-admin:ro,z
     restart: unless-stopped
     networks:
       knet-node:

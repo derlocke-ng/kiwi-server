@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.12.0 — service passwords no longer have to be written down
+
+- **Service passwords left out of the fleet file are generated** from
+  `secrets/seed` (kiwi-modules 0.5.0): `wg_password`, `pihole_password`,
+  `transmission_password`, `sftp_password`, and the cloud's and Portainer's
+  `admin_password`. A password that is written down is used as before. Portainer
+  left empty used to wait on its first-run page; it now starts with a generated
+  password.
+- **`kiwi-server secrets show <fleet> <host> [setting]`** prints a host's
+  password, or the names of those it has. It reads the fleet on this machine.
+- **`validate` warns** about passwords written in the fleet file that need not
+  be, and about `admin.password`. A warning for now: refusing them waits for the
+  secret store.
+- `kiwi-server init` writes a fleet file with no passwords in it.
+- Taking a password out on a running machine changes it. Nextcloud's and
+  Portainer's are only read at their first start, so there the old one stays
+  in force.
+
 ## 2.11.0 — a disk key that outlives nothing
 
 - **`debian.encrypt` needs no passphrase**: kiwi-server makes a short one-time

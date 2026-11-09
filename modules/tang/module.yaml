@@ -19,7 +19,9 @@ network:
 
 firewall:
   scope: vpn-client
-  rules: []
+  rules:
+    # the mesh reaches the rings too, for a master's relay: on to the host's published ports
+    - "-t nat -A PREROUTING -d ${VPN_IP} -p tcp -m multiport --dports {{ rings.values() | join(',') }} -j DNAT --to-destination {{ docker_gateway }}"
 
 templates:
   compose: docker-compose.yml.j2

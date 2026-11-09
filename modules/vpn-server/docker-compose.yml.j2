@@ -26,6 +26,9 @@ services:
     ports:
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ wg_port }}:51820/udp"
       - "127.0.0.1:51821:51821/tcp"
+{% for port in unlock_relay %}
+      - "{{ public_ip ~ ':' if public_ip else '' }}{{ port }}:{{ port }}/tcp"
+{% endfor %}
 {# nginx lives in this namespace, so a public reverse proxy's ports are published here #}
 {% if public_names %}
       - "{{ public_ip ~ ':' if public_ip else '' }}80:80/tcp"

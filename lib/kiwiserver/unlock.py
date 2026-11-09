@@ -95,7 +95,7 @@ changed=
 if [ "$(cat $d/authorized_keys 2>/dev/null)" != "$keys" ]; then
     printf '%%s\n' "$keys" > $d/authorized_keys; chmod 0600 $d/authorized_keys; changed=1
 fi
-want='DROPBEAR_OPTIONS="-p %d -s -I 600"'
+want='DROPBEAR_OPTIONS="-p %d -s -j%s -T 3 -I 600"'
 if [ "$(cat $d/dropbear.conf 2>/dev/null)" != "$want" ]; then
     printf '%%s\n' "$want" > $d/dropbear.conf; changed=1
 fi
@@ -112,7 +112,8 @@ dropbearkey -y -f $d/dropbear_ed25519_host_key | grep '^ssh-ed25519' | cut -d' '
 '''
 
 # The same on CoreOS: dracut-sshd, layered, with a host key of its own since the boot
-# partition is not encrypted. stdin: the keys that may log in. Takes effect at the next boot.
+# partition is not encrypted and a config that allows nothing but forwarding in. stdin: the
+# keys that may log in. Takes effect at the next boot.
 # sshd refuses a key for an account it takes as locked, and the initramfs's /etc/shadow has
 # no root in it. dracut will not overwrite that file, so the line goes in under another
 # name and sshd's unit adds it at the start. `*` is no password at all, without being locked.
@@ -123,16 +124,42 @@ d=/etc/dracut-sshd
 mkdir -p $d; chmod 0700 $d
 k=/etc/ssh/dracut_ssh_host_ed25519_key
 [ -f $k ] || ssh-keygen -q -t ed25519 -N '' -f $k
+changed=
 if [ "$(cat $d/authorized_keys 2>/dev/null)" != "$keys" ]; then
     printf '%s\n' "$keys" > $d/authorized_keys; chmod 0600 $d/authorized_keys
-    echo changed >&2
+    changed=1
 fi
+cat > $d/sshd_config.new <<'CONFIG'
+PermitRootLogin forced-commands-only
+AuthorizedKeysFile .ssh/authorized_keys
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+X11Forwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+AllowTcpForwarding remote
+GatewayPorts no
+PermitTunnel no
+PermitUserRC no
+MaxAuthTries 3
+MaxSessions 2
+LoginGraceTime 20
+ClientAliveInterval 15
+ClientAliveCountMax 4
+SyslogFacility AUTHPRIV
+CONFIG
+if ! cmp -s $d/sshd_config.new $d/sshd_config; then mv $d/sshd_config.new $d/sshd_config; changed=1; else rm $d/sshd_config.new; fi
 printf 'root:*:19000:0:99999:7:::\n' > $d/kiwi-shadow; chmod 0600 $d/kiwi-shadow
 cat > $d/kiwi-sshd.conf <<'UNIT'
 [Service]
 ExecStartPre=/bin/sh -c 'grep -q ^root: /etc/shadow || cat /etc/kiwi-shadow >> /etc/shadow'
 UNIT
 rpm-ostree install --idempotent --allow-inactive dracut-sshd >/dev/null
+if rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled'; then
+    [ -z "$changed" ] || rpm-ostree initramfs --disable >/dev/null
+fi
 rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled' ||
     rpm-ostree initramfs --enable --arg=--include --arg=$d/kiwi-shadow --arg=/etc/kiwi-shadow \
         --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf >/dev/null
@@ -254,6 +281,36 @@ def _bound(listing):
     return out
 
 
+def _unlock_key(fleet):
+    """A key for the initramfs and for nothing else: what a person does with it there is
+    limited by its line in authorized_keys, and it opens no running machine."""
+    path = fleet.resolve_path("secrets/unlock_ed25519")
+    if not os.path.isfile(path):
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "kiwi-unlock", "-f", path], check=True)
+    return path
+
+
+def authorized_line(host):
+    """That key's line in the initramfs: as tight as the server there can make it.
+    Dropbear ignores a key with an option it does not know, so it gets only what it knows."""
+    public = " ".join(util.read_bytes(_unlock_key(host.fleet) + ".pub").decode().split()[:2])
+    forwards = _forwarded_rings(host)
+    if host.target == "debian":
+        options = ["no-agent-forwarding", "no-X11-forwarding", "no-pty"] + ([] if forwards else ["no-port-forwarding"])
+        options.append('command="case $SSH_ORIGINAL_COMMAND in unlock) cryptroot-unlock;; *) echo %s; sleep 900;; esac"' % _CONNECTED)
+    else:
+        options = ["restrict"]
+        if forwards:
+            options.append("port-forwarding")
+            options += ['permitlisten="127.0.0.1:%d"' % forwarded_ring(host, r)[1] for r in forwards]
+        options.append('command="echo %s; sleep 900"' % _CONNECTED)
+        allowed = host.cfg["unlock"].get("ssh_from") or []
+        if allowed:
+            options.append('from="%s"' % ",".join(str(a) for a in allowed))
+    return "%s %s" % (",".join(options), public)
+
+
 def _known_hosts(host):
     return host.fleet.resolve_path("secrets/known_hosts.initramfs")
 
@@ -261,8 +318,9 @@ def _known_hosts(host):
 def _initramfs_ssh(host, tgt):
     """SSH in the initramfs, and its host key on record while the machine can vouch for it:
     the boot partition is not encrypted, so that key is the only proof of who answers."""
-    script = PREPARE_DROPBEAR % ssh_port(host) if host.target == "debian" else PREPARE_DRACUT_SSHD
-    out = remote.run(tgt, script, ("\n".join(host.ssh_keys()) + "\n").encode())
+    # no forwarded ring: nothing here needs forwarding at all
+    script = (PREPARE_DROPBEAR % (ssh_port(host), "" if _forwarded_rings(host) else " -k")) if host.target == "debian" else PREPARE_DRACUT_SSHD
+    out = remote.run(tgt, script, (authorized_line(host) + "\n").encode())
     key = out.decode(errors="replace").strip()
     if not key.startswith("ssh-ed25519 "):
         raise KiwiError("%s: the initramfs has no SSH host key" % host.name)
@@ -362,7 +420,8 @@ def forwarded_ring(host, ring=None):
 
 def _initramfs_ssh_argv(host, address, options=(), command=()):
     """ssh into the initramfs: its own known_hosts, and the first option given is the one that counts."""
-    return (["ssh", "-o", "UserKnownHostsFile=%s" % _known_hosts(host), "-o", "StrictHostKeyChecking=yes"] + remote.ssh_opts()
+    return (["ssh", "-o", "UserKnownHostsFile=%s" % _known_hosts(host), "-o", "StrictHostKeyChecking=yes",
+             "-o", "IdentitiesOnly=yes", "-i", _unlock_key(host.fleet)] + remote.ssh_opts(identities=False)
             + list(options or ["-p", str(ssh_port(host))]) + ["root@%s" % address] + list(command))
 
 
@@ -380,7 +439,7 @@ def type_key(host, address=None, timeout=300, runner=subprocess.run, clock=time.
         for a in addresses:
             if not remote._answers(a, ssh_port(host)):
                 continue
-            r = runner(_initramfs_ssh_argv(host, a, command=["cryptroot-unlock"]), input=key.encode(), capture_output=True)
+            r = runner(_initramfs_ssh_argv(host, a, command=["unlock"]), input=key.encode(), capture_output=True)
             if r.returncode == 0:
                 util.say("%s: the disk is open; the machine goes on booting" % host.name)
                 return True
@@ -400,9 +459,9 @@ def open_disk(host, servers, ring=None, address=None, port=None, timeout=300, ru
     sshport = port or ssh_port(host)
     options = ["-p", str(sshport), "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
                "-R", forward]
-    # The session prints this once it is in and the port is forwarded. It ends when the
-    # initramfs does, which can be seconds later: how long it lasted says nothing.
-    command = ["echo %s; sleep 900" % _CONNECTED]
+    # The key's forced command prints a marker once it is in and the port is forwarded. It
+    # ends when the initramfs does, which can be seconds later: how long it lasted says nothing.
+    command = ["wait"]
     deadline = clock() + timeout
     while clock() < deadline:
         for a in addresses:

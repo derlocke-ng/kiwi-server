@@ -2157,6 +2157,7 @@ class TestUnlock(Base):
         argv = [c[1] for c in calls if c[0] == "ssh"][0]
         self.assertIn("127.0.0.1:7500:192.168.2.30:7500", argv)
         self.assertEqual(argv[-2], "root@192.168.2.61")
+        self.assertEqual(argv[argv.index("-i") + 1], f.resolve_path("secrets/unlock_ed25519"))
         self.assertEqual(argv[argv.index("-p") + 1], "2222")
         self.assertIn("StrictHostKeyChecking=yes", argv)
         self.assertLess(argv.index("StrictHostKeyChecking=yes"), argv.index("BatchMode=yes"))     # the first one given counts
@@ -2185,7 +2186,7 @@ class TestUnlock(Base):
         with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True):
             self.assertTrue(unlock.type_key(h, runner=runner, sleep=lambda s: None))
         self.assertEqual(seen[0][1], b"thediskkey")
-        self.assertEqual(seen[0][0][-1], "cryptroot-unlock")
+        self.assertEqual(seen[0][0][-1], "unlock")
         self.assertNotIn("thediskkey", " ".join(seen[0][0]))
 
     def test_a_refused_key_is_not_tried_again(self):
@@ -2198,6 +2199,49 @@ class TestUnlock(Base):
         with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True), self.assertRaisesRegex(KiwiError, "counts tries"):
             unlock.type_key(h, runner=runner, sleep=lambda s: None)
         self.assertEqual(len(count), 1)
+
+    def test_the_initramfs_key_is_its_own(self):
+        f, h = self.tunnel_host()
+        line = unlock.authorized_line(h)
+        self.assertTrue(os.path.isfile(f.resolve_path("secrets/unlock_ed25519")))
+        for admin in h.ssh_keys():
+            self.assertNotIn(admin.split()[1], line)
+
+    def test_dropbear_gets_only_what_it_knows(self):
+        f, h = self.tunnel_host()
+        line = unlock.authorized_line(h)
+        self.assertIn("no-agent-forwarding,no-X11-forwarding,no-pty,", line)
+        self.assertIn('command="case $SSH_ORIGINAL_COMMAND in unlock) cryptroot-unlock;;', line)
+        self.assertNotIn("no-port-forwarding", line)    # the ring is forwarded in
+        for unknown in ("from=", "permitlisten", "restrict"):
+            self.assertNotIn(unknown, line)
+
+    def test_dropbear_may_not_forward_when_no_ring_needs_it(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        self.assertIn("no-port-forwarding", unlock.authorized_line(h))
+
+    def test_openssh_is_held_to_one_port_and_one_command(self):
+        h = self.coreos_host()
+        h.cfg["unlock"].update(via={"house": "http://127.0.0.1:7500"}, ssh=True, ssh_from=["192.0.2.0/24", "10.9.0.0/16"])
+        line = unlock.authorized_line(h)
+        self.assertTrue(line.startswith('restrict,port-forwarding,permitlisten="127.0.0.1:7500",'))
+        self.assertIn('command="echo kiwi-unlock-connected; sleep 900"', line)
+        self.assertIn('from="192.0.2.0/24,10.9.0.0/16"', line)
+
+    def test_openssh_without_a_forwarded_ring_forwards_nothing(self):
+        line = unlock.authorized_line(self.coreos_host())
+        self.assertNotIn("port-forwarding", line)
+        self.assertNotIn("permitlisten", line)
+
+    def test_the_initramfs_sshd_allows_only_a_forced_command_and_remote_forwarding(self):
+        for setting in ("PermitRootLogin forced-commands-only", "AllowTcpForwarding remote", "MaxAuthTries 3", "AllowAgentForwarding no"):
+            self.assertIn(setting, unlock.PREPARE_DRACUT_SSHD)
+
+    def test_ssh_from_is_refused_on_debian(self):
+        f = self.unlock_fleet()
+        f.hosts["lychee"].cfg["unlock"].update(ssh=True, ssh_from=["192.0.2.0/24"])
+        self.assertTrue([e for e in f.hosts["lychee"].validate(self.roles) if "Dropbear has no from=" in e])
 
     def test_the_initramfs_brings_up_its_loopback(self):
         self.assertIn("ip link set lo up", unlock.PREPARE_DROPBEAR)

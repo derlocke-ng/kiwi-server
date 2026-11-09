@@ -706,7 +706,7 @@ Asked for by the owner in November 2026:
   rules first, or `wg.` and `pihole.` answer anyone who sends the right
   `Host` header. Then 443 published from the WireGuard server's namespace
   (`vpn-server.published_ports`, which the unlock relay needs too) and a
-  certificate for its public name.
+  Let's Encrypt certificate for its public name (the owner's choice).
 - **An MTU probe people run themselves** (problem 40): measure a node's or a
   device's real path, then set the fleet's values from the result instead of
   guessing them. Done in 2.14.0: `kiwi-server mtu`.

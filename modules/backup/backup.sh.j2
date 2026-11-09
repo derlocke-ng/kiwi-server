@@ -21,11 +21,18 @@ SERVICES[{{ s.name }}]="{{ s.services | join(' ') }}"
 NO_RESTORE[{{ s.name }}]="{{ s.no_restore }}"
 {% endfor %}
 
+# A server that hangs instead of refusing keeps restic waiting for as long as it hangs. LIMIT
+# bounds that: a database frozen meanwhile is down, and a run that never ends blocks the next.
+# A first upload that needs longer than BULK_LIMIT goes on from where it was at the next run.
+FREEZE_LIMIT=30m
+ASK_LIMIT=3m
+BULK_LIMIT=20h
+
 restic() { # MOUNT... -- ARGUMENT...
     local mounts=()
     while [[ $1 != -- ]]; do mounts+=(-v "$1"); shift; done
     shift
-    {{ runtime }} run --rm --network host --security-opt label=disable --env-file "$DIR/restic.env" \
+    ${LIMIT:+timeout -k 60 "$LIMIT"} {{ runtime }} run --rm --network host --security-opt label=disable --env-file "$DIR/restic.env" \
         -v {{ docker_dir }}/kiwi/ca:/kiwi-ca:ro -v kiwi_restic_cache:/cache "${mounts[@]}" \
         "$IMAGE" --cacert /kiwi-ca/kiwiCA.crt --cache-dir /cache "$@"
 }
@@ -67,19 +74,42 @@ thaw() {
 trap thaw EXIT
 trap 'exit 143' TERM INT
 
+# A run killed outright thaws nothing, and a paused container looks like a running one:
+# kn-backup.service does this after every run.
+thaw_left() {
+    local m c list
+    for m in "${MODULES[@]}"; do
+        read -ra list <<<"${FREEZE[$m]}"
+        for c in "${list[@]}"; do
+            [[ $({{ runtime }} inspect --format '{% raw %}{{.State.Status}}{% endraw %}' "$c" 2>/dev/null) == paused ]] || continue
+            echo "backup: $c was left frozen" >&2
+            {{ runtime }} unpause "$c" >/dev/null || echo "backup: $c could not be unpaused" >&2
+        done
+    done
+}
+
 backup() {
     local m c list ok failed=()
-    restic -- cat config >/dev/null 2>&1 || restic -- init || return 1
+    LIMIT=$ASK_LIMIT restic -- cat config >/dev/null 2>&1 || LIMIT=$ASK_LIMIT restic -- init || return 1
+    # a restic killed half way leaves its lock, and one from a prune stops every backup after
+    # it. This removes only those: a lock in use is refreshed and is never old enough.
+    LIMIT=$ASK_LIMIT restic -- unlock >/dev/null 2>&1 || true
     for m in "${MODULES[@]}"; do
+        # the server gone, each module would sit frozen through restic's retries in its turn
+        if [[ -n ${failed[*]:-} ]] && ! LIMIT=$ASK_LIMIT restic -- cat config >/dev/null 2>&1; then
+            echo "backup: {{ server }} no longer answers, stopping here" >&2
+            failed+=("$m and those after it")
+            break
+        fi
         ok=1
         read -ra list <<<"${FREEZE[$m]}"
         for c in "${list[@]}"; do
             # not running: its files are not changing either
             if {{ runtime }} pause "$c" >/dev/null 2>&1; then FROZEN_NOW+=("$c"); fi
         done
-        store "$m" frozen "${FROZEN[$m]}" || ok=0
+        LIMIT=$FREEZE_LIMIT store "$m" frozen "${FROZEN[$m]}" || ok=0
         thaw
-        store "$m" bulk "${BULK[$m]}" || ok=0
+        LIMIT=$BULK_LIMIT store "$m" bulk "${BULK[$m]}" || ok=0
         (( ok )) || failed+=("$m")
     done
     if [[ -n ${failed[*]:-} ]]; then
@@ -142,6 +172,7 @@ due() {
 exec 9>"$DIR/lock"
 case "${1:-}" in
     due)        due ;;
+    thaw)       flock -w 120 9 || exit 0; thaw_left ;;
     backup)     flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; backup ;;
     snapshots)  restic -- snapshots --host "$HOST" ;;
     restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; restore "$@" ;;

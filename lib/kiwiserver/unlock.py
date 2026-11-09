@@ -521,6 +521,18 @@ def _initramfs_ssh_argv(host, address, options=(), command=()):
             + list(options or ["-p", str(ssh_port(host))]) + ["root@%s" % address] + list(command))
 
 
+def waiting_at(host, runner=subprocess.run):
+    """The address where this machine's initramfs is waiting for its key, or None. It is known
+    by the key it shows, without logging in: a port that merely answers could be the system."""
+    if not host.cfg["unlock"].get("ssh"):
+        return None
+    port = ssh_port(host)
+    for a in remote.addresses(host):
+        if remote._answers(a, port) and remote.shows_key_from(a, port, _known_hosts(host), runner):
+            return a
+    return None
+
+
 def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
     """The disk's key, handed to the initramfs over SSH, for when no ring can help. It goes
     on stdin without a line end: Debian passes stdin to cryptsetup as it is."""

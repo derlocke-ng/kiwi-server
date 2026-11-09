@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.35.0 — what a night of pulling plugs found
+
+- `kiwi-server status` says when a machine is waiting at its locked disk, and with which
+  command to open it, instead of calling it unreachable. On CoreOS the initramfs answers on
+  the system's own SSH port, where a command used to suggest removing the host key.
+- `status` shows how long the public certificates are good for, and calls it a problem when a
+  certificate should have been renewed by now: the job that renews them does not fail.
+- `prune` removes the locks of dead restic processes first. One left by a machine that lost
+  power stopped it for good.
+- kiwi-stack 0.4.0: a podman machine switches off a Docker daemon that runs nothing. It kept
+  the published ports from the network after a reboot while every container looked healthy.
+- kiwi-modules 0.19.0: a backup that dies or hangs lets its databases go, tries again an hour
+  later and clears dead locks; a machine restored with two ACME accounts can renew again.
+
 ## 2.34.0 — the certificates come back too
 
 - kiwi-modules 0.18.0: the backup holds a public site's Let's Encrypt certificates and

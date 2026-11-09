@@ -14,6 +14,16 @@ for _ in $(seq 1 30); do
     sleep 2
 done
 
+# certbot will not choose between several accounts by itself, and a restore can leave two:
+# the one this certificate was issued with, else the newest
+accounts=$dir/letsencrypt/accounts/{{ 'acme-staging-v02' if acme_staging else 'acme-v02' }}.api.letsencrypt.org/directory
+account_for() { # NAME
+    local a
+    a=$(sed -n 's/^account = //p' "$dir/letsencrypt/renewal/$1.conf" 2>/dev/null)
+    [[ -n $a && -d $accounts/$a ]] || a=$(ls -t "$accounts" 2>/dev/null | head -n 1)
+    echo "$a"
+}
+
 for name in {{ public_names | join(' ') }}; do
 {% if not acme_staging %}
     # certbot would keep a certificate from the test service until it expires
@@ -21,9 +31,11 @@ for name in {{ public_names | join(' ') }}; do
         rm -rf "$dir/letsencrypt/live/$name" "$dir/letsencrypt/archive/$name" "$dir/letsencrypt/renewal/$name.conf"
     fi
 {% endif %}
+    account=$(account_for "$name")
     if ! "$rt" run --rm --network host \
         -v "$dir/letsencrypt:/etc/letsencrypt:z" -v "$dir/www:/var/www/acme:z" {{ acme_image }} \
         certonly --non-interactive --agree-tos --keep-until-expiring \
+        ${account:+--account "$account"} \
 {% if acme_email %}
         --email {{ acme_email }} \
 {% else %}
@@ -33,7 +45,11 @@ for name in {{ public_names | join(' ') }}; do
         --staging \
 {% endif %}
         --webroot -w /var/www/acme --cert-name "$name" -d "$name"; then
-        echo "no certificate for $name yet: does its DNS record point at this machine?"
+        if [[ -f $dir/letsencrypt/live/$name/fullchain.pem ]]; then
+            echo "could not renew the certificate of $name: certbot says why above"
+        else
+            echo "no certificate for $name yet: does its DNS record point at this machine?"
+        fi
         continue
     fi
     src=$dir/letsencrypt/live/$name

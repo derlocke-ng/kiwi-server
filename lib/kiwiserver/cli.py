@@ -953,8 +953,11 @@ def cmd_status(args):
         try:
             human, data = facts.split(remote.run(tgt, facts.SCRIPT).decode(errors="replace"))
         except KiwiError as e:
-            return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down",
-                    "problems": [{"level": "bad", "text": "unreachable: %s" % e}], "notes": [], "facts": {}}
+            at = unlock.waiting_at(h)
+            if at:
+                e = "its disk is locked, the machine waits at %s: kiwi-server unlock %s %s" % (at, args.fleet, h.name)
+            return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down", "locked": bool(at),
+                    "problems": [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e}], "notes": [], "facts": {}}
         measured = facts.parse(data)
         state, problems, notes = facts.assess(measured)
         return {"host": h.name, "target": tgt, "ok": True, "output": human, "state": state,
@@ -965,7 +968,7 @@ def cmd_status(args):
         print(json.dumps({"hosts": out}, indent=2))
         return
     for o in out:
-        print("== %s (%s)%s" % (o["host"], o["target"], "" if o["ok"] else " — unreachable"))
+        print("== %s (%s)%s" % (o["host"], o["target"], "" if o["ok"] else " — disk locked" if o.get("locked") else " — unreachable"))
         print("   " + o["output"].rstrip().replace("\n", "\n   "))
         if o["ok"]:
             for p in o["problems"]:

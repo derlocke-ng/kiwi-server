@@ -183,6 +183,19 @@ ks_ensure_podman() {
     systemctl enable --now podman.socket 2>/dev/null || true
     install -d -m 0755 /etc/containers/systemd
 }
+# Docker turns iptables' FORWARD policy to DROP when it starts, and what podman publishes goes
+# through that chain too. Left over from a time this machine had runtime: docker, it cuts every
+# published port off from the network at the next boot, with the containers all looking fine.
+ks_retire_docker() {
+    systemctl -q is-active docker.service 2>/dev/null || systemctl -q is-enabled docker.service 2>/dev/null || return 0
+    if systemctl -q is-active docker.service && [[ -n $(docker ps -q 2>/dev/null) ]]; then
+        ks_warn "docker runs containers here beside the podman stack: its FORWARD policy keeps the stack's published ports from the network"
+        return 0
+    fi
+    ks_say "docker runs nothing here: switching it off, its firewall policy would hide the published ports"
+    systemctl disable --now docker.socket docker.service 2>/dev/null || true
+    iptables -P FORWARD ACCEPT 2>/dev/null || true
+}
 ks_docker_ce() {
     ks_say "installing Docker CE from download.docker.com"
     ks_apt ca-certificates curl gnupg
@@ -408,6 +421,8 @@ ks_stack_unpack() {
         /usr/local/bin/kiwi-stack stop || ks_warn "the old stack did not stop cleanly — check with podman ps / docker ps"
         old_services=''
     fi
+    # after the block above: until then a move from docker still has its stack running there
+    [[ $KS_STACK_RUNTIME != podman ]] || ks_retire_docker
     if [[ $KS_STACK_RUNTIME == podman && -n $old_services ]]; then
         # a container whose module left the stack: its quadlet goes below, the running
         # unit would stay (a target does not stop what merely wants it)

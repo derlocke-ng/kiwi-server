@@ -46,6 +46,10 @@ if [ -f /etc/kiwi-server/stack.env ]; then
     if [ -x "${STACK_DIR:-}/kiwi/backup.sh" ]; then
         kv backup "$(stat -c %Y "$STACK_DIR/kiwi/backup/last-success" 2>/dev/null || echo 0)"
     fi
+    for c in "${STACK_DIR:-}/${STACK_PREFIX:-km}-nginx/acme"/*/fullchain.pem; do
+        [ -f "$c" ] || continue
+        kv certificate "$(basename "$(dirname "$c")") $(date -d "$(openssl x509 -enddate -noout -in "$c" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null)"
+    done
     "$rt" ps -a --format 'container={{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null
     for s in ${STACK_SERVICES:-}; do
         if [ "$rt" = podman ]; then
@@ -76,6 +80,8 @@ RUNNING = ("active", "running")
 BOOTING = 300     # seconds after boot in which a stack that is not up yet is only late
 BACKUP_LATE = 36 * 3600      # a nightly backup that missed a night
 BACKUP_BAD = 7 * 86400
+CERTIFICATE_LATE = 21 * 86400    # renewal starts at 30 days: this many left and it has been failing
+CERTIFICATE_BAD = 7 * 86400
 
 
 def split(text):
@@ -93,7 +99,7 @@ def _int(value, default=0):
 
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
-    raw, disks, containers, units = {}, {}, {}, []
+    raw, disks, containers, units, certificates = {}, {}, {}, [], []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -109,6 +115,9 @@ def parse(data, local_now=None):
         elif key == "service":
             name, _, state = value.partition(" ")
             units.append((name, state.strip() or "unknown"))
+        elif key == "certificate":
+            name, _, expires = value.partition(" ")
+            certificates.append({"name": name, "expires": _int(expires)})
         else:
             raw[key] = value.strip()
     services = []
@@ -148,6 +157,8 @@ def parse(data, local_now=None):
     if "backup" in raw:
         last = _int(raw["backup"])
         out["backup"] = {"last": last, "age": remote_now - last if last and remote_now else None}
+    if certificates:
+        out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if raw.get("luks"):
         out["encryption"] = "none" if raw["luks"] == "none" else ("bound" if _int(raw["luks"]) else "key")
     if raw.get("vpn"):
@@ -211,6 +222,14 @@ def assess(f):
             problems.append(warn("the last backup is %d hours old" % (b["age"] / 3600)))
         elif b["age"] is not None:
             notes.append("last backup %d h ago" % (b["age"] / 3600))
+    for c in f.get("certificates", []):
+        days = int(c["left"] / 86400)
+        if c["left"] < CERTIFICATE_BAD:
+            problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %d days" % days)))
+        elif c["left"] < CERTIFICATE_LATE:
+            problems.append(warn("the certificate of %s expires in %d days: it should have been renewed" % (c["name"], days)))
+    if f.get("certificates"):
+        notes.append("certificates good for %d days" % int(min(c["left"] for c in f["certificates"]) / 86400))
     encryption = f.get("encryption")
     if encryption == "none":
         notes.append("the disk is not encrypted")

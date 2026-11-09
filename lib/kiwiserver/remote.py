@@ -94,11 +94,31 @@ def reach(host, override=None):
     return target(host)
 
 
+def _key_blobs(lines):
+    return {f[2] for f in (line.split() for line in lines) if len(f) >= 3 and not f[0].startswith("#")}
+
+
+def shows_key_from(address, port, known_hosts, runner=subprocess.run):
+    """Does the SSH server there show a key from that known_hosts file? Nothing is logged into."""
+    if not os.path.isfile(known_hosts):
+        return False
+    with open(known_hosts) as f:
+        pinned = _key_blobs(f)
+    try:
+        r = runner(["ssh-keyscan", "-T", "4", "-p", str(port), address], capture_output=True) if pinned else None
+    except FileNotFoundError:
+        return False
+    return bool(r and pinned & _key_blobs((r.stdout or b"").decode(errors="replace").splitlines()))
+
+
 def _fail(where, r):
     text = (r.stderr or b"").decode(errors="replace")
     lines = text.strip().splitlines() or ["ssh failed"]
     if "REMOTE HOST IDENTIFICATION HAS CHANGED" in text or "Host key verification failed" in text:
         host = where.rsplit("@", 1)[-1]
+        # CoreOS: the initramfs answers on the system's port, with a key of its own
+        if KNOWN_HOSTS and shows_key_from(host, 22, KNOWN_HOSTS + ".initramfs"):
+            raise KiwiError("%s: the machine is waiting for its disk key, not reinstalled: kiwi-server unlock" % where)
         raise KiwiError("%s: the machine's SSH host key is not the one on record (reinstalled?) — when that is expected: "
                         "ssh-keygen -R %s -f %s" % (where, host, KNOWN_HOSTS or "~/.ssh/known_hosts"))
     raise KiwiError("%s: %s" % (where, lines[-1]))

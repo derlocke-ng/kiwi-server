@@ -54,6 +54,10 @@ storage:
 nginx:
   aggregator: true
 
+backup:
+  # a public site's certificates and its ACME account: asking again is limited to a few a week
+  paths: ["${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt", "${DOCKERDIR}/{{ container_prefix }}-nginx/acme"]
+
 settings:
   - key: network_mode
     label: Share a container's network

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.34.0 — the certificates come back too
+
+- kiwi-modules 0.18.0: the backup holds a public site's Let's Encrypt certificates and
+  ACME account, so a rebuilt machine does not have to ask again.
+
 ## 2.33.0 — status knows about backups and disks
 
 - `kiwi-server status` says when a machine with the `backup` module last backed up, warns

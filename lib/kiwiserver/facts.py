@@ -36,11 +36,16 @@ df -kP /var /var/mnt/data /mnt/data 2>/dev/null | awk 'NR>1{print "disk=" $6, $2
 kv clock "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
 if [ -e /run/reboot-required ] || [ -e /run/ostree/staged-deployment ]; then kv reboot yes; fi
 kv failed "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
+luks=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device 2>/dev/null | head -n 1)
+if [ -n "$luks" ]; then kv luks "$(clevis luks list -d "$luks" 2>/dev/null | wc -l)"; else kv luks none; fi
 if [ -f /etc/kiwi-server/stack.env ]; then
     # shellcheck disable=SC1091
     . /etc/kiwi-server/stack.env
     rt=${STACK_RUNTIME:-podman}
     kv runtime "$rt"
+    if [ -x "${STACK_DIR:-}/kiwi/backup.sh" ]; then
+        kv backup "$(stat -c %Y "$STACK_DIR/kiwi/backup/last-success" 2>/dev/null || echo 0)"
+    fi
     "$rt" ps -a --format 'container={{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null
     for s in ${STACK_SERVICES:-}; do
         if [ "$rt" = podman ]; then
@@ -69,6 +74,8 @@ _HEALTH = re.compile(r"\((?:health: )?(healthy|unhealthy|starting)\)")
 _HEALTHCHECK_UNIT = re.compile(r"^[0-9a-f]{64}-[0-9a-f]+\.(service|timer)$")
 RUNNING = ("active", "running")
 BOOTING = 300     # seconds after boot in which a stack that is not up yet is only late
+BACKUP_LATE = 36 * 3600      # a nightly backup that missed a night
+BACKUP_BAD = 7 * 86400
 
 
 def split(text):
@@ -138,6 +145,11 @@ def parse(data, local_now=None):
         "running": sum(1 for s in services if s["stack"] and s["running"]),
         "expected": sum(1 for s in services if s["stack"]),
     }
+    if "backup" in raw:
+        last = _int(raw["backup"])
+        out["backup"] = {"last": last, "age": remote_now - last if last and remote_now else None}
+    if raw.get("luks"):
+        out["encryption"] = "none" if raw["luks"] == "none" else ("bound" if _int(raw["luks"]) else "key")
     if raw.get("vpn"):
         container = next((s for s in services if s["name"] == raw["vpn"]), None)
         out["tunnel"] = {"container": raw["vpn"], "running": bool(container and container["running"]),
@@ -188,5 +200,21 @@ def assess(f):
         problems.append(warn("the clock is %+d s off from this computer's" % f["skew"]))
     if f.get("reboot"):
         notes.append("an update is waiting for a reboot")
+    b = f.get("backup")
+    if b:
+        if not b["last"]:
+            # the first run follows the first apply: late only once the machine has been up a while
+            (notes.append("no backup yet") if booting else problems.append(warn("no backup has succeeded yet")))
+        elif b["age"] is not None and b["age"] > BACKUP_BAD:
+            problems.append(bad("the last backup is %d days old" % (b["age"] / 86400)))
+        elif b["age"] is not None and b["age"] > BACKUP_LATE:
+            problems.append(warn("the last backup is %d hours old" % (b["age"] / 3600)))
+        elif b["age"] is not None:
+            notes.append("last backup %d h ago" % (b["age"] / 3600))
+    encryption = f.get("encryption")
+    if encryption == "none":
+        notes.append("the disk is not encrypted")
+    elif encryption == "key":
+        notes.append("the disk opens only with a typed key")
     levels = {p["level"] for p in problems}
     return ("bad" if "bad" in levels else "warn" if "warn" in levels else "ok"), problems, notes

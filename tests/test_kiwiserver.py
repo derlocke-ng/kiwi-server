@@ -2189,6 +2189,17 @@ class TestUnlock(Base):
         self.assertEqual(seen[0][0][-1], "unlock")
         self.assertNotIn("thediskkey", " ".join(seen[0][0]))
 
+    def test_a_connection_that_failed_is_tried_again(self):
+        f, h = self.tunnel_host()
+        tries = []
+
+        def runner(argv, input=None, capture_output=True):
+            tries.append(1)
+            return subprocess.CompletedProcess(argv, 255 if len(tries) < 3 else 0, b"", b"banner exchange")
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: addr == "192.168.2.61"):
+            self.assertTrue(unlock.type_key(h, runner=runner, sleep=lambda s: None, clock=lambda: 0.0))
+        self.assertEqual(len(tries), 3)
+
     def test_a_refused_key_is_not_tried_again(self):
         f, h = self.tunnel_host()
         count = []
@@ -2243,8 +2254,68 @@ class TestUnlock(Base):
         f.hosts["lychee"].cfg["unlock"].update(ssh=True, ssh_from=["192.0.2.0/24"])
         self.assertTrue([e for e in f.hosts["lychee"].validate(self.roles) if "Dropbear has no from=" in e])
 
+    def media_host(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        os.remove(luks.key_file(h))
+        h.cfg["unlock"].update(via={"infra": "http://127.0.0.1:7500"}, ssh=True)
+        return f, h
+
+    def test_debian_media_bring_ssh_for_the_first_boot(self):
+        f, h = self.media_host()
+        self.assertIn("dropbear-initramfs", debian_t.preseed(h, VERSION))
+        late = debian_t.late_script(h)
+        self.assertIn("cp $S/dropbear-authorized_keys $D/authorized_keys", late)
+        self.assertLess(late.index("kiwi-unlock"), late.index("update-initramfs -u"))
+        files = debian_t.iso_files(h, "#!/bin/sh\n")
+        self.assertIn("command=", files["dropbear-authorized_keys"][0])
+        self.assertEqual(files["kiwi-unlock-ip"][0], "IP=192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n")
+        self.assertIn('-p 2222 -s -j -T 3', files["dropbear.conf"][0])
+
+    def test_media_without_ssh_stay_as_they_were(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        self.assertNotIn("dropbear", debian_t.preseed(h, VERSION))
+        self.assertNotIn("dropbear-authorized_keys", debian_t.iso_files(h, "#!/bin/sh\n"))
+
+    def test_the_first_boot_opens_with_the_one_time_key_and_takes_the_host_key(self):
+        f, h = self.media_host()
+        write(luks.once_file(h), "onetimekey\n")
+        self.assertTrue(luks.at_first_boot(h))
+        seen = []
+
+        def runner(argv, input=None, capture_output=True):
+            seen.append((argv, input))
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True):
+            unlock.type_key(h, runner=runner, sleep=lambda s: None)
+        self.assertEqual(seen[0][1], b"onetimekey")
+        self.assertIn("StrictHostKeyChecking=accept-new", seen[0][0])
+
+    def test_after_the_first_apply_the_host_key_has_to_match(self):
+        f, h = self.media_host()
+        write(luks.once_file(h), "onetimekey\n")
+        write(luks.key_file(h), "thediskkey\n")
+        self.assertFalse(luks.at_first_boot(h))
+        self.assertIn("StrictHostKeyChecking=yes", unlock._initramfs_ssh_argv(h, "192.0.2.1"))
+
+    def test_a_machine_waiting_for_a_forwarded_ring_does_not_reboot_by_itself(self):
+        f, h = self.tunnel_host()
+        calls, a, b = self.fake_remote()
+        with a, b, mock.patch.object(unlock, "_initramfs_ssh"):
+            unlock.bind(h, "core@lychee", self.servers(f))
+        self.assertTrue([c for c in calls if "disable --now kiwi-reboot-if-required.timer" in c[1]])
+
+    def test_a_machine_on_the_lan_keeps_its_reboot_window(self):
+        f = self.unlock_fleet()
+        calls, a, b = self.fake_remote()
+        with a, b:
+            unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
+        self.assertFalse([c for c in calls if "kiwi-reboot-if-required" in c[1]])
+
     def test_the_initramfs_brings_up_its_loopback(self):
-        self.assertIn("ip link set lo up", unlock.PREPARE_DROPBEAR)
+        self.assertIn("ip link set lo up", unlock.LOOPBACK_HOOK)
+        self.assertIn("kiwi-loopback", unlock.LOOPBACK_PATH)
 
     def test_ignition_sizes_the_root_when_the_ring_is_only_forwarded(self):
         h = self.coreos_host()

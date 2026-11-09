@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.30.0 — an encrypted install with no console
+
+- A Debian host with `unlock.ssh` and `debian.encrypt` has SSH in its initramfs from the
+  first boot on, so a machine at a provider needs no web console: `kiwi-server unlock
+  <fleet> <host> --manual` hands the one-time key over. The host key is taken at that
+  first contact, for a key that dies at the first apply, and is pinned from then on.
+- `kiwi-server unlock --manual` tries again when the connection fails: only a key the
+  initramfs refused counts as a try.
+- A machine whose ring has to be forwarded in does not reboot by itself any more: it
+  would wait at boot until someone opened it.
+
 ## 2.29.0 — the relay
 
 - kiwi-modules 0.16.0. **`vpn-server.unlock_relay`** lets a machine behind NAT ask the

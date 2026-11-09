@@ -104,6 +104,15 @@ def current_key(host):
     return _read(_path(host.fleet, host.name, "key")) or str(host.cfg["debian"].get("passphrase") or "")
 
 
+def one_time_key(host):
+    return _read(once_file(host))
+
+
+def at_first_boot(host):
+    """Installed with a one-time key and not yet applied: there is no key on record but that."""
+    return uses_one_time_key(host) and bool(one_time_key(host)) and not _read(key_file(host))
+
+
 def key_file(host):
     return _path(host.fleet, host.name, "key")
 

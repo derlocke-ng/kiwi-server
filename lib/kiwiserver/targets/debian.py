@@ -8,11 +8,17 @@ readable — and the same directory is what `render` leaves next to it.
 """
 import ipaddress
 
-from .. import luks
+from .. import luks, unlock
 from . import ROLE_DIR, ROLE_SCRIPT, on_calendar, role_unit
 
 CDROM_DIR = "/cdrom/kiwi-server"
 KERNEL_ARGS = "auto=true priority=critical"
+
+
+def _ssh_at_boot(host):
+    """SSH in the initramfs from the first boot on, for a disk nobody can type a key at."""
+    d = host.cfg["debian"]
+    return bool(host.cfg["unlock"].get("ssh")) and bool(d.get("encrypt") or d.get("partitioning") == "crypto")
 
 
 def _netmask(cidr):
@@ -103,6 +109,8 @@ def preseed(host, version):
         ]
     pkgs = ["sudo", "curl", "ca-certificates", "git", "gnupg", "openssh-server"]
     pkgs += [str(p) for p in (d.get("packages") or []) if str(p) not in pkgs]
+    if _ssh_at_boot(host):
+        pkgs.append("dropbear-initramfs")
     L += [
         "",
         "### packages",
@@ -180,10 +188,19 @@ def late_script(host):
         # the LUKS prompt lives in the initramfs, which does not load the console
         # keymap unless told: a German keyboard typed its passphrase as US (y/z
         # swapped, no dash) on the first encrypted VM
-        L += [
-            "sed -i 's/^KEYMAP=.*/KEYMAP=y/' $T/etc/initramfs-tools/initramfs.conf",
-            "in-target update-initramfs -u",
-        ]
+        L.append("sed -i 's/^KEYMAP=.*/KEYMAP=y/' $T/etc/initramfs-tools/initramfs.conf")
+        if _ssh_at_boot(host):
+            L += [
+                "D=$T/etc/dropbear/initramfs",
+                "cp $S/dropbear-authorized_keys $D/authorized_keys",
+                "chmod 0600 $D/authorized_keys",
+                "cp $S/dropbear.conf $D/dropbear.conf",
+                "cp $S/kiwi-loopback $T%s" % unlock.LOOPBACK_PATH,
+                "chmod 0755 $T%s" % unlock.LOOPBACK_PATH,
+                "dev=$(ip -4 route show default | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1)",
+                "sed \"s/IFACE/$dev/\" $S/kiwi-unlock-ip > $T/etc/initramfs-tools/conf.d/kiwi-unlock",
+            ]
+        L.append("in-target update-initramfs -u")
     L += ["in-target systemctl enable kiwi-role.service", "exit 0", ""]
     return "\n".join(L)
 
@@ -207,7 +224,14 @@ def iso_files(host, role_script):
     svc, timer = reboot_units(host)
     sshd = ["# kiwi-server", "PermitRootLogin no",
             "PasswordAuthentication %s" % ("yes" if a.get("ssh_password_auth") else "no"), ""]
+    ssh_files = {}
+    if _ssh_at_boot(host):
+        ssh_files = {"dropbear-authorized_keys": (unlock.authorized_line(host) + "\n", 0o600),
+                     "dropbear.conf": (unlock.dropbear_conf(host) + "\n", 0o644),
+                     "kiwi-loopback": (unlock.LOOPBACK_HOOK + "\n", 0o755),
+                     "kiwi-unlock-ip": ("IP=%s\n" % unlock.initramfs_ip(host), 0o644)}
     out = {
+        **ssh_files,
         "late.sh": (late_script(host), 0o755),
         "role.sh": (role_script, 0o600),
         "kiwi-role.service": (role_unit(host), 0o644),

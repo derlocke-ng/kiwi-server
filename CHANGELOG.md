@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.25.0 — old backups go
+
+- **`kiwi-server prune <fleet>`** removes old snapshots from the backup nodes and frees
+  the space: seven days, four weeks and six months are kept, and `--keep-daily`,
+  `--keep-weekly` and `--keep-monthly` change that; `--dry-run` only says what would go.
+  It runs from the operator's machine because a machine can only add to its backups and
+  the node has no keys. The password reaches the node on stdin, for that one run.
+
 ## 2.24.0 — backups of a machine's data
 
 - kiwi-modules 0.14.0 and kiwi-stack 0.3.0. The module **`backup`** keeps a machine's

@@ -1916,6 +1916,79 @@ class FakeWgEasy:
         self.thread.join(5)
 
 
+class TestPrune(Base):
+    FORGET = b'[{"keep": ["a", "b"], "remove": ["c", "d", "e"]}, {"keep": ["f"], "remove": null}]\n'
+
+    def test_it_runs_on_the_node_and_the_password_comes_in_on_stdin(self):
+        calls = []
+
+        def runner(argv, input=None, capture_output=True):
+            calls.append((argv[-1], input))
+            out = self.FORGET if " forget " in argv[-1] else b"to delete: 1\ntotal prune:  3 blobs / 1.5 MiB\nremaining: x\n"
+            return subprocess.CompletedProcess(argv, 0, out, b"")
+        r = backup.prune_repository("core@n.kiwi", "podman", "/data/papaya.kiwi", "restic:1", "s3cret", runner=runner)
+        self.assertEqual(r, {"kept": 3, "removed": 3, "freed": "3 blobs / 1.5 MiB"})
+        self.assertEqual([c[1] for c in calls], [b"s3cret\n", b"s3cret\n"])
+        self.assertNotIn("s3cret", " ".join(c[0] for c in calls))
+        self.assertIn("--network none", calls[0][0])
+        self.assertIn("--group-by host,tags", calls[0][0])
+        self.assertIn("--keep-daily 7 --keep-weekly 4 --keep-monthly 6", calls[0][0])
+        self.assertIn(" prune", calls[1][0])
+
+    def test_a_dry_run_frees_nothing(self):
+        calls = []
+
+        def runner(argv, input=None, capture_output=True):
+            calls.append(argv[-1])
+            return subprocess.CompletedProcess(argv, 0, self.FORGET, b"")
+        r = backup.prune_repository("core@n.kiwi", "podman", "/d/x", "restic:1", "p", dry_run=True, runner=runner)
+        self.assertEqual((r["kept"], r["removed"]), (3, 3))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--dry-run", calls[0])
+
+    def prune_fleet(self):
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "store": {"role": "node", "node": dict(node, modules=["vpn-client", "reverse-proxy", "backup-server"],
+                                                   **{"backup-server": {"clients": ["papaya.kiwi", "elsewhere.kiwi"]}})},
+            "papaya": {"role": "node", "node": dict(node, modules=["vpn-client", "reverse-proxy", "backup"],
+                                                    backup={"server": "https://backup.store.kiwi"})},
+            "plain": {"role": "node", "node": {"preset": "minimal"}}}})
+
+    def test_the_command_finds_each_clients_password_and_repository(self):
+        f = self.prune_fleet()
+        calls = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            calls.append((tgt, script, data))
+            return self.FORGET if " forget " in script else b"total prune:  3 blobs / 1.5 MiB\n"
+        with mock.patch.object(remote, "run", fake_run):
+            rc, out, err = TestManage.run_cli(self, "prune", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(calls[0][0], "core@store.kiwi")
+        self.assertIn("/home/user/docker/kn-backup-server/data/papaya.kiwi:/repo", calls[0][1])
+        self.assertEqual(calls[0][2], (f.derive_secret("papaya.kiwi", "backup", "repo_password") + "\n").encode())
+        self.assertIn("3 snapshots kept, 3 removed, freed 3 blobs / 1.5 MiB", out + err)
+        self.assertIn("elsewhere.kiwi is not a machine of this fleet", out + err)
+        self.assertNotIn(calls[0][2].decode().strip(), out + err)
+
+    def test_the_command_will_not_keep_nothing(self):
+        rc, out, err = TestManage.run_cli(self, "prune", self.prune_fleet().path, "--keep-daily", "0", "--keep-weekly", "0", "--keep-monthly", "0")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("would keep nothing", err)
+
+    def test_the_command_needs_a_backup_server(self):
+        rc, out, err = TestManage.run_cli(self, "prune", self.prune_fleet().path, "plain")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("none of these hosts", err)
+
+    def test_nothing_stored_yet_is_nothing_to_do(self):
+        def runner(argv, input=None, capture_output=True):
+            return subprocess.CompletedProcess(argv, 0, b"[]\n", b"")
+        self.assertEqual(backup.prune_repository("c@n", "podman", "/d/x", "r:1", "p", runner=runner),
+                         {"kept": 0, "removed": 0, "freed": ""})
+
+
 class TestRemote(Base):
     class R:
         def __init__(self, rc=0, out=b"", err=b""):

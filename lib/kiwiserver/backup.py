@@ -14,6 +14,7 @@ from a passphrase), so nothing but openssl and tar is needed to open one by
 hand:  openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 600000 -in X | tar xz
 """
 import io
+import json
 import os
 import shlex
 import subprocess
@@ -198,3 +199,34 @@ def fetch_remote(target, name=None, runner=subprocess.run):
     if "/" in name or not name.startswith("fleet-") or not name.endswith(".tar.enc"):
         raise KiwiError("not a fleet backup name: %r" % name)
     return name, _ssh(target, "cat %s/%s" % (REMOTE_DIR, shlex.quote(name)), None, runner)
+
+
+# ---- old snapshots of the machines' data (the backup and backup-server modules) ----------
+
+KEEP = {"daily": 7, "weekly": 4, "monthly": 6}
+
+
+def prune_repository(tgt, runtime, repo, image, password, keep=None, dry_run=False, runner=subprocess.run):
+    """Forget what the rules no longer keep in one machine's repository and free the space.
+
+    A machine can only add to its repository, so this happens on the backup node, on the
+    files themselves, from the operator's machine: the node does not hold the password. It
+    comes in on stdin and lives in the container for as long as this takes."""
+    keep = keep or KEEP
+    restic = "%s run --rm -i --network none --security-opt label=disable -v %s:/repo %s -r /repo --no-cache --retry-lock 5m" % (
+        shlex.quote(runtime), shlex.quote(repo), shlex.quote(image))
+    rules = " ".join("--keep-%s %d" % (k, n) for k, n in keep.items())
+    script = "[ -d %s ] || { echo '[]'; exit 0; }\n%s forget --json --group-by host,tags %s%s" % (
+        shlex.quote(repo), restic, rules, " --dry-run" if dry_run else "")
+    data = (password + "\n").encode()
+    lines = remote.run(tgt, script, data, runner=runner).decode(errors="replace").splitlines()
+    try:
+        groups = json.loads(next((ln for ln in reversed(lines) if ln.startswith("[")), "[]"))
+    except ValueError:
+        raise KiwiError("%s: restic's answer about %s could not be read" % (tgt, repo))
+    result = {"kept": sum(len(g.get("keep") or []) for g in groups),
+              "removed": sum(len(g.get("remove") or []) for g in groups), "freed": ""}
+    if result["removed"] and not dry_run:
+        out = remote.run(tgt, restic + " prune", data, runner=runner).decode(errors="replace")
+        result["freed"] = " ".join(ln.split(":", 1)[1].strip() for ln in out.splitlines() if ln.startswith("total prune:"))
+    return result

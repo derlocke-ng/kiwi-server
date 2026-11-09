@@ -646,3 +646,32 @@ Asked for by the owner in October 2026, for the test round and after:
   Syncthing (sync without a cloud), Home Assistant (home). Each is a
   compose fragment and a module.yaml; the catalog decides which are
   presets.
+
+Asked for by the owner in November 2026:
+
+- **Secrets off the media and encrypted at rest** (design/control-plane.md,
+  Secrets). First, with no controller: `build` and `script` bare by default,
+  `--offline` and a warning for media that carry secrets; a one-time LUKS key
+  per build, replaced at first contact, `cryptsetup reencrypt` on a master;
+  the fleet file's literals gone to hashes and seed-generated values,
+  `validate` refusing what is left unless the file is encrypted. Then the
+  `age` secret store and `kiwi-server secrets unlock|lock|status|show`, with
+  an identity in the GNOME Keyring, one sealed to the control node's rings
+  and a recovery one; the fleet backup moves to it (problem 21). A join
+  medium that carries only the token, the CA certificate, the one-time key
+  and hashes comes with step 5.
+- **Hubs live on masters**, not nodes: a hub may be public, and a master is
+  the machine made to face the internet (problem 37). A master with
+  `nostr-relay` and `hub` in its `modules:` renders today, reachable through
+  the mesh. Still to do: the node role's `hub` preset goes, and a public hub
+  needs 443 published from the WireGuard server's namespace
+  (`vpn-server.published_ports`, which the unlock relay needs too) and a
+  certificate for its public name.
+
+The order the owner agreed in November 2026, ahead of the numbered steps
+above: problems 59 and 60; the first part of the secrets work; the dead-node
+drill on a VM; the netcup client; a hub on a master; the secret store; then
+steps 3 to 6 and what follows them. Federation keeps its place after the
+unlock: it is not built, and a hand-made multi-hop between two masters can
+be tried any time. The live v1 network stays as it is until the owner decides
+to move it.

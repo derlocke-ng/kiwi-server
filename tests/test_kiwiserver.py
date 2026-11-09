@@ -2307,6 +2307,14 @@ class TestUnlock(Base):
             unlock.bind(h, "core@lychee", self.servers(f))
         self.assertTrue([c for c in calls if "disable --now kiwi-reboot-if-required.timer" in c[1]])
 
+    def test_a_ring_of_its_own_reach_keeps_the_reboot_window(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        h.cfg["unlock"].update(rings=["infra", "operator"], via={"operator": "http://127.0.0.1:7500"})
+        self.assertFalse(unlock.forwarded(h))
+        h.cfg["unlock"]["threshold"] = 2
+        self.assertTrue(unlock.forwarded(h))
+
     def test_a_machine_on_the_lan_keeps_its_reboot_window(self):
         f = self.unlock_fleet()
         calls, a, b = self.fake_remote()
@@ -3546,6 +3554,46 @@ peers=4 3
     def test_the_clock_is_compared_with_this_computer(self):
         f = facts.parse("applied=x\nos=D\nclock=yes\nnow=1100\n", local_now=1000)
         self.assertEqual(facts.assess(f)[0], "warn")
+
+    def assessed(self, extra, uptime=86400):
+        now = 2000000000
+        data = "now=%d\napplied=x\nos=Debian\nuptime=%d\nclock=yes\n%s\n" % (now, uptime, extra)
+        f = facts.parse(data, local_now=now)
+        return f, facts.assess(f)
+
+    def test_a_fresh_backup_is_a_note(self):
+        f, (state, problems, notes) = self.assessed("backup=%d" % (2000000000 - 7200))
+        self.assertEqual(f["backup"]["age"], 7200)
+        self.assertEqual(state, "ok")
+        self.assertIn("last backup 2 h ago", notes)
+
+    def test_a_missed_night_is_a_warning(self):
+        _f, (state, problems, _n) = self.assessed("backup=%d" % (2000000000 - 40 * 3600))
+        self.assertEqual(state, "warn")
+        self.assertIn("40 hours old", problems[0]["text"])
+
+    def test_a_week_without_a_backup_is_bad(self):
+        _f, (state, problems, _n) = self.assessed("backup=%d" % (2000000000 - 8 * 86400))
+        self.assertEqual(state, "bad")
+        self.assertIn("8 days old", problems[0]["text"])
+
+    def test_a_backup_that_never_ran_warns_once_the_machine_has_been_up(self):
+        self.assertEqual(self.assessed("backup=0")[1][0], "warn")
+        state, _p, notes = self.assessed("backup=0", uptime=60)[1]
+        self.assertEqual(state, "ok")
+        self.assertIn("no backup yet", notes)
+
+    def test_a_machine_without_the_module_says_nothing_about_backups(self):
+        f, (_s, problems, notes) = self.assessed("")
+        self.assertNotIn("backup", f)
+        self.assertFalse([x for x in problems + notes if "backup" in str(x)])
+
+    def test_the_disk_is_reported_as_it_is(self):
+        self.assertIn("the disk is not encrypted", self.assessed("luks=none")[1][2])
+        self.assertIn("the disk opens only with a typed key", self.assessed("luks=0")[1][2])
+        f, (_s, _p, notes) = self.assessed("luks=1")
+        self.assertEqual(f["encryption"], "bound")
+        self.assertFalse([n for n in notes if "disk" in n])
 
     def test_status_text_and_probe_come_apart(self):
         human, data = facts.split("applied: x\n%s\nuptime=1\n" % facts.MARK)

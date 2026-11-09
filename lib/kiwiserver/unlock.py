@@ -445,7 +445,7 @@ def bind(host, tgt, servers):
     if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
     changed = _rebind(host, tgt, key, wanted_tree)
-    if _forwarded_rings(host):
+    if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
     if host.cfg["unlock"].get("ssh"):
@@ -474,8 +474,10 @@ def _rebind(host, tgt, key, wanted_tree):
 
 
 def forwarded(host):
-    """Is any ring reached only through a port someone forwards in? It cannot help a first boot."""
-    return bool(_forwarded_rings(host))
+    """Does opening this disk take a ring that someone has to forward in? Rings it reaches
+    by itself may be enough for the threshold, and then nobody has to be there."""
+    cfg = host.cfg["unlock"]
+    return len(cfg["rings"]) - len(_forwarded_rings(host)) < int(cfg["threshold"])
 
 
 def _forwarded_rings(host):

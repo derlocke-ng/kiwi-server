@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.33.0 — status knows about backups and disks
+
+- `kiwi-server status` says when a machine with the `backup` module last backed up, warns
+  after a missed night and calls a week without one bad, and says whether the disk is
+  unencrypted or opens only with a typed key. The app shows the same.
+- A machine keeps its reboot window when rings it reaches by itself are enough to open
+  its disk, even if another ring has to be forwarded in.
+
 ## 2.32.0 — a ring on this machine
 
 - The ring named **`operator`** is served by kiwi-server itself, from the operator's machine,

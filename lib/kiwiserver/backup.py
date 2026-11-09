@@ -230,3 +230,51 @@ def prune_repository(tgt, runtime, repo, image, password, keep=None, dry_run=Fal
         out = remote.run(tgt, restic + " prune", data, runner=runner).decode(errors="replace")
         result["freed"] = " ".join(ln.split(":", 1)[1].strip() for ln in out.splitlines() if ln.startswith("total prune:"))
     return result
+
+
+# ---- a master's WireGuard identity ------------------------------------------------------
+#
+# Its data backup goes over the mesh, and the mesh is that identity: a new master could
+# not fetch it. So the fleet keeps a copy with its other secrets, refreshed by apply and
+# enroll, and a master that has none gets it back before its stack starts.
+
+def carries_wireguard(host):
+    return "vpn-server" in (host.modules or [])
+
+
+def _wireguard_copy(host):
+    return host.fleet.resolve_path("secrets/wg-easy/%s.json" % host.name)
+
+
+def _wireguard_file(host):
+    return "%s/km-vpn-server/wg0.json" % ((host.role_settings or {}).get("docker_dir") or "/home/user/docker")
+
+
+def put_back_wireguard(host, tgt, runner=subprocess.run):
+    """Only where the machine has none: what is there is newer than any copy."""
+    path = _wireguard_copy(host)
+    if not os.path.isfile(path):
+        return False
+    f = shlex.quote(_wireguard_file(host))
+    script = ('[ -s %s ] && { echo present; exit 0; }\nmkdir -p "$(dirname %s)"\numask 027\ncat > %s.new && mv %s.new %s\necho restored'
+              % (f, f, f, f, f))
+    with open(path, "rb") as stored:
+        out = remote.run(tgt, script, stored.read(), runner=runner)
+    return b"restored" in out
+
+
+def keep_wireguard(host, tgt, runner=subprocess.run):
+    """The machine's state into the fleet's secrets, when there is one worth keeping."""
+    f = shlex.quote(_wireguard_file(host))
+    out = remote.run(tgt, "[ -s %s ] && cat %s || true" % (f, f), runner=runner)
+    try:
+        if not json.loads(out)["server"]["privateKey"]:
+            return False
+    except (ValueError, KeyError, TypeError):
+        return False                        # not started yet, or not wg-easy's
+    path = _wireguard_copy(host)
+    if os.path.isfile(path) and util.read_bytes(path) == out:
+        return False
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    util.write_bytes(path, out, 0o600)
+    return True

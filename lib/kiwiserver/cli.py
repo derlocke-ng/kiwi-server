@@ -902,6 +902,8 @@ def cmd_apply(args):
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
             script, _b = r.script(h)
+            if not args.no_run and backupmod.carries_wireguard(h) and backupmod.put_back_wireguard(h, tgt):
+                util.say("%s: its WireGuard identity is back from the fleet's copy" % h.name)
             util.say("%s: sending the role script to %s" % (h.name, tgt))
             remote.put(tgt, script.encode(), "/var/lib/kiwi-server/role.sh", "0700")
             if args.no_run:
@@ -913,6 +915,8 @@ def cmd_apply(args):
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
             if unlock.wanted(h):
                 unlock.bind(h, tgt, servers)
+            if backupmod.carries_wireguard(h):
+                backupmod.keep_wireguard(h, tgt)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             failed.append(h.name)
@@ -1013,6 +1017,10 @@ def cmd_enroll(args):
         dest = fleet.resolve_path("secrets/devices/%s.conf" % name)
     util.write_text(dest, text if text.endswith("\n") else text + "\n", 0o600)
     util.say("%s" % dest)
+    try:                                 # the new peer is part of what a rebuilt master needs
+        backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+    except KiwiError as e:
+        util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
     if host:
         util.say("%s's vpn-client picks it up by itself (wireguard_config falls back to secrets/<hostname>.conf) — "
                  "kiwi-server render %s" % (host.name, os.path.basename(fleet.path)))

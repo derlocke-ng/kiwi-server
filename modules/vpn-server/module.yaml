@@ -48,6 +48,8 @@ nginx:
       comment: wg-easy (WireGuard clients)
 
 backup:
+  # stopping it takes away the mesh a restore comes over
+  no_restore: "it carries the mesh this restore would come over. kiwi-server apply puts it back from the copy in the fleet's secrets; the snapshots here are for by hand, on the backup node"
   frozen:
     containers: ["{{ container_prefix }}-vpn-server"]
     paths: ["${DOCKERDIR}/{{ container_prefix }}-vpn-server"]

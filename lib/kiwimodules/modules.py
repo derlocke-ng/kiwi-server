@@ -478,6 +478,7 @@ class Renderer:
                 "frozen": mounts(frozen, ctx, where), "bulk": mounts(b, ctx, where),
                 # an absolute exclude is a path on the host; restic sees it under /source
                 "exclude": [("/source" + e) if e.startswith("/") else e for e in values(b.get("exclude"), ctx, where)],
+                "no_restore": str(b.get("no_restore") or ""),
             })
         return sources
 

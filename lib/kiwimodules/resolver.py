@@ -162,7 +162,7 @@ def resolve_settings(role, host, modset=None):
     return host.role_settings
 
 
-def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None):
+def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None):
     rs = host.role_settings
     vpn_ip = rs.get("vpn_ip") or ""
     if not vpn_ip and "vpn-server" in host.modules:
@@ -175,7 +175,7 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None):
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
         pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {},
         module_config=host.module_settings, files=host.module_files,
-        dns_records=dns_records or [], service_user=service_user(host),
+        dns_records=dns_records or [], lan_addresses=lan_addresses or {}, service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",
         domain=host.domain, runtime=rs.get("runtime") or "podman", ca_cert=ca_cert,
         auto_update=rs.get("auto_update") or "registry")

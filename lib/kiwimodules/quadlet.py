@@ -10,6 +10,7 @@ podman is needed on the machine, and `podman auto-update` pulls new images.
 Only the compose subset the modules use is translated; anything else is an
 error at render time rather than a surprise on the host.
 """
+import json
 import re
 
 from .util import KiwiError
@@ -167,15 +168,16 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
     hc = body.get("healthcheck")
     if hc and not hc.get("disable"):
         test = hc.get("test")
-        if isinstance(test, list):
-            if test and test[0] == "CMD-SHELL":
-                test = " ".join(test[1:])
-            elif test and test[0] == "CMD":
-                test = " ".join(test[1:])
-            else:
-                test = " ".join(test)
-        if test:
-            container.append("HealthCmd=%s" % _esc(test))
+        if isinstance(test, list) and test[:1] == ["CMD"] and test[1:]:
+            # as a JSON array podman runs it directly; as a string it goes through /bin/sh,
+            # which not every image has. Quadlet passes this value on as it stands: no quoting.
+            health = json.dumps([str(a).replace("$$", "$") for a in test[1:]], separators=(",", ":")).replace("%", "%%")
+        else:
+            if isinstance(test, list):
+                test = " ".join(test[1:] if test[:1] == ["CMD-SHELL"] else test)
+            health = _esc(test) if test else ""
+        if health:
+            container.append("HealthCmd=%s" % health)
             for key, opt in (("interval", "HealthInterval"), ("timeout", "HealthTimeout"),
                              ("start_period", "HealthStartPeriod")):
                 if hc.get(key):

@@ -144,7 +144,7 @@ settings:
   - key: fleet_records
     type: bool
     label: Serve the fleet's names
-    help: "Local DNS records for every host and service in the fleet, at their mesh addresses (split-horizon DNS)."
+    help: "Local DNS records for every host and service in the fleet (split-horizon DNS): their mesh addresses, except that a node on this node's own LAN answers with its LAN address."
     default: true
   - key: extra_records
     type: map

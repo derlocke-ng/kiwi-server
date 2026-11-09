@@ -982,7 +982,7 @@ class TestModules(Base):
         self.assertNotIn("AddHost=", b.quadlets["kn-pihole.container"])
         # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
         inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
-        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW ! --ctstatus DNAT -j DROP'), inserts)
+        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP'), inserts)
         # … and, standing on top, it must spare the replies to what the containers started
         # (the VPN client's handshake) and the LAN's connections to published ports
         self.assertRegex(b.files["kn-portainer/admin-password"][0], r"^[A-Za-z0-9]{32}\s*$")   # left out: generated, no open first-run page

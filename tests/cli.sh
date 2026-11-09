@@ -36,7 +36,7 @@ grep -q 'KS_STACK=0' "$tmp/bare/sh3/sh3.role.sh"
 if grep -q 'KS_FILES\[stack/docker-compose.yml\]=' "$tmp/bare/sh3/sh3.role.sh"; then echo "--bare must not embed the stack" >&2; exit 1; fi
 "$ks" list fleet.yaml | grep -q '^sh3 '
 "$ks" list fleet.yaml --porcelain | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["hosts"])==4; assert all(not h["errors"] for h in d["hosts"])'
-"$ks" script fleet.yaml gate | bash -n
+"$ks" script fleet.yaml gate --offline 2>/dev/null | bash -n
 test -f output/gate/gate.preseed.cfg
 test -f output/gate/gate.stack/km-vpn-server/start.sh
 test -f output/sh3/sh3.bu
@@ -54,7 +54,7 @@ grep -q "KS_ROLE_VPN_IP='10.8.0.6'" output/m1/m1.role.sh        # from the WireG
 grep -q 'FTLCONF_dns_hosts=.*10.8.0.25 cloud.sh3.home' output/m1/m1.stack/docker-compose.yml
 grep -q 'set $backend http://nextcloud-aio-apache:11000;' output/sh3/sh3.stack/kn-nginx/nginx.conf
 test -f output/m1/m1.stack/kn-sftp/users.conf
-"$ks" script fleet.yaml sh3 | head -1 | grep -q '^#!/usr/bin/env bash$'   # nothing but the script on stdout
+"$ks" script fleet.yaml sh3 --offline 2>/dev/null | head -1 | grep -q '^#!/usr/bin/env bash$'   # nothing but the script on stdout
 printf '[Interface]\nPrivateKey = x\nAddress = 10.8.4.2/24\n[Peer]\nPublicKey = y\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.org:51820\n' > secrets/router.conf
 "$ks" openwrt fleet.yaml --wireguard secrets/router.conf | grep -q "server='/home/10.8.0.1'"
 "$ks" openwrt fleet.yaml --via 192.168.1.5 | grep -q "kiwi_route.gateway='192.168.1.5'"

@@ -90,22 +90,27 @@ Boot the machine from it. CoreOS and Debian install and then **power off**
 provider's ISO before the machine ever boots again — media left first in the
 boot order would reinstall on every boot; `install: { on_done: reboot }` goes
 straight into the installed system instead. Powered on again, the machine
-runs the role on first boot; uCore reboots twice more first (unsigned rebase,
-then signed).
+sets up its base system on first boot (hostname, network, the admin user, the
+update policy); uCore reboots twice more first (unsigned rebase, then signed).
 Watch it with `journalctl -u kiwi-role -f`; `/var/lib/kiwi-server/role.done`
 appears when it is finished.
 
-Or skip the ISO: `kiwi-server script fleet.yaml sh3 > sh3.sh`, copy it to any
-installed Debian / CoreOS / uCore machine and `sudo bash sh3.sh`. It is the
-same script the ISO runs.
+The ISO carries none of the stack's secrets. The role and its stack come
+afterwards, over SSH:
 
-Media that leave the house — a provider's ISO store, a stick in the post —
-should not carry the stack's secrets: `kiwi-server build fleet.yaml sh3
---bare` writes an ISO with the base system only (hostname, network, the
-admin user, the update policy), and `kiwi-server apply fleet.yaml sh3 --ssh
-core@<address>` brings the role and its stack afterwards, over SSH. A node's
-bare media can be built before `enroll` wrote its WireGuard config; `apply`
+```bash
+kiwi-server apply fleet.yaml sh3 --ssh core@<address>
+```
+
+A node's ISO can be built before `enroll` wrote its WireGuard config; `apply`
 checks the role's settings when it brings them.
+
+For a machine that cannot be reached over SSH there are **offline media**:
+`kiwi-server build fleet.yaml sh3 --offline` puts the whole role and its
+secrets on the ISO, and `kiwi-server script fleet.yaml sh3 --offline > sh3.sh`
+writes the same thing as a script to `sudo bash` on any installed Debian /
+CoreOS / uCore machine. Whoever holds one holds those secrets: keep it off a
+provider's ISO store and delete it once the machine is installed.
 
 ## The fleet file
 
@@ -426,7 +431,7 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
   LUKS passphrase. Files are written 0600 and `output/` is in `.gitignore`;
   treat the ISOs the same way.
 - A role script runs as root and does what the role says. Read
-  `kiwi-server script fleet.yaml <host>` before trusting a role you did not
+  `kiwi-server script fleet.yaml <host> --offline` before trusting a role you did not
   write, the same way you would read an installer.
 - **The machines' SSH host keys** are kept in `secrets/known_hosts`: the first
   contact accepts a new machine's key, a changed key (a reinstall) is refused

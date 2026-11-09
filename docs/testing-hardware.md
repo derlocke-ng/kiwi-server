@@ -68,6 +68,10 @@ kiwi-server build fleet.yaml m1 && ls -l output/m1/m1.iso
 sudo dd if=output/m1/m1.iso of=/dev/sdX bs=4M status=progress oflag=sync   # a raw copy, nothing else
 ```
 
+The ISO carries the base system only. Once the machine is up, `kiwi-server
+apply fleet.yaml m1 --ssh core@<address>` brings the role and its stack;
+`build --offline` puts them on the ISO instead.
+
 Write the stick **raw** (`dd`, GNOME's Disk Image Writer, Fedora Media
 Writer). Ventoy, Rufus in ISO mode and similar tools rewrite the image, and
 the Fedora CoreOS live system then cannot find its root: the console ends in

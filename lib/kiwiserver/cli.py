@@ -524,13 +524,40 @@ def cmd_targets(args):
         print("%-8s %s" % (k, v))
 
 
+def make_bare(fleet, hosts, note):
+    """Media without the stack: the role script carries the base system only
+    (hostname, network, the admin user, the update policy) and the machine
+    comes up as `bare`; its role and every secret of its stack arrive
+    afterwards with `apply` over SSH, which checks the role's settings then.
+    So a node's WireGuard config may still be missing here (enroll comes
+    after the master exists): only the base system is validated."""
+    for h in hosts:
+        if h.role != "bare":
+            note("%s: bare media — afterwards: kiwi-server apply %s %s --ssh %s@<address>"
+                 % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"]))
+        h.role, h.role_settings_raw, h.role_settings = "bare", {}, {}
+
+
+def warn_offline(hosts, what):
+    """Said where the media are made: an offline ISO or script is the whole role."""
+    for h in hosts:
+        if h.role != "bare":
+            util.warn("%s: this %s holds the %s role's secrets in the clear, and whoever has it has them: "
+                      "keep it off a provider's store and delete it once the machine is installed"
+                      % (h.name, what, h.role))
+
+
 def cmd_script(args):
     fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
+    if not args.offline:
+        make_bare(fleet, [h], lambda m: print(":: %s" % m, file=sys.stderr))   # stdout is the script
     check(fleet, roles, ms, [h])
     tc = make_tc(args)
     util.QUIET = True   # stdout is the script; the CA / certificate notes would end up inside it
     script, _bundle = Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms).script(h)
+    if args.offline:
+        warn_offline([h], "script")
     sys.stdout.write(script)
 
 
@@ -732,19 +759,11 @@ def cmd_ca(args):
 def _render_or_build(args, build):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
-    if getattr(args, "bare", False):
-        # Media without the stack: the role script carries the base system only
-        # (hostname, network, the admin user, the update policy) and the machine
-        # comes up as `bare`; its role and every secret of its stack arrive
-        # afterwards with `apply` over SSH, which checks the role's settings
-        # then. So a node's WireGuard config may still be missing here (enroll
-        # comes after the master exists) — only the base system is validated.
-        # For media that leave the house (a provider's ISO store).
-        for h in hosts:
-            if h.role != "bare":
-                util.say("%s: bare media — afterwards: kiwi-server apply %s %s --ssh %s@<address>"
-                         % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"]))
-            h.role, h.role_settings_raw, h.role_settings = "bare", {}, {}
+    offline = getattr(args, "offline", False)
+    if offline and args.bare:
+        raise KiwiError("--bare and --offline exclude each other")
+    if args.bare or (build and not offline):       # an ISO is bare unless it is asked for by name
+        make_bare(fleet, hosts, util.say)
     check(fleet, roles, ms, hosts)
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
@@ -766,6 +785,8 @@ def _render_or_build(args, build):
             print("error: %s" % e, file=sys.stderr)
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
+    if offline:
+        warn_offline(hosts, "ISO")
     if build:
         util.say("done — these ISOs wipe their target disk on boot; label them")
     if not getattr(args, "no_backup", False):
@@ -946,8 +967,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server list <fleet>                      hosts and what has been generated
   kiwi-server show <fleet> <host>               the effective configuration of one host
   kiwi-server render <fleet> [host...]          role scripts, stacks, Butane/Ignition or preseed
-  kiwi-server build <fleet> [host...]           render, then the unattended ISO per host (--bare: without the stack)
-  kiwi-server script <fleet> <host>             print the role script (run it on any machine)
+  kiwi-server build <fleet> [host...]           render, then the unattended ISO per host: the base system (--offline: the role and its secrets too)
+  kiwi-server script <fleet> <host>             print the script for any machine: the base system (--offline: the role and its secrets too)
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
@@ -1001,9 +1022,13 @@ def build_parser():
     for name, fn in (("render", cmd_render), ("build", cmd_build)):
         s = sub(name, fn); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
         s.add_argument("--bare", action="store_true",
-                       help="the base system only: the role and its stack's secrets come later with apply (media that leave the house)")
+                       help="the base system only: the role and its stack's secrets come later with apply (what build does by default)")
+        if name == "build":
+            s.add_argument("--offline", action="store_true",
+                           help="the role and its secrets on the ISO too, for a machine that cannot be reached over SSH")
         s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
     s.add_argument("--wireguard", metavar="FILE", help="the client config the master issued for the router")

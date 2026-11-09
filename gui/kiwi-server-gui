@@ -1126,7 +1126,8 @@ class Window(Adw.ApplicationWindow):
         dlg = Adw.AlertDialog(
             heading="Build unattended ISO%s?" % ("" if len(names) == 1 else "s"),
             body="Each ISO installs WITHOUT ASKING and wipes the disk it is told to:\n\n%s\n\n"
-                 "Base images are downloaded once into the cache." % "\n".join(lines))
+                 "Base images are downloaded once into the cache. The ISO carries the base "
+                 "system only; Apply brings the host's role and its secrets afterwards." % "\n".join(lines))
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("build", "Build")
         dlg.set_response_appearance("build", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -1180,7 +1181,7 @@ class Window(Adw.ApplicationWindow):
         self.set_busy(True, "Rendering the role script…")
 
         def worker():
-            rc, out, err = run_cli(self.cli, ["script", self.doc.path, scope])
+            rc, out, err = run_cli(self.cli, ["script", self.doc.path, scope, "--offline"])
             GLib.idle_add(done, rc, out, err)
 
         def done(rc, out, err):

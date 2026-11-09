@@ -663,7 +663,7 @@ Asked for by the owner in November 2026:
 
 - **Secrets off the media and encrypted at rest** (design/control-plane.md,
   Secrets). First, with no controller: `build` and `script` bare by default,
-  `--offline` and a warning for media that carry secrets; a one-time LUKS key
+  `--offline` and a warning for media that carry secrets (done in 2.10.0); a one-time LUKS key
   per build, replaced at first contact, `cryptsetup reencrypt` on a master;
   the fleet file's literals gone to hashes and seed-generated values,
   `validate` refusing what is left unless the file is encrypted. Then the
@@ -685,7 +685,7 @@ Asked for by the owner in November 2026:
 
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node
-drill on a VM; the netcup client; a hub on a master; the secret store; then
+drill on a VM; the netcup client; the MTU probe; a hub on a master; the secret store; then
 steps 3 to 6 and what follows them. Federation keeps its place after the
 unlock: it is not built, and a hand-made multi-hop between two masters can
 be tried any time. The live v1 network stays as it is until the owner decides

@@ -5,7 +5,7 @@ _kiwi_server() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     cmds="init validate list show render build script ca openwrt apply status enroll backup restore roles modules targets toolchain doctor version help"
-    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --local --ssh --passphrase-file --from --list --into --no-run --group --address --split --existing --master --qr"
+    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --offline --local --ssh --passphrase-file --from --list --into --no-run --group --address --split --existing --master --qr"
 
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")

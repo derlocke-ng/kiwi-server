@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.10.0 — install media carry no stack unless asked to
+
+- **`build` and `script` make the base system by default**: hostname, network,
+  the admin user and the update policy, with `apply` bringing the role and its
+  stack afterwards over SSH. Before, a plain `build` put every secret of the
+  stack on the ISO. `--bare` is still accepted and now only says the default.
+- **`--offline` asks for the old behaviour by name**, for a machine that
+  cannot be reached over SSH, and says when it is used that whoever holds the
+  ISO or script holds those secrets.
+- The GUI's Build makes base-system ISOs and says so; its script preview still
+  shows the whole role.
+- Not yet: a Debian host with `encrypt: true` still has its LUKS passphrase in
+  the ISO's preseed, until the one-time key lands (ROADMAP, November wishes).
+
 ## 2.9.1 — what a reboot exposed
 
 - **A master's mesh clients have internet after a reboot** (problem 61): the

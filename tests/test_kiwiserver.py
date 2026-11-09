@@ -2042,7 +2042,7 @@ class TestManage(Base):
         # the fleet picks it up without a line in fleet.yaml: vpn_ip derived, the config embedded
         rc, out, err = self.run_cli("validate", f.path)
         self.assertEqual(rc, 0, err)
-        rc, out, err = self.run_cli("script", f.path, "sh3")
+        rc, out, err = self.run_cli("script", f.path, "sh3", "--offline")
         self.assertEqual(rc, 0, err)
         self.assertIn("10.8.0.2", out)
         import base64
@@ -2282,7 +2282,7 @@ class TestCli(Base):
         self.assertEqual(data["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
         self.assertNotIn("node-cloud", data["config"])
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "ca", "kiwiCA.pem")))
-        rc, out, _ = self.run_cli("script", f.path, "n")
+        rc, out, _ = self.run_cli("script", f.path, "n", "--offline")
         self.assertEqual(rc, 0)
         self.assertIn("ks_role_apply", out)
 
@@ -2342,7 +2342,7 @@ class TestCli(Base):
 
     def test_script_prints_only_the_script(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"n": {"role": "node-cloud", "node-cloud": self.node_cloud()}}})
-        rc, out, err = self.run_cli("script", f.path, "n")   # a fresh fleet: the CA is created on the way
+        rc, out, err = self.run_cli("script", f.path, "n", "--offline")   # a fresh fleet: the CA is created on the way
         self.assertEqual(rc, 0, err)
         self.assertTrue(out.startswith("#!/usr/bin/env bash\n"), out[:80])
         self.assertNotIn("\n:: ", out)
@@ -2422,7 +2422,7 @@ class TestCli(Base):
         self.assertEqual(pw_a, c.hosts["other"].module_settings["cloud"]["database_password"])   # the host key does not matter
         self.assertEqual(len(c.seed_id()), 12)
         self.assertEqual(a.seed_id(), c.seed_id())           # one secrets/seed in the fleet directory
-        rc, out, err = self.run_cli("script", c.path, "other")   # the fleet file on disk is c's by now
+        rc, out, err = self.run_cli("script", c.path, "other", "--offline")   # the fleet file on disk is c's by now
         self.assertEqual(rc, 0, err)
         self.assertIn("KS_SEED_ID='%s'" % c.seed_id(), out)
 
@@ -2439,6 +2439,52 @@ class TestCli(Base):
         rc, out, err = self.run_cli("build", f.path, "-o", os.path.join(self.tmp, "o"), "--toolchain", "native")
         self.assertEqual(rc, 1)
         self.assertIn("disk", err)
+
+    def media_fleet(self):
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+
+    def test_script_is_bare_unless_offline(self):
+        f = self.media_fleet()
+        rc, out, err = self.run_cli("script", f.path, "gate")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.startswith("#!/usr/bin/env bash\n"), out[:80])   # the note went to stderr
+        self.assertIn("KS_STACK=0", out)
+        self.assertNotIn("KS_FILES[stack/docker-compose.yml]=", out)
+        self.assertIn("bare media", err)
+        rc, out, err = self.run_cli("script", f.path, "gate", "--offline")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("KS_STACK=1", out)
+        self.assertIn("KS_FILES[stack/docker-compose.yml]=", out)
+        self.assertIn("in the clear", err)
+
+    def build_roles(self, *flags):
+        """What `build` hands the builder, with the ISO tools taken out of the way."""
+        f = self.media_fleet()
+        iso = os.path.join(self.tmp, "fake.iso")
+        write(iso, "iso")
+        seen = []
+
+        def fake_build(_renderer, host, _cache):
+            seen.append(host.role)
+            return mock.Mock(iso=iso)
+        with mock.patch.object(cli.Renderer, "build", fake_build):
+            rc, out, err = self.run_cli("build", f.path, "--no-backup", "-o", os.path.join(self.tmp, "o"),
+                                        "--toolchain", "native", *flags)
+        return rc, seen, err
+
+    def test_build_is_bare_unless_offline(self):
+        rc, seen, err = self.build_roles()
+        self.assertEqual((rc, seen), (0, ["bare"]), err)
+        self.assertNotIn("in the clear", err)
+        rc, seen, err = self.build_roles("--offline")
+        self.assertEqual((rc, seen), (0, ["master"]), err)
+        self.assertIn("in the clear", err)
+
+    def test_bare_and_offline_exclude_each_other(self):
+        rc, seen, err = self.build_roles("--bare", "--offline")
+        self.assertEqual((rc, seen), (1, []))
+        self.assertIn("exclude each other", err)
 
     def test_init_and_example_fleet_validates(self):
         dest = os.path.join(self.tmp, "new.yaml")

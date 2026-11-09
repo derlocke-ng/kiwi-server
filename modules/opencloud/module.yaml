@@ -1,0 +1,89 @@
+schema_version: "1.0"
+
+module:
+  name: opencloud
+  title: OpenCloud
+  version: 1.0.0
+  description: "OpenCloud, files and sharing in one Go binary, behind the reverse proxy at opencloud.<hostname>"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  start: start.sh.j2
+
+outputs:
+  start: { path: "{{ container_prefix }}-opencloud/start.sh", mode: 0755 }
+
+derived:
+  opencloud_host: "{{ opencloud_domain or 'opencloud.' ~ hostname }}"
+  data_path: "{{ data_dir or docker_dir ~ '/' ~ container_prefix ~ '-opencloud/data' }}"
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-opencloud/config", type: dir, required: true }
+    - { host: "{{ data_path }}", type: dir, required: true }
+
+urls:
+  - "OpenCloud: https://{{ opencloud_host }} — user admin, the opencloud.admin_password setting"
+
+nginx:
+  upstream:
+    name: opencloud
+    server: "{{ container_prefix }}-opencloud:9200"
+  server_name: "{{ opencloud_host }}"
+  proxy_pass: "http://opencloud"
+  websocket: true
+  client_max_body_size: "0"
+  proxy_read_timeout: 3600s
+  comment: OpenCloud
+  extra_directives:
+    - "proxy_buffering off;"
+    - "proxy_request_buffering off;"
+
+settings:
+  - key: opencloud_domain
+    label: Name
+    help: "Empty: opencloud.<hostname>."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: admin_password
+    type: secret
+    generate: true
+    label: Admin password
+    help: "The password of the OpenCloud user `admin`, set on the first start. Empty: generated from the seed."
+  - key: data_dir
+    label: Data directory
+    help: "Where the files live, e.g. a big disk mounted at /mnt/data/opencloud. It must belong to uid 1000. Empty: under the stack directory."
+    default: ""
+  - key: log_level
+    type: enum
+    options: [panic, fatal, error, warn, info, debug]
+    default: warn
+  - key: insecure
+    type: bool
+    group: Advanced
+    label: Skip certificate checks inside OpenCloud
+    help: "Its services call each other through the site's own address, whose certificate comes from the fleet CA, which the image does not know."
+    default: true
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: KEY=value, passed to the container as they are.
+    default: {}
+  - key: image
+    group: Advanced
+    default: docker.io/opencloudeu/opencloud-rolling:9.0.0

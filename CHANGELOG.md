@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.22.0 — OpenCloud, Immich and Paperless-ngx to try out
+
+- kiwi-modules 0.12.0: three new modules for a node, `opencloud`, `immich` and
+  `paperless`, each behind the reverse proxy with a setting for where its data lives.
+  None is in a preset: add them to `modules:`.
+- A new Nextcloud installs end-to-end encryption by default.
+
 ## 2.21.0 — a calendar's way to Nextcloud
 
 - kiwi-modules 0.11.0. **`hub.caldav`** lets a hub's calendar reach a Nextcloud through

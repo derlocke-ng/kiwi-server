@@ -1,0 +1,102 @@
+# paperless (Paperless-ngx)
+services:
+  {{ container_prefix }}-paperless:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-paperless
+    depends_on:
+      - {{ container_prefix }}-paperless-db
+      - {{ container_prefix }}-paperless-redis
+{% if office_documents %}
+      - {{ container_prefix }}-paperless-tika
+      - {{ container_prefix }}-paperless-gotenberg
+{% endif %}
+    environment:
+      - PAPERLESS_URL=https://{{ paperless_host }}
+      - PAPERLESS_SECRET_KEY={{ secret_key }}
+      - PAPERLESS_ADMIN_USER=admin
+      - PAPERLESS_ADMIN_PASSWORD={{ admin_password }}
+      - PAPERLESS_REDIS=redis://{{ container_prefix }}-paperless-redis:6379
+      - PAPERLESS_DBENGINE=postgresql
+      - PAPERLESS_DBHOST={{ container_prefix }}-paperless-db
+      - PAPERLESS_DBNAME=paperless
+      - PAPERLESS_DBUSER=paperless
+      - PAPERLESS_DBPASS={{ db_password }}
+      - PAPERLESS_OCR_LANGUAGE={{ ocr_language }}
+      - PAPERLESS_TIME_ZONE={{ timezone }}
+{% if office_documents %}
+      - PAPERLESS_TIKA_ENABLED=1
+      - PAPERLESS_TIKA_ENDPOINT=http://{{ container_prefix }}-paperless-tika:9998
+      - PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://{{ container_prefix }}-paperless-gotenberg:3000
+{% endif %}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ store_path }}/data:/usr/src/paperless/data:z
+      - {{ store_path }}/media:/usr/src/paperless/media:z
+      - {{ store_path }}/export:/usr/src/paperless/export:z
+      - {{ consume_path }}:/usr/src/paperless/consume:z
+
+  {{ container_prefix }}-paperless-redis:
+    image: {{ redis_image }}
+    container_name: {{ container_prefix }}-paperless-redis
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - paperless_redis:/data
+
+  {{ container_prefix }}-paperless-db:
+    image: {{ db_image }}
+    container_name: {{ container_prefix }}-paperless-db
+    environment:
+      - POSTGRES_DB=paperless
+      - POSTGRES_USER=paperless
+      - POSTGRES_PASSWORD={{ db_password }}
+      - TZ={{ timezone }}
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - paperless_db:/var/lib/postgresql
+{% if office_documents %}
+
+  {{ container_prefix }}-paperless-gotenberg:
+    image: {{ gotenberg_image }}
+    container_name: {{ container_prefix }}-paperless-gotenberg
+    command: ["gotenberg", "--chromium-disable-javascript=true", "--chromium-allow-list=^file:///tmp/.*"]
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  {{ container_prefix }}-paperless-tika:
+    image: {{ tika_image }}
+    container_name: {{ container_prefix }}-paperless-tika
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}

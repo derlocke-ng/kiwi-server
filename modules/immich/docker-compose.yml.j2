@@ -1,0 +1,80 @@
+# immich
+services:
+  {{ container_prefix }}-immich:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-immich
+    depends_on:
+      - {{ container_prefix }}-immich-db
+      - {{ container_prefix }}-immich-redis
+    environment:
+      - DB_HOSTNAME={{ container_prefix }}-immich-db
+      - DB_USERNAME=immich
+      - DB_PASSWORD={{ db_password }}
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME={{ container_prefix }}-immich-redis
+      - IMMICH_TRUSTED_PROXIES={{ docker_subnet }}
+{% if machine_learning %}
+      - IMMICH_MACHINE_LEARNING_URL=http://{{ container_prefix }}-immich-ml:3003
+{% else %}
+      - IMMICH_MACHINE_LEARNING_ENABLED=false
+{% endif %}
+      - TZ={{ timezone }}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ library_path }}:/data:z
+{% if machine_learning %}
+
+  {{ container_prefix }}-immich-ml:
+    image: {{ ml_image }}
+    container_name: {{ container_prefix }}-immich-ml
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - immich_model_cache:/cache
+{% endif %}
+
+  {{ container_prefix }}-immich-redis:
+    image: {{ redis_image }}
+    container_name: {{ container_prefix }}-immich-redis
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  {{ container_prefix }}-immich-db:
+    image: {{ db_image }}
+    container_name: {{ container_prefix }}-immich-db
+    shm_size: 134217728
+    environment:
+      - POSTGRES_PASSWORD={{ db_password }}
+      - POSTGRES_USER=immich
+      - POSTGRES_DB=immich
+      - POSTGRES_INITDB_ARGS=--data-checksums
+      - TZ={{ timezone }}
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - immich_db:/var/lib/postgresql/data

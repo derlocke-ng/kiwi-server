@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.8.0 — the stack network and the tunnels get an MTU each
 
 - **The stack network and the tunnels have an MTU each** (problem 40):
   `bridge_mtu` (default 1500) for the stack's bridge and `wg_mtu` (default
@@ -48,6 +48,9 @@
   master's `start.sh`, the clamp in m1's `post-rules.txt`.
 - Carries kiwi-modules 0.3.0 (`VENDORED`), where the renderer and module
   side of this change is developed.
+- Applied to the test fleet's two masters and a node before the release: no
+  packet split through the mesh and the exit. The numbers are in ROADMAP
+  problem 40, with problems 59 and 60, found on the way.
 
 ## 2.7.1 — the enroll tunnel beside an operator's ssh multiplexing
 

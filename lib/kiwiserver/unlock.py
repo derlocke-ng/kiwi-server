@@ -82,6 +82,10 @@ echo none
 '''
 
 
+# a forwarded ring listens on 127.0.0.1, and Debian's initramfs leaves the loopback down
+LOOPBACK_HOOK = '#!/bin/sh\n[ "$1" = prereqs ] && exit 0\nip link set lo up'
+LOOPBACK_PATH = "/etc/initramfs-tools/scripts/init-premount/kiwi-loopback"
+
 # An SSH server in Debian's initramfs, for a machine nothing can reach at boot but a person.
 # stdin: the keys that may log in.
 PREPARE_DROPBEAR = r'''
@@ -95,15 +99,12 @@ changed=
 if [ "$(cat $d/authorized_keys 2>/dev/null)" != "$keys" ]; then
     printf '%%s\n' "$keys" > $d/authorized_keys; chmod 0600 $d/authorized_keys; changed=1
 fi
-want='DROPBEAR_OPTIONS="-p %d -s -j%s -T 3 -I 600"'
+want='%s'
 if [ "$(cat $d/dropbear.conf 2>/dev/null)" != "$want" ]; then
     printf '%%s\n' "$want" > $d/dropbear.conf; changed=1
 fi
-# a forwarded ring listens on 127.0.0.1, and Debian's initramfs leaves the loopback down
-h=/etc/initramfs-tools/scripts/init-premount/kiwi-loopback
-hook='#!/bin/sh
-[ "$1" = prereqs ] && exit 0
-ip link set lo up'
+h=%s
+hook='%s'
 if [ "$(cat $h 2>/dev/null)" != "$hook" ]; then
     printf '%%s\n' "$hook" > $h; chmod 0755 $h; changed=1
 fi
@@ -311,6 +312,16 @@ def authorized_line(host):
     return "%s %s" % (",".join(options), public)
 
 
+def dropbear_conf(host):
+    # no forwarded ring: nothing here needs forwarding at all
+    return 'DROPBEAR_OPTIONS="-p %d -s -j%s -T 3 -I 600"' % (ssh_port(host), "" if _forwarded_rings(host) else " -k")
+
+
+def initramfs_ip(host):
+    """The IP= for Debian's initramfs, with IFACE for the interface of the default route."""
+    return _ip_setting(host)
+
+
 def _known_hosts(host):
     return host.fleet.resolve_path("secrets/known_hosts.initramfs")
 
@@ -318,8 +329,7 @@ def _known_hosts(host):
 def _initramfs_ssh(host, tgt):
     """SSH in the initramfs, and its host key on record while the machine can vouch for it:
     the boot partition is not encrypted, so that key is the only proof of who answers."""
-    # no forwarded ring: nothing here needs forwarding at all
-    script = (PREPARE_DROPBEAR % (ssh_port(host), "" if _forwarded_rings(host) else " -k")) if host.target == "debian" else PREPARE_DRACUT_SSHD
+    script = (PREPARE_DROPBEAR % (dropbear_conf(host), LOOPBACK_PATH, LOOPBACK_HOOK)) if host.target == "debian" else PREPARE_DRACUT_SSHD
     out = remote.run(tgt, script, (authorized_line(host) + "\n").encode())
     key = out.decode(errors="replace").strip()
     if not key.startswith("ssh-ed25519 "):
@@ -359,6 +369,9 @@ def bind(host, tgt, servers):
     if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
     changed = _rebind(host, tgt, key, wanted_tree)
+    if _forwarded_rings(host):
+        # it waits at boot for someone to forward the ring: it must not reboot unasked
+        remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
     if host.cfg["unlock"].get("ssh"):
         _initramfs_ssh(host, tgt)
         if coreos:
@@ -419,30 +432,36 @@ def forwarded_ring(host, ring=None):
 
 
 def _initramfs_ssh_argv(host, address, options=(), command=()):
-    """ssh into the initramfs: its own known_hosts, and the first option given is the one that counts."""
-    return (["ssh", "-o", "UserKnownHostsFile=%s" % _known_hosts(host), "-o", "StrictHostKeyChecking=yes",
+    """ssh into the initramfs: its own known_hosts, and the first option given is the one that
+    counts. Before the first apply nothing can have vouched for the host key, and what goes
+    over that session is a key that dies at that apply."""
+    strict = "accept-new" if luks.at_first_boot(host) else "yes"
+    return (["ssh", "-o", "UserKnownHostsFile=%s" % _known_hosts(host), "-o", "StrictHostKeyChecking=%s" % strict,
              "-o", "IdentitiesOnly=yes", "-i", _unlock_key(host.fleet)] + remote.ssh_opts(identities=False)
             + list(options or ["-p", str(ssh_port(host))]) + ["root@%s" % address] + list(command))
 
 
-def type_key(host, address=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
+def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
     """The disk's key, handed to the initramfs over SSH, for when no ring can help. It goes
     on stdin without a line end: Debian passes stdin to cryptsetup as it is."""
     if host.target != "debian":
         raise KiwiError("%s: typing the key over SSH is built for Debian; on %s use the console" % (host.name, host.target))
-    key = luks.current_key(host)
+    key = luks.current_key(host) or luks.one_time_key(host)
     if not key:
         raise KiwiError("%s: the disk's key is not on record (secrets/luks/%s.key)" % (host.name, host.name))
     addresses = [address] if address else remote.addresses(host)
+    sshport = port or ssh_port(host)
     deadline = clock() + timeout
     while clock() < deadline:
         for a in addresses:
-            if not remote._answers(a, ssh_port(host)):
+            if not remote._answers(a, sshport):
                 continue
-            r = runner(_initramfs_ssh_argv(host, a, command=["unlock"]), input=key.encode(), capture_output=True)
+            r = runner(_initramfs_ssh_argv(host, a, ["-p", str(sshport)], ["unlock"]), input=key.encode(), capture_output=True)
             if r.returncode == 0:
                 util.say("%s: the disk is open; the machine goes on booting" % host.name)
                 return True
+            if r.returncode == 255:         # ssh's own failure: no session, so no try was counted
+                continue
             said = r.stderr.decode(errors="replace").strip().splitlines()[-1:] or ["no message"]
             raise KiwiError("%s: the initramfs did not take the key (%s) — it counts tries; see the console before trying again" % (host.name, said[0]))
         sleep(3)

@@ -662,7 +662,10 @@ def vps_install(args, fleet, client, server):
         for a in addresses + [h.hostname]:
             subprocess.run(["ssh-keygen", "-q", "-R", a, "-f", known], capture_output=True)
     if luks.uses_one_time_key(h):
-        util.say("%s: at the console, the disk asks for the key in %s" % (h.name, luks.once_file(h)))
+        if h.cfg["unlock"].get("ssh"):
+            util.say("%s: the disk waits for its key: kiwi-server unlock %s %s --manual" % (h.name, os.path.basename(fleet.path), h.name))
+        else:
+            util.say("%s: at the console, the disk asks for the key in %s" % (h.name, luks.once_file(h)))
     util.say("%s: next: kiwi-server apply %s %s --ssh %s@%s"
              % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"], addresses[0] if addresses else "<address>"))
 
@@ -1127,7 +1130,7 @@ def cmd_unlock(args):
     fleet, roles, ms = load(args)
     hosts = fleet.select([args.host])
     if args.manual:
-        unlock.type_key(hosts[0], address=args.address, timeout=args.timeout)
+        unlock.type_key(hosts[0], address=args.address, port=args.port, timeout=args.timeout)
         return
     servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
     unlock.open_disk(hosts[0], servers, ring=args.ring, address=args.address, port=args.port, timeout=args.timeout)

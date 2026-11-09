@@ -183,6 +183,7 @@ services:
 {% endfor %}
     volumes:
       - nextcloud_aio_nextcloud:/var/www/html:rw
+      - {{ docker_dir }}/nextcloud-aio-nextcloud/kiwi.config.php:/var/www/html/config/kiwi.config.php:ro,z
       - {{ datadir }}:/mnt/ncdata:rw,z
 {% if ca_cert_dir %}
       # the fleet CA: Collabora, Talk and notify-push are reached through https://cloud.<host>

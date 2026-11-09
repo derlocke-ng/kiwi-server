@@ -622,12 +622,25 @@ class Renderer:
                          "proxy_ssl": bool(e.get("proxy_ssl", proxy_pass.startswith("https://"))),
                          "extra_directives": [self.expand(x, ctx, what) for x in (e.get("extra_directives") or [])],
                          "extra_locations": [{"path": self.expand(x["path"], ctx, what),
-                                              "config": self.expand(x["config"], ctx, what)}
-                                             for x in (e.get("extra_locations") or [])]}
+                                              "config": self.expand(x["config"], ctx, what),
+                                              "proxy": bool(x.get("proxy"))}
+                                             for x in (e.get("extra_locations") or [])
+                                             if not x.get("when") or ctx.get(str(x["when"]))],
+                         "cors": self.cors_block(e.get("cors"), ctx, what, len(servers))}
                 except (KeyError, TypeError, AttributeError) as err:
                     raise KiwiError("%s: malformed server block for %s (%s)" % (what, e.get("server_name"), err))
                 servers.append(s)
         return upstreams, servers
+
+    def cors_block(self, cors, ctx, what, number):
+        """What the reverse proxy needs to answer browsers on other origins for one
+        path of a site, or None when the setting that lists the origins is empty."""
+        origins = ctx.get(str(cors.get("origins"))) if cors else None
+        if not origins:
+            return None
+        return {"path": self.expand(cors["path"], ctx, what), "map": "kiwi_cors_origin_%d" % number,
+                "origins": [str(o) for o in origins], "methods": cors["methods"],
+                "allow_headers": cors["allow_headers"], "expose_headers": cors["expose_headers"]}
 
     def service_names(self, spec):
         """The names the reverse proxy would answer for — what the fleet's DNS

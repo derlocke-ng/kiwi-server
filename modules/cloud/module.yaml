@@ -23,6 +23,10 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  kiwi_config: kiwi.config.php.j2
+
+outputs:
+  kiwi_config: { path: "nextcloud-aio-nextcloud/kiwi.config.php", mode: 0644 }
 
 storage:
   volumes: [nextcloud_aio_nextcloud, nextcloud_aio_apache, nextcloud_aio_database, nextcloud_aio_database_dump, nextcloud_aio_redis]
@@ -47,6 +51,12 @@ nginx:
       hsts: true
       client_max_body_size: "0"
       proxy_read_timeout: 86400s
+      cors:
+        origins: cors_origins
+        path: /remote.php/dav/
+        methods: "GET, PUT, DELETE, PROPFIND, REPORT, OPTIONS"
+        allow_headers: "Authorization, Content-Type, Depth, If-Match, If-None-Match, Prefer"
+        expose_headers: "ETag, DAV, Location"
       extra_directives:
         - "proxy_set_header Connection $http_connection;"
         - "proxy_redirect off;"
@@ -116,6 +126,12 @@ settings:
     group: Services
     label: Whiteboard
     default: false
+  - key: cors_origins
+    type: list
+    label: Hubs elsewhere that may use the calendar
+    help: "Origins of kiwi hubs on other servers whose calendar app may talk to this Nextcloud from the browser, e.g. https://derlocke-ng.github.io (Armory). Empty: none; a hub of this fleet reaches it through its own container (hub.caldav)."
+    default: []
+    pattern: 'https://[A-Za-z0-9.-]+(:[0-9]+)?'
   - key: apache_port
     type: int
     group: Advanced

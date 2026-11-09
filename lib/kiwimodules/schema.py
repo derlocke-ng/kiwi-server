@@ -77,10 +77,15 @@ def coerce(setting, value, where):
         raise KiwiError("%s.%s must be true or false" % (where, setting.key))
     if t == "list":
         if isinstance(value, str):
-            return [v for v in value.split() if v]
-        if not isinstance(value, list):
+            items = [v for v in value.split() if v]
+        elif isinstance(value, list):
+            items = [str(v) for v in value]
+        else:
             raise KiwiError("%s.%s must be a list" % (where, setting.key))
-        return [str(v) for v in value]
+        for v in items:
+            if setting.pattern and not re.fullmatch(setting.pattern, v):
+                raise KiwiError("%s.%s: %r is not a valid value" % (where, setting.key, v))
+        return items
     if t == "map":
         if not isinstance(value, dict):
             raise KiwiError("%s.%s must be a mapping" % (where, setting.key))

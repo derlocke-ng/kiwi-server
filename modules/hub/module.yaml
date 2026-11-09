@@ -46,6 +46,12 @@ nginx:
   websocket: false
   client_max_body_size: "1m"
   comment: Hub (kiwi-framework)
+  extra_locations:
+    # forwards to a private Nextcloud: on a public hub that login must not face the internet
+    - path: "^~ /remote.php/dav/"
+      when: caldav
+      proxy: true
+      config: "allow {{ mesh_subnet }}; deny all;"
 
 settings:
   - key: hub_domain
@@ -58,6 +64,11 @@ settings:
     label: The hub's own relays
     help: "wss:// URLs. Empty: this host's nostr-relay module (wss://relay.<hostname>). A private hub names relays inside the VPN here; a public hub names public ones."
     default: []
+  - key: caldav
+    label: Nextcloud for the calendar
+    help: "The Nextcloud the hub's calendar app reaches through the hub, e.g. https://cloud.<node hostname> (the cloud module's address). Only devices on the mesh can use it, on a public hub too. Empty: the calendar asks for a server."
+    default: ""
+    pattern: '(https?://[A-Za-z0-9.-]+(:[0-9]+)?)?'
   - key: relays_locked
     type: bool
     label: Relays are fixed

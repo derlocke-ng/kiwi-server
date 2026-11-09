@@ -65,7 +65,8 @@ written to an audit log in the fleet directory.
 
 Two paths, both kept:
 
-- **Per-host ISO with embedded secrets** (today's path) for offline installs.
+- **Per-host ISO with embedded secrets** (today's path) for offline installs,
+  asked for by name and warned about (Secrets, below).
 - **Generic bootstrap ISO per target**, built once by CI and published as a
   release artifact, carrying no secrets. On first boot it fetches its role
   from the controller with a one-time join token: `ignition.config.url` on
@@ -341,6 +342,111 @@ gone for ten minutes, optional per device because a router replacement must
 not take a node down. Nodes: the stock pin; master: rules in `start.sh`;
 control node: `tang` containers; desktop: `kiwi-server tang`. Nothing new in
 the initramfs, which is the part that cannot be restarted to try again.
+
+## Secrets
+
+Agreed in November 2026; nothing here is built yet. Today the fleet
+directory is plain files: literal passwords in the fleet file; the seed, the
+CA key and the WireGuard configurations in `secrets/`; rendered stacks and
+ISOs in `output/`. A full ISO takes the LUKS passphrase and the commercial
+provider's key wherever it goes, a provider's media store among them. Two
+moves: get the secrets off the media and out of the fleet file, then encrypt
+what cannot be removed.
+
+**What install media carry.** A join medium, ISO or script, holds only:
+
+| On the medium | Why it may be lost |
+|---|---|
+| the one-time join token and the controller's address | works once, expires, belongs to one host, can be revoked |
+| the fleet CA certificate | public, and how the machine knows it is talking to the controller |
+| a one-time LUKS key, if the disk is encrypted | dead after first contact |
+| the console password hash and the admin's SSH public keys | a hash and public keys |
+
+Everything else comes from the controller over TLS once the token is
+accepted. Never the seed: it derives every generated secret of the fleet, so
+one lost ISO would be all of them, and a seed cannot be revoked.
+
+**Offline media** keep today's path for a machine that cannot reach a
+controller: the whole role with its secrets on the ISO or in the script.
+They are asked for by name (`build --offline`, `script --offline`), say when
+they are made that whoever holds them holds those secrets, and are deleted
+or encrypted once written. Until the controller exists, `build` makes bare
+media by default and `apply` plays the controller's part, pushing the role
+over SSH.
+
+**The one-time LUKS key.** A random key per build, short and free of
+layout-sensitive characters because someone may type it at a console, kept
+in the secret store until it is replaced. At first contact the role replaces
+it: `clevis luks bind` with the device's tree where a ring exists (Unlock,
+Binding); a passphrase the owner chooses, or a generated recovery key in the
+secret store, where none does. Then the old keyslot goes and the copies are
+shredded (ROADMAP, problem 15). Where Ignition binds Tang during the install
+there is no key to carry.
+
+A hash cannot stand in for it. A hash only checks a password; LUKS derives
+the key to its keyslot from the passphrase, so it needs the passphrase to
+create or open one, and a stored KDF output would itself open the disk.
+Replacing a keyslot also keeps the volume key: anyone who copied the LUKS
+header while the one-time key was valid can still decrypt the disk. For a
+lost ISO that does not matter, the header on the disk no longer has that
+slot. On a rented machine the provider holds the ISO and the disk during the
+install, so the role also runs `cryptsetup reencrypt` for a new volume key,
+a per-host setting that defaults on for a master. It runs before the role's
+secrets reach the disk: a snapshot from before it would still expose them.
+
+**The fleet file** ends up with no secrets in it, so it stays readable and
+diffable:
+
+| Today a literal | Becomes |
+|---|---|
+| the admin's console `password` | `password_hash`, which exists |
+| Portainer's and Vaultwarden's admin passwords | a hash; both services accept one |
+| `wg_password` (`enroll` logs in to wg-easy with it), Pi-hole's and the other service passwords | generated from the seed (`generate: true`, as the cloud secrets already are), printed on request by `kiwi-server secrets show <host> <setting>` |
+| the Debian LUKS `passphrase` | the one-time key above |
+| the commercial provider's WireGuard key, `wireguard_config` files | the secret store: these are keys, nothing can replace them |
+
+`validate` refuses a literal secret unless the fleet file is itself
+encrypted (`fleet.yaml.age`, opened like the store), so the file needs
+unlocking exactly when plaintext is in it.
+
+**The secret store** holds what cannot be hashed or generated: the seed, the
+CA key, WireGuard configurations, any admin SSH key kept with the fleet, the
+one-time keys. One file per fleet, `secrets.age`, a tar of what is `secrets/`
+today, which nothing but `age` and `tar` opens by hand, as `openssl` and
+`tar` open the fleet backup. `age` encrypts to several recipients, so each
+way of unlocking has its own identity and losing one loses nothing:
+
+| Where | The identity |
+|---|---|
+| a desktop | in the GNOME Keyring (the Secret Service API), so logging in unlocks it; a prompted passphrase where there is no keyring |
+| the control node | sealed with Clevis to the tree its disk uses (Unlock), so it opens at service start with nobody there |
+| recovery | on paper or in a password manager, beside the `emergency` ring's keys |
+| a hardware key | `age-plugin-yubikey`, one more recipient |
+
+`kiwi-server secrets unlock` opens the store into a tmpfs
+(`$XDG_RUNTIME_DIR` on a desktop, a tmpfs mount in the control container);
+`lock` or a timer closes it, and changes are encrypted back. (Not
+`kiwi-server unlock`, which is the disk's.) `output/` renders into the same
+tmpfs, since nothing in it is a source, and a medium that has to reach a
+disk or a stick is safe by construction or is the offline case above. The
+fleet backup becomes the store plus the fleet file, which moves it to `age`
+as ROADMAP problem 21 asks.
+
+This protects copies, backups and a machine that is off. While the store is
+open, anything running as the same user can read it, and on a desktop
+anything running as the user can ask the keyring for the identity.
+
+Considered and not adopted (November 2026): the keyring as the store (built
+for small secrets, no way to scope an item to one program, absent on a
+headless control node); an encrypted database such as SQLCipher for the
+secrets (a dependency, and recovery would need that software rather than
+`age`). The control node does want SQLite for state that changes: join
+tokens (stored hashed; issued, used, expired) and the rotation queue.
+
+**Order.** The first two steps need no controller: bare media by default
+with `--offline`, the one-time key and the literals gone from the fleet
+file; then the store and `kiwi-server secrets`. The join token comes with the
+control module and the image.
 
 ## Managed masters: the orchard
 

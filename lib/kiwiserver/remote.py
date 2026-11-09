@@ -3,6 +3,7 @@ other side. Everything that reaches a node goes through here — the fleet
 backup, `apply`, `status`, the tunnel `enroll` uses to reach the master's
 wg-easy — so one place knows how a host is addressed and how a failure reads.
 """
+import os
 import shlex
 import socket
 import subprocess
@@ -45,6 +46,52 @@ def ssh_opts():
 def target(host, override=None):
     """user@address: the admin user at the hostname, unless told otherwise."""
     return override or "%s@%s" % (host.admin["user"], host.hostname)
+
+
+def _on_record(address):
+    """Has this fleet met the machine at that address? ssh-keygen also reads hashed entries."""
+    if not KNOWN_HOSTS or not os.path.isfile(KNOWN_HOSTS):
+        return False
+    try:
+        r = subprocess.run(["ssh-keygen", "-F", address, "-f", KNOWN_HOSTS], capture_output=True)
+    except FileNotFoundError:
+        return False
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def _answers(address, port=22, timeout=2):
+    try:
+        socket.create_connection((address, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def addresses(host):
+    """Where this machine may answer, its name first."""
+    found = [host.hostname]
+    net = host.cfg.get("network") or {}
+    if not net.get("dhcp", True) and net.get("address"):
+        found.append(str(net["address"]).split("/", 1)[0])
+    found.append((host.role_settings_raw.get("vpn-server") or {}).get("wg_host"))
+    found.append((host.role_settings or {}).get("vpn_ip"))
+    return [a for i, a in enumerate(found) if a and a not in found[:i]]
+
+
+def reach(host, override=None):
+    """user@address, for an address that answers from where we are now.
+
+    `.home` names only resolve on the mesh, so the fleet's other addresses for
+    the machine are tried too, but only ones whose host key is already on
+    record: an address on someone else's LAN must never get a role script
+    because the first key it showed was accepted. Nothing on record: the name.
+    """
+    if override:
+        return override
+    for address in addresses(host):
+        if _on_record(address) and _answers(address):
+            return "%s@%s" % (host.admin["user"], address)
+    return target(host)
 
 
 def _fail(where, r):

@@ -1,15 +1,17 @@
 """The command line. bin/kiwi-server execs this; kiwi-server-gui calls it
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
+import concurrent.futures
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, util, wgeasy
+from . import facts, luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -431,19 +433,27 @@ def cmd_list(args):
     fleet, roles, ms = load(args)
     out_dir = out_dir_for(args, fleet)
     rows = []
+    r = Renderer(fleet, roles, out_dir, None, ms)
+    domain, master_ip, mesh, _mtu = fleet_facts(fleet, roles, ms, r)
+    records = r.dns_records()
     for h in fleet.hosts.values():
         errs = h.validate(roles)
         if not errs:
             errs = settings_errors(roles, ms, h)
         o = Outputs(out_dir, h)
+        mesh_ip = (h.role_settings or {}).get("vpn_ip") or (
+            master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
-                     "vpn_ip": (h.role_settings or {}).get("vpn_ip") or "",
+                     "vpn_ip": mesh_ip,
+                     "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname],
                      "status": o.status(), "dir": o.dir, "iso": o.iso,
+                     "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
     if args.porcelain:
-        print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "hosts": rows}, indent=2))
+        print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
+                          "master_ip": master_ip, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
     print(fmt % ("NAME", "HOSTNAME", "TARGET", "ROLE", "ADDRESS", "OUTPUT"))
@@ -730,6 +740,9 @@ def secrets_store(args):
               "It is shown once, and without it a lost keyring means lost secrets:\n\n  %s\n" % recovery)
     elif not st.exists():
         if args.action == "status":
+            if args.porcelain:
+                print(json.dumps({"store": False, "open": True, "locks_at": None, "opens_with": []}))
+                return
             print("no secret store: secrets/ is plain files (kiwi-server secrets init %s)" % args.fleet)
             return
         raise KiwiError("this fleet has no secret store: kiwi-server secrets init %s" % args.fleet)
@@ -744,6 +757,9 @@ def secrets_store(args):
     else:
         with open(st.recipients) as f:
             names = [line[1:].split("(")[0].strip() for line in f if line.startswith("# ") and "who can" not in line]
+        if args.porcelain:
+            print(json.dumps({"store": True, "open": st.is_open(), "locks_at": st.locks_at(), "opens_with": names}))
+            return
         print("%s; opens with: %s" % ("open" if st.is_open() else "locked", ", ".join(names)))
 
 
@@ -794,10 +810,10 @@ def fleet_identities(fleet):
     return out
 
 
-def fleet_facts(fleet, roles, ms):
+def fleet_facts(fleet, roles, ms, r=None):
     """(domain, master's mesh address, mesh subnet, the master's wg_mtu or None):
     what a router needs to know."""
-    r = Renderer(fleet, roles, out_dir_for(argparse.Namespace(output_dir=None), fleet), None, ms)
+    r = r or Renderer(fleet, roles, out_dir_for(argparse.Namespace(output_dir=None), fleet), None, ms)
     r.scan()
     mesh, wg_mtu = "10.8.0.0/16", None
     for h in fleet.hosts.values():
@@ -844,7 +860,7 @@ def cmd_apply(args):
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms)
     failed = []
     for h in hosts:
-        tgt = remote.target(h, args.ssh)
+        tgt = remote.reach(h, args.ssh)
         try:
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
@@ -867,30 +883,38 @@ def cmd_apply(args):
 
 
 def cmd_status(args):
-    """What a running machine says: when its role was applied, and what its
-    stack is doing."""
+    """What a running machine says: when its role was applied, what its stack
+    is doing, and what is wrong with it. Every host at once, so one that is
+    off costs the others nothing."""
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
-    out = []
-    for h in hosts:
-        tgt = remote.target(h, args.ssh)
-        script = ("echo \"applied: $(cat /var/lib/kiwi-server/role.done 2>/dev/null || echo never)\"; "
-                  "if [ -f /var/lib/kiwi-server/role.failed ]; then echo 'ROLE FAILED:'; sed 's/^/  /' /var/lib/kiwi-server/role.failed; fi; "
-                  "echo \"uptime: $(uptime -p 2>/dev/null || uptime)\"; "
-                  "if [ -x /usr/local/bin/kiwi-stack ]; then kiwi-stack status 2>&1 || true; else echo 'no stack'; fi")
+
+    def ask(h):
+        tgt = remote.reach(h, args.ssh)
         try:
-            text = remote.run(tgt, script).decode(errors="replace")
-            out.append({"host": h.name, "target": tgt, "ok": True, "output": text})
+            human, data = facts.split(remote.run(tgt, facts.SCRIPT).decode(errors="replace"))
         except KiwiError as e:
-            out.append({"host": h.name, "target": tgt, "ok": False, "output": str(e)})
+            return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down",
+                    "problems": [{"level": "bad", "text": "unreachable: %s" % e}], "notes": [], "facts": {}}
+        measured = facts.parse(data)
+        state, problems, notes = facts.assess(measured)
+        return {"host": h.name, "target": tgt, "ok": True, "output": human, "state": state,
+                "problems": problems, "notes": notes, "facts": measured}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        out = list(pool.map(ask, hosts))
     if args.porcelain:
         print(json.dumps({"hosts": out}, indent=2))
         return
     for o in out:
         print("== %s (%s)%s" % (o["host"], o["target"], "" if o["ok"] else " — unreachable"))
         print("   " + o["output"].rstrip().replace("\n", "\n   "))
+        if o["ok"]:
+            for p in o["problems"]:
+                print("   ! %s" % p["text"])
+            for n in o["notes"]:
+                print("   - %s" % n)
 
 
 def _master_of(fleet, roles, ms, name=None):

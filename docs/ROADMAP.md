@@ -59,8 +59,11 @@ A reboot afterwards unlocked with the generated key, the clock wait succeeded,
 the VPN client forwarded, and the exit was up 46 seconds after the key, without
 a tunnel restart.
 
-Not proven yet: federation, a phone on 5G, a public hub, a restore of a node's
-data.
+Not proven yet: federation, a phone on 5G, a restore of a node's data.
+
+**The whole test fleet, 9 November 2026**, from 2.17.0: all four machines
+applied in 30 to 150 seconds with no failure, their OS updates taken, sorbet and
+papaya rebooted, every service back and the exits up.
 
 ## Problems
 
@@ -175,9 +178,10 @@ UX and ecosystem:
     without jinja2; the README's `pip install --user` refuses on Debian.
     Pick an existing key in `init`, per-OS install lines.
 28. The GUI lags the CLI: no enroll, backup, restore, openwrt or ca, no
-    address on apply/status, no tls or backup groups, validation only after
-    save; its Stack button shows the compose file, not the quadlets the
-    machine runs. All of this is porcelain plumbing.
+    tls or backup groups, validation only after save; its Compose file
+    entry shows the compose file, not the quadlets the machine runs, and
+    only after a render. All of this is porcelain plumbing. (Since 2.18.0
+    it shows the machines' state and finds their addresses.)
 29. Not every command has `--porcelain`; the exit-code contract is
     undocumented. The API in the control plane design replaces this.
 30. docs/REVIEW-2.1.0.md should be retired to its status table.
@@ -426,6 +430,16 @@ UX and ecosystem:
     nothing showed until a device was connected after a reboot; the
     unattended reboot after an update would have caused it. `vpn-client`
     sets the sysctl itself now. (modules/vpn-client)
+62. *Found on hardware (9 November 2026), fix in kiwi-stack 0.2.4.* The clock
+    wait from problem 60 cost every uCore node 90 seconds at each boot and left
+    a failed unit. `systemd-time-wait-sync` only wakes when the clock is stepped
+    or timesyncd says so, and chrony trims a clock that is already close, so
+    it sat out its whole timeout: the source was selected after 33 seconds and
+    nothing told the waiter. Only a machine behind chrony shows it, and the
+    first one to boot with the fix was papaya, which had not been applied
+    since October. With chrony's own `chrony-wait.service` the same machine
+    reaches userspace in 25 seconds instead of 94, the wait takes 18, and
+    the stack still starts after it. (lib.sh ks_time_sync_at_boot)
 40. **MTU.** *Found on hardware (the v1 fleet, 7 November 2026); the
     generator's half fixed in 2.8.0 (kiwi-modules 0.3.0).* Symptoms: TLS
     stalls and stuttering streams through the VPN. One `mtu` (1412) was the
@@ -713,6 +727,27 @@ Asked for by the owner in November 2026:
 - **An MTU probe people run themselves** (problem 40): measure a node's or a
   device's real path, then set the fleet's values from the result instead of
   guessing them. Done in 2.14.0: `kiwi-server mtu`.
+- **Who may write to a public hub's relay** (answered with the framework,
+  `handoffs/kiwi-modules-relay-members.md` there): authenticate the connection
+  with NIP-42, because boards, groups and gift wraps are not signed by the
+  person's key; `nostr-relay.members: registered | approved`, `write_pubkeys`
+  stays for admins, bans as a list an admin keeps.
+  **Blocked, found 9 November 2026 on the test hub:** strfry, master included,
+  gives the write plugin the proven key only for a NIP-70 protected event by that
+  same key, so a member's boards, groups and sealed notes are still refused. It
+  also sends a challenge only for a protected event (1.1.3) or a restricted read
+  (master). Everything else in the rules worked live: `auth-required:`, proof of
+  work, gift wraps to members, admins' lists, the store read back after a restart.
+  The module is on the `relay-members` branch of kiwi-modules. It needs a strfry
+  that passes the key on for every event (a small patch, untried, in an image of
+  our own or upstream), or a gate in front of it.
+- **Production test use needs the unlock**, raised 9 November 2026: Tang, and
+  every running OS encrypted with LUKS with a proper way to unlock it (Unlock,
+  in design/control-plane.md, comes forward; sorbet and crumble are not
+  encrypted today, and a CoreOS machine has no LUKS yet).
+- **Nextcloud with end-to-end encryption on by default**, and **OpenCloud,
+  Immich and Paperless-ngx as modules to try out** (the October list below), so
+  the owner can judge them and work out how they should fit together.
 
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node

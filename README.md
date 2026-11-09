@@ -449,12 +449,26 @@ tree.
 
 ## The GUI
 
-**Kiwi Server** in the app grid: open or create a fleet, pick Defaults or a
-host on the left, edit on the right. Every host field shows what it inherits;
-the role's stack settings and one group per module appear, built from
-`role.yaml` and the modules' `module.yaml`; changing the `modules` list
+**Kiwi Server** in the app grid opens the fleet you had last. On the left the
+overview, one row per host and the defaults; each host row says whether the
+machine answers, how long it has been up and how many of its services run.
+
+The **overview** counts machines, services and what needs a look, with a card
+per machine. A **host** has two tabs. *Overview* is what the machine says about
+itself: system, load, memory, disks, every service with its state, the tunnel,
+and the web interfaces to open from the mesh. *Settings* is the form: every field
+shows what it inherits; the role's stack settings and one group per module appear,
+built from `role.yaml` and the modules' `module.yaml`; changing the `modules` list
 changes the groups.
-*Render* and *Build ISOs* run the CLI and stream its output; *Build* lists
+
+The machines are asked once a minute while the window has the focus, over SSH and
+read-only, through `kiwi-server status --porcelain`, which is also where it is
+decided what counts as a problem. A machine is reached at its name, or at another
+address of it the fleet has already met, so `.home` names need not resolve on this
+computer; `apply --ssh` once introduces a new one. A locked secret store shows a
+banner with *Unlock*, and the corner of the sidebar locks it again.
+
+*Apply*, *Build* and *Render* run the CLI and stream its output; *Build* lists
 every host with the disk it will wipe before it starts. The GUI writes plain
 YAML — comments in a hand-written fleet file are not kept when it saves.
 

@@ -49,6 +49,8 @@ nginx:
   client_max_body_size: "0"
   proxy_read_timeout: 300s
   comment: Paperless-ngx
+  # no-referrer makes a browser send "Origin: null" with a form, and Django's CSRF check refuses that
+  referrer_policy: same-origin
 
 settings:
   - key: paperless_domain
@@ -79,6 +81,16 @@ settings:
     label: Office documents and email
     help: "Word, Excel and .eml files, through Tika and Gotenberg: two more containers."
     default: true
+  - key: filename_format
+    label: File names
+    help: "How stored documents are named and sorted, e.g. {{created_year}}/{{correspondent}}/{{title}}. Empty: numbered files. Documents already stored keep their names until document_renamer runs in the container."
+    default: ""
+  - key: user_id
+    type: int
+    group: Advanced
+    label: User and group ID
+    help: "Paperless runs as this ID and owns its folders with it. 33 lets it share a folder with Nextcloud on this host (cloud.shared_folders)."
+    default: 1000
   - key: secret_key
     type: secret
     generate: true

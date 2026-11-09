@@ -23,6 +23,12 @@ services:
       - PAPERLESS_DBPASS={{ db_password }}
       - PAPERLESS_OCR_LANGUAGE={{ ocr_language }}
       - PAPERLESS_TIME_ZONE={{ timezone }}
+      - USERMAP_UID={{ user_id }}
+      - USERMAP_GID={{ user_id }}
+{% if filename_format %}
+      - PAPERLESS_FILENAME_FORMAT={{ filename_format }}
+      - PAPERLESS_FILENAME_FORMAT_REMOVE_NONE=true
+{% endif %}
 {% if office_documents %}
       - PAPERLESS_TIKA_ENABLED=1
       - PAPERLESS_TIKA_ENDPOINT=http://{{ container_prefix }}-paperless-tika:9998

@@ -1,0 +1,22 @@
+[Unit]
+Description=Nextcloud's shared folders ({{ hostname }})
+Documentation=https://github.com/derlocke-ng/kiwi-server
+{% if runtime == 'docker' %}
+After=docker.service kiwi-stack.service
+Requires=docker.service
+{% else %}
+# podman: the containers are systemd units themselves; kiwi-stack.service starts their target
+After=kiwi-stack.service
+{% endif %}
+Wants=kiwi-stack.service
+
+[Service]
+# exec, not oneshot: boot does not wait for Nextcloud, and the script may keep running
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/cloud-folders.sh
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

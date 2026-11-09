@@ -192,6 +192,12 @@ services:
 {% if nextcloud_mount %}
       - {{ nextcloud_mount }}:{{ nextcloud_mount }}:rw
 {% endif %}
+{% for path in shared_folders.values() %}
+      - {{ path }}:{{ path }}:rw,z
+{% endfor %}
+{% for path in read_only_folders.values() %}
+      - {{ path }}:{{ path }}:ro,z
+{% endfor %}
     healthcheck: {{ hc }}
     logging:
       driver: json-file

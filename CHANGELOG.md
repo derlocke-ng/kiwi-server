@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.18.0 — the app shows what the machines say
+
+- **The app has an overview**: machines online, services running, what needs a
+  look, a card per machine with memory and disk. Each host has an *Overview* tab
+  beside its settings: system, load, memory, disks, every service, the tunnel, the
+  web interfaces, when the role was applied. The sidebar row says whether the
+  machine answers, how long it has been up and how many services run. It asks once
+  a minute while it has the focus, and opens the fleet you had last.
+- **`kiwi-server status --porcelain`** returns `state`, `problems`, `notes` and
+  `facts` per host, from one read-only probe, for every host at once. What counts as
+  a problem is decided there: a service down, a tunnel missing, a VPN client that
+  does not forward, a disk filling up, a clock that is off. A machine that booted a
+  moment ago is late, not broken, and a healthcheck still starting is not a failed
+  unit.
+- **`apply` and `status` find the machine**: its name, its static address, the
+  master's public address or its mesh address, whichever answers. Only addresses
+  whose host key is already on record count, so a stranger at the same address on
+  another LAN never gets a role script; `--ssh` still says exactly where.
+- `kiwi-server secrets status --porcelain`, with when the timer locks the store;
+  the app has *Unlock* and *Lock*. `list --porcelain` adds the web names of a host,
+  its update window and the fleet's domain and mesh.
+- The app showed no help for settings whose text has `<hostname>` in it: fixed.
+
 ## 2.17.0 — secrets/ as one encrypted file
 
 - **`kiwi-server secrets init|unlock|lock|status <fleet>`**: `secrets/` becomes

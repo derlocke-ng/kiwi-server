@@ -28,7 +28,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import luks, mtu, store  # noqa: E402
+from kiwiserver import facts, luks, mtu, store  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -2239,7 +2239,9 @@ class TestManage(Base):
             if "role.done" in script:
                 if tgt.endswith("gate.kiwi"):
                     raise KiwiError("%s: ssh: connect to host gate.kiwi port 22: Connection refused" % tgt)
-                return b"applied: 2026-10-06T10:00:00Z\nuptime: up 3 days\nkiwi-stack: 2 containers running\n"
+                return (b"applied: 2026-10-06T10:00:00Z\nuptime: up 3 days\nkiwi-stack: 2 containers running\n"
+                        b"--- kiwi-facts ---\napplied=2026-10-06T10:00:00Z\nuptime=259200\nos=Debian\nclock=yes\n"
+                        b"service=kn-nginx inactive\n")
             return b""
 
         def fake_stream(tgt, script, runner=None):
@@ -2272,10 +2274,14 @@ class TestManage(Base):
             self.assertEqual(byname["sh3"]["ok"], True)
             self.assertIn("applied: 2026-10-06T10:00:00Z", byname["sh3"]["output"])
             self.assertEqual(byname["sh3"]["target"], "core@sh3.kiwi")
+            self.assertEqual((byname["gate"]["state"], byname["sh3"]["state"]), ("down", "bad"))
+            self.assertEqual(byname["sh3"]["facts"]["uptime"], 259200)
+            self.assertNotIn("--- kiwi-facts ---", byname["sh3"]["output"])
             rc, out, err = self.run_cli("status", f.path, "sh3")
             self.assertEqual(rc, 0, err)
             self.assertIn("== sh3 (core@sh3.kiwi)", out)
             self.assertIn("   uptime: up 3 days", out)
+            self.assertIn("   ! kn-nginx is not running (inactive)", out)
         # a role script that fails is reported, not swallowed
         with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "run_stream", lambda *a, **k: 7):
             rc, out, err = self.run_cli("apply", f.path, "sh3")
@@ -2427,6 +2433,8 @@ class TestStore(Base):
     def test_init_twice_is_refused_and_status_reports(self):
         rc, out, err = self.run_cli("secrets", "status", self.f.path)
         self.assertIn("no secret store", out)
+        rc, out, err = self.run_cli("secrets", "status", self.f.path, "--porcelain")
+        self.assertEqual(json.loads(out)["store"], False)
         self.init()
         rc, out, err = self.run_cli("secrets", "init", self.f.path)
         self.assertEqual(rc, 1)
@@ -2434,9 +2442,13 @@ class TestStore(Base):
         rc, out, err = self.run_cli("secrets", "status", self.f.path)
         self.assertEqual(rc, 0, err)
         self.assertIn("open; opens with: desktop, recovery", out)
+        rc, out, err = self.run_cli("secrets", "status", self.f.path, "--porcelain")
+        self.assertEqual(json.loads(out), {"store": True, "open": True, "locks_at": None, "opens_with": ["desktop", "recovery"]})
         self.run_cli("secrets", "lock", self.f.path)
         rc, out, err = self.run_cli("secrets", "status", self.f.path)
         self.assertIn("locked", out)
+        rc, out, err = self.run_cli("secrets", "status", self.f.path, "--porcelain")
+        self.assertEqual(json.loads(out)["open"], False)
 
     def test_a_tar_that_escapes_is_refused(self):
         buf = io.BytesIO()
@@ -2863,6 +2875,126 @@ class TestCerts(Base):
         self.assertIn("DNS:.lan", text)
 
 
+class TestFacts(Base):
+    SAMPLE = """now=1000
+applied=2026-10-06T10:00:00Z
+os=Fedora CoreOS 44
+kernel=7.2
+uptime=259200
+load=0.50 0.40 0.30
+cpus=2
+mem=2000000 1000000
+disk=/var 1000 100
+disk=/var 1000 100
+disk=/var/mnt/data 1000 960
+clock=yes
+failed=012c89533cccbc4fbd60eadec0d1bb3f13f79eb7ab9b218f8f8a4c02bbdefb94-7ee2adc215a743d0.service kiwi-backup.service
+runtime=podman
+container=kn-nginx|running|Up 3 days|docker.io/nginx:1
+container=kn-cloud|running|Up 3 days (starting)|example/cloud
+container=by-hand|exited|Exited (0) 2 days ago|example/x
+service=kn-nginx active
+service=kn-cloud active
+service=kn-gone inactive
+vpn=kn-nginx
+tunnel=
+forward=0
+peers=4 3
+"""
+
+    def test_the_machine_is_read_into_data(self):
+        f = facts.parse(self.SAMPLE, local_now=990)
+        self.assertEqual((f["running"], f["expected"], f["skew"]), (2, 3, 10))
+        self.assertEqual([d["mount"] for d in f["disks"]], ["/var", "/var/mnt/data"])
+        self.assertEqual(f["memory"], {"total": 2000000, "available": 1000000})
+        self.assertEqual(f["peers"], {"total": 4, "recent": 3})
+        by = {s["name"]: s for s in f["services"]}
+        self.assertEqual(by["kn-cloud"]["health"], "starting")
+        self.assertFalse(by["by-hand"]["stack"])
+        self.assertEqual(by["kn-gone"]["image"], "")
+
+    def test_a_healthcheck_that_is_starting_is_not_a_failed_unit(self):
+        self.assertEqual(facts.parse(self.SAMPLE)["failed_units"], ["kiwi-backup.service"])
+
+    def test_what_is_wrong_is_said(self):
+        f = facts.parse(self.SAMPLE, local_now=1000)
+        state, problems, notes = facts.assess(f)
+        self.assertEqual(state, "bad")
+        texts = [p["text"] for p in problems]
+        self.assertIn("kn-gone is not running (inactive)", texts)
+        self.assertIn("the VPN client kn-nginx has no tunnel", texts)
+        self.assertTrue(any("does not forward" in t for t in texts))
+        self.assertIn("failed units: kiwi-backup.service", texts)
+        self.assertIn("/var/mnt/data is 96% full", texts)
+        self.assertEqual(notes, ["kn-cloud is still starting"])
+
+    def test_a_healthy_machine_has_nothing_to_say(self):
+        f = facts.parse("applied=x\nos=Debian\nclock=yes\nuptime=5\nservice=a active\ncontainer=a|running|Up 1 hour|i\n"
+                        "disk=/ 1000 10\nmem=1000 900\n")
+        self.assertEqual(facts.assess(f), ("ok", [], []))
+
+    def test_a_machine_that_just_booted_is_only_late(self):
+        f = facts.parse("applied=x\nos=D\nclock=yes\nuptime=40\nservice=a inactive\nservice=b failed\n")
+        state, problems, notes = facts.assess(f)
+        self.assertEqual([p["text"] for p in problems], ["b is not running (failed)"])
+        self.assertEqual(notes, ["a has not started yet: the machine just booted"])
+
+    def test_a_stopped_vpn_client_is_reported_once(self):
+        f = facts.parse("applied=x\nos=D\nclock=yes\nservice=v inactive\nvpn=v\ntunnel=\nforward=\n")
+        _state, problems, _notes = facts.assess(f)
+        self.assertEqual([p["text"] for p in problems], ["v is not running (inactive)"])
+
+    def test_the_clock_is_compared_with_this_computer(self):
+        f = facts.parse("applied=x\nos=D\nclock=yes\nnow=1100\n", local_now=1000)
+        self.assertEqual(facts.assess(f)[0], "warn")
+
+    def test_status_text_and_probe_come_apart(self):
+        human, data = facts.split("applied: x\n%s\nuptime=1\n" % facts.MARK)
+        self.assertEqual((human, data), ("applied: x\n", "uptime=1\n"))
+        self.assertEqual(facts.split("no probe\n"), ("no probe\n", ""))
+
+    def test_the_probe_is_plain_sh_and_never_dumps_wireguard(self):
+        path = os.path.join(self.tmp, "probe.sh")
+        write(path, "#!/bin/sh\n" + facts.SCRIPT)
+        self.assertEqual(subprocess.run(["sh", "-n", path]).returncode, 0)
+        if have("shellcheck"):
+            r = subprocess.run(["shellcheck", "-S", "warning", "-s", "sh", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertNotIn("dump", facts.SCRIPT)
+        self.assertIn("latest-handshakes", facts.SCRIPT)
+
+
+class TestReach(Base):
+    def host(self, **network):
+        y = {"defaults": {"domain": "kiwi", "admin": {"user": "core"}},
+             "hosts": {"a": {"network": dict({"dhcp": False, "address": "192.168.9.9/24"}, **network)}}}
+        path = os.path.join(self.tmp, "fleet.yaml")
+        write(path, yaml.safe_dump(y))
+        return config.Fleet.load(path).hosts["a"]
+
+    def on_record(self, *addresses):
+        path = os.path.join(self.tmp, "known_hosts")
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJtmZ2FrZWZha2VmYWtlZmFrZWZha2VmYWtlZmFrZWZha2Vm"
+        write(path, "".join("%s %s\n" % (a, key) for a in addresses))
+        remote.configure(path)
+        self.addCleanup(remote.configure, "")
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen")
+    def test_an_address_on_record_that_answers_is_used(self):
+        self.on_record("192.168.9.9")
+        with mock.patch.object(remote, "_answers", lambda a: a == "192.168.9.9"):
+            self.assertEqual(remote.reach(self.host()), "core@192.168.9.9")
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen")
+    def test_an_address_never_met_gets_nothing_sent_to_it(self):
+        self.on_record("10.0.0.1")
+        with mock.patch.object(remote, "_answers", lambda a: True):
+            self.assertEqual(remote.reach(self.host()), "core@a.kiwi")
+
+    def test_an_address_given_wins(self):
+        self.assertEqual(remote.reach(self.host(), "root@1.2.3.4"), "root@1.2.3.4")
+
+
 class TestCli(Base):
     def test_a_reader_that_left_is_not_an_error(self):
         """`kiwi-server script … | head -1` under pipefail: the output still
@@ -2935,6 +3067,8 @@ class TestCli(Base):
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
         self.assertTrue(hosts["u"]["status"]["script"] and hosts["u"]["status"]["config"])
         self.assertEqual(hosts["d"]["errors"], [])
+        self.assertEqual(hosts["u"]["sites"], [])
+        self.assertIn("domain", json.loads(out))
         rc, out, _ = self.run_cli("show", f.path, "n", "--porcelain")
         data = json.loads(out)
         self.assertEqual(data["config"]["admin"]["password"], "********")

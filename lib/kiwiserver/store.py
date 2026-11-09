@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 
 from .util import KiwiError
 
@@ -133,6 +134,17 @@ class Store:
     def _digest_file(self):
         return os.path.join(self.runtime(), "digest")
 
+    def _locks_at_file(self):
+        return os.path.join(self.runtime(), "locks_at")
+
+    def locks_at(self):
+        """When the timer locks it again (epoch seconds), or None."""
+        try:
+            with open(self._locks_at_file()) as f:
+                return int(f.read())
+        except (OSError, ValueError):
+            return None
+
     def is_open(self):
         return self.exists() and os.path.islink(self.link) and os.path.isdir(self.link)
 
@@ -246,6 +258,10 @@ def _lock_unit(store):
 def cancel_lock(store):
     if shutil.which("systemctl"):
         subprocess.run(["systemctl", "--user", "stop", _lock_unit(store) + ".timer"], capture_output=True)
+    try:
+        os.remove(store._locks_at_file())
+    except OSError:
+        pass
 
 
 def schedule_lock(store, fleet_path, after):
@@ -258,4 +274,9 @@ def schedule_lock(store, fleet_path, after):
     me = shutil.which("kiwi-server") or os.path.abspath(sys.argv[0])
     r = subprocess.run(["systemd-run", "--user", "--quiet", "--unit", _lock_unit(store), "--on-active", after,
                         me, "secrets", "lock", os.path.abspath(fleet_path)], capture_output=True)
-    return r.returncode == 0
+    if r.returncode != 0:
+        return False
+    seconds = int(after.rstrip("smhd")) * {"m": 60, "h": 3600, "d": 86400}.get(after[-1], 1)
+    with open(store._locks_at_file(), "w") as f:
+        f.write(str(int(time.time()) + seconds))
+    return True

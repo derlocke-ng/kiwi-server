@@ -4,7 +4,9 @@ Anything that needs a tool (shellcheck, butane, xorriso, cpio) uses it when it
 is on $PATH and is skipped otherwise, so the suite runs anywhere; CI installs
 all of them. No test touches the network.
 """
+import contextlib
 import http.server
+import io
 import json
 import os
 import re
@@ -14,6 +16,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.parse
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -2302,6 +2305,264 @@ class TestManage(Base):
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
+class FakeNetcup:
+    """netcup's Keycloak and SCP API, as much as `kiwi-server vps` uses, plus the
+    presigned storage URL. In-process, on a loopback port, no network."""
+
+    def __init__(self, driver="SATA"):
+        self.driver, self.calls, self.uploaded = driver, [], 0
+        self.state, self.attached, self.polls_pending, self.polls_running = "RUNNING", None, 1, 0
+        self.fail_task, self.refresh = False, "refresh-1"
+        self.bootorder = ["CDROM", "HDD", "NETWORK"]
+        fake = self
+        AUTH, API = "/realms/scp/protocol/openid-connect", "/scp-core/api/v1"
+        task = {"uuid": "t1", "state": "RUNNING"}
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_a):
+                pass
+
+            def _send(self, code, obj=None):
+                payload = b"" if obj is None else json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def _read(self):
+                return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+            def _json(self):
+                raw = self._read()
+                return json.loads(raw) if raw else None
+
+            def _server(self):
+                return {"id": 7, "name": "v2202", "hostname": "crumble.internal", "nickname": "crumble", "architecture": "AMD64",
+                        "rescueSystemActive": False, "ipv4Addresses": [{"ip": "203.0.113.9"}],
+                        "serverLiveInfo": {"state": fake.state, "uefi": False, "cpuCount": 2, "maxServerMemoryInMiB": 2048,
+                                           "bootorder": fake.bootorder}}
+
+            def do_POST(self):
+                path = self.path.split("?")[0]
+                if path == AUTH + "/auth/device":
+                    self._read()
+                    return self._send(200, {"device_code": "dc", "verification_uri_complete": "https://login.example/x",
+                                            "expires_in": 60, "interval": 1})
+                if path == AUTH + "/token":
+                    form = dict(urllib.parse.parse_qsl(self._read().decode()))
+                    if form["grant_type"].endswith("device_code") and fake.polls_pending > 0:
+                        fake.polls_pending -= 1
+                        return self._send(400, {"error": "authorization_pending"})
+                    if form["grant_type"] == "refresh_token" and form["refresh_token"] != fake.refresh:
+                        return self._send(400, {"error": "invalid_grant"})
+                    n = int(fake.refresh.split("-")[1]) + (form["grant_type"] == "refresh_token")
+                    fake.refresh = "refresh-%d" % n
+                    return self._send(200, {"access_token": "a%d" % n, "expires_in": 300, "refresh_token": fake.refresh})
+                body = self._json()
+                fake.calls.append(("POST", path, body))
+                if "/" not in (self.headers.get("Content-Type") or ""):     # as the real one: even with no body
+                    return self._send(400, {"message": "The HTTP header Content-Type must be 'type/subtype'"})
+                if path == API + "/users/94774/isos/kiwi-x.iso":
+                    return self._send(201, {"presignedUrl": fake.url + "/s3/kiwi-x.iso"})
+                if path == API + "/servers/7/iso":
+                    fake.attached = body["userIsoName"]
+                    return self._send(202, task)
+                self._send(404, {"message": "no such path"})
+
+            def do_PUT(self):
+                fake.uploaded = len(self._read())
+                fake.calls.append(("PUT", self.path, None))
+                self._send(200)
+
+            def do_PATCH(self):
+                body = self._json()
+                fake.calls.append(("PATCH", self.path, body))
+                if body.get("state"):
+                    fake.state = "SHUTOFF" if body["state"] == "OFF" else "RUNNING"
+                    fake.polls_running = 1
+                if body.get("bootorder"):
+                    fake.bootorder = body["bootorder"]
+                self._send(202, task)
+
+            def do_DELETE(self):
+                fake.calls.append(("DELETE", self.path, None))
+                if self.path.endswith("/servers/7/iso"):
+                    fake.attached = None
+                self._send(204)
+
+            def do_GET(self):
+                path = self.path.split("?")[0]
+                if not (self.headers.get("Authorization") or "").startswith("Bearer a"):
+                    return self._send(401, {"message": "no token"})
+                if path == AUTH + "/userinfo":
+                    return self._send(200, {"id": 94774})
+                if path == API + "/servers":
+                    return self._send(200, [self._server()])
+                if path == API + "/servers/7":
+                    s = self._server()
+                    if fake.attached and fake.state == "RUNNING":       # the installer runs, then powers off
+                        fake.polls_running -= 1
+                        if fake.polls_running < 0:
+                            fake.state = "SHUTOFF"
+                    return self._send(200, s)
+                if path == API + "/servers/7/disks":
+                    return self._send(200, [{"name": "sda", "capacityInMiB": 40960, "storageDriver": fake.driver}])
+                if path == API + "/servers/7/iso":
+                    return self._send(200, {"isoAttached": bool(fake.attached), "iso": fake.attached})
+                if path == API + "/tasks/t1":
+                    if fake.fail_task:
+                        return self._send(200, {"uuid": "t1", "state": "ERROR", "responseError": {"message": "boom"}})
+                    return self._send(200, {"uuid": "t1", "state": "FINISHED"})
+                self._send(404, {"message": "no such path"})
+
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = "http://127.0.0.1:%d" % self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+    def seen(self):
+        return [(m, p.split("/api/v1")[-1].split("?")[0]) for m, p, _b in self.calls]
+
+
+class TestVps(Base):
+    def setUp(self):
+        super().setUp()
+        self.api = FakeNetcup()
+        self.addCleanup(self.api.close)
+        patcher = mock.patch("kiwiserver.netcup.time.sleep", lambda _s: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = cli.main(list(args) + ["--api", self.api.url])
+            except SystemExit as e:
+                rc = e.code
+        return rc, out.getvalue(), err.getvalue()
+
+    def vps_fleet(self, disk="/dev/sda"):
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "target": "debian", "disk": disk, "vps": {"server": 7}}}})
+
+    def logged_in(self):
+        write(os.path.join(self.tmp, "secrets", "netcup.token"), json.dumps({"refresh_token": "refresh-1"}))
+
+    def built(self, stack=0):
+        write(os.path.join(self.tmp, "output", "x", "x.iso"), "ISO" * 100)
+        write(os.path.join(self.tmp, "output", "x", "x.role.sh"), "KS_STACK=%d\n" % stack)
+
+    def test_login_keeps_only_the_refresh_token_private(self):
+        f = self.vps_fleet()
+        rc, out, err = self.run_cli("vps", "login", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("https://login.example/x", out)
+        path = os.path.join(self.tmp, "secrets", "netcup.token")
+        with open(path) as fh:
+            self.assertEqual(json.load(fh), {"refresh_token": "refresh-1"})
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+
+    def test_a_used_refresh_token_is_replaced(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "list", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("crumble", out)
+        with open(os.path.join(self.tmp, "secrets", "netcup.token")) as fh:
+            self.assertEqual(json.load(fh)["refresh_token"], "refresh-2")
+
+    def test_not_logged_in_says_how(self):
+        rc, out, err = self.run_cli("vps", "list", self.vps_fleet().path)
+        self.assertEqual(rc, 1)
+        self.assertIn("vps login", err)
+
+    def test_probe_says_the_real_disk(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "probe", f.path, "x")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("disk: /dev/sda", out)
+        self.api.driver = "VIRTIO"
+        rc, out, err = self.run_cli("vps", "probe", f.path, "7", "--porcelain")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["disks"][0]["device"], "/dev/vda")
+
+    def test_a_server_found_by_name(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "probe", f.path, "crumble")
+        self.assertEqual(rc, 0, err)
+        rc, out, err = self.run_cli("vps", "probe", f.path, "nosuch")
+        self.assertEqual(rc, 1)
+        self.assertIn("names no netcup server", err)
+
+    def test_install_runs_the_whole_sequence(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        self.built()
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.api.seen(), [
+            ("POST", "/users/94774/isos/kiwi-x.iso"), ("PUT", "/s3/kiwi-x.iso"),
+            ("PATCH", "/servers/7"),            # off
+            ("POST", "/servers/7/iso"),
+            ("PATCH", "/servers/7"),            # on, into the installer
+            ("DELETE", "/servers/7/iso"),
+            ("PATCH", "/servers/7"),            # the boot order
+            ("DELETE", "/users/94774/isos/kiwi-x.iso"),
+            ("PATCH", "/servers/7")])           # on, from the disk
+        self.assertEqual(self.api.uploaded, 300)
+        states = [b for m, _p, b in self.api.calls if m == "PATCH"]
+        self.assertEqual([s.get("state") for s in states], ["OFF", "ON", None, "ON"])
+        self.assertEqual(states[2]["bootorder"][0], "HDD")
+        self.assertIn("stateOption=POWEROFF", self.api.calls[2][1])
+        self.assertEqual(self.api.calls[3][2], {"userIsoName": "kiwi-x.iso", "changeBootDeviceToCdrom": True})
+        self.assertIn("next: kiwi-server apply", out)
+
+    def assert_refused(self, needle, *flags, fleet=None):
+        f = fleet or self.vps_fleet()
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", *flags)
+        self.assertEqual(rc, 1, err)
+        self.assertIn(needle, err)
+        self.assertNotIn("PUT", [m for m, _p, _b in self.api.calls])     # nothing uploaded, nothing wiped
+        self.assertEqual(self.api.state, "RUNNING")
+
+    def test_install_refuses_the_wrong_disk(self):
+        self.logged_in()
+        self.built()
+        self.assert_refused("set disk: /dev/sda", "--yes", fleet=self.vps_fleet(disk="/dev/vda"))
+
+    def test_install_refuses_media_with_secrets(self):
+        self.logged_in()
+        self.built(stack=1)
+        self.assert_refused("carries the role's secrets", "--yes")
+
+    def test_install_refuses_without_an_iso(self):
+        self.logged_in()
+        self.assert_refused("no ISO for x", "--yes")
+
+    def test_install_needs_yes_when_nobody_can_answer(self):
+        self.logged_in()
+        self.built()
+        with mock.patch("sys.stdin", io.StringIO("")):
+            self.assert_refused("add --yes")
+
+    def test_a_failed_task_stops_the_install(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        self.built()
+        self.api.fail_task = True
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 1)
+        self.assertIn("boom", err)
+        self.assertNotIn(("DELETE", "/users/94774/isos/kiwi-x.iso"), self.api.seen())
+
+
 class TestCerts(Base):
     def test_ca_and_host_cert(self):
         ca = os.path.join(self.tmp, "ca")

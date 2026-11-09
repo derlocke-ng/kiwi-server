@@ -641,7 +641,8 @@ Asked for by the owner in October 2026, for the test round and after:
   cross-network enrolment. Together with federation and the orchard: a VPN
   service of one's own.
 - **netcup as the first provider API** (`kiwi-server vps …`, later the
-  orchard's driver). Read from the SCP REST API's OpenAPI spec
+  orchard's driver; `login`, `list`, `probe` and `install` done in 2.13.0,
+  the rescue system, user images and snapshots still to do). Read from the SCP REST API's OpenAPI spec
   (`https://www.servercontrolpanel.de/scp-core/api/v1/openapi`, OAS 3.1,
   Bearer tokens from Keycloak's device flow: `client_id=scp`,
   `scope=offline_access openid`, a refresh token that lives while it is used

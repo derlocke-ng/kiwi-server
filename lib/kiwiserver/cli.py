@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import luks, remote, router as routermod, toolchain as tcmod, util, wgeasy
+from . import luks, netcup, remote, router as routermod, toolchain as tcmod, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -581,6 +581,84 @@ def cmd_script(args):
     sys.stdout.write(script)
 
 
+def vps_server(client, fleet, name, override):
+    """A server named directly, or the one a fleet host says it is."""
+    h = fleet.hosts.get(name)
+    if override or h is None:
+        return client.find(override or name)
+    return client.find((h.cfg.get("vps") or {}).get("server")
+                       or (h.role_settings_raw.get("vpn-server") or {}).get("wg_host") or h.name)
+
+
+def vps_install(args, fleet, client, server):
+    h = fleet.hosts.get(args.target)
+    if h is None:
+        raise KiwiError("vps install needs a host of the fleet; %s is not one" % args.target)
+    disks = client.disks(server["id"])
+    want = netcup.device_for(disks[0]) if disks else None
+    if want and h.cfg.get("disk") != want:
+        raise KiwiError("%s: disk: says %s, but the server's disk is %s (%s): set disk: %s and build again"
+                        % (h.name, h.cfg.get("disk"), want, disks[0].get("storageDriver"), want))
+    base = os.path.join(out_dir_for(args, fleet), h.name, h.name)
+    if not os.path.isfile(base + ".iso"):
+        raise KiwiError("no ISO for %s yet: kiwi-server build %s %s" % (h.name, os.path.basename(fleet.path), h.name))
+    if "KS_STACK=0" not in util.read_text(base + ".role.sh"):
+        raise KiwiError("%s.iso carries the role's secrets and this would put it on a provider's store: "
+                        "kiwi-server build %s %s, without --offline" % (h.name, os.path.basename(fleet.path), h.name))
+    label = server.get("nickname") or server.get("name")
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise KiwiError("this wipes %s: add --yes to go ahead" % label)
+        if input("This wipes the disk of %s. Type its name to go ahead: " % label).strip() != label:
+            raise KiwiError("not confirmed, nothing touched")
+    netcup.install(client, server, base + ".iso", "kiwi-%s.iso" % h.name, lambda m: util.say("%s: %s" % (h.name, m)))
+    addresses = [a["ip"] for a in server.get("ipv4Addresses") or []]
+    known = fleet.resolve_path("secrets/known_hosts")
+    if os.path.isfile(known):                          # the reinstall made new host keys, and this is why
+        for a in addresses + [h.hostname]:
+            subprocess.run(["ssh-keygen", "-q", "-R", a, "-f", known], capture_output=True)
+    if luks.uses_one_time_key(h):
+        util.say("%s: at the console, the disk asks for the key in %s" % (h.name, luks.once_file(h)))
+    util.say("%s: next: kiwi-server apply %s %s --ssh %s@%s"
+             % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"], addresses[0] if addresses else "<address>"))
+
+
+def print_probe(p):
+    print("%s (id %s)%s" % (p["name"], p["id"], "  %s" % p["nickname"] if p["nickname"] else ""))
+    print("  state:      %s, %s, %s CPUs, %s MiB" % (p["state"], p["architecture"], p["cpus"], p["memory_mib"]))
+    print("  addresses:  %s" % (", ".join(p["addresses"]) or "-"))
+    print("  boot:       %s%s, ISO attached: %s, rescue: %s"
+          % (" ".join(p["bootorder"] or []) or "-", " (UEFI)" if p["uefi"] else "", p["iso"] or "no", "on" if p["rescue"] else "off"))
+    for d in p["disks"]:
+        print("  disk:       %s, %s MiB, %s  ->  disk: %s" % (d["name"], d["mib"], d["driver"], d["device"] or "(unknown driver)"))
+
+
+def cmd_vps(args):
+    fleet, _roles, _ms = load(args, need_roles=False)
+    if fleet.errors:
+        raise KiwiError(fleet.errors[0])
+    client = netcup.Netcup(fleet.resolve_path("secrets/netcup.token"), args.api or netcup.BASE)
+    if args.action == "login":
+        client.login(lambda url: print("Open this page and sign in to netcup:\n  %s" % url, flush=True))
+        util.say("logged in; the token is in %s and lasts while it is used once in 30 days" % client.token_path)
+    elif args.action == "list":
+        rows = client.servers()
+        if args.porcelain:
+            print(json.dumps(rows, indent=2))
+        for s in [] if args.porcelain else rows:
+            print("%-10s %-22s %-30s %s" % (s["id"], s.get("name") or "-", s.get("hostname") or "-", s.get("nickname") or "-"))
+    else:
+        if not args.target:
+            raise KiwiError("which server? kiwi-server vps %s <fleet> <host or server>" % args.action)
+        server = vps_server(client, fleet, args.target, args.server)
+        if args.action == "install":
+            vps_install(args, fleet, client, server)
+        elif args.porcelain:
+            print(json.dumps(netcup.probe(client, server), indent=2))
+        else:
+            print_probe(netcup.probe(client, server))
+
+
 def cmd_secrets(args):
     """The secrets a host's role resolved to, generated or written down, read
     from the fleet on this machine: nothing is asked of the host."""
@@ -1025,6 +1103,9 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
+  kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
+  kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
+  kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -1081,6 +1162,11 @@ def build_parser():
     sub("ca", cmd_ca).add_argument("fleet")
     s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show"]); s.add_argument("fleet")
     s.add_argument("host"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
+    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install"]); s.add_argument("fleet")
+    s.add_argument("target", nargs="?", help="a fleet host, or a server's id, address, name or nickname")
+    s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")
+    s.add_argument("--yes", action="store_true", help="install: wipe the server's disk without asking")
+    s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake netcup (tests)
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
     s.add_argument("--wireguard", metavar="FILE", help="the client config the master issued for the router")
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")

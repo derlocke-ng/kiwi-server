@@ -99,6 +99,7 @@ hosts:
     role: master
     target: debian
     disk: /dev/vda
+    # vps: { server: v2202... }           # kiwi-server vps: the server at netcup (a master: found by wg_host)
     master:
       vpn-client:
         vpn_provider: mullvad

@@ -112,6 +112,24 @@ writes the same thing as a script to `sudo bash` on any installed Debian /
 CoreOS / uCore machine. Whoever holds one holds those secrets: keep it off a
 provider's ISO store and delete it once the machine is installed.
 
+A server at netcup needs no trip to the web panel. `kiwi-server vps` drives
+netcup's API, and `vps install` wipes the server, so it asks first (`--yes`
+for a script):
+
+```bash
+kiwi-server vps login fleet.yaml             # prints a page to sign in on; once
+kiwi-server vps list fleet.yaml              # your servers
+kiwi-server vps probe fleet.yaml crumble     # state, addresses, what disk: has to say
+kiwi-server build fleet.yaml crumble
+kiwi-server vps install fleet.yaml crumble   # upload, boot it, wait, detach, boot the disk
+```
+
+A master is found by its `wg_host`; any other host says `vps: { server: <id,
+name or nickname> }`. `vps install` refuses an ISO that carries the role's
+secrets, and one built for a different `disk:` than the server really has. It
+removes the ISO from netcup's store when it is done, and forgets the machine's
+old SSH host keys.
+
 ## The fleet file
 
 ```yaml

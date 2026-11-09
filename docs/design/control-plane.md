@@ -400,8 +400,8 @@ diffable:
 | Today a literal | Becomes |
 |---|---|
 | the admin's console `password` | `password_hash`, which exists |
-| Portainer's and Vaultwarden's admin passwords | a hash; both services accept one |
-| `wg_password` (`enroll` logs in to wg-easy with it), Pi-hole's and the other service passwords | generated from the seed (`generate: true`, as the cloud secrets already are), printed on request by `kiwi-server secrets show <host> <setting>` |
+| Vaultwarden's admin token | stays empty, which keeps the admin page off; when set, an Argon2 hash works |
+| `wg_password` (`enroll` logs in to wg-easy with it), Pi-hole's, Portainer's, Nextcloud's and the other service passwords | generated from the seed (`generate: true`, as the cloud secrets already are), printed on request by `kiwi-server secrets show <fleet> <host> <setting>` |
 | the Debian LUKS `passphrase` | the one-time key above |
 | the commercial provider's WireGuard key, `wireguard_config` files | the secret store: these are keys, nothing can replace them |
 

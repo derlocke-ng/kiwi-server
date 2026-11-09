@@ -40,7 +40,8 @@ settings:
     default: user
   - key: sftp_password
     type: secret
-    required: true
+    generate: true
+    help: "Empty: generated from the fleet's seed."
   - key: sftp_uid
     type: int
     help: Must own the shared directory (the downloader's puid when sharing its downloads).

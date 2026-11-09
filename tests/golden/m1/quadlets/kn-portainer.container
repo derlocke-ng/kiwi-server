@@ -19,7 +19,9 @@ DNS=172.128.0.4
 DNS=9.9.9.9
 Volume=portainer_data:/data
 Volume=/run/podman/podman.sock:/var/run/docker.sock
+Volume=/home/user/docker/kn-portainer/admin-password:/run/kiwi/portainer-admin:ro,z
 PublishPort=127.0.0.1:9443:9443
+Exec=--admin-password-file /run/kiwi/portainer-admin
 LogDriver=journald
 
 [Service]

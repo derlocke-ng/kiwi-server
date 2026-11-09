@@ -41,7 +41,7 @@ defaults:
 
   admin:
     user: core                      # has passwordless sudo on every target
-    password: change-me             # hashed at render time; or password_hash: $6$...
+    # password_hash: $6$...         # the console login, from: openssl passwd -6
     ssh_keys:
       - ~/.ssh/id_ed25519.pub       # a key, or a file containing keys
     groups: [docker]
@@ -107,12 +107,12 @@ hosts:
         server_countries: Germany
       vpn-server:
         wg_host: vpn.example.org          # what clients and nodes connect to
-        wg_password: change-me-too        # wg-easy admin (127.0.0.1:51821 on the master)
         # public_ip: 203.0.113.5          # bind the WireGuard port to one address only
-      dns:
-        pihole_password: change-me-three
-        # mullvad_socks: false            # on in the master preset: Mullvad's SOCKS5 proxies by name,
-        #                                 # de-fra-001.mullvad.home, refreshed every 6 hours
+      # Service passwords left out are generated from secrets/seed. To read one:
+      #   kiwi-server secrets show fleet.yaml gate vpn-server.wg_password
+      # dns:
+      #   mullvad_socks: false            # on in the master preset: Mullvad's SOCKS5 proxies by name,
+      #                                   # de-fra-001.mullvad.home, refreshed every 6 hours
 
   # a kiwi-node in gateway mode on uCore: LAN gateway + download station
   m1:
@@ -126,19 +126,13 @@ hosts:
         wireguard_config: secrets/m1.home.conf    # the client config wg-easy issued
         # extra_dnat_rules: ["2222/tcp:172.128.0.1:22"]   # ssh to this node from the mesh:
         #                                 # mesh address port 2222 -> the host (docker gateway) port 22
-      dns:
-        pihole_password: change-me-four
-        # dhcp_enabled: true              # Pi-hole as the LAN's DHCP server (the dhcp-relay carries
-        # dhcp_start: 192.168.1.100       # the broadcasts to it); turn the router's DHCP off
-        # dhcp_end: 192.168.1.250
-        # dhcp_router: 192.168.1.1        # or this machine's LAN address: LAN -> VPN for everyone
+      # dns:
+      #   dhcp_enabled: true              # Pi-hole as the LAN's DHCP server (the dhcp-relay carries
+      #   dhcp_start: 192.168.1.100       # the broadcasts to it); turn the router's DHCP off
+      #   dhcp_end: 192.168.1.250
+      #   dhcp_router: 192.168.1.1        # or this machine's LAN address: LAN -> VPN for everyone
       downloader:
         download_dir: /mnt/data/downloads
-        transmission_password: change-me-five    # also JDownloader's web login unless jd_web_password is set
-      sftp:
-        sftp_password: change-me-six
-      portainer:
-        admin_password: change-me-seven   # set before the first start; no open first-run page
 
   # a kiwi-node in cloud mode on uCore (hci): Nextcloud + Vaultwarden.
   # Containers run as podman quadlets (systemd units) unless runtime: docker is set.
@@ -160,7 +154,6 @@ hosts:
       vpn-client:
         wireguard_config: secrets/sh3.home.conf
       cloud:
-        admin_password: change-me-eight     # the Nextcloud user `admin`
         nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data
         memory_limit: 8192M
         # collabora: true  talk: false  imaginary: true  clamav: false  fulltextsearch: false  whiteboard: false

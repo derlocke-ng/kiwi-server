@@ -54,7 +54,8 @@ settings:
     default: user
   - key: transmission_password
     type: secret
-    required: true
+    generate: true
+    help: "Empty: generated from the fleet's seed."
   - key: transmission_hostname
     label: Transmission hostname
     help: "Empty: dl.<hostname>."

@@ -123,7 +123,7 @@ defaults:                          # every host, unless it says otherwise
   disk: /dev/sda                   # WIPED by the ISO. Required for build, not for render
   admin:
     user: core                     # passwordless sudo on every target
-    password: change-me            # hashed at render; or password_hash: $6$…
+    password_hash: $6$…            # the console login, from: openssl passwd -6
     ssh_keys: [~/.ssh/id_ed25519.pub]   # keys, or files holding keys
   network: { dhcp: true }          # or dhcp: false + address/gateway/dns, or an iprange
   updates: { days: [Sun], time: "03:30", length_minutes: 90 }
@@ -430,6 +430,12 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 - **The output holds secrets**: password hashes, WireGuard keys, TLS keys, the
   LUKS passphrase. Files are written 0600 and `output/` is in `.gitignore`;
   treat the ISOs the same way.
+- **Service passwords you leave out are generated** from `secrets/seed`, the
+  same at every render, so the fleet file need not hold them.
+  `kiwi-server secrets show fleet.yaml <host> [setting]` prints one. `validate`
+  warns about those still written in the file. Taking one out on a running
+  machine changes that password; Nextcloud's and Portainer's are only read at
+  their first start.
 - **Encrypted Debian disks** install with a one-time key: type the one in
   `secrets/luks/<host>.once` at the first boot, and the first `apply` replaces
   it before anything secret reaches the machine. From then on the disk asks for

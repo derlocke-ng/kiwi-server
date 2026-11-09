@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: nostr-relay
   title: Nostr relay (strfry)
-  version: 1.0.0
+  version: 1.1.0
   description: "strfry, a nostr relay, behind the reverse proxy at relay.<hostname>: the relay a hub built on kiwi-framework keeps its events on. Reachable through the mesh (TLS from the fleet CA); public when the host publishes 443 under a public name with a certificate for it"
   category: network
   node_types: [master]
@@ -31,6 +31,7 @@ outputs:
   write_policy: { path: "{{ container_prefix }}-nostr-relay/write-policy.py", mode: 0755, when: writes_restricted }
 
 validate:
+  - { when: "register_pow < 0 or register_pow > 40", error: "nostr-relay.register_pow: 0 to 40 bits" }
   - { when: "write_pubkeys | map('length') | reject('equalto', 64) | list", error: "nostr-relay.write_pubkeys: 64 hex characters each, not npub1..." }
 
 storage:
@@ -64,9 +65,15 @@ settings:
     pattern: '[a-z0-9.-]*'
   - key: write_pubkeys
     type: list
-    label: Keys that may post from anywhere
-    help: "Public keys, 64 hex characters each. Anyone may read; the mesh may post; from the internet only these keys may."
+    label: Admins
+    help: "Public keys, 64 hex characters each. They may always post, and only their lists of members and bans count. Anyone may read."
     default: []
+  - key: members
+    type: enum
+    label: Who may post from the internet
+    help: "After proving their key (NIP-42). approved: the keys on the list an admin signs; an account alone can only read. registered: anyone with an account on this hub, made with proof of work against spam. The mesh may always post."
+    options: [approved, registered]
+    default: approved
   - key: open_writes
     type: bool
     group: Advanced
@@ -102,6 +109,17 @@ settings:
     type: int
     group: Limits
     default: 40
+  - key: register_pow
+    type: int
+    group: Limits
+    label: Proof of work for a new account (bits)
+    help: "NIP-13, on the account entry. Each bit doubles the work a sign-up costs."
+    default: 20
+  - key: register_per_hour
+    type: int
+    group: Limits
+    label: New accounts per address and hour
+    default: 10
   - key: keep_days
     type: int
     group: Limits
@@ -115,7 +133,8 @@ settings:
     default: true
   - key: image
     group: Advanced
-    default: docker.io/dockurr/strfry:latest
+    help: "Members need this build (images/strfry): stock strfry does not tell the write policy which key a connection proved."
+    default: ghcr.io/derlocke-ng/strfry:1.1.3-kiwi1
   - key: config_path
     group: Advanced
     label: Config path in the image

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.28.0 — the initramfs key can do one thing
+
+- The initramfs has a key of its own, `secrets/unlock_ed25519`, which opens no running
+  machine, and its line in `authorized_keys` allows what unlocking needs and nothing else:
+  a forced command, and on CoreOS one forwarded port and `unlock.ssh_from`. Dropbear has no
+  `from=` and ignores a key that names one, so `ssh_from` is refused on Debian.
+- CoreOS's initramfs sshd takes forced commands only and forwards inwards only.
+
 ## 2.27.0 — CoreOS through the tunnel too
 
 - `unlock.ssh` works on CoreOS: `dracut-sshd`, layered, with a host key of its own, and

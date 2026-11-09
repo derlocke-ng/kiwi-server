@@ -32,11 +32,11 @@ def configure(known_hosts, identities=()):
     IDENTITIES = [str(i) for i in identities]
 
 
-def ssh_opts():
+def ssh_opts(identities=True):
     opts = list(SSH_OPTS)
     if KNOWN_HOSTS:
         opts += ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=%s" % KNOWN_HOSTS]
-    if IDENTITIES:
+    if IDENTITIES and identities:
         opts += ["-o", "IdentitiesOnly=yes"]
         for i in IDENTITIES:
             opts += ["-i", i]

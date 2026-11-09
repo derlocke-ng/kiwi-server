@@ -295,7 +295,9 @@ build its ISO with the ring running. Its key stays in another keyslot, in
 machine that cannot reach the ring at boot, such as a master on the Internet, is bound
 through `via: { infra: "http://127.0.0.1:7500" }` and opened with `kiwi-server unlock
 <fleet> <host>`, which forwards the ring in over SSH in its initramfs (`--manual`
-hands over the key instead, on Debian). A machine cannot serve its own ring. Back up the rings'
+hands over the key instead, on Debian). The key that does this, `secrets/unlock_ed25519`,
+opens no running machine and can only run the unlock; on CoreOS `unlock.ssh_from` also says
+where from. A machine cannot serve its own ring. Back up the rings'
 keys: the `backup` module keeps them.
 
 A machine's own data is the job of two modules. `backup-server` on a node with

@@ -112,6 +112,7 @@ DEFAULTS = {
         "threshold": 1,
         "via": {},        # ring -> URL, where the LAN is not the way to it
         "ssh": False,     # an SSH server in the initramfs, for `kiwi-server unlock`
+        "ssh_from": [],   # where it may be used from (CoreOS only: Dropbear has no from=)
     },
     "tls": {
         # certificates for hosts that run the reverse proxy and bring none:
@@ -420,6 +421,8 @@ class Host:
                 errs.append("unlock.threshold must be between 1 and the number of rings")
             if self.target == "debian" and not (d.get("encrypt") or d.get("partitioning") == "crypto"):
                 errs.append("unlock.rings is set but debian.encrypt is off: there is no disk to bind")
+            if u.get("ssh_from") and self.target == "debian":
+                errs.append("unlock.ssh_from works on CoreOS only: Dropbear has no from= and ignores a key that names it")
         if self.target == "ucore" and "/" not in str(c["ucore"].get("image") or ""):
             errs.append("ucore.image must be a full image reference like ghcr.io/ublue-os/ucore:stable")
         for key in ("files", "directories", "units"):

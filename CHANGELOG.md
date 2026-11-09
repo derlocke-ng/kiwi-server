@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.29.0 — the relay
+
+- kiwi-modules 0.16.0. **`vpn-server.unlock_relay`** lets a machine behind NAT ask the
+  master's public port for its ring, past a gate that holds only the addresses enrolled
+  machines last connected from: an `unlock.via` of `http://<master>:<port>`. The `tang`
+  module's rings are reachable at the node's mesh address for it.
+
 ## 2.28.0 — the initramfs key can do one thing
 
 - The initramfs has a key of its own, `secrets/unlock_ed25519`, which opens no running

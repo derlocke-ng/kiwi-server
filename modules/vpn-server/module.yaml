@@ -15,7 +15,7 @@ dependencies:
 network:
   listen_ports: ["51820/udp", "51821/tcp"]
   needs_vpn_dnat: false
-  open_ports: ["{{ wg_port }}/udp"]
+  open_ports: ["{{ wg_port }}/udp", "{% for port in unlock_relay %}{{ port }}/tcp {% endfor %}"]
 
 firewall:
   # applied inside the container by start.sh (WG_POST_UP)
@@ -81,6 +81,13 @@ settings:
   - key: wg_default_address
     label: Client address pattern
     default: 10.8.0.x
+  - key: unlock_relay
+    type: map
+    label: Tang rings relayed into the mesh
+    help: "Public port=mesh address:port of a ring, for machines that cannot reach it at boot any other way: an unlock.via of http://<this master>:<port>. Only addresses that enrolled machines last connected from get through."
+    default: {}
+    key_pattern: '[0-9]+'
+    pattern: '[0-9]+(\.[0-9]+){3}:[0-9]+'
   - key: wg_hostname
     label: wg-easy page hostname
     help: "Empty: wg.<hostname>. Served by the reverse proxy when there is one, for admin groups only."

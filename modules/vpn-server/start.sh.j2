@@ -87,6 +87,36 @@ iptables -A INPUT -i wg0 -p tcp --dport 80 -j DROP
 iptables -A INPUT -i wg0 -p tcp --dport 443 -j DROP
 {% endif %}
 
+{% if unlock_relay %}
+# The Tang relay. A machine rebooting where it cannot reach its ring asks this public port;
+# the packet goes into the mesh without leaving the kernel, and this master learns nothing
+# it can use: Tang's exchange is safe in the clear. The gate lets through only the addresses
+# enrolled machines last connected from, so a box carried off elsewhere is dropped first.
+iptables -N KIWI_RELAY 2>/dev/null || iptables -F KIWI_RELAY
+{% for port, dest in unlock_relay.items() %}
+{% set ip, dport = dest.split(':') %}
+iptables -t nat -A PREROUTING -i eth0 -p tcp --dport {{ port }} -j DNAT --to-destination {{ dest }}
+iptables -t nat -A POSTROUTING -o wg0 -d {{ ip }} -p tcp --dport {{ dport }} -j SNAT --to-source {{ server_ip }}
+# a gate that is being rewritten falls through to the DROP, never to the accepts further down
+iptables -A FORWARD -i eth0 -o wg0 -d {{ ip }} -p tcp --dport {{ dport }} -m conntrack --ctstate NEW -j KIWI_RELAY
+iptables -A FORWARD -i eth0 -o wg0 -d {{ ip }} -p tcp --dport {{ dport }} -m conntrack --ctstate NEW -m limit --limit 6/min -j LOG --log-prefix "kiwi-relay refused: "
+iptables -A FORWARD -i eth0 -o wg0 -d {{ ip }} -p tcp --dport {{ dport }} -m conntrack --ctstate NEW -j DROP
+# the answers go back out of the real interface, not through the exit
+iptables -t mangle -A PREROUTING -i eth0 -p tcp --dport {{ port }} -j CONNMARK --set-mark 65
+{% endfor %}
+iptables -t mangle -A PREROUTING -i wg0 -m connmark --mark 65 -j CONNMARK --restore-mark
+relay_gate() {
+    iptables -F KIWI_RELAY
+    for ip in $(wg show wg0 endpoints | awk '{print $2}' | sed -n 's/^\([0-9.]*\):.*/\1/p' | sort -u); do
+        iptables -A KIWI_RELAY -s "$ip" -m hashlimit --hashlimit-upto 30/min --hashlimit-burst 30 --hashlimit-mode srcip --hashlimit-name kiwi_relay -j ACCEPT
+    done
+}
+relay_gate
+[ -e /run/kiwi-relay.pid ] && kill "$(cat /run/kiwi-relay.pid)" 2>/dev/null
+( while sleep 30; do relay_gate; done ) >/dev/null 2>&1 &
+echo $! > /run/kiwi-relay.pid
+
+{% endif %}
 # stock wg-easy post-up
 iptables -t nat -A POSTROUTING -s {{ wg_subnet }} -o eth0 -j MASQUERADE
 iptables -A INPUT -p udp -m udp --dport 51820 -j ACCEPT

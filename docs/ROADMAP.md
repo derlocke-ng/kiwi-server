@@ -787,8 +787,10 @@ Asked for by the owner in November 2026:
   on lychee (Debian, its ring on uCore) and a CoreOS VM (its ring on Debian), each
   with the ring up, with the ring down and with the key at the console. Since 2.27.0
   also SSH in CoreOS's initramfs, with `dracut-sshd` layered until the phoenix image
-  has it. Open: the relay on the master for NATed nodes, rings on more than one host,
-  rotation, the leash, and reinstalling the real machines.
+  has it. Since 2.28.0 a key for the initramfs alone; since 2.29.0 the relay on the
+  master for NATed nodes, tried from behind NAT on the home connection. Open: a NATed
+  node on another network, `from=` on Debian (Dropbear has none), rings on more than one
+  host, rotation, the leash, and reinstalling the real machines.
 - **A node that sleeps, keeps the backups and can stand in**, raised
   9 November 2026; not built. As a backup node it wakes for the night: by its own
   RTC alarm (nobody has to be awake to send anything) and by Wake-on-LAN when

@@ -297,7 +297,9 @@ through `via: { infra: "http://127.0.0.1:7500" }` and opened with `kiwi-server u
 <fleet> <host>`, which forwards the ring in over SSH in its initramfs (`--manual`
 hands over the key instead, on Debian). The key that does this, `secrets/unlock_ed25519`,
 opens no running machine and can only run the unlock; on CoreOS `unlock.ssh_from` also says
-where from. A machine cannot serve its own ring. Back up the rings'
+where from. A machine behind NAT that nobody can reach at boot asks its master instead:
+`vpn-server.unlock_relay: { "7500": "<mesh address>:7500" }` there, and
+`via: { infra: "http://<master>:7500" }` on the machine. A machine cannot serve its own ring. Back up the rings'
 keys: the `backup` module keeps them.
 
 A machine's own data is the job of two modules. `backup-server` on a node with

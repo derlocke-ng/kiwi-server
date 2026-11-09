@@ -18,7 +18,9 @@ ip link set dev wg0 mtu 1376
 # --set-mss never raises a smaller MSS.
 iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1336
 
-# clients never reach the docker network behind the server
+# clients never reach the docker network behind the server; the answers to what the
+# master and its containers start towards the mesh still have to get back (below, NAT)
+iptables -A FORWARD -s 10.8.0.0/16 -d 172.64.0.0/24 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A FORWARD -s 10.8.0.0/16 -d 172.64.0.0/24 -j DROP
 
 # group guests (10.8.1.0/24): reach nodes; other clients no; internet yes; admin pages no

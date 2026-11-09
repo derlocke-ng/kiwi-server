@@ -107,6 +107,8 @@ fi
 iptables -t nat -N KIWI_GW_NAT
 iptables -t nat -A KIWI_GW_NAT -s "$DOCKER_SUBNET" -j RETURN
 iptables -t nat -A KIWI_GW_NAT -s "$VPN_SUBNET" -j RETURN
+# a connection to a published port (nginx from the LAN) keeps its address: it is not going through the VPN client
+iptables -t nat -A KIWI_GW_NAT -m conntrack --ctstate DNAT -j RETURN
 iptables -t nat -A KIWI_GW_NAT -j MASQUERADE
 iptables -t nat -I POSTROUTING -o "$BRIDGE" -j KIWI_GW_NAT
 echo "[kiwi-gw] LAN ($PUB_IFACE) -> $CONTAINER_IP (VPN client); mesh $VPN_SUBNET allowed"

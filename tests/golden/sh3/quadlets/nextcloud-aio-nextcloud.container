@@ -75,6 +75,7 @@ AddHost=cloud.sh3.home:172.128.0.5
 AddHost=vault.sh3.home:172.128.0.5
 AddHost=portainer.sh3.home:172.128.0.5
 Volume=nextcloud_aio_nextcloud:/var/www/html:rw
+Volume=/home/user/docker/nextcloud-aio-nextcloud/kiwi.config.php:/var/www/html/config/kiwi.config.php:ro,z
 Volume=/home/user/docker/knnc-data:/mnt/ncdata:rw,z
 Volume=/home/user/docker/kiwi/ca:/usr/local/share/ca-certificates:ro,z
 HealthCmd=/healthcheck.sh

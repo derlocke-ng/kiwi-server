@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.21.0 — a calendar's way to Nextcloud
+
+- kiwi-modules 0.11.0. **`hub.caldav`** lets a hub's calendar reach a Nextcloud through
+  the hub, from the mesh only, on a public hub too. **`cloud.cors_origins`** lets hubs on
+  other addresses, such as Armory, use CalDAV from the browser.
+- **Nextcloud sees who its clients are.** It recorded every client as `127.0.0.1`, so
+  brute-force protection counted nothing. The gateway no longer hides LAN clients of
+  published ports behind the bridge address.
+- A master's containers can reach the mesh: the answers were being dropped.
+
 ## 2.20.0 — local traffic stays local
 
 - **A node's Pi-hole and hosts file answer with the LAN address of the nodes on its

@@ -11,6 +11,9 @@ services:
       - HUB_RELAYS_LOCKED={{ 'true' if relays_locked else 'false' }}
       - HUB_REQUIRE_HUB={{ 'true' if require_hub else 'false' }}
       - HUB_USER_MOUNTS={{ 'true' if user_mounts else 'false' }}
+{% if caldav %}
+      - HUB_CALDAV={{ caldav }}
+{% endif %}
 {% if 'nostr-relay' in module_config %}
       - HUB_REGISTER_POW={{ (module_config.get('nostr-relay') or {}).get('register_pow', 20) }}
 {% endif %}

@@ -458,6 +458,20 @@ UX and ecosystem:
     kiwi network did. Still through the master: a device with its tunnel on at home.
     Two sites using the same subnet would be taken for one; that needs a per-site
     setting if it ever happens. (modules/dns, modules.py, cli.py lan_addresses)
+65. *Found on hardware (9 November 2026), fixed in kiwi-modules 0.11.0.* Nextcloud on
+    the `cloud` module recorded every client as `127.0.0.1`, so brute-force protection
+    counted nothing and its logs named nobody. AIO's Caddy replaces `X-Forwarded-For`
+    unless the proxy is in private address space, which the stack network is not
+    (problem 66). Nextcloud now reads `X-Real-IP`, which nginx sets on every request.
+    Through `hub.caldav` every person still counts as the hub; the path is mesh-only.
+    (modules/cloud/kiwi.config.php.j2)
+66. **The stack networks are in public address space.** `172.128.0.0/24` on nodes and
+    `172.64.0.0/24` on masters are outside RFC 1918 (`172.16.0.0/12`), and
+    `172.64.0.0/13` belongs to Cloudflare. A container cannot reach real addresses inside
+    its own /24, and software that trusts only private ranges, like AIO's Caddy in
+    problem 65, does not trust the stack. Moving them means new defaults, new goldens and
+    recreating the networks on every machine, the live v1 network's included when it
+    moves. (roles/common/stack.yaml, modules.py)
 40. **MTU.** *Found on hardware (the v1 fleet, 7 November 2026); the
     generator's half fixed in 2.8.0 (kiwi-modules 0.3.0).* Symptoms: TLS
     stalls and stuttering streams through the VPN. One `mtu` (1412) was the

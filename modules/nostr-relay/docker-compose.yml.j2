@@ -1,0 +1,18 @@
+# nostr-relay (strfry) — the relay behind the reverse proxy
+services:
+  {{ container_prefix }}-nostr-relay:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-nostr-relay
+    environment:
+      - TZ={{ timezone }}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-nostr-relay/strfry.conf:{{ config_path }}:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nostr-relay/db:{{ db_path }}:z

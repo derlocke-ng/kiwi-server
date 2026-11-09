@@ -232,7 +232,7 @@ class TestRoles(Base):
     def test_discover(self):
         self.assertEqual(sorted(self.roles), ["bare", "master", "node", "node-cloud", "node-gw"])
         node = self.roles["node"]
-        self.assertEqual(sorted(node.presets), ["cloud", "gateway", "minimal"])
+        self.assertEqual(sorted(node.presets), ["cloud", "gateway", "hub", "minimal"])
         self.assertEqual(node.default_modules({"preset": "cloud"}), ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
         self.assertEqual(node.default_modules({}), node.presets["gateway"]["modules"])   # the first preset
         self.assertEqual(node.defaults_for("dns", {"preset": "gateway"}), {"expose_web_ui": True})
@@ -642,7 +642,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 12)
+        self.assertEqual(len(ms.names()), 14)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -2245,13 +2245,13 @@ class TestCli(Base):
         data = json.loads(out)
         self.assertEqual(sorted(r["name"] for r in data["roles"]), ["bare", "master", "node", "node-cloud", "node-gw"])
         node = [r for r in data["roles"] if r["name"] == "node"][0]
-        self.assertEqual(list(node["presets"]), ["gateway", "cloud", "minimal"])
+        self.assertEqual(list(node["presets"]), ["gateway", "cloud", "minimal", "hub"])
         self.assertIn("cloud", [m["name"] for m in node["module_schemas"]])
         self.assertIn("vpn-client", [m["name"] for m in data["modules"]])
         master = [r for r in data["roles"] if r["name"] == "master"][0]
         self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 12)
+        self.assertEqual(len(json.loads(out)["modules"]), 14)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian"})
 

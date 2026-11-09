@@ -1,0 +1,109 @@
+schema_version: "1.0"
+
+module:
+  name: nostr-relay
+  title: Nostr relay (strfry)
+  version: 1.0.0
+  description: "strfry, a nostr relay, behind the reverse proxy at relay.<hostname>: the relay a hub built on kiwi-framework keeps its events on. Reachable through the mesh (TLS from the fleet CA); public when the host publishes 443 under a public name with a certificate for it"
+  category: network
+  node_types: [node, master]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client]
+
+network:
+  listen_ports: ["7777/tcp"]
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  strfry_conf: strfry.conf.j2
+
+outputs:
+  strfry_conf: { path: "{{ container_prefix }}-nostr-relay/strfry.conf", mode: 0644 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nostr-relay", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nostr-relay/db", type: dir, required: true }
+
+derived:
+  relay_host: "{{ relay_domain or 'relay.' ~ hostname }}"
+
+urls:
+  - "Nostr relay: wss://{{ relay_host }}"
+
+nginx:
+  upstream:
+    name: strfry
+    server: "{{ container_prefix }}-nostr-relay:7777"
+  server_name: "{{ relay_host }}"
+  proxy_pass: "http://strfry"
+  websocket: true
+  proxy_read_timeout: 86400s
+  client_max_body_size: "1m"
+  comment: Nostr relay (strfry)
+
+settings:
+  - key: relay_domain
+    label: Name
+    help: "The name clients connect to, wss://<name>. Empty: relay.<hostname>, a mesh name (the fleet's DNS resolves it, the fleet CA signs it). A public relay is a public name here, the host's 443 reachable from the internet, and a certificate for the name under reverse-proxy."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: relay_name
+    label: Relay name (NIP-11)
+    help: "Shown by clients. Empty: the host's name."
+    default: ""
+  - key: relay_description
+    type: text
+    label: Description (NIP-11)
+    default: "A Kiwi Network relay."
+  - key: relay_pubkey
+    label: Operator pubkey (NIP-11, hex)
+    default: ""
+    pattern: '([0-9a-f]{64})?'
+  - key: relay_contact
+    label: Contact (NIP-11)
+    default: ""
+  - key: max_event_bytes
+    type: int
+    group: Limits
+    label: Largest event (bytes)
+    help: "kiwi-framework's sealed events stay well under 256 KiB; photos go to a media server, not the relay."
+    default: 262144
+  - key: max_filter_limit
+    type: int
+    group: Limits
+    default: 500
+  - key: max_subs_per_connection
+    type: int
+    group: Limits
+    default: 40
+  - key: keep_days
+    type: int
+    group: Limits
+    label: Oldest event accepted (days)
+    help: "Events dated further back than this are refused. 0: no limit."
+    default: 0
+  - key: negentropy
+    type: bool
+    group: Advanced
+    label: Negentropy sync
+    default: true
+  - key: image
+    group: Advanced
+    default: docker.io/dockurr/strfry:latest
+  - key: config_path
+    group: Advanced
+    label: Config path in the image
+    default: /etc/strfry.conf
+  - key: db_path
+    group: Advanced
+    label: Database path in the image
+    default: /app/strfry-db

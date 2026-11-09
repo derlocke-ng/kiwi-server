@@ -1,0 +1,31 @@
+# hub (kiwi-framework) — the distribution's site, configured for this network at start
+services:
+  {{ container_prefix }}-hub:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-hub
+    environment:
+      - TZ={{ timezone }}
+      - HUB_RELAYS={{ relays_effective }}
+      - HUB_PUBLIC_RELAYS={{ public_relays | join(',') }}
+      - HUB_PUBLIC_MOUNTS={{ public_mounts | join(',') }}
+      - HUB_RELAYS_LOCKED={{ 'true' if relays_locked else 'false' }}
+      - HUB_REQUIRE_HUB={{ 'true' if require_hub else 'false' }}
+      - HUB_USER_MOUNTS={{ 'true' if user_mounts else 'false' }}
+{# only what the host says: unset, the distribution's own account-only mounts stand #}
+{% if account_mounts %}
+      - HUB_ACCOUNT_MOUNTS={{ account_mounts | join(',') }}
+{% endif %}
+{% if require_account %}
+      - HUB_REQUIRE_ACCOUNT=true
+{% endif %}
+{% if space_relays %}
+      - HUB_SPACE_RELAYS={{ space_relays | join(';') }}
+{% endif %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m

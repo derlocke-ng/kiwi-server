@@ -1,0 +1,106 @@
+schema_version: "1.0"
+
+module:
+  name: hub
+  title: Hub (kiwi-framework)
+  version: 1.1.0
+  description: "A hub built on kiwi-framework (Armory, or your fork) as a container behind the reverse proxy at hub.<hostname>: its relays, policy and public area set here, so a private hub inside the VPN, a semi-public one with a public chat, or a public one come from the same image"
+  category: productivity
+  node_types: [node, master]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client, nostr-relay]
+
+network:
+  listen_ports: ["80/tcp"]
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  hub_host: "{{ hub_domain or 'hub.' ~ hostname }}"
+  # the node's own relay when it runs one and no relays are given; the relay module's name, or relay.<hostname>
+  relays_effective: "{{ (relays | join(',')) if relays else ('wss://' ~ ((module_config.get('nostr-relay') or {}).get('relay_domain') or ('relay.' ~ hostname)) if has_nostr_relay else '') }}"
+
+validate:
+  - { when: "not relays_effective", error: "name relays, or run the nostr-relay module on this host" }
+  - { when: "public_mounts and not public_relays", error: "public_mounts need public_relays" }
+  - { when: "space_relays and (space_relays | join(' ')).count('=') < (space_relays | length)", error: "space_relays: one <space id>=<relays> per line" }
+
+urls:
+  - "Hub: https://{{ hub_host }}"
+
+nginx:
+  upstream:
+    name: kiwihub
+    server: "{{ container_prefix }}-hub:80"
+  server_name: "{{ hub_host }}"
+  proxy_pass: "http://kiwihub"
+  websocket: false
+  client_max_body_size: "1m"
+  comment: Hub (kiwi-framework)
+
+settings:
+  - key: hub_domain
+    label: Name
+    help: "The name the hub is served under, https://<name>. Empty: hub.<hostname>, a mesh name. A public hub is a public name here, the host's 443 reachable from the internet, and a certificate for the name under reverse-proxy."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: relays
+    type: list
+    label: The hub's own relays
+    help: "wss:// URLs. Empty: this host's nostr-relay module (wss://relay.<hostname>). A private hub names relays inside the VPN here; a public hub names public ones."
+    default: []
+  - key: relays_locked
+    type: bool
+    label: Relays are fixed
+    help: "On: a person cannot replace the hub's relays in the settings (a private hub). Off: they may use their own."
+    default: true
+  - key: require_hub
+    type: bool
+    label: Wait for the hub's relays
+    help: "On: the hub's pages wait while none of its relays is reachable, with a note to connect to the network (a private hub inside the VPN). Off for a public hub."
+    default: true
+  - key: public_relays
+    type: list
+    label: Public area relays
+    help: "wss:// URLs anyone reaches; the mounts under public_mounts use them, so the hub's people can talk to outsiders there. Empty: no public area."
+    default: []
+  - key: public_mounts
+    type: list
+    label: Public area mounts
+    help: "The mounts (by id, e.g. uplink) on the public relays. Everything else stays on the hub's own relays."
+    default: []
+  - key: account_mounts
+    type: list
+    label: Mounts that ask for an account
+    help: "The mounts (by id, e.g. tradingpost) for people with an account on this hub: a username and password for their key, not a key alone. Anyone else is told why and sent to sign in or register, then back. No age or identity is asked. Empty: the distribution's own choice."
+    default: []
+  - key: require_account
+    type: bool
+    group: Advanced
+    label: Every mount asks for an account
+    default: false
+  - key: space_relays
+    type: list
+    group: Advanced
+    label: A space's own relays
+    help: "One line per space: <space id>=wss://a,wss://b. A mount on that space reads and writes there and nowhere else. Empty after the '=': the space's mount's network."
+    default: []
+  - key: user_mounts
+    type: bool
+    group: Advanced
+    label: People may follow other spaces
+    default: false
+  - key: image
+    group: Advanced
+    label: Image
+    help: "A distribution built with kiwi-framework's container/Dockerfile. Armory's is the default; a fork publishes its own."
+    default: ghcr.io/derlocke-ng/armory:latest

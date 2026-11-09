@@ -662,6 +662,12 @@ class Renderer:
         # cross-module facts first: the compose fragments read them too
         upstreams, servers = self.nginx_blocks(spec, ordered, base)
         base["upstreams"], base["servers"] = upstreams, servers
+        # with a public reverse proxy, a site is public when its name is outside the
+        # fleet's domain; every other site then answers the mesh only
+        public = bool((spec.module_config.get("reverse-proxy") or {}).get("public"))
+        for s in servers:
+            s["public"] = public and not (s["server_name"] + ".").endswith(".%s." % spec.domain)
+        base["public_names"] = [s["server_name"] for s in servers if s["public"]]
         base["module_rules"] = self.vpn_rules(spec, ordered, base)
         base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and any(
             self.ms.get(n).needs_vpn_dnat for n in ordered)

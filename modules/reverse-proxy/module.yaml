@@ -17,24 +17,39 @@ network:
   needs_vpn_dnat: false
   # on the host only with an address of its own; inside the WireGuard server's
   # namespace (a master) it answers on the mesh address and nothing is published
-  open_ports: ["{% if not network_mode %}80/tcp{% endif %}", "{% if not network_mode %}443/tcp{% endif %}"]
+  open_ports: ["{% if not network_mode or public_names %}80/tcp{% endif %}", "{% if not network_mode or public_names %}443/tcp{% endif %}"]
 
 firewall:
   scope: self
   rules: []
 
+validate:
+  - { when: "public and not network_mode", error: "reverse-proxy.public is for a master: the proxy in the WireGuard server's namespace" }
+  - { when: "public and not public_names", error: "reverse-proxy.public: no site has a name outside the fleet's domain (hub_domain, relay_domain)" }
+
 templates:
   compose: docker-compose.yml.j2
   nginx: nginx.conf.j2
+  nginx_start: start.sh.j2
+  acme_script: acme.sh.j2
+  acme_service: acme.service.j2
+  acme_timer: acme.timer.j2
 
 outputs:
   nginx: { path: "{{ container_prefix }}-nginx/nginx.conf", mode: 0644 }
   tls_fullchain: { path: "{{ container_prefix }}-nginx/fullchain.pem", mode: 0644 }
   tls_privkey: { path: "{{ container_prefix }}-nginx/privkey.pem", mode: 0600 }
+  nginx_start: { path: "{{ container_prefix }}-nginx/start.sh", mode: 0755, when: public_names }
+  acme_script: { path: "kiwi/acme.sh", mode: 0755, when: public_names }
+  acme_service: { kind: host_unit, name: "{{ container_prefix }}-acme.service", when: public_names }
+  acme_timer: { kind: host_unit, name: "{{ container_prefix }}-acme.timer", when: public_names }
 
 storage:
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/acme", type: dir, required: true, when: public_names }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/www", type: dir, required: true, when: public_names }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt", type: dir, required: true, when: public_names }
 
 nginx:
   aggregator: true
@@ -55,6 +70,24 @@ settings:
     type: bool
     label: Send HSTS headers
     default: true
+  - key: public
+    type: bool
+    label: Open to the internet
+    help: "A master only. Publishes 80 and 443. A site whose name is outside the fleet's domain (hub_domain, relay_domain) is public, with a certificate from Let's Encrypt; every other site, the admin pages among them, answers the mesh only. The names need DNS records pointing at this machine."
+    default: false
+  - key: acme_email
+    label: Email for Let's Encrypt
+    help: "Told about certificates that are about to expire. Empty: no account email."
+    default: ""
+  - key: acme_staging
+    type: bool
+    group: Advanced
+    label: Let's Encrypt's test service
+    help: "Certificates browsers do not trust, but no rate limits: for trying this out."
+    default: false
+  - key: acme_image
+    group: Advanced
+    default: docker.io/certbot/certbot:latest
   - key: image
     group: Advanced
     default: docker.io/library/nginx:1

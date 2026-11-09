@@ -700,13 +700,14 @@ Asked for by the owner in November 2026:
 - **Hubs live on masters**, not nodes: a hub may be public, and a master is
   the machine made to face the internet (problem 37). Done in 2.15.0: a
   master with `nostr-relay` and `hub` in its `modules:` works through the
-  mesh, run on a test master, and a node is refused them. Still to do for a
-  public hub: nginx has no per-site access rules, because a master's 443 was
-  never public, so every site that is not meant to be public needs mesh-only
-  rules first, or `wg.` and `pihole.` answer anyone who sends the right
-  `Host` header. Then 443 published from the WireGuard server's namespace
-  (`vpn-server.published_ports`, which the unlock relay needs too) and a
-  Let's Encrypt certificate for its public name (the owner's choice).
+  mesh, run on a test master, and a node is refused them. Done in 2.16.0, on
+  a test master with real names: a public hub (`reverse-proxy.public`), with
+  mesh-only rules in nginx on every other site, Let's Encrypt certificates
+  (the owner's choice) renewed by a host timer, and a relay that takes posts
+  only from the mesh and listed keys. From outside only 22, 80 and 443 are
+  open, and the admin pages answer 403. Not tried live: a listed key posting
+  from outside, and a renewal that is really due. The unlock relay still needs
+  its own way to publish ports (`vpn-server.published_ports`).
 - **An MTU probe people run themselves** (problem 40): measure a node's or a
   device's real path, then set the fleet's values from the result instead of
   guessing them. Done in 2.14.0: `kiwi-server mtu`.

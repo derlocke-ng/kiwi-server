@@ -1,0 +1,13 @@
+#!/bin/sh
+# nginx for {{ hostname }}: it will not start without a certificate for each
+# public name, and Let's Encrypt can only be asked once nginx is answering. So
+# a name with no certificate yet starts on the fleet's, and acme.sh replaces it.
+for name in {{ public_names | join(' ') }}; do
+    d=/etc/nginx/acme/$name
+    if [ ! -f "$d/fullchain.pem" ]; then
+        mkdir -p "$d"
+        cp /etc/nginx/fullchain.pem "$d/fullchain.pem"
+        cp /etc/nginx/privkey.pem "$d/privkey.pem"
+    fi
+done
+exec nginx -g 'daemon off;'

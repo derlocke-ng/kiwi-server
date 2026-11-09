@@ -24,7 +24,7 @@ relay {
     bind = "0.0.0.0"
     port = 7777
     nofiles = 0
-    realIpHeader = "x-forwarded-for"
+    realIpHeader = "x-real-ip"
 
     info {
         name = "{{ relay_name or hostname }}"
@@ -44,7 +44,7 @@ relay {
     maxSubsPerConnection = {{ max_subs_per_connection }}
 
     writePolicy {
-        plugin = ""
+        plugin = "{{ '' if open_writes else '/app/kiwi-write-policy.py' }}"
     }
 
     compression {

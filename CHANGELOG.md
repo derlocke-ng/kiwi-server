@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.16.0 — a public hub, and nothing else public with it
+
+Carries kiwi-modules 0.8.0.
+
+- **`reverse-proxy.public`**, for a master, publishes 80 and 443. A site whose
+  name is outside the fleet's domain (`hub_domain`, `relay_domain`) is public;
+  every other site, the admin pages among them, answers the mesh only, enforced
+  in nginx per site.
+- **Let's Encrypt** certificates for the public names, renewed by a host timer.
+  nginx starts on the fleet's certificate until the first one is issued, and
+  `acme_staging` tries it out on the test service.
+- **A public relay is not an open one**: anyone may read, the mesh may post, and
+  from the internet only the keys in `nostr-relay.write_pubkeys`. `open_writes`
+  is the old behaviour, by name.
+- **The relay reads the client's address from `X-Real-IP`**, not
+  `X-Forwarded-For`, which a client can pre-fill.
+- Run on a test master with real names. From outside: the hub and relay answer
+  with a trusted certificate, `wg.` and `pihole.` answer 403, a signed post from
+  a stranger is refused even with a forged address, and only 22, 80 and 443 are
+  open.
+
 ## 2.15.0 — hubs live on masters
 
 - **`hub` and `nostr-relay` are for masters now** (kiwi-modules 0.6.0): a hub may

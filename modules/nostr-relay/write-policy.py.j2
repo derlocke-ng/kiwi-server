@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+# Who may post to the relay of {{ hostname }}: its own mesh, and the keys listed
+# in nostr-relay.write_pubkeys. strfry hands over one JSON request per line and
+# reads one answer per line; anything that cannot be understood is refused.
+import ipaddress
+import json
+import sys
+
+MESH = ipaddress.ip_network("{{ mesh_subnet }}")
+KEYS = set({{ write_pubkeys | tojson }})
+REFUSED = "blocked: this relay takes posts from its own network and its listed keys"
+
+
+def from_mesh(request):
+    try:
+        return ipaddress.ip_address(request.get("sourceInfo", "")) in MESH
+    except ValueError:                  # not an address: strfry's own stream or sync
+        return False
+
+
+for line in sys.stdin:
+    event_id = ""
+    try:
+        request = json.loads(line)
+        event = request["event"]
+        event_id = event["id"]
+        allowed = request.get("type") == "new" and (event["pubkey"] in KEYS or from_mesh(request))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        allowed = False
+    print(json.dumps({"id": event_id, "action": "accept" if allowed else "reject", "msg": "" if allowed else REFUSED}), flush=True)

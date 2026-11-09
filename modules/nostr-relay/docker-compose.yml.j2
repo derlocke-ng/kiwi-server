@@ -16,3 +16,6 @@ services:
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-nostr-relay/strfry.conf:{{ config_path }}:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nostr-relay/db:{{ db_path }}:z
+{% if not open_writes %}
+      - {{ docker_dir }}/{{ container_prefix }}-nostr-relay/write-policy.py:/app/kiwi-write-policy.py:ro,z
+{% endif %}

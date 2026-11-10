@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.41.0 — a restore from before
+
+- kiwi-modules 0.23.0: `kiwi-stack restore --at TIME MODULE...` puts back the newest snapshot
+  of each module made at or before TIME, and `kiwi-stack snapshots MODULE...` lists only those.
+
 ## 2.40.0 — what shares a network comes back with it
 
 - kiwi-modules 0.22.0: a container in another's network is bound to it and wanted by it, so

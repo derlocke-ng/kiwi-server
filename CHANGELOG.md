@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.43.0 — two copies, and a rebuilt machine brings itself back
+
+- kiwi-modules 0.24.0: a machine backs up to every server in `backup.servers`, each with a
+  full copy of its own; a rebuilt machine restores every module by itself at its first run;
+  a commercial VPN exit stuck on a bad server is started anew with another.
+- `kiwi-server status` lists each backup copy's age and warns when one falls behind while
+  the others are fine.
+- `kiwi-server prune <fleet> --every week|day|off`: a systemd user timer on this computer that
+  prunes the fleet's backup nodes; a missed run comes at the next login. `status` says on each
+  backup node when it was last pruned from here, and warns after three weeks.
+- `tests/drills/`: drills that break the test machines on purpose, refusing every host not in
+  `drills.yaml` next to the fleet file. The first: a commercial VPN exit stuck on a bad server.
+- The roadmap has netboot (PXE and Wake-on-LAN), more hosters, masters without LUKS by
+  default, the RAM-only master (parked) and testing updates before they reach live machines.
+
 ## 2.42.0 — every disk in sight
 
 - `kiwi-server status` shows every machine's disks (how full, how big), the stack's own

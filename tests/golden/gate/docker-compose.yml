@@ -28,6 +28,16 @@ services:
     - net.ipv4.tcp_mtu_probing=1
     - net.ipv4.tcp_base_mss=1024
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD
+      - /gluetun-entrypoint
+      - healthcheck
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    x-kiwi-health-on-failure: kill
     logging:
       driver: json-file
       options:

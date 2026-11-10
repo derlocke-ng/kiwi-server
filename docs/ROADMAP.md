@@ -807,6 +807,40 @@ Asked for by the owner in November 2026:
   the original returns the two have diverged, so a person decides first
   (`kiwi-server failover <module> <host>`) and automation comes later if at all.
   Overlaps with the standby master.
+- **Netboot at home: PXE and Wake-on-LAN**, raised 10 November 2026; not built. A
+  rebuilt VPS needs nobody since 2.38 (`vps install`, the one-time key, apply, and the
+  backup restoring itself since kiwi-modules 0.24); a home machine still needs a USB stick.
+  One node serves netboot: proxy DHCP, which answers PXE requests only and hands out no
+  addresses (no test node serves DHCP on the LAN), and iPXE over HTTP with each machine's
+  installer chosen by its MAC address. A dead machine whose firmware tries the network
+  after its disk reinstalls itself, unlocks, applies and restores. Wake-on-LAN from a node
+  on the same LAN wakes the sleeping backup node and a standby; WOL does not cross the mesh.
+  Needs MAC addresses in the fleet file and a way to tell "reinstall" from "boot normally"
+  (a one-shot flag the netboot node clears).
+- **More hosters**, raised 10 November 2026. netcup works because it takes our ISO; most
+  others (Hetzner Cloud, DigitalOcean, Vultr, Scaleway) do not, and all of them take
+  cloud-init user-data on a stock Debian. So one generic path, user-data that installs the
+  role and lets the backup restore itself, behind a small provider interface; netcup stays
+  the ISO path. Hetzner Cloud first: its API is small. Masters there go without LUKS.
+- **A master without LUKS is the default**, decided 10 November 2026. On a VPS disk
+  encryption protects disk images and old disks only (the hoster can read RAM), and costs
+  someone at every reboot and the unattended update reboots. `debian.encrypt` stays per
+  host; home nodes keep LUKS and their rings.
+- **A master that lives in RAM**, raised 10 November 2026; parked. Stateless sounds right
+  for "just a VPN", but the master still needs its WireGuard keys, its peer list and its
+  certificates at every boot: kept on the hoster's storage they need encryption again, and
+  handed over at boot they need someone, as an unlock does. A master that is disposable
+  instead (one unattended rebuild that restores its identity and certificates from the
+  backups in about ten minutes) gets most of it sooner; RAM can come on top.
+- **Testing updates before they reach live machines**, raised 10 November 2026:
+  `kiwi-server plan` (render every host with the installed release and the new one, and
+  say per host which files, units and containers change and which containers restart);
+  `kiwi-server check` (probe after an update: DNS through each Pi-hole, the mesh, each
+  exit, every service name over HTTPS, each backup client to its servers); the drills in
+  `tests/drills/`, guarded to the hosts in `drills.yaml` next to the fleet file; and an
+  upgrade rehearsal on a throwaway VM (install the previous release, give it data, apply
+  the new one, check). Moving the live v1 network is a separate job: an inventory of each
+  v1 machine first, then a rehearsal on a copy.
 - **Nextcloud with end-to-end encryption on by default**, and **OpenCloud,
   Immich and Paperless-ngx as modules to try out** (the October list below), so
   the owner can judge them and work out how they should fit together.

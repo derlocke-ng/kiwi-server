@@ -49,6 +49,9 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
             files[file_prefix + s.key] = util.read_bytes(p)
             v = os.path.basename(p)
         values[s.key] = v
+    for s in settings:
+        if s.required_unless and is_empty(values.get(s.key)) and is_empty(values.get(s.required_unless)):
+            raise KiwiError("%s.%s or %s.%s is required" % (where, s.key, where, s.required_unless))
     return values
 
 

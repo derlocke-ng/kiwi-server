@@ -818,7 +818,8 @@ class TestModules(Base):
         self.assertIn("Restart=always", a)
         b = q["b.container"]
         self.assertIn("Network=container:a", b)
-        self.assertIn("Requires=a.service", b)
+        self.assertIn("BindsTo=a.service", b)
+        self.assertIn("WantedBy=a.service", b)
         self.assertIn("Restart=no", b)
         self.assertIn("Network=host", q["c.container"])
         self.assertIn("Environment=IP=1.2.3.4", q["c.container"])
@@ -1314,7 +1315,8 @@ class TestModules(Base):
             with open(os.path.join(ROOT, rel)) as fh:
                 self.assertNotIn("--no-deps", fh.read(), rel)
         # … nor what the renderer writes, and under podman the sharers follow the container whose
-        # namespace they use (Requires= restarts them with it)
+        # namespace they use: BindsTo= restarts them with it and stops them when it goes, WantedBy=
+        # brings them back when it starts
         host, role, spec = self.spec("gate", role="master", target="debian", master=self.master())
         b = modmod.Renderer(self.ms).render(spec)
         rendered = [t for t, _m in b.files.values() if isinstance(t, str)] + list(b.units.values()) + list(b.quadlets.values())
@@ -1325,7 +1327,8 @@ class TestModules(Base):
         for n in sharers:
             unit = b.quadlets["%s.container" % n]
             self.assertIn("Network=container:km-vpn-server", unit)
-            self.assertIn("Requires=km-vpn-server.service", unit)
+            self.assertIn("BindsTo=km-vpn-server.service", unit)
+            self.assertIn("WantedBy=km-vpn-server.service", unit)
 
     def test_rendered_scripts_are_clean(self):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw()})

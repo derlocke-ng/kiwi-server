@@ -10,7 +10,7 @@ After=kiwi-stack.service network-online.target
 Wants=network-online.target
 # for a server that is rebooting, say; the night's run is over before the next one is due
 StartLimitIntervalSec=12h
-StartLimitBurst=6
+StartLimitBurst=4
 
 [Service]
 Type=oneshot

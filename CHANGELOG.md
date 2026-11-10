@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.36.0 — a full disk costs one module
+
+- kiwi-modules 0.20.0: a backup repository that cannot take a frozen database ends the run
+  instead of pausing each module in turn, a database is paused for at most ten minutes, a file
+  that goes away during a backup no longer fails the run, and a stale exclusive lock no longer
+  stops a run before it can be removed.
+
 ## 2.35.0 — what a night of pulling plugs found
 
 - `kiwi-server status` says when a machine is waiting at its locked disk, and with which

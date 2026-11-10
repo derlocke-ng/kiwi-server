@@ -24,7 +24,7 @@ NO_RESTORE[{{ s.name }}]="{{ s.no_restore }}"
 # A server that hangs instead of refusing keeps restic waiting for as long as it hangs. LIMIT
 # bounds that: a database frozen meanwhile is down, and a run that never ends blocks the next.
 # A first upload that needs longer than BULK_LIMIT goes on from where it was at the next run.
-FREEZE_LIMIT=30m
+FREEZE_LIMIT=10m
 ASK_LIMIT=3m
 BULK_LIMIT=20h
 
@@ -58,6 +58,10 @@ store() { # MODULE KIND MOUNTS
     [[ -n ${paths[*]:-} ]] || return 0
     excludes "$module"
     restic "${mounts[@]}" -- backup --host "$HOST" --tag "$module,$kind" "${EXCLUDES[@]}" "${paths[@]}"
+    local rc=$?
+    # 3: stored, without a file or two that went away while the machine was running
+    (( rc == 3 )) || return "$rc"
+    echo "backup: $module: some files could not be read, the rest is stored" >&2
 }
 
 # A database must not change while restic reads it. Frozen, its files are what a power cut
@@ -89,14 +93,14 @@ thaw_left() {
 }
 
 backup() {
-    local m c list ok failed=()
-    LIMIT=$ASK_LIMIT restic -- cat config >/dev/null 2>&1 || LIMIT=$ASK_LIMIT restic -- init || return 1
+    local m c list ok frozen_failed=0 failed=()
+    LIMIT=$ASK_LIMIT restic -- --no-lock cat config >/dev/null 2>&1 || LIMIT=$ASK_LIMIT restic -- init || return 1
     # a restic killed half way leaves its lock, and one from a prune stops every backup after
     # it. This removes only those: a lock in use is refreshed and is never old enough.
     LIMIT=$ASK_LIMIT restic -- unlock >/dev/null 2>&1 || true
     for m in "${MODULES[@]}"; do
         # the server gone, each module would sit frozen through restic's retries in its turn
-        if [[ -n ${failed[*]:-} ]] && ! LIMIT=$ASK_LIMIT restic -- cat config >/dev/null 2>&1; then
+        if [[ -n ${failed[*]:-} ]] && ! LIMIT=$ASK_LIMIT restic -- --no-lock cat config >/dev/null 2>&1; then
             echo "backup: {{ server }} no longer answers, stopping here" >&2
             failed+=("$m and those after it")
             break
@@ -107,10 +111,17 @@ backup() {
             # not running: its files are not changing either
             if {{ runtime }} pause "$c" >/dev/null 2>&1; then FROZEN_NOW+=("$c"); fi
         done
-        LIMIT=$FREEZE_LIMIT store "$m" frozen "${FROZEN[$m]}" || ok=0
+        LIMIT=$FREEZE_LIMIT store "$m" frozen "${FROZEN[$m]}" || { ok=0; frozen_failed=1; }
         thaw
         LIMIT=$BULK_LIMIT store "$m" bulk "${BULK[$m]}" || ok=0
         (( ok )) || failed+=("$m")
+        # A repository that could not take this database (a full disk still answers) will not
+        # take the next one either, and each would sit frozen until its limit in its turn.
+        if (( frozen_failed )); then
+            echo "backup: {{ server }} took nothing from a frozen $m, stopping here" >&2
+            failed+=("those after it")
+            break
+        fi
     done
     if [[ -n ${failed[*]:-} ]]; then
         echo "backup: failed: ${failed[*]}" >&2

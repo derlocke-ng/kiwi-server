@@ -415,6 +415,63 @@ ks_stack_drop_files() { # DIR
     done
 }
 
+# ---- what an apply changed, so a running stack restarts only that (problem 55) ------------
+KS_QUADLET_DIR=${KS_QUADLET_DIR:-/etc/containers/systemd}
+declare -gA KS_BEFORE=()
+KS_CHANGED=()
+
+ks_stack_remember() {   # the files and quadlets as they are before the apply writes them
+    local entry rel q
+    KS_BEFORE=()
+    for entry in "${KS_STACK_FILES[@]}"; do
+        rel=${entry%:*}
+        [[ -f $KS_STACK_DIR/$rel ]] && KS_BEFORE[$KS_STACK_DIR/$rel]=$(sha256sum < "$KS_STACK_DIR/$rel")
+    done
+    for q in "${KS_STACK_QUADLETS[@]}"; do
+        [[ -f $KS_QUADLET_DIR/$q ]] && KS_BEFORE[$KS_QUADLET_DIR/$q]=$(sha256sum < "$KS_QUADLET_DIR/$q")
+    done
+    return 0
+}
+
+ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or different now
+    local entry p q
+    KS_CHANGED=()
+    for entry in "${KS_STACK_FILES[@]}"; do
+        p=$KS_STACK_DIR/${entry%:*}
+        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
+    done
+    for q in "${KS_STACK_QUADLETS[@]}"; do
+        p=$KS_QUADLET_DIR/$q
+        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
+    done
+    return 0
+}
+
+ks_stack_changed_services() {   # the containers whose quadlet, or a file they mount or read, changed
+    local svc q line src p hit
+    for svc in "${KS_STACK_SERVICES[@]}"; do
+        q=$KS_QUADLET_DIR/$svc.container
+        hit=0
+        for p in "${KS_CHANGED[@]}"; do
+            [[ $p == "$q" ]] && { hit=1; break; }
+        done
+        if (( ! hit )) && [[ -f $q ]]; then
+            while IFS= read -r line; do
+                case $line in
+                    Volume=/*)          src=${line#Volume=}; src=${src%%:*} ;;
+                    EnvironmentFile=/*) src=${line#EnvironmentFile=} ;;
+                    *)                  continue ;;
+                esac
+                for p in "${KS_CHANGED[@]}"; do
+                    [[ $p == "$src" || $p == "$src"/* ]] && { hit=1; break 2; }
+                done
+            done < "$q"
+        fi
+        (( hit )) && echo "$svc"
+    done
+    return 0
+}
+
 ks_stack_unpack() {
     # Everything the generator rendered (compose file, module configs, gw.sh)
     # is root's: root runs the stack and the host units execute some of these
@@ -444,6 +501,7 @@ ks_stack_unpack() {
     fi
     # after the block above: until then a move from docker still has its stack running there
     [[ $KS_STACK_RUNTIME != podman ]] || ks_retire_docker
+    ks_stack_remember
     if [[ $KS_STACK_RUNTIME == podman && -n $old_services ]]; then
         # a container whose module left the stack: its quadlet goes below, the running
         # unit would stay (a target does not stop what merely wants it)
@@ -524,6 +582,7 @@ ks_stack_unpack() {
             fi
         done
     fi
+    ks_stack_compare
     local files=() entry
     for entry in "${KS_STACK_FILES[@]}"; do files+=("${entry%:*}"); done
     install -d -m 0755 /etc/kiwi-server
@@ -693,10 +752,22 @@ ks_stack_apply() {
     ks_stack_pull
     ks_say "starting the stack (${KS_STACK_MODULES[*]})"
     ks_stack_units
-    # restart, not `enable --now`: on a re-run the service is already active and
-    # the containers must pick up the replaced files (a bind mount keeps the old inode)
     systemctl enable -q kiwi-stack.service
-    systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
+    if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service; then
+        # a running stack: what is new starts, what changed restarts (a bind mount keeps the old
+        # inode, so a changed file needs it), and the rest goes on serving (problem 55). What
+        # lives in another's network follows it by BindsTo.
+        local changed=() svc
+        mapfile -t changed < <(ks_stack_changed_services)
+        ks_say "the stack is running: restarting what changed (${changed[*]:-nothing}), starting what is new"
+        /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
+        for svc in "${changed[@]}"; do
+            systemctl restart "$svc.service" || ks_warn "$svc did not restart — kiwi-stack logs $svc"
+        done
+    else
+        # the first apply, a stopped stack or a recreated network: everything from the start
+        systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
+    fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
     for unit in "${KS_STACK_UNITS[@]}"; do

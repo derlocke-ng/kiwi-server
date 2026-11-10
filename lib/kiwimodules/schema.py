@@ -25,6 +25,7 @@ class Setting:
         self.label = str(d.get("label") or self.key.replace("_", " "))
         self.help = str(d.get("help") or "")
         self.required = bool(d.get("required", False))
+        self.required_unless = str(d.get("required_unless") or "")   # required while that key is empty
         self.options = [str(o) for o in (d.get("options") or [])]
         self.targets = [str(t) for t in (d.get("targets") or [])]
         self.placeholder = str(d.get("placeholder") or "")

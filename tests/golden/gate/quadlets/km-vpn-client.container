@@ -29,6 +29,12 @@ AddHost=gate.home:172.64.0.5
 AddHost=wg.gate.home:172.64.0.5
 AddHost=pihole.gate.home:172.64.0.5
 Volume=/home/user/docker/km-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
+HealthCmd=["/gluetun-entrypoint","healthcheck"]
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=120s
+HealthRetries=5
+HealthOnFailure=kill
 LogDriver=journald
 
 [Service]

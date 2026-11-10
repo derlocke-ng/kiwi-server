@@ -46,6 +46,9 @@ if [ -f /etc/kiwi-server/stack.env ]; then
     if [ -x "${STACK_DIR:-}/kiwi/backup.sh" ]; then
         kv backup "$(stat -c %Y "$STACK_DIR/kiwi/backup/last-success" 2>/dev/null || echo 0)"
         if [ -f "$STACK_DIR/kiwi/backup/held" ]; then kv backup_held "$(head -c 300 "$STACK_DIR/kiwi/backup/held" | tr '\n' ' ')"; fi
+        for f in "$STACK_DIR"/kiwi/backup/last-success.*; do
+            [ -f "$f" ] && kv backup_copy "${f##*/last-success.} $(stat -c %Y "$f")"
+        done
     fi
     df -kP "${STACK_DIR:-/var}" 2>/dev/null | awk 'NR>1{print "disk=" $6, $2, $3}'
     # a backup node: what each machine keeps here, and how fast it grew in the last week (new
@@ -124,7 +127,7 @@ def _int(value, default=0):
 
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
-    raw, disks, containers, units, certificates, repos = {}, {}, {}, [], [], []
+    raw, disks, containers, units, certificates, repos, copies = {}, {}, {}, [], [], [], []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -140,6 +143,9 @@ def parse(data, local_now=None):
         elif key == "service":
             name, _, state = value.partition(" ")
             units.append((name, state.strip() or "unknown"))
+        elif key == "backup_copy":
+            name, _, at = value.partition(" ")
+            copies.append({"server": name, "last": _int(at)})
         elif key == "backup_repo":
             parts = value.split()
             if len(parts) == 4:
@@ -186,7 +192,8 @@ def parse(data, local_now=None):
     if "backup" in raw:
         last = _int(raw["backup"])
         out["backup"] = {"last": last, "age": remote_now - last if last and remote_now else None,
-                         "held": raw.get("backup_held", "").replace("backup: ", "", 1)}
+                         "held": raw.get("backup_held", "").replace("backup: ", "", 1),
+                         "copies": [dict(c, age=remote_now - c["last"] if c["last"] and remote_now else None) for c in copies]}
     store = raw.get("backup_store", "").split()
     if len(store) == 2:
         out["backup_store"] = {"mount": store[0], "free_kib": _int(store[1]), "repos": repos}
@@ -271,6 +278,13 @@ def assess(f):
             problems.append(warn("the last backup is %d hours old" % (b["age"] / 3600)))
         elif b["age"] is not None:
             notes.append("last backup %d h ago" % (b["age"] / 3600))
+        copies = b.get("copies") or []
+        if len(copies) > 1:
+            notes.append("copies: " + ", ".join("%s %s" % (c["server"], "%d h ago" % (c["age"] / 3600) if c["age"] is not None else "never")
+                                              for c in copies))
+        for c in copies:
+            if c["age"] is not None and c["age"] > BACKUP_LATE and b["age"] is not None and b["age"] <= BACKUP_LATE:
+                problems.append(warn("the last copy at %s is %d hours old" % (c["server"], c["age"] / 3600)))
     for c in f.get("certificates", []):
         days = int(c["left"] / 86400)
         if c["left"] < CERTIFICATE_BAD:

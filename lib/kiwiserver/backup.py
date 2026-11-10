@@ -16,6 +16,8 @@ hand:  openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 600000 -in X | tar x
 import io
 import json
 import os
+import shutil
+import hashlib
 import shlex
 import subprocess
 import sys
@@ -234,6 +236,87 @@ def prune_repository(tgt, runtime, repo, image, password, keep=None, dry_run=Fal
         out = remote.run(tgt, restic + " prune", data, runner=runner).decode(errors="replace")
         result["freed"] = " ".join(ln.split(":", 1)[1].strip() for ln in out.splitlines() if ln.startswith("total prune:"))
     return result
+
+
+# ---- pruning on a timer --------------------------------------------------------------------
+#
+# Only this computer holds the keys that may delete, so the timer lives here, as a systemd user
+# unit per fleet. The PC may be off or the store locked: Persistent= runs a missed prune at the
+# next login, and a failed one is in the journal and in the record `status` reads.
+
+PRUNE_LATE = 21 * 86400
+_EVERY = {"day": "daily", "week": "weekly"}
+
+
+def _prune_unit(fleet_path):
+    return "kiwi-prune-%s" % hashlib.sha256(fleet_path.encode()).hexdigest()[:10]
+
+
+def _user_units():
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "systemd", "user")
+
+
+def _systemctl_user(*args):
+    return subprocess.run(["systemctl", "--user"] + list(args), capture_output=True, text=True)
+
+
+def prune_timer(fleet_path, every, systemctl=_systemctl_user):
+    """A timer on this computer that prunes the fleet's backup nodes every day or week, or none."""
+    unit, d = _prune_unit(fleet_path), _user_units()
+    if every == "off":
+        systemctl("disable", "--now", unit + ".timer")
+        for ext in (".service", ".timer"):
+            if os.path.isfile(os.path.join(d, unit + ext)):
+                os.remove(os.path.join(d, unit + ext))
+        systemctl("daemon-reload")
+        util.say("no timer prunes %s any more" % fleet_path)
+        return
+    cli = shutil.which("kiwi-server") or os.path.abspath(sys.argv[0])
+    os.makedirs(d, exist_ok=True)
+    util.write_bytes(os.path.join(d, unit + ".service"), (
+        "[Unit]\nDescription=Kiwi Network: old snapshots off the backup nodes of %s\n\n"
+        "[Service]\nType=oneshot\nExecStart=%s prune %s\n" % (fleet_path, shlex.quote(cli), shlex.quote(fleet_path))).encode(), 0o644)
+    util.write_bytes(os.path.join(d, unit + ".timer"), (
+        "[Unit]\nDescription=Kiwi Network: prune the backup nodes of %s every %s\n\n"
+        "[Timer]\nOnCalendar=%s\nRandomizedDelaySec=1h\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
+        % (fleet_path, every, _EVERY[every])).encode(), 0o644)
+    systemctl("daemon-reload")
+    r = systemctl("enable", "--now", unit + ".timer")
+    if r.returncode != 0:
+        raise KiwiError("the timer did not start: %s" % (r.stderr.strip().splitlines() or ["systemctl failed"])[-1])
+    util.say("%s.timer prunes %s every %s (a missed run comes at the next login); journalctl --user -u %s"
+             % (unit, fleet_path, every, unit))
+
+
+def timer_on(fleet_path):
+    return os.path.isfile(os.path.join(_user_units(), _prune_unit(fleet_path) + ".timer"))
+
+
+def _prune_record(fleet):
+    return fleet.resolve_path("output/prune.json")
+
+
+def record_prune(fleet, nodes, failed, now=None):
+    path = _prune_record(fleet)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    util.write_bytes(path, json.dumps({"time": int(now if now is not None else time.time()), "nodes": nodes,
+                                       "failed": list(failed)}).encode(), 0o600)
+
+
+def prune_note(fleet, host, now=None):
+    """(level or None, text) about when this backup node was last pruned from here."""
+    path, now = _prune_record(fleet), now if now is not None else time.time()
+    try:
+        rec = json.loads(util.read_bytes(path))
+    except (OSError, ValueError):
+        rec = None
+    timer = "a weekly or daily timer prunes it" if timer_on(fleet.path) else "no timer prunes it: kiwi-server prune --every week"
+    if not rec or host not in rec.get("nodes", []):
+        return ("warn", "never pruned from here; %s" % timer)
+    days = (now - rec["time"]) / 86400
+    if rec.get("failed"):
+        return ("warn", "the last prune %d days ago failed for %s; %s" % (days, ", ".join(rec["failed"]), timer))
+    return ("warn" if days * 86400 > PRUNE_LATE else None, "pruned %d days ago; %s" % (days, timer))
 
 
 # ---- a master's WireGuard identity ------------------------------------------------------

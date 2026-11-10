@@ -32,12 +32,25 @@ outputs:
   backup_timer: { kind: host_unit, name: kn-backup.timer }
 
 settings:
-  - key: server
-    required: true
-    label: Backup server
-    help: "https://backup.<node> of a node running backup-server, whose clients list has this machine's full name."
+  - key: servers
+    type: list
+    label: Backup servers
+    help: "https://backup.<node> of each node running backup-server whose clients list has this machine's full name. Each gets a full copy of its own; a restore takes the freshest."
     placeholder: https://backup.lychee.home
     pattern: 'https://[a-z0-9.-]+(:[0-9]+)?'
+    default: []
+    required_unless: server
+  - key: server
+    label: Backup server
+    help: "One server, as before servers existed: the same as a servers list of one."
+    placeholder: https://backup.lychee.home
+    pattern: 'https://[a-z0-9.-]+(:[0-9]+)?'
+  - key: restore
+    type: enum
+    options: [auto, hold]
+    default: auto
+    label: A rebuilt machine
+    help: "auto: a machine that finds itself in the backups but has made none of them (a rebuild) restores every module by itself, then backs up as before. hold: it waits for kiwi-stack restore or kiwi-stack backup --new."
   - key: at
     label: Time of day
     help: "When the nightly run starts, within a quarter of an hour."

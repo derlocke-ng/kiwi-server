@@ -20,6 +20,9 @@ KNOWN_SERVICE_KEYS = {
     "cap_add", "cap_drop", "sysctls", "devices", "restart", "logging", "security_opt", "init", "read_only",
     "tmpfs", "user", "shm_size", "stop_grace_period", "hostname", "command", "depends_on", "healthcheck",
     "profiles", "labels", "extra_hosts", "dns", "entrypoint",
+    # what podman does with a container that stays unhealthy (kill: systemd starts it anew);
+    # docker has no such thing and leaves it marked unhealthy
+    "x-kiwi-health-on-failure",
 }
 
 
@@ -194,6 +197,12 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
                     container.append("%s=%ds" % (opt, _seconds(hc[key])))
             if hc.get("retries"):
                 container.append("HealthRetries=%d" % int(hc["retries"]))
+            on_failure = str(body.get("x-kiwi-health-on-failure") or "")
+            if on_failure:
+                if on_failure not in ("kill", "restart", "stop", "none"):
+                    raise KiwiError("quadlet: %s: x-kiwi-health-on-failure %r is not one of kill, restart, stop, none"
+                                    % (service, on_failure))
+                container.append("HealthOnFailure=%s" % on_failure)
     container.append("LogDriver=journald")
     restart = str(body.get("restart") or "no")
     svc.append("Restart=%s" % ("always" if restart in ("always", "unless-stopped") else

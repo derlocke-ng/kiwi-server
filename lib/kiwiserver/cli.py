@@ -960,6 +960,13 @@ def cmd_status(args):
                     "problems": [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e}], "notes": [], "facts": {}}
         measured = facts.parse(data)
         state, problems, notes = facts.assess(measured)
+        if "backup-server" in (h.modules or []):
+            level, text = backupmod.prune_note(fleet, h.name)
+            if level:
+                problems.append({"level": level, "text": text})
+                state = "bad" if "bad" in (state, level) else "warn"
+            else:
+                notes.append(text)
         return {"host": h.name, "target": tgt, "ok": True, "output": human, "state": state,
                 "problems": problems, "notes": notes, "facts": measured}
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
@@ -1164,6 +1171,8 @@ def cmd_unlock(args):
 def cmd_prune(args):
     """Old snapshots off the backup nodes. A machine can only add to its backups, so this
     is done from here, where the seed is."""
+    if args.every:
+        return backupmod.prune_timer(os.path.abspath(args.fleet), args.every)
     fleet, roles, ms = load(args)
     if fleet.errors:
         raise KiwiError(fleet.errors[0])
@@ -1204,6 +1213,8 @@ def cmd_prune(args):
             freed = ", freed %s" % r["freed"] if r["freed"] else ""
             util.say("%s: %s: %d snapshots kept, %d %s%s" % (h.name, name, r["kept"], r["removed"],
                                                              "would go" if args.dry_run else "removed", freed))
+    if not args.dry_run:
+        backupmod.record_prune(fleet, [h.name for h in servers], failed)
     if failed:
         raise KiwiError("not pruned: %s" % ", ".join(failed))
 
@@ -1450,6 +1461,8 @@ def build_parser():
     s.add_argument("--keep-monthly", type=int, default=backupmod.KEEP["monthly"], metavar="N", help="months (default %(default)s)")
     s.add_argument("--dry-run", action="store_true", help="only say what would go")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
+    s.add_argument("--every", choices=("day", "week", "off"),
+                   help="instead of pruning now: a timer on this computer that does it (a missed run comes at the next login), or none")
     s = sub("restore", cmd_restore); s.add_argument("archive", nargs="?")
     s.add_argument("--from", dest="ssh", metavar="USER@ADDR", help="fetch from this node (its LAN address works before any mesh)")
     s.add_argument("--name", help="which archive; default the newest")

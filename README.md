@@ -315,19 +315,28 @@ encrypted, every night and on `sudo kiwi-stack backup`:
     lychee: { node: { modules: [vpn-client, reverse-proxy, backup-server],
                       backup-server: { clients: [papaya.home], data_dir: /mnt/backups } } }
     papaya: { node: { modules: [vpn-client, cloud, backup],
-                      backup: { server: https://backup.lychee.home } } }
+                      backup: { servers: [https://backup.lychee.home] } } }
 ```
+
+With two backup nodes each backs up to the other, and every other machine to both:
+`servers: [https://backup.lychee.home, https://backup.papaya.home]` gives each server a
+full copy of its own, and a restore takes the freshest. A rebuilt machine finds itself in
+the backups at its first apply and restores every module by itself before it backs up
+again (`backup.restore: hold` makes it wait for `kiwi-stack restore` instead).
 
 `sudo kiwi-stack snapshots [vault]` lists what is stored and `sudo kiwi-stack restore
 vault cloud` puts the newest back, stopping only those modules; `restore --at "yesterday
 18:00" vault` takes the newest from that time or before, for a mistake found late (the time
-is the machine's own unless it says otherwise, and the list shows UTC). A rebuilt machine holds
-its backups until it is restored, so its first apply cannot store the empty machine as the
-newest snapshot; `sudo kiwi-stack backup --new` starts a history of its own instead. The passwords
+is the machine's own unless it says otherwise, and the list shows UTC). A machine that was rebuilt
+never backs up its empty self over its history; `sudo kiwi-stack backup --new` starts a
+history of its own instead of restoring. The passwords
 derive from the seed, so the seed brings the backups back. A machine can add to
 its backups but not delete them, so one that is taken over cannot destroy them;
 `kiwi-server prune <fleet>` removes old snapshots (seven days, four weeks and six
-months are kept) from the operator's machine, which is where the keys are.
+months are kept) from the operator's machine, which is where the keys are;
+`kiwi-server prune <fleet> --every week` sets up a timer on that machine that does it, and
+`kiwi-server status` says on each backup node when it was last pruned and how long its
+free space lasts.
 
 A database is paused while restic reads it, for ten minutes at most. A run that fails tries
 again an hour later, three more times, and when the backup server is gone or full the run

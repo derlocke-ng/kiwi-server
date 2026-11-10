@@ -1883,6 +1883,18 @@ class TestSetup(Base):
         self.assertEqual(hosts["lab-pi"]["node"]["preset"], "gateway")
         self.assertEqual(setupmod.free_name("node", set(setupmod.NODES)), setupmod.NODES[0] + "2")
 
+    def test_status_remembers_machines_an_older_release_applied(self):
+        fleet = self.fleet({"defaults": self.base_defaults(), "hosts": {"gate": {"role": "master", "target": "debian",
+                                                                                  "master": self.master()}}})
+        cli.record_applied(fleet, "gate", only_new=True)
+        first = cli.fleet_state(fleet)["applied"]["gate"]
+        cli.record_applied(fleet, "gate", only_new=True)         # seen again: the time stays
+        self.assertEqual(cli.fleet_state(fleet)["applied"]["gate"], first)
+        elsewhere = os.path.join(os.path.expanduser("~"), "kiwi-elsewhere", "a.iso")    # not below the tests' cwd
+        self.assertEqual(cli.shown_path(elsewhere), "~/kiwi-elsewhere/a.iso")
+        self.assertEqual(cli.shown_path("/srv/a.iso"), "/srv/a.iso")
+        self.assertEqual(cli.shown_path(os.path.join(os.getcwd(), "output", "a.iso")), os.path.join("output", "a.iso"))
+
 
 class TestOutputInMemory(Base):
     def test_rendered_files_go_to_the_open_store_and_the_disk_keeps_the_iso(self):

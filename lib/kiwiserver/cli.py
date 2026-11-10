@@ -625,10 +625,30 @@ def fleet_state(fleet):
         return {}
 
 
-def record_applied(fleet, name):
+def record_applied(fleet, *names, only_new=False):
+    """Remember that these machines have their role. `only_new`: for machines `status` found
+    with a role applied, which an older release or another computer applied; their time stays."""
     state = fleet_state(fleet)
-    state.setdefault("applied", {})[name] = int(time.time())
-    util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    applied = state.setdefault("applied", {})
+    new = [n for n in names if not (only_new and n in applied)]
+    if not new:
+        return
+    for n in new:
+        applied[n] = int(time.time())
+    try:
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    except OSError:
+        if not only_new:
+            raise
+
+
+def shown_path(path):
+    """A path as a person reads it: relative below the working directory, else from ~."""
+    rel = os.path.relpath(path)
+    if not rel.startswith(".."):
+        return rel
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
 
 
 def next_step(fleet, roles, host, errors, out):
@@ -649,7 +669,7 @@ def next_step(fleet, roles, host, errors, out):
         if (host.cfg.get("vps") or {}).get("server") or host.role in roles and roles[host.role].node_type == "master":
             return "build", "kiwi-server build %s %s, then kiwi-server vps install (netcup) or boot the ISO" % (fname, host.name)
         return "build", "kiwi-server build %s %s, write the ISO to a stick and boot it" % (fname, host.name)
-    return "install", "install it from %s, then kiwi-server apply %s %s" % (os.path.relpath(out.iso), fname, host.name)
+    return "install", "install it from %s, then kiwi-server apply %s %s" % (shown_path(os.path.abspath(out.iso)), fname, host.name)
 
 
 def cmd_show(args):
@@ -1141,6 +1161,7 @@ def cmd_status(args):
                 "problems": problems, "notes": notes, "facts": measured}
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         out = list(pool.map(ask, hosts))
+    record_applied(fleet, *[o["host"] for o in out if o["ok"] and o["facts"].get("applied")], only_new=True)
     if args.porcelain:
         print(json.dumps({"hosts": out}, indent=2))
         return

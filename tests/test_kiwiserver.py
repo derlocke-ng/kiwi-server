@@ -1988,6 +1988,43 @@ class TestPrune(Base):
         self.assertNotEqual(rc, 0)
         self.assertIn("none of these hosts", err)
 
+    def test_a_timer_prunes_from_here_and_can_be_switched_off(self):
+        calls = []
+
+        def systemctl(*args):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        fleet_path = os.path.join(self.tmp, "fleet.yaml")
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": os.path.join(self.tmp, "cfg")}):
+            backup.prune_timer(fleet_path, "week", systemctl=systemctl)
+            units = os.path.join(self.tmp, "cfg", "systemd", "user")
+            names = sorted(os.listdir(units))
+            self.assertEqual(len(names), 2)
+            timer = open(os.path.join(units, [n for n in names if n.endswith(".timer")][0])).read()
+            service = open(os.path.join(units, [n for n in names if n.endswith(".service")][0])).read()
+            self.assertIn("OnCalendar=weekly", timer)
+            self.assertIn("Persistent=true", timer)                  # a PC that was off catches up
+            self.assertIn("prune %s" % fleet_path, service)
+            self.assertTrue(backup.timer_on(fleet_path))
+            self.assertIn(("enable", "--now", names[1]), calls)
+            backup.prune_timer(fleet_path, "off", systemctl=systemctl)
+            self.assertEqual(os.listdir(units), [])
+            self.assertFalse(backup.timer_on(fleet_path))
+
+    def test_status_says_when_a_node_was_last_pruned(self):
+        f = self.prune_fleet()
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": os.path.join(self.tmp, "cfg")}):
+            level, text = backup.prune_note(f, "store", now=100 * 86400)
+            self.assertEqual(level, "warn")
+            self.assertIn("never pruned from here", text)
+            self.assertIn("kiwi-server prune --every week", text)
+            backup.record_prune(f, ["store"], [], now=90 * 86400)
+            self.assertEqual(backup.prune_note(f, "store", now=100 * 86400)[0], None)
+            self.assertIn("pruned 10 days ago", backup.prune_note(f, "store", now=100 * 86400)[1])
+            self.assertEqual(backup.prune_note(f, "store", now=115 * 86400)[0], "warn")      # 25 days
+            backup.record_prune(f, ["store"], ["papaya.kiwi"], now=99 * 86400)
+            self.assertIn("failed for papaya.kiwi", backup.prune_note(f, "store", now=100 * 86400)[1])
+
     def test_nothing_stored_yet_is_nothing_to_do(self):
         def runner(argv, input=None, capture_output=True):
             return subprocess.CompletedProcess(argv, 0, b"[]\n", b"")
@@ -3644,6 +3681,21 @@ peers=4 3
         f = facts.parse("applied=x\nos=Debian\nclock=yes\nuptime=5\nservice=a active\ncontainer=a|running|Up 1 hour|i\n"
                         "disk=/ 18874368 2621440\ndisk=/mnt/data 1000000000 4000000\nmem=1000 900\n")
         self.assertEqual(facts.assess(f), ("ok", [], ["disk / 13% of 18 GB, /mnt/data 0% of 953.7 GB"]))
+
+    def test_each_backup_server_has_its_copy(self):
+        now = 1000000
+        base = "now=%d\napplied=x\nos=Debian\nclock=yes\nuptime=99999\nbackup=%d\n" % (now, now - 3 * 3600)
+        f = facts.parse(base + "backup_copy=backup.lychee.home %d\nbackup_copy=backup.papaya.home %d\n"
+                        % (now - 3 * 3600, now - 3 * 3600), local_now=now)
+        state, problems, notes = facts.assess(f)
+        self.assertEqual((state, problems), ("ok", []))
+        self.assertIn("copies: backup.lychee.home 3 h ago, backup.papaya.home 3 h ago", notes)
+        # one node down for two days while the other still gets every copy
+        f = facts.parse(base + "backup_copy=backup.lychee.home %d\nbackup_copy=backup.papaya.home %d\n"
+                        % (now - 3 * 3600, now - 50 * 3600), local_now=now)
+        state, problems, _ = facts.assess(f)
+        self.assertEqual(state, "warn")
+        self.assertEqual([p["text"] for p in problems], ["the last copy at backup.papaya.home is 50 hours old"])
 
     def test_a_backup_node_says_what_it_keeps_and_how_long_it_lasts(self):
         base = "applied=x\nos=Debian\nclock=yes\nuptime=5\ndisk=/mnt/backups 104857600 52428800\n"

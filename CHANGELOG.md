@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.46.1 — an apply leaves a data directory's owner alone
+
+- kiwi-stack 0.6.1: an apply no longer gives a container's data directory to the stack user
+  when the container owns it as another (Tang could not read its keys after an apply of
+  2.46.0), and an image that cannot be pulled no longer stops an apply when the machine has a
+  copy.
+
 ## 2.46.0 — an apply restarts only what changed
 
 - kiwi-stack 0.6.0: on a running podman stack an apply restarts only the containers whose

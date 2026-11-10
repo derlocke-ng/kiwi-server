@@ -107,8 +107,11 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
         if d in services and d not in requires:
             unit.append("After=%s" % _unit_name(d))
             unit.append("Wants=%s" % _unit_name(d))
+    # It lives in r's network namespace, which goes when r does: stopped, crashed or replaced by an
+    # update. Bound, it goes too, and r's start brings it back into the new namespace (Requires let
+    # it run on, cut off, or left it stopped when r came back).
     for r in requires:
-        unit.append("Requires=%s" % _unit_name(r))
+        unit.append("BindsTo=%s" % _unit_name(r))
         unit.append("After=%s" % _unit_name(r))
     container.insert(0, "Image=%s" % body["image"])
     container.insert(1, "ContainerName=%s" % (body.get("container_name") or service))
@@ -203,7 +206,7 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
     unit.append("StartLimitIntervalSec=0")
     text = ["# kiwi-server stack — generated; the fleet file is the place to change it",
             "[Unit]"] + unit + ["", "[Container]"] + container + ["", "[Service]"] + svc + \
-           ["", "[Install]", "WantedBy=kiwi-stack.target", ""]
+           ["", "[Install]", "WantedBy=kiwi-stack.target"] + ["WantedBy=%s" % _unit_name(r) for r in requires] + [""]
     return "\n".join(text), ("\n".join(env_lines) + "\n") if env_lines else None
 
 

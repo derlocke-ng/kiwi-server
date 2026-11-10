@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.40.0 — what shares a network comes back with it
+
+- kiwi-modules 0.22.0: a container in another's network is bound to it and wanted by it, so
+  Pi-hole, Tor and nginx come back when the VPN container does, after a stop or a crash. The
+  master's public sites stayed down after its WireGuard server had been stopped and started.
+
 ## 2.39.0 — a rebuilt machine does not back up its empty self
 
 - kiwi-modules 0.21.0: a machine that has made no backup but finds snapshots of itself on the

@@ -32,7 +32,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import facts, luks, mtu, store, unlock  # noqa: E402
+from kiwiserver import facts, luks, mtu, setup as setupmod, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -1773,6 +1773,115 @@ class TestRouter(Base):
             script = fh.read()
         self.assertIn("KS_STACK=1", script)                  # the real role again, same output directory
         self.assertIn("KS_FILES[stack/docker-compose.yml]=", script)
+
+
+class TestSetup(Base):
+    ANSWERS = {"domain": "home", "timezone": "Europe/Berlin", "keyboard": "de", "admin_key": "generate",
+               "master_name": "trifle", "master_where": "netcup", "master_address": "203.0.113.7", "exit": "direct",
+               "lan_subnet": "192.168.0.0/16", "lan_gateway": "192.168.2.1",
+               "nodes": [{"name": "mango", "preset": "gateway", "address": "192.168.2.30/16"},
+                         {"name": "quince", "preset": "cloud", "target": "debian"}], "store": False}
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = cli.main(list(args))
+            except SystemExit as e:
+                rc = e.code
+        return rc, out.getvalue(), err.getvalue()
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_answers_make_a_fleet_that_waits_only_for_its_master(self):
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        rc, out, err = self.run_cli("init", dest, "--answers", answers)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "admin_ed25519")))
+        self.assertIn("kiwi-server vps install fleet.yaml trifle", out)
+        self.assertIn("kiwi-server enroll fleet.yaml mango", out)
+        rc, out, err = self.run_cli("list", dest, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual(hosts["trifle"]["errors"], [])
+        self.assertEqual((hosts["trifle"]["phase"], hosts["mango"]["phase"], hosts["quince"]["phase"]),
+                         ("build", "enroll", "enroll"))
+        self.assertIn("once trifle runs: kiwi-server enroll", hosts["mango"]["next"])
+        self.assertNotIn("file not found", err)
+        # enrolled: the same node is ready to be built
+        write(os.path.join(self.tmp, "secrets", "mango.home.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.2/24\n")
+        rc, out, err = self.run_cli("list", dest, "--porcelain")
+        hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual(hosts["mango"]["phase"], "build", hosts["mango"]["next"])
+
+    def test_the_terminal_asks_and_enter_takes_the_suggestion(self):
+        typed = iter(["", "", "",            # domain, time zone, keyboard
+                      "1",                   # a key of the fleet's own
+                      "parfait", "1", "198.51.100.4", "", "",   # master: name, netcup, address, disk, direct exit
+                      "", "",                # LAN, router
+                      "y", "papaya", "", "", "", "", "",       # a gateway node, all suggestions
+                      "n",                   # no second one
+                      "n"])                  # no secret store
+        found = {"subnet": "192.168.1.0/24", "gateway": "192.168.1.1", "timezone": "Europe/Vienna",
+                 "keyboard": "at", "ssh_key": ""}
+        with contextlib.redirect_stdout(io.StringIO()):
+            a = setupmod.ask(found, read=lambda prompt: next(typed))
+        self.assertEqual((a["timezone"], a["master_where"], a["exit"], a["store"]), ("Europe/Vienna", "netcup", "direct", False))
+        self.assertEqual(a["nodes"], [{"name": "papaya", "preset": "gateway", "target": "ucore",
+                                       "download_dir": "/home/user/downloads", "address": "192.168.1.30/24",
+                                       "disk": "/dev/nvme0n1"}])
+        data, _made = setupmod.make(dict(a, admin_key="~/.ssh/x.pub"), self.tmp)
+        self.assertEqual(data["hosts"]["papaya"]["network"], {"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1"})
+
+    def test_the_questions_and_what_is_refused(self):
+        rc, out, err = self.run_cli("init", "--questions")
+        self.assertEqual(rc, 0, err)
+        d = json.loads(out)
+        ids = [q["id"] for st in d["steps"] for q in st["questions"]]
+        for need in ("domain", "admin_key", "master_name", "master_where", "exit", "nodes", "store"):
+            self.assertIn(need, ids)
+        self.assertIn("subnet", d["found"])
+        bad = dict(self.ANSWERS, nodes=[{"name": "trifle"}])
+        with self.assertRaisesRegex(KiwiError, "called the same"):
+            setupmod.make(bad, self.tmp)
+        with self.assertRaisesRegex(KiwiError, "Mullvad needs"):
+            setupmod.make(dict(self.ANSWERS, exit="mullvad"), self.tmp)
+        with self.assertRaisesRegex(KiwiError, "mDNS"):
+            setupmod.make(dict(self.ANSWERS, domain="local"), self.tmp)
+        self.assertEqual(setupmod.suggest("192.168.0.0/16", 0, "192.168.2.1"), "192.168.2.30/16")
+        self.assertEqual(setupmod.suggest("10.0.0.0/24", 2), "10.0.0.32/24")
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_new_hosts_get_a_free_fruit_or_fruit_dish(self):
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(dict(self.ANSWERS, master_name="sorbet", nodes=[{"name": "papaya", "preset": "minimal"}])))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers)[0], 0)
+        with open(dest, "a") as fh:
+            fh.write("  # a comment at the end stays\n")
+        rc, out, err = self.run_cli("names", dest)
+        self.assertEqual(rc, 0, err)
+        names = json.loads(out)
+        self.assertEqual((names["master"], names["node"]), (setupmod.MASTERS[1], setupmod.NODES[1]))
+        self.assertIn("sorbet", names["masters"])
+        self.assertEqual(self.run_cli("add", dest, "node")[0], 0)
+        self.assertEqual(self.run_cli("add", dest, "master")[0], 0)
+        rc, _out, err = self.run_cli("add", dest, "node", "lab-pi", "--preset", "gateway")
+        self.assertEqual(rc, 0, err)
+        rc, _out, err = self.run_cli("add", dest, "node", "papaya")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("already a host called papaya", err)
+        with open(dest) as fh:
+            text = fh.read()
+        self.assertIn("# a comment at the end stays", text)
+        hosts = yaml.safe_load(text)["hosts"]
+        node, master = hosts[setupmod.NODES[1]], hosts[setupmod.MASTERS[1]]
+        self.assertEqual((node["role"], node["node"]["preset"]), ("node", "minimal"))
+        self.assertEqual(node["node"]["vpn-client"]["wireguard_config"], "secrets/%s.home.conf" % setupmod.NODES[1])
+        self.assertEqual((master["role"], master["target"]), ("master", "debian"))
+        self.assertEqual(hosts["lab-pi"]["node"]["preset"], "gateway")
+        self.assertEqual(setupmod.free_name("node", set(setupmod.NODES)), setupmod.NODES[0] + "2")
 
 
 class TestOutputInMemory(Base):

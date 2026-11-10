@@ -4,8 +4,8 @@ _kiwi_server() {
     local cur prev cmds opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="init validate list show render build script ca openwrt apply status enroll secrets mtu vps backup restore prune unlock roles modules targets toolchain doctor version help"
-    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --offline --local --ssh --passphrase-file --dry-run --keep-daily --keep-weekly --keep-monthly --from --list --into --no-run --group --address --split --existing --master --qr"
+    cmds="init add names validate list show render build script ca openwrt apply status enroll secrets mtu vps backup restore prune unlock roles modules targets toolchain doctor version help"
+    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --offline --local --ssh --passphrase-file --dry-run --keep-daily --keep-weekly --keep-monthly --from --list --into --no-run --group --address --split --existing --master --qr --example --questions --answers --preset --target"
 
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
@@ -16,12 +16,14 @@ _kiwi_server() {
             mapfile -t COMPREPLY < <(compgen -d -- "$cur"); return ;;
         --toolchain)
             mapfile -t COMPREPLY < <(compgen -W "auto native container" -- "$cur"); return ;;
-        --wireguard|--passphrase-file)
+        --wireguard|--passphrase-file|--answers)
             mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return ;;
         --local|--into)
             mapfile -t COMPREPLY < <(compgen -d -- "$cur"); return ;;
         --domain)
             mapfile -t COMPREPLY < <(compgen -W "home internal corp mail" -- "$cur"); return ;;
+        --preset)
+            mapfile -t COMPREPLY < <(compgen -W "minimal gateway cloud" -- "$cur"); return ;;
         toolchain)
             mapfile -t COMPREPLY < <(compgen -W "status build" -- "$cur"); return ;;
     esac
@@ -44,7 +46,13 @@ _kiwi_server() {
                     "$(kiwi-server list "$fleet" --porcelain 2>/dev/null |
                        sed -n 's/^ *"name": "\([^"]*\)".*/\1/p')" -- "$cur")
             fi ;;
-        init|restore) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;;
+        init|restore|names) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;;
+        add)
+            if [[ -z $fleet ]]; then
+                mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")
+            elif [[ $prev == "$fleet" ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "node master bare" -- "$cur")
+            fi ;;
     esac
 }
 complete -F _kiwi_server kiwi-server

@@ -1,7 +1,7 @@
 # kiwi-server stack — generated; the fleet file is the place to change it
 [Unit]
 Description=kiwi stack: km-pihole
-Requires=km-vpn-server.service
+BindsTo=km-vpn-server.service
 After=km-vpn-server.service
 StartLimitIntervalSec=0
 
@@ -33,3 +33,4 @@ TimeoutStartSec=900
 
 [Install]
 WantedBy=kiwi-stack.target
+WantedBy=km-vpn-server.service

@@ -1,7 +1,7 @@
 # kiwi-server stack — generated; the fleet file is the place to change it
 [Unit]
 Description=kiwi stack: kn-transmission
-Requires=kn-vpn-client.service
+BindsTo=kn-vpn-client.service
 After=kn-vpn-client.service
 StartLimitIntervalSec=0
 
@@ -26,3 +26,4 @@ TimeoutStartSec=900
 
 [Install]
 WantedBy=kiwi-stack.target
+WantedBy=kn-vpn-client.service

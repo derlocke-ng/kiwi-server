@@ -47,6 +47,17 @@ if [ -f /etc/kiwi-server/stack.env ]; then
         kv backup "$(stat -c %Y "$STACK_DIR/kiwi/backup/last-success" 2>/dev/null || echo 0)"
         if [ -f "$STACK_DIR/kiwi/backup/held" ]; then kv backup_held "$(head -c 300 "$STACK_DIR/kiwi/backup/held" | tr '\n' ' ')"; fi
     fi
+    df -kP "${STACK_DIR:-/var}" 2>/dev/null | awk 'NR>1{print "disk=" $6, $2, $3}'
+    # a backup node: what each machine keeps here, and how fast it grew in the last week (new
+    # packs; a prune rewrites some, so this errs on the side of too fast)
+    store=$("$rt" inspect "${STACK_PREFIX:-km}-backup-server" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
+    if [ -n "$store" ] && [ -d "$store" ]; then
+        df -kP "$store" | awk 'NR>1{print "disk=" $6, $2, $3; print "backup_store=" $6, $4}'
+        for repo in "$store"/*/; do
+            [ -d "$repo/snapshots" ] || continue
+            kv backup_repo "$(basename "$repo") $(du -sk "$repo" | cut -f1) $(ls "$repo/snapshots" | wc -l) $(find "$repo/data" -type f -mtime -7 -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print int(s/1024)}')"
+        done
+    fi
     for c in "${STACK_DIR:-}/${STACK_PREFIX:-km}-nginx/acme"/*/fullchain.pem; do
         [ -f "$c" ] || continue
         kv certificate "$(basename "$(dirname "$c")") $(date -d "$(openssl x509 -enddate -noout -in "$c" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null)"
@@ -81,8 +92,21 @@ RUNNING = ("active", "running")
 BOOTING = 300     # seconds after boot in which a stack that is not up yet is only late
 BACKUP_LATE = 36 * 3600      # a nightly backup that missed a night
 BACKUP_BAD = 7 * 86400
+BACKUP_FULL_SOON = 30              # days of free space left on a backup node before it is a problem
 CERTIFICATE_LATE = 21 * 86400    # renewal starts at 30 days: this many left and it has been failing
 CERTIFICATE_BAD = 7 * 86400
+
+
+def human(kib):
+    """1.5 GB, 120 MB: sizes for a person."""
+    for unit, size in (("TB", 1 << 30), ("GB", 1 << 20), ("MB", 1 << 10)):
+        if kib >= size:
+            return ("%.1f %s" % (kib / size, unit)).replace(".0 ", " ")
+    return "%d KB" % kib
+
+
+def lasts(days):
+    return "%d days" % days if days < 60 else "%d weeks" % (days / 7) if days < 730 else "years"
 
 
 def split(text):
@@ -100,7 +124,7 @@ def _int(value, default=0):
 
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
-    raw, disks, containers, units, certificates = {}, {}, {}, [], []
+    raw, disks, containers, units, certificates, repos = {}, {}, {}, [], [], []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -116,6 +140,10 @@ def parse(data, local_now=None):
         elif key == "service":
             name, _, state = value.partition(" ")
             units.append((name, state.strip() or "unknown"))
+        elif key == "backup_repo":
+            parts = value.split()
+            if len(parts) == 4:
+                repos.append({"client": parts[0], "kib": _int(parts[1]), "snapshots": _int(parts[2]), "week_kib": _int(parts[3])})
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
@@ -159,6 +187,9 @@ def parse(data, local_now=None):
         last = _int(raw["backup"])
         out["backup"] = {"last": last, "age": remote_now - last if last and remote_now else None,
                          "held": raw.get("backup_held", "").replace("backup: ", "", 1)}
+    store = raw.get("backup_store", "").split()
+    if len(store) == 2:
+        out["backup_store"] = {"mount": store[0], "free_kib": _int(store[1]), "repos": repos}
     if certificates:
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if raw.get("luks"):
@@ -204,6 +235,20 @@ def assess(f):
         used = d["used"] / d["size"] if d["size"] else 0
         if used >= .85:
             problems.append((bad if used >= .95 else warn)("%s is %d%% full" % (d["mount"], used * 100)))
+    if f.get("disks"):
+        notes.append("disk " + ", ".join("%s %d%% of %s" % (d["mount"], 100 * d["used"] / d["size"], human(d["size"]))
+                                         for d in f["disks"] if d["size"]))
+    st = f.get("backup_store")
+    if st:
+        repos = st["repos"]
+        week = sum(r["week_kib"] for r in repos)
+        days = st["free_kib"] / (week / 7) if week else None
+        notes.append("backups here: %s; %s free%s" % (
+            ", ".join("%s %s in %d snapshots" % (r["client"], human(r["kib"]), r["snapshots"]) for r in repos) or "none yet",
+            human(st["free_kib"]), ", about %s at last week's rate" % lasts(days) if days is not None else ""))
+        if days is not None and days < BACKUP_FULL_SOON:
+            problems.append((bad if days < 7 else warn)(
+                "the backups fill %s in about %s at last week's rate: kiwi-server prune" % (st["mount"], lasts(days))))
     m = f.get("memory") or {}
     if m.get("total") and m["available"] / m["total"] < .05:
         problems.append(warn("only %d MiB of memory free" % (m["available"] / 1024)))

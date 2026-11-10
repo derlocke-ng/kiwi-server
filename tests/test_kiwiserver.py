@@ -3612,7 +3612,8 @@ peers=4 3
         self.assertTrue(any("does not forward" in t for t in texts))
         self.assertIn("failed units: kiwi-backup.service", texts)
         self.assertIn("/var/mnt/data is 96% full", texts)
-        self.assertEqual(notes, ["kn-cloud is still starting"])
+        self.assertEqual(notes[0], "kn-cloud is still starting")
+        self.assertTrue(notes[1].startswith("disk /var 10% of"), notes)
 
     def test_held_backups_say_why(self):
         base = "now=100000\napplied=x\nos=Debian\nclock=yes\nuptime=99999\nbackup=0\n"
@@ -3639,10 +3640,31 @@ peers=4 3
         f = facts.parse(base + "certificate=hub.example.org \n", local_now=1000)
         self.assertEqual(facts.assess(f), ("ok", [], []))
 
-    def test_a_healthy_machine_has_nothing_to_say(self):
+    def test_a_healthy_machine_has_nothing_to_say_but_its_disks(self):
         f = facts.parse("applied=x\nos=Debian\nclock=yes\nuptime=5\nservice=a active\ncontainer=a|running|Up 1 hour|i\n"
-                        "disk=/ 1000 10\nmem=1000 900\n")
-        self.assertEqual(facts.assess(f), ("ok", [], []))
+                        "disk=/ 18874368 2621440\ndisk=/mnt/data 1000000000 4000000\nmem=1000 900\n")
+        self.assertEqual(facts.assess(f), ("ok", [], ["disk / 13% of 18 GB, /mnt/data 0% of 953.7 GB"]))
+
+    def test_a_backup_node_says_what_it_keeps_and_how_long_it_lasts(self):
+        base = "applied=x\nos=Debian\nclock=yes\nuptime=5\ndisk=/mnt/backups 104857600 52428800\n"
+        store = "backup_store=/mnt/backups 52428800\n"          # 50 GB free
+
+        def assessed(week_kib):
+            return facts.assess(facts.parse(base + store + "backup_repo=papaya.home 2097152 34 %d\n"
+                                            "backup_repo=sorbet.home 122880 12 0\n" % week_kib))
+        state, problems, notes = assessed(1048576)           # 1 GB a week: 50 weeks
+        self.assertEqual((state, problems), ("ok", []))
+        self.assertIn("backups here: papaya.home 2 GB in 34 snapshots, sorbet.home 120 MB in 12 snapshots; "
+                      "50 GB free, about 50 weeks at last week's rate", notes)
+        state, problems, _ = assessed(10 * 1048576)          # 10 GB a week: 35 days
+        self.assertEqual(state, "ok")
+        state, problems, _ = assessed(15 * 1048576)          # 23 days
+        self.assertEqual(state, "warn")
+        self.assertIn("fill /mnt/backups in about 23 days", problems[0]["text"])
+        self.assertIn("kiwi-server prune", problems[0]["text"])
+        self.assertEqual(assessed(60 * 1048576)[0], "bad")   # 5 days
+        _, _, notes = facts.assess(facts.parse(base + store))
+        self.assertIn("backups here: none yet; 50 GB free", notes)
 
     def test_a_machine_that_just_booted_is_only_late(self):
         f = facts.parse("applied=x\nos=D\nclock=yes\nuptime=40\nservice=a inactive\nservice=b failed\n")

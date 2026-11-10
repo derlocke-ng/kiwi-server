@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.44.0 — rendered secrets stay in memory
+
+- While the secret store is open, `render`, `apply` and `build` write the rendered files into
+  its tmpfs beside it, as design/control-plane.md always said: the role scripts, the stacks with
+  their env files and the installer configs hold the fleet's secrets and are made again by
+  every command. Only the ISOs stay on disk in `output/<host>/`; a render removes the plain
+  copies an older release left there. Without a store nothing changes.
+- A bare ISO says so beside itself (`<host>.iso.bare`), so `vps install` no longer needs the
+  rendered role to know it may upload one. An ISO built by an older release has no such mark:
+  build it again before `vps install`.
+
 ## 2.43.1 — the automatic restore finishes
 
 - kiwi-modules 0.24.1: a restore no longer restarts kn-backup.service, which killed the

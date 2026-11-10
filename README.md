@@ -377,7 +377,10 @@ docker gateway is the host).
 
 ## What you get
 
-`output/<host>/`:
+`output/<host>/`, which is in the secret store's tmpfs while the store is open (the rendered
+files hold the fleet's secrets and are made again by every command, so they never touch the
+disk); only the ISO, and beside a bare one a `.bare` mark, stays on disk in `output/<host>/`.
+A render removes the plain copies an older release left there.
 
 | file | what |
 |---|---|

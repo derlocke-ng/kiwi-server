@@ -8,6 +8,7 @@ import contextlib
 import http.server
 import io
 import ipaddress
+import argparse
 import json
 import os
 import re
@@ -1774,6 +1775,39 @@ class TestRouter(Base):
         self.assertIn("KS_FILES[stack/docker-compose.yml]=", script)
 
 
+class TestOutputInMemory(Base):
+    def test_rendered_files_go_to_the_open_store_and_the_disk_keeps_the_iso(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        media = os.path.join(self.tmp, "output")
+        ram = os.path.join(self.tmp, "run", "output")
+        for stale in ("gate.role.sh", "gate.preseed.cfg", "README.txt", "gate.stack/x.env"):
+            write(os.path.join(media, "gate", stale), "a secret an older release left here")
+        write(os.path.join(media, "gate", "gate.iso"), "ISO")
+
+        class Open:
+            def exists(self):
+                return True
+
+            def is_open(self):
+                return True
+
+            def runtime(self):
+                return os.path.join(os.path.dirname(ram))
+
+            def locked(self):
+                return False
+
+            def sync(self):
+                return False
+        with mock.patch.object(cli.store.Store, "for_fleet", classmethod(lambda cls, path: Open())):
+            self.assertEqual(cli.out_dir_for(argparse.Namespace(output_dir=None), f), ram)
+            self.assertEqual(cli.main(["render", f.path, "gate", "--no-backup"]), 0)
+        self.assertTrue(os.path.isfile(os.path.join(ram, "gate", "gate.role.sh")))
+        self.assertEqual(sorted(os.listdir(os.path.join(media, "gate"))), ["gate.iso"])   # the plain copies are gone
+        self.assertEqual(cli.out_dir_for(argparse.Namespace(output_dir=None), f), media)   # no store: on disk as before
+
+
 @unittest.skipUnless(have("openssl"), "openssl not installed")
 class TestBackup(Base):
     def test_archive_roundtrip_and_exclusions(self):
@@ -3439,7 +3473,8 @@ class TestVps(Base):
 
     def built(self, stack=0):
         write(os.path.join(self.tmp, "output", "x", "x.iso"), "ISO" * 100)
-        write(os.path.join(self.tmp, "output", "x", "x.role.sh"), "KS_STACK=%d\n" % stack)
+        if stack == 0:      # a bare ISO says so beside itself: the rendered role lives in the store's tmpfs
+            write(os.path.join(self.tmp, "output", "x", "x.iso.bare"), "bare\n")
 
     def test_login_keeps_only_the_refresh_token_private(self):
         f = self.vps_fleet()

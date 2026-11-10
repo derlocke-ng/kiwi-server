@@ -26,8 +26,37 @@ def cache_dir_for(args):
             or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "kiwi-server"))
 
 
-def out_dir_for(args, fleet):
+def media_dir_for(args, fleet):
+    """Where ISOs go: on disk, since they have to reach a stick or a provider anyway."""
     return os.path.abspath(getattr(args, "output_dir", None) or os.path.join(fleet.dir, "output"))
+
+
+def out_dir_for(args, fleet):
+    """Where rendered files go: while the secret store is open, into its tmpfs beside it, since
+    they hold the fleet's secrets and nothing in them is a source; else output/ on disk."""
+    if getattr(args, "output_dir", None):
+        return os.path.abspath(args.output_dir)
+    st = store.Store.for_fleet(fleet.path)
+    if st.exists() and st.is_open():
+        return os.path.join(st.runtime(), "output")
+    return media_dir_for(args, fleet)
+
+
+RENDERED = (".role.sh", ".bu", ".ign", ".preseed.cfg", ".post-install.sh", ".kiwi-server", ".stack")
+
+
+def retire_rendered(media, name):
+    """The rendered files an older release left on disk beside the ISO, now that they live in
+    the store's tmpfs: plain copies of the fleet's secrets."""
+    for suffix in RENDERED:
+        p = os.path.join(media, name + suffix)
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p, ignore_errors=True)
+        elif os.path.isfile(p):
+            os.remove(p)
+    readme = os.path.join(media, "README.txt")
+    if os.path.isfile(readme):
+        os.remove(readme)
 
 
 def make_tc(args):
@@ -53,8 +82,9 @@ def static_lan(host):
 class Outputs:
     """Where a host's files go and which of them exist."""
 
-    def __init__(self, out_dir, host):
+    def __init__(self, out_dir, host, media_dir=None):
         self.dir = os.path.join(out_dir, host.name)
+        self.media = os.path.join(media_dir or out_dir, host.name)
         n = host.name
         self.script = os.path.join(self.dir, n + ".role.sh")
         self.bu = os.path.join(self.dir, n + ".bu")
@@ -62,9 +92,10 @@ class Outputs:
         self.preseed = os.path.join(self.dir, n + ".preseed.cfg")
         self.files = os.path.join(self.dir, n + ".kiwi-server")
         self.stack = os.path.join(self.dir, n + ".stack")
-        self.iso = os.path.join(self.dir, n + ".iso")
+        self.iso = os.path.join(self.media, n + ".iso")
+        self.bare_mark = self.iso + ".bare"        # the ISO carries no role and no secrets of it
         self.readme = os.path.join(self.dir, "README.txt")
-        self.work = os.path.join(self.dir, ".work")
+        self.work = os.path.join(self.media, ".work")
         self.host = host
 
     def status(self):
@@ -173,8 +204,9 @@ def tls_needs_ca(host):
 
 
 class Renderer:
-    def __init__(self, fleet, roles, out_dir, tc, modset=None):
+    def __init__(self, fleet, roles, out_dir, tc, modset=None, media_dir=None):
         self.fleet, self.roles, self.out_dir, self.tc = fleet, roles, out_dir, tc
+        self.media_dir = media_dir or out_dir
         self.ms = modset or modmod.discover()
         self._scanned = False
         self._records = []
@@ -319,8 +351,10 @@ class Renderer:
             raise KiwiError("rendered docker-compose.yml is invalid:\n  %s" % err.replace("\n", "\n  "))
 
     def render(self, host):
-        o = Outputs(self.out_dir, host)
+        o = Outputs(self.out_dir, host, self.media_dir)
         os.makedirs(o.dir, exist_ok=True)
+        if o.media != o.dir:
+            retire_rendered(o.media, host.name)
         script, bundle = self.script(host)
         util.write_text(o.script, script, 0o600)
         produced = [o.script]
@@ -365,6 +399,7 @@ class Renderer:
         o, _ = self.render(host)
         if not host.cfg.get("disk"):
             raise KiwiError("%s: disk: is required to build an ISO (it is wiped on boot)" % host.name)
+        os.makedirs(o.media, exist_ok=True)
         if host.target == "debian":
             base = isomod.debian_base_iso(self.tc, host.cfg["debian"], cache_dir)
             isomod.debian_iso(self.tc, host, o.preseed, o.files, o.iso, base, o.work)
@@ -372,6 +407,11 @@ class Renderer:
             if not os.path.isfile(o.ign):
                 raise KiwiError("%s: no Ignition config — butane is needed (see kiwi-server doctor)" % host.name)
             isomod.coreos_iso(self.tc, host, o.ign, o.iso, cache_dir)
+        # what the ISO carries, kept beside it: the rendered role may be gone with the tmpfs
+        if "KS_STACK=0" in util.read_text(o.script):
+            util.write_text(o.bare_mark, "this ISO carries no role and none of its secrets\n", 0o644)
+        elif os.path.isfile(o.bare_mark):
+            os.remove(o.bare_mark)
         return o
 
 
@@ -472,7 +512,7 @@ def cmd_list(args):
         errs = h.validate(roles)
         if not errs:
             errs = settings_errors(roles, ms, h)
-        o = Outputs(out_dir, h)
+        o = Outputs(out_dir, h, media_dir_for(args, fleet))
         mesh_ip = (h.role_settings or {}).get("vpn_ip") or (
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
@@ -620,7 +660,7 @@ def cmd_script(args):
     check(fleet, roles, ms, [h])
     tc = make_tc(args)
     util.QUIET = True   # stdout is the script; the CA / certificate notes would end up inside it
-    script, _bundle = Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms).script(h)
+    script, _bundle = Renderer(fleet, roles, out_dir_for(args, fleet), tc, ms, media_dir_for(args, fleet)).script(h)
     if args.offline:
         warn_offline([h], "script")
     sys.stdout.write(script)
@@ -657,10 +697,10 @@ def vps_install(args, fleet, client, server):
     if want and h.cfg.get("disk") != want:
         raise KiwiError("%s: disk: says %s, but the server's disk is %s (%s): set disk: %s and build again"
                         % (h.name, h.cfg.get("disk"), want, disks[0].get("storageDriver"), want))
-    base = os.path.join(out_dir_for(args, fleet), h.name, h.name)
+    base = os.path.join(media_dir_for(args, fleet), h.name, h.name)
     if not os.path.isfile(base + ".iso"):
         raise KiwiError("no ISO for %s yet: kiwi-server build %s %s" % (h.name, os.path.basename(fleet.path), h.name))
-    if "KS_STACK=0" not in util.read_text(base + ".role.sh"):
+    if not os.path.isfile(base + ".iso.bare"):
         raise KiwiError("%s.iso carries the role's secrets and this would put it on a provider's store: "
                         "kiwi-server build %s %s, without --offline" % (h.name, os.path.basename(fleet.path), h.name))
     label = server.get("nickname") or server.get("name")
@@ -905,7 +945,7 @@ def cmd_apply(args):
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
     check(fleet, roles, ms, hosts)
-    r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
     failed = []
     servers = None
     for h in hosts:
@@ -1078,7 +1118,7 @@ def _render_or_build(args, build):
     check(fleet, roles, ms, hosts)
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
-    r = Renderer(fleet, roles, out_dir, tc, ms)
+    r = Renderer(fleet, roles, out_dir, tc, ms, media_dir_for(args, fleet))
     failed = []
     for h in hosts:
         try:

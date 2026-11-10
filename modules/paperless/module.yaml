@@ -102,10 +102,12 @@ settings:
     type: secret
     generate: true
     group: Generated
+    help: "Signs Paperless's login sessions; a new one signs everybody out. Empty: generated from the fleet's seed."
   - key: db_password
     type: secret
     generate: true
     group: Generated
+    help: "The password of Paperless's database, used only between its containers. Empty: generated from the fleet's seed."
   - key: extra_env
     type: map
     group: Advanced
@@ -114,16 +116,21 @@ settings:
     default: {}
   - key: image
     group: Advanced
+    help: "The container image of Paperless, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: ghcr.io/paperless-ngx/paperless-ngx:latest
   - key: db_image
     group: Advanced
+    help: "The container image of Paperless's database, PostgreSQL, pinned by tag. Change it to try another version or to pin a newer one. A new PostgreSQL major version cannot open the old one's data."
     default: docker.io/library/postgres:18
   - key: redis_image
     group: Advanced
+    help: "The container image of Paperless's task queue, Valkey (a Redis), pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/valkey/valkey:9-alpine
   - key: gotenberg_image
     group: Advanced
+    help: "The container image of Gotenberg, which turns office documents and email into PDF, pinned by tag. Change it to try another version or to pin a newer one. Only with office_documents."
     default: docker.io/gotenberg/gotenberg:8.38
   - key: tika_image
     group: Advanced
+    help: "The container image of Tika, which reads the text of office documents and email, pinned by tag. Change it to try another version or to pin a newer one. Only with office_documents."
     default: docker.io/apache/tika:3.3.1.0

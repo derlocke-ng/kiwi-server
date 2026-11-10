@@ -70,9 +70,11 @@ settings:
   - key: tls_privkey
     type: file
     label: TLS private key (privkey.pem)
+    help: "The key of that certificate chain: give both or neither. Empty: issued with the chain by the fleet CA at render time."
   - key: hsts
     type: bool
     label: Send HSTS headers
+    help: "On: browsers are told to reach these sites over HTTPS only, for half a year, subdomains included. A site that decides this itself, as Nextcloud's does, keeps its own choice."
     default: true
   - key: public
     type: bool
@@ -91,7 +93,9 @@ settings:
     default: false
   - key: acme_image
     group: Advanced
+    help: "The container image of certbot, which fetches the Let's Encrypt certificates of public names, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: docker.io/certbot/certbot:latest
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/library/nginx:1

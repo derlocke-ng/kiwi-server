@@ -49,6 +49,7 @@ settings:
     default: ""
   - key: socks_policy_accept
     label: Who may use it
+    help: "The addresses that may use the proxy, as one network, e.g. 10.8.0.0/16 for the whole mesh. Everyone else is refused."
     default: 10.8.0.0/16
   - key: countries
     label: Entry and exit countries
@@ -56,4 +57,5 @@ settings:
     default: de,ch,at,nl,fr
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default has no tag, so it follows each new release."
     default: docker.io/dockurr/tor

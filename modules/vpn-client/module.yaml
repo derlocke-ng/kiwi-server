@@ -55,6 +55,7 @@ settings:
   - key: vpn_type
     type: enum
     options: [wireguard, openvpn]
+    help: "wireguard for a custom config and most providers. openvpn only for a provider without WireGuard; its login then goes in extra_env (OPENVPN_USER, OPENVPN_PASSWORD)."
     default: wireguard
   - key: wireguard_config
     type: file
@@ -115,4 +116,5 @@ settings:
     default: {}
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/qmcgaw/gluetun:v3

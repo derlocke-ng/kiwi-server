@@ -62,4 +62,5 @@ settings:
     default: ""
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/portainer/portainer-ce:lts

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.48.0 — every setting explained
+
+- kiwi-modules 0.24.2: help for the 94 module settings that had none.
+- Every field in the GUI's settings has a (?) with what it is for and a link to its
+  documentation: a module's `module.yaml`, a role's `role.yaml` or the fleet file's section of
+  the README. The 16 base fields without help have it now, and tests keep a new setting from
+  coming without one.
+
 ## 2.47.1 — machines that already run are not new
 
 - `status` remembers every machine it finds with its role applied, so `list` no longer tells

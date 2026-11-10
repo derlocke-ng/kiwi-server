@@ -56,13 +56,16 @@ settings:
     default: false
   - key: invitations_allowed
     type: bool
+    help: "On: an organization's admins may invite people by email address, who can then register although signups are off. Off: nobody new joins while signups are off."
     default: true
   - key: show_password_hint
     type: bool
+    help: "On: without a mail server, the hint to an account's master password is shown on the page to anyone who asks with the account's email address. Off: it stays hidden."
     default: false
   - key: log_level
     type: enum
     options: [error, warn, info, debug]
+    help: "How much Vaultwarden writes to its log, from error (least) to debug (most)."
     default: warn
   - key: admin_token
     type: secret
@@ -77,4 +80,5 @@ settings:
     default: {}
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default, latest-alpine, follows each new release."
     default: docker.io/vaultwarden/server:latest-alpine

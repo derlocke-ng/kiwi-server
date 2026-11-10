@@ -81,11 +81,11 @@ BASE_GROUPS = [
              help="WIPED by the ISO without asking — /dev/sda, /dev/nvme0n1, /dev/vda"),
         dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
              help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
-        dict(path=("timezone",), type="string", label="Time zone", default="UTC"),
-        dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8"),
+        dict(path=("timezone",), type="string", label="Time zone", default="UTC", help="An IANA name, e.g. Europe/Berlin: the clock of logs, backups and the reboot time"),
+        dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8", help="Language and formats of the system, e.g. de_DE.UTF-8"),
         dict(path=("keyboard",), type="string", label="Keyboard layout", default="us",
              help="Debian installer keymap, e.g. de, us, fr"),
-        dict(path=("motd",), type="text", label="Message of the day", default=""),
+        dict(path=("motd",), type="text", label="Message of the day", default="", help="Shown at every SSH login, e.g. what the machine is for"),
     ]),
     ("Admin user", [
         dict(path=("admin", "user"), type="string", label="User name", default="core",
@@ -98,13 +98,13 @@ BASE_GROUPS = [
              help="One per line: a key, or a path to a .pub file (~/.ssh/id_ed25519.pub)"),
         dict(path=("admin", "groups"), type="list", label="Extra groups", default=[],
              help="Space separated, e.g. docker"),
-        dict(path=("admin", "ssh_password_auth"), type="bool", label="Allow SSH password login", default=False),
+        dict(path=("admin", "ssh_password_auth"), type="bool", label="Allow SSH password login", default=False, help="Off: SSH takes keys only, the password is for the console. On only while a machine has no key yet"),
     ]),
     ("Network", [
-        dict(path=("network", "dhcp"), type="bool", label="DHCP", default=True),
+        dict(path=("network", "dhcp"), type="bool", label="DHCP", default=True, help="On: the router gives the address. Off: the address below, or the next free one from the range in the defaults"),
         dict(path=("network", "address"), type="string", label="Static address (CIDR)", default="",
              help="192.168.1.20/24 — or leave empty and set an address range in the defaults"),
-        dict(path=("network", "gateway"), type="string", label="Gateway", default=""),
+        dict(path=("network", "gateway"), type="string", label="Gateway", default="", help="The router's address, e.g. 192.168.1.1. Only without DHCP"),
         dict(path=("network", "dns"), type="list", label="DNS servers", default=[], help="Space separated"),
         dict(path=("network", "interface"), type="string", label="Interface", default="",
              help="Empty: the first wired interface"),
@@ -114,29 +114,29 @@ BASE_GROUPS = [
              default="", help="Empty: the smallest network covering the range"),
     ]),
     ("Updates", [
-        dict(path=("updates", "enabled"), type="bool", label="Automatic updates", default=True),
+        dict(path=("updates", "enabled"), type="bool", label="Automatic updates", default=True, help="On: the system updates itself and reboots in the window below when it must"),
         dict(path=("updates", "days"), type="list", label="Reboot days", default=["Sun"],
              help="Mon Tue … Sun, space separated; empty = any day. Updates install continuously, this is when a reboot may happen"),
         dict(path=("updates", "time"), type="string", label="Reboot time", default="03:30", help="HH:MM local time"),
-        dict(path=("updates", "length_minutes"), type="int", label="Window length (minutes)", default=90),
+        dict(path=("updates", "length_minutes"), type="int", label="Window length (minutes)", default=90, help="How long after the reboot time a reboot may still start"),
     ]),
     ("uCore", [
         dict(path=("ucore", "image"), type="string", label="Image", default="ghcr.io/ublue-os/ucore:stable",
              help="ucore-minimal, ucore, ucore-hci — with -nvidia / -zfs variants; :stable or :testing"),
     ]),
     ("Debian", [
-        dict(path=("debian", "release"), type="string", label="Release", default="trixie"),
-        dict(path=("debian", "mirror"), type="string", label="Mirror", default="deb.debian.org"),
+        dict(path=("debian", "release"), type="string", label="Release", default="trixie", help="The Debian release the installer installs, e.g. trixie"),
+        dict(path=("debian", "mirror"), type="string", label="Mirror", default="deb.debian.org", help="Where packages come from; deb.debian.org picks a near one"),
         dict(path=("debian", "partitioning"), type="enum", label="Partitioning", options=["regular", "lvm", "crypto"],
-             default="lvm"),
-        dict(path=("debian", "encrypt"), type="bool", label="Encrypt the disk (LUKS)", default=False),
-        dict(path=("debian", "passphrase"), type="secret", label="Disk passphrase", default=""),
+             default="lvm", help="lvm: volumes that can grow later. regular: plain partitions. crypto: LVM inside LUKS, as Encrypt does"),
+        dict(path=("debian", "encrypt"), type="bool", label="Encrypt the disk (LUKS)", default=False, help="Full-disk encryption with a one-time key the first apply replaces; unlocked at boot by the fleet (Tang) or by hand"),
+        dict(path=("debian", "passphrase"), type="secret", label="Disk passphrase", default="", help="Empty: a one-time key from the fleet, replaced at the first apply. Set: this passphrase stays a way in"),
         dict(path=("debian", "packages"), type="list", label="Extra packages", default=[], help="Space separated"),
-        dict(path=("debian", "proxy"), type="string", label="APT proxy", default=""),
+        dict(path=("debian", "proxy"), type="string", label="APT proxy", default="", help="An HTTP proxy for the installer's downloads, e.g. http://192.168.1.5:3142. Empty: none"),
     ]),
     ("CoreOS (advanced)", [
-        dict(path=("coreos", "stream"), type="string", label="Stream", default="stable"),
-        dict(path=("coreos", "kernel_arguments"), type="list", label="Kernel arguments", default=[]),
+        dict(path=("coreos", "stream"), type="string", label="Stream", default="stable", help="Fedora CoreOS' update stream: stable, testing or next"),
+        dict(path=("coreos", "kernel_arguments"), type="list", label="Kernel arguments", default=[], help="Added to the kernel command line, space separated, e.g. mitigations=auto"),
         dict(path=("coreos", "services"), type="list", label="Services to enable", default=[],
              help="docker podman cockpit tailscale nfs samba libvirtd, or any unit name"),
         dict(path=("coreos", "console"), type="string", label="Console", default="", help="e.g. ttyS0,115200n8"),
@@ -358,15 +358,25 @@ class Form:
     # ---- rows ----
     def row_for(self, field):
         t = field["type"]
-        if t in ("string", "secret", "list", "int", "file"):
-            return self.entry_row(field)
         if t in ("text", "lines", "map", "object"):
-            return self.text_row(field)
-        if t == "bool":
-            return self.bool_row(field)
-        if t == "enum":
-            return self.enum_row(field)
-        return self.entry_row(field)
+            row = self.text_row(field)
+        elif t == "bool":
+            row = self.bool_row(field)
+        elif t == "enum":
+            row = self.enum_row(field)
+        else:
+            row = self.entry_row(field)
+        if field.get("help"):
+            btn = help_button(field["help"], DOCS + field.get("doc", "README.md#the-fleet-file"))
+            if isinstance(row, Adw.ExpanderRow):
+                row.add_suffix(btn)
+            elif hasattr(row, "ks_switch"):         # the (?) before the switch, not after it
+                row.remove(row.ks_switch)
+                row.add_suffix(btn)
+                row.add_suffix(row.ks_switch)
+            else:
+                row.add_suffix(btn)
+        return row
 
     def entry_row(self, field):
         cls = Adw.PasswordEntryRow if field["type"] == "secret" else Adw.EntryRow
@@ -385,11 +395,12 @@ class Form:
         if sub:
             row.set_tooltip_text(" — ".join(sub))
             # EntryRow has no subtitle; a dim hint label as suffix keeps it visible
-            hint = Gtk.Label(label=sub[-1] if self.scope != "defaults" and inh else (field.get("help") or ""),
-                             ellipsize=3, max_width_chars=28, valign=Gtk.Align.CENTER)
-            hint.add_css_class("dim-label")
-            hint.add_css_class("caption")
-            row.add_suffix(hint)
+            shown = sub[-1] if (self.scope != "defaults" and inh) or field.get("placeholder") else ""
+            if shown:
+                hint = Gtk.Label(label=shown, ellipsize=3, max_width_chars=28, valign=Gtk.Align.CENTER)
+                hint.add_css_class("dim-label")
+                hint.add_css_class("caption")
+                row.add_suffix(hint)
         if field["type"] == "file":
             btn = Gtk.Button(icon_name="document-open-symbolic", valign=Gtk.Align.CENTER,
                              tooltip_text="Choose a file")
@@ -450,9 +461,12 @@ class Form:
         inh = self.inherited(field)
         cur = self.current(field)
         if self.scope == "defaults":
-            row = Adw.SwitchRow(title=field["label"], subtitle=esc(field.get("help", ""), -1))
-            row.set_active(bool(cur if cur is not None else inh))
-            row.connect("notify::active", lambda r, _p: self.write(field, bool(r.get_active())))
+            row = Adw.ActionRow(title=field["label"], subtitle=esc(field.get("help", ""), -1))
+            sw = Gtk.Switch(valign=Gtk.Align.CENTER, active=bool(cur if cur is not None else inh))
+            sw.connect("notify::active", lambda w, _p: self.write(field, bool(w.get_active())))
+            row.add_suffix(sw)
+            row.set_activatable_widget(sw)
+            row.ks_switch = sw
             return row
         row = Adw.ComboRow(title=field["label"], subtitle=esc(field.get("help", ""), -1))
         row.set_model(Gtk.StringList.new(["Inherit (%s)" % ("on" if inh else "off"), "On", "Off"]))
@@ -539,9 +553,10 @@ class Form:
         return out
 
     def _field(self, path, s, default):
+        doc = "modules/%s/module.yaml" % path[1] if len(path) == 3 else "roles/%s/role.yaml" % path[0]
         f = dict(path=path, type=s["type"], label=s["label"] + (" *" if s.get("required") else ""),
                  help=s.get("help", ""), options=s.get("options") or [], default=default,
-                 placeholder=s.get("placeholder", ""))
+                 placeholder=s.get("placeholder", ""), doc=doc)
         if s.get("targets"):
             f["help"] = (f["help"] + " (%s only)" % "/".join(s["targets"])).strip()
         return f
@@ -569,6 +584,7 @@ class Form:
             g.add(self.row_for(dict(
                 path=(name, "modules"), type="list", label="Modules", apply=True,
                 help="Space separated, Enter applies. Empty: the preset — %s" % " ".join(role.get("modules") or []),
+                doc="README.md#roles-and-modules",
                 default=list(role.get("modules") or []), placeholder=" ".join(role.get("modules") or []))))
             self.page.add(g)
             self.role_group.append(g)
@@ -863,7 +879,7 @@ DOCS = "https://github.com/derlocke-ng/kiwi-server/blob/main/"
 
 def help_button(text, link=None):
     """A (?) beside a field: what it is for, and the documentation one click away."""
-    b = Gtk.MenuButton(icon_name="help-about-symbolic", valign=Gtk.Align.CENTER, tooltip_text="What is this?",
+    b = Gtk.MenuButton(icon_name="dialog-question-symbolic", valign=Gtk.Align.CENTER, tooltip_text="What is this?",
                        css_classes=["flat", "circular", "ks-help"])
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=10, margin_bottom=10,
                   margin_start=12, margin_end=12)

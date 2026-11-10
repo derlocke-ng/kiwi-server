@@ -98,6 +98,7 @@ settings:
     type: bool
     group: Advanced
     label: Every mount asks for an account
+    help: "On: every mount asks for an account, not only those in account_mounts. Off: account_mounts, or the distribution's own choice, decides."
     default: false
   - key: space_relays
     type: list
@@ -109,6 +110,7 @@ settings:
     type: bool
     group: Advanced
     label: People may follow other spaces
+    help: "On: a person may follow a space the hub does not ship. Off: only the hub's own spaces."
     default: false
   - key: image
     group: Advanced

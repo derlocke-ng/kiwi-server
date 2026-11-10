@@ -104,6 +104,7 @@ settings:
     default: 127.0.0.1
   - key: web_ui_port
     type: int
+    help: "The host port of the web UI while expose_web_ui is on: http://<web_ui_bind>:<this port>/admin."
     default: 8080
   - key: web_port
     type: int
@@ -120,11 +121,13 @@ settings:
   - key: dhcp_start
     group: DHCP
     label: First address
+    help: "The lowest address Pi-hole hands out, in the LAN's subnet. Keep addresses set by hand, e.g. of servers and printers, outside the range."
     placeholder: 192.168.1.100
     default: ""
   - key: dhcp_end
     group: DHCP
     label: Last address
+    help: "The highest address Pi-hole hands out, in the same subnet as the first."
     placeholder: 192.168.1.250
     default: ""
   - key: dhcp_router
@@ -136,6 +139,7 @@ settings:
   - key: dhcp_lease_time
     group: DHCP
     label: Lease time
+    help: "How long a device keeps its address before it asks again, e.g. 1h, 24h or 7d."
     default: 24h
   - key: pihole_hostname
     label: Admin hostname
@@ -185,4 +189,5 @@ settings:
     default: {}
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: docker.io/pihole/pihole:latest

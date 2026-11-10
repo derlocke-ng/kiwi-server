@@ -68,6 +68,7 @@ settings:
   - key: wg_port
     type: int
     label: WireGuard port (UDP)
+    help: "The UDP port clients reach the WireGuard server at on wg_host; it goes into every client config. A firewall in front of the master must let it through."
     default: 51820
   - key: public_ip
     label: Bind to this address only
@@ -79,9 +80,11 @@ settings:
     default: 10.8.0.1
   - key: wg_subnet
     label: Mesh subnet
+    help: "The plain mesh's network, the one wg_default_address lies in, e.g. 10.8.0.0/24. Its clients reach the internet through the exit."
     default: 10.8.0.0/24
   - key: wg_default_address
     label: Client address pattern
+    help: "How wg-easy numbers clients, x standing for the number: 10.8.0.x gives the server 10.8.0.1 (server_ip) and the clients 10.8.0.2 and on. Must lie in wg_subnet."
     default: 10.8.0.x
   - key: unlock_relay
     type: map
@@ -121,9 +124,11 @@ settings:
     type: list
     group: Advanced
     label: Extra addresses isolated clients may reach (legacy)
+    help: "With isolated_subnet: host names, addresses or subnets those clients may reach besides the nodes. A new setup uses groups instead."
     default: []
   - key: ui_traffic_stats
     type: bool
+    help: "On: the wg-easy page shows detailed traffic statistics for each client, received and sent."
     default: true
   - key: extra_env
     type: map

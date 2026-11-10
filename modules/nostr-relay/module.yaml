@@ -92,13 +92,16 @@ settings:
   - key: relay_description
     type: text
     label: Description (NIP-11)
+    help: "A few words about the relay that clients show with its name."
     default: "A Kiwi Network relay."
   - key: relay_pubkey
     label: Operator pubkey (NIP-11, hex)
+    help: "The public key of whoever runs the relay, 64 hex characters, shown by clients as its operator. Empty: none."
     default: ""
     pattern: '([0-9a-f]{64})?'
   - key: relay_contact
     label: Contact (NIP-11)
+    help: "How to reach whoever runs the relay, e.g. an email address or a URL, shown by clients. Empty: none."
     default: ""
   - key: max_event_bytes
     type: int
@@ -109,10 +112,12 @@ settings:
   - key: max_filter_limit
     type: int
     group: Limits
+    help: "The most events one query returns, however many a client asks for."
     default: 500
   - key: max_subs_per_connection
     type: int
     group: Limits
+    help: "How many subscriptions one connection may keep open at once; a client asking for more is refused."
     default: 40
   - key: register_pow
     type: int
@@ -124,6 +129,7 @@ settings:
     type: int
     group: Limits
     label: New accounts per address and hour
+    help: "How many accounts one address may create within an hour; any more are refused, on top of the proof of work."
     default: 10
   - key: keep_days
     type: int
@@ -135,6 +141,7 @@ settings:
     type: bool
     group: Advanced
     label: Negentropy sync
+    help: "Lets clients and other relays sync with this relay quickly (NIP-77), fetching only the events they lack. Off: they fall back to ordinary queries."
     default: true
   - key: image
     group: Advanced
@@ -143,8 +150,10 @@ settings:
   - key: config_path
     group: Advanced
     label: Config path in the image
+    help: "Where strfry in the image reads its configuration; the module's strfry.conf is mounted there. Change it only for an image that looks elsewhere."
     default: /etc/strfry.conf
   - key: db_path
     group: Advanced
     label: Database path in the image
+    help: "Where strfry in the image keeps its database, which lives on the host in the stack directory. Change it only for an image that looks elsewhere."
     default: /app/strfry-db

@@ -29,4 +29,5 @@ storage:
 settings:
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: docker.io/homeall/dhcphelper:latest

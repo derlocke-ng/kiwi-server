@@ -65,6 +65,8 @@ settings:
     type: secret
     generate: true
     group: Generated
+    help: "Signs this machine in at its backup servers. Leave it empty: generated from the fleet's seed, from which the servers derive the same password; one set by hand is not known to them."
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/restic/restic:0.19.1

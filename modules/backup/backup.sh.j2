@@ -206,6 +206,17 @@ service() { # stop|start SERVICE...
     done
 }
 
+# Everything of the stack up again, a container in another's network included. Not `kiwi-stack
+# start`: that restarts the host units too, kn-backup.service among them, and an automatic
+# restore, which runs in it, was killed half way and began again, over and over.
+stack_up() {
+{% if runtime == 'podman' %}
+    systemctl start kiwi-stack.target
+{% else %}
+    docker compose --file {{ docker_dir }}/docker-compose.yml up --detach >/dev/null
+{% endif %}
+}
+
 restore() { # [--at TIME] MODULE...
     local m list kind at when rc=0 exact=''
     declare -A SNAP=()
@@ -252,8 +263,7 @@ restore() { # [--at TIME] MODULE...
         fi
         service start "${list[@]}"
     done
-    # a container in another's network namespace stops with it and nothing else brings it back
-    /usr/local/bin/kiwi-stack start >/dev/null 2>&1 || rc=1
+    stack_up || rc=1
     if (( rc == 0 )); then
         rm -f "$DIR/held"
         touch "$DIR/restored"       # what it backs up from now on continues what was restored

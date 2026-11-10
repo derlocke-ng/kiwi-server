@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.43.1 — the automatic restore finishes
+
+- kiwi-modules 0.24.1: a restore no longer restarts kn-backup.service, which killed the
+  automatic restore running in it, and that unit has no start limit any more, which kept the
+  night's run from starting after a few applies; its retries back off from an hour to eight.
+
 ## 2.43.0 — two copies, and a rebuilt machine brings itself back
 
 - kiwi-modules 0.24.0: a machine backs up to every server in `backup.servers`, each with a

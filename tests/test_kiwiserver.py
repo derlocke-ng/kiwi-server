@@ -2597,6 +2597,12 @@ class TestRemote(Base):
                 return self.R(255, b"", b"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n")
             with self.assertRaisesRegex(KiwiError, "reinstalled.*ssh-keygen -R a.kiwi -f /x/secrets/known_hosts"):
                 remote.run("core@a.kiwi", "true", runner=changed)
+            # CoreOS: the initramfs answers on port 22 with its own key, and that is no reinstall
+            def initramfs_key(address, port, known_hosts, runner=None):
+                return (address, port, known_hosts) == ("a.kiwi", 22, "/x/secrets/known_hosts.initramfs")
+            with mock.patch.object(remote, "shows_key_from", initramfs_key):
+                with self.assertRaisesRegex(KiwiError, "waiting for its disk key, not reinstalled"):
+                    remote.run("core@a.kiwi", "true", runner=changed)
         finally:
             remote.configure("")
 

@@ -323,6 +323,11 @@ its backups but not delete them, so one that is taken over cannot destroy them;
 `kiwi-server prune <fleet>` removes old snapshots (seven days, four weeks and six
 months are kept) from the operator's machine, which is where the keys are.
 
+A database is paused while restic reads it, for ten minutes at most. A run that fails tries
+again an hour later, three more times, and when the backup server is gone or full the run
+stops rather than pause each module in turn; `kiwi-server status` says when the last backup
+is late.
+
 DNS is one chain for the whole network: VPN clients ask the master's Pi-hole,
 a gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
 (Quad9 only while the master is unreachable), names under the fleet's domain

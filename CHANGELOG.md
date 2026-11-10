@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.38.0 — a reinstalled machine can open its disk
+
+- `unlock --manual` opens a reinstalled encrypted Debian machine. Its initramfs shows a new
+  host key, which ssh refused against the old one on record, and the key on record was the
+  old disk's: `unlock` retried for ten minutes and said no initramfs had answered. A host key
+  that is not on record now gets the one-time key of the new ISO and nothing else.
+- No ring is forwarded to an initramfs whose host key is not on record, and `unlock` says so
+  at once instead of waiting out its timeout.
+- A timeout says what ssh said last.
+
 ## 2.37.0 — what a module leaves behind goes with it
 
 - kiwi-stack 0.5.0: an apply removes the files a module rendered once it has left the stack,

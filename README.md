@@ -319,7 +319,9 @@ encrypted, every night and on `sudo kiwi-stack backup`:
 ```
 
 `sudo kiwi-stack snapshots` lists what is stored and `sudo kiwi-stack restore
-vault cloud` puts the newest back, stopping only those modules. The passwords
+vault cloud` puts the newest back, stopping only those modules. A rebuilt machine holds
+its backups until it is restored, so its first apply cannot store the empty machine as the
+newest snapshot; `sudo kiwi-stack backup --new` starts a history of its own instead. The passwords
 derive from the seed, so the seed brings the backups back. A machine can add to
 its backups but not delete them, so one that is taken over cannot destroy them;
 `kiwi-server prune <fleet>` removes old snapshots (seven days, four weeks and six

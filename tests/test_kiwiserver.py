@@ -3611,6 +3611,14 @@ peers=4 3
         self.assertIn("/var/mnt/data is 96% full", texts)
         self.assertEqual(notes, ["kn-cloud is still starting"])
 
+    def test_held_backups_say_why(self):
+        base = "now=100000\napplied=x\nos=Debian\nclock=yes\nuptime=99999\nbackup=0\n"
+        state, problems, _ = facts.assess(facts.parse(base + "backup_held=backup: lychee holds snapshots of sorbet.home and this machine made none of them \n", local_now=100000))
+        self.assertEqual(state, "warn")
+        self.assertEqual([p["text"] for p in problems], ["backups are held: lychee holds snapshots of sorbet.home and this machine made none of them"])
+        state, problems, _ = facts.assess(facts.parse(base, local_now=100000))
+        self.assertEqual([p["text"] for p in problems], ["no backup has succeeded yet"])
+
     def test_a_certificate_that_is_not_being_renewed_is_a_problem(self):
         base = "now=1000\napplied=x\nos=Debian\nclock=yes\nuptime=9999\n"
         day = 86400

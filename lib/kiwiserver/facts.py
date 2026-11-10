@@ -45,6 +45,7 @@ if [ -f /etc/kiwi-server/stack.env ]; then
     kv runtime "$rt"
     if [ -x "${STACK_DIR:-}/kiwi/backup.sh" ]; then
         kv backup "$(stat -c %Y "$STACK_DIR/kiwi/backup/last-success" 2>/dev/null || echo 0)"
+        if [ -f "$STACK_DIR/kiwi/backup/held" ]; then kv backup_held "$(head -c 300 "$STACK_DIR/kiwi/backup/held" | tr '\n' ' ')"; fi
     fi
     for c in "${STACK_DIR:-}/${STACK_PREFIX:-km}-nginx/acme"/*/fullchain.pem; do
         [ -f "$c" ] || continue
@@ -156,7 +157,8 @@ def parse(data, local_now=None):
     }
     if "backup" in raw:
         last = _int(raw["backup"])
-        out["backup"] = {"last": last, "age": remote_now - last if last and remote_now else None}
+        out["backup"] = {"last": last, "age": remote_now - last if last and remote_now else None,
+                         "held": raw.get("backup_held", "").replace("backup: ", "", 1)}
     if certificates:
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if raw.get("luks"):
@@ -213,7 +215,9 @@ def assess(f):
         notes.append("an update is waiting for a reboot")
     b = f.get("backup")
     if b:
-        if not b["last"]:
+        if b.get("held"):
+            problems.append(warn("backups are held: %s" % b["held"]))
+        elif not b["last"]:
             # the first run follows the first apply: late only once the machine has been up a while
             (notes.append("no backup yet") if booting else problems.append(warn("no backup has succeeded yet")))
         elif b["age"] is not None and b["age"] > BACKUP_BAD:

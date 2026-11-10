@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.47.1 — machines that already run are not new
+
+- `status` remembers every machine it finds with its role applied, so `list` no longer tells
+  a machine an older release (or another computer) applied to install itself from its ISO.
+- `list` shows an ISO outside the working directory from `~`, not as `../../..`.
+
 ## 2.47.0 — a guided start
 
 - `kiwi-server init fleet.yaml` asks a few questions in the terminal (domain, the admin

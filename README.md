@@ -573,6 +573,15 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
   run while it is locked refuses and says so. It needs `age`
   (`brew install age`); `age` and `tar` alone can open it by hand. While it is
   open, anything running as you can read it.
+- **The same fleet on another computer of yours**: copy or sync the fleet folder
+  (`fleet.yaml`, `secrets.age`, `secrets.recipients`; `output/` is made again), run
+  `kiwi-server secrets join fleet.yaml laptop` there, and the line it prints on a
+  computer that can open the store; that one encrypts the store for both, and with
+  the new `secrets.age` back on the laptop `secrets unlock` works there too.
+  `secrets remove fleet.yaml laptop` takes a computer out again (a copy it kept
+  still opens with its key: treat a lost computer's secrets as known). A computer
+  never saves over a `secrets.age` another one saved since it opened it; it says so
+  and keeps its changes in memory until you take the other copy.
 - **Service passwords you leave out are generated** from `secrets/seed`, the
   same at every render, so the fleet file need not hold them.
   `kiwi-server secrets show fleet.yaml <host> [setting]` prints one. `validate`

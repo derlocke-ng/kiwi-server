@@ -3092,6 +3092,51 @@ class TestStore(Base):
         with open(os.path.join(self.tmp, "secrets.recipients")) as fh:
             self.assertEqual(len([ln for ln in fh if ln.startswith("age1")]), 2)
 
+    def on(self, computer):
+        """Switch to another computer: its own keyring, the same fleet folder."""
+        kr = os.path.join(self.tmp, "keyring-" + computer)
+        os.makedirs(kr, exist_ok=True)
+        os.environ["FAKE_KEYRING"] = kr
+
+    def test_another_computer_joins_and_the_first_one_can_leave(self):
+        self.on("desktop")
+        self.init()
+        self.on("laptop")
+        rc, out, err = self.run_cli("secrets", "join", self.f.path, "laptop")
+        self.assertEqual(rc, 0, err)
+        key = re.search(r"secrets add \S+ laptop (age1\S+)", out).group(1)
+        rc, _out, err = self.run_cli("secrets", "join", self.f.path, "laptop")
+        self.assertNotEqual(rc, 0)                                      # its keyring has a key for it already
+        self.on("desktop")
+        rc, _out, err = self.run_cli("secrets", "add", self.f.path, "laptop", key)
+        self.assertEqual(rc, 0, err)
+        rc, out, err = self.run_cli("secrets", "status", self.f.path)
+        self.assertIn("opens with: desktop, recovery, laptop", out)
+        self.assertEqual(self.run_cli("secrets", "lock", self.f.path)[0], 0)
+        self.on("laptop")
+        rc, _out, err = self.run_cli("secrets", "unlock", self.f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read_secret("deep", "key"), "private")
+        # the first computer leaves: the others still find their keys under the same store id
+        rc, _out, err = self.run_cli("secrets", "remove", self.f.path, "desktop")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.run_cli("secrets", "lock", self.f.path)[0], 0)
+        self.assertEqual(self.run_cli("secrets", "unlock", self.f.path)[0], 0)
+        rc, out, _err = self.run_cli("secrets", "status", self.f.path)
+        self.assertIn("opens with: recovery, laptop", out)
+        self.assertNotEqual(self.run_cli("secrets", "add", self.f.path, "x", "age1nope")[0], 0)
+        self.assertNotEqual(self.run_cli("secrets", "remove", self.f.path, "nobody")[0], 0)
+
+    def test_a_copy_saved_by_another_computer_is_not_overwritten(self):
+        self.init()
+        with open(os.path.join(self.tmp, "secrets.age"), "ab") as fh:
+            fh.write(b"\n")                                            # another computer saved it meanwhile
+        write(os.path.join(self.secrets, "new"), "changed here")
+        rc, _out, err = self.run_cli("secrets", "lock", self.f.path)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("changed on disk since this computer opened it", err)
+        self.assertTrue(os.path.isfile(os.path.join(self.secrets, "new")))   # what changed here is still there
+
     def test_a_locked_store_stops_commands_and_makes_no_new_seed(self):
         self.init()
         rc, out, err = self.run_cli("secrets", "lock", self.f.path)

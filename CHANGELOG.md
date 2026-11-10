@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.39.0 — a rebuilt machine does not back up its empty self
+
+- kiwi-modules 0.21.0: a machine that has made no backup but finds snapshots of itself on the
+  server holds its backups until `kiwi-stack restore` or `kiwi-stack backup --new`. A rebuilt
+  master had backed up its empty self during its first apply, and `restore` put that back.
+- `kiwi-server status` says when a machine's backups are held, and why.
+
 ## 2.38.0 — a reinstalled machine can open its disk
 
 - `unlock --manual` opens a reinstalled encrypted Debian machine. Its initramfs shows a new

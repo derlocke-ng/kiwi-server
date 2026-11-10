@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 # {{ hostname }}'s data to {{ server }} with restic, which runs in a container. What is kept is
 # what each module declares in the backup: block of its module.yaml.
-#   kiwi-stack backup               one run now (kn-backup.timer does it at {{ at }})
+#   kiwi-stack backup [--new]       one run now (kn-backup.timer does it at {{ at }}); --new: a
+#                                   rebuilt machine starts a history of its own instead of restoring
 #   kiwi-stack snapshots            what is stored
 #   kiwi-stack restore MODULE...    put the newest back; those modules stop around it
 set -uo pipefail
@@ -172,19 +173,47 @@ restore() { # MODULE...
     done
     # a container in another's network namespace stops with it and nothing else brings it back
     /usr/local/bin/kiwi-stack start >/dev/null 2>&1 || rc=1
+    if (( rc == 0 )); then
+        rm -f "$DIR/held"
+        touch "$DIR/restored"       # what it backs up from now on continues what was restored
+    fi
     return "$rc"
 }
 
 # a re-apply and a stack start restart host units: this keeps that from being a backup
+# A rebuilt machine finds snapshots of itself that it never made. Backed up now, its fresh and
+# empty state would be the newest snapshot, the one `restore` takes, and the next prune keeps
+# only that one of the day. So it waits: for a restore, or for `kiwi-stack backup --new`.
+held() { # true while this machine must not back up; says why on stderr
+    [[ -f $DIR/last-success || -f $DIR/restored || -f $DIR/new-history ]] && return 1
+    if [[ -f $DIR/held ]]; then cat "$DIR/held" >&2; return 0; fi
+    # no repository yet, or no server: a new machine, or a run that fails on its own anyway
+    LIMIT=$ASK_LIMIT restic -- --no-lock cat config >/dev/null 2>&1 || return 1
+    local list
+    if ! list=$(LIMIT=$ASK_LIMIT restic -- --no-lock snapshots --host "$HOST" --json 2>/dev/null); then
+        echo "backup: {{ server }} did not say what it holds of $HOST: trying again at the next run" >&2
+        return 0
+    fi
+    [[ $list == *'"short_id"'* ]] || return 1
+    echo "backup: {{ server }} holds snapshots of $HOST and this machine made none of them: rebuilt? Restore first (kiwi-stack restore MODULE...), or start a new history (kiwi-stack backup --new)" | tee "$DIR/held" >&2
+    return 0
+}
+
 due() {
-    [[ ! -f $DIR/last-success ]] || (( $(date +%s) - $(stat -c %Y "$DIR/last-success") > 20 * 3600 ))
+    if [[ -f $DIR/last-success ]] && (( $(date +%s) - $(stat -c %Y "$DIR/last-success") <= 20 * 3600 )); then
+        return 1
+    fi
+    ! held
 }
 
 exec 9>"$DIR/lock"
 case "${1:-}" in
     due)        due ;;
     thaw)       flock -w 120 9 || exit 0; thaw_left ;;
-    backup)     flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; backup ;;
+    backup)     flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }
+                if [[ ${2:-} == --new ]]; then rm -f "$DIR/held"; touch "$DIR/new-history"; fi
+                held && exit 1
+                backup ;;
     snapshots)  restic -- snapshots --host "$HOST" ;;
     restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; restore "$@" ;;
     *)          echo "usage: kiwi-stack backup|snapshots|restore MODULE..." >&2; exit 1 ;;

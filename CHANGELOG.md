@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.45.0 — one fleet, several computers
+
+- `kiwi-server secrets join <fleet> <name>` on another computer makes it a key in its own
+  keyring and prints what to run on a computer that can open the store:
+  `secrets add <fleet> <name> <key>` encrypts the store for it too, `secrets remove` takes a
+  computer out again. The store keeps its id in `secrets.recipients` once the first key goes,
+  so the other computers' keyrings still find theirs.
+- A computer no longer saves over a `secrets.age` that another one saved since it opened the
+  store: it refuses, says so and keeps its changes in memory.
+
 ## 2.44.0 — rendered secrets stay in memory
 
 - While the secret store is open, `render`, `apply` and `build` write the rendered files into

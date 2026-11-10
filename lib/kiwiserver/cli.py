@@ -842,9 +842,24 @@ def secrets_store(args):
     elif args.action == "lock":
         st.lock()
         util.say("the secret store is locked")
+    elif args.action == "join":
+        public = st.join()
+        util.say("this computer has a key for the store now, in its keyring; on a computer that can open it run:")
+        print("\n  kiwi-server secrets add %s %s %s\n" % (args.fleet, args.host or "<name of this computer>", public))
+        util.say("then bring the fleet folder here again (its secrets.age changes) and kiwi-server secrets unlock %s" % args.fleet)
+    elif args.action == "add":
+        if not (args.host and args.setting):
+            raise KiwiError("kiwi-server secrets add <fleet> <name> <age1… key from `kiwi-server secrets join` on that computer>")
+        st.add(args.host, args.setting)
+        util.say("%s can open the store now: bring it the fleet folder with the new %s" % (args.host, store.FILE))
+    elif args.action == "remove":
+        if not args.host:
+            raise KiwiError("kiwi-server secrets remove <fleet> <name>   (kiwi-server secrets status names them)")
+        st.remove(args.host)
+        util.say("%s can no longer open %s as it is now. A copy it kept still opens with its key: if that "
+                 "computer is lost, treat the fleet's secrets as known" % (args.host, store.FILE))
     else:
-        with open(st.recipients) as f:
-            names = [line[1:].split("(")[0].strip() for line in f if line.startswith("# ") and "who can" not in line]
+        names = [n for n, _k in st.ways()]
         if args.porcelain:
             print(json.dumps({"store": True, "open": st.is_open(), "locks_at": st.locks_at(), "opens_with": names}))
             return
@@ -1453,7 +1468,7 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s.add_argument("--for", default="8h", metavar="TIME", help="unlock: lock again after this long (default 8h; 0: stay open)")
     s.add_argument("--identity", metavar="FILE", help="unlock: a file with the age secret key, instead of the keyring")

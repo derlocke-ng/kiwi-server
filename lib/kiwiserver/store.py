@@ -120,9 +120,111 @@ class Store:
         return os.path.isfile(self.file)
 
     def store_id(self):
+        """What each computer's keyring files its key under: the hash of the first key, or the
+        `# store:` line written once that key had to go."""
         with open(self.recipients) as f:
-            keys = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+            lines = f.read().splitlines()
+        for line in lines:
+            if line.startswith("# store: "):
+                return line.split(":", 1)[1].strip()
+        keys = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
         return hashlib.sha256(keys[0].encode()).hexdigest()[:16]
+
+    # ---- who can open it: one key per computer, plus the recovery key ----------------------
+
+    def ways(self):
+        """[(name, public key)] in the order of secrets.recipients."""
+        out, name = [], ""
+        with open(self.recipients) as f:
+            for line in f.read().splitlines():
+                if line.startswith("# ") and "who can open" not in line and not line.startswith("# store: "):
+                    name = line[2:].split("(")[0].strip()
+                elif line.startswith("age1"):
+                    out.append((name or "unnamed", line.strip()))
+                    name = ""
+        return out
+
+    def _write_ways(self, ways, store_id):
+        lines = ["# who can open secrets.age: one public key per way of unlocking it", "# store: %s" % store_id]
+        for name, key in ways:
+            note = "its secret key is in the keyring" if name == "desktop" else (
+                "kept by the owner" if name == "recovery" else "its secret key is in that computer's keyring")
+            lines += ["# %s (%s)" % (name, note), key]
+        tmp = self.recipients + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, self.recipients)
+
+    def _reencrypt(self):
+        """For the keys now listed: from the open tree, after making sure nobody saved over it."""
+        if not self.is_open():
+            raise KiwiError("the store is locked: kiwi-server secrets unlock first")
+        self._unchanged_on_disk()
+        data = snapshot(self._tree())
+        self._encrypt(data)
+        with open(self._digest_file(), "w") as f:
+            f.write(hashlib.sha256(data).hexdigest())
+
+    def join(self):
+        """A key for this computer, kept in its keyring; the public half goes to a computer that
+        can open the store already (`add`). Refuses when this computer has a key for it."""
+        if keyring_get(self.store_id()):
+            raise KiwiError("this computer's keyring already holds a key for this store: it can open it, or joined before "
+                            "and waits for `kiwi-server secrets add` on another computer")
+        secret, public = keygen()
+        if not keyring_put(self.store_id(), secret):
+            raise KiwiError("no keyring took the key (secret-tool): a computer without one opens the store with its recovery key")
+        return public
+
+    def add(self, name, public):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", name or ""):
+            raise KiwiError("a name for the computer: lowercase letters, digits and dashes, e.g. laptop")
+        if not re.fullmatch(r"age1[0-9a-z]{58}", public or ""):
+            raise KiwiError("%r is not an age public key (age1…, as `kiwi-server secrets join` prints it)" % public)
+        ways = self.ways()
+        if any(n == name for n, _k in ways):
+            raise KiwiError("%s can open the store already" % name)
+        if any(k == public for _n, k in ways):
+            raise KiwiError("that key opens the store already, as %s" % next(n for n, k in ways if k == public))
+        sid = self.store_id()
+        self._write_ways(ways + [(name, public)], sid)
+        self._reencrypt()
+
+    def remove(self, name):
+        ways = self.ways()
+        keep = [(n, k) for n, k in ways if n != name]
+        if len(keep) == len(ways):
+            raise KiwiError("nothing called %s opens the store (%s)" % (name, ", ".join(n for n, _k in ways)))
+        if not keep:
+            raise KiwiError("%s is the last way to open the store" % name)
+        sid = self.store_id()        # kept in the file, so the other computers' keyrings still find it
+        self._write_ways(keep, sid)
+        self._reencrypt()
+
+    # ---- the file on disk: another computer may have saved it since it was opened ----------
+
+    def _file_digest_path(self):
+        return os.path.join(self.runtime(), "file-sha256")
+
+    def _remember_file(self):
+        with open(self.file, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        with open(self._file_digest_path(), "w") as f:
+            f.write(digest)
+
+    def _unchanged_on_disk(self):
+        try:
+            with open(self._file_digest_path()) as f:
+                opened = f.read().strip()
+        except OSError:
+            return          # opened by an older release: nothing to compare with
+        with open(self.file, "rb") as f:
+            now = hashlib.sha256(f.read()).hexdigest()
+        if now != opened:
+            raise KiwiError("%s changed on disk since this computer opened it (another computer saved it): "
+                            "nothing is saved over it. Lock, take the other copy, unlock again; what changed here "
+                            "is still in %s until then" % (self.file, self._tree()))
 
     def runtime(self):
         base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"
@@ -158,6 +260,8 @@ class Store:
             raise KiwiError("age could not encrypt the store: %s" % r.stderr.decode(errors="replace").strip()[:200])
         os.chmod(tmp, 0o600)
         os.replace(tmp, self.file)
+        if os.path.isdir(self.runtime()):
+            self._remember_file()
 
     def _decrypt(self, identity):
         r = subprocess.run([_tool("age"), "-d", "-i", "-", self.file], input=identity.encode() + b"\n", capture_output=True)
@@ -197,6 +301,7 @@ class Store:
             raise
         saved = keyring_put(self.store_id(), desktop[0])
         self._open(data)
+        self._remember_file()
         aside = self.link + ".replaced"
         os.rename(self.link, aside)
         os.symlink(self._tree(), self.link)
@@ -205,6 +310,7 @@ class Store:
 
     def unlock(self, identity):
         self._open(self._decrypt(identity))
+        self._remember_file()
         if os.path.islink(self.link):
             os.remove(self.link)
         elif os.path.exists(self.link):
@@ -220,6 +326,7 @@ class Store:
         with open(self._digest_file()) as f:
             if f.read() == digest:
                 return False
+        self._unchanged_on_disk()
         self._encrypt(data)
         with open(self._digest_file(), "w") as f:
             f.write(digest)

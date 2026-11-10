@@ -9,14 +9,17 @@ Requires=docker.service
 After=kiwi-stack.service network-online.target
 {% endif %}
 Wants=network-online.target
-# for a server that is rebooting, say; the night's run is over before the next one is due
-StartLimitIntervalSec=12h
-StartLimitBurst=4
+# No start limit: every apply restarts this unit, and a limit counted those too and kept the
+# night's run from starting. Retries back off instead (RestartSteps, RestartMaxDelaySec).
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
+# for a server that is rebooting, say: an hour, then longer, at most every eight hours
 Restart=on-failure
 RestartSec=1h
+RestartSteps=3
+RestartMaxDelaySec=8h
 ExecCondition=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh due
 ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh backup
 ExecStopPost=/usr/bin/bash {{ docker_dir }}/kiwi/backup.sh thaw

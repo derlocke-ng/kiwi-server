@@ -77,6 +77,7 @@ vpn_restart() {
 if [[ $STACK_RUNTIME == podman ]]; then
     case "${1:-}" in
         start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; host_units restart --no-block ;;
+        up)      systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route ;;
         stop)    host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
         update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then podman auto-update; podman image prune -f >/dev/null; else echo "auto_update is off: images change with an apply"; fi; mesh_route; host_units restart --no-block ;;
@@ -89,6 +90,7 @@ if [[ $STACK_RUNTIME == podman ]]; then
 else
     case "${1:-}" in
         start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
+        up)      compose up --detach --remove-orphans; mesh_route ;;
         stop)    host_units stop; compose down ;;
         restart) "$0" stop; "$0" start ;;
         update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then compose pull; fi; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;

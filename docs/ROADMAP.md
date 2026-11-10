@@ -346,7 +346,8 @@ UX and ecosystem:
     pipe", exit 0 — `enroll` said "the tunnel to port 51821 failed: ssh
     exited" although wg-easy answered on the master. kiwi-server's ssh now
     passes `ControlMaster=no ControlPath=none`. (remote.py)
-55. A re-apply restarts every container of the stack (`systemctl restart
+55. *Fixed in kiwi-stack 0.6.0 (kiwi-server 2.46.0) for podman: only what changed restarts;
+    docker still restarts everything.* A re-apply restarts every container of the stack (`systemctl restart
     kiwi-stack.service`), not only the one whose files changed; the runbook's
     step 5 expected "the container with the changed file restarts, the others
     do not". Adding a module to a node restarted the VPN client, nginx and

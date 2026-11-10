@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.46.0 — an apply restarts only what changed
+
+- kiwi-stack 0.6.0: on a running podman stack an apply restarts only the containers whose
+  quadlet or files changed and starts what is new; the rest goes on serving. Every container
+  restarted before (problem 55), on a master every VPN client's tunnel with it.
+
 ## 2.45.0 — one fleet, several computers
 
 - `kiwi-server secrets join <fleet> <name>` on another computer makes it a key in its own

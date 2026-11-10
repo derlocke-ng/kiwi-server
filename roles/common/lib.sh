@@ -523,7 +523,10 @@ ks_stack_unpack() {
             [[ -d $d ]] || install -d -m 0755 -o "$u" -g "$u" "$d"
         elif [[ -d $dd/$d ]]; then
             if ks_stack_dir_is_data "$d"; then
-                chown "$u:$u" "$dd/$d"
+                # its container may own it as another user (Tang's runs as 999): only a directory
+                # an older release left to root becomes the stack user's. Changing the owner of a
+                # running container's data broke it until its next start.
+                [[ $(stat -c %u "$dd/$d") != 0 ]] || chown "$u:$u" "$dd/$d"
             else   # rendered files live here: root's, writable by nobody else (the Mullvad refresh insists)
                 chown root:root "$dd/$d"; chmod go-w "$dd/$d"
             fi
@@ -622,7 +625,15 @@ ks_stack_pull() {
             fi
             ks_warn "pull of $img failed (try $n of 3)"; sleep $((n * 10))
         done
-        (( ok )) || ks_die "cannot pull $img — is the Internet reachable from this host?"
+        if (( ! ok )); then
+            # a registry that is down must not stop an apply that has the image already
+            if { [[ $KS_STACK_RUNTIME == podman ]] && podman image exists "$img"; } ||
+               { [[ $KS_STACK_RUNTIME == docker ]] && docker image inspect "$img" >/dev/null 2>&1; }; then
+                ks_warn "cannot pull $img: going on with the copy this machine has"
+                continue
+            fi
+            ks_die "cannot pull $img, and this machine has no copy — is the Internet reachable from this host?"
+        fi
         ks_say "  $img"
     done
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.42.0 — every disk in sight
+
+- `kiwi-server status` shows every machine's disks (how full, how big), the stack's own
+  among them.
+- A backup node says what it keeps for each machine (size, snapshots), how much is free and
+  how long that lasts at last week's rate; less than 30 days is a problem, less than a week a
+  bad one, and both say to prune. The figures are in `--porcelain` for the app.
+
 ## 2.41.0 — a restore from before
 
 - kiwi-modules 0.23.0: `kiwi-stack restore --at TIME MODULE...` puts back the newest snapshot

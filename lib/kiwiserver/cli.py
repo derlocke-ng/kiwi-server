@@ -13,7 +13,7 @@ import sys
 import time
 
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
-from . import facts, luks, mtu, netcup, remote, router as routermod, store, toolchain as tcmod, unlock, util, wgeasy
+from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
 from .util import KiwiError
@@ -167,6 +167,15 @@ def tls_problem(host):
     return None
 
 
+NOT_ENROLLED = "not enrolled yet"
+
+
+def not_enrolled(error):
+    """A node whose WireGuard config is not there yet: its master issues it once it runs.
+    A step still to take, not a mistake in the fleet file."""
+    return NOT_ENROLLED in error
+
+
 def settings_errors(roles, ms, host):
     """Resolve the host's role and module settings; the errors, as strings."""
     if host.role not in roles or host.target not in TARGETS:
@@ -175,6 +184,9 @@ def settings_errors(roles, ms, host):
     try:
         rolesmod.resolve_settings(role, host, ms)
     except KiwiError as e:
+        if re.search(r"vpn-client\.wireguard_config: file not found", str(e)):
+            return ["%s: %s: kiwi-server enroll %s %s, once its master runs"
+                    % (host.name, NOT_ENROLLED, os.path.basename(host.fleet.path), host.name)]
         return [str(e)]
     p = tls_problem(host)
     if p:
@@ -253,7 +265,8 @@ class Renderer:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
-                util.warn("dns records: skipping %s: %s" % (h.name, e))
+                if not re.search(r"vpn-client\.wireguard_config: file not found", str(e)):   # not enrolled yet: no mesh name yet
+                    util.warn("dns records: skipping %s: %s" % (h.name, e))
         self._records, self._needs_ca, self._master_ip, self._node_lan = recs, needs_ca, master_ip, node_lan
 
     def dns_records(self):
@@ -464,9 +477,38 @@ def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
 
 
 def cmd_init(args):
+    """A new fleet: asked step by step in a terminal, from answers the app collected, or the
+    commented example (--example, and whenever nobody can be asked)."""
+    if args.questions:
+        found = setupmod.detect()
+        print(json.dumps({"found": found, "steps": setupmod.questions(found),
+                          "suggestions": {"masters": setupmod.MASTERS, "nodes": setupmod.NODES,
+                                          "addresses": [a for a in (setupmod.suggest(found["subnet"], i, found["gateway"])
+                                                                    for i in range(12)) if a]}}, indent=2))
+        return
     dest = args.path or "fleet.yaml"
     if os.path.exists(dest):
         raise KiwiError("%s exists — not overwriting it" % dest)
+    if args.answers or (not args.example and not args.domain and sys.stdin.isatty()):
+        if args.answers:
+            answers = json.load(sys.stdin if args.answers == "-" else open(args.answers))
+        else:
+            print("A new fleet in %s. Enter takes what is in brackets." % os.path.abspath(dest))
+            answers = setupmod.ask()
+        fleet_dir = os.path.dirname(os.path.abspath(dest))
+        data, made = setupmod.make(answers, fleet_dir)
+        setupmod.write(dest, data)
+        util.say("wrote %s%s" % (dest, "".join(", %s" % os.path.relpath(p, fleet_dir) for p in made)))
+        if answers.get("store", True):
+            st = store.Store.for_fleet(dest)
+            recovery, saved = st.init()
+            util.say("secrets/ is encrypted now (%s) and open in memory" % store.FILE)
+            if not saved:
+                util.warn("no keyring took the desktop key: unlocking will ask for the recovery key below")
+            print("\nYour recovery key. Save it somewhere safe now, on paper or in a password manager.\n"
+                  "It is shown once, and without it a lost keyring means lost secrets:\n\n  %s\n" % recovery)
+        print("Next:\n" + "\n".join(setupmod.next_steps(os.path.basename(dest), answers)))
+        return
     text = util.read_text(os.path.join(util.home_dir(), "examples", "fleet.yaml"))
     if args.domain:
         d = args.domain.strip().strip(".").lower()
@@ -481,6 +523,34 @@ def cmd_init(args):
                 .replace(".home.conf", ".%s.conf" % d).replace("sh3.home", "sh3.%s" % d))
     util.write_text(dest, text, 0o600)
     util.say("wrote %s — edit it, then: kiwi-server validate %s" % (dest, dest))
+
+
+def cmd_names(args):
+    """Names for new machines: a fruit dish for a master, a fruit for anything else, free in
+    the fleet when one is given. JSON, for the app."""
+    taken = set()
+    if args.fleet:
+        import yaml
+        taken = set((yaml.safe_load(util.read_text(args.fleet)) or {}).get("hosts") or {})
+    print(json.dumps({"master": setupmod.free_name("master", taken), "node": setupmod.free_name("node", taken),
+                      "masters": setupmod.MASTERS, "nodes": setupmod.NODES}))
+
+
+def cmd_add(args):
+    """A new host in the fleet file, named after a fruit (a node) or a fruit dish (a master)
+    unless a name is given."""
+    import yaml
+    taken = set((yaml.safe_load(util.read_text(args.fleet)) or {}).get("hosts") or {})
+    name = args.name or setupmod.free_name(args.role, taken)
+    setupmod.add_host(args.fleet, name, args.role, args.preset or "", args.target or "")
+    util.say("added %s as a %s to %s" % (name, args.role, args.fleet))
+    fname = os.path.basename(args.fleet)
+    if args.role == "master":
+        util.say("next: set its wg_host (the public address) in the fleet file, then kiwi-server build %s %s" % (fname, name))
+    elif args.role == "node":
+        util.say("next: once its master runs, kiwi-server enroll %s %s; then kiwi-server build %s %s" % (fname, name, fname, name))
+    else:
+        util.say("next: kiwi-server build %s %s" % (fname, name))
 
 
 def cmd_validate(args):
@@ -515,7 +585,9 @@ def cmd_list(args):
         o = Outputs(out_dir, h, media_dir_for(args, fleet))
         mesh_ip = (h.role_settings or {}).get("vpn_ip") or (
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
+        nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
+                     "phase": nxt[0], "next": nxt[1], "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
@@ -532,10 +604,52 @@ def cmd_list(args):
     for r in rows:
         s = r["status"]
         have = [k for k in ("script", "stack", "config", "ignition", "iso") if s.get(k)]
-        state = "INVALID" if r["errors"] else (", ".join(have) if have else "-")
+        state = "INVALID" if r["phase"] == "invalid" else (", ".join(have) if have else "-")
         print(fmt % (r["name"], r["hostname"], r["target"], r["role"], r["address"] or "", state))
         for e in r["errors"]:
-            print("    error: %s" % e)
+            if r["phase"] == "invalid":
+                print("    error: %s" % e)
+        print("    next: %s" % r["next"])
+
+
+def _state_path(fleet):
+    return fleet.resolve_path(".kiwi-state.json")
+
+
+def fleet_state(fleet):
+    """What this fleet's folder remembers about its machines, nothing secret: when each was
+    last applied. It goes with the folder to another computer."""
+    try:
+        return json.loads(util.read_text(_state_path(fleet)))
+    except (OSError, ValueError):
+        return {}
+
+
+def record_applied(fleet, name):
+    state = fleet_state(fleet)
+    state.setdefault("applied", {})[name] = int(time.time())
+    util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+
+
+def next_step(fleet, roles, host, errors, out):
+    """(phase, what to do next) for a machine, from what this computer knows: the fleet file
+    and the output. `status` knows whether it runs; the app combines the two."""
+    fname = os.path.basename(fleet.path)
+    real = [e for e in errors if not not_enrolled(e)]
+    if real:
+        return "invalid", "fix the fleet file: %s" % real[0]
+    if errors:
+        masters = [h.name for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"]
+        return "enroll", "once %s runs: kiwi-server enroll %s %s" % (" or ".join(masters) or "its master", fname, host.name)
+    if (fleet_state(fleet).get("applied") or {}).get(host.name):
+        return "applied", "kiwi-server status %s %s says how it is" % (fname, host.name)
+    if host.role == "bare":
+        return "bare", "give it a role in the fleet file, or install it bare: kiwi-server build %s %s" % (fname, host.name)
+    if not out.status()["iso"]:
+        if (host.cfg.get("vps") or {}).get("server") or host.role in roles and roles[host.role].node_type == "master":
+            return "build", "kiwi-server build %s %s, then kiwi-server vps install (netcup) or boot the ISO" % (fname, host.name)
+        return "build", "kiwi-server build %s %s, write the ISO to a stick and boot it" % (fname, host.name)
+    return "install", "install it from %s, then kiwi-server apply %s %s" % (os.path.relpath(out.iso), fname, host.name)
 
 
 def cmd_show(args):
@@ -986,6 +1100,7 @@ def cmd_apply(args):
                 unlock.bind(h, tgt, servers)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
+            record_applied(fleet, h.name)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             failed.append(h.name)
@@ -1392,7 +1507,9 @@ def cmd_version(_args):
 
 USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network machines
 
-  kiwi-server init [fleet.yaml]                 write an example fleet file
+  kiwi-server init [fleet.yaml]                 a new fleet: a few questions (--example: the commented example)
+  kiwi-server add <fleet> master|node|bare [name]  a new host, named after a fruit dish (master) or a fruit
+  kiwi-server names [fleet]                     free names for new machines, as JSON
   kiwi-server validate <fleet> [host...]        check it (exit 2 on errors)
   kiwi-server list <fleet>                      hosts and what has been generated
   kiwi-server show <fleet> <host>               the effective configuration of one host
@@ -1453,7 +1570,15 @@ def build_parser():
         return s
 
     s = sub("init", cmd_init); s.add_argument("path", nargs="?")
-    s.add_argument("--domain", help="the fleet's domain (default home; .internal, .corp and .mail are the other safe ones)")
+    s.add_argument("--domain", help="the commented example with this domain (default home; .internal, .corp and .mail are the other safe ones)")
+    s.add_argument("--example", action="store_true", help="the commented example fleet instead of the questions")
+    s.add_argument("--questions", action="store_true", help="the questions as JSON, with what this computer knows filled in (for the app)")
+    s.add_argument("--answers", metavar="FILE", help="the answers as JSON (- for stdin) instead of asking")
+    s = sub("names", cmd_names); s.add_argument("fleet", nargs="?")
+    s = sub("add", cmd_add); s.add_argument("fleet"); s.add_argument("role", choices=["master", "node", "bare"])
+    s.add_argument("name", nargs="?", help="default: a free fruit (a node) or fruit dish (a master)")
+    s.add_argument("--preset", choices=["gateway", "cloud", "minimal"], help="a node's module list (default minimal)")
+    s.add_argument("--target", choices=["ucore", "coreos", "debian"], help="its system (default: the fleet's)")
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")

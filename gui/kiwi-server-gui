@@ -49,6 +49,9 @@ CSS = b"""
 .ks-dot.warn { background: @warning_color; }
 .ks-dot.bad  { background: @error_color; }
 .ks-dot.down { background: none; box-shadow: inset 0 0 0 2px @error_color; }
+.ks-dot.new  { background: none; box-shadow: inset 0 0 0 2px @accent_color; }
+.ks-pill.new { background: alpha(@accent_bg_color, .24); color: @accent_color; }
+.ks-help { min-width: 22px; min-height: 22px; padding: 0; }
 .ks-tile { padding: 12px 16px; }
 .ks-tile-value { font-size: 1.7em; font-weight: 700; font-feature-settings: "tnum"; }
 .ks-tile-value.ok   { color: @success_color; }
@@ -648,7 +651,8 @@ class DoctorDialog(Adw.Dialog):
 FLEET = ":fleet"        # the overview's scope: a colon cannot be in a host name
 POLL_SECONDS = 60
 WORDS = {"ok": "All good", "warn": "Needs a look", "bad": "Something is wrong", "down": "Unreachable",
-         "unknown": "Checking…"}
+         "unknown": "Checking…", "new": "Not installed yet"}
+NEW_PHASES = ("enroll", "build", "install", "bare")     # `list --porcelain`'s phases before a first apply
 ROLE_GROUPS = (("master", "Masters"), ("node", "Nodes"), ("bare", "Bare machines"))
 RECENT = os.path.join(GLib.get_user_config_dir(), "kiwi-server", "gui.json")
 
@@ -837,8 +841,10 @@ class HostRow(Gtk.ListBoxRow):
         self.line.set_label(win.machine_line(name))
         self.line.set_tooltip_text(st.get("hostname") or "")
         problems = win.problems_of(name)
-        if st.get("errors"):
-            self.badge.set_child(pill("INVALID", "bad", "\n".join(st["errors"])))
+        if win.phase_of(name) == "invalid":
+            self.badge.set_child(pill("INVALID", "bad", "\n".join(st.get("errors") or [])))
+        elif state == "new":
+            self.badge.set_child(pill("NEXT", "new", win.next_of(name)))
         elif problems and state != "down":
             self.badge.set_child(pill(str(len(problems)), state, "\n".join(t for _l, t in problems)))
         else:
@@ -850,6 +856,184 @@ class HostRow(Gtk.ListBoxRow):
         if mods:
             pills.append(pill("%d modules" % len(mods), "acc", ", ".join(mods)))
         self.pills.set_child(pills)
+
+
+DOCS = "https://github.com/derlocke-ng/kiwi-server/blob/main/"
+
+
+def help_button(text, link=None):
+    """A (?) beside a field: what it is for, and the documentation one click away."""
+    b = Gtk.MenuButton(icon_name="help-about-symbolic", valign=Gtk.Align.CENTER, tooltip_text="What is this?",
+                       css_classes=["flat", "circular", "ks-help"])
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=10, margin_bottom=10,
+                  margin_start=12, margin_end=12)
+    box.append(Gtk.Label(label=text, wrap=True, max_width_chars=48, xalign=0))
+    if link:
+        box.append(Gtk.LinkButton(uri=link, label="Read more", halign=Gtk.Align.START))
+    b.set_popover(Gtk.Popover(child=box))
+    return b
+
+
+class SetupWizard(Adw.Dialog):
+    """A new fleet, step by step. The questions are `kiwi-server init --questions` and the
+    answers go back to `kiwi-server init --answers`: the terminal and the app ask the same."""
+
+    def __init__(self, win, path, data):
+        super().__init__(title="New fleet", content_width=660, content_height=700)
+        self.win, self.path = win, path
+        self.steps, self.suggest = data["steps"], data.get("suggestions") or {}
+        self.get, self.rows, self.machines = {}, {}, []
+        self.nav = Adw.NavigationView()
+        self.pages = [self.step_page(i, st) for i, st in enumerate(self.steps)]
+        self.nav.add(self.pages[0])
+        self.set_child(self.nav)
+        self.update_when()
+
+    # ---- the pages ----
+    def step_page(self, i, step):
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup(title=step["step"], description=step.get("intro", ""))
+        page.add(g)
+        for q in step["questions"]:
+            if q.get("type") == "machines":
+                page.add(self.machines_group(q))
+            else:
+                g.add(self.row_for(q))
+        last = i == len(self.steps) - 1
+        go = Gtk.Button(label="Create the fleet" if last else "Next", css_classes=["suggested-action", "pill"],
+                        halign=Gtk.Align.CENTER, margin_top=6, margin_bottom=12)
+        go.connect("clicked", lambda *_: self.create() if last else self.nav.push(self.pages[i + 1]))
+        tv = Adw.ToolbarView(content=page)
+        tv.add_top_bar(Adw.HeaderBar())
+        tv.add_bottom_bar(go)
+        return Adw.NavigationPage(title="%d of %d · %s" % (i + 1, len(self.steps), step["step"]), child=tv)
+
+    def row_for(self, q, into=None):
+        """A row for one question; its value is read through self.get (or into, for a machine)."""
+        kind, get = q.get("type", "string"), None
+        if kind == "choice":
+            opts = q["options"]
+            row = Adw.ComboRow(title=q["label"], model=Gtk.StringList.new([o["label"] for o in opts]), use_subtitle=True)
+            row.set_selected(next((n for n, o in enumerate(opts) if o["value"] == q.get("default")), 0))
+            row.connect("notify::selected", lambda *_: self.update_when())
+            get = lambda r=row, o=opts: o[r.get_selected()]["value"]
+        elif kind == "bool":
+            row = Adw.SwitchRow(title=q["label"], active=bool(q.get("default")))
+            get = row.get_active
+        else:
+            row = (Adw.PasswordEntryRow if q.get("secret") else Adw.EntryRow)(title=q["label"])
+            row.set_text(str(q.get("default") or ""))
+            get = lambda r=row: r.get_text().strip()
+        if q.get("help"):
+            row.add_suffix(help_button(q["help"], DOCS + "README.md"))
+        (into if into is not None else self.get)[q["id"]] = get
+        if into is None:
+            self.rows[q["id"]] = (row, q.get("when"))
+        return row
+
+    def machines_group(self, q):
+        self.machine_q = q
+        g = Adw.PreferencesGroup(title=q["label"], description="Add one with +, or none: they can come later.")
+        add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a machine", css_classes=["flat"],
+                         valign=Gtk.Align.CENTER)
+        add.connect("clicked", lambda *_: self.add_machine(g))
+        head = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
+        if q.get("help"):
+            head.append(help_button(q["help"], DOCS + "README.md"))
+        head.append(add)
+        g.set_header_suffix(head)
+        self.machine_group = g
+        return g
+
+    def add_machine(self, g):
+        n = len(self.machines)
+        taken = {m["name"]() for m in self.machines} | ({self.get["master_name"]()} if "master_name" in self.get else set())
+        name = next((x for x in self.suggest.get("nodes", []) if x not in taken), "node%d" % (n + 1))
+        addrs = self.suggest.get("addresses") or []
+        exp = Adw.ExpanderRow(title=name, subtitle="a machine at home", expanded=True)
+        fields = {}
+        for f in self.machine_q.get("fields") or []:
+            f = dict(f)
+            if f.get("default_from") == "fruits":
+                f["default"] = name
+            elif f.get("default_from") == "suggest":
+                f["default"] = addrs[n] if n < len(addrs) else ""
+            row = self.row_for(f, into=fields)
+            exp.add_row(row)
+            fields["_row_" + f["id"]] = (row, f.get("when"))
+        rm = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove it", css_classes=["flat"],
+                        valign=Gtk.Align.CENTER)
+        exp.add_suffix(rm)
+        entry = {"exp": exp, "fields": fields, "name": fields["name"]}
+        name_row = fields["_row_name"][0]
+        name_row.connect("changed", lambda r: exp.set_title(r.get_text().strip() or "a machine"))
+        rm.connect("clicked", lambda *_: (g.remove(exp), self.machines.remove(entry)))
+        self.machines.append(entry)
+        g.add(exp)
+        self.update_when()
+
+    def update_when(self):
+        """Show a question only while its `when` holds (key == 'value')."""
+        def holds(cond, values):
+            if not cond:
+                return True
+            key, _sep, val = cond.partition(" == ")
+            return key in values and str(values[key]()) == val.strip("'")
+        for row, cond in self.rows.values():
+            row.set_visible(holds(cond, self.get))
+        for m in self.machines:
+            for k, v in m["fields"].items():
+                if k.startswith("_row_"):
+                    v[0].set_visible(holds(v[1], {x: g for x, g in m["fields"].items() if not x.startswith("_row_")}))
+
+    # ---- the end ----
+    def answers(self):
+        a = {k: g() for k, g in self.get.items() if self.rows[k][0].get_visible()}
+        a["nodes"] = [{k: g() for k, g in m["fields"].items() if not k.startswith("_row_") and m["fields"]["_row_" + k][0].get_visible()}
+                      for m in self.machines]
+        return a
+
+    def create(self):
+        a = self.answers()
+        if not a.get("master_address"):
+            self.win.alert("The master's address", "What phones and the machines at home connect to: its public address "
+                           "or name, e.g. 203.0.113.7. netcup shows it in its control panel.")
+            return
+        # the answers may hold a Mullvad key: they pass through memory, not the disk
+        tmp = os.path.join(GLib.get_user_runtime_dir(), "kiwi-init-%d.json" % os.getpid())
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(a, f)
+        spinner = Adw.StatusPage(title="Making the fleet", description="keys, the fleet file and, if asked, the secret store")
+        self.nav.push(Adw.NavigationPage(title="Making the fleet", child=spinner, can_pop=False))
+
+        def work():
+            try:
+                rc, out, err = run_cli(self.win.cli, ["init", self.path, "--answers", tmp], timeout=300)
+            finally:
+                os.remove(tmp)
+            GLib.idle_add(self.done, rc, out, err)
+        threading.Thread(target=work, daemon=True).start()
+
+    def done(self, rc, out, err):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        ok = rc == 0
+        box.append(Gtk.Label(label="The fleet is ready" if ok else "The fleet was not made", xalign=0,
+                             css_classes=["title-2"]))
+        if ok and "recovery key" in out:
+            box.append(Gtk.Label(label="Write the recovery key below down now, on paper or in a password manager: it is "
+                                       "shown only once, and without it a lost keyring means lost secrets.",
+                                 wrap=True, xalign=0, css_classes=["warning"]))
+        tv = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, vexpand=True)
+        tv.get_buffer().set_text((out + ("\n" + err if err.strip() else "")).strip())
+        box.append(Gtk.ScrolledWindow(child=tv, vexpand=True, min_content_height=360))
+        b = Gtk.Button(label="Open the fleet" if ok else "Back", css_classes=["suggested-action", "pill"],
+                       halign=Gtk.Align.CENTER)
+        b.connect("clicked", lambda *_: (self.close(), ok and self.win.open_path(self.path)))
+        box.append(b)
+        self.nav.push(Adw.NavigationPage(title="Done" if ok else "Not made", child=box, can_pop=not ok))
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -940,7 +1124,7 @@ class Window(Adw.ApplicationWindow):
                                        title="The secret store is locked: nothing can be built, applied or asked until it is open")
         self.store_banner.connect("button-clicked", lambda *_: self.toggle_store())
         self.empty = Adw.StatusPage(icon_name="folder-open-symbolic", title="No fleet open",
-                                    description="Open a fleet.yaml, or start a new one from the example.")
+                                    description="Open a fleet.yaml, or start a new one: a few questions, and it is ready to build.")
         eb = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
         b1 = Gtk.Button(label="Open…")
         b1.connect("clicked", lambda *_: self.open_dialog())
@@ -1131,7 +1315,14 @@ class Window(Adw.ApplicationWindow):
                 f = d.save_finish(res)
             except GLib.Error:
                 return
-            self.ask_domain(lambda domain: self.create_fleet(f.get_path(), domain))
+            path = f.get_path()
+            if os.path.exists(path):
+                os.unlink(path)          # the file dialog asked about replacing it already
+            rc, out, err = run_cli(self.cli, ["init", "--questions"])
+            if rc != 0:
+                self.alert("kiwi-server init --questions failed", err or out)
+                return
+            SetupWizard(self, path, json.loads(out)).present(self)
         dlg.save(self, None, done)
 
     def ask_domain(self, then):
@@ -1223,21 +1414,41 @@ class Window(Adw.ApplicationWindow):
     def locked(self):
         return bool(self.store.get("store")) and not self.store.get("open")
 
+    def phase_of(self, name):
+        st = self.status.get(name) or {}
+        return st.get("phase") or ("invalid" if st.get("errors") else "")
+
+    def is_new(self, name):
+        """Not installed yet: never applied from this fleet folder and not answering. What
+        comes next is a step, not a problem."""
+        live = self.live.get(name)
+        return self.phase_of(name) in NEW_PHASES and not (live and live["ok"]) and not self.last_seen.get(name)
+
     def state_of(self, name):
-        if (self.status.get(name) or {}).get("errors"):
+        if self.phase_of(name) == "invalid":
             return "bad"
+        if self.is_new(name):
+            return "new"
         live = self.live.get(name)
         return live["state"] if live else "unknown"
 
     def problems_of(self, name):
-        found = [("bad", e) for e in (self.status.get(name) or {}).get("errors") or []]
+        st = self.status.get(name) or {}
+        found = [("bad", e) for e in st.get("errors") or []] if self.phase_of(name) == "invalid" else []
         live = self.live.get(name)
-        return found + [(p["level"], p["text"]) for p in live["problems"]] if live else found
+        if not live or self.is_new(name):
+            return found
+        return found + [(p["level"], p["text"]) for p in live["problems"]]
+
+    def next_of(self, name):
+        return (self.status.get(name) or {}).get("next") or ""
 
     def machine_line(self, name):
         if self.locked():
             return "secret store locked"
         live = self.live.get(name)
+        if self.is_new(name):
+            return "not installed yet"
         if not live:
             return "checking…" if self.polling else "no answer yet"
         if not live["ok"]:
@@ -1250,7 +1461,7 @@ class Window(Adw.ApplicationWindow):
         return " · ".join(bits)
 
     def numbers(self):
-        hosts = self.doc.hosts()
+        hosts = [h for h in self.doc.hosts() if not self.is_new(h)]
         answers = [self.live[h] for h in hosts if h in self.live]
         good = [a for a in answers if a["ok"]]
         return {"hosts": len(hosts), "answers": len(answers), "online": len(good),
@@ -1261,7 +1472,8 @@ class Window(Adw.ApplicationWindow):
     def fleet_line(self):
         n = self.numbers()
         if not n["hosts"]:
-            return "no hosts yet"
+            fresh = [h for h in self.doc.hosts() if self.is_new(h)]
+            return "%d to install" % len(fresh) if fresh else "no hosts yet"
         if self.locked():
             return "secret store locked"
         if not n["answers"]:
@@ -1468,6 +1680,19 @@ class Window(Adw.ApplicationWindow):
         ], 4))
         if n["attention"]:
             parts.append(self.attention_group(n["attention"], True))
+        fresh = [h for h in self.doc.hosts() if self.is_new(h)]
+        if fresh:
+            g = Adw.PreferencesGroup(title="Next steps",
+                                     description="Machines not installed yet, in the order to do them: the master first.")
+            order = {title: i for i, (_r, title) in enumerate(ROLE_GROUPS)}
+            for h in sorted(fresh, key=lambda x: order.get(self.group_of(x), len(order))):
+                row = plain_row(h, self.next_of(h))
+                row.add_prefix(dot("new"))
+                row.set_activatable(True)
+                row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+                row.connect("activated", lambda _r, x=h: self.select_scope(x))
+                g.add(row)
+            parts.append(g)
         machines = Adw.PreferencesGroup(title="Machines")
         order = {title: i for i, (_r, title) in enumerate(ROLE_GROUPS)}
         names = sorted(self.doc.hosts(), key=lambda h: order.get(self.group_of(h), len(order)))
@@ -1505,6 +1730,12 @@ class Window(Adw.ApplicationWindow):
         col.append(caption(" · ".join(x for x in (word, st.get("hostname"), self.checked_line()) if x)))
         hero.append(col)
         parts = [hero]
+        if state == "new" and self.next_of(name):
+            g = Adw.PreferencesGroup(title="Next step")
+            row = plain_row(self.next_of(name))
+            row.set_title_selectable(True)
+            g.add(row)
+            parts.append(g)
         if problems:
             parts.append(self.attention_group([(name, lv, t) for lv, t in problems], False))
         if live and not live["ok"] and "resolve" in live["output"]:
@@ -1736,10 +1967,28 @@ class Window(Adw.ApplicationWindow):
         if not self.doc.path:
             self.toast("Open or create a fleet first")
             return
-        dlg = Adw.AlertDialog(heading="Add a host", body="A short name: letters, digits, dashes. "
-                              "It becomes <name>.<domain> unless you set a hostname.")
-        entry = Gtk.Entry(placeholder_text="sh5")
-        dlg.set_extra_child(entry)
+        dlg = Adw.AlertDialog(heading="Add a host", body="Masters are named after fruit dishes, everything else after "
+                              "fruits; any short name works: letters, digits, dashes. It becomes <name>.<domain>.")
+        rc, out, _err = run_cli(self.cli, ["names"])
+        pools = json.loads(out) if rc == 0 else {}
+        taken = set(self.doc.hosts())               # with hosts added here and not saved yet
+        names = {k: next((x for x in pools.get(k + "s", []) if x not in taken), "") for k in ("master", "node")}
+        roles = [("node", "A node: a machine at home"), ("master", "A master: the machine everything connects to"),
+                 ("bare", "Bare: only the system, a role later")]
+        role = Gtk.DropDown.new_from_strings([label for _r, label in roles])
+        entry = Gtk.Entry(text=names.get("node", ""), placeholder_text=names.get("node", "papaya"))
+        suggested = [entry.get_text()]
+
+        def role_changed(*_):
+            key = "master" if roles[role.get_selected()][0] == "master" else "node"
+            if entry.get_text() in suggested:          # not typed over: follow the role
+                entry.set_text(names.get(key, ""))
+                suggested.append(entry.get_text())
+        role.connect("notify::selected", role_changed)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.append(role)
+        box.append(entry)
+        dlg.set_extra_child(box)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("add", "Add")
         dlg.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
@@ -1757,6 +2006,15 @@ class Window(Adw.ApplicationWindow):
                 self.toast("There is already a host called %s" % name)
                 return
             self.doc.add_host(name)
+            kind = roles[role.get_selected()][0]
+            self.doc.set(name, ("role",), kind)
+            if kind == "master":            # what `kiwi-server add` writes; wg_host is the user's to fill in
+                self.doc.set(name, ("target",), "debian")
+                self.doc.set(name, ("master", "modules"), ["vpn-server", "dns", "tor", "reverse-proxy"])
+            elif kind == "node":
+                domain = self.doc.get("defaults", ("domain",)) or "home"
+                self.doc.set(name, ("node", "preset"), "minimal")
+                self.doc.set(name, ("node", "vpn-client", "wireguard_config"), "secrets/%s.%s.conf" % (name, domain))
             self.mark_dirty()
             self.rebuild_sidebar(name)
             self.host_stack.set_visible_child_name("settings")

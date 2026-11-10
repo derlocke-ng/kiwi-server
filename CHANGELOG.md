@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.47.0 — a guided start
+
+- `kiwi-server init fleet.yaml` asks a few questions in the terminal (domain, the admin
+  key, the master and where it runs, the exit, the machines at home, a secret store) with
+  what it found on this computer as the suggestions, and writes a fleet that validates and
+  waits only for its master. `init --questions` and `init --answers FILE` are the same for
+  the app, `init --example` keeps the commented example.
+- The GUI's *New fleet* is a wizard on those questions, each with a (?) that explains it and
+  links the documentation.
+- Machines are named after fruits and masters after fruit dishes: `kiwi-server add fleet.yaml
+  node|master|bare [name]` appends a host with the next free one and what its role needs,
+  `kiwi-server names` prints the suggestions; the GUI's *+* asks for the role and suggests
+  the name.
+- `list` says where each host stands (enroll, build, install, applied) and what comes next;
+  `apply` records which host it applied. A node whose WireGuard config is missing is "not
+  enrolled yet", with the command that enrolls it, no longer "file not found". The GUI shows
+  the next step on every machine not installed yet.
+
 ## 2.46.1 — an apply leaves a data directory's owner alone
 
 - kiwi-stack 0.6.1: an apply no longer gives a container's data directory to the stack user

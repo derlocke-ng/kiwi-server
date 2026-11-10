@@ -77,13 +77,22 @@ kiwi-server toolchain build     # one image with all three, used automatically
 ## Quick start
 
 ```bash
-kiwi-server init                # writes a commented fleet.yaml
-$EDITOR fleet.yaml              # hosts, roles, your ssh key, the install disk
+kiwi-server init fleet.yaml     # asks: domain, your key, the master, the machines at home
+kiwi-server list fleet.yaml     # every host, where it stands and what comes next
 kiwi-server validate fleet.yaml
 kiwi-server render fleet.yaml   # scripts + configs into ./output/<host>/
 kiwi-server build fleet.yaml    # + the ISOs (base images cached in ~/.cache/kiwi-server)
 sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
+
+`init` asks a few questions in the terminal (Enter takes the suggestion it
+found on this computer: time zone, keyboard, the router's network) and writes a
+fleet that waits only for its master; `init --example` writes the commented
+example instead. The GUI's *New fleet* asks the same questions, each with a (?)
+for what it means. New machines are named after fruits, masters after fruit
+dishes: `kiwi-server add fleet.yaml node` adds the next free fruit (`add
+fleet.yaml master`, or `add fleet.yaml node mybox --preset gateway` for a name
+of your own), and `kiwi-server names` prints the suggestions.
 
 Boot the machine from it. CoreOS and Debian install and then **power off**
 (`install.on_done: poweroff`, the default), so you remove the stick or the
@@ -258,7 +267,7 @@ and nginx on a master, the downloaders on a node) with `docker compose up
 `docker compose up -d` without `--no-deps`, or `kiwi-stack restart`.
 
 Names are `service.hostname.domain`, and the domain is yours to choose:
-`kiwi-server init --domain …`, the GUI asks when it creates a fleet, and
+`kiwi-server init` and the GUI ask when they create a fleet, and
 `home` is the fallback. `validate` says when a choice is a bad one. `.home`,
 `.corp` and `.mail` are strings ICANN will not delegate as public top-level
 domains, `.internal` is reserved for private use, so a name under them can
@@ -525,8 +534,13 @@ tree.
 overview, one row per host and the defaults; each host row says whether the
 machine answers, how long it has been up and how many of its services run.
 
-The **overview** counts machines, services and what needs a look, with a card
-per machine. A **host** has two tabs. *Overview* is what the machine says about
+A new fleet starts with **New fleet** in the menu: a few pages of questions
+(the fleet, logging in, the master, the machines at home, secrets), each with a
+(?) that explains it, then the fleet with its next steps. The **overview** counts
+machines, services and what needs a look, with a card per machine, and lists
+what comes next for every machine not installed yet: enroll, build, install,
+apply. *+* adds a host with the next free fruit (or fruit dish, for a master) as
+its name. A **host** has two tabs. *Overview* is what the machine says about
 itself: system, load, memory, disks, every service with its state, the tunnel,
 and the web interfaces to open from the mesh. *Settings* is the form: every field
 shows what it inherits; the role's stack settings and one group per module appear,

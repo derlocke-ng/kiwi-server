@@ -394,6 +394,27 @@ ks_stack_drop_units() {
     systemctl daemon-reload 2>/dev/null || true
 }
 
+ks_stack_drop_files() { # DIR
+    # A file the last apply rendered and this one does not (its module left the stack) goes
+    # as well: a backup script left behind still looked like a backup to `kiwi-server status`.
+    # Data is never rendered, so nothing a container wrote is touched.
+    local dd=$1 old='' old_dir='' rel entry keep
+    if [[ -f $KS_STACK_ENV ]]; then
+        old=$(sed -n 's/^STACK_FILES="\(.*\)"$/\1/p' "$KS_STACK_ENV")
+        old_dir=$(sed -n 's/^STACK_DIR=//p' "$KS_STACK_ENV")
+    fi
+    [[ $old_dir == "$dd" ]] || return 0
+    for rel in $old; do
+        [[ $rel =~ ^[A-Za-z0-9@._/-]+$ && $rel != *..* && $rel != /* ]] || continue
+        keep=0
+        for entry in "${KS_STACK_FILES[@]}"; do [[ ${entry%:*} == "$rel" ]] && keep=1; done
+        (( keep )) && continue
+        [[ -f $dd/$rel ]] || continue
+        ks_say "removing $rel — no module renders it any more"
+        rm -f "${dd:?}/$rel"
+    done
+}
+
 ks_stack_unpack() {
     # Everything the generator rendered (compose file, module configs, gw.sh)
     # is root's: root runs the stack and the host units execute some of these
@@ -458,6 +479,7 @@ ks_stack_unpack() {
         rel=${entry%:*}; mode=${entry##*:}
         ks_file "stack/$rel" "$dd/$rel" "$mode" root:root
     done
+    ks_stack_drop_files "$dd"
     ks_stack_drop_units
     for unit in "${KS_STACK_UNITS[@]}"; do
         ks_file "unit/$unit" "$KS_SYSTEMD_DIR/$unit" 0644
@@ -502,6 +524,8 @@ ks_stack_unpack() {
             fi
         done
     fi
+    local files=() entry
+    for entry in "${KS_STACK_FILES[@]}"; do files+=("${entry%:*}"); done
     install -d -m 0755 /etc/kiwi-server
     {
         echo "# written by kiwi-server $KS_VERSION — read by /usr/local/bin/kiwi-stack"
@@ -515,6 +539,7 @@ ks_stack_unpack() {
         echo "STACK_MESH_SUBNET=$KS_STACK_MESH_SUBNET"
         echo "STACK_MESH_VIA=$KS_STACK_MESH_VIA"
         echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
+        echo "STACK_FILES=\"${files[*]}\""
         echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
         echo "STACK_SEED_ID=${KS_SEED_ID:-}"
         echo "STACK_AUTO_UPDATE=${KS_STACK_AUTO_UPDATE:-registry}"

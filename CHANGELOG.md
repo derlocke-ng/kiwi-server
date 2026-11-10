@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.37.0 — what a module leaves behind goes with it
+
+- kiwi-stack 0.5.0: an apply removes the files a module rendered once it has left the stack,
+  as it already did with its host units. A backup script left behind kept `status` reporting a
+  backup that would have turned late after a day and a half.
+
 ## 2.36.0 — a full disk costs one module
 
 - kiwi-modules 0.20.0: a backup repository that cannot take a frozen database ends the run

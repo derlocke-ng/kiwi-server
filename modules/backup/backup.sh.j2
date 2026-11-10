@@ -3,8 +3,11 @@
 # what each module declares in the backup: block of its module.yaml.
 #   kiwi-stack backup [--new]       one run now (kn-backup.timer does it at {{ at }}); --new: a
 #                                   rebuilt machine starts a history of its own instead of restoring
-#   kiwi-stack snapshots            what is stored
-#   kiwi-stack restore MODULE...    put the newest back; those modules stop around it
+#   kiwi-stack snapshots [MODULE...]           what is stored
+#   kiwi-stack restore [--at TIME] MODULE...    put the newest back, or the newest made at or
+#                                   before TIME ("2026-11-10 09:00", "yesterday 18:00", "3 days
+#                                   ago"), this machine's time unless it says ("09:00 UTC"; the
+#                                   snapshots list shows UTC); those modules stop around it
 set -uo pipefail
 
 DIR={{ docker_dir }}/kiwi/backup
@@ -132,8 +135,21 @@ backup() {
     echo "backup: ${MODULES[*]} stored at {{ server }}"
 }
 
-put_back() { # MODULE KIND MOUNTS
-    local module=$1 kind=$2 m list mounts=()
+# The newest snapshot of one part of a module made at or before a moment (in nanoseconds),
+# or nothing: restic picks only the newest by itself, so its list is read here, the snapshots'
+# time and short id and nothing else.
+snapshot_at() { # MODULE KIND EPOCH
+    local json t id e best='' best_e=0
+    json=$(LIMIT=$ASK_LIMIT restic -- --no-lock snapshots --host "$HOST" --tag "$1,$2" --json) || return 1
+    while read -r t id; do
+        e=$(date -d "$t" +%s%N 2>/dev/null) || continue
+        if (( e <= $3 && e > best_e )); then best=$id; best_e=$e; fi
+    done < <(grep -o '"time": *"[^"]*"\|"short_id": *"[^"]*"' <<<"$json" | sed 's/^"[a-z_]*": *"//; s/"$//' | paste - -)
+    [[ -n $best ]] && echo "$best"
+}
+
+put_back() { # MODULE KIND MOUNTS [SNAPSHOT]
+    local module=$1 kind=$2 m list mounts=() snap=${4:-latest}
     read -ra list <<<"$3"
     [[ -n ${list[*]:-} ]] || return 0
     for m in "${list[@]}"; do
@@ -142,7 +158,7 @@ put_back() { # MODULE KIND MOUNTS
     done
     excludes "$module"
     # --delete empties the target of what the snapshot does not hold: it must hold nothing but these
-    restic "${mounts[@]}" -- restore latest --host "$HOST" --tag "$module,$kind" --target /restore --delete "${EXCLUDES[@]}"
+    restic "${mounts[@]}" -- restore "$snap" --host "$HOST" --tag "$module,$kind" --target /restore --delete "${EXCLUDES[@]}"
 }
 
 service() { # stop|start SERVICE...
@@ -157,18 +173,37 @@ service() { # stop|start SERVICE...
     done
 }
 
-restore() { # MODULE...
-    local m list rc=0
-    (( $# )) || { echo "usage: kiwi-stack restore MODULE...   (${MODULES[*]})" >&2; return 1; }
+restore() { # [--at TIME] MODULE...
+    local m list kind at='' when rc=0
+    declare -A SNAP=()
+    if [[ ${1:-} == --at ]]; then
+        [[ -n ${2:-} ]] || { echo "usage: kiwi-stack restore [--at TIME] MODULE..." >&2; return 1; }
+        at=$(date -d "$2" +%s%N 2>/dev/null) || { echo "backup: $2 is not a time date(1) understands" >&2; return 1; }
+        when=$(date -d "@$(( at / 1000000000 ))" '+%F %T %Z')
+        shift 2
+    fi
+    (( $# )) || { echo "usage: kiwi-stack restore [--at TIME] MODULE...   (${MODULES[*]})" >&2; return 1; }
     for m; do
         [[ -v "BULK[$m]" ]] || { echo "backup: no module $m here (${MODULES[*]})" >&2; return 1; }
         [[ -z ${NO_RESTORE[$m]} ]] || { echo "backup: $m is not restored from here: ${NO_RESTORE[$m]}" >&2; return 1; }
     done
+    # every snapshot is found before anything stops: a time with nothing to restore changes nothing
+    if [[ -n $at ]]; then
+        for m; do
+            for kind in frozen bulk; do
+                [[ $kind == frozen ]] && list=${FROZEN[$m]} || list=${BULK[$m]}
+                [[ -n $list ]] || continue
+                SNAP[$m,$kind]=$(snapshot_at "$m" "$kind" "$at") ||
+                    { echo "backup: no snapshot of $m ($kind) from $when or before: kiwi-stack snapshots $m" >&2; return 1; }
+                echo "backup: $m ($kind): snapshot ${SNAP[$m,$kind]}, the newest from $when or before"
+            done
+        done
+    fi
     for m; do
         read -ra list <<<"${SERVICES[$m]}"
         service stop "${list[@]}"
-        put_back "$m" frozen "${FROZEN[$m]}" || { echo "backup: $m: its frozen part did not come back" >&2; rc=1; }
-        put_back "$m" bulk "${BULK[$m]}" || { echo "backup: $m: its files did not come back" >&2; rc=1; }
+        put_back "$m" frozen "${FROZEN[$m]}" "${SNAP[$m,frozen]:-}" || { echo "backup: $m: its frozen part did not come back" >&2; rc=1; }
+        put_back "$m" bulk "${BULK[$m]}" "${SNAP[$m,bulk]:-}" || { echo "backup: $m: its files did not come back" >&2; rc=1; }
         service start "${list[@]}"
     done
     # a container in another's network namespace stops with it and nothing else brings it back
@@ -214,7 +249,8 @@ case "${1:-}" in
                 if [[ ${2:-} == --new ]]; then rm -f "$DIR/held"; touch "$DIR/new-history"; fi
                 held && exit 1
                 backup ;;
-    snapshots)  restic -- snapshots --host "$HOST" ;;
+    snapshots)  shift; tags=(); for m; do tags+=(--tag "$m"); done
+                restic -- snapshots --host "$HOST" "${tags[@]}" ;;
     restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; restore "$@" ;;
-    *)          echo "usage: kiwi-stack backup|snapshots|restore MODULE..." >&2; exit 1 ;;
+    *)          echo "usage: kiwi-stack backup [--new] | snapshots [MODULE...] | restore [--at TIME] MODULE..." >&2; exit 1 ;;
 esac

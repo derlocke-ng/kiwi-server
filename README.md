@@ -318,8 +318,10 @@ encrypted, every night and on `sudo kiwi-stack backup`:
                       backup: { server: https://backup.lychee.home } } }
 ```
 
-`sudo kiwi-stack snapshots` lists what is stored and `sudo kiwi-stack restore
-vault cloud` puts the newest back, stopping only those modules. A rebuilt machine holds
+`sudo kiwi-stack snapshots [vault]` lists what is stored and `sudo kiwi-stack restore
+vault cloud` puts the newest back, stopping only those modules; `restore --at "yesterday
+18:00" vault` takes the newest from that time or before, for a mistake found late (the time
+is the machine's own unless it says otherwise, and the list shows UTC). A rebuilt machine holds
 its backups until it is restored, so its first apply cannot store the empty machine as the
 newest snapshot; `sudo kiwi-stack backup --new` starts a history of its own instead. The passwords
 derive from the seed, so the seed brings the backups back. A machine can add to

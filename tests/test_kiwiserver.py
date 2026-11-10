@@ -2223,6 +2223,54 @@ class TestUnlock(Base):
             self.assertTrue(unlock.type_key(h, runner=runner, sleep=lambda s: None, clock=lambda: 0.0))
         self.assertEqual(len(tries), 3)
 
+    def test_a_reinstalled_machine_gets_the_one_time_key_and_never_the_old_one(self):
+        f, h = self.tunnel_host()
+        once = f.resolve_path("secrets/luks/%s.once" % h.name)
+        os.makedirs(os.path.dirname(once), exist_ok=True)
+        with open(once, "w") as out:
+            out.write("theonetimekey")
+        seen = []
+
+        def runner(argv, input=None, capture_output=True):
+            seen.append((argv, input))
+            if len(seen) == 1:      # the pinned key is the old installation's
+                return subprocess.CompletedProcess(argv, 255, b"", b"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n")
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: addr == "192.168.2.61"):
+            self.assertTrue(unlock.type_key(h, runner=runner, sleep=lambda s: None, clock=lambda: 0.0))
+        self.assertEqual(len(seen), 2)
+        argv, given = seen[1]
+        self.assertEqual(given, b"theonetimekey")
+        self.assertNotIn(f.resolve_path("secrets/known_hosts.initramfs"), " ".join(argv))   # nothing pinned is changed
+        self.assertLess(argv.index("StrictHostKeyChecking=accept-new"), argv.index("BatchMode=yes"))
+        os.remove(once)
+        seen.clear()
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: addr == "192.168.2.61"), \
+                self.assertRaisesRegex(KiwiError, "not on record and there is no one-time key"):
+            unlock.type_key(h, runner=runner, sleep=lambda s: None, clock=lambda: 0.0)
+        self.assertEqual(len(seen), 1)                  # the key on record went nowhere
+
+    def test_no_ring_goes_to_an_initramfs_with_another_host_key(self):
+        f, h = self.tunnel_host()
+        _calls, a, b = self.fake_remote()
+
+        def runner(argv, stdin=None, capture_output=True):
+            return subprocess.CompletedProcess(argv, 255, b"", b"Host key verification failed.\n")
+        with a, b, mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True), \
+                self.assertRaisesRegex(KiwiError, "no ring goes to it.*--manual"):
+            unlock.open_disk(h, self.servers(f), runner=runner, clock=lambda: 0.0, sleep=lambda s: None)
+
+    def test_a_timeout_says_what_ssh_said(self):
+        f, h = self.tunnel_host()
+        now = [0.0]
+
+        def runner(argv, input=None, capture_output=True):
+            now[0] += 5
+            return subprocess.CompletedProcess(argv, 255, b"", b"Connection reset by peer")
+        with mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True), \
+                self.assertRaisesRegex(KiwiError, "no initramfs answered within 20 s \\(ssh: Connection reset by peer\\)"):
+            unlock.type_key(h, timeout=20, runner=runner, sleep=lambda s: None, clock=lambda: now[0])
+
     def test_a_refused_key_is_not_tried_again(self):
         f, h = self.tunnel_host()
         count = []

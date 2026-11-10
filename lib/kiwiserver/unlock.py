@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import time
 import urllib.parse
 
@@ -533,6 +534,35 @@ def waiting_at(host, runner=subprocess.run):
     return None
 
 
+def _key_not_on_record(r):
+    """ssh refused the session because the host key differs from the one pinned."""
+    text = (r.stderr or b"").decode(errors="replace")
+    return r.returncode == 255 and ("REMOTE HOST IDENTIFICATION HAS CHANGED" in text or "Host key verification failed" in text)
+
+
+def _last_words(r):
+    lines = (r.stderr or b"").decode(errors="replace").strip().splitlines()
+    return lines[-1] if lines else "no message"
+
+
+def _as_new_installation(host, address, port, runner):
+    """An initramfs whose host key is not the one on record is a new installation, or someone
+    else's machine. Either way it gets the one-time key and nothing more: that key opens only a
+    disk installed from this fleet's ISO, and the first apply replaces it. The key on record,
+    which opens the old installation's disk, never goes to a host that cannot prove which it is."""
+    once = luks.one_time_key(host)
+    if not once:
+        raise KiwiError("%s: its initramfs at %s shows a host key that is not on record and there is no one-time key "
+                        "(%s) for a new installation: if it was reinstalled, build its ISO again" % (host.name, address, luks.once_file(host)))
+    util.say("%s: its initramfs shows a host key that is not on record: a new installation, it gets the one-time key"
+             % host.name)
+    with tempfile.TemporaryDirectory() as d:
+        argv = (["ssh", "-o", "UserKnownHostsFile=%s" % os.path.join(d, "known_hosts"), "-o", "StrictHostKeyChecking=accept-new",
+                 "-o", "IdentitiesOnly=yes", "-i", _unlock_key(host.fleet)] + remote.ssh_opts(identities=False)
+                + ["-p", str(port), "root@%s" % address, "unlock"])
+        return runner(argv, input=once.encode(), capture_output=True)
+
+
 def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
     """The disk's key, handed to the initramfs over SSH, for when no ring can help. It goes
     on stdin without a line end: Debian passes stdin to cryptsetup as it is."""
@@ -543,21 +573,24 @@ def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, 
         raise KiwiError("%s: the disk's key is not on record (secrets/luks/%s.key)" % (host.name, host.name))
     addresses = [address] if address else remote.addresses(host)
     sshport = port or ssh_port(host)
-    deadline = clock() + timeout
+    deadline, last = clock() + timeout, ""
     while clock() < deadline:
         for a in addresses:
             if not remote._answers(a, sshport):
                 continue
             r = runner(_initramfs_ssh_argv(host, a, ["-p", str(sshport)], ["unlock"]), input=key.encode(), capture_output=True)
+            if _key_not_on_record(r):
+                r = _as_new_installation(host, a, sshport, runner)
             if r.returncode == 0:
                 util.say("%s: the disk is open; the machine goes on booting" % host.name)
                 return True
             if r.returncode == 255:         # ssh's own failure: no session, so no try was counted
+                last = _last_words(r)
                 continue
             said = r.stderr.decode(errors="replace").strip().splitlines()[-1:] or ["no message"]
             raise KiwiError("%s: the initramfs did not take the key (%s) — it counts tries; see the console before trying again" % (host.name, said[0]))
         sleep(3)
-    raise KiwiError("%s: no initramfs answered within %d s" % (host.name, timeout))
+    raise KiwiError("%s: no initramfs answered within %d s%s" % (host.name, timeout, " (ssh: %s)" % last if last else ""))
 
 
 def open_disk(host, servers, ring=None, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
@@ -573,14 +606,21 @@ def open_disk(host, servers, ring=None, address=None, port=None, timeout=300, ru
     # The key's forced command prints a marker once it is in and the port is forwarded. It
     # ends when the initramfs does, which can be seconds later: how long it lasted says nothing.
     command = ["wait"]
-    deadline = clock() + timeout
+    deadline, last = clock() + timeout, ""
     while clock() < deadline:
         for a in addresses:
             if not remote._answers(a, sshport):
                 continue
             r = runner(_initramfs_ssh_argv(host, a, options, command), stdin=subprocess.DEVNULL, capture_output=True)
+            if _key_not_on_record(r):
+                # with a ring, a machine that cannot prove which it is could open the real one's disk
+                raise KiwiError("%s: its initramfs at %s shows a host key that is not on record, so no ring goes to it. "
+                                "A reinstalled machine opens with kiwi-server unlock %s %s --manual until its first apply"
+                                % (host.name, a, os.path.basename(host.fleet.path), host.name))
+            if r.returncode == 255:
+                last = _last_words(r)
             if _CONNECTED.encode() in r.stdout:
                 util.say("%s: the disk is open; the machine goes on booting" % host.name)
                 return True
         sleep(3)
-    raise KiwiError("%s: no initramfs answered within %d s" % (host.name, timeout))
+    raise KiwiError("%s: no initramfs answered within %d s%s" % (host.name, timeout, " (ssh: %s)" % last if last else ""))

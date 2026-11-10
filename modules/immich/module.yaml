@@ -80,6 +80,7 @@ settings:
     type: secret
     generate: true
     group: Generated
+    help: "The password of Immich's database, used only between its containers. Empty: generated from the fleet's seed."
   - key: extra_env
     type: map
     group: Advanced
@@ -88,13 +89,17 @@ settings:
     default: {}
   - key: image
     group: Advanced
+    help: "The container image of the Immich server, pinned by tag. Change it to try another version or to pin a newer one."
     default: ghcr.io/immich-app/immich-server:v3
   - key: ml_image
     group: Advanced
+    help: "The container image of Immich's machine learning, pinned by tag. Change it to try another version or to pin a newer one. Keep it at the same version as the server."
     default: ghcr.io/immich-app/immich-machine-learning:v3
   - key: db_image
     group: Advanced
+    help: "The container image of Immich's database, its own PostgreSQL build, pinned by tag. Change it to try another version or to pin a newer one. A new PostgreSQL major version cannot open the old one's data."
     default: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
   - key: redis_image
     group: Advanced
+    help: "The container image of Immich's job queue, Valkey (a Redis), pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/valkey/valkey:9

@@ -130,6 +130,7 @@ settings:
     type: bool
     group: Services
     label: OnlyOffice
+    help: "Office documents in the browser with OnlyOffice. Not together with Collabora: turn that off first."
     default: false
   - key: talk
     type: bool
@@ -141,16 +142,19 @@ settings:
     type: bool
     group: Services
     label: Talk recording
+    help: "Lets moderators record Talk calls; the recordings are kept as files in Nextcloud. Needs talk."
     default: false
   - key: imaginary
     type: bool
     group: Services
     label: Imaginary (previews)
+    help: "Picture previews made in a container of their own: faster, and also for HEIC, TIFF and SVG. Off: Nextcloud makes the previews it can by itself."
     default: true
   - key: clamav
     type: bool
     group: Services
     label: ClamAV (virus scan of uploads)
+    help: "Scans uploaded files for viruses, up to upload_limit in size. Its container wants about a gigabyte of memory."
     default: false
   - key: fulltextsearch
     type: bool
@@ -162,6 +166,7 @@ settings:
     type: bool
     group: Services
     label: Whiteboard
+    help: "A whiteboard several people draw on at the same time, in Nextcloud's Whiteboard app."
     default: false
   - key: cors_origins
     type: list
@@ -175,20 +180,26 @@ settings:
     help: The port Nextcloud's apache listens on behind nginx; never published on the host.
     default: 11000
   - key: upload_limit
+    help: "The largest file one upload may be, e.g. 50G or 512M. Also the largest file ClamAV scans."
     default: 50G
   - key: max_time
     type: int
+    help: "How long, in seconds, one request may run before it is cut off, e.g. a slow upload. The default is 100 hours."
     default: 360000
   - key: memory_limit
+    help: "The memory one Nextcloud PHP process may use, e.g. 512M or 4096M. Raise it when previews or apps fail for lack of memory."
     default: 4096M
   - key: startup_apps
     label: Apps installed on first start
+    help: "App ids separated by spaces, installed when Nextcloud starts for the first time; a - in front disables one, e.g. -dashboard. Later, apps are added on Nextcloud's Apps page."
     default: deck twofactor_totp tasks calendar contacts notes end_to_end_encryption
   - key: additional_apks
     group: Advanced
+    help: "Alpine packages installed into the Nextcloud container when it starts, separated by spaces. Keep imagemagick in the list, which the imagick PHP extension works with."
     default: imagemagick
   - key: additional_php_extensions
     group: Advanced
+    help: "PHP extensions added to the Nextcloud container when it starts, separated by spaces. Keep imagick in the list: Nextcloud uses it for some previews and for the theming app's icons."
     default: imagick
   - key: enable_dri_device
     type: bool
@@ -198,34 +209,42 @@ settings:
   - key: keep_disabled_apps
     type: bool
     group: Advanced
+    help: "Off: when a service here is switched off, e.g. collabora, Nextcloud's app for it is removed as well. On: the app stays installed without the service."
     default: false
   - key: install_latest_major
     type: bool
     group: Advanced
     label: Install the latest major version on first start
+    help: "On: a new installation is upgraded right away to Nextcloud's newest major version instead of staying on the image's. No effect on a Nextcloud already installed."
     default: false
   - key: update_nextcloud_apps
     type: bool
     group: Advanced
     label: Update Nextcloud apps on Saturdays
+    help: "On: when the Nextcloud container starts on a Saturday, it updates its apps from the app store. Off: an admin updates them on the Apps page."
     default: false
   - key: talk_port
     type: int
     group: Advanced
+    help: "The port of Talk's TURN server, published on the host for TCP and UDP while talk is on. Callers outside the network must be able to reach it."
     default: 3478
   - key: collabora_dictionaries
     group: Advanced
+    help: "The spelling dictionaries Collabora offers, as language codes separated by spaces, e.g. de_DE en_US."
     default: de_DE en_GB en_US es_ES fr_FR it nl pt_BR pt_PT ru
   - key: collabora_log_level
     group: Advanced
+    help: "How much Collabora writes to its log: fatal, critical, error, warning, notice, information, debug or trace."
     default: warning
   - key: fulltextsearch_java_options
     group: Advanced
+    help: "Java options of Elasticsearch, mostly its memory: -Xms and -Xmx set the same, e.g. -Xms1G -Xmx1G for a big index. Only with fulltextsearch."
     default: -Xms512M -Xmx512M
   - key: log_level
     type: enum
     options: [debug, info, warn, error]
     group: Advanced
+    help: "How much the Nextcloud containers write to their logs, from debug (most) to error (least)."
     default: warn
   - key: database_password
     type: secret
@@ -236,38 +255,47 @@ settings:
     type: secret
     generate: true
     group: Generated
+    help: "The password of Nextcloud's Redis cache, which the whiteboard uses as well. Empty: generated from the fleet's seed."
   - key: turn_secret
     type: secret
     generate: true
     group: Generated
+    help: "Shared by Nextcloud and Talk's TURN server, which lets callers through with it. Empty: generated from the fleet's seed."
   - key: signaling_secret
     type: secret
     generate: true
     group: Generated
+    help: "Shared by Nextcloud and Talk's signaling server. Empty: generated from the fleet's seed."
   - key: talk_internal_secret
     type: secret
     generate: true
     group: Generated
+    help: "Shared by Talk's signaling server and its recording server. Empty: generated from the fleet's seed."
   - key: recording_secret
     type: secret
     generate: true
     group: Generated
+    help: "Shared by Nextcloud and Talk's recording server. Empty: generated from the fleet's seed."
   - key: onlyoffice_secret
     type: secret
     generate: true
     group: Generated
+    help: "Signs what Nextcloud and OnlyOffice send each other. Empty: generated from the fleet's seed."
   - key: imaginary_secret
     type: secret
     generate: true
     group: Generated
+    help: "Shared by Nextcloud and Imaginary. Empty: generated from the fleet's seed."
   - key: fulltextsearch_password
     type: secret
     generate: true
     group: Generated
+    help: "The password of Elasticsearch's user elastic, which Nextcloud signs in with. Empty: generated from the fleet's seed."
   - key: whiteboard_secret
     type: secret
     generate: true
     group: Generated
+    help: "Signs the tokens Nextcloud hands to the whiteboard server. Empty: generated from the fleet's seed."
   - key: extra_env
     type: map
     group: Advanced
@@ -280,4 +308,5 @@ settings:
     default: ghcr.io/nextcloud-releases/
   - key: image_tag
     group: Advanced
+    help: "The tag of all the AIO container images this module runs, which pins their version. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: latest

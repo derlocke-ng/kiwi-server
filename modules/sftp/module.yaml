@@ -41,6 +41,7 @@ backup:
 
 settings:
   - key: sftp_user
+    help: "The login name; the shared directory is Downloads in its home."
     default: user
   - key: sftp_password
     type: secret
@@ -52,6 +53,7 @@ settings:
     default: 1000
   - key: sftp_port
     type: int
+    help: "The host port SFTP answers on, e.g. sftp -P 2224 user@<hostname>. Not 22, which the host's own ssh uses."
     default: 2224
   - key: sftp_dir
     label: Shared directory

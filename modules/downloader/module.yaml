@@ -51,6 +51,7 @@ settings:
     help: Absolute path on the host, e.g. /mnt/data/downloads.
     placeholder: /mnt/data/downloads
   - key: transmission_user
+    help: "The login of Transmission's web UI, and of JDownloader's unless jd_web_user is set."
     default: user
   - key: transmission_password
     type: secret
@@ -63,6 +64,7 @@ settings:
   - key: jdownloader
     type: bool
     label: Run JDownloader
+    help: "JDownloader 2 next to Transmission, for downloads from file hosters, at jd.<hostname>. Off: Transmission only."
     default: true
   - key: jd_hostname
     label: JDownloader hostname
@@ -83,28 +85,36 @@ settings:
     default: ""
   - key: myjd_password
     type: secret
+    help: "The password of the MyJDownloader account. Only used together with that account."
     default: ""
   - key: myjd_device_name
+    help: "The name this JDownloader appears under at my.jdownloader.org. Empty: the hostname."
     default: ""
   - key: puid
     type: int
+    help: "The user ID Transmission and JDownloader run as and write the downloads with, e.g. 1000, the first user on most systems. The download directory must belong to it."
     default: 1000
   - key: pgid
     type: int
+    help: "The group ID that goes with puid."
     default: 1000
   - key: extra_env
     type: map
     group: Advanced
     label: Extra Transmission environment variables
+    help: "KEY=value, passed to the Transmission container as they are, e.g. PEERPORT=51413."
     default: {}
   - key: jd_extra_env
     type: map
     group: Advanced
     label: Extra JDownloader environment variables
+    help: "KEY=value, passed to the JDownloader container as they are, e.g. DARK_MODE=1."
     default: {}
   - key: transmission_image
     group: Advanced
+    help: "The container image of Transmission, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: lscr.io/linuxserver/transmission:latest
   - key: jdownloader_image
     group: Advanced
+    help: "The container image of JDownloader, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: docker.io/jlesage/jdownloader-2:latest

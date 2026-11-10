@@ -76,6 +76,7 @@ settings:
   - key: log_level
     type: enum
     options: [panic, fatal, error, warn, info, debug]
+    help: "How much OpenCloud writes to its log, from panic (least) to debug (most)."
     default: warn
   - key: insecure
     type: bool
@@ -91,4 +92,5 @@ settings:
     default: {}
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/opencloudeu/opencloud-rolling:9.0.0

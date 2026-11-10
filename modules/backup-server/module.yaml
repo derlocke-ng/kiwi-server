@@ -77,4 +77,5 @@ settings:
     generate_hash_of: backup/server_password
   - key: image
     group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/restic/rest-server:0.14.0

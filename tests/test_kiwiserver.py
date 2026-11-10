@@ -1896,6 +1896,23 @@ class TestSetup(Base):
         self.assertEqual(cli.shown_path(os.path.join(os.getcwd(), "output", "a.iso")), os.path.join("output", "a.iso"))
 
 
+class TestGuiHelp(unittest.TestCase):
+    def test_every_base_field_of_the_app_has_help(self):
+        """The app shows a (?) with the help beside every field; it reads the module and role
+        settings' help from their yaml, the base fields' from its own BASE_GROUPS."""
+        import ast
+        with open(os.path.join(ROOT, "gui", "kiwi-server-gui")) as fh:
+            tree = ast.parse(fh.read())
+        groups = next(n.value for n in tree.body if isinstance(n, ast.Assign)
+                      and any(getattr(t, "id", "") == "BASE_GROUPS" for t in n.targets))
+        fields = [c for c in ast.walk(groups) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "dict"
+                  and any(k.arg == "path" for k in c.keywords)]
+        self.assertGreater(len(fields), 30)
+        missing = [ast.unparse(next(k.value for k in c.keywords if k.arg == "path")) for c in fields
+                   if not any(k.arg == "help" for k in c.keywords)]
+        self.assertEqual(missing, [])
+
+
 class TestOutputInMemory(Base):
     def test_rendered_files_go_to_the_open_store_and_the_disk_keeps_the_iso(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

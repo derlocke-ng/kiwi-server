@@ -414,7 +414,9 @@ class Form:
     # ---- rows ----
     def row_for(self, field):
         t = field["type"]
-        if t in ("text", "lines", "map", "object"):
+        if field["path"][-2:] == ("vpn-server", "groups"):
+            row = self.groups_row(field)
+        elif t in ("text", "lines", "map", "object"):
             row = self.text_row(field)
         elif t == "bool":
             row = self.bool_row(field)
@@ -486,6 +488,99 @@ class Form:
             rel = os.path.relpath(p, self.doc.dir)
             row.set_text(rel if not rel.startswith("..") else p)
         dlg.open(self.win, None, done)
+
+    # ---- the VPN's client groups: a list to edit, not YAML ----
+    def groups_row(self, field):
+        exp = Adw.ExpanderRow(title=field["label"])
+        cur = self.current(field)
+        groups = dict(cur if isinstance(cur, dict) else (self.inherited(field) or {}))
+
+        def save():
+            self.write(field, {n: {k: v for k, v in g.items() if v is not None} for n, g in groups.items()})
+            redraw()
+        rows = []
+
+        def redraw():
+            for r in rows:
+                exp.remove(r)
+            rows.clear()
+            inherited = self.current(field) is None and self.scope != "defaults"
+            exp.set_subtitle("%d groups%s" % (len(groups), ", inherited" if inherited else ""))
+            for name in sorted(groups):
+                g = groups[name] or {}
+                reach = g.get("reach", ["all"])
+                bits = [g.get("subnet", "?"), "reaches " + (" ".join(reach) or "only the server")]
+                bits += [w for k, w in (("peers", "no peers"), ("internet", "no internet")) if g.get(k) is False]
+                if g.get("admin"):
+                    bits.append("admin")
+                row = plain_row(name, " · ".join(bits))
+                edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                  tooltip_text="Edit")
+                edit.connect("clicked", lambda _b, n=name: self.group_dialog(groups, n, save))
+                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                tooltip_text="Remove")
+                rm.connect("clicked", lambda _b, n=name: (groups.pop(n, None), save()))
+                row.add_suffix(edit)
+                row.add_suffix(rm)
+                exp.add_row(row)
+                rows.append(row)
+            add = Adw.ButtonRow(title="Add a group", start_icon_name="list-add-symbolic")
+            add.connect("activated", lambda *_: self.group_dialog(groups, None, save))
+            exp.add_row(add)
+            rows.append(add)
+        redraw()
+        return exp
+
+    def group_dialog(self, groups, name, save):
+        g = dict(groups.get(name) or {})
+        if name is None:            # the next free /24 after the groups there are
+            used = {str(x.get("subnet", "")).split(".")[2] for x in groups.values() if str(x.get("subnet", "")).count(".") == 3}
+            base = next((str(x["subnet"]) for x in groups.values() if x.get("subnet")), "10.8.0.0/24").split(".")
+            third = next(n for n in range(1, 255) if str(n) not in used)
+            g = {"subnet": "%s.%s.%d.0/24" % (base[0], base[1], third), "reach": ["nodes"], "peers": False}
+        dlg = Adw.Dialog(title="Group" if name else "A new group", content_width=480)
+        page = Adw.PreferencesPage()
+        grp = Adw.PreferencesGroup()
+        name_row = Adw.EntryRow(title="Name", text=name or "")
+        subnet = Adw.EntryRow(title="Addresses (a /24 of the VPN)", text=str(g.get("subnet", "")))
+        reach = Adw.EntryRow(title="May reach", text=" ".join(g.get("reach", ["all"])))
+        reach.add_suffix(help_button("all, nodes (every node), host names of the fleet, addresses or subnets, "
+                                     "separated by spaces. Empty: only the server (its DNS)."))
+        switches = {}
+        for key, title, default in (("peers", "Reach other VPN clients", True), ("internet", "Use the internet exit", True),
+                                    ("admin", "Open the admin pages", False)):
+            sw = Adw.SwitchRow(title=title, active=bool(g.get(key, default)))
+            switches[key] = (sw, default)
+        for r in [name_row, subnet, reach] + [sw for sw, _d in switches.values()]:
+            grp.add(r)
+        page.add(grp)
+        b = Gtk.Button(label="Save", css_classes=["suggested-action"], halign=Gtk.Align.END, margin_top=12)
+        bg = Adw.PreferencesGroup()
+        bg.add(b)
+        page.add(bg)
+
+        def done(*_):
+            new = name_row.get_text().strip()
+            if not re.match(r"^[a-z][a-z0-9-]*$", new):
+                self.win.toast("A group name: lowercase letters, digits and dashes")
+                return
+            if new != name and new in groups:
+                self.win.toast("There is already a group called %s" % new)
+                return
+            out = {"subnet": subnet.get_text().strip(), "reach": reach.get_text().split()}
+            for key, (sw, default) in switches.items():
+                if sw.get_active() != default:
+                    out[key] = sw.get_active()
+            if name and name != new:
+                groups.pop(name, None)
+            groups[new] = out
+            dlg.close()
+            save()
+        b.connect("clicked", done)
+        tb = Adw.ToolbarView(content=page)
+        tb.add_top_bar(Adw.HeaderBar())
+        dlg.set_child(tb)
+        dlg.present(self.win)
 
     def text_row(self, field):
         exp = Adw.ExpanderRow(title=field["label"])

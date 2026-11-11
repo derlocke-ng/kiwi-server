@@ -299,9 +299,15 @@ held() { # true while this machine must not back up; says why on stderr
     return 1
 }
 
-# a re-apply and a stack start restart host units: this keeps that from being a backup
+# a re-apply and a stack start restart host units: this keeps that from being a backup. The
+# night's own run (the timer's time and the hour after it) always is one, unless one just ran:
+# a backup by hand in the evening no longer cancels the night.
 due() {
-    if [[ -f $DIR/last-success ]] && (( $(date +%s) - $(stat -c %Y "$DIR/last-success") <= 20 * 3600 )); then
+    local limit=$(( 20 * 3600 )) now start
+    now=$(date +%s)
+    start=$(date -d "today {{ at }}" +%s)
+    (( now >= start && now - start < 3600 )) && limit=3600
+    if [[ -f $DIR/last-success ]] && (( now - $(stat -c %Y "$DIR/last-success") <= limit )); then
         return 1
     fi
     if held 2>/dev/null; then [[ $AUTO_RESTORE == yes ]]; return; fi

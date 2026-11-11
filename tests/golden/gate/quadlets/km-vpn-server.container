@@ -24,9 +24,9 @@ Environment=WG_DEFAULT_DNS=10.8.0.1
 Environment=WG_DEFAULT_ADDRESS=10.8.0.x
 Environment=WG_MTU=1376
 EnvironmentFile=/home/user/docker/kiwi/env/km-vpn-server.env
-AddHost=gate.home:172.64.0.5
-AddHost=wg.gate.home:172.64.0.5
-AddHost=pihole.gate.home:172.64.0.5
+AddHost=gate.home:172.64.0.3
+AddHost=wg.gate.home:172.64.0.3
+AddHost=pihole.gate.home:172.64.0.3
 DNS=172.64.0.3
 DNS=9.9.9.9
 Volume=/home/user/docker/km-vpn-server:/etc/wireguard:z

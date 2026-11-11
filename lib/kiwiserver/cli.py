@@ -1348,6 +1348,60 @@ def cmd_backup(args):
         util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
 
 
+def parse_snapshots(text):
+    """`kiwi-stack snapshots --json`: per backup server its snapshots, newest first."""
+    servers = []
+    for line in text.splitlines():
+        name, _tab, data = line.partition("\t")
+        try:
+            raw = json.loads(data) if data else None
+        except ValueError:
+            raw = None
+        snaps = []
+        for sn in raw or []:
+            tags = sn.get("tags") or []
+            snaps.append({"id": sn.get("short_id") or (sn.get("id") or "")[:8], "time": sn.get("time", ""),
+                          "module": next((t for t in tags if t not in ("frozen", "bulk")), ""),
+                          "kind": "frozen" if "frozen" in tags else "bulk" if "bulk" in tags else ""})
+        snaps.sort(key=lambda x: x["time"], reverse=True)
+        servers.append({"server": name, "ok": raw is not None, "snapshots": snaps})
+    return servers
+
+
+def cmd_backups(args):
+    """A machine's own backups: what each backup server keeps of it, a backup now, or modules
+    brought back. The fleet folder's backup is `backup`."""
+    fleet, roles, ms = load(args)
+    h = fleet.select([args.host])[0]
+    rolesmod.resolve_settings(roles[h.role], h, ms)
+    if "backup" not in (h.modules or []):
+        raise KiwiError("%s has no backup module" % h.name)
+    tgt = remote.reach(h, args.ssh)
+    mods = " ".join(shlex.quote(m) for m in args.modules)
+    if args.now or args.new:
+        rc = remote.run_stream(tgt, "kiwi-stack backup" + (" --new" if args.new else ""))
+    elif args.restore:
+        if not args.modules:            # everything there is a snapshot of
+            found = parse_snapshots(remote.run(tgt, "kiwi-stack snapshots --json").decode(errors="replace"))
+            mods = " ".join(sorted({sn["module"] for sv in found for sn in sv["snapshots"] if sn["module"]}))
+            if not mods:
+                raise KiwiError("%s: the backup servers keep nothing of it" % h.name)
+        at = " --at %s" % shlex.quote(args.at) if args.at else ""
+        rc = remote.run_stream(tgt, "kiwi-stack restore%s %s" % (at, mods))
+    else:
+        servers = parse_snapshots(remote.run(tgt, "kiwi-stack snapshots --json %s" % mods).decode(errors="replace"))
+        if args.porcelain:
+            print(json.dumps({"host": h.name, "servers": servers}, indent=1))
+            return
+        for sv in servers:
+            print("== %s%s" % (sv["server"], "" if sv["ok"] else ": nothing found (not reached, or no repository of this machine)"))
+            for sn in sv["snapshots"]:
+                print("   %s  %-12s %-6s %s" % (sn["time"][:19].replace("T", " "), sn["module"], sn["kind"], sn["id"]))
+        return
+    if rc != 0:
+        raise KiwiError("%s: kiwi-stack exited with %d" % (h.name, rc))
+
+
 def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
@@ -1380,12 +1434,13 @@ def cmd_prune(args):
         raise KiwiError("none of these hosts runs the backup-server module")
     if args.ssh and len(servers) != 1:
         raise KiwiError("--ssh goes with exactly one host")
-    keep = {"daily": args.keep_daily, "weekly": args.keep_weekly, "monthly": args.keep_monthly}
-    if not any(keep.values()):
-        raise KiwiError("--keep-daily, --keep-weekly and --keep-monthly are all 0: that would keep nothing")
+    flags = {"daily": args.keep_daily, "weekly": args.keep_weekly, "monthly": args.keep_monthly}
     failed = []
     for h in servers:
         cfg = h.module_settings["backup-server"]
+        keep = {k: v if v is not None else int(cfg.get("keep_" + k, backupmod.KEEP[k]) or 0) for k, v in flags.items()}
+        if not any(keep.values()):
+            raise KiwiError("%s: keeping 0 days, weeks and months would keep nothing" % h.name)
         data = cfg.get("data_dir") or "%s/kn-backup-server/data" % (h.role_settings.get("docker_dir") or "/home/user/docker")
         tgt = remote.reach(h, args.ssh)
         for name in cfg.get("clients") or []:
@@ -1553,6 +1608,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
+  kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
@@ -1650,6 +1706,12 @@ def build_parser():
     s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--passphrase-file", metavar="FILE")
+    s = sub("backups", cmd_backups); s.add_argument("fleet"); s.add_argument("host"); s.add_argument("modules", nargs="*")
+    s.add_argument("--now", action="store_true", help="back up now")
+    s.add_argument("--new", action="store_true", help="a rebuilt machine that waits: start a new history instead of restoring")
+    s.add_argument("--restore", action="store_true", help="bring these modules back from the backups (none named: all of them)")
+    s.add_argument("--at", metavar="TIME", help="with --restore: the newest snapshot from then or before, e.g. '2026-11-10 19:00'")
+    s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")
@@ -1657,9 +1719,9 @@ def build_parser():
     s.add_argument("--port", type=int, metavar="N", help="the initramfs's SSH port, where something forwards it elsewhere")
     s.add_argument("--timeout", type=int, default=300, metavar="SECONDS", help="how long to wait for its initramfs (default %(default)s)")
     s = sub("prune", cmd_prune); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
-    s.add_argument("--keep-daily", type=int, default=backupmod.KEEP["daily"], metavar="N", help="days with a snapshot to keep (default %(default)s)")
-    s.add_argument("--keep-weekly", type=int, default=backupmod.KEEP["weekly"], metavar="N", help="weeks (default %(default)s)")
-    s.add_argument("--keep-monthly", type=int, default=backupmod.KEEP["monthly"], metavar="N", help="months (default %(default)s)")
+    s.add_argument("--keep-daily", type=int, metavar="N", help="days with a snapshot to keep (default: the server's keep_daily)")
+    s.add_argument("--keep-weekly", type=int, metavar="N", help="weeks (default: keep_weekly)")
+    s.add_argument("--keep-monthly", type=int, metavar="N", help="months (default: keep_monthly)")
     s.add_argument("--dry-run", action="store_true", help="only say what would go")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--every", choices=("day", "week", "off"),

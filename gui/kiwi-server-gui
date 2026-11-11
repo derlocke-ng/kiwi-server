@@ -695,6 +695,78 @@ class Form:
 # ---------------------------------------------------------------------------
 # dialogs
 # ---------------------------------------------------------------------------
+class SnapshotsDialog(Adw.Dialog):
+    """What the backup servers keep of one machine, a module per group, each time with Restore."""
+
+    def __init__(self, win, host):
+        super().__init__(title="Snapshots of %s" % host, content_width=620, content_height=640)
+        self.win, self.host = win, host
+        self.page = Adw.PreferencesPage()
+        self.status = Adw.StatusPage(title="Asking the backup servers…", child=Adw.Spinner())
+        self.stack = Gtk.Stack()
+        self.stack.add_named(self.status, "wait")
+        self.stack.add_named(self.page, "list")
+        tb = Adw.ToolbarView(content=self.stack)
+        tb.add_top_bar(Adw.HeaderBar())
+        self.set_child(tb)
+        threading.Thread(target=self.load, daemon=True).start()
+
+    def load(self):
+        rc, out, err = run_cli(self.win.cli, ["backups", self.win.doc.path, self.host, "--porcelain"], timeout=180)
+        GLib.idle_add(self.show_list, json.loads(out) if rc == 0 else None, err.strip())
+
+    def show_list(self, data, err):
+        if data is None:
+            self.status.set_title("No answer")
+            self.status.set_description(err.splitlines()[-1] if err else "")
+            self.status.set_child(None)
+            return False
+        times = {}          # module -> minute -> (newest time, servers)
+        for sv in data["servers"]:
+            for sn in sv["snapshots"]:
+                key = sn["time"][:16]
+                at, servers = times.setdefault(sn["module"], {}).get(key, ("", set()))
+                servers.add(sv["server"].removeprefix("backup.").split(".")[0])
+                times[sn["module"]][key] = (max(at, sn["time"]), servers)
+        missed = [sv["server"] for sv in data["servers"] if not sv["ok"]]
+        if missed:
+            g = Adw.PreferencesGroup()
+            g.add(plain_row("Nothing found on %s" % ", ".join(missed), "Not reached, or it keeps no repository of this machine"))
+            self.page.add(g)
+        for module in sorted(times):
+            g = Adw.PreferencesGroup(title=module)
+            for key in sorted(times[module], reverse=True)[:30]:
+                at, servers = times[module][key]
+                row = plain_row(local_time(at), " · ".join(sorted(servers)))
+                b = Gtk.Button(label="Restore", valign=Gtk.Align.CENTER, css_classes=["flat"])
+                b.connect("clicked", self.ask, module, at)
+                row.add_suffix(b)
+                g.add(row)
+            self.page.add(g)
+        if not times:
+            self.status.set_title("No snapshots yet")
+            self.status.set_child(None)
+            return False
+        self.stack.set_visible_child_name("list")
+        return False
+
+    def ask(self, _b, module, at):
+        dlg = Adw.AlertDialog(heading="Restore %s?" % module,
+                              body="%s on %s goes back to %s. What it has now is replaced." % (module, self.host, local_time(at)))
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("go", "Restore")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_close_response("cancel")
+
+        def resp(_d, r):
+            if r == "go":
+                self.close()
+                self.win.spawn(["backups", self.win.doc.path, self.host, module, "--restore", "--at", at],
+                               "Restoring %s on %s…" % (module, self.host))
+        dlg.connect("response", resp)
+        dlg.present(self)
+
+
 class TextDialog(Adw.Dialog):
     def __init__(self, title, text, mono=True):
         super().__init__(title=title, content_width=820, content_height=620)
@@ -739,6 +811,23 @@ WORDS = {"ok": "All good", "warn": "Needs a look", "bad": "Something is wrong", 
 NEW_PHASES = ("enroll", "build", "install", "bare")     # `list --porcelain`'s phases before a first apply
 ROLE_GROUPS = (("master", "Masters"), ("node", "Nodes"), ("bare", "Bare machines"))
 RECENT = os.path.join(GLib.get_user_config_dir(), "kiwi-server", "gui.json")
+
+
+def size_kib(kib):
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        if kib < 1024 or unit == "TiB":
+            return "%.0f %s" % (kib, unit) if unit == "KiB" else "%.1f %s" % (kib, unit)
+        kib /= 1024
+
+
+def local_time(iso):
+    """restic's time (nanoseconds, an offset) as local 'Tue 10 Nov 19:01'."""
+    try:
+        import datetime
+        t = datetime.datetime.fromisoformat(re.sub(r"(\.\d+)", "", iso).replace("Z", "+00:00"))
+        return t.astimezone().strftime("%a %d %b %H:%M")
+    except ValueError:
+        return iso[:16]
 
 
 def duration(seconds):
@@ -1831,11 +1920,18 @@ class Window(Adw.ApplicationWindow):
                             % (tilde(self.doc.path), name, self.admin_user(name)))
             g.add(row)
             parts.append(g)
-        if live and live.get("notes"):
+        notes = [t for t in (live or {}).get("notes") or []
+                 if not t.startswith(("backups here", "last backup"))]    # the Backups group says it
+        if notes:
             g = Adw.PreferencesGroup(title="Good to know")
-            for text in live["notes"]:
+            for text in notes:
                 g.add(plain_row(text))
             parts.append(g)
+        if live and live.get("locked"):
+            parts.append(self.locked_group(name))
+        backups = self.backup_group(name, f)
+        if backups:
+            parts.append(backups)
         if f:
             parts.append(self.machine_group(f))
             parts.append(self.services_group(f))
@@ -1845,6 +1941,67 @@ class Window(Adw.ApplicationWindow):
             parts.append(web)
         parts.append(self.deploy_group(name, st, f))
         self.host_column.show(parts)
+
+    def action_button(self, label, args, msg, ask=None):
+        """A button that runs the CLI with its output in the log, after `ask` (heading, body, verb)."""
+        b = Gtk.Button(label=label, valign=Gtk.Align.CENTER, css_classes=["flat"])
+
+        def go(*_):
+            if not ask:
+                return self.spawn(args, msg)
+            dlg = Adw.AlertDialog(heading=ask[0], body=ask[1])
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("go", ask[2])
+            dlg.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+            dlg.set_close_response("cancel")
+            dlg.connect("response", lambda _d, r: r == "go" and self.spawn(args, msg))
+            dlg.present(self)
+        b.connect("clicked", go)
+        return b
+
+    def locked_group(self, name):
+        g = Adw.PreferencesGroup(title="Disk")
+        row = plain_row("Locked", "Waiting at boot for its key")
+        row.add_suffix(self.action_button("Unlock", ["unlock", self.doc.path, name], "Unlocking %s…" % name))
+        g.add(row)
+        return g
+
+    def backup_group(self, name, f):
+        b, store = f.get("backup"), f.get("backup_store")
+        if not b and not store:
+            return None
+        g = Adw.PreferencesGroup(title="Backups")
+        g.set_header_suffix(help_button("Every night each module goes to the backup servers. "
+                                        "Snapshots lists them; Restore brings a module back as it was then.",
+                                        DOCS + "modules/backup/module.yaml"))
+        if b:
+            last = "%s ago" % duration(b["age"]) if b.get("last") and b.get("age") is not None else "never"
+            copies = ", ".join("%s %s ago" % (c["server"].split(".")[1] if c["server"].startswith("backup.") else c["server"],
+                                              duration(c["age"])) for c in b.get("copies") or [] if c.get("age") is not None)
+            row = plain_row("Last backup: %s" % last, copies)
+            row.add_suffix(self.action_button("Back up now", ["backups", self.doc.path, name, "--now"],
+                                              "Backing up %s…" % name))
+            snaps = Gtk.Button(label="Snapshots", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            snaps.connect("clicked", lambda *_: SnapshotsDialog(self, name).present(self))
+            row.add_suffix(snaps)
+            g.add(row)
+            if b.get("held"):
+                row = plain_row("Rebuilt: waiting", b["held"])
+                row.add_suffix(self.action_button(
+                    "Restore all", ["backups", self.doc.path, name, "--restore"], "Restoring %s…" % name,
+                    ("Restore everything?", "Every module of %s comes back from its newest snapshot." % name, "Restore")))
+                row.add_suffix(self.action_button(
+                    "Start new", ["backups", self.doc.path, name, "--new"], "Backing up %s…" % name,
+                    ("Start a new history?", "%s keeps what it has now and backs that up; the old snapshots stay "
+                     "until pruned." % name, "Start new")))
+                g.add(row)
+        if store:
+            repos = store.get("repos") or []
+            row = plain_row("Stored here", "%s free on %s · %d machines" % (
+                size_kib(store.get("free_kib") or 0), store.get("mount", ""), len(repos)))
+            row.add_suffix(self.action_button("Prune now", ["prune", self.doc.path, name], "Pruning %s…" % name))
+            g.add(row)
+        return g
 
     def admin_user(self, name):
         return self.doc.get(name, ("admin", "user")) or self.doc.get("defaults", ("admin", "user")) or "core"

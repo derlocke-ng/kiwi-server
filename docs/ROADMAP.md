@@ -827,7 +827,10 @@ Asked for by the owner in November 2026:
   encryption protects disk images and old disks only (the hoster can read RAM), and costs
   someone at every reboot and the unattended update reboots. `debian.encrypt` stays per
   host; home nodes keep LUKS and their rings.
-- **A master that lives in RAM**, raised 10 November 2026; parked. Stateless sounds right
+- **A master that lives in RAM**, raised 10 November 2026, asked for again 11 November:
+  a small system (Alpine's diskless mode, or another) that boots an image into RAM; an
+  update is a new image and a reboot; its update and backup behaviour are settings like
+  everyone else's. What follows is why it was parked first. Stateless sounds right
   for "just a VPN", but the master still needs its WireGuard keys, its peer list and its
   certificates at every boot: kept on the hoster's storage they need encryption again, and
   handed over at boot they need someone, as an unlock does. A master that is disposable

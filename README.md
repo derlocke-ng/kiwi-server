@@ -341,11 +341,14 @@ never backs up its empty self over its history; `sudo kiwi-stack backup --new` s
 history of its own instead of restoring. The passwords
 derive from the seed, so the seed brings the backups back. A machine can add to
 its backups but not delete them, so one that is taken over cannot destroy them;
-`kiwi-server prune <fleet>` removes old snapshots (seven days, four weeks and six
-months are kept) from the operator's machine, which is where the keys are;
+`kiwi-server prune <fleet>` removes old snapshots (what the backup server's `keep_daily`,
+`keep_weekly` and `keep_monthly` say, seven days, four weeks and six months unless set)
+from the operator's machine, which is where the keys are;
 `kiwi-server prune <fleet> --every week` sets up a timer on that machine that does it, and
 `kiwi-server status` says on each backup node when it was last pruned and how long its
-free space lasts.
+free space lasts. `kiwi-server backups <fleet> <host>` lists what the servers keep of a
+machine; `--now` backs it up, `--restore MODULE... [--at TIME]` brings modules back. The
+GUI has the same on each host's page.
 
 A database is paused while restic reads it, for ten minutes at most. A run that fails tries
 again an hour later, three more times, and when the backup server is gone or full the run

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.50.0 — backups in the app
+
+- `kiwi-server backups <fleet> <host>`: what each backup server keeps of a machine;
+  `--now` backs up, `--restore [MODULE...] [--at TIME]` brings modules back (all without
+  names), `--new` starts a new history on a rebuilt machine.
+- GUI, on a host's page: Backups (last backup, copies, Back up now, Snapshots with Restore,
+  a rebuilt machine's Restore all / Start new, Prune now on a backup server) and Unlock for a
+  disk that waits at boot.
+- kiwi-modules 0.25.0: what prune keeps is the backup server's `keep_daily`, `keep_weekly`,
+  `keep_monthly`; the flags still override.
+
 ## 2.49.0 — settings in pages
 
 - The GUI's settings have a sidebar: machine, role, one page per module, then the system

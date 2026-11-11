@@ -32,7 +32,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import facts, luks, mtu, setup as setupmod, sshca, store, unlock  # noqa: E402
+from kiwiserver import facts, luks, mtu, plan as planmod, setup as setupmod, sshca, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -1962,6 +1962,28 @@ class TestSshCa(Base):
                 self.assertTrue(remote.reach(h).endswith("@198.51.100.7"))
             with mock.patch.object(remote, "_certified", lambda tgt: False):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
+
+
+class TestPlan(unittest.TestCase):
+    def test_a_container_restarts_when_its_quadlet_or_a_file_it_mounts_changed(self):
+        class B:
+            files = {"kiwi/a.conf": ("new a", 0o644), "kiwi/b.env": ("b", 0o600)}
+            quadlets = {"kn-a.container": "[Container]\nVolume=/d/kiwi/a.conf:/etc/a.conf:ro\n",
+                        "kn-b.container": "[Container]\nEnvironmentFile=/d/kiwi/b.env\n",
+                        "kn-c.container": "[Container]\nImage=c:2\n", "kiwi-stack.target": "[Unit]\n"}
+            units = {}
+            services = ["kn-a", "kn-b", "kn-c"]
+
+        class H:
+            role_settings = {"docker_dir": "/d"}
+        want = planmod.wanted(H, B)
+        self.assertIn("/etc/systemd/system/kiwi-stack.target", want)
+        have = dict(want)
+        have["/d/kiwi/a.conf"] = "old"                                  # a mounted file changed
+        del have["/etc/containers/systemd/kn-c.container"]              # a new container
+        x = planmod.compare(B, want, have, ["kn-a", "kn-b", "kn-gone"])
+        self.assertEqual((x["restart"], x["new_services"], x["removed_services"]), (["kn-a"], ["kn-c"], ["kn-gone"]))
+        self.assertEqual(planmod.compare(B, want, dict(want), B.services)["changed"], [])
 
 
 class TestBackups(unittest.TestCase):

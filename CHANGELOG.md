@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.51.1 — the night's backup runs
+
+- kiwi-modules 0.25.1: a backup by hand in the evening no longer skips the nightly run (seen
+  on all three test machines the night of 11 November).
+- `tests/drills/soak.py`: a read-only watch over hours, noting problems, restarts, reboots
+  and backups.
+
 ## 2.51.0 — an SSH CA
 
 - `kiwi-server sshca <fleet> init` makes the fleet's SSH CA (`secrets/ssh_ca`). Every apply

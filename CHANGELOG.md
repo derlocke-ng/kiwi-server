@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.56.1 — fail2ban for public sites
+
+- kiwi-modules 0.27.1: on a master with public sites fail2ban also bans scanners (requests for
+  wp-login.php, .env, cgi-bin and the like), bad requests and failed basic logins, from the
+  host's port forwarding. Tried on sorbet: four probes from crumble, then a ban.
+
 ## 2.56.0 — SSH off port 22, fail2ban
 
 - `admin.ssh_port` (22 unless set), also in the GUI: an apply moves sshd there without a

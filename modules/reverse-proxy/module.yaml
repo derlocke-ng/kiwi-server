@@ -34,6 +34,8 @@ templates:
   acme_script: acme.sh.j2
   acme_service: acme.service.j2
   acme_timer: acme.timer.j2
+  logs_service: nginx-logs.service.j2
+  logs_timer: nginx-logs.timer.j2
 
 outputs:
   nginx: { path: "{{ container_prefix }}-nginx/nginx.conf", mode: 0644 }
@@ -42,6 +44,8 @@ outputs:
   nginx_start: { path: "{{ container_prefix }}-nginx/start.sh", mode: 0755, when: public_names }
   acme_script: { path: "kiwi/acme.sh", mode: 0755, when: public_names }
   acme_service: { kind: host_unit, name: "{{ container_prefix }}-acme.service", when: public_names }
+  logs_service: { kind: host_unit, name: "{{ container_prefix }}-nginx-logs.service", when: public_names }
+  logs_timer: { kind: host_unit, name: "{{ container_prefix }}-nginx-logs.timer", when: public_names }
   acme_timer: { kind: host_unit, name: "{{ container_prefix }}-acme.timer", when: public_names }
 
 storage:
@@ -49,6 +53,7 @@ storage:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx", type: dir, required: true }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/acme", type: dir, required: true, when: public_names }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/www", type: dir, required: true, when: public_names }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/log", type: dir, required: true, when: public_names }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt", type: dir, required: true, when: public_names }
 
 nginx:

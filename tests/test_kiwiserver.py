@@ -4213,7 +4213,7 @@ class TestCli(Base):
         rc, out, _ = self.run_cli("modules", "--porcelain")
         self.assertEqual(len(json.loads(out)["modules"]), 20)
         rc, out, _ = self.run_cli("targets", "--porcelain")
-        self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian"})
+        self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "coreos-ram"})
 
     def test_validate_render_list_show(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

@@ -20,6 +20,7 @@ checked out. `drill.py` holds what they share.
 | Drill | What it does | Covers |
 |---|---|---|
 | `exit-server-stuck.py FLEET MACHINE` | Makes DNS-over-TLS fail inside a commercial VPN exit, as through a bad server, and waits for the container to be started anew (about eight minutes, the exit is down most of them) | vpn-client's health check, `HealthOnFailure` |
+| `ram-master-vm.sh [WORKDIR]` | Builds a `coreos-ram` master in a throwaway fleet, boots it in a local QEMU VM on a blank disk, applies, reboots, then boots a new image on the same disk; checks the state comes back and `/etc` does not (a few minutes; touches no fleet machine, so it needs no `drills.yaml`) | `targets/ram.py`, the state partition, `apply` on it |
 
 Each drill prints what it measured, one line per step, and puts back what it changed (a
 firewall rule, a stopped container) when it ends, also when it fails half way.

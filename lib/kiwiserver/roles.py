@@ -43,6 +43,10 @@ class Role(_profiles.Profile):
         super().__init__(path, roles_root)
         meta = yaml.safe_load(util.read_text(os.path.join(path, "role.yaml"))) or {}
         self.targets = [str(t) for t in (meta.get("targets") or ["coreos", "ucore", "debian"])]
+        # coreos-ram is CoreOS live, for masters (docs/design/ram-master.md): a master or a bare
+        # machine that runs on coreos runs there too. Decided here, the profiles are kiwi-modules'.
+        if "coreos" in self.targets and (self.node_type == "master" or not self.stack) and "coreos-ram" not in self.targets:
+            self.targets.append("coreos-ram")
         self.apply_path = os.path.join(path, "apply.sh")
         if not os.path.isfile(self.apply_path):
             raise KiwiError("%s: apply.sh is missing" % self.name)

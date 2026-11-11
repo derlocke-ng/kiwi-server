@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.52.0 — a master in RAM
+
+- `target: coreos-ram`, a prototype for masters: the Fedora CoreOS live ISO with the
+  master's live Ignition, booted every time, so every boot starts from the image. It holds no
+  role and no secret. The state (the role script, the stack directory with the WireGuard keys,
+  the SSH host keys, the image cache) is one partition labelled `kiwi-state` on `disk:`, which
+  the first `apply` makes; at every boot `kiwi-state.service` binds it into place and the role
+  runs again from it. Settings `ram.copy_to_ram` (off by default: copying the image into RAM
+  needs 3 GiB, a 2 GiB machine stops in emergency mode), `ram.image_cache`, `ram.keep_logs`, in
+  the GUI under RAM. Tried in a local VM: apply, reboots, a new image on the same disk.
+  Design and the answer to the roadmap's objection: docs/design/ram-master.md.
+- A RAM master keeps the SSH CA's host certificate and trusted user CA across reboots.
+
 ## 2.51.0 — an SSH CA
 
 - `kiwi-server sshca <fleet> init` makes the fleet's SSH CA (`secrets/ssh_ca`). Every apply

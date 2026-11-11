@@ -836,6 +836,12 @@ Asked for by the owner in November 2026:
   handed over at boot they need someone, as an unlock does. A master that is disposable
   instead (one unattended rebuild that restores its identity and certificates from the
   backups in about ten minutes) gets most of it sooner; RAM can come on top.
+  *Designed and prototyped 11 November 2026* ([design/ram-master.md](design/ram-master.md)):
+  the objection does not hold, because the state stays on one partition of the master's own
+  disk under the threat model the unencrypted default master already has, and a unit reads it
+  at boot. `target: coreos-ram` (2.52.0), tried in a local VM only. Open: OS updates
+  without someone (the phoenix RAM spin with a transient root and `bootc upgrade`), netcup
+  swapping the ISO (`vps`), a hoster without ISOs.
 - **Testing updates before they reach live machines**, raised 10 November 2026:
   `kiwi-server plan` (render every host with the installed release and the new one, and
   say per host which files, units and containers change and which containers restart);

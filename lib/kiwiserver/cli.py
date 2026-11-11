@@ -15,7 +15,7 @@ import time
 from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod, sshca
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
-from .targets import coreos as coreos_t, debian as debian_t
+from .targets import coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
 
 EXIT_INVALID = 2
@@ -130,6 +130,17 @@ def host_readme(host, o, bundle=None):
               if getattr(bundle, "quadlets", None) else "    runtime: docker compose.",
               "    Container addresses: %s" % ", ".join("%s=%s" % kv for kv in bundle.container_ips.items()),
               "    On the machine: sudo kiwi-stack start|stop|update|status|logs", ""]
+    if host.target == "coreos-ram":
+        L += ["%s.bu / %s.ign" % (host.name, host.name),
+              "    Butane and Ignition of the live system, which runs from RAM. No role in it:",
+              "    kiwi-server apply makes the state partition on %s and puts the role there." % disk, "",
+              "%s.iso" % host.name,
+              "    The whole system: boot from it every time (a provider's CD-ROM, a stick).",
+              "    It installs nothing and holds no secret. A new one is the OS update.", "",
+              "On the machine:",
+              "    sudo bash %s status       the state partition" % ram_t.STATE_SCRIPT,
+              "    journalctl -u kiwi-state -u kiwi-role    this boot", ""]
+        return "\n".join(L)
     if host.target == "debian":
         L += ["%s.preseed.cfg + %s.kiwi-server/" % (host.name, host.name),
               "    What the Debian installer reads. The preseed is written for the ISO:",
@@ -391,7 +402,8 @@ class Renderer:
             if unlock.wanted(host):      # the thumbprints go into the Ignition: Ignition binds the disk
                 host.unlock_pins = unlock.pins(host, unlock.ring_servers(
                     self.fleet, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms)))
-            util.write_text(o.bu, coreos_t.render(host, script), 0o600)
+            # coreos-ram: the live system's Ignition, without the role (apply puts it on the state partition)
+            util.write_text(o.bu, ram_t.render(host) if host.target == "coreos-ram" else coreos_t.render(host, script), 0o600)
             produced.append(o.bu)
             how, why = self.tc.how("butane")
             if how:
@@ -410,6 +422,14 @@ class Renderer:
 
     def build(self, host, cache_dir):
         o, _ = self.render(host)
+        if host.target == "coreos-ram":
+            if not os.path.isfile(o.ign):
+                raise KiwiError("%s: no Ignition config — butane is needed (see kiwi-server doctor)" % host.name)
+            os.makedirs(o.media, exist_ok=True)
+            ram_t.iso(self.tc, host, o.ign, o.iso, cache_dir)
+            # the live system carries no role and no secret of it, whatever the role script holds
+            util.write_text(o.bare_mark, "this ISO carries no role and none of its secrets\n", 0o644)
+            return o
         if not host.cfg.get("disk"):
             raise KiwiError("%s: disk: is required to build an ISO (it is wiped on boot)" % host.name)
         os.makedirs(o.media, exist_ok=True)
@@ -760,7 +780,7 @@ def cmd_targets(args):
         print(json.dumps({"targets": TARGETS}, indent=2))
         return
     for k, v in TARGETS.items():
-        print("%-8s %s" % (k, v))
+        print("%-11s %s" % (k, v))
 
 
 def make_bare(fleet, hosts, note):
@@ -1105,6 +1125,11 @@ def cmd_apply(args):
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
             script, _b = r.script(h)
+            if h.target == "coreos-ram":
+                if args.no_run:
+                    util.warn("%s: without its state partition the role script stays in RAM until the next apply" % h.name)
+                else:                   # the role, the WireGuard identity and the stack belong on the state partition
+                    util.say("%s: %s" % (h.name, ram_t.prepare(h, tgt)))
             if not args.no_run and backupmod.carries_wireguard(h) and backupmod.put_back_wireguard(h, tgt):
                 util.say("%s: its WireGuard identity is back from the fleet's copy" % h.name)
             util.say("%s: sending the role script to %s" % (h.name, tgt))
@@ -1123,6 +1148,8 @@ def cmd_apply(args):
             if sshca.exists(fleet):
                 sshca.install(fleet, h, tgt)
                 util.say("%s: its host certificate is signed, its sshd takes the fleet's user certificates" % h.name)
+                if h.target == "coreos-ram":    # /etc is new at every boot: they go onto the state partition
+                    ram_t.save(h, tgt)
             record_applied(fleet, h.name)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
@@ -1267,6 +1294,8 @@ def _render_or_build(args, build):
     offline = getattr(args, "offline", False)
     if offline and args.bare:
         raise KiwiError("--bare and --offline exclude each other")
+    if offline and any(h.target == "coreos-ram" for h in hosts):
+        raise KiwiError("a coreos-ram image never carries the role: build it without --offline, then kiwi-server apply")
     if args.bare or (build and not offline):       # an ISO is bare unless it is asked for by name
         make_bare(fleet, hosts, util.say)
     check(fleet, roles, ms, hosts)
@@ -1294,8 +1323,10 @@ def _render_or_build(args, build):
         raise KiwiError("failed: %s" % ", ".join(failed))
     if offline:
         warn_offline(hosts, "ISO")
-    if build:
+    if build and any(h.target != "coreos-ram" for h in hosts):
         util.say("done — these ISOs wipe their target disk on boot; label them")
+    elif build:
+        util.say("done — boot from it every time; kiwi-server apply makes the state partition on disk: and sends the role")
     if not getattr(args, "no_backup", False):
         auto_backup(fleet)
 

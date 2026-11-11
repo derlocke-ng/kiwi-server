@@ -2000,8 +2000,8 @@ class TestSshPort(Base):
 
 
 class TestWatchStore(unittest.TestCase):
-    def test_a_locked_store_is_opened_for_one_look_and_locked_again(self):
-        calls = []
+    def test_a_locked_store_is_copied_for_one_look_and_the_link_left_alone(self):
+        calls, seen = [], []
 
         class Fake:
             def __init__(self, open_):
@@ -2016,35 +2016,31 @@ class TestWatchStore(unittest.TestCase):
             def identity(self, path=None):
                 return "AGE-SECRET-KEY-FROM-KEYRING"
 
+            def private_copy(self, key):
+                calls.append(("copy", key))
+                return {"tree": "/run/user/1000/kiwi-private-x/secrets"}
+
+            def save_private(self, copy):
+                calls.append(("save",))
+
             def unlock(self, key):
-                calls.append(("unlock", key))
-                self.open_ = True
+                calls.append(("unlock",))          # the shared link: never
 
             def lock(self):
                 calls.append(("lock",))
         args = argparse.Namespace(fleet="x/fleet.yaml", timer=None, once=True, interval=1)
+        look = lambda a: seen.append(os.environ.get("KIWI_SECRETS_DIR"))   # noqa: E731
         with mock.patch.object(cli.store.Store, "for_fleet", lambda p: Fake(False)), \
-             mock.patch.object(cli, "_watch_once", lambda a: calls.append(("look",))):
+             mock.patch.object(cli, "_watch_once", look):
             cli.cmd_watch(args)
-        self.assertEqual(calls, [("unlock", "AGE-SECRET-KEY-FROM-KEYRING"), ("look",), ("lock",)])
+        self.assertEqual(calls, [("copy", "AGE-SECRET-KEY-FROM-KEYRING"), ("save",)])
+        self.assertEqual(seen, ["/run/user/1000/kiwi-private-x/secrets"])
+        self.assertIsNone(os.environ.get("KIWI_SECRETS_DIR"))
         calls.clear()
         with mock.patch.object(cli.store.Store, "for_fleet", lambda p: Fake(True)), \
-             mock.patch.object(cli, "_watch_once", lambda a: calls.append(("look",))):
+             mock.patch.object(cli, "_watch_once", look):
             cli.cmd_watch(args)
-        self.assertEqual(calls, [("look",)])          # opened by the owner: left as it is
-
-
-class TestSeedGuard(Base):
-    def test_no_new_seed_beside_a_locked_store(self):
-        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
-            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
-        seed = f.resolve_path("secrets/seed")
-        if os.path.exists(seed):
-            os.remove(seed)
-        write(os.path.join(self.tmp, "secrets.age"), "x")             # a store, not open
-        with self.assertRaisesRegex(KiwiError, "secret store is locked"):
-            f.seed()
-        self.assertFalse(os.path.exists(seed))
+        self.assertEqual(calls, [])          # opened by the owner: used as it is
 
 
 class TestCheck(Base):

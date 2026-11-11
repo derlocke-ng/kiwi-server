@@ -20,11 +20,19 @@ svc=$(systemctl is-active -q sshd.service 2>/dev/null && echo sshd || echo ssh)
 if [ "$port" = 22 ]; then
     [ -f "$conf" ] || exit 0
     rm -f "$conf"
+    if command -v semodule >/dev/null && semodule -l 2>/dev/null | grep -qx kiwi-ssh-port; then semodule -r kiwi-ssh-port; fi
 else
     if command -v getenforce >/dev/null && [ "$(getenforce)" != Disabled ]; then
-        command -v semanage >/dev/null || { echo "SELinux is on and semanage is missing: port $port left out" >&2; exit 3; }
-        semanage port -l | grep -qE "^ssh_port_t .*[ ,]$port(,|$)" || semanage port -a -t ssh_port_t -p tcp "$port" \
-            || semanage port -m -t ssh_port_t -p tcp "$port"
+        if command -v semanage >/dev/null; then
+            semanage port -l | grep -qE "^ssh_port_t .*[ ,]$port(,|$)" || semanage port -a -t ssh_port_t -p tcp "$port" \
+                || semanage port -m -t ssh_port_t -p tcp "$port"
+        elif command -v semodule >/dev/null; then
+            # Fedora CoreOS has no semanage: the port's label as a policy module of its own
+            printf '(portcon tcp %%s (system_u object_r ssh_port_t ((s0)(s0))))\n' "$port" > /etc/selinux/kiwi-ssh-port.cil
+            semodule -i /etc/selinux/kiwi-ssh-port.cil
+        else
+            echo "SELinux is on and neither semanage nor semodule is here: port $port left out" >&2; exit 3
+        fi
     fi
     if systemctl is-active -q firewalld 2>/dev/null; then
         firewall-cmd -q --query-port="$port/tcp" || { firewall-cmd -q --permanent --add-port="$port/tcp"; firewall-cmd -q --add-port="$port/tcp"; }

@@ -451,7 +451,8 @@ class Renderer:
 
 def load(args, need_roles=True):
     st = store.Store.for_fleet(args.fleet)
-    if st.locked():      # before anything looks in secrets/: a missing seed would be made anew
+    if st.locked() and not os.environ.get("KIWI_SECRETS_DIR"):     # (a private copy is open for this process)
+        # before anything looks in secrets/: a missing seed would be made anew
         raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % args.fleet)
     fleet = config.Fleet.load(args.fleet)
     remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
@@ -1283,31 +1284,33 @@ def cmd_watch(args):
     if args.timer:
         return ram_t.watch_timer(os.path.abspath(args.fleet), args.timer == "on")
     while True:
-        opened = _open_for_watch(args.fleet)
+        copy = _open_for_watch(args.fleet)
         try:
+            if copy:
+                os.environ["KIWI_SECRETS_DIR"] = copy[1]["tree"]
             _watch_once(args)
         finally:
-            if opened:              # as it was: the store is open only as long as a look takes
-                opened.lock()
+            os.environ.pop("KIWI_SECRETS_DIR", None)
+            if copy:
+                copy[0].save_private(copy[1])
         if args.once:
             return
         time.sleep(args.interval)
 
 
 def _open_for_watch(path):
-    """A locked secret store opened from this computer's keyring for one look (a timer has
-    nobody to ask); None when it was open already or there is none."""
+    """A locked secret store decrypted from this computer's keyring into a copy of its own for
+    one look (a timer has nobody to ask): the store's link is never touched, so the owner can
+    open and lock it meanwhile. None when it is open already (then the look uses it) or there
+    is none."""
     st = store.Store.for_fleet(path)
     if not st.exists() or st.is_open():
         return None
     try:
-        st.unlock(st.identity())
-        if not st.is_open():
-            raise KiwiError("it did not open")
+        return st, st.private_copy(st.identity())
     except KiwiError as e:
         raise KiwiError("the secret store is locked and the keyring did not open it (%s): "
                         "a RAM master that boots now stays blank until kiwi-server secrets unlock %s" % (e, path))
-    return st
 
 
 def _watch_once(args):

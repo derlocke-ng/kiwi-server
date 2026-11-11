@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.56.3 — watch on a copy of its own
+
+- `watch` with a locked store decrypts it into a copy for itself alone and writes back what it
+  changed (unless `secrets.age` changed meanwhile): the store's link is never touched, so the
+  owner can open and lock the store while a look runs. Before, a look locked a store the owner
+  had just opened, and a lock during a look made it write a new seed (2.56.2 stops that too).
+- `admin.ssh_port` on a host with SELinux and no semanage (Fedora CoreOS): the port's label as a
+  small policy module (`semodule`).
+
 ## 2.56.2 — never a new seed beside a locked store
 
 - A command that needed the fleet's seed while its secret store was locked made a new seed in

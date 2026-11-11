@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 
 from .util import KiwiError
@@ -268,6 +269,34 @@ class Store:
         if r.returncode != 0:
             raise KiwiError("that key does not open this store")
         return r.stdout
+
+    def private_copy(self, identity):
+        """The store decrypted into a directory of its own for one process: the shared link, and
+        a session that opens or locks the store meanwhile, are not touched. Returns a handle for
+        save_private."""
+        data = self._decrypt(identity)
+        base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"
+        d = tempfile.mkdtemp(prefix="kiwi-private-", dir=base)
+        tree = os.path.join(d, "secrets")
+        extract(data, tree)
+        with open(self.file, "rb") as f:
+            on_disk = hashlib.sha256(f.read()).hexdigest()
+        return {"dir": d, "tree": tree, "digest": hashlib.sha256(snapshot(tree)).hexdigest(), "file": on_disk}
+
+    def save_private(self, copy):
+        """What the process changed in its copy into the store, unless the file changed under it;
+        the copy is removed either way."""
+        try:
+            data = snapshot(copy["tree"])
+            if hashlib.sha256(data).hexdigest() == copy["digest"]:
+                return False
+            with open(self.file, "rb") as f:
+                if hashlib.sha256(f.read()).hexdigest() != copy["file"]:
+                    raise KiwiError("%s changed on disk meanwhile: this run's changes are not saved" % self.file)
+            self._encrypt(data)
+            return True
+        finally:
+            shutil.rmtree(copy["dir"], ignore_errors=True)
 
     def _open(self, data):
         shutil.rmtree(self.runtime(), ignore_errors=True)

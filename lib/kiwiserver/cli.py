@@ -1302,6 +1302,8 @@ def _open_for_watch(path):
         return None
     try:
         st.unlock(st.identity())
+        if not st.is_open():
+            raise KiwiError("it did not open")
     except KiwiError as e:
         raise KiwiError("the secret store is locked and the keyring did not open it (%s): "
                         "a RAM master that boots now stays blank until kiwi-server secrets unlock %s" % (e, path))

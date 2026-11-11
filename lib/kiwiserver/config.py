@@ -516,6 +516,12 @@ class Fleet:
         a new seed rotates every generated secret."""
         p = self.resolve_path("secrets/seed")
         if not os.path.isfile(p):
+            from . import store
+            st = store.Store.for_fleet(self.path)
+            if st.exists() and not st.is_open():
+                # never a new seed beside a locked store: every generated secret would differ
+                # (found: a watch run whose store was locked under it made one in a plain secrets/)
+                raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % self.path)
             os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
             util.write_bytes(p, os.urandom(32), 0o600)
             # stderr: `script` and --porcelain keep stdout for their payload

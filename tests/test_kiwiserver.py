@@ -2018,6 +2018,7 @@ class TestWatchStore(unittest.TestCase):
 
             def unlock(self, key):
                 calls.append(("unlock", key))
+                self.open_ = True
 
             def lock(self):
                 calls.append(("lock",))
@@ -2031,6 +2032,19 @@ class TestWatchStore(unittest.TestCase):
              mock.patch.object(cli, "_watch_once", lambda a: calls.append(("look",))):
             cli.cmd_watch(args)
         self.assertEqual(calls, [("look",)])          # opened by the owner: left as it is
+
+
+class TestSeedGuard(Base):
+    def test_no_new_seed_beside_a_locked_store(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        seed = f.resolve_path("secrets/seed")
+        if os.path.exists(seed):
+            os.remove(seed)
+        write(os.path.join(self.tmp, "secrets.age"), "x")             # a store, not open
+        with self.assertRaisesRegex(KiwiError, "secret store is locked"):
+            f.seed()
+        self.assertFalse(os.path.exists(seed))
 
 
 class TestCheck(Base):

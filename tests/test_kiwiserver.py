@@ -3869,6 +3869,18 @@ class TestVps(Base):
         self.assertEqual(self.api.calls[3][2], {"userIsoName": "kiwi-x.iso", "changeBootDeviceToCdrom": True})
         self.assertIn("next: kiwi-server apply", out)
 
+    def test_a_ram_master_boots_its_image_and_keeps_it_attached(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "target": "coreos-ram", "vps": {"server": 7}}}})
+        self.logged_in()
+        self.built()
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.api.seen(), [
+            ("POST", "/users/94774/isos/kiwi-x.iso"), ("PUT", "/s3/kiwi-x.iso"),
+            ("PATCH", "/servers/7"), ("POST", "/servers/7/iso"), ("PATCH", "/servers/7")])  # off, attach, on: no detach
+        self.assertIn("kiwi-server watch", out)
+
     def assert_refused(self, needle, *flags, fleet=None):
         f = fleet or self.vps_fleet()
         rc, out, err = self.run_cli("vps", "install", f.path, "x", *flags)
@@ -4235,7 +4247,7 @@ class TestCli(Base):
         rc, out, _ = self.run_cli("modules", "--porcelain")
         self.assertEqual(len(json.loads(out)["modules"]), 20)
         rc, out, _ = self.run_cli("targets", "--porcelain")
-        self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian"})
+        self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "coreos-ram"})
 
     def test_validate_render_list_show(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

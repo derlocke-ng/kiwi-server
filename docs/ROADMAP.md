@@ -836,6 +836,12 @@ Asked for by the owner in November 2026:
   handed over at boot they need someone, as an unlock does. A master that is disposable
   instead (one unattended rebuild that restores its identity and certificates from the
   backups in about ten minutes) gets most of it sooner; RAM can come on top.
+  *Designed and prototyped 11 November 2026* ([design/ram-master.md](design/ram-master.md)):
+  the master keeps nothing, and the "someone" at boot is a machine at home: the image carries
+  only its SSH host key, and `kiwi-server watch` sends a blank master its role and the
+  identity the fleet keeps of it. `target: coreos-ram` (2.52.0), tried in a local VM only.
+  Open: the control node running `watch`, the phoenix spin with the images inside, netcup
+  swapping the ISO (`vps`), a hoster without ISOs.
 - **Testing updates before they reach live machines**, raised 10 November 2026:
   `kiwi-server plan` (render every host with the installed release and the new one, and
   say per host which files, units and containers change and which containers restart);

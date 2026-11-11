@@ -222,6 +222,26 @@ def probe(client, server):
             "iso": client.attached_iso(sid)}
 
 
+def boot_live(client, server, iso_path, key, say):
+    """A RAM master: its image stays attached and is what it boots, every time. A new image
+    replaces the one attached before, which then leaves netcup's store; the disk is not used."""
+    sid = server["id"]
+    old = client.attached_iso(sid)
+    say("uploading %s (%d MB)" % (os.path.basename(iso_path), os.path.getsize(iso_path) >> 20))
+    client.upload_iso(key, iso_path)
+    if client.state(sid) != "SHUTOFF":
+        say("powering off")
+        client.power(sid, False)
+    client.attach_iso(sid, key)
+    client.power(sid, True)
+    say("booting the image from RAM")
+    if old and old != key:
+        try:
+            client.delete_iso(old)
+        except KiwiError as e:
+            say("the image before (%s) stays in netcup's store: %s" % (old, e))
+
+
 def install(client, server, iso_path, key, say):
     """Upload, attach, boot from it, wait for the installer's power-off, detach,
     the disk first in the boot order again, the ISO out of netcup's store, power on."""

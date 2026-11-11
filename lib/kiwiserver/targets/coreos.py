@@ -155,13 +155,8 @@ def _unlock_kargs(host, pins):
     return ["rd.neednet=1", "ip=%s::%s:%s::%s:none" % (addr.ip, net["gateway"] or "", addr.netmask, net["interface"])]
 
 
-def build_butane(host, role_script):
-    c = host.cfg
-    pins = getattr(host, "unlock_pins", None)
-    ucore = host.target == "ucore"
-    files, dirs, links, units = [], [], [], []
-
-    # ---- admin user ---------------------------------------------------------
+def admin_user(host):
+    """The admin user: keys, the console password, sudo through wheel unless it is core."""
     a = host.admin
     user = {"name": a["user"]}
     keys = host.ssh_keys()
@@ -175,8 +170,12 @@ def build_butane(host, role_script):
         groups = ["wheel", "sudo"] + [g for g in groups if g not in ("wheel", "sudo")]
     if groups:
         user["groups"] = groups
+    return user
 
-    # ---- base system ----------------------------------------------------------
+
+def base_system(host, files, links):
+    """Hostname, motd, time zone, a static address, SSH passwords if asked for."""
+    c = host.cfg
     files.append(_file("/etc/hostname", host.hostname + "\n"))
     if c.get("motd"):
         files.append(_file("/etc/motd", str(c["motd"]).rstrip("\n") + "\n"))
@@ -188,9 +187,49 @@ def build_butane(host, role_script):
     if km:
         files.append(_file("/etc/NetworkManager/system-connections/kiwi-static.nmconnection",
                            km, mode=0o600))
-    if a.get("ssh_password_auth"):
+    if host.admin.get("ssh_password_auth"):
         files.append(_file("/etc/ssh/sshd_config.d/20-kiwi-passwords.conf",
                            "PasswordAuthentication yes\n"))
+
+
+def passthrough(co, files, dirs, units):
+    """coreos.services, units, files and directories: plain Butane fields."""
+    for svc in co.get("services") or []:
+        units.append({"name": SERVICE_MAP.get(str(svc), str(svc)), "enabled": True})
+    for unit in co.get("units") or []:
+        units.append(dict(unit))
+    for f in co.get("files") or []:
+        f = dict(f)
+        contents = f.pop("contents", "")
+        entry = {"path": f.pop("path"), "mode": int(f.pop("mode", 0o644)),
+                 "overwrite": bool(f.pop("overwrite", True))}
+        entry["contents"] = contents if isinstance(contents, dict) else {"inline": str(contents)}
+        entry.update(f)
+        files.append(entry)
+    for d in co.get("directories") or []:
+        dirs.append({"path": d["path"], "mode": int(d.get("mode", 0o755))})
+
+
+def assemble(user, files, dirs, links, units):
+    storage = {}
+    if dirs:
+        storage["directories"] = dirs
+    if files:
+        storage["files"] = files
+    if links:
+        storage["links"] = links
+    return {"variant": BUTANE_VARIANT, "version": BUTANE_VERSION, "passwd": {"users": [user]},
+            "storage": storage, "systemd": {"units": units}}
+
+
+def build_butane(host, role_script):
+    c = host.cfg
+    pins = getattr(host, "unlock_pins", None)
+    ucore = host.target == "ucore"
+    files, dirs, links, units = [], [], [], []
+
+    user = admin_user(host)
+    base_system(host, files, links)
 
     # ---- updates ----------------------------------------------------------------
     u = host.updates()
@@ -213,37 +252,12 @@ def build_butane(host, role_script):
     units.append({"name": "kiwi-role.service", "enabled": True,
                   "contents": role_unit(host, extra_conditions=[UCORE_SIGNED_MARKER] if ucore else [])})
 
-    # ---- advanced passthrough (plain Butane fields) --------------------------
     co = c["coreos"]
-    for svc in co.get("services") or []:
-        units.append({"name": SERVICE_MAP.get(str(svc), str(svc)), "enabled": True})
-    for unit in co.get("units") or []:
-        units.append(dict(unit))
-    for f in co.get("files") or []:
-        f = dict(f)
-        contents = f.pop("contents", "")
-        entry = {"path": f.pop("path"), "mode": int(f.pop("mode", 0o644)),
-                 "overwrite": bool(f.pop("overwrite", True))}
-        entry["contents"] = contents if isinstance(contents, dict) else {"inline": str(contents)}
-        entry.update(f)
-        files.append(entry)
-    for d in co.get("directories") or []:
-        dirs.append({"path": d["path"], "mode": int(d.get("mode", 0o755))})
-
-    # ---- assemble ---------------------------------------------------------------------
-    bu = {"variant": BUTANE_VARIANT, "version": BUTANE_VERSION,
-          "passwd": {"users": [user]}}
-    storage = {}
-    if dirs:
-        storage["directories"] = dirs
-    if files:
-        storage["files"] = files
-    if links:
-        storage["links"] = links
+    passthrough(co, files, dirs, units)
+    bu = assemble(user, files, dirs, links, units)
+    storage = bu["storage"]
     if co.get("luks"):
         storage["luks"] = co["luks"] if isinstance(co["luks"], list) else [co["luks"]]
-    bu["storage"] = storage
-    bu["systemd"] = {"units": units}
     kargs = [str(k) for k in (co.get("kernel_arguments") or [])] + _unlock_kargs(host, pins)
     if kargs:
         bu["kernel_arguments"] = {"should_exist": kargs}

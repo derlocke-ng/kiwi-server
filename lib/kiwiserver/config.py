@@ -26,6 +26,7 @@ TARGETS = {
     "coreos": "Fedora CoreOS, stable stream — Zincati applies updates in your window",
     "ucore":  "uCore — Fedora CoreOS that rebases itself onto a ghcr.io/ublue-os/ucore image",
     "debian": "Debian stable (trixie) netinst with a preseed — unattended-upgrades",
+    "coreos-ram": "Fedora CoreOS live, in RAM: every boot starts from the image, the state on one partition (masters)",
 }
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -91,6 +92,10 @@ DEFAULTS = {
     },
     "ucore": {
         "image": "ghcr.io/ublue-os/ucore:stable",
+    },
+    "ram": {
+        # target coreos-ram (docs/design/ram-master.md)
+        "copy_to_ram": False,    # the image into RAM too (about 900 MB more, 3 GiB at least); off: read from the medium
     },
     "debian": {
         "release": "trixie",
@@ -189,7 +194,7 @@ _KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@", "
 
 
 # the blocks whose keys are fixed: a misspelled one is an error, not a silently ignored line
-_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "debian", "unlock", "tls", "backup", "vps")
+_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "ram", "debian", "unlock", "tls", "backup", "vps")
 
 
 def unknown_keys(block, roles, where):
@@ -404,7 +409,11 @@ class Host:
         if self.cfg.get("disk") and not str(self.cfg["disk"]).startswith("/dev/"):
             errs.append("disk must be a device path like /dev/sda or /dev/nvme0n1")
         if not self.cfg.get("disk"):
-            self.warnings.append("no disk: set — configs render, but an ISO cannot be built")
+            if self.target != "coreos-ram":     # it touches no disk
+                self.warnings.append("no disk: set — configs render, but an ISO cannot be built")
+        if self.target == "coreos-ram":
+            from .targets import ram
+            errs += ram.problems(self)
         d = c["debian"]
         if d.get("partitioning") not in ("regular", "lvm", "crypto"):
             errs.append("debian.partitioning must be regular, lvm or crypto")

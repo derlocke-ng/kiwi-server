@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.53.0 — a master in RAM
+
+- `target: coreos-ram`, a prototype for masters that live in RAM only: the Fedora CoreOS
+  live ISO with the master's live Ignition, booted every time, touching no disk. The image
+  carries no role, only the machine's SSH host key (`secrets/ram/<host>/`, signed by the SSH
+  CA when the fleet has one, pinned in `known_hosts`).
+- `kiwi-server watch <fleet>`: sends the role to a RAM master that booted blank, putting
+  back its WireGuard identity and Let's Encrypt state from the fleet's copies, and refreshes
+  those copies hourly while it runs. `--timer on`: a user timer that looks every minute.
+- `ram.copy_to_ram` (off: copying the image into RAM needs 3 GiB, a 2 GiB machine stops in
+  emergency mode), in the GUI under RAM. Design and the answer to the roadmap's objection:
+  docs/design/ram-master.md. Tried in a local VM without a disk.
+
 ## 2.52.0 — a plan before an update
 
 - `kiwi-server plan <fleet> [host...]`: what an apply would change on each running machine

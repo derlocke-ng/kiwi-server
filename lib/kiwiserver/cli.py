@@ -836,6 +836,21 @@ def _iso_key(host):
     return "kiwi-%s-%d.iso" % (host.name, time.time())
 
 
+def vps_boot_ram(args, fleet, client, server, h):
+    base = os.path.join(media_dir_for(args, fleet), h.name, h.name)
+    if not os.path.isfile(base + ".iso"):
+        raise KiwiError("no image for %s yet: kiwi-server build %s %s" % (h.name, os.path.basename(fleet.path), h.name))
+    label = server.get("nickname") or server.get("name")
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise KiwiError("this restarts %s from the RAM image: add --yes to go ahead" % label)
+        if input("%s boots the RAM image from now on (its disk is left as it is). Type its name to go ahead: "
+                 % label).strip() != label:
+            raise KiwiError("not confirmed, nothing touched")
+    netcup.boot_live(client, server, base + ".iso", _iso_key(h), lambda m: util.say("%s: %s" % (h.name, m)))
+    util.say("%s: next: kiwi-server watch %s sends it its role once it answers" % (h.name, os.path.basename(fleet.path)))
+
+
 def vps_install(args, fleet, client, server):
     h = fleet.hosts.get(args.target)
     if h is None:
@@ -845,6 +860,8 @@ def vps_install(args, fleet, client, server):
         raise KiwiError("%s has %d MiB of memory, and encrypting a CoreOS root copies the whole root into memory at the first boot: "
                         "it runs out and stops in emergency mode, with nothing to see from here. Give it about 4 GiB, or target: debian"
                         % (h.name, memory))
+    if h.target == "coreos-ram":
+        return vps_boot_ram(args, fleet, client, server, h)
     disks = client.disks(server["id"])
     want = netcup.device_for(disks[0]) if disks else None
     if want and h.cfg.get("disk") != want:

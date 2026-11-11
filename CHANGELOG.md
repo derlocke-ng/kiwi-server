@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.56.2 — never a new seed beside a locked store
+
+- A command that needed the fleet's seed while its secret store was locked made a new seed in
+  a plain `secrets/` directory — different from the store's, so every generated secret would
+  have differed, and the next `secrets unlock` refused the directory. It says the store is
+  locked now. Seen once on the kiwi2 test fleet with the watch timer; nothing was applied with
+  the stray seed. `watch` also checks that the store really opened.
+
 ## 2.56.1 — fail2ban for public sites
 
 - kiwi-modules 0.27.1: on a master with public sites fail2ban also bans scanners (requests for

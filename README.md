@@ -617,6 +617,13 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 - **The machines' SSH host keys** are kept in `secrets/known_hosts`: the first
   contact accepts a new machine's key, a changed key (a reinstall) is refused
   until you drop the old line (`ssh-keygen -R <host> -f secrets/known_hosts`).
+- **An SSH CA** (`kiwi-server sshca fleet.yaml init`, kept as `secrets/ssh_ca`): every
+  apply then gives the machine a host certificate for its names and addresses, so it is
+  known at a new address without trusting the first key shown there, and its sshd takes
+  user certificates. `sshca fleet.yaml sign ~/.ssh/id_ed25519.pub --days 30` lets a key in
+  on every machine for that long, `sshca fleet.yaml trust` puts the CA in your
+  `~/.ssh/known_hosts`. `admin.ssh_keys` keep working beside it; the unlock at boot keeps
+  its own key.
 - **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the
   step and the command, `kiwi-server status` shows it, and the marker that
   means "applied" is only written once every container of the stack runs.

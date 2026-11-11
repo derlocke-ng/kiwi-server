@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.51.0 — an SSH CA
+
+- `kiwi-server sshca <fleet> init` makes the fleet's SSH CA (`secrets/ssh_ca`). Every apply
+  then signs the machine's host key for its names and addresses and lets its sshd take user
+  certificates; `sshca sign KEY [--days N]` lets a key in on every machine for N days,
+  `sshca trust` adds the CA to `~/.ssh/known_hosts`.
+- A machine at an address the fleet never met is reached when it shows the CA's certificate,
+  still never by trusting the first key it shows.
+- GUI: text too long for its row is cut, the rest behind an (i); "?" stays for what a field
+  means. Role and module descriptions are behind an (i).
+
 ## 2.50.0 — backups in the app
 
 - `kiwi-server backups <fleet> <host>`: what each backup server keeps of a machine;

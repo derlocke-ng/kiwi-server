@@ -88,10 +88,32 @@ def reach(host, override=None):
     """
     if override:
         return override
+    user = host.admin["user"]
     for address in addresses(host):
         if _on_record(address) and _answers(address):
-            return "%s@%s" % (host.admin["user"], address)
+            return "%s@%s" % (user, address)
+    for address in addresses(host)[1:]:     # met nowhere yet: one whose certificate the fleet's CA signed
+        if _ca_known() and _answers(address) and _certified("%s@%s" % (user, address)):
+            return "%s@%s" % (user, address)
     return target(host)
+
+
+def _ca_known():
+    if not KNOWN_HOSTS or not os.path.isfile(KNOWN_HOSTS):
+        return False
+    with open(KNOWN_HOSTS) as fh:
+        return "@cert-authority " in fh.read()
+
+
+def _certified(tgt):
+    """Does the machine there show a host certificate of the fleet's CA? Strict, so a key
+    nobody vouches for is refused rather than recorded."""
+    opts = ["StrictHostKeyChecking=yes" if o == "StrictHostKeyChecking=accept-new" else o for o in ssh_opts()]
+    argv = ["ssh"] + opts + ["-o", "ConnectTimeout=8", tgt, "true"]
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _key_blobs(lines):

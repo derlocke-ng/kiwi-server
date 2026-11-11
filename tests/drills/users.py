@@ -33,6 +33,8 @@ extra.add_argument("--backup-at", nargs=2, metavar=("MINUTE", "HOST"))
 extra.add_argument("--restart-at", nargs=2, metavar=("MINUTE", "UNIT"), help="restart a unit on the master then, as an update does")
 extra.add_argument("--partner", help="the partner network's fleet file: one user of it opens what is shared")
 extra.add_argument("--partner-ssh", help="how to reach the partner's master")
+extra.add_argument("--client", choices=("wg", "gluetun"), default="wg",
+                   help="wg: plain wg-quick, as a phone's app (default); gluetun: a node's VPN client")
 opts, rest = extra.parse_known_args()
 sys.argv = [sys.argv[0]] + rest
 args, fleet, m = setup(__doc__.splitlines()[0], roles=("master",))
@@ -77,7 +79,7 @@ fi
 
 
 class User:
-    def __init__(self, name, fleet_path, ssh, urls, dns_names, dns, nc=None):
+    def __init__(self, name, fleet_path, ssh, urls, dns_names, dns, nc=None, mesh=()):
         self.name, self.urls, self.dns_names, self.dns, self.nc = name, urls, dns_names, dns, nc
         conf = os.path.join(os.path.dirname(os.path.abspath(fleet_path)), "secrets", "devices", name + ".conf")
         cmd = ["enroll", fleet_path, name] + (["--ssh", ssh] if ssh else []) + (["--existing"] if os.path.isfile(conf) else [])
@@ -87,6 +89,32 @@ class User:
         self.box = "kiwi-%s" % name
         for c in (self.box + "-tools", self.box):
             subprocess.run(["podman", "rm", "-f", c], capture_output=True)
+        if opts.client == "wg":
+            self.tools = self.box
+            plain = os.path.join(os.path.dirname(conf), ".%s.wg-quick.conf" % name)
+            # no DNS line (wg-quick would want resolvconf; dig asks the Pi-hole itself), and the meshes
+            # only, as a phone's split tunnel: a full one makes wg-quick set a kernel switch a
+            # container may not
+            with open(conf) as fh:
+                text = "".join(("AllowedIPs = %s\n" % ", ".join(mesh)) if line.startswith("AllowedIPs") and mesh else line
+                               for line in fh if not line.startswith("DNS"))
+            fd = os.open(plain, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(text)
+            self.plain = plain
+            # the kernel's WireGuard in the container's own namespace (rootless podman may make one)
+            subprocess.run(["podman", "run", "-d", "--name", self.box, "--security-opt", "label=disable", "--cap-add", "NET_ADMIN",
+                            "--sysctl", "net.ipv4.conf.all.src_valid_mark=1",
+                            "-v", "%s:/etc/wireguard/wg0.conf:ro" % plain, "docker.io/library/alpine:3.20", "sh", "-c",
+                            "apk add -q curl bind-tools wireguard-tools iproute2 iptables ip6tables && wg-quick up wg0 && sleep infinity"],
+                           check=True, capture_output=True)
+            for _ in range(40):
+                if subprocess.run(["podman", "exec", self.box, "sh", "-c", "wg show wg0 latest-handshakes | awk '$2>0' | grep -q ."],
+                                  capture_output=True).returncode == 0:
+                    break
+                time.sleep(3)
+            return
+        self.tools, self.plain = self.box + "-tools", None
         subprocess.run(["podman", "run", "-d", "--name", self.box, "--security-opt", "label=disable", "--cap-add", "NET_ADMIN",
                         "--device", "/dev/net/tun", "-e", "VPN_SERVICE_PROVIDER=custom", "-e", "VPN_TYPE=wireguard",
                         "-e", "WIREGUARD_IMPLEMENTATION=userspace", "-e", "DOT=off", "-e", "FIREWALL_OUTBOUND_SUBNETS=",
@@ -110,7 +138,7 @@ class User:
         if self.nc:
             env += "NC=%s\nNCIP=%s\nNCPASS='%s'\n" % (self.nc[0], self.nc[1], self.nc[2].replace("'", "'\\''"))
         try:
-            p = subprocess.run(["podman", "exec", "-i", self.box + "-tools", "sh", "-s"], input=env + SCRIPT,
+            p = subprocess.run(["podman", "exec", "-i", self.tools, "sh", "-s"], input=env + SCRIPT,
                                capture_output=True, text=True, timeout=300)
             out = p.stdout
         except subprocess.TimeoutExpired:
@@ -129,12 +157,14 @@ class User:
     def cleanup(self):
         if self.nc:
             env = "NC=%s\nNCIP=%s\nNCPASS='%s'\n" % (self.nc[0], self.nc[1], self.nc[2].replace("'", "'\\''"))
-            subprocess.run(["podman", "exec", "-i", self.box + "-tools", "sh", "-s"], input=env +
+            subprocess.run(["podman", "exec", "-i", self.tools, "sh", "-s"], input=env +
                            'curl -sk -u "admin:$NCPASS" -X DELETE -o /dev/null --max-time 30 --resolve "$NC:443:$NCIP" '
                            '"https://$NC/remote.php/dav/files/admin/kiwi-users/%s.bin"\n' % self.name,
                            capture_output=True, text=True, timeout=60)
         for c in (self.box + "-tools", self.box):
             subprocess.run(["podman", "rm", "-f", c], capture_output=True)
+        if self.plain and os.path.exists(self.plain):
+            os.remove(self.plain)
 
 
 def ok(kind, code):
@@ -142,6 +172,7 @@ def ok(kind, code):
 
 
 urls = ["%s:443:%s" % (n, ip) for n, ip in services]
+own_mesh = (fleet.defaults.get("master") or {}).get("mesh_subnet") or "10.8.0.0/16"
 users = []
 results, lock, events = [], threading.Lock(), []
 try:
@@ -149,7 +180,7 @@ try:
                                                               cloud[0] if cloud else "none"))
     for i in range(opts.users):
         users.append(User("drill-user-%d" % (i + 1), args.fleet, master.target, urls, hosts[:3] + ["example.com", "wikipedia.org"],
-                          dns_ip, cloud))
+                          dns_ip, cloud, mesh=[own_mesh]))
     if opts.partner:
         with open(os.path.join(os.path.dirname(os.path.abspath(args.fleet)), "federation.yaml")) as fh:
             fed = yaml.safe_load(fh) or {}
@@ -157,8 +188,10 @@ try:
         shared = ["%s.%s" % (e, fleet.defaults.get("domain") or "home") for e in (fed.get(pname) or {}).get("share") or [] if "." in e]
         purls = ["%s:443:%s" % (n, ip) for n, ip in services if n in shared]
         with open(opts.partner) as fh:
-            pdns = ((yaml.safe_load(fh) or {}).get("defaults", {}).get("master") or {}).get("vpn-server", {}).get("server_ip") or "10.10.0.1"
-        users.append(User("drill-partner-1", opts.partner, opts.partner_ssh, purls, shared, pdns))
+            pmaster = (yaml.safe_load(fh) or {}).get("defaults", {}).get("master") or {}
+        pdns = pmaster.get("vpn-server", {}).get("server_ip") or "10.10.0.1"
+        users.append(User("drill-partner-1", opts.partner, opts.partner_ssh, purls, shared, pdns,
+                          mesh=[pmaster.get("mesh_subnet") or "10.10.0.0/16", own_mesh]))
         say("partner user of %s: %s" % (pname, " ".join(shared) or "nothing shared"))
     t0 = time.time()
     end = t0 + opts.minutes * 60

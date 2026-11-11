@@ -542,10 +542,10 @@ what comes next for every machine not installed yet: enroll, build, install,
 apply. *+* adds a host with the next free fruit (or fruit dish, for a master) as
 its name. A **host** has two tabs. *Overview* is what the machine says about
 itself: system, load, memory, disks, every service with its state, the tunnel,
-and the web interfaces to open from the mesh. *Settings* is the form: every field
-shows what it inherits; the role's stack settings and one group per module appear,
-built from `role.yaml` and the modules' `module.yaml`; changing the `modules` list
-changes the groups.
+and the web interfaces to open from the mesh. *Settings* has a page per section
+(machine, role, each module, admin, network, updates, the target): every field shows
+what it inherits, its "?" says what it is for. Changing the `modules` list or the
+target changes the pages.
 
 The machines are asked once a minute while the window has the focus, over SSH and
 read-only, through `kiwi-server status --porcelain`, which is also where it is

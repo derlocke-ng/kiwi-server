@@ -113,7 +113,8 @@ class Outputs:
 def host_readme(host, o, bundle=None):
     disk = host.cfg.get("disk") or "<disk: not set>"
     L = ["%s — %s" % (host.name, host.hostname),
-         "target: %s    role: %s    install disk: %s" % (host.target, host.role, disk)]
+         "target: %s    role: %s    %s" % (host.target, host.role,
+                                              "in RAM, no disk" if host.target == "coreos-ram" else "install disk: %s" % disk)]
     if host.modules:
         L.append("modules: %s" % ", ".join(host.modules))
     L += ["",
@@ -132,14 +133,12 @@ def host_readme(host, o, bundle=None):
               "    On the machine: sudo kiwi-stack start|stop|update|status|logs", ""]
     if host.target == "coreos-ram":
         L += ["%s.bu / %s.ign" % (host.name, host.name),
-              "    Butane and Ignition of the live system, which runs from RAM. No role in it:",
-              "    kiwi-server apply makes the state partition on %s and puts the role there." % disk, "",
+              "    Butane and Ignition of the live system, which runs from RAM and touches no disk.",
+              "    No role in it; its one secret is the SSH host key in secrets/ram/%s/." % host.name, "",
               "%s.iso" % host.name,
               "    The whole system: boot from it every time (a provider's CD-ROM, a stick).",
-              "    It installs nothing and holds no secret. A new one is the OS update.", "",
-              "On the machine:",
-              "    sudo bash %s status       the state partition" % ram_t.STATE_SCRIPT,
-              "    journalctl -u kiwi-state -u kiwi-role    this boot", ""]
+              "    After every boot it waits; kiwi-server watch (or apply) sends the role.",
+              "    A new image is the OS update.", ""]
         return "\n".join(L)
     if host.target == "debian":
         L += ["%s.preseed.cfg + %s.kiwi-server/" % (host.name, host.name),
@@ -427,8 +426,8 @@ class Renderer:
                 raise KiwiError("%s: no Ignition config — butane is needed (see kiwi-server doctor)" % host.name)
             os.makedirs(o.media, exist_ok=True)
             ram_t.iso(self.tc, host, o.ign, o.iso, cache_dir)
-            # the live system carries no role and no secret of it, whatever the role script holds
-            util.write_text(o.bare_mark, "this ISO carries no role and none of its secrets\n", 0o644)
+            # the live system carries no role; its one secret is the machine's SSH host key
+            util.write_text(o.bare_mark, "this ISO carries no role and none of its secrets, only the machine's SSH host key\n", 0o644)
             return o
         if not host.cfg.get("disk"):
             raise KiwiError("%s: disk: is required to build an ISO (it is wiped on boot)" % host.name)
@@ -1170,13 +1169,10 @@ def cmd_apply(args):
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
             script, _b = r.script(h)
-            if h.target == "coreos-ram":
-                if args.no_run:
-                    util.warn("%s: without its state partition the role script stays in RAM until the next apply" % h.name)
-                else:                   # the role, the WireGuard identity and the stack belong on the state partition
-                    util.say("%s: %s" % (h.name, ram_t.prepare(h, tgt)))
             if not args.no_run and backupmod.carries_wireguard(h) and backupmod.put_back_wireguard(h, tgt):
                 util.say("%s: its WireGuard identity is back from the fleet's copy" % h.name)
+            if not args.no_run and h.target == "coreos-ram" and ram_t.put_back(h, tgt):
+                util.say("%s: its certificates are back from the fleet's copy" % h.name)
             util.say("%s: sending the role script to %s" % (h.name, tgt))
             remote.put(tgt, script.encode(), "/var/lib/kiwi-server/role.sh", "0700")
             if args.no_run:
@@ -1190,11 +1186,12 @@ def cmd_apply(args):
                 unlock.bind(h, tgt, servers)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
+            if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
+                ram_t.keep(h, tgt)
+                ram_t.kept_now(fleet, h.name)
             if sshca.exists(fleet):
                 sshca.install(fleet, h, tgt)
                 util.say("%s: its host certificate is signed, its sshd takes the fleet's user certificates" % h.name)
-                if h.target == "coreos-ram":    # /etc is new at every boot: they go onto the state partition
-                    ram_t.save(h, tgt)
             record_applied(fleet, h.name)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
@@ -1202,6 +1199,47 @@ def cmd_apply(args):
             print("error: %s: %s" % (h.name, e), file=sys.stderr)
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
+
+
+def cmd_watch(args):
+    """Home pushes: a RAM master that booted waits blank until its role comes; this sends it,
+    and keeps the fleet's copies of a running one fresh."""
+    if args.timer:
+        return ram_t.watch_timer(os.path.abspath(args.fleet), args.timer == "on")
+    while True:
+        fleet, roles, ms = load(args)
+        hosts = [h for h in fleet.select(args.hosts) if h.target == "coreos-ram"]
+        if not hosts:
+            raise KiwiError("no coreos-ram host to watch in %s" % args.fleet)
+        for h in hosts:
+            try:
+                rolesmod.resolve_settings(roles[h.role], h, ms)     # where its stack and addresses are
+            except KiwiError as e:
+                util.warn("%s: %s" % (h.name, e))
+                continue
+            tgt = remote.reach(h, args.ssh)
+            st = ram_t.state(tgt)
+            if st == "blank":
+                util.say("%s: booted and blank, sending its role" % h.name)
+                a = argparse.Namespace(**vars(args))
+                a.hosts, a.no_run = [h.name], False
+                try:
+                    cmd_apply(a)
+                except KiwiError as e:
+                    util.warn("%s: %s" % (h.name, e))
+            elif st == "ready" and ram_t.keep_due(fleet, h.name):
+                try:                    # what changed since (peers enrolled, a certificate renewed)
+                    if backupmod.carries_wireguard(h):
+                        backupmod.keep_wireguard(h, tgt)
+                    ram_t.keep(h, tgt)
+                    ram_t.kept_now(fleet, h.name)
+                except KiwiError as e:
+                    util.warn("%s: the fleet's copy is not refreshed: %s" % (h.name, e))
+            elif st != "ready":
+                util.say("%s: %s" % (h.name, st))
+        if args.once:
+            return
+        time.sleep(args.interval)
 
 
 def cmd_status(args):
@@ -1371,7 +1409,7 @@ def _render_or_build(args, build):
     if build and any(h.target != "coreos-ram" for h in hosts):
         util.say("done — these ISOs wipe their target disk on boot; label them")
     elif build:
-        util.say("done — boot from it every time; kiwi-server apply makes the state partition on disk: and sends the role")
+        util.say("done — boot from it every time; kiwi-server watch (or apply) sends the role after every boot")
     if not getattr(args, "no_backup", False):
         auto_backup(fleet)
 
@@ -1710,6 +1748,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
+  kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
@@ -1809,6 +1848,11 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s = sub("watch", cmd_watch); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
+    s.add_argument("--once", action="store_true", help="one look, then exit (what the timer runs)")
+    s.add_argument("--interval", type=int, default=60, metavar="SECONDS", help="between looks (default %(default)s)")
+    s.add_argument("--timer", choices=("on", "off"), help="a user timer on this computer that looks every minute")
     s = sub("status", cmd_status); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("enroll", cmd_enroll); s.add_argument("fleet"); s.add_argument("name", help="a fleet host, or a device name")

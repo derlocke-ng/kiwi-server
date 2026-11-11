@@ -429,16 +429,17 @@ always runs on the final image. `sudo bash /var/lib/kiwi-server/role.sh
 | coreos | Zincati, continuously | only inside the window (`strategy = "periodic"`, local time) |
 | ucore | `rpm-ostreed-automatic.timer` stages them (the image's default) | `kiwi-staged-reboot.timer` reboots into a staged deployment in the window |
 | debian | unattended-upgrades, daily | `kiwi-reboot-if-required.timer` reboots in the window when `/var/run/reboot-required` exists |
-| coreos-ram | a new ISO from `kiwi-server build`, booted (by hand for now) | the boot from it is the update; containers update in the window as everywhere |
+| coreos-ram | a new ISO from `kiwi-server build`, booted (by hand for now) | the boot from it is the update, `watch` sends the role again; containers update in the window as everywhere |
 
 `updates.days: []` means any day; `updates.enabled: false` turns all of it off.
 
 **A master in RAM** (`target: coreos-ram`, [docs/design/ram-master.md](docs/design/ram-master.md)):
-the CoreOS live ISO with the master's live Ignition, booted every time; every boot starts
-from the image. Its state (the role script, the stack directory with the WireGuard keys,
-the SSH host keys, the image cache) is one partition on `disk:`, which the first `apply`
-makes. `ram.copy_to_ram` (off: the image is read from the medium; on: copied into RAM, 3 GiB
-or more), `ram.image_cache`, `ram.keep_logs` (off: logs live in RAM).
+the CoreOS live ISO with the master's live Ignition, booted every time; it touches no disk.
+The image carries no role, only the machine's SSH host key. After every boot the master
+waits, and `kiwi-server watch <fleet>` at home sends the role and puts back the WireGuard
+identity and certificates the fleet keeps of it; `watch --timer on` looks every minute
+while this computer is on. `ram.copy_to_ram` (off: the image is read from the medium; on:
+copied into RAM, 3 GiB or more).
 
 ## Managing running machines
 

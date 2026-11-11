@@ -1,95 +1,87 @@
 # A master that lives in RAM
 
-Designed and prototyped 11 November 2026 (`target: coreos-ram`). The master's system
-starts from its image at every boot and writes only to RAM; what makes it *this* master
-stays on one partition of its disk.
+Designed and prototyped 11 November 2026 (`target: coreos-ram`). The master boots from its
+image every time, keeps everything in RAM and touches no disk. Home sends it what makes it
+*this* master after every boot.
 
 ## The base: CoreOS live
 
 The Fedora CoreOS live ISO is already that: Ignition runs at every boot, the root is a
 read-only image, everything written goes to RAM. It has systemd, podman and quadlets, so
 kiwi-stack and the role script run unchanged, and it is phoenix-server's lineage. Alpine
-diskless is smaller but OpenRC, and every quadlet and host unit of kiwi-stack is systemd:
-it would be a second machine side.
+diskless is smaller but OpenRC, and every quadlet and host unit of kiwi-stack is systemd.
 
 ## The image
 
 `kiwi-server build`: the stock live ISO with the host's live Ignition (`coreos-installer
-iso customize --live-ignition`): admin user and keys, hostname, network, the units below.
-No role and no secret, so a provider's media store may keep it. On netcup the ISO stays
-attached and the machine boots from CD-ROM every time.
+iso customize --live-ignition`): admin user and keys, hostname, network, and the machine's
+**SSH host key**, signed by the fleet's SSH CA when there is one. No role. On netcup the ISO
+stays attached and the machine boots from CD-ROM every time.
 
-Measured with the master stack (wg-easy, Pi-hole, nginx): 535 MB used of 2 GiB.
-`coreos.liveiso.fromram` would copy the image into RAM as well, about 900 MB more, and needs
-3 GiB: with 2 GiB the initramfs runs out of space and stops in emergency mode. So it is the
-setting `ram.copy_to_ram`, off by default.
+The host key is the image's one secret and the "passthrough key": it lets home know it is
+talking to this master. It is made once per host in `secrets/ram/<host>/` and pinned in the
+fleet's `known_hosts`; a new one (delete it, build again) revokes every older image.
 
-## The state at every boot
+## Every boot: home pushes
 
-The roadmap's objection: kept on the hoster's storage the state needs encryption again;
-handed over at boot it needs someone. Neither holds:
+The roadmap's objection was that the state needs encryption on the hoster's storage, or
+someone at boot. The master keeps nothing, and "someone" is a machine at home:
 
-- **No encryption again.** A master's disk is unencrypted by default since 10 November,
-  because the hoster can read RAM anyway. A RAM master keeps the same data on the same
-  disk under the same threat model, and less of it: no OS, no logs, no shell history.
-- **Nobody at boot.** A unit reads the partition, not a person.
+1. The master boots blank: SSH only, no WireGuard, nodes waiting.
+2. `kiwi-server watch <fleet>` at home looks at it every minute (`watch --timer on`: a user
+   timer; later the control node). It reaches the master at its public address, checks the
+   host key, finds no role and runs `apply`. That goes out from home, so NAT is no matter.
+3. `apply` puts back what the fleet keeps of the master: the WireGuard identity (as since
+   2.38) and the Let's Encrypt certificates and ACME account, so a boot never asks for new
+   ones. Then it sends the role and the stack starts.
+4. The `backup` module restores the rest over the mesh (`restore: auto`).
 
-One partition labelled `kiwi-state` on `disk:`. `kiwi-state.service` mounts it at every
-boot and binds it into place:
+While the master runs, `watch` refreshes the fleet's copies hourly, so peers enrolled and
+certificates renewed survive a reboot. A token on the medium does not work here: it is used up
+at the first boot, and a blank master could only pull from something public.
 
-| On the partition | Bound to | What |
-|---|---|---|
-| `kiwi-server/` | `/var/lib/kiwi-server` | the role script `apply` sends |
-| `docker/` | the stack directory | WireGuard keys and peers, certificates, Pi-hole, backup markers |
-| `containers/` | `/var/lib/containers` | the image cache (`ram.image_cache`) |
-| `journal/` | `/var/log/journal` | logs, only with `ram.keep_logs` |
-| `ssh/` | `/etc/ssh/ssh_host_*` | the host keys, so `known_hosts` stays valid |
+**Security.** At the hoster there is the image and nothing else. A stolen image alone gets
+nothing: home pushes only to the master's own address. Only someone with the image *and* that
+address could take the push, which is the hoster, who can read RAM anyway.
 
-Then `kiwi-role.service` runs the role script from it, as on a first boot, and the stack
-starts. The boot never formats anything: the first `apply` makes the partition (wiping
-`disk:`, as every install does) before it sends the role. Without the partition (a new VPS,
-a wiped disk) it is the disposable master the roadmap has: `apply` makes it, puts the
-WireGuard identity back from the fleet's copy, and the backup restores the rest.
+**Costs.** After an unplanned reboot the master is down until home looks: a minute with the
+timer on, longer when the computer running it is off. Container images are pulled into RAM at
+every boot (about 430 MB).
 
-Not adopted: a blob sealed to a Tang ring (the hoster has the blob and reaches the ring
-from the master's address, so it protects against nobody who matters); nothing on disk at
-all (every reboot would need `apply`, with a new host key each time; maybe later with the
-join token).
+## Measured
 
-## Updates
-
-A new image and a reboot. Today `kiwi-server build` makes the ISO from the newest CoreOS
-release and booting it is the update (netcup: upload, attach, reboot), so someone runs it.
-Containers update in the `updates:` window as everywhere.
+In a VM with the master stack (wg-easy, Pi-hole, nginx) and 2 GiB: about 950 MB used, the
+images in RAM included, and the stack up 60 to 80 seconds after boot with the image read from
+the medium. `coreos.liveiso.fromram` would copy the image into RAM too, about 900 MB more,
+and needs 3 GiB: with 2 GiB the initramfs runs out of space and stops in emergency mode. So it
+is `ram.copy_to_ram`, off by default.
 
 ## Settings
-
-Block `ram:`, in the GUI under *RAM*:
 
 | Setting | Default | |
 |---|---|---|
 | `ram.copy_to_ram` | `false` | on: the image into RAM too, 3 GiB at least, the medium may go |
-| `ram.image_cache` | `true` | off: container images pulled into RAM at every boot |
-| `ram.keep_logs` | `false` | off: logs live in RAM, gone at every reboot |
 
-`disk:` holds the partition, `updates:` is the window, backups are the `backup` module's
-settings, `coreos.stream`, `kernel_arguments` and `console` apply. `unlock:` does not.
+`updates:` is the containers' window as everywhere; an OS update is a new image, booted.
+Backups are the `backup` module's settings. `coreos.stream`, `kernel_arguments` and
+`console` apply. `disk:` and `unlock:` do not.
 
-## Later: the phoenix spin
+## Later
 
-A RAM variant of the phoenix-server image: `[root] transient = true` and `[etc] transient =
-true` in `/usr/lib/ostree/prepare-root.conf` (FCOS 44 has ostree 2026.4 with composefs on;
-untried), `/var` a tmpfs with the binds above. The image stays read-only on the disk, every
-boot starts from it, and `bootc upgrade` in the window updates it with a rollback: every
-hoster that takes bootc, no one needed for OS updates. `coreos-ram` stays for provider ISOs
-and VMs.
+- **The phoenix spin**: the same image with the master's container images inside, so nothing
+  is pulled into RAM at boot, and `bootc`'s updates with a rollback for machines that boot it
+  from a disk (`[root] transient = true`, `[etc] transient = true` in ostree's
+  `prepare-root.conf`; untried).
+- **The control node** runs `watch`, so the push does not depend on a desktop being on.
+- **netcup** swapping the ISO: `vps` uploads a new image and reboots into it.
 
-Considered: NixOS with an impermanent root (a third OS, control-plane.md, The image);
-Debian live with `toram` (an image we would build and sign ourselves).
+Considered: a partition with the state on the master's disk (no one needed at an unplanned
+reboot, but state at rest; the owner chose RAM only); a blob sealed to a Tang ring (the hoster
+has the blob and reaches the ring from the master's address); NixOS (a third OS); Debian live
+(an image we would build and sign ourselves).
 
 ## Tried
 
-A local QEMU VM, 11 November 2026: build, boot, `apply` (partition made, stack up),
-reboot (same SSH host key, its SSH CA certificate and WireGuard key, a file written to `/etc` gone, stack up 35 to
-45 s after boot, SELinux enforcing, no denial), a new image with other settings on the same
-disk (same state). Not tried: a VPS, clients, the backup restoring onto a blank partition.
+A local QEMU VM with no disk, 11 November 2026, `tests/drills/ram-master-vm.sh`: build,
+boot, `watch` sends the role, reboot, `watch` sends it again; the same host key, certificate
+and WireGuard key, `/etc` fresh. Not tried: a VPS, clients, a public site's certificates.

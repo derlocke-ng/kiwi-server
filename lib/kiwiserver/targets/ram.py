@@ -1,234 +1,114 @@
-"""coreos-ram: a master whose system runs from RAM (docs/design/ram-master.md).
+"""coreos-ram: a master that lives in RAM only (docs/design/ram-master.md).
 
-The Fedora CoreOS live ISO with the host's live Ignition. Ignition runs at every boot of
-a live system, so every boot starts from the image. What makes the machine this master
-lives on one partition, LABEL=kiwi-state on disk:, which kiwi-state.service mounts and
-binds into place; kiwi-role.service then runs the role script from it, as on a first
-boot. The ISO carries no role and no secret: apply makes the partition and sends the role.
+The Fedora CoreOS live ISO with the host's live Ignition: every boot starts from the image,
+everything written stays in RAM, no disk is touched. The image holds no role. It holds one
+secret, the machine's SSH host key (signed by the fleet's SSH CA when there is one), so home
+knows it is talking to this master. After every boot the master waits with SSH only, and home
+pushes: `kiwi-server watch` sees a blank master and runs apply, which sends the role and puts
+back what the fleet keeps of the master (the WireGuard identity, the Let's Encrypt state).
 """
+import hashlib
+import json
 import os
 import shlex
+import shutil
 import subprocess
+import sys
+import time
 
 from .. import remote, sshca, util
 from ..util import KiwiError
-from . import ROLE_DIR, ROLE_SCRIPT, role_unit
+from . import ROLE_DIR, ROLE_MARKER, ROLE_SCRIPT
 from . import coreos as coreos_t
 
-LABEL = "kiwi-state"
-MOUNT = "/var/mnt/kiwi-state"
-STATE_SCRIPT = "/etc/kiwi-ram/state.sh"
 FROMRAM = "coreos.liveiso.fromram"
+HOST_KEY = "/etc/ssh/ssh_host_ed25519_key"
+SSHD_DROP_IN = "/etc/ssh/sshd_config.d/30-kiwi-ram.conf"
 DEFAULT_STACK_DIR = "/home/user/docker"
-
-STATE_SH = r"""#!/usr/bin/bash
-# kiwi-server: the state of a master that lives in RAM (docs/design/ram-master.md).
-#   state.sh mount                at every boot (kiwi-state.service): the partition into place
-#   state.sh init DISK STACK_DIR  from kiwi-server apply: the partition made on DISK (wiped) when
-#                                 it is not there, with what this boot has so far
-#   state.sh save                 from kiwi-server apply: what it put into /etc/ssh, kept like the keys
-#   state.sh status               what is where
-set -euo pipefail
-LABEL=__LABEL__
-MNT=__MOUNT__
-IMAGE_CACHE=__IMAGE_CACHE__
-KEEP_LOGS=__KEEP_LOGS__
-SSH_KEEP="__SSH_KEEP__"     # the SSH CA's files beside the host keys and their certificate
-
-say() { echo "kiwi-state: $*"; }
-die() { echo "kiwi-state: $*" >&2; exit 1; }
-
-binds() { # NAME PATH, one per line: a directory on the partition and where it goes
-    echo "kiwi-server /var/lib/kiwi-server"
-    if [[ -s $MNT/stack-dir ]]; then echo "docker $(cat "$MNT/stack-dir")"; fi
-    if (( IMAGE_CACHE )); then echo "containers /var/lib/containers"; fi
-    if (( KEEP_LOGS )); then echo "journal /var/log/journal"; fi
-}
-
-keys() { # the SSH host keys stay, so the fleet's known_hosts does
-    install -d -m 0700 "$MNT/ssh"
-    if compgen -G "$MNT/ssh/ssh_host_*_key" >/dev/null; then
-        cp -p "$MNT"/ssh/ssh_host_* /etc/ssh/
-        if [[ -d $MNT/ssh/etc ]]; then cp -a "$MNT/ssh/etc/." /etc/ssh/; fi
-        restorecon -RF /etc/ssh 2>/dev/null || true
-    else
-        ssh-keygen -A >/dev/null
-        cp -p /etc/ssh/ssh_host_* "$MNT/ssh/"
-    fi
-}
-
-place() { # every directory of the partition over the one it stands for
-    local name path
-    keys
-    while read -r name path; do
-        mkdir -p "$MNT/$name" "$path"
-        mountpoint -q "$path" && continue
-        # a bound directory carries its own SELinux label: the one the system gave the original
-        chcon --reference="$path" "$MNT/$name" 2>/dev/null || true
-        if [[ $name == journal ]]; then
-            journalctl --relinquish-var 2>/dev/null || true
-            mount --bind "$MNT/$name" "$path"
-            journalctl --flush 2>/dev/null || true
-        else
-            mount --bind "$MNT/$name" "$path"
-        fi
-    done < <(binds)
-    # the system is new at every boot: the role runs again (kiwi-role.service)
-    rm -f /var/lib/kiwi-server/role.done
-}
-
-device() { blkid -L "$LABEL" 2>/dev/null; }
-
-do_mount() {
-    local dev
-    udevadm settle --timeout=30 || true
-    if ! dev=$(device); then
-        say "no partition labelled $LABEL: this boot keeps nothing. kiwi-server apply makes it on disk:"
-        return 0
-    fi
-    mkdir -p "$MNT"
-    mountpoint -q "$MNT" || mount -o noatime "$dev" "$MNT"
-    place
-    say "$dev in place: $(binds | awk '{print $2}' | tr '\n' ' ')"
-}
-
-booted_from() { # DISK: true when the medium this system started from is on it
-    local src parent
-    src=$(findmnt -no SOURCE /run/media/iso 2>/dev/null) || return 1
-    [[ $src == "$1" ]] && return 0
-    parent=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)
-    [[ -n $parent && /dev/$parent == "$(readlink -f "$1")" ]]
-}
-
-do_init() {
-    local disk=$1 stack=$2 part p
-    [[ -n $disk && -n $stack ]] || die "usage: state.sh init DISK STACK_DIR"
-    if device >/dev/null; then
-        mkdir -p "$MNT"
-        mountpoint -q "$MNT" || mount -o noatime "$(device)" "$MNT"
-        if [[ ! -s $MNT/stack-dir ]]; then echo "$stack" > "$MNT/stack-dir"; fi
-        if [[ $(cat "$MNT/stack-dir") != "$stack" ]]; then
-            die "the partition holds the stack for $(cat "$MNT/stack-dir"), the role says $stack: move it by hand first"
-        fi
-        place
-        say "$(device) is there already"
-        return 0
-    fi
-    [[ -b $disk ]] || die "$disk is not a disk here (lsblk): set disk: in the fleet file"
-    booted_from "$disk" && die "$disk holds the medium this system booted from"
-    if lsblk -lno MOUNTPOINTS "$disk" 2>/dev/null | grep -q .; then die "something on $disk is mounted"; fi
-    say "wiping $disk for the partition $LABEL"
-    for p in $(lsblk -lnpo NAME,TYPE "$disk" | awk '$2 == "part" {print $1}'); do wipefs -a -q "$p"; done
-    wipefs -a -q "$disk"
-    printf 'label: gpt\nname=%s\n' "$LABEL" | sfdisk -q --wipe always --wipe-partitions always "$disk"
-    udevadm settle --timeout=30 || true
-    part=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2 == "part" {print $1; exit}')
-    [[ -n $part ]] || die "$disk has no partition after sfdisk"
-    mkfs.xfs -q -f -L "$LABEL" "$part"
-    udevadm settle --timeout=30 || true
-    mkdir -p "$MNT"
-    mount -o noatime "$part" "$MNT"
-    echo "$stack" > "$MNT/stack-dir"
-    # what this boot has so far goes onto it before the binds cover it
-    mkdir -p "$MNT/kiwi-server" "$MNT/docker"
-    if [[ -d /var/lib/kiwi-server ]]; then cp -a /var/lib/kiwi-server/. "$MNT/kiwi-server/"; fi
-    if [[ -d $stack ]]; then cp -a "$stack/." "$MNT/docker/"; fi
-    install -d -m 0700 "$MNT/ssh"
-    cp -p /etc/ssh/ssh_host_* "$MNT/ssh/"
-    place
-    say "$part made and in place"
-}
-
-do_save() {
-    local f
-    mountpoint -q "$MNT" || { say "no state partition: nothing kept"; return 0; }
-    install -d -m 0700 "$MNT/ssh"
-    cp -p /etc/ssh/ssh_host_* "$MNT/ssh/"
-    for f in $SSH_KEEP; do
-        [[ -e $f ]] || continue
-        mkdir -p "$(dirname "$MNT/ssh/etc/${f#/etc/ssh/}")"
-        cp -p "$f" "$MNT/ssh/etc/${f#/etc/ssh/}"
-    done
-}
-
-do_status() {
-    local name path
-    if ! device >/dev/null; then say "no partition labelled $LABEL"; return 0; fi
-    say "$(device) at $MNT, $(df -h --output=used,size "$MNT" 2>/dev/null | tail -1 | xargs) used"
-    while read -r name path; do
-        if mountpoint -q "$path"; then say "  $path <- $name/"; else say "  $path: not bound"; fi
-    done < <(binds)
-}
-
-case ${1:-} in
-    mount)  do_mount ;;
-    init)   do_init "${2:-}" "${3:-}" ;;
-    save)   do_save ;;
-    status) do_status ;;
-    *)      die "usage: state.sh mount | init DISK STACK_DIR | save | status" ;;
-esac
-"""
+# what the fleet keeps of a RAM master beside its WireGuard identity: a public site's
+# certificates and ACME account (asking again is limited to a few a week)
+KEPT = ("km-nginx/letsencrypt", "km-nginx/acme")
+KEEP_EVERY = 3600       # watch refreshes the fleet's copies of a running master this often
 
 
 def settings(host):
-    r = dict(host.cfg.get("ram") or {})
-    return {k: bool(r.get(k)) for k in ("copy_to_ram", "image_cache", "keep_logs")}
+    return {"copy_to_ram": bool((host.cfg.get("ram") or {}).get("copy_to_ram"))}
 
 
-def state_script(host):
-    s = settings(host)
-    return (STATE_SH.replace("__LABEL__", LABEL).replace("__MOUNT__", MOUNT)
-            .replace("__IMAGE_CACHE__", "1" if s["image_cache"] else "0")
-            .replace("__KEEP_LOGS__", "1" if s["keep_logs"] else "0")
-            .replace("__SSH_KEEP__", " ".join((sshca.USER_CA, sshca.DROP_IN))))
+# ---- the host key: the image's one secret ---------------------------------------------
+
+def key_dir(host):
+    return host.fleet.resolve_path("secrets/ram/%s" % host.name)
 
 
-def state_unit():
-    return "\n".join([
-        "[Unit]",
-        "Description=kiwi-server: this master's state partition (%s)" % LABEL,
-        "Documentation=https://github.com/derlocke-ng/kiwi-server/blob/main/docs/design/ram-master.md",
-        # the host keys are in place before the generators look: they start together otherwise
-        "Before=%s sshd.service kiwi-role.service" % " ".join("sshd-keygen@%s.service" % k for k in ("rsa", "ecdsa", "ed25519")),
-        "",
-        "[Service]",
-        "Type=oneshot",
-        "RemainAfterExit=yes",
-        "ExecStart=/usr/bin/bash %s mount" % STATE_SCRIPT,
-        "StandardOutput=journal+console",
-        "",
-        "[Install]",
-        "WantedBy=multi-user.target",
-        "",
-    ])
+def host_key(host):
+    """(private, public) of the machine's SSH host key, made once and kept in the fleet's
+    secrets. A new one (delete the directory, build again) revokes every image built before."""
+    d = key_dir(host)
+    key = os.path.join(d, "ssh_host_ed25519_key")
+    if not os.path.isfile(key):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        try:
+            r = subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "%s host" % host.hostname, "-f", key],
+                               capture_output=True, text=True)
+        except FileNotFoundError:
+            raise KiwiError("ssh-keygen is not installed")
+        if r.returncode != 0:
+            raise KiwiError("ssh-keygen: %s" % r.stderr.strip()[:300])
+        util.say("%s: made its SSH host key in %s; every image of it carries the key" % (host.name, d))
+    return util.read_text(key), util.read_text(key + ".pub").strip()
 
 
-def journald_conf(host):
-    if settings(host)["keep_logs"]:
-        return "[Journal]\nStorage=persistent\nSystemMaxUse=256M\n"
-    # in RAM only, and not much of it: gone at every reboot
-    return "[Journal]\nStorage=volatile\nRuntimeMaxUse=64M\n"
+def pin(host, public, known_hosts):
+    """The key on record for the machine's names and addresses: home knows the image at first contact."""
+    names = remote.addresses(host)
+    line = "%s %s" % (",".join(names), " ".join(public.split()[:2]))
+    old = util.read_text(known_hosts).splitlines() if os.path.isfile(known_hosts) else []
+    if line in old:
+        return False
+    if os.path.isfile(known_hosts):
+        for n in names:     # whatever key an earlier install of the machine showed
+            subprocess.run(["ssh-keygen", "-R", n, "-f", known_hosts], capture_output=True)
+        old = util.read_text(known_hosts).splitlines()
+        if os.path.isfile(known_hosts + ".old"):
+            os.remove(known_hosts + ".old")
+    os.makedirs(os.path.dirname(os.path.abspath(known_hosts)), exist_ok=True)
+    util.write_text(known_hosts, "\n".join(old + [line]) + "\n", 0o600)
+    return True
+
+
+# ---- the image ------------------------------------------------------------------------
+
+ISSUE = ("This master lives in RAM. After every boot it waits for its role:\n"
+         "kiwi-server watch (or apply) at home sends it.\n\n")
 
 
 def build_butane(host):
-    """The live system's Ignition: the base system, the state partition, the role unit.
-    No role script: that one is on the partition, put there by apply."""
+    """The live system's Ignition: the base system and the host key, nothing of the role."""
     co = host.cfg["coreos"]
     files, dirs, links, units = [], [], [], []
+    f = coreos_t._file
     user = coreos_t.admin_user(host)
     coreos_t.base_system(host, files, links)
-    files.append(coreos_t._file("/etc/systemd/journald.conf.d/50-kiwi-ram.conf", journald_conf(host)))
-    files.append(coreos_t._file(STATE_SCRIPT, state_script(host), mode=0o700))
-    units.append({"name": "kiwi-state.service", "enabled": True, "contents": state_unit()})
-    units.append({"name": "kiwi-role.service", "enabled": True,
-                  "contents": role_unit(host, extra_conditions=[ROLE_SCRIPT],
-                                        after=("network-online.target", "kiwi-state.service"))})
+    private, public = host_key(host)
+    files += [f(HOST_KEY, private, mode=0o600), f(HOST_KEY + ".pub", public + "\n"),
+              # this key and no other: the ones the image would make at every boot would be new each time
+              f(SSHD_DROP_IN, "HostKey %s\n" % HOST_KEY)]
+    if sshca.exists(host.fleet):
+        cert = sshca.sign(host.fleet, public, "%s host" % host.hostname, [host.name] + sshca._addresses(host),
+                          sshca.HOST_DAYS, host=True)
+        files += [f(sshca.HOST_CERT, cert.strip() + "\n"), f(sshca.USER_CA, sshca.public(host.fleet) + "\n"),
+                  f(sshca.DROP_IN, "HostCertificate %s\nTrustedUserCAKeys %s\n" % (sshca.HOST_CERT, sshca.USER_CA))]
+    # logs in RAM, and not much of it: gone at every reboot
+    files.append(f("/etc/systemd/journald.conf.d/50-kiwi-ram.conf", "[Journal]\nStorage=volatile\nRuntimeMaxUse=64M\n"))
+    files.append(f("/etc/issue.d/50-kiwi-ram.issue", ISSUE))
     dirs.append({"path": ROLE_DIR, "mode": 0o700})
     coreos_t.passthrough(co, files, dirs, units)
     return coreos_t.assemble(user, files, dirs, links, units)
 
 
 def render(host):
+    pin(host, host_key(host)[1], host.fleet.resolve_path("secrets/known_hosts"))
     return coreos_t.to_yaml(build_butane(host))
 
 
@@ -252,44 +132,127 @@ def iso(tc, host, ign_path, out_iso, cache_dir):
     if os.path.exists(out_iso):
         os.unlink(out_iso)   # coreos-installer will not replace an existing output file
     tc.run(argv, mounts=[util.parent(ign_path), util.parent(out_iso), cache_dir])
+    if os.path.isfile(out_iso):
+        os.chmod(out_iso, 0o600)   # it carries the host key
     return out_iso
 
+
+# ---- what the fleet keeps of a running master --------------------------------------------
 
 def stack_dir(host):
     return str((host.role_settings or {}).get("docker_dir") or DEFAULT_STACK_DIR)
 
 
-def prepare(host, tgt, runner=subprocess.run):
-    """Before apply sends the role: the state partition, made on disk: when it is not
-    there, so the role script, the WireGuard identity and the stack land on it."""
-    disk = host.cfg.get("disk")
-    if not disk:
-        raise KiwiError("%s: coreos-ram keeps its state on disk:, which is not set" % host.name)
-    out = remote.run(tgt, "bash %s init %s %s" % (STATE_SCRIPT, shlex.quote(str(disk)), shlex.quote(stack_dir(host))),
-                     runner=runner)
-    return out.decode(errors="replace").strip()
+def _kept_copy(host):
+    return os.path.join(key_dir(host), "kept.tar")
 
 
-def save(host, tgt, runner=subprocess.run):
-    """After apply wrote into /etc/ssh (the SSH CA): onto the partition, or gone at the next boot.
-    An image from before `save` existed says so, and the apply goes on."""
+def keep(host, tgt, runner=subprocess.run):
+    """KEPT, as one tar, into the fleet's secrets when it changed. True when it did."""
+    d = shlex.quote(stack_dir(host))
+    script = ('cd %s 2>/dev/null || exit 0\nset --\nfor p in %s; do [ -d "$p" ] && set -- "$@" "$p"; done\n'
+              '[ $# -gt 0 ] && tar -cf - --sort=name "$@"\nexit 0' % (d, " ".join(KEPT)))
+    out = remote.run(tgt, script, runner=runner)
+    path = _kept_copy(host)
+    if not out or (os.path.isfile(path) and util.read_bytes(path) == out):
+        return False
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    util.write_bytes(path, out, 0o600)
+    return True
+
+
+def put_back(host, tgt, runner=subprocess.run):
+    """The fleet's copy onto a master that booted without it. True when it was put back."""
+    path = _kept_copy(host)
+    if not os.path.isfile(path):
+        return False
+    d = shlex.quote(stack_dir(host))
+    script = ('[ -e %s/%s ] && { echo present; exit 0; }\nmkdir -p %s && cd %s && tar -xf - && echo restored'
+              % (d, KEPT[0], d, d))
+    out = remote.run(tgt, script, util.read_bytes(path), runner=runner)
+    return b"restored" in out
+
+
+# ---- home pushes -------------------------------------------------------------------------
+
+# [/]: the pattern must not find this probe's own command line
+STATE_PROBE = ("if [ -f %s ]; then echo ready; elif pgrep -f '[/]%s' >/dev/null; then echo busy; else echo blank; fi"
+               % (ROLE_MARKER, ROLE_SCRIPT.lstrip("/")))
+
+
+def state(tgt, runner=subprocess.run):
+    """ready, busy (a role is running), blank (booted, nothing sent yet) or unreachable."""
     try:
-        remote.run(tgt, "bash %s save" % STATE_SCRIPT, runner=runner)
-    except KiwiError as e:
-        util.warn("%s: the SSH CA's files are not on the state partition and go at the next boot: %s" % (host.name, e))
+        out = remote.run(tgt, STATE_PROBE, runner=runner).decode(errors="replace").strip()
+    except KiwiError:
+        return "unreachable"
+    return out if out in ("ready", "busy", "blank") else "unreachable"
+
+
+def _watch_record(fleet):
+    return fleet.resolve_path("output/watch.json")
+
+
+def _record(fleet):
+    try:
+        return json.loads(util.read_text(_watch_record(fleet)))
+    except (OSError, ValueError):
+        return {}
+
+
+def keep_due(fleet, host, now=None):
+    return (now if now is not None else time.time()) - _record(fleet).get(host, 0) >= KEEP_EVERY
+
+
+def kept_now(fleet, host, now=None):
+    rec = _record(fleet)
+    rec[host] = int(now if now is not None else time.time())
+    os.makedirs(os.path.dirname(_watch_record(fleet)), exist_ok=True)
+    util.write_text(_watch_record(fleet), json.dumps(rec, sort_keys=True), 0o600)
+
+
+def _unit(fleet_path):
+    return "kiwi-watch-%s" % hashlib.sha256(fleet_path.encode()).hexdigest()[:10]
+
+
+def watch_timer(fleet_path, on, systemctl=None):
+    """A timer on this computer that runs `watch --once` every minute, or none."""
+    from .. import backup
+    systemctl = systemctl or backup._systemctl_user
+    unit, d = _unit(fleet_path), backup._user_units()
+    if not on:
+        systemctl("disable", "--now", unit + ".timer")
+        for ext in (".service", ".timer"):
+            if os.path.isfile(os.path.join(d, unit + ext)):
+                os.remove(os.path.join(d, unit + ext))
+        systemctl("daemon-reload")
+        util.say("nothing watches the RAM masters of %s any more" % fleet_path)
+        return
+    cli = shutil.which("kiwi-server") or os.path.abspath(sys.argv[0])
+    os.makedirs(d, exist_ok=True)
+    util.write_bytes(os.path.join(d, unit + ".service"), (
+        "[Unit]\nDescription=Kiwi Network: the role to a RAM master of %s that booted\n\n"
+        "[Service]\nType=oneshot\nExecStart=%s watch %s --once\n" % (fleet_path, shlex.quote(cli), shlex.quote(fleet_path))).encode(), 0o644)
+    util.write_bytes(os.path.join(d, unit + ".timer"), (
+        "[Unit]\nDescription=Kiwi Network: watch the RAM masters of %s\n\n"
+        "[Timer]\nOnBootSec=1min\nOnUnitInactiveSec=1min\n\n[Install]\nWantedBy=timers.target\n" % fleet_path).encode(), 0o644)
+    systemctl("daemon-reload")
+    r = systemctl("enable", "--now", unit + ".timer")
+    if r.returncode != 0:
+        raise KiwiError("the timer did not start: %s" % (r.stderr.strip().splitlines() or ["systemctl failed"])[-1])
+    util.say("%s.timer looks at the RAM masters of %s every minute while this computer is on; "
+             "journalctl --user -u %s" % (unit, fleet_path, unit))
 
 
 def problems(host):
     """What cannot work on this target, as validate errors."""
     c = host.cfg
     errs = []
-    r = c.get("ram") or {}
-    for k in ("copy_to_ram", "image_cache", "keep_logs"):
-        if not isinstance(r.get(k), bool):
-            errs.append("ram.%s must be true or false" % k)
+    if not isinstance((c.get("ram") or {}).get("copy_to_ram"), bool):
+        errs.append("ram.copy_to_ram must be true or false")
     if (c.get("unlock") or {}).get("rings"):
-        errs.append("unlock.rings: a coreos-ram master has no encrypted disk to unlock")
+        errs.append("unlock.rings: a coreos-ram master has no disk to unlock")
     for k in ("luks", "boot_device"):
         if c["coreos"].get(k):
-            errs.append("coreos.%s: a coreos-ram master installs nothing to a disk" % k)
+            errs.append("coreos.%s: a coreos-ram master touches no disk" % k)
     return errs

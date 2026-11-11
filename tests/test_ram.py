@@ -1,20 +1,26 @@
-"""The coreos-ram target: a master whose system runs from RAM (docs/design/ram-master.md)."""
+"""The coreos-ram target: a master in RAM only, its role pushed from home (docs/design/ram-master.md)."""
+import argparse
 import json
 import os
 import subprocess
 import unittest
+from unittest import mock
 
 import yaml
 
-from test_kiwiserver import KEY, Base, have, write  # noqa: F401  (KEY: the fleet's admin key)
-from kiwiserver import cli, config, util
+from test_kiwiserver import KEY, Base, have, write
+from kiwiserver import backup, cli, config, sshca, util
 from kiwiserver.targets import ram
 from kiwiserver.util import KiwiError
 
 
+def done(out=b"", rc=0):
+    return lambda argv, **kw: subprocess.CompletedProcess(argv, rc, out, b"")
+
+
 class TestRam(Base):
     def ram_fleet(self, **over):
-        d = self.base_defaults(target="coreos-ram", role="master", disk="/dev/vda")
+        d = self.base_defaults(target="coreos-ram", role="master", disk=None)
         d.update(over)
         return self.fleet({"defaults": d, "hosts": {"trifle": {"master": self.master()}}})
 
@@ -23,49 +29,61 @@ class TestRam(Base):
         self.prepare(h)
         return h, yaml.safe_load(ram.render(h))
 
-    def test_the_image_holds_no_role(self):
+    def files(self, bu):
+        return {fl["path"]: fl for fl in bu["storage"]["files"]}
+
+    def test_the_image_holds_the_host_key_and_no_role(self):
         h, bu = self.butane(self.ram_fleet())
-        files = {fl["path"]: fl for fl in bu["storage"]["files"]}
+        files = self.files(bu)
         self.assertNotIn("/var/lib/kiwi-server/role.sh", files)
-        self.assertNotIn("/etc/zincati/config.d/55-updates-strategy.toml", files)
-        self.assertEqual(files[ram.STATE_SCRIPT]["mode"], 0o700)
+        self.assertEqual(files[ram.HOST_KEY]["mode"], 0o600)
+        self.assertIn("OPENSSH PRIVATE KEY", files[ram.HOST_KEY]["contents"]["inline"])
+        self.assertEqual(files[ram.SSHD_DROP_IN]["contents"]["inline"], "HostKey %s\n" % ram.HOST_KEY)
+        self.assertIn("Storage=volatile", files["/etc/systemd/journald.conf.d/50-kiwi-ram.conf"]["contents"]["inline"])
+        self.assertIn("/etc/issue.d/50-kiwi-ram.issue", files)
         self.assertEqual(bu["passwd"]["users"][0]["ssh_authorized_keys"], [KEY])
-        # nothing of the master's stack in it: no password, no key, no provider config
+        self.assertEqual(bu["systemd"]["units"], [])         # nothing to run at boot: home pushes
         text = ram.render(h)
-        for secret in ("pihole_password", "wireguard_private_key", "vpn.example.org"):
+        for secret in ("pihole_password", "wireguard_private_key", "vpn.example.org", "wg_password"):
             self.assertNotIn(secret, text)
 
-    def test_units_order_the_state_before_the_role(self):
-        _h, bu = self.butane(self.ram_fleet())
-        units = {u["name"]: u for u in bu["systemd"]["units"]}
-        state, role = units["kiwi-state.service"]["contents"], units["kiwi-role.service"]["contents"]
-        self.assertIn("ExecStart=/usr/bin/bash %s mount" % ram.STATE_SCRIPT, state)
-        self.assertIn("Before=sshd-keygen@rsa.service sshd-keygen@ecdsa.service sshd-keygen@ed25519.service "
-                      "sshd.service kiwi-role.service", state)
-        self.assertIn("After=network-online.target kiwi-state.service", role)
-        self.assertIn("ConditionPathExists=/var/lib/kiwi-server/role.sh", role)
-        self.assertIn("ConditionPathExists=!/var/lib/kiwi-server/role.done", role)
-        self.assertTrue(units["kiwi-state.service"]["enabled"] and units["kiwi-role.service"]["enabled"])
-
-    def test_defaults_logs_in_ram_images_on_disk(self):
-        h, bu = self.butane(self.ram_fleet())
-        files = {fl["path"]: fl["contents"]["inline"] for fl in bu["storage"]["files"]}
-        self.assertIn("Storage=volatile", files["/etc/systemd/journald.conf.d/50-kiwi-ram.conf"])
-        script = files[ram.STATE_SCRIPT]
-        self.assertIn("IMAGE_CACHE=1\n", script)
-        self.assertIn("KEEP_LOGS=0\n", script)
-        self.assertIn("LABEL=kiwi-state\n", script)
-        self.assertNotIn("__", script)
-        self.assertEqual(ram.live_kargs(h), [])
-
-    def test_settings_change_the_image(self):
-        f = self.ram_fleet(ram={"copy_to_ram": True, "image_cache": False, "keep_logs": True},
-                           coreos={"console": "ttyS0,115200n8", "kernel_arguments": ["mitigations=auto"]})
+    def test_the_host_key_stays_and_is_on_record(self):
+        f = self.ram_fleet()
         h, bu = self.butane(f)
-        files = {fl["path"]: fl["contents"]["inline"] for fl in bu["storage"]["files"]}
-        self.assertIn("Storage=persistent", files["/etc/systemd/journald.conf.d/50-kiwi-ram.conf"])
-        self.assertIn("IMAGE_CACHE=0\n", files[ram.STATE_SCRIPT])
-        self.assertIn("KEEP_LOGS=1\n", files[ram.STATE_SCRIPT])
+        key = self.files(bu)[ram.HOST_KEY]["contents"]["inline"]
+        _h, again = self.butane(config.Fleet.load(f.path))
+        self.assertEqual(self.files(again)[ram.HOST_KEY]["contents"]["inline"], key)
+        pub = util.read_text(os.path.join(ram.key_dir(h), "ssh_host_ed25519_key.pub")).split()
+        known = util.read_text(f.resolve_path("secrets/known_hosts"))
+        self.assertIn("trifle.kiwi,vpn.example.org %s %s" % (pub[0], pub[1]), known)
+
+    def test_pin_replaces_an_earlier_install_once(self):
+        f = self.ram_fleet()
+        h = f.hosts["trifle"]
+        self.prepare(h)
+        known = f.resolve_path("secrets/known_hosts")
+        write(known, "vpn.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOldOldOldOldOldOldOldOldOldOldOldOldOldOldOld\n"
+                     "other.kiwi ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherOtherOtherOtherOtherOtherOtherOtherOth\n")
+        pub = ram.host_key(h)[1]
+        self.assertTrue(ram.pin(h, pub, known))
+        self.assertFalse(ram.pin(h, pub, known))
+        text = util.read_text(known)
+        self.assertNotIn("OldOld", text)
+        self.assertIn("other.kiwi", text)
+
+    def test_with_the_ssh_ca_the_image_shows_a_certificate(self):
+        f = self.ram_fleet()
+        sshca.init(f)
+        _h, bu = self.butane(config.Fleet.load(f.path))
+        files = self.files(bu)
+        self.assertIn("ssh-ed25519-cert-v01@openssh.com", files[sshca.HOST_CERT]["contents"]["inline"])
+        self.assertIn("TrustedUserCAKeys %s" % sshca.USER_CA, files[sshca.DROP_IN]["contents"]["inline"])
+
+    def test_kernel_arguments(self):
+        h, _bu = self.butane(self.ram_fleet())
+        self.assertEqual(ram.live_kargs(h), [])
+        h, _bu = self.butane(self.ram_fleet(ram={"copy_to_ram": True},
+                                            coreos={"console": "ttyS0,115200n8", "kernel_arguments": ["mitigations=auto"]}))
         self.assertEqual(ram.live_kargs(h), [ram.FROMRAM, "mitigations=auto", "console=ttyS0,115200n8"])
 
     def test_iso_is_the_live_system_not_an_installer(self):
@@ -93,66 +111,103 @@ class TestRam(Base):
 
     def test_validation(self):
         f = self.ram_fleet()
-        self.assertEqual(f.hosts["trifle"].validate(self.roles), [])
+        h = f.hosts["trifle"]
+        self.assertEqual(h.validate(self.roles), [])
+        self.assertFalse(any("disk" in w for w in h.warnings))      # it touches no disk
         bad = self.fleet({"defaults": self.base_defaults(target="coreos-ram", role="master"),
                           "hosts": {"a": {"master": self.master(), "unlock": {"rings": ["infra"]}},
                                     "b": {"master": self.master(), "coreos": {"luks": {"device": "/dev/vda"}}},
-                                    "c": {"master": self.master(), "ram": {"keep_logs": "yes"}},
-                                    "d": {"master": self.master(), "ram": {"keep_log": True}},
+                                    "c": {"master": self.master(), "ram": {"copy_to_ram": "yes"}},
+                                    "d": {"master": self.master(), "ram": {"keep_logs": True}},
                                     "n": {"role": "node-cloud", "node-cloud": self.node_cloud()}}})
         errs = {n: " ".join(h.validate(self.roles)) for n, h in bad.hosts.items()}
-        self.assertIn("no encrypted disk to unlock", errs["a"])
+        self.assertIn("no disk to unlock", errs["a"])
         self.assertIn("coreos.luks", errs["b"])
-        self.assertIn("ram.keep_logs must be true or false", errs["c"])
-        self.assertIn("did you mean keep_logs", errs["d"])
+        self.assertIn("ram.copy_to_ram must be true or false", errs["c"])
+        self.assertIn("unknown key 'keep_logs'", errs["d"])
         self.assertIn("does not support target coreos-ram", errs["n"])
 
-    def test_without_disk_it_keeps_nothing(self):
-        f = self.ram_fleet(disk=None)
-        h = f.hosts["trifle"]
-        self.assertEqual(h.validate(self.roles), [])
-        self.assertTrue(any("keeps nothing between boots" in w for w in h.warnings))
-        with self.assertRaisesRegex(KiwiError, "disk:"):
-            ram.prepare(h, "core@x", runner=None)
-
-    def test_prepare_makes_the_partition_for_the_stack_dir(self):
-        f = self.fleet({"defaults": self.base_defaults(target="coreos-ram", role="master", disk="/dev/vda"),
-                        "hosts": {"trifle": {"master": self.master(docker_dir="/var/srv/stack")}}})
+    def test_keep_and_put_back(self):
+        f = self.ram_fleet()
         h = f.hosts["trifle"]
         self.prepare(h)
         seen = []
 
         def runner(argv, **kw):
-            seen.append(argv)
-            return subprocess.CompletedProcess(argv, 0, b"kiwi-state: /dev/vda1 made and in place\n", b"")
-        self.assertEqual(ram.prepare(h, "core@trifle", runner=runner), "kiwi-state: /dev/vda1 made and in place")
-        self.assertTrue(seen[0][-1].endswith("bash /etc/kiwi-ram/state.sh init /dev/vda /var/srv/stack'"), seen[0][-1])
-
-    def test_ssh_ca_files_are_kept(self):
-        f = self.ram_fleet()
-        h = f.hosts["trifle"]
-        script = ram.state_script(h)
-        self.assertIn('SSH_KEEP="/etc/ssh/kiwi-user-ca.pub /etc/ssh/sshd_config.d/40-kiwi-ca.conf"', script)
-        seen = []
-
-        def runner(argv, **kw):
             seen.append(argv[-1])
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
-        ram.save(h, "core@trifle", runner=runner)
-        self.assertIn("bash /etc/kiwi-ram/state.sh save", seen[0])
+            return subprocess.CompletedProcess(argv, 0, b"TAR", b"")
+        self.assertFalse(ram.put_back(h, "core@trifle", runner=runner))      # nothing kept yet
+        self.assertTrue(ram.keep(h, "core@trifle", runner=runner))
+        self.assertIn("km-nginx/letsencrypt km-nginx/acme", seen[-1])
+        self.assertFalse(ram.keep(h, "core@trifle", runner=runner))          # unchanged
+        self.assertFalse(ram.keep(h, "core@trifle", runner=done(b"")))       # nothing there: the copy stays
+        self.assertEqual(util.read_bytes(os.path.join(ram.key_dir(h), "kept.tar")), b"TAR")
+        self.assertTrue(ram.put_back(h, "core@trifle", runner=done(b"restored\n")))
+        self.assertFalse(ram.put_back(h, "core@trifle", runner=done(b"present\n")))
 
-        def old_image(argv, **kw):
-            return subprocess.CompletedProcess(argv, 1, b"", b"kiwi-state: usage: state.sh mount | init DISK STACK_DIR | status")
-        ram.save(h, "core@trifle", runner=old_image)     # a warning, not a failed apply
+    def test_state(self):
+        self.assertEqual(ram.state("x", runner=done(b"blank\n")), "blank")
+        self.assertEqual(ram.state("x", runner=done(b"ready\n")), "ready")
+        self.assertEqual(ram.state("x", runner=done(b"", rc=255)), "unreachable")
+        # the probe does not find itself (its paths moved where nothing else runs)
+        probe = ram.STATE_PROBE.replace("var/lib/kiwi-server", self.tmp.lstrip("/") + "/kiwi")
+        self.assertIn("[/]%s/kiwi/role.sh" % self.tmp.lstrip("/"), probe)
+        r = subprocess.run(["sh", "-c", probe], capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "blank")
+        write(os.path.join(self.tmp, "kiwi", "role.done"), "")
+        r = subprocess.run(["sh", "-c", probe], capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "ready")
+
+    def watch_args(self, f, **over):
+        a = argparse.Namespace(fleet=f.path, hosts=[], ssh=None, once=True, interval=60, timer=None,
+                               toolchain="auto", output_dir=None, cache=None, verbose=False)
+        a.__dict__.update(over)
+        return a
+
+    def test_watch_sends_the_role_to_a_blank_master(self):
+        f = self.ram_fleet()
+        with mock.patch.object(ram, "state", return_value="blank"), mock.patch.object(cli, "cmd_apply") as apply:
+            cli.cmd_watch(self.watch_args(f))
+        self.assertEqual(apply.call_args[0][0].hosts, ["trifle"])
+        self.assertFalse(apply.call_args[0][0].no_run)
+
+    def test_watch_keeps_the_copies_of_a_running_master_hourly(self):
+        f = self.ram_fleet()
+        with mock.patch.object(ram, "state", return_value="ready"), mock.patch.object(cli, "cmd_apply") as apply, \
+                mock.patch.object(backup, "keep_wireguard") as wg, mock.patch.object(ram, "keep") as kept:
+            cli.cmd_watch(self.watch_args(f))
+            cli.cmd_watch(self.watch_args(f))
+        apply.assert_not_called()
+        self.assertEqual((wg.call_count, kept.call_count), (1, 1))
+        self.assertIn("trifle", json.loads(util.read_text(f.resolve_path("output/watch.json"))))
+
+    def test_watch_timer(self):
+        calls = []
+
+        def systemctl(*a):
+            calls.append(a)
+            return subprocess.CompletedProcess(a, 0, "", "")
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.tmp}):
+            ram.watch_timer("/f/fleet.yaml", True, systemctl=systemctl)
+            unit = os.path.join(self.tmp, "systemd", "user", ram._unit("/f/fleet.yaml"))
+            self.assertIn("watch /f/fleet.yaml --once", util.read_text(unit + ".service"))
+            self.assertIn("OnUnitInactiveSec=1min", util.read_text(unit + ".timer"))
+            ram.watch_timer("/f/fleet.yaml", False, systemctl=systemctl)
+            self.assertFalse(os.path.exists(unit + ".timer"))
+        self.assertIn(("enable", "--now", ram._unit("/f/fleet.yaml") + ".timer"), calls)
 
     def test_render_and_offline(self):
         f = self.ram_fleet()
         out = os.path.join(self.tmp, "out")
         self.assertEqual(cli.main(["render", f.path, "trifle", "--no-backup", "-o", out]), 0)
         bu = yaml.safe_load(util.read_text(os.path.join(out, "trifle", "trifle.bu")))
-        self.assertNotIn("/var/lib/kiwi-server/role.sh", [fl["path"] for fl in bu["storage"]["files"]])
+        paths = [fl["path"] for fl in bu["storage"]["files"]]
+        self.assertNotIn("/var/lib/kiwi-server/role.sh", paths)
+        self.assertIn(ram.HOST_KEY, paths)
         self.assertTrue(os.path.isfile(os.path.join(out, "trifle", "trifle.role.sh")))
-        self.assertIn("state partition", util.read_text(os.path.join(out, "trifle", "README.txt")))
+        readme = util.read_text(os.path.join(out, "trifle", "README.txt"))
+        self.assertIn("kiwi-server watch", readme)
+        self.assertNotIn("install disk", readme)
         with self.assertRaisesRegex(KiwiError, "never carries the role"):
             cli._render_or_build(type("A", (), {"fleet": f.path, "hosts": ["trifle"], "offline": True, "bare": False,
                                                 "toolchain": "auto", "output_dir": out, "no_backup": True})(), True)
@@ -160,28 +215,16 @@ class TestRam(Base):
     def test_targets_lists_it(self):
         self.assertIn("coreos-ram", config.TARGETS)
         self.assertIn("coreos-ram", self.roles["master"].targets)
+        self.assertIn("coreos-ram", self.roles["bare"].targets)
         self.assertNotIn("coreos-ram", self.roles["node"].targets)
-
-    def test_state_script_parses(self):
-        f = self.ram_fleet()
-        p = os.path.join(self.tmp, "state.sh")
-        write(p, ram.state_script(f.hosts["trifle"]))
-        r = subprocess.run(["bash", "-n", p], capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        if have("shellcheck"):
-            r = subprocess.run(["shellcheck", "-S", "warning", p], capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stdout)
 
     @unittest.skipUnless(have("butane"), "butane not installed")
     def test_butane_strict(self):
-        f = self.ram_fleet(ram={"copy_to_ram": True, "image_cache": True, "keep_logs": True})
-        h = f.hosts["trifle"]
-        self.prepare(h)
+        h, _bu = self.butane(self.ram_fleet())
         bu = os.path.join(self.tmp, "trifle.bu")
         write(bu, ram.render(h))
         r = subprocess.run(["butane", "--strict", "--pretty", bu], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout)["ignition"]["version"], "3.5.0")
 
 
 if __name__ == "__main__":

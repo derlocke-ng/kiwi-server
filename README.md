@@ -387,6 +387,20 @@ the role runs (the role script does not stop docker containers). Mesh SSH to a n
 rule: `vpn-client: { extra_dnat_rules: ["2222/tcp:172.128.0.1:22"] }` (the
 docker gateway is the host).
 
+## Federation
+
+Two networks can share chosen services with each other (docs/design/federation.md):
+
+```bash
+kiwi-server federate ~/kiwi/fleet.yaml ~/kiwi2/fleet.yaml   # the link, nothing shared yet
+$EDITOR ~/kiwi/federation.yaml                             # share: [cloud.papaya], from: []
+kiwi-server plan ~/kiwi/fleet.yaml && kiwi-server apply ~/kiwi/fleet.yaml
+```
+
+Each network keeps its fleet, seed, CA and mesh (every network its own /16); the masters are
+linked by WireGuard on UDP 51822, each Pi-hole asks the other for the other's domain, and a
+partner reaches only what is listed under `share`, from the addresses under `from`.
+
 ## What you get
 
 `output/<host>/`, which is in the secret store's tmpfs while the store is open (the rendered

@@ -127,6 +127,22 @@ http {
         listen 443 ssl;
         http2 on;
         server_name {{ s.server_name }};
+{% set fed = federation or {} %}
+{% set fn = (fed.names or {}).get(s.server_name) %}
+{% if fn %}
+        # federation: shared with these partner addresses, not with the rest of the partners
+{% for c in fn.allow or [] %}
+        allow {{ c }};
+{% endfor %}
+{% for c in fn.deny or [] %}
+        deny {{ c }};
+{% endfor %}
+{% elif fed.deny %}
+        # federation: not shared with partner networks
+{% for c in fed.deny %}
+        deny {{ c }};
+{% endfor %}
+{% endif %}
 {% if s.public %}
         ssl_certificate     /etc/nginx/acme/{{ s.server_name }}/fullchain.pem;
         ssl_certificate_key /etc/nginx/acme/{{ s.server_name }}/privkey.pem;

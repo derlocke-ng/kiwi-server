@@ -31,7 +31,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 
 import yaml  # noqa: E402
 
-from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
+from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
 from kiwiserver import facts, luks, mtu, plan as planmod, setup as setupmod, sshca, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
@@ -1962,6 +1962,48 @@ class TestSshCa(Base):
                 self.assertTrue(remote.reach(h).endswith("@198.51.100.7"))
             with mock.patch.object(remote, "_certified", lambda tgt: False):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
+
+
+class TestFederation(Base):
+    def test_the_link_key_is_wireguards(self):
+        priv = bytes.fromhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")   # RFC 7748
+        self.assertEqual(fedmod._x25519_base(priv).hex(), "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+        self.assertEqual(fedmod.public_key("secret-for-test"), "dmZZPI0kvXBkZN/0+t4ACkEhunuvL8QeZowWG6x3QU4=")  # wg pubkey said so
+
+    def test_a_node_lets_a_partner_open_only_what_is_shared(self):
+        found = fedmod.with_addresses({
+            "b": {"mesh": "10.10.0.0/16", "share": ["cloud.papaya", "lychee"], "from": []},
+            "c": {"mesh": "10.11.0.0/16", "share": ["papaya:22"], "from": []}}, "10.9.0.0/16")
+        self.assertEqual((found["b"]["as"], found["c"]["as"]), ("10.9.255.1", "10.9.255.2"))
+        papaya = fedmod.node_rules(found, "papaya", "home")
+        self.assertEqual(papaya["names"]["cloud.papaya.home"]["allow"], ["10.9.255.1"])
+        self.assertEqual(papaya["deny"], ["10.9.255.1"])          # c has the whole node (a port of it): no name rules
+        self.assertEqual(fedmod.node_rules(found, "lychee", "home")["deny"], ["10.9.255.2"])
+
+    def test_federate_links_two_fleets_and_leaves_the_sharing_to_them(self):
+        a = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}),
+                        "hosts": {"gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        b_path = os.path.join(other, "fleet.yaml")
+        with open(a.path) as fh:
+            data = yaml.safe_load(fh)
+        data["defaults"]["domain"] = "internal"
+        data["defaults"]["master"] = {"mesh_subnet": "10.10.0.0/16"}
+        data["hosts"]["gate"]["master"]["vpn-server"]["wg_host"] = "198.51.100.9"
+        for k in ("admin",):
+            data["defaults"][k]["ssh_keys"] = [os.path.join(self.tmp, k) for k in data["defaults"][k].get("ssh_keys") or []] or []
+        write(b_path, yaml.safe_dump(data))
+        for d in ("secrets",):
+            shutil.copytree(os.path.join(self.tmp, d), os.path.join(other, d), dirs_exist_ok=True) if os.path.isdir(os.path.join(self.tmp, d)) else None
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
+        self.assertEqual(rc, 0, err)
+        with open(os.path.join(self.tmp, "federation.yaml")) as fh:
+            mine = yaml.safe_load(fh)
+        partner = mine["other"]
+        self.assertEqual((partner["mesh"], partner["domain"], partner["share"]), ("10.10.0.0/16", "internal", []))
+        loaded = config.Fleet.load(a.path)
+        self.assertEqual(loaded.hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]["as"], "10.9.255.1")
 
 
 class TestPlan(unittest.TestCase):

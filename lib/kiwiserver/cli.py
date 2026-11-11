@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca
+from . import VERSION, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t, ram as ram_t
@@ -1571,6 +1571,36 @@ def cmd_sshca(args):
     print("trusted for: %s" % ", ".join(sshca.patterns(fleet)))
 
 
+def cmd_federate(args):
+    """Link two networks this computer holds both fleets of: each master's link key, address,
+    mesh and DNS into the other's federation.yaml. What each shares stays empty until written."""
+    sides = []
+    for path in (args.fleet, args.other):
+        a = argparse.Namespace(**dict(vars(args), fleet=path))
+        fleet, roles, ms = load(a)
+        masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"]
+        if len(masters) != 1:
+            raise KiwiError("%s: federation needs exactly one master, found %d" % (path, len(masters)))
+        h = masters[0]
+        rolesmod.resolve_settings(roles[h.role], h, ms)
+        vs = h.module_settings.get("vpn-server") or {}
+        if not vs.get("wg_host") or not vs.get("federation_secret"):
+            raise KiwiError("%s: its master %s has no wg_host or no federation key" % (path, h.name))
+        sides.append((fleet, os.path.basename(fleet.dir.rstrip("/")) or h.name, {
+            "endpoint": str(vs["wg_host"]), "public_key": fedmod.public_key(vs["federation_secret"]),
+            "mesh": h.role_settings.get("mesh_subnet") or h.role_settings_raw.get("mesh_subnet") or "10.8.0.0/16",
+            "domain": h.domain, "dns": vs.get("server_ip") or ""}))
+    (fa, na, ea), (fb, nb, eb) = sides
+    if na == nb:
+        raise KiwiError("both fleets are called %s: rename one folder" % na)
+    if not ea["mesh"] or not eb["mesh"] or ea["mesh"] == eb["mesh"]:
+        raise KiwiError("the two meshes must be set and differ (%s, %s): every network has its own /16" % (ea["mesh"], eb["mesh"]))
+    fedmod.write(fa.dir, nb, eb)
+    fedmod.write(fb.dir, na, ea)
+    util.say("%s and %s are linked; nothing is shared yet: share and from in each federation.yaml, then apply both masters"
+             % (na, nb))
+
+
 def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
@@ -1780,6 +1810,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
   kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
+  kiwi-server federate <fleet> <other fleet>         link two networks (then share in federation.yaml)
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -1897,6 +1928,7 @@ def build_parser():
     s.add_argument("--user", help="sign: the user the key logs in as (default: admin.user)")
     s.add_argument("--days", type=int, default=sshca.USER_DAYS, help="sign: how long it lets the key in (default %(default)s)")
     s.add_argument("--known-hosts", metavar="FILE", help="trust: instead of ~/.ssh/known_hosts")
+    s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")

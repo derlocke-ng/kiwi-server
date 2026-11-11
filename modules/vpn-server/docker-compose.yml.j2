@@ -26,6 +26,9 @@ services:
     ports:
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ wg_port }}:51820/udp"
       - "127.0.0.1:51821:51821/tcp"
+{% if federation %}
+      - "{{ public_ip ~ ':' if public_ip else '' }}{{ federation_port }}:{{ federation_port }}/udp"
+{% endif %}
 {% for port in unlock_relay %}
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ port }}:{{ port }}/tcp"
 {% endfor %}

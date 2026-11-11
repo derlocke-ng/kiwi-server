@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.54.0 — federation
+
+- `kiwi-server federate <fleet> <other fleet>` links two networks: each master gets the
+  other's link key, address, mesh and DNS in `federation.yaml` next to its fleet file. What a
+  network shares is its own `share` (a node, `node:port`, or `service.node`) and `from` (the
+  partner's groups or addresses) there; nothing is shared until written.
+- kiwi-modules 0.26.1: the masters' WireGuard link (`wg-fed`, UDP 51822), its firewall, the
+  partner's domain in the Pi-hole, and per-name partner access in the nodes' nginx. A partner's
+  connections reach the nodes from one address of this mesh (`as`, 10.x.255.N).
+- `tests/drills/federation.py`: a client of the partner reaches the shared service, gets 403
+  on another name of the same node, and nothing from a node that is not shared.
+
 ## 2.53.2 — multi-hop, tried
 
 - kiwi-modules 0.25.2: a master whose VPN client leaves through another network's master

@@ -46,16 +46,24 @@ mesh_route() {
 }
 verify() {
     # every service of the stack is running, or the names of those that are not;
-    # a unit still (re)starting counts as down — a pull that cannot finish must not pass
-    local s down=() state
-    for s in $STACK_SERVICES; do
-        if [[ $STACK_RUNTIME == podman ]]; then
-            state=$(systemctl is-active "$s.service" 2>/dev/null || true)
-            [[ $state == active ]] || down+=("$s ($state)")
-        else
-            state=$(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)
-            [[ $state == running ]] || down+=("$s ($state)")
-        fi
+    # a unit still (re)starting counts as down — a pull that cannot finish must not pass.
+    # Asked again for a minute: a restarted container's network is followed by the
+    # containers sharing it a few seconds later (BindsTo), and the first look caught them
+    # stopped (an apply that changed the WireGuard server failed, found with federation)
+    local s down=() state tries=${KS_VERIFY_TRIES:-13}
+    while :; do
+        down=()
+        for s in $STACK_SERVICES; do
+            if [[ $STACK_RUNTIME == podman ]]; then
+                state=$(systemctl is-active "$s.service" 2>/dev/null || true)
+                [[ $state == active ]] || down+=("$s ($state)")
+            else
+                state=$(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)
+                [[ $state == running ]] || down+=("$s ($state)")
+            fi
+        done
+        (( ${#down[@]} && --tries > 0 )) || break
+        sleep 5
     done
     if (( ${#down[@]} )); then
         printf 'not running: %s\n' "${down[@]}" >&2

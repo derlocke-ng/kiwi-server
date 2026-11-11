@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.52.0 — a plan before an update
+
+- `kiwi-server plan <fleet> [host...]`: what an apply would change on each running machine
+  (the stack's files, quadlets and units, by hash) and which containers it would restart, by
+  kiwi-stack's own rule. Read-only; run it before an update. Right after an apply it says
+  "nothing changes".
+
 ## 2.51.1 — the night's backup runs
 
 - kiwi-modules 0.25.1: a backup by hand in the evening no longer skips the nightly run (seen

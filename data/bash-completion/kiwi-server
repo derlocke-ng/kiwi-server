@@ -4,7 +4,7 @@ _kiwi_server() {
     local cur prev cmds opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="init add names backups sshca validate list show render build script ca openwrt apply status enroll secrets mtu vps backup restore prune unlock roles modules targets toolchain doctor version help"
+    cmds="init add names backups sshca plan validate list show render build script ca openwrt apply status enroll secrets mtu vps backup restore prune unlock roles modules targets toolchain doctor version help"
     opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --offline --local --ssh --passphrase-file --dry-run --keep-daily --keep-weekly --keep-monthly --from --list --into --no-run --group --address --split --existing --master --qr --example --questions --answers --preset --target --now --new --restore --at --days --user --known-hosts"
 
     if [[ $cur == -* ]]; then
@@ -38,7 +38,7 @@ _kiwi_server() {
     done
     case "$verb" in
         "")  mapfile -t COMPREPLY < <(compgen -W "$cmds" -- "$cur") ;;
-        validate|list|show|render|build|script|ca|openwrt|backup|backups|prune|unlock|apply|status|enroll)
+        validate|list|show|plan|render|build|script|ca|openwrt|backup|backups|prune|unlock|apply|status|enroll)
             if [[ -z $fleet ]]; then
                 mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")
             elif [[ -f $fleet ]]; then

@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod, sshca
+from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
@@ -1084,6 +1084,51 @@ def cmd_openwrt(args):
 
 # ---- managing machines that run ----------------------------------------------------
 
+def cmd_plan(args):
+    """What `apply` would change on each running machine: files, units, and which containers
+    restart. Read-only; run it before an update."""
+    fleet, roles, ms = load(args)
+    hosts = fleet.select(args.hosts)
+    check(fleet, roles, ms, hosts)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
+    report = []
+    for h in hosts:
+        _script, b = r.script(h)
+        if b is None:
+            report.append({"host": h.name, "stack": False})
+            continue
+        want = planmod.wanted(h, b)
+        try:
+            version, have, before = planmod.machine(remote.reach(h, args.ssh), sorted(want))
+        except KiwiError as e:
+            report.append({"host": h.name, "error": str(e)})
+            continue
+        report.append(dict(planmod.compare(b, want, have, before), host=h.name, release=version))
+    if args.porcelain:
+        print(json.dumps({"release": VERSION, "hosts": report}, indent=1))
+        return
+    for x in report:
+        if "error" in x:
+            print("%s: not reached: %s" % (x["host"], x["error"]))
+            continue
+        if not x.get("stack", True):
+            print("%s: no stack" % x["host"])
+            continue
+        head = "%s (%s -> %s): " % (x["host"], x["release"] or "?", VERSION)
+        if not x["changed"] and not x["removed_services"]:
+            print(head + "nothing changes")
+            continue
+        bits = ["%d files" % len(x["changed"])]
+        for key, word in (("restart", "restarts"), ("new_services", "new"), ("removed_services", "goes")):
+            if x[key]:
+                bits.append("%s %s" % (word, " ".join(x[key])))
+        if not x["restart"] and x["quadlets"]:
+            bits.append("nothing restarts")
+        print(head + "; ".join(bits))
+        for c in x["changed"]:
+            print("   %s%s" % (c["path"], " (new)" if c["new"] else ""))
+
+
 def cmd_apply(args):
     """Re-render a host and run the role script on it: settings changed, a
     certificate renewed, a module added — without a reinstall."""
@@ -1646,6 +1691,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
+  kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
@@ -1727,6 +1773,8 @@ def build_parser():
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")
     s.add_argument("--via", metavar="NODE|IP", help="no tunnel: a static route to a gateway node on the LAN")
     s.add_argument("--name", default="kiwi", help="the interface and zone name on the router (default kiwi)")
+    s = sub("plan", cmd_plan); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")

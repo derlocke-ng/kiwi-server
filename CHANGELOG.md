@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.55.1 — federation and SSH certificates in the app
+
+- GUI menu: *Federation…* lists the partner networks with what each may reach here (Shared
+  here, From) and links another network's fleet file; *SSH certificates…* makes the CA, trusts
+  it on this computer and signs a key for a number of days.
+
 ## 2.55.0 — a check after an update
 
 - `kiwi-server check <fleet>`: from each master's Pi-hole container, every name of the fleet

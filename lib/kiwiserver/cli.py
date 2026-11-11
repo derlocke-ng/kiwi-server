@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod
+from . import VERSION, backup as backupmod, certs, config, iso as isomod, modules as modmod, roles as rolesmod, sshca
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t
@@ -1120,6 +1120,9 @@ def cmd_apply(args):
                 unlock.bind(h, tgt, servers)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
+            if sshca.exists(fleet):
+                sshca.install(fleet, h, tgt)
+                util.say("%s: its host certificate is signed, its sshd takes the fleet's user certificates" % h.name)
             record_applied(fleet, h.name)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
@@ -1402,6 +1405,41 @@ def cmd_backups(args):
         raise KiwiError("%s: kiwi-stack exited with %d" % (h.name, rc))
 
 
+def cmd_sshca(args):
+    """The fleet's SSH CA: made once, then every apply gives the machine a host certificate and
+    its sshd takes user certificates the CA signed."""
+    fleet, roles, ms = load(args)
+    for h in fleet.hosts.values():          # the machines' addresses, for the certificates' names
+        try:
+            rolesmod.resolve_settings(roles[h.role], h, ms)
+        except (KiwiError, KeyError):
+            pass
+    if args.action == "init":
+        pub = sshca.init(fleet)
+        util.say("SSH CA made: %s (%s); every apply from now on signs the machine's host key" % (sshca.CA, pub.split()[1][-12:]))
+        util.say("next: kiwi-server apply %s, then kiwi-server sshca %s trust" % (os.path.basename(args.fleet), os.path.basename(args.fleet)))
+        return
+    if not sshca.exists(fleet):
+        raise KiwiError("the fleet has no SSH CA yet: kiwi-server sshca %s init" % args.fleet)
+    if args.action == "trust":
+        known = os.path.expanduser(args.known_hosts or "~/.ssh/known_hosts")
+        changed = sshca.trust(fleet, known)
+        util.say("%s %s: ssh to the fleet's machines checks their certificates" % ("written to" if changed else "already in", known))
+        return
+    if args.action == "sign":
+        if not args.key:
+            raise KiwiError("which key? kiwi-server sshca %s sign ~/.ssh/id_ed25519.pub" % args.fleet)
+        key = os.path.expanduser(args.key)
+        user = args.user or (fleet.defaults.get("admin") or {}).get("user") or "core"
+        cert = sshca.sign(fleet, util.read_text(key), "%s (%s)" % (user, os.path.basename(key)), [user], args.days)
+        out = key[:-4] + "-cert.pub" if key.endswith(".pub") else key + "-cert.pub"
+        util.write_text(out, cert, 0o644)
+        util.say("%s: lets this key in as %s on every machine for %d days (ssh finds it next to the key)" % (out, user, args.days))
+        return
+    print("SSH CA %s  %s" % (sshca.CA, sshca.fingerprint(fleet)))
+    print("trusted for: %s" % ", ".join(sshca.patterns(fleet)))
+
+
 def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
@@ -1609,6 +1647,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
+  kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
@@ -1712,6 +1751,12 @@ def build_parser():
     s.add_argument("--restore", action="store_true", help="bring these modules back from the backups (none named: all of them)")
     s.add_argument("--at", metavar="TIME", help="with --restore: the newest snapshot from then or before, e.g. '2026-11-10 19:00'")
     s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("sshca", cmd_sshca); s.add_argument("fleet")
+    s.add_argument("action", nargs="?", choices=("init", "sign", "trust"))
+    s.add_argument("key", nargs="?", help="sign: the public key to let in")
+    s.add_argument("--user", help="sign: the user the key logs in as (default: admin.user)")
+    s.add_argument("--days", type=int, default=sshca.USER_DAYS, help="sign: how long it lets the key in (default %(default)s)")
+    s.add_argument("--known-hosts", metavar="FILE", help="trust: instead of ~/.ssh/known_hosts")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")

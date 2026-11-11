@@ -4,8 +4,8 @@ _kiwi_server() {
     local cur prev cmds opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="init add names backups validate list show render build script ca openwrt apply status enroll secrets mtu vps backup restore prune unlock roles modules targets toolchain doctor version help"
-    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --offline --local --ssh --passphrase-file --dry-run --keep-daily --keep-weekly --keep-monthly --from --list --into --no-run --group --address --split --existing --master --qr --example --questions --answers --preset --target --now --new --restore --at"
+    cmds="init add names backups sshca validate list show render build script ca openwrt apply status enroll secrets mtu vps backup restore prune unlock roles modules targets toolchain doctor version help"
+    opts="--output-dir --cache --toolchain --image --porcelain --quiet --verbose -o -v --help --version --wireguard --full --via --name --domain --no-backup --offline --local --ssh --passphrase-file --dry-run --keep-daily --keep-weekly --keep-monthly --from --list --into --no-run --group --address --split --existing --master --qr --example --questions --answers --preset --target --now --new --restore --at --days --user --known-hosts"
 
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
@@ -47,6 +47,14 @@ _kiwi_server() {
                        sed -n 's/^ *"name": "\([^"]*\)".*/\1/p')" -- "$cur")
             fi ;;
         init|restore|names) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;;
+        sshca)
+            if [[ -z $fleet ]]; then
+                mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")
+            elif [[ $prev == "$fleet" ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "init sign trust" -- "$cur")
+            else
+                mapfile -t COMPREPLY < <(compgen -f -X '!*.pub' -- "$cur")
+            fi ;;
         add)
             if [[ -z $fleet ]]; then
                 mapfile -t COMPREPLY < <(compgen -f -X '!*.y*ml' -- "$cur")

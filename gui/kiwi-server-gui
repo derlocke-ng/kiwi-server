@@ -663,7 +663,7 @@ class Form:
                 g.add(self.row_for(self._field((name, st["key"]), st, st.get("default"))))
             groups.append(g)
         if groups:
-            groups[0].set_header_suffix(help_button(role["description"] + (
+            groups[0].set_header_suffix(info_button(role["description"] + (
                 "" if role.get("status") == "stable" else " [%s]" % role.get("status")), DOCS + "roles/%s/role.yaml" % name))
             add("role", role["title"], groups)
         if stack:
@@ -680,7 +680,7 @@ class Form:
                 schema = self.win.module_schemas[m]
                 g = Adw.PreferencesGroup(title=schema["title"])
                 if schema.get("description"):
-                    g.set_header_suffix(help_button(schema["description"], DOCS + "modules/%s/module.yaml" % m))
+                    g.set_header_suffix(info_button(schema["description"], DOCS + "modules/%s/module.yaml" % m))
                 for st in schema["settings"]:
                     default = (mdefaults.get(m) or {}).get(st["key"], st.get("default"))
                     g.add(self.row_for(self._field((name, m, st["key"]), st, default)))
@@ -897,11 +897,28 @@ def meter(fraction, **kw):
     return bar
 
 
+SHORT = 90       # longer text is cut in its row and whole behind an (i)
+
+
+def shorten(text, n=SHORT):
+    """The text up to its first sentence's end, or cut at a word, when it is longer than n."""
+    if len(text) <= n:
+        return text
+    for end in (". ", "; ", ": "):
+        i = text.find(end)
+        if 20 < i < n:
+            return text[:i + 1] + " …"
+    return text[:n].rsplit(" ", 1)[0] + " …"
+
+
 def plain_row(title, subtitle="", **kw):
-    """A row for text from elsewhere (an error, a path): `<` and `&` are just characters."""
+    """A row for text from elsewhere (an error, a path): `<` and `&` are just characters. Text
+    too long for a row is cut, the whole of it behind an (i)."""
     row = Adw.ActionRow(use_markup=False, **kw)
-    row.set_title(title)
-    row.set_subtitle(subtitle)
+    row.set_title(shorten(title))
+    row.set_subtitle(shorten(subtitle))
+    if len(title) > SHORT or len(subtitle) > SHORT:
+        row.add_suffix(info_button("\n\n".join(t for t in (title, subtitle) if t)))
     return row
 
 
@@ -1034,19 +1051,27 @@ class HostRow(Gtk.ListBoxRow):
 DOCS = "https://github.com/derlocke-ng/kiwi-server/blob/main/"
 
 
-def help_button(text, link=None):
-    """A (?) beside a field: what it is for, and the documentation one click away."""
-    # a plain "?", as in the other kiwi apps: Adwaita's question icon is a diamond that reads as a warning
-    b = Gtk.MenuButton(child=Gtk.Label(label="?", css_classes=["heading"]), valign=Gtk.Align.CENTER,
-                       tooltip_text="What is this?", css_classes=["flat", "circular", "ks-help"])
+def help_button(text, link=None, info=False):
+    """A "?" beside a field or term: what it means, the documentation one click away. With
+    `info`, an (i) instead: the whole of a text too long for where it stands."""
+    if info:
+        b = Gtk.MenuButton(icon_name="help-about-symbolic", valign=Gtk.Align.CENTER, tooltip_text="More",
+                           css_classes=["flat", "circular", "ks-help"])
+    else:   # a plain "?", as in the other kiwi apps: Adwaita's question icon is a diamond that reads as a warning
+        b = Gtk.MenuButton(child=Gtk.Label(label="?", css_classes=["heading"]), valign=Gtk.Align.CENTER,
+                           tooltip_text="What is this?", css_classes=["flat", "circular", "ks-help"])
     b.update_property([Gtk.AccessibleProperty.LABEL], ["More about this"])
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=10, margin_bottom=10,
                   margin_start=12, margin_end=12)
-    box.append(Gtk.Label(label=text, wrap=True, max_width_chars=48, xalign=0))
+    box.append(Gtk.Label(label=text, wrap=True, max_width_chars=56, xalign=0, selectable=info))
     if link:
         box.append(Gtk.LinkButton(uri=link, label="More in the docs", halign=Gtk.Align.START, css_classes=["flat"]))
     b.set_popover(Gtk.Popover(child=box))
     return b
+
+
+def info_button(text, link=None):
+    return help_button(text, link, info=True)
 
 
 class SetupWizard(Adw.Dialog):

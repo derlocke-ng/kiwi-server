@@ -32,7 +32,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import facts, luks, mtu, setup as setupmod, store, unlock  # noqa: E402
+from kiwiserver import facts, luks, mtu, setup as setupmod, sshca, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -1896,6 +1896,74 @@ class TestSetup(Base):
         self.assertEqual(cli.shown_path(os.path.join(os.getcwd(), "output", "a.iso")), os.path.join("output", "a.iso"))
 
 
+@unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+class TestSshCa(Base):
+    def gate(self):
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+
+    def test_a_host_certificate_names_the_machine_and_its_sshd_takes_user_certificates(self):
+        fleet = self.gate()
+        sshca.init(fleet)
+        with self.assertRaisesRegex(KiwiError, "exists already"):
+            sshca.init(fleet)
+        key = os.path.join(self.tmp, "host")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
+        scripts = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            scripts.append(script)
+            if not script.startswith("cat "):
+                return b""
+            with open(key + ".pub", "rb") as fh:
+                return fh.read()
+        h = fleet.hosts["gate"]
+        with mock.patch.object(remote, "run", fake_run):
+            sshca.install(fleet, h, "core@gate.kiwi")
+        self.assertIn("HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub", scripts[1])
+        self.assertIn("TrustedUserCAKeys /etc/ssh/kiwi-user-ca.pub", scripts[1])
+        self.assertIn("sshd -t", scripts[1])
+        cert = re.search(r"printf '%s\\n' '([^']+)' > /etc/ssh/ssh_host_ed25519_key-cert.pub", scripts[1]).group(1)
+        write(key + "-cert.pub", cert + "\n")
+        shown = subprocess.run(["ssh-keygen", "-L", "-f", key + "-cert.pub"], capture_output=True, text=True).stdout
+        self.assertIn("host certificate", shown)
+        self.assertIn(h.hostname, shown)
+        self.assertNotIn("PRIVATE", "".join(scripts))
+        with open(fleet.resolve_path("secrets/known_hosts")) as fh:
+            known = fh.read()
+        self.assertEqual(known.count("@cert-authority "), 1)
+        self.assertIn("*.%s" % fleet.defaults["domain"], known)
+
+    def test_a_key_is_let_in_for_a_while(self):
+        fleet = self.gate()
+        sshca.init(fleet)
+        key = os.path.join(self.tmp, "laptop")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
+        rc, out, err = TestManage.run_cli(self, "sshca", fleet.path, "sign", key + ".pub", "--days", "2")
+        self.assertEqual(rc, 0, err)
+        shown = subprocess.run(["ssh-keygen", "-L", "-f", key + "-cert.pub"], capture_output=True, text=True).stdout
+        self.assertIn("user certificate", shown)
+        self.assertIn(fleet.defaults["admin"]["user"], shown)
+        known = os.path.join(self.tmp, "kh")
+        write(known, "other.example ssh-ed25519 AAAA\n")
+        for _ in range(2):
+            TestManage.run_cli(self, "sshca", fleet.path, "trust", "--known-hosts", known)
+        with open(known) as fh:
+            lines = fh.read().splitlines()
+        self.assertEqual((lines[0], sum(x.startswith("@cert-authority") for x in lines)), ("other.example ssh-ed25519 AAAA", 1))
+
+    def test_an_address_met_nowhere_counts_only_with_a_certificate(self):
+        h = self.gate().hosts["gate"]
+        with mock.patch.object(remote, "_on_record", lambda a: False), \
+             mock.patch.object(remote, "_answers", lambda a, *p: True), \
+             mock.patch.object(remote, "_ca_known", lambda: True), \
+             mock.patch.object(remote, "addresses", lambda host: ["gate.kiwi", "198.51.100.7"]):
+            with mock.patch.object(remote, "_certified", lambda tgt: tgt.endswith("198.51.100.7")):
+                self.assertTrue(remote.reach(h).endswith("@198.51.100.7"))
+            with mock.patch.object(remote, "_certified", lambda tgt: False):
+                self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
+
+
 class TestBackups(unittest.TestCase):
     def test_snapshots_per_server_newest_first(self):
         line = "backup.papaya.home\t" + json.dumps([
@@ -2202,8 +2270,8 @@ class TestPrune(Base):
             units = os.path.join(self.tmp, "cfg", "systemd", "user")
             names = sorted(os.listdir(units))
             self.assertEqual(len(names), 2)
-            timer = open(os.path.join(units, [n for n in names if n.endswith(".timer")][0])).read()
-            service = open(os.path.join(units, [n for n in names if n.endswith(".service")][0])).read()
+            timer = util.read_text(os.path.join(units, [n for n in names if n.endswith(".timer")][0]))
+            service = util.read_text(os.path.join(units, [n for n in names if n.endswith(".service")][0]))
             self.assertIn("OnCalendar=weekly", timer)
             self.assertIn("Persistent=true", timer)                  # a PC that was off catches up
             self.assertIn("prune %s" % fleet_path, service)

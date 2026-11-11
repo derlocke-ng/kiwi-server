@@ -63,8 +63,8 @@ def _mesh_address_from_wireguard(host, module_files, where):
     for it: fill it in when it is empty, warn when the two disagree (the DNAT
     rules and the fleet's DNS records would point at the wrong address)."""
     data = module_files.get("vpn-client/wireguard_config")
-    if not data:
-        return
+    if not data or "vpn-server" in (host.modules or []):
+        return      # a master's client config is another network's (multi-hop): its own address is server_ip
     m = _WG_ADDRESS.search(data.decode("utf-8", "replace"))
     if not m:
         return

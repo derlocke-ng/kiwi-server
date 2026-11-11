@@ -16,6 +16,7 @@ rules end up in the VPN client's post-rules.
 """
 import copy
 import ipaddress
+import hashlib
 import os
 import re
 
@@ -65,7 +66,16 @@ def _jinja():
     if jinja2 is None:
         raise KiwiError("python3 jinja2 is required to render modules — "
                         "pip install --user jinja2  (or rpm-ostree install python3-jinja2)")
-    return jinja2.Environment(trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
+    env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
+    env.filters["wg_key"] = wg_key
+    return env
+
+
+def wg_key(secret):
+    """A WireGuard private key from a generated secret: SHA-256 of it, base64 (wg clamps the
+    bits). kiwi-server computes the public key from the same bytes for the partner."""
+    import base64
+    return base64.b64encode(hashlib.sha256(str(secret).encode()).digest()).decode()
 
 
 class Module:

@@ -148,3 +148,55 @@ iptables -t mangle -A OUTPUT -p tcp --sport 80 -j MARK --set-mark 65
 iptables -t mangle -A OUTPUT -p tcp --sport 443 ! -d {{ mesh_subnet }} -j MARK --set-mark 65
 {% endif %}
 {% endif %}
+{% if federation %}
+
+# federation (docs/design/federation.md in kiwi-server): a link to each partner network over
+# wg-fed. Their meshes are routed through it; they reach here only what is shared with them,
+# from the addresses named in `from`, and this server's DNS. No NAT: each side sees the other's
+# real addresses, which is what its rules filter on.
+ip link del wg-fed 2>/dev/null
+ip link add wg-fed type wireguard
+umask 077
+printf '%s' '{{ federation_secret | wg_key }}' > /run/wg-fed.key
+# fwmark: the link's packets leave on the real interface (table novpn), not through the exit.
+# WireGuard routes its own packets before the mangle table could mark them: through the exit,
+# the partner learnt the exit's address and the link went one way (found with sorbet)
+wg set wg-fed private-key /run/wg-fed.key listen-port {{ federation_port }}{{ ' fwmark 65' if has_vpn_client else '' }}
+rm -f /run/wg-fed.key
+ip addr add {{ server_ip }}/32 dev wg-fed
+ip link set wg-fed mtu {{ wg_mtu }} up
+iptables -N KIWI_FED 2>/dev/null || iptables -F KIWI_FED
+iptables -I FORWARD 1 -i wg-fed -j KIWI_FED
+iptables -A KIWI_FED -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -I INPUT 1 -i wg-fed -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -I INPUT 2 -i wg-fed -p udp --dport 53 -j ACCEPT
+iptables -I INPUT 3 -i wg-fed -p tcp --dport 53 -j ACCEPT
+iptables -I INPUT 4 -i wg-fed -j DROP
+{% for pname, p in federation.items() %}
+{% set ep = p.endpoint ~ ('' if ':' in (p.endpoint | string) else ':' ~ federation_port) %}
+# {{ pname }}: {{ p.mesh }} at {{ ep }}
+wg set wg-fed peer {{ p.public_key }} endpoint {{ ep }} allowed-ips {{ p.mesh }} persistent-keepalive 25
+ip route replace {{ p.mesh }} dev wg-fed
+{% if p['as'] %}
+# its connections reach the mesh from {{ p['as'] }}, an address of this mesh: a node routes
+# only its own mesh back through its VPN client, and its nginx tells the partners apart by it
+iptables -t nat -A POSTROUTING -s {{ p.mesh }} -o wg0 -j SNAT --to-source {{ p['as'] }}
+{% endif %}
+{% for src in (p['from'] or [p.mesh]) %}
+{% for e in (p.share or []) %}
+{% set host, _, port = (e | string).partition(':') %}
+{% set ip = host_ips.get(host ~ '.' ~ domain) or host_ips.get(host) %}
+{% if not ip %}
+# share {{ e }}: no such name in this fleet, left out
+{% elif '.' in host %}
+iptables -A KIWI_FED -s {{ src }} -d {{ ip }} -p tcp --dport 443 -j ACCEPT
+{% elif port %}
+iptables -A KIWI_FED -s {{ src }} -d {{ ip }} -p tcp --dport {{ port }} -j ACCEPT
+{% else %}
+iptables -A KIWI_FED -s {{ src }} -d {{ ip }} -j ACCEPT
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endfor %}
+iptables -A KIWI_FED -j DROP
+{% endif %}

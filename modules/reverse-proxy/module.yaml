@@ -59,6 +59,12 @@ backup:
   paths: ["{% if public_names %}${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt{% endif %}", "{% if public_names %}${DOCKERDIR}/{{ container_prefix }}-nginx/acme{% endif %}"]
 
 settings:
+  - key: federation
+    type: object
+    group: Generated
+    label: Federation access
+    help: "Filled in by kiwi-server from federation.yaml: which partner addresses may open which of this machine's names (names: name -> allow, deny), and the partner networks shut out of the rest (deny)."
+    default: {}
   - key: network_mode
     label: Share a container's network
     help: "Empty: own address, ports 80 and 443 published on the host (a node). vpn-server: inside the WireGuard server's network stack, reachable at the server's mesh address only (a master): wg.<hostname>, pihole.<hostname>."

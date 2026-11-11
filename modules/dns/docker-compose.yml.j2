@@ -33,6 +33,10 @@
 {% set _ = lines.append('local=/' ~ domain ~ '/') %}
 {% endif %}
 {% endif %}
+{# federation: a partner network's names from its own DNS, over the link #}
+{% for pname, p in ((module_config.get('vpn-server') or {}).get('federation') or {}).items() if node_type == 'master' and p.domain and p.dns %}
+{% set _ = lines.append('server=/' ~ p.domain ~ '/' ~ p.dns) %}
+{% endfor %}
 {% if mullvad_socks %}
 {# the Mullvad SOCKS5 records, refreshed by the host timer; reloaded on every change #}
 {% set _ = lines.append('hostsdir=/etc/mullvad-socks') %}

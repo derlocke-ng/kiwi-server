@@ -15,7 +15,7 @@ dependencies:
 network:
   listen_ports: ["51820/udp", "51821/tcp"]
   needs_vpn_dnat: false
-  open_ports: ["{{ wg_port }}/udp", "{% for port in unlock_relay %}{{ port }}/tcp {% endfor %}"]
+  open_ports: ["{{ wg_port }}/udp", "{% for port in unlock_relay %}{{ port }}/tcp {% endfor %}", "{{ federation_port ~ '/udp' if federation else '' }}"]
 
 firewall:
   # applied inside the container by start.sh (WG_POST_UP)
@@ -97,6 +97,22 @@ settings:
     label: wg-easy page hostname
     help: "Empty: wg.<hostname>. Served by the reverse proxy when there is one, for admin groups only."
     default: ""
+  - key: federation
+    type: object
+    label: Federation partners
+    help: "Other networks this one is linked to, from federation.yaml next to the fleet file (kiwi-server federate): per partner endpoint, public_key, mesh, domain, dns, and what it may reach here (share: nodes, node:port or service.node; from: its groups' subnets or addresses, empty: its whole mesh; as: the address of this mesh its connections come from)."
+    default: {}
+  - key: federation_port
+    type: int
+    label: Federation port (UDP)
+    help: "Where the link to partner networks listens on this master. A firewall in front must let it through."
+    default: 51822
+  - key: federation_secret
+    type: secret
+    group: Generated
+    label: Federation key
+    help: "The link's private key derives from it. Empty: generated from the fleet's seed."
+    generate: true
   - key: groups
     type: object
     label: Client groups

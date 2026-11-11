@@ -497,6 +497,8 @@ class Fleet:
             data = yaml.safe_load(util.read_text(path))
         except yaml.YAMLError as e:
             raise KiwiError("%s: not valid YAML: %s" % (path, e))
+        from . import federation
+        federation.inject(os.path.dirname(os.path.abspath(path)), data)
         return cls(path, data)
 
     def resolve_path(self, p):

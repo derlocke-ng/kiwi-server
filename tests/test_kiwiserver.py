@@ -1964,6 +1964,26 @@ class TestSshCa(Base):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
 
 
+class TestCheck(Base):
+    def test_check_reports_each_probe_and_fails_on_a_dead_name(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        seen = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            seen.append(script)
+            return (b"https wg.gate.kiwi 403\nhttps pihole.gate.kiwi 000\ndns gate.kiwi 10.8.0.1\n"
+                    b"dns quad9.net none\nexit km-vpn-client 198.51.100.4\n")
+        with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@gate"):
+            rc, out, err = TestManage.run_cli(self, "check", f.path)
+        self.assertEqual(rc, 1)
+        self.assertIn("2 checks failed", err)
+        self.assertRegex(out, r"ok +gate +https wg.gate.kiwi 403")
+        self.assertRegex(out, r"FAILED gate +https pihole.gate.kiwi 000")
+        self.assertRegex(out, r"FAILED gate +dns +quad9.net none")
+        self.assertIn("NAMES=", seen[0])
+
+
 class TestFederation(Base):
     def test_the_link_key_is_wireguards(self):
         priv = bytes.fromhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")   # RFC 7748

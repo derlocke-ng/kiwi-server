@@ -391,6 +391,9 @@ class Renderer:
             "container_ips": ips, "modules": list(ordered),
             "has_nextcloud": "cloud" in ordered,
             "proxy_ip": ips.get("reverse-proxy", ""),
+            # where the proxy answers: its own address, or that of the container whose
+            # namespace it shares (the master's WireGuard server)
+            "proxy_netns_ip": self._netns_ip(spec, ips, "reverse-proxy"),
             "vpn_client_ip": ips.get("vpn-client", ""),
             "dns_ip": ips.get("dns", ""),
             # where Pi-hole answers on the stack network: its own address, or the
@@ -588,7 +591,9 @@ class Renderer:
         client); and lookups go to this stack's Pi-hole, when there is one,
         with Quad9 behind it — never to the host's resolver, which podman
         replaces with a public one when it is a loopback address."""
-        own = [(n, base["proxy_ip"]) for ip, n in spec.dns_records if spec.vpn_ip and ip == spec.vpn_ip]
+        # the proxy's namespace: on a master it lives in the WireGuard server's, and its own
+        # address there leads nowhere (sorbet's own names went to 172.64.0.5, found by check)
+        own = [(n, base["proxy_netns_ip"]) for ip, n in spec.dns_records if spec.vpn_ip and ip == spec.vpn_ip]
         dns_ip = base.get("dns_container_ip") or ""
         for svc, body in services.items():
             body = body or {}
@@ -597,7 +602,7 @@ class Renderer:
             # not into Pi-hole's: dnsmasq reads the container's /etc/hosts and would answer
             # the node's own names with the proxy's container address to every LAN and mesh
             # client (found on the first gateway node); Pi-hole serves the fleet's records
-            if own and base["proxy_ip"] and "extra_hosts" not in body and svc != "%s-pihole" % base["container_prefix"]:
+            if own and base["proxy_netns_ip"] and "extra_hosts" not in body and svc != "%s-pihole" % base["container_prefix"]:
                 body["extra_hosts"] = ["%s:%s" % (n, ip) for n, ip in own]
             if dns_ip and "dns" not in body and svc not in ("%s-pihole" % base["container_prefix"],
                                                              "%s-vpn-client" % base["container_prefix"]):

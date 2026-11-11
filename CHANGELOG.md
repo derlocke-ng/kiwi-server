@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.55.0 — a check after an update
+
+- `kiwi-server check <fleet>`: from each master's Pi-hole container, every name of the fleet
+  over HTTPS (a redirect, a login or a refusal counts as an answer), a fleet name and an
+  outside one in DNS, and the exit's address. Read-only; exits 1 when something fails.
+- kiwi-modules 0.26.2: a master's containers found its own names at an address where nothing
+  listens (the proxy lives in the WireGuard server's namespace); `check` found it on sorbet
+  and crumble.
+
 ## 2.54.1 — an apply waits for the containers that follow
 
 - kiwi-stack 0.6.2: the check after an apply asks again for a minute; an apply that restarted

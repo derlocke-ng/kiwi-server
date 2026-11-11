@@ -25,9 +25,9 @@ Environment=DOT_PROVIDERS=quad9
 Environment=BLOCK_MALICIOUS=off
 Environment=UPDATER_PERIOD=24h
 EnvironmentFile=/home/user/docker/kiwi/env/km-vpn-client.env
-AddHost=gate.home:172.64.0.5
-AddHost=wg.gate.home:172.64.0.5
-AddHost=pihole.gate.home:172.64.0.5
+AddHost=gate.home:172.64.0.3
+AddHost=wg.gate.home:172.64.0.3
+AddHost=pihole.gate.home:172.64.0.3
 Volume=/home/user/docker/km-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
 HealthCmd=["/gluetun-entrypoint","healthcheck"]
 HealthInterval=60s

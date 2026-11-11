@@ -1165,6 +1165,64 @@ def cmd_plan(args):
             print("   %s%s" % (c["path"], " (new)" if c["new"] else ""))
 
 
+CHECK_SCRIPT = r"""
+p=$(podman ps --format '{{.Names}}' | grep -E '^k[mn]-pihole$' | head -1)
+[ -n "$p" ] || { echo "skip no Pi-hole here"; exit 0; }
+for n in $NAMES; do
+    code=$(podman exec "$p" curl -sk -o /dev/null -w '%{http_code}' --max-time 8 "https://$n/" 2>/dev/null)
+    echo "https $n ${code:-000}"
+done
+for n in $LOOKUP; do
+    a=$(podman exec "$p" dig +short +time=3 +tries=1 "$n" @127.0.0.1 2>/dev/null | grep -E '^[0-9.]+$' | tail -1)
+    echo "dns $n ${a:-none}"
+done
+v=$(podman ps --format '{{.Names}}' | grep -E '^k[mn]-vpn-client$' | head -1)
+if [ -n "$v" ]; then
+    ip=$(podman exec "$v" wget -qO- -T 10 https://api.ipify.org 2>/dev/null)
+    echo "exit $v ${ip:-none}"
+fi
+"""
+
+
+def cmd_check(args):
+    """After an update: from each master's Pi-hole container (the fleet's own resolver), every
+    name of the fleet over HTTPS, a fleet name and one outside in DNS, and where its exit
+    leaves. Read-only; says what fails."""
+    fleet, roles, ms = load(args)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
+    records = r.dns_records()
+    names = sorted({n for _ip, n in records if n.count(".") >= 2})        # services: <service>.<host>.<domain>
+    hosts = sorted({n for _ip, n in records if n.count(".") == 1})
+    failed = []
+    masters = [h for h in fleet.select(args.hosts) if h.role in roles and roles[h.role].node_type == "master"]
+    if not masters:
+        raise KiwiError("no master among these hosts: check asks from the master")
+    for h in masters:
+        rolesmod.resolve_settings(roles[h.role], h, ms)
+        lookup = " ".join(hosts[:1] + ["quad9.net"])
+        script = "NAMES=%s\nLOOKUP=%s\n%s" % (shlex.quote(" ".join(names)), shlex.quote(lookup), CHECK_SCRIPT)
+        try:
+            out = remote.run(remote.reach(h, args.ssh), script).decode(errors="replace")
+        except KiwiError as e:
+            print("%s: not reached: %s" % (h.name, e))
+            failed.append(h.name)
+            continue
+        for line in out.splitlines():
+            kind, _sp, rest = line.partition(" ")
+            name, _sp, value = rest.rpartition(" ")
+            if kind == "https":
+                ok = value[:1] in "234"            # a redirect, a login or a refusal: nginx and the service answered
+            elif kind in ("dns", "exit"):
+                ok = value != "none"
+            else:
+                continue
+            print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", h.name, kind, name, value))
+            if not ok:
+                failed.append("%s %s" % (kind, name))
+    if failed:
+        raise KiwiError("%d checks failed" % len(failed))
+
+
 def cmd_apply(args):
     """Re-render a host and run the role script on it: settings changed, a
     certificate renewed, a module added — without a reinstall."""
@@ -1809,6 +1867,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
   kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
   kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
+  kiwi-server check <fleet>                      after an update: every name over HTTPS, DNS, the exit
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
   kiwi-server federate <fleet> <other fleet>         link two networks (then share in federation.yaml)
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
@@ -1891,6 +1950,8 @@ def build_parser():
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")
     s.add_argument("--via", metavar="NODE|IP", help="no tunnel: a static route to a gateway node on the LAN")
     s.add_argument("--name", default="kiwi", help="the interface and zone name on the router (default kiwi)")
+    s = sub("check", cmd_check); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
     s = sub("plan", cmd_plan); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")

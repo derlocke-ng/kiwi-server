@@ -98,6 +98,8 @@ BASE_GROUPS = [
              help="One per line: a key, or a path to a .pub file (~/.ssh/id_ed25519.pub)"),
         dict(path=("admin", "groups"), type="list", label="Extra groups", default=[],
              help="Space separated, e.g. docker"),
+        dict(path=("admin", "ssh_port"), type="int", label="SSH port", default=22,
+             help="Where sshd listens. Another port than 22 sees far fewer bots; moved without a lockout at the next apply"),
         dict(path=("admin", "ssh_password_auth"), type="bool", label="Allow SSH password login", default=False, help="Off: SSH takes keys only, the password is for the console. On only while a machine has no key yet"),
     ]),
     ("Network", [

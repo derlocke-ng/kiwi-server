@@ -32,7 +32,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import facts, luks, mtu, plan as planmod, setup as setupmod, sshca, store, unlock  # noqa: E402
+from kiwiserver import facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -670,7 +670,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 20)
+        self.assertEqual(len(ms.names()), 21)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -999,7 +999,7 @@ class TestModules(Base):
         self.assertEqual(spec.vpn_ip, "10.8.0.1")
         b = modmod.Renderer(self.ms).render(spec)
         svcs = b.compose["services"]
-        self.assertEqual(set(svcs), {"km-vpn-client", "km-vpn-server", "km-pihole", "km-tor", "km-nginx"})
+        self.assertEqual(set(svcs), {"km-vpn-client", "km-vpn-server", "km-pihole", "km-tor", "km-nginx", "km-fail2ban"})
         self.assertEqual(svcs["km-pihole"]["network_mode"], "service:km-vpn-server")
         # nginx inside the server's namespace: the admin pages by name, on the mesh address only
         self.assertEqual(svcs["km-nginx"]["network_mode"], "service:km-vpn-server")
@@ -1373,14 +1373,14 @@ class TestModules(Base):
         self.assertIn("url='https://raw.githubusercontent.com/derlocke-ng/mullvad-socks5/list/mullvad-socks.hosts'", script)
         self.assertIn("short='mullvad.kiwi'", script)
         self.assertIn("dir='/home/user/docker/km-pihole/mullvad-socks'", script)
-        self.assertEqual(sorted(b.units), ["km-mullvad-socks.service", "km-mullvad-socks.timer"])
+        self.assertEqual(sorted(b.units), ["km-mullvad-socks.service", "km-mullvad-socks.timer", "kn-sshd-log.service"])
         self.assertIn("ExecStart=/usr/bin/bash /home/user/docker/kiwi/mullvad-socks.sh", b.units["km-mullvad-socks.service"])
         self.assertIn("TimeoutStartSec=", b.units["km-mullvad-socks.service"])
         self.assertIn("Unit=km-mullvad-socks.service", b.units["km-mullvad-socks.timer"])
         self.assertIn("OnUnitActiveSec=6h", b.units["km-mullvad-socks.timer"])
         # the role script carries and enables them like any host unit
         full = rolesmod.render_script(host, role, VERSION, bundle=b)
-        self.assertIn("KS_STACK_UNITS=('km-mullvad-socks.service' 'km-mullvad-socks.timer')", full)
+        self.assertIn("KS_STACK_UNITS=('km-mullvad-socks.service' 'km-mullvad-socks.timer' 'kn-sshd-log.service')", full)
         self.assertIn("'kiwi/mullvad-socks.sh:0755'", full)
 
     def test_mullvad_socks_records_are_opt_in_elsewhere(self):
@@ -1397,7 +1397,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["km-pihole"]["environment"]))
         self.assertNotIn("mullvad", "\n".join(b.compose["services"]["km-pihole"]["volumes"]))
-        self.assertEqual(b.units, {})
+        self.assertEqual(list(b.units), ["kn-sshd-log.service"])          # fail2ban's, from the master preset
         self.assertFalse([f for f in b.files if "mullvad" in f])
         self.assertFalse([d for d in b.dirs if "mullvad" in d])
         node = self.node_gw()
@@ -1428,7 +1428,7 @@ class TestModules(Base):
             modmod.Renderer(self.ms).render(spec)
         m = self.master(); m["dns"]["mullvad_socks_url"] = ""; m["dns"]["mullvad_socks"] = False
         host, role, spec = self.spec("gate", role="master", **{"master": m})
-        self.assertEqual(modmod.Renderer(self.ms).render(spec).units, {})
+        self.assertEqual(list(modmod.Renderer(self.ms).render(spec).units), ["kn-sshd-log.service"])
 
     def test_a_secret_is_never_echoed_by_a_pattern_error(self):
         from kiwiserver import schema
@@ -1954,7 +1954,7 @@ class TestSshCa(Base):
 
     def test_an_address_met_nowhere_counts_only_with_a_certificate(self):
         h = self.gate().hosts["gate"]
-        with mock.patch.object(remote, "_on_record", lambda a: False), \
+        with mock.patch.object(remote, "_on_record", lambda a, *p: False), \
              mock.patch.object(remote, "_answers", lambda a, *p: True), \
              mock.patch.object(remote, "_ca_known", lambda: True), \
              mock.patch.object(remote, "addresses", lambda host: ["gate.kiwi", "198.51.100.7"]):
@@ -1962,6 +1962,41 @@ class TestSshCa(Base):
                 self.assertTrue(remote.reach(h).endswith("@198.51.100.7"))
             with mock.patch.object(remote, "_certified", lambda tgt: False):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
+
+
+class TestSshPort(Base):
+    def test_targets_carry_the_port(self):
+        self.assertEqual(remote.with_port("core@203.0.113.7", 41022), "ssh://core@203.0.113.7:41022")
+        self.assertEqual(remote.with_port("ssh://core@203.0.113.7:41022", 22), "core@203.0.113.7")
+        self.assertEqual(remote.port_of("ssh://core@203.0.113.7:41022"), 41022)
+        self.assertEqual(remote.port_of("core@203.0.113.7"), 22)
+        self.assertEqual(remote.address_of("ssh://core@203.0.113.7:41022"), "203.0.113.7")
+        self.assertEqual(remote.address_of("core@gate.kiwi"), "gate.kiwi")
+
+    def test_a_move_keeps_22_until_the_new_port_is_proven(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "admin": {"ssh_port": 41022}, "master": self.master()}}})
+        h = f.hosts["gate"]
+        scripts = []
+        with mock.patch.object(remote, "run", lambda tgt, script, **kw: scripts.append((tgt, script)) or b""), \
+             mock.patch.object(remote, "run_ok", lambda tgt, timeout=30: True):
+            now = sshport.ensure(h, "core@203.0.113.7")
+        self.assertEqual(now, "ssh://core@203.0.113.7:41022")
+        self.assertEqual(scripts[0][0], "core@203.0.113.7")
+        self.assertIn("keep22=1", scripts[0][1])            # first both ports
+        self.assertEqual(scripts[1][0], "ssh://core@203.0.113.7:41022")
+        self.assertIn("keep22=0", scripts[1][1])            # 22 goes only over the new port
+        scripts.clear()
+        with mock.patch.object(remote, "run", lambda tgt, script, **kw: scripts.append((tgt, script)) or b""), \
+             mock.patch.object(remote, "run_ok", lambda tgt, timeout=30: False):
+            now = sshport.ensure(h, "core@203.0.113.7")
+        self.assertEqual((now, len(scripts)), ("core@203.0.113.7", 1))   # not proven: 22 stays
+        self.assertIn("sshd -t", scripts[0][1])
+
+    def test_the_port_is_a_port(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "admin": {"ssh_port": 70000}, "master": self.master()}}})
+        self.assertTrue(any("ssh_port" in e for e in f.hosts["gate"].validate(None)))
 
 
 class TestWatchStore(unittest.TestCase):
@@ -4280,13 +4315,13 @@ class TestReach(Base):
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen")
     def test_an_address_on_record_that_answers_is_used(self):
         self.on_record("192.168.9.9")
-        with mock.patch.object(remote, "_answers", lambda a: a == "192.168.9.9"):
+        with mock.patch.object(remote, "_answers", lambda a, *p: a == "192.168.9.9"):
             self.assertEqual(remote.reach(self.host()), "core@192.168.9.9")
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen")
     def test_an_address_never_met_gets_nothing_sent_to_it(self):
         self.on_record("10.0.0.1")
-        with mock.patch.object(remote, "_answers", lambda a: True):
+        with mock.patch.object(remote, "_answers", lambda a, *p: True):
             self.assertEqual(remote.reach(self.host()), "core@a.kiwi")
 
     def test_an_address_given_wins(self):
@@ -4339,9 +4374,9 @@ class TestCli(Base):
         self.assertIn("cloud", [m["name"] for m in node["module_schemas"]])
         self.assertIn("vpn-client", [m["name"] for m in data["modules"]])
         master = [r for r in data["roles"] if r["name"] == "master"][0]
-        self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"])
+        self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "fail2ban"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 20)
+        self.assertEqual(len(json.loads(out)["modules"]), 21)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "coreos-ram"})
 

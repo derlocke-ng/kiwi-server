@@ -10,7 +10,7 @@ description: WireGuard entry point with a double hop through a commercial VPN, P
 status: stable
 targets: [coreos, ucore, debian]
 node_type: master
-modules: [vpn-client, vpn-server, dns, tor, reverse-proxy]
+modules: [vpn-client, vpn-server, dns, tor, reverse-proxy, fail2ban]
 settings_include: [common/stack]
 # Pi-hole, Tor and nginx share the WireGuard server's network stack, so clients
 # reach them at the server's mesh address (10.8.0.1) — how the live master

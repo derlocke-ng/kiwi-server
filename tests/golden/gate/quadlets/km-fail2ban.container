@@ -1,0 +1,27 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: km-fail2ban
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/linuxserver/fail2ban:1.1.0
+ContainerName=km-fail2ban
+Network=host
+AutoUpdate=registry
+AddCapability=NET_ADMIN
+AddCapability=NET_RAW
+Environment=TZ=Europe/Berlin
+Environment=PUID=0
+Environment=PGID=0
+Volume=/home/user/docker/km-fail2ban/config:/config:z
+Volume=/home/user/docker/km-fail2ban/init:/custom-cont-init.d:ro,z
+Volume=/var/log/kiwi:/var/log/kiwi:ro,z
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target

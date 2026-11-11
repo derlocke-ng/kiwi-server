@@ -1896,6 +1896,18 @@ class TestSetup(Base):
         self.assertEqual(cli.shown_path(os.path.join(os.getcwd(), "output", "a.iso")), os.path.join("output", "a.iso"))
 
 
+class TestBackups(unittest.TestCase):
+    def test_snapshots_per_server_newest_first(self):
+        line = "backup.papaya.home\t" + json.dumps([
+            {"short_id": "aaa", "time": "2026-11-10T11:13:25Z", "tags": ["portainer", "frozen"]},
+            {"short_id": "bbb", "time": "2026-11-10T19:01:12Z", "tags": ["tang", "bulk"]}])
+        servers = cli.parse_snapshots(line + "\nbackup.lychee.home\tnull\n")
+        self.assertEqual([s["server"] for s in servers], ["backup.papaya.home", "backup.lychee.home"])
+        self.assertEqual([(x["id"], x["module"], x["kind"]) for x in servers[0]["snapshots"]],
+                         [("bbb", "tang", "bulk"), ("aaa", "portainer", "frozen")])
+        self.assertEqual((servers[1]["ok"], servers[1]["snapshots"]), (False, []))
+
+
 class TestGuiHelp(unittest.TestCase):
     def test_every_base_field_of_the_app_has_help(self):
         """The app shows a (?) with the help beside every field; it reads the module and role
@@ -2149,6 +2161,24 @@ class TestPrune(Base):
         self.assertIn("3 snapshots kept, 3 removed, freed 3 blobs / 1.5 MiB", out + err)
         self.assertIn("elsewhere.kiwi is not a machine of this fleet", out + err)
         self.assertNotIn(calls[0][2].decode().strip(), out + err)
+
+    def test_the_server_settings_say_what_is_kept(self):
+        f = self.prune_fleet()
+        with open(f.path) as fh:
+            data = yaml.safe_load(fh)
+        data["hosts"]["store"]["node"]["backup-server"]["keep_daily"] = 3
+        write(f.path, yaml.safe_dump(data))
+        scripts = []
+
+        def fake_run(tgt, script, data=None, runner=None):
+            scripts.append(script)
+            return self.FORGET if " forget " in script else b""
+        with mock.patch.object(remote, "run", fake_run):
+            TestManage.run_cli(self, "prune", f.path)
+            TestManage.run_cli(self, "prune", f.path, "--keep-daily", "5")
+        forget = [x for x in scripts if " forget " in x]
+        self.assertIn("--keep-daily 3 --keep-weekly 4", forget[0])
+        self.assertIn("--keep-daily 5", forget[1])
 
     def test_the_command_will_not_keep_nothing(self):
         rc, out, err = TestManage.run_cli(self, "prune", self.prune_fleet().path, "--keep-daily", "0", "--keep-weekly", "0", "--keep-monthly", "0")

@@ -308,13 +308,18 @@ due() {
     return 0
 }
 
-snapshots() { # MODULE...
-    local t m tags=()
+snapshots() { # [--json] MODULE...      --json: a line "server<TAB>restic's JSON" per server
+    local t m json='' tags=()
+    if [[ ${1:-} == --json ]]; then json=1; shift; fi
     for m; do tags+=(--tag "$m"); done
     for t in "${TARGETS[@]}"; do
         TARGET=$t
-        echo "== $(name "$t")"
-        restic -- --no-lock snapshots --host "$HOST" "${tags[@]}"
+        if [[ -n $json ]]; then
+            printf '%s\t%s\n' "$(name "$t")" "$(restic -- --no-lock --json snapshots --host "$HOST" "${tags[@]}" 2>/dev/null || echo null)"
+        else
+            echo "== $(name "$t")"
+            restic -- --no-lock snapshots --host "$HOST" "${tags[@]}"
+        fi
     done
 }
 
@@ -332,5 +337,5 @@ case "${1:-}" in
                 backup ;;
     snapshots)  shift; snapshots "$@" ;;
     restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; restore "$@" ;;
-    *)          echo "usage: kiwi-stack backup [--new] | snapshots [MODULE...] | restore [--at TIME] MODULE..." >&2; exit 1 ;;
+    *)          echo "usage: kiwi-stack backup [--new] | snapshots [--json] [MODULE...] | restore [--at TIME] MODULE..." >&2; exit 1 ;;
 esac

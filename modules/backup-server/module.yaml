@@ -67,6 +67,21 @@ settings:
     help: "Empty: backup.<hostname>."
     default: ""
     pattern: '[a-z0-9.-]*'
+  - key: keep_daily
+    type: int
+    label: Days to keep
+    help: "kiwi-server prune keeps the newest snapshot of this many days."
+    default: 7
+  - key: keep_weekly
+    type: int
+    label: Weeks to keep
+    help: "And of this many weeks."
+    default: 4
+  - key: keep_monthly
+    type: int
+    label: Months to keep
+    help: "And of this many months."
+    default: 6
   - key: client_hashes
     type: map
     group: Generated

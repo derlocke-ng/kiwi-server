@@ -52,6 +52,11 @@ settings:
     label: Provider
     help: "custom = a WireGuard config file (a node joining the master); or a gluetun provider name — mullvad, protonvpn, airvpn, ivpn, windscribe, … (the master's exit)."
     default: custom
+  - key: keepalive
+    type: int
+    label: Keepalive (seconds)
+    help: "How often the tunnel says it is there. A restarted master knows where a node is only from its next one. 0: 10 for a master of the fleet (custom), 25 for a provider."
+    default: 0
   - key: vpn_type
     type: enum
     options: [wireguard, openvpn]

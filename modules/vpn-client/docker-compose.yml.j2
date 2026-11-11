@@ -25,7 +25,7 @@ services:
 {% endif %}
       - TZ={{ timezone }}
       - WIREGUARD_MTU={{ wg_mtu }}
-      - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
+      - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL={{ keepalive or (10 if vpn_provider == 'custom' else 25) }}s
       - DOT_PROVIDERS={{ dot_providers }}
       - BLOCK_MALICIOUS=off
 {% for k, v in extra_env.items() %}

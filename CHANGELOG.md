@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.55.2 — synthetic users
+
+- `tests/drills/users.py`: WireGuard clients of the master run here, doing every minute what a
+  person does (names, every service, a file to Nextcloud and back), with failures and response
+  times per name; across a backup, a restart or an update.
+- kiwi-modules 0.26.3: nodes keep their tunnel alive every 10 s (was 25): after the master's
+  WireGuard server restarted, lychee's services were gone until its next keepalive.
+
 ## 2.55.1 — federation and SSH certificates in the app
 
 - GUI menu: *Federation…* lists the partner networks with what each may reach here (Shared

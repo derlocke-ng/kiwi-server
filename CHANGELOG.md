@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.53.2 — multi-hop, tried
+
+- kiwi-modules 0.25.2: a master whose VPN client leaves through another network's master
+  keeps its own mesh address; its Pi-hole answered its names with the other network's.
+- `enroll` and `mtu` reach the master the way `apply` does, not only by its name, which does
+  not resolve off the mesh.
+- `tests/drills/multihop.py`: a client of one master leaves at another network's master,
+  resolves the first master's names, and the second network's mesh stays closed. Passed with
+  sorbet exiting through crumble.
+
 ## 2.53.1 — VPN groups in the app
 
 - GUI: the WireGuard server's client groups are a list to edit, not YAML: each group with

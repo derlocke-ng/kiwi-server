@@ -59,7 +59,7 @@ A reboot afterwards unlocked with the generated key, the clock wait succeeded,
 the VPN client forwarded, and the exit was up 46 seconds after the key, without
 a tunnel restart.
 
-Not proven yet: federation, a phone on 5G, a restore of a node's data.
+Not proven yet: federation (enrolment across networks), a phone on 5G. Multi-hop (one network's master leaving through another's) is proven since 11 November 2026: `tests/drills/multihop.py`.
 
 **The whole test fleet, 9 November 2026**, from 2.17.0: all four machines
 applied in 30 to 150 seconds with no failure, their OS updates taken, sorbet and

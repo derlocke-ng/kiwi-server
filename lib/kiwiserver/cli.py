@@ -945,7 +945,7 @@ def cmd_mtu(args):
         if host.role not in roles or roles[host.role].node_type != "node":
             raise KiwiError("%s is not a node: this measures the tunnel of a node or a device" % host.name)
         rolesmod.resolve_settings(roles[host.role], host, ms)
-        tgt, addr, cap = remote.target(host, args.ssh), master_ip, int(host.role_settings.get("wg_mtu") or 1376)
+        tgt, addr, cap = remote.reach(host, args.ssh), master_ip, int(host.role_settings.get("wg_mtu") or 1376)
         container = "%s-vpn-client" % modmod.PREFIX["node"]
     else:
         addr = args.target
@@ -957,7 +957,7 @@ def cmd_mtu(args):
             addr = m.group(1)
         elif not re.fullmatch(r"[0-9.]+", args.target):
             raise KiwiError("%s is neither a host of the fleet, a device in secrets/devices/, nor a mesh address" % args.target)
-        tgt, cap = remote.target(master, args.ssh), int(master_mtu or 1376)
+        tgt, cap = remote.reach(master, args.ssh), int(master_mtu or 1376)
         container = "%s-vpn-server" % modmod.PREFIX["master"]
     util.say("%s: measuring through the tunnel to %s (MTU %d)" % (args.target, addr, cap))
     largest, tried = mtu.search(lambda size: mtu.send(tgt, container, addr, size), cap, util.say)
@@ -1352,7 +1352,7 @@ def cmd_enroll(args):
     if args.api:
         text = enroll(args.api)
     else:
-        with remote.Tunnel(remote.target(master, args.ssh), 51821) as url:
+        with remote.Tunnel(remote.reach(master, args.ssh), 51821) as url:
             text = enroll(url)
     if args.split:
         text = wgeasy.split_tunnel(text, mesh)

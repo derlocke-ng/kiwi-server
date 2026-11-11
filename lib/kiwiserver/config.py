@@ -96,8 +96,6 @@ DEFAULTS = {
     "ram": {
         # target coreos-ram (docs/design/ram-master.md)
         "copy_to_ram": False,    # the image into RAM too (about 900 MB more, 3 GiB at least); off: read from the medium
-        "image_cache": True,     # container images on the state partition; off: pulled at every boot
-        "keep_logs": False,      # off: the journal lives in RAM and is gone at every reboot
     },
     "debian": {
         "release": "trixie",
@@ -411,9 +409,8 @@ class Host:
         if self.cfg.get("disk") and not str(self.cfg["disk"]).startswith("/dev/"):
             errs.append("disk must be a device path like /dev/sda or /dev/nvme0n1")
         if not self.cfg.get("disk"):
-            self.warnings.append("no disk: set — it keeps nothing between boots, and apply cannot make its state partition"
-                                 if self.target == "coreos-ram" else
-                                 "no disk: set — configs render, but an ISO cannot be built")
+            if self.target != "coreos-ram":     # it touches no disk
+                self.warnings.append("no disk: set — configs render, but an ISO cannot be built")
         if self.target == "coreos-ram":
             from .targets import ram
             errs += ram.problems(self)

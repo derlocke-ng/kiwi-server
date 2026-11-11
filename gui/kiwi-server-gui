@@ -148,6 +148,11 @@ BASE_GROUPS = [
 ]
 
 
+# the target groups a host shows only for its own target; shorter names in the sidebar
+SECTION_TARGETS = {"uCore": ("ucore",), "Debian": ("debian",), "CoreOS (advanced)": ("coreos", "ucore")}
+SECTION_LABELS = {"Admin user": "Admin", "CoreOS (advanced)": "CoreOS", "After the role": "Post script"}
+
+
 def find_cli():
     here = os.path.dirname(os.path.realpath(__file__))
     for c in (os.environ.get("KIWI_SERVER_CLI"), os.path.join(here, "..", "bin", "kiwi-server"),
@@ -321,9 +326,52 @@ class Form:
     def __init__(self, win, doc, scope, roles, targets):
         self.win, self.doc, self.scope, self.roles, self.targets = win, doc, scope, roles, targets
         self.loading = False
-        self.page = Adw.PreferencesPage()
-        self.role_group = None
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, hexpand=True)
+        self.side = Gtk.ListBox(css_classes=["navigation-sidebar"])
+        self.side.connect("row-selected", self.on_section)
+        side = Gtk.ScrolledWindow(child=self.side, hscrollbar_policy=Gtk.PolicyType.NEVER, width_request=180)
+        self.page = Gtk.Box()               # what the window shows: the sections beside their pages
+        self.page.append(side)
+        self.page.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        self.page.append(self.stack)
+        self.role_parts = []
         self.build()
+
+    # ---- sections ----
+    def section(self, name, label, groups, at=None):
+        """A page of its own with a row in the sidebar; `at` inserts the row there."""
+        page = Adw.PreferencesPage()
+        for g in groups:
+            page.add(g)
+        self.stack.add_named(page, name)
+        row = Gtk.ListBoxRow(child=Gtk.Label(label=label, xalign=0, ellipsize=3))
+        row.ks_name = name
+        self.side.insert(row, -1 if at is None else at)
+        return row, page
+
+    def heading(self, text, at=None):
+        lbl = Gtk.Label(label=text, xalign=0, margin_top=12, css_classes=["dim-label", "caption-heading"])
+        row = Gtk.ListBoxRow(child=lbl, selectable=False, activatable=False)
+        self.side.insert(row, -1 if at is None else at)
+        return row
+
+    def on_section(self, _box, row):
+        if row is not None and getattr(row, "ks_name", None):
+            self.stack.set_visible_child_name(row.ks_name)
+            self.win.settings_section = row.ks_name      # the same section on the next host
+
+    def select(self, name):
+        rows, row = [], self.side.get_first_child()
+        while row is not None:
+            if getattr(row, "ks_name", None):
+                rows.append(row)
+            row = row.get_next_sibling()
+        pick = next((r for r in rows if r.ks_name == name), rows[0] if rows else None)
+        if pick is not None:
+            self.side.select_row(pick)
+
+    def effective_target(self):
+        return self.doc.get(self.scope, ("target",)) or self.doc.get("defaults", ("target",)) or "coreos"
 
     # ---- helpers ----
     def inherited(self, field):
@@ -342,7 +390,9 @@ class Form:
             return
         self.doc.set(self.scope, field["path"], value)
         self.win.mark_dirty()
-        if field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] in ("modules", "preset")):
+        if field["path"] == ("target",):
+            GLib.idle_add(self.rebuild)
+        elif field["path"] == ("role",) or (len(field["path"]) == 2 and field["path"][1] in ("modules", "preset")):
             self.rebuild_role_group()
 
     def role_name(self):
@@ -433,8 +483,6 @@ class Form:
 
     def text_row(self, field):
         exp = Adw.ExpanderRow(title=field["label"])
-        if field.get("help"):
-            exp.set_subtitle(esc(field["help"], -1))
         tv = Gtk.TextView(monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=6,
                           bottom_margin=6, left_margin=8, right_margin=8)
         tv.add_css_class("ks-textbox")
@@ -461,14 +509,14 @@ class Form:
         inh = self.inherited(field)
         cur = self.current(field)
         if self.scope == "defaults":
-            row = Adw.ActionRow(title=field["label"], subtitle=esc(field.get("help", ""), -1))
+            row = Adw.ActionRow(title=field["label"])
             sw = Gtk.Switch(valign=Gtk.Align.CENTER, active=bool(cur if cur is not None else inh))
             sw.connect("notify::active", lambda w, _p: self.write(field, bool(w.get_active())))
             row.add_suffix(sw)
             row.set_activatable_widget(sw)
             row.ks_switch = sw
             return row
-        row = Adw.ComboRow(title=field["label"], subtitle=esc(field.get("help", ""), -1))
+        row = Adw.ComboRow(title=field["label"])
         row.set_model(Gtk.StringList.new(["Inherit (%s)" % ("on" if inh else "off"), "On", "Off"]))
         row.set_selected(0 if cur is None else (1 if cur else 2))
         row.connect("notify::selected",
@@ -486,7 +534,7 @@ class Form:
         labels = list(opts)
         if self.scope != "defaults":
             labels = ["Inherit (%s)" % inh] + labels
-        row = Adw.ComboRow(title=field["label"], subtitle=esc(field.get("help", ""), -1))
+        row = Adw.ComboRow(title=field["label"])
         row.set_model(Gtk.StringList.new(labels))
         if cur in opts:
             row.set_selected(opts.index(cur) + (0 if self.scope == "defaults" else 1))
@@ -507,19 +555,34 @@ class Form:
     # ---- assembly ----
     def build(self):
         self.loading = True
+        target = self.effective_target()
+        system = False
         for title, fields in BASE_GROUPS:
+            if self.scope != "defaults" and target not in SECTION_TARGETS.get(title, (target,)):
+                continue
+            rows = [self.row_for(f) for f in fields if self.visible(f)]
+            if not rows:
+                continue
+            if title != "Machine" and not system:
+                self.heading("System")
+                system = True
             g = Adw.PreferencesGroup(title=title)
-            n = 0
-            for f in fields:
-                if not self.visible(f):
-                    continue
-                g.add(self.row_for(f))
-                n += 1
-            if n:
-                self.page.add(g)
-        self.role_group = None
+            for r in rows:
+                g.add(r)
+            self.section("base:" + title, SECTION_LABELS.get(title, title), [g])
         self.rebuild_role_group()
         self.loading = False
+        self.select(getattr(self.win, "settings_section", None))
+
+    def rebuild(self):
+        """Everything again, e.g. after the target changed which sections there are."""
+        while (row := self.side.get_first_child()) is not None:
+            self.side.remove(row)
+        while (page := self.stack.get_first_child()) is not None:
+            self.stack.remove(page)
+        self.role_parts = []
+        self.build()
+        return False
 
     def effective_modules(self, role):
         """The preset's modules, or the fleet's override, with dependencies."""
@@ -562,43 +625,47 @@ class Form:
         return f
 
     def rebuild_role_group(self):
-        if self.role_group is not None:
-            for g in self.role_group:
-                self.page.remove(g)
-        self.role_group = []
+        """The role's page and one page per module, after Machine in the sidebar."""
+        current = self.stack.get_visible_child_name()
+        for row, page in self.role_parts:
+            self.side.remove(row)
+            if page is not None:
+                self.stack.remove(page)
+        self.role_parts = []
         name = self.role_name()
         role = next((r for r in self.roles if r["name"] == name), None)
         if not role:
             return
         was = self.loading
         self.loading = True
+        at = [1]                            # right after Machine
+
+        def add(*part):
+            row = part[0] if len(part) == 1 else self.section(*part, at=at[0])[0]
+            self.role_parts.append((row, self.stack.get_child_by_name(part[0]) if len(part) > 1 else None))
+            at[0] += 1
         stack = bool(role.get("stack"))
-        by_group = {}
-        for s in role["settings"]:
-            by_group.setdefault(s.get("group") or "Settings", []).append(s)
-        first = True
+        groups = []
         if stack:
-            g = Adw.PreferencesGroup(title="%s — Modules" % role["title"],
-                                     description=esc(role["description"] + (
-                                         "" if role.get("status") == "stable" else "  [%s]" % role.get("status")), -1))
+            g = Adw.PreferencesGroup(title=role["title"])
             g.add(self.row_for(dict(
                 path=(name, "modules"), type="list", label="Modules", apply=True,
                 help="Space separated, Enter applies. Empty: the preset — %s" % " ".join(role.get("modules") or []),
                 doc="README.md#roles-and-modules",
                 default=list(role.get("modules") or []), placeholder=" ".join(role.get("modules") or []))))
-            self.page.add(g)
-            self.role_group.append(g)
-            first = False
+            groups.append(g)
+        by_group = {}
+        for st in role["settings"]:
+            by_group.setdefault(st.get("group") or "Settings", []).append(st)
         for gname, items in by_group.items():
-            g = Adw.PreferencesGroup(title="%s — %s" % (role["title"], gname))
-            if first:
-                g.set_description(esc(role["description"] + (
-                    "" if role.get("status") == "stable" else "  [%s]" % role.get("status")), -1))
-                first = False
-            for s in items:
-                g.add(self.row_for(self._field((name, s["key"]), s, s.get("default"))))
-            self.page.add(g)
-            self.role_group.append(g)
+            g = Adw.PreferencesGroup(title=gname if groups else role["title"])
+            for st in items:
+                g.add(self.row_for(self._field((name, st["key"]), st, st.get("default"))))
+            groups.append(g)
+        if groups:
+            groups[0].set_header_suffix(help_button(role["description"] + (
+                "" if role.get("status") == "stable" else " [%s]" % role.get("status")), DOCS + "roles/%s/role.yaml" % name))
+            add("role", role["title"], groups)
         if stack:
             mdefaults = dict(role.get("module_defaults") or {})
             if role.get("presets"):
@@ -606,22 +673,23 @@ class Form:
                 pr = pr if pr in role["presets"] else next(iter(role["presets"]))
                 for m, d in (role["presets"][pr].get("module_defaults") or {}).items():
                     mdefaults[m] = {**(mdefaults.get(m) or {}), **d}
-            for m in self.effective_modules(role):
-                schema = self.win.module_schemas.get(m)
-                if not schema:
-                    continue
-                g = Adw.PreferencesGroup(title="Module: %s" % schema["title"],
-                                         description=esc(schema.get("description", ""), -1))
-                n = 0
-                for s in schema["settings"]:
-                    default = (mdefaults.get(m) or {}).get(s["key"], s.get("default"))
-                    g.add(self.row_for(self._field((name, m, s["key"]), s, default)))
-                    n += 1
-                if n == 0:
-                    g.add(Adw.ActionRow(title="No settings", subtitle="This module is on or off, nothing else."))
-                self.page.add(g)
-                self.role_group.append(g)
+            mods = [m for m in self.effective_modules(role) if self.win.module_schemas.get(m)]
+            if mods:
+                add(self.heading("Modules", at=at[0]))
+            for m in mods:
+                schema = self.win.module_schemas[m]
+                g = Adw.PreferencesGroup(title=schema["title"])
+                if schema.get("description"):
+                    g.set_header_suffix(help_button(schema["description"], DOCS + "modules/%s/module.yaml" % m))
+                for st in schema["settings"]:
+                    default = (mdefaults.get(m) or {}).get(st["key"], st.get("default"))
+                    g.add(self.row_for(self._field((name, m, st["key"]), st, default)))
+                if not schema["settings"]:
+                    g.add(Adw.ActionRow(title="No settings", subtitle="On or off, nothing else."))
+                add("mod:" + m, schema["title"], [g])
         self.loading = was
+        if current and self.stack.get_child_by_name(current):
+            self.select(current)
 
 
 # ---------------------------------------------------------------------------
@@ -879,13 +947,15 @@ DOCS = "https://github.com/derlocke-ng/kiwi-server/blob/main/"
 
 def help_button(text, link=None):
     """A (?) beside a field: what it is for, and the documentation one click away."""
-    b = Gtk.MenuButton(icon_name="dialog-question-symbolic", valign=Gtk.Align.CENTER, tooltip_text="What is this?",
-                       css_classes=["flat", "circular", "ks-help"])
+    # a plain "?", as in the other kiwi apps: Adwaita's question icon is a diamond that reads as a warning
+    b = Gtk.MenuButton(child=Gtk.Label(label="?", css_classes=["heading"]), valign=Gtk.Align.CENTER,
+                       tooltip_text="What is this?", css_classes=["flat", "circular", "ks-help"])
+    b.update_property([Gtk.AccessibleProperty.LABEL], ["More about this"])
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=10, margin_bottom=10,
                   margin_start=12, margin_end=12)
     box.append(Gtk.Label(label=text, wrap=True, max_width_chars=48, xalign=0))
     if link:
-        box.append(Gtk.LinkButton(uri=link, label="Read more", halign=Gtk.Align.START))
+        box.append(Gtk.LinkButton(uri=link, label="More in the docs", halign=Gtk.Align.START, css_classes=["flat"]))
     b.set_popover(Gtk.Popover(child=box))
     return b
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.49.0 — settings in pages
+
+- The GUI's settings have a sidebar: machine, role, one page per module, then the system
+  sections; a host shows only its target's. Help sits behind a plain "?" (as in the other kiwi
+  apps), no longer in the rows.
+
 ## 2.48.0 — every setting explained
 
 - kiwi-modules 0.24.2: help for the 94 module settings that had none.

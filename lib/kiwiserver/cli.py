@@ -1282,39 +1282,63 @@ def cmd_watch(args):
     if args.timer:
         return ram_t.watch_timer(os.path.abspath(args.fleet), args.timer == "on")
     while True:
-        fleet, roles, ms = load(args)
-        hosts = [h for h in fleet.select(args.hosts) if h.target == "coreos-ram"]
-        if not hosts:
-            raise KiwiError("no coreos-ram host to watch in %s" % args.fleet)
-        for h in hosts:
-            try:
-                rolesmod.resolve_settings(roles[h.role], h, ms)     # where its stack and addresses are
-            except KiwiError as e:
-                util.warn("%s: %s" % (h.name, e))
-                continue
-            tgt = remote.reach(h, args.ssh)
-            st = ram_t.state(tgt)
-            if st == "blank":
-                util.say("%s: booted and blank, sending its role" % h.name)
-                a = argparse.Namespace(**vars(args))
-                a.hosts, a.no_run = [h.name], False
-                try:
-                    cmd_apply(a)
-                except KiwiError as e:
-                    util.warn("%s: %s" % (h.name, e))
-            elif st == "ready" and ram_t.keep_due(fleet, h.name):
-                try:                    # what changed since (peers enrolled, a certificate renewed)
-                    if backupmod.carries_wireguard(h):
-                        backupmod.keep_wireguard(h, tgt)
-                    ram_t.keep(h, tgt)
-                    ram_t.kept_now(fleet, h.name)
-                except KiwiError as e:
-                    util.warn("%s: the fleet's copy is not refreshed: %s" % (h.name, e))
-            elif st != "ready":
-                util.say("%s: %s" % (h.name, st))
+        opened = _open_for_watch(args.fleet)
+        try:
+            _watch_once(args)
+        finally:
+            if opened:              # as it was: the store is open only as long as a look takes
+                opened.lock()
         if args.once:
             return
         time.sleep(args.interval)
+
+
+def _open_for_watch(path):
+    """A locked secret store opened from this computer's keyring for one look (a timer has
+    nobody to ask); None when it was open already or there is none."""
+    st = store.Store.for_fleet(path)
+    if not st.exists() or st.is_open():
+        return None
+    try:
+        st.unlock(st.identity())
+    except KiwiError as e:
+        raise KiwiError("the secret store is locked and the keyring did not open it (%s): "
+                        "a RAM master that boots now stays blank until kiwi-server secrets unlock %s" % (e, path))
+    return st
+
+
+def _watch_once(args):
+    """One look at every RAM master of the fleet."""
+    fleet, roles, ms = load(args)
+    hosts = [h for h in fleet.select(args.hosts) if h.target == "coreos-ram"]
+    if not hosts:
+        raise KiwiError("no coreos-ram host to watch in %s" % args.fleet)
+    for h in hosts:
+        try:
+            rolesmod.resolve_settings(roles[h.role], h, ms)     # where its stack and addresses are
+        except KiwiError as e:
+            util.warn("%s: %s" % (h.name, e))
+            continue
+        tgt = remote.reach(h, args.ssh)
+        st = ram_t.state(tgt)
+        if st == "blank":
+            util.say("%s: booted and blank, sending its role" % h.name)
+            a = argparse.Namespace(**vars(args))
+            a.hosts, a.no_run = [h.name], False
+            try:
+                cmd_apply(a)
+            except KiwiError as e:
+                util.warn("%s: %s" % (h.name, e))
+        elif st == "ready" and ram_t.keep_due(fleet, h.name):
+            try:                    # what changed since (peers enrolled, a certificate renewed)
+                if backupmod.carries_wireguard(h):
+                    backupmod.keep_wireguard(h, tgt)
+                ram_t.keep(h, tgt)
+                ram_t.kept_now(fleet, h.name)
+            except KiwiError as e:
+                util.warn("%s: the fleet's copy is not refreshed: %s" % (h.name, e))
+        elif st != "ready":
+            util.say("%s: %s" % (h.name, st))
 
 
 def cmd_status(args):

@@ -1964,6 +1964,40 @@ class TestSshCa(Base):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
 
 
+class TestWatchStore(unittest.TestCase):
+    def test_a_locked_store_is_opened_for_one_look_and_locked_again(self):
+        calls = []
+
+        class Fake:
+            def __init__(self, open_):
+                self.open_ = open_
+
+            def exists(self):
+                return True
+
+            def is_open(self):
+                return self.open_
+
+            def identity(self, path=None):
+                return "AGE-SECRET-KEY-FROM-KEYRING"
+
+            def unlock(self, key):
+                calls.append(("unlock", key))
+
+            def lock(self):
+                calls.append(("lock",))
+        args = argparse.Namespace(fleet="x/fleet.yaml", timer=None, once=True, interval=1)
+        with mock.patch.object(cli.store.Store, "for_fleet", lambda p: Fake(False)), \
+             mock.patch.object(cli, "_watch_once", lambda a: calls.append(("look",))):
+            cli.cmd_watch(args)
+        self.assertEqual(calls, [("unlock", "AGE-SECRET-KEY-FROM-KEYRING"), ("look",), ("lock",)])
+        calls.clear()
+        with mock.patch.object(cli.store.Store, "for_fleet", lambda p: Fake(True)), \
+             mock.patch.object(cli, "_watch_once", lambda a: calls.append(("look",))):
+            cli.cmd_watch(args)
+        self.assertEqual(calls, [("look",)])          # opened by the owner: left as it is
+
+
 class TestCheck(Base):
     def test_check_reports_each_probe_and_fails_on_a_dead_name(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

@@ -7,6 +7,8 @@
 #   target:  coreos  — Fedora CoreOS, stable stream
 #            ucore   — CoreOS that rebases itself onto ghcr.io/ublue-os/ucore*
 #            debian  — Debian stable (trixie) from the netinst image
+#            coreos-ram — a master in RAM: the CoreOS live ISO, its state on one partition
+#                     (docs/design/ram-master.md)
 #   role:    bare | master | node
 #            master and node are MODULE roles: a list of kiwi-v2 modules
 #            (vpn-client, vpn-server, dns, reverse-proxy, cloud, vault, downloader,
@@ -74,6 +76,11 @@ defaults:
 
   ucore:
     image: ghcr.io/ublue-os/ucore:stable     # ucore-minimal / ucore / ucore-hci (+ -nvidia, -zfs)
+
+  ram:                              # target: coreos-ram only
+    copy_to_ram: false              # true: the image into RAM too (3 GiB or more), the medium may go
+    image_cache: true               # container images on the state partition; false: pulled at every boot
+    keep_logs: false                # false: logs live in RAM and are gone at every reboot
 
   debian:
     release: trixie

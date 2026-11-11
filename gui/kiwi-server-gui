@@ -124,6 +124,17 @@ BASE_GROUPS = [
         dict(path=("ucore", "image"), type="string", label="Image", default="ghcr.io/ublue-os/ucore:stable",
              help="ucore-minimal, ucore, ucore-hci — with -nvidia / -zfs variants; :stable or :testing"),
     ]),
+    ("RAM", [
+        dict(path=("ram", "copy_to_ram"), type="bool", label="Copy the image into RAM", default=False,
+             help="Off: the system reads its image from the medium, which stays attached; whatever it writes is in RAM. On: the image too, about 900 MB more, 3 GiB at least, and the medium may go",
+             doc="docs/design/ram-master.md"),
+        dict(path=("ram", "image_cache"), type="bool", label="Keep container images", default=True,
+             help="On: images stay on the state partition. Off: pulled into RAM at every boot",
+             doc="docs/design/ram-master.md"),
+        dict(path=("ram", "keep_logs"), type="bool", label="Keep logs", default=False,
+             help="Off: logs live in RAM and are gone at every reboot. On: on the state partition",
+             doc="docs/design/ram-master.md"),
+    ]),
     ("Debian", [
         dict(path=("debian", "release"), type="string", label="Release", default="trixie", help="The Debian release the installer installs, e.g. trixie"),
         dict(path=("debian", "mirror"), type="string", label="Mirror", default="deb.debian.org", help="Where packages come from; deb.debian.org picks a near one"),
@@ -149,7 +160,8 @@ BASE_GROUPS = [
 
 
 # the target groups a host shows only for its own target; shorter names in the sidebar
-SECTION_TARGETS = {"uCore": ("ucore",), "Debian": ("debian",), "CoreOS (advanced)": ("coreos", "ucore")}
+SECTION_TARGETS = {"uCore": ("ucore",), "RAM": ("coreos-ram",), "Debian": ("debian",),
+                   "CoreOS (advanced)": ("coreos", "ucore", "coreos-ram")}
 SECTION_LABELS = {"Admin user": "Admin", "CoreOS (advanced)": "CoreOS", "After the role": "Post script"}
 
 

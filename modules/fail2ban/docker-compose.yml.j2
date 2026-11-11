@@ -1,0 +1,22 @@
+# fail2ban — on the host's network, so its bans are the host's firewall rules
+services:
+  {{ container_prefix }}-fail2ban:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-fail2ban
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - TZ={{ timezone }}
+      - PUID=0
+      - PGID=0
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-fail2ban/config:/config:z
+      - {{ docker_dir }}/{{ container_prefix }}-fail2ban/init:/custom-cont-init.d:ro,z
+      - /var/log/kiwi:/var/log/kiwi:ro,z

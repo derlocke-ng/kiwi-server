@@ -1,0 +1,6 @@
+#!/usr/bin/with-contenv bash
+# kiwi-server: at most 20 new SSH connections a minute from one address on gate.home;
+# runs in the host's network each time the container starts, and adds the rule once
+rule=(-p tcp --dport 22 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 20/minute
+      --hashlimit-burst 20 --hashlimit-mode srcip --hashlimit-name kiwi_ssh -j DROP)
+iptables -C INPUT "${rule[@]}" 2>/dev/null || iptables -I INPUT 1 "${rule[@]}"

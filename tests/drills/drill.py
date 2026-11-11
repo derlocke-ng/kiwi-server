@@ -37,7 +37,7 @@ class Machine:
 
     @property
     def address(self):
-        return self.target.rsplit("@", 1)[-1]
+        return remote.address_of(self.target)
 
     def run(self, script, timeout=300):
         """(exit code, output) of a shell script as root on the machine; never raises."""

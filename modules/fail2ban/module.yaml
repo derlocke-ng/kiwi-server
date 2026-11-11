@@ -1,0 +1,71 @@
+schema_version: "1.0"
+
+module:
+  name: fail2ban
+  title: Fail2ban
+  version: 1.0.0
+  description: "Bans addresses that keep failing to log in over SSH, and slows down any one address that opens SSH connections too fast. fail2ban runs on the host's network and reads sshd's log, which a small host unit copies out of the journal."
+  category: security
+  node_types: [master, node]
+
+dependencies:
+  required: []
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: host
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  jail: kiwi.local.j2
+  ratelimit: ratelimit.sh.j2
+  log_unit: kn-sshd-log.service.j2
+
+outputs:
+  jail: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/jail.d/kiwi.local", mode: 0644 }
+  ratelimit: { path: "{{ container_prefix }}-fail2ban/init/50-kiwi-ratelimit", mode: 0755 }
+  log_unit: { kind: host_unit, name: kn-sshd-log.service }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-fail2ban/config", type: dir }
+    - { host: "/var/log/kiwi", type: dir }
+
+settings:
+  - key: ssh_port
+    type: int
+    label: SSH port
+    help: "The port sshd listens on: what the jail and the rate limit watch. kiwi-server sets it from admin.ssh_port."
+    default: 22
+  - key: maxretry
+    type: int
+    label: Failures before a ban
+    help: "Failed logins from one address within findtime before it is banned."
+    default: 5
+  - key: findtime
+    label: Within
+    help: "The window the failures are counted in, e.g. 10m or 1h."
+    default: "10m"
+  - key: bantime
+    label: Ban for
+    help: "How long a banned address stays out, e.g. 1h or 1d. -1: for good."
+    default: "1h"
+  - key: ratelimit
+    type: int
+    label: New SSH connections per minute
+    help: "Per address; more are dropped. Generous enough for kiwi-server's own bursts. 0: no limit."
+    default: 20
+  - key: ignore
+    type: list
+    label: Never banned
+    help: "Addresses or networks that are never banned, e.g. your home's public address. The mesh is never banned."
+    default: []
+  - key: image
+    group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
+    default: docker.io/linuxserver/fail2ban:1.1.0

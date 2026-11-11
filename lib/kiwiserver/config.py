@@ -48,6 +48,7 @@ DEFAULTS = {
         "ssh_keys": [],
         "groups": [],
         "ssh_password_auth": False,
+        "ssh_port": 22,
     },
     "network": {
         "interface": "",
@@ -349,6 +350,9 @@ class Host:
         self.warnings = []
         c = self.cfg
         errs += unknown_keys(self.overrides, roles, "hosts.%s" % self.name)
+        port = (c.get("admin") or {}).get("ssh_port", 22)
+        if not isinstance(port, int) or not 0 < port < 65536:
+            errs.append("admin.ssh_port must be a port number (got %r)" % (port,))
         if self.target not in TARGETS:
             errs.append("target must be one of %s (got %r)" % (", ".join(TARGETS), self.target))
         if not self.role:

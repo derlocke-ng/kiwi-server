@@ -1,0 +1,18 @@
+[Unit]
+Description=sshd's log for fail2ban on gate.home
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=systemd-journald.service
+
+[Service]
+# sshd logs to the journal only (Debian 13, CoreOS); fail2ban's image reads files. A day's worth:
+# the unit ends after a day and starts again on an empty file
+ExecStartPre=/usr/bin/install -d -m 0755 /var/log/kiwi
+ExecStartPre=/bin/sh -c ': > /var/log/kiwi/sshd.log'
+# OpenSSH 9.8 and later log as sshd-session, which fail2ban 1.1.0's filter does not know yet
+ExecStart=/bin/sh -c 'journalctl -f -n 0 -o short-iso _COMM=sshd _COMM=sshd-session | sed -u "s/ sshd-session\\[/ sshd[/" >> /var/log/kiwi/sshd.log'
+RuntimeMaxSec=1d
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

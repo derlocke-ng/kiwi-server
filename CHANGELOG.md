@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.56.0 — SSH off port 22, fail2ban
+
+- `admin.ssh_port` (22 unless set), also in the GUI: an apply moves sshd there without a
+  lockout — 22 and the new port first (firewall and SELinux told, `sshd -t`), 22 dropped only
+  after kiwi-server logged in over the new one. kiwi-server reaches every host on its port
+  (`ssh://user@address:port`), and on 22 while a move is under way.
+- kiwi-modules 0.27.0: the `fail2ban` module, in the master preset: an sshd jail and a rate
+  limit of new SSH connections per address, on whatever port sshd listens.
+- Tried on sorbet: port 41022, 22 closed; crumble banned after six failed logins.
+
 ## 2.55.3 — watch opens a locked store
 
 - `kiwi-server watch` opens a locked secret store from this computer's keyring for each look

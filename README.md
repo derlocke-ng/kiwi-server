@@ -640,6 +640,10 @@ coreos-installer xorriso`; on Bluefin/Silverblue the image is the way.
 - **The machines' SSH host keys** are kept in `secrets/known_hosts`: the first
   contact accepts a new machine's key, a changed key (a reinstall) is refused
   until you drop the old line (`ssh-keygen -R <host> -f secrets/known_hosts`).
+- **SSH off port 22, fail2ban**: `admin: { ssh_port: 41022 }` moves sshd at the next apply
+  without a lockout (both ports until the new one is proven). The `fail2ban` module (on every
+  master by default) bans an address after five failed logins in ten minutes and drops an
+  address opening more than 20 SSH connections a minute; the mesh is never banned.
 - **An SSH CA** (`kiwi-server sshca fleet.yaml init`, kept as `secrets/ssh_ca`): every
   apply then gives the machine a host certificate for its names and addresses, so it is
   known at a new address without trusting the first key shown there, and its sshd takes

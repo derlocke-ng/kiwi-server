@@ -43,17 +43,53 @@ def ssh_opts(identities=True):
     return opts
 
 
+def ssh_port(host):
+    return int((host.admin or {}).get("ssh_port") or 22)
+
+
+def with_port(tgt, port):
+    """user@address on a port: ssh's own URI form, which every ssh call here takes."""
+    user_host = tgt[len("ssh://"):] if tgt.startswith("ssh://") else tgt
+    if user_host.count(":") == 1 and "[" not in user_host:
+        user_host = user_host.rsplit(":", 1)[0]
+    return user_host if int(port) == 22 else "ssh://%s:%d" % (user_host, int(port))
+
+
+def port_of(tgt):
+    if tgt.startswith("ssh://") and tgt.count(":") >= 2:
+        return int(tgt.rsplit(":", 1)[1])
+    return 22
+
+
+def address_of(tgt):
+    rest = tgt[len("ssh://"):] if tgt.startswith("ssh://") else tgt
+    rest = rest.rsplit("@", 1)[-1]
+    return rest.rsplit(":", 1)[0] if tgt.startswith("ssh://") and rest.count(":") == 1 else rest
+
+
 def target(host, override=None):
-    """user@address: the admin user at the hostname, unless told otherwise."""
-    return override or "%s@%s" % (host.admin["user"], host.hostname)
+    """user@address: the admin user at the hostname, unless told otherwise; on admin.ssh_port."""
+    if override:
+        return override if override.startswith("ssh://") else with_port(override, ssh_port(host))
+    return with_port("%s@%s" % (host.admin["user"], host.hostname), ssh_port(host))
 
 
-def _on_record(address):
+def run_ok(tgt, timeout=30):
+    """Does a login there work, the host key checked as everywhere?"""
+    argv = ["ssh"] + ssh_opts() + ["-o", "ConnectTimeout=10", tgt, "true"]
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=timeout).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _on_record(address, port=22):
     """Has this fleet met the machine at that address? ssh-keygen also reads hashed entries."""
     if not KNOWN_HOSTS or not os.path.isfile(KNOWN_HOSTS):
         return False
+    name = address if int(port) == 22 else "[%s]:%d" % (address, int(port))
     try:
-        r = subprocess.run(["ssh-keygen", "-F", address, "-f", KNOWN_HOSTS], capture_output=True)
+        r = subprocess.run(["ssh-keygen", "-F", name, "-f", KNOWN_HOSTS], capture_output=True)
     except FileNotFoundError:
         return False
     return r.returncode == 0 and bool(r.stdout.strip())
@@ -87,15 +123,21 @@ def reach(host, override=None):
     because the first key it showed was accepted. Nothing on record: the name.
     """
     if override:
-        return override
-    user = host.admin["user"]
-    for address in addresses(host):
-        if _on_record(address) and _answers(address):
-            return "%s@%s" % (user, address)
-    for address in addresses(host)[1:]:     # met nowhere yet: one whose certificate the fleet's CA signed
-        if _ca_known() and _answers(address) and _certified("%s@%s" % (user, address)):
-            return "%s@%s" % (user, address)
+        return target(host, override) if remote_port_answers(override, ssh_port(host)) else override
+    user, port = host.admin["user"], ssh_port(host)
+    for p in ([port, 22] if port != 22 else [22]):      # 22 still, while a move to another port is under way
+        for address in addresses(host):
+            if _on_record(address, p) and _answers(address, p):
+                return with_port("%s@%s" % (user, address), p)
+        for address in addresses(host)[1:]:     # met nowhere yet: one whose certificate the fleet's CA signed
+            if _ca_known() and _answers(address, p) and _certified(with_port("%s@%s" % (user, address), p)):
+                return with_port("%s@%s" % (user, address), p)
     return target(host)
+
+
+def remote_port_answers(override, port):
+    """Does the address of a given user@address answer on the port? Then that is where to go."""
+    return int(port) != 22 and _answers(override.rsplit("@", 1)[-1], port)
 
 
 def _ca_known():

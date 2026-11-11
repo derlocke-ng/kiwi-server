@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.54.1 — an apply waits for the containers that follow
+
+- kiwi-stack 0.6.2: the check after an apply asks again for a minute; an apply that restarted
+  the WireGuard server failed it while the containers in its network were still following.
+
 ## 2.54.0 — federation
 
 - `kiwi-server federate <fleet> <other fleet>` links two networks: each master gets the

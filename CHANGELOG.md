@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.55.3 — watch opens a locked store
+
+- `kiwi-server watch` opens a locked secret store from this computer's keyring for each look
+  and locks it again after; a store the owner opened stays as it is. The timer went on
+  working only while the store happened to be open (it locks itself after 8 hours).
+
 ## 2.55.2 — synthetic users
 
 - `tests/drills/users.py`: WireGuard clients of the master run here, doing every minute what a

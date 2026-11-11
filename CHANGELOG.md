@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.53.1 — VPN groups in the app
+
+- GUI: the WireGuard server's client groups are a list to edit, not YAML: each group with
+  its addresses, what it may reach, other VPN clients, the internet exit and the admin pages;
+  a new group gets the next free /24.
+
 ## 2.53.0 — a master in RAM
 
 - `target: coreos-ram`, a prototype for masters that live in RAM only: the Fedora CoreOS

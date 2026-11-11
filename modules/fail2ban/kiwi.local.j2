@@ -14,3 +14,31 @@ logpath  = /var/log/kiwi/sshd.log
 backend  = polling
 # aggressive: also preauth disconnects and timeouts, which is most of what bots do
 mode     = aggressive
+{% if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') %}
+
+# the public sites: nginx is reached through the host's port forwarding, so a ban goes into
+# FORWARD (where those packets pass), not INPUT
+[nginx-bad-request]
+enabled  = true
+port     = http,https
+chain    = FORWARD
+logpath  = /var/log/nginx/access.log
+backend  = polling
+
+[nginx-http-auth]
+enabled  = true
+port     = http,https
+chain    = FORWARD
+logpath  = /var/log/nginx/error.log
+backend  = polling
+
+# scanners asking for what is not here: WordPress, PHP admin pages, dotfiles, CGI
+[kiwi-nginx-probe]
+enabled  = true
+port     = http,https
+chain    = FORWARD
+filter   = kiwi-nginx-probe
+logpath  = /var/log/nginx/access.log
+backend  = polling
+maxretry = 3
+{% endif %}

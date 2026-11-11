@@ -25,6 +25,8 @@ services:
 {% if public_names %}
       - {{ docker_dir }}/{{ container_prefix }}-nginx/start.sh:/etc/nginx/start.sh:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/acme:/etc/nginx/acme:z
+      # real files where the official image has links to stdout: fail2ban reads them
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/log:/var/log/nginx:z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/www:/var/www/acme:z
     command: /bin/sh /etc/nginx/start.sh
 {% endif %}

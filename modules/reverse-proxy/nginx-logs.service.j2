@@ -1,0 +1,8 @@
+[Unit]
+Description=A day of nginx's log files on {{ hostname }} (fail2ban reads them)
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Service]
+Type=oneshot
+# kept for a day: copied aside and emptied in place, nginx appends on (no reopen needed)
+ExecStart=/bin/sh -c 'cd {{ docker_dir }}/{{ container_prefix }}-nginx/log && for f in access.log error.log; do [ -f "$f" ] && cp -p "$f" "$f.1" && : > "$f"; done; true'

@@ -20,3 +20,6 @@ services:
       - {{ docker_dir }}/{{ container_prefix }}-fail2ban/config:/config:z
       - {{ docker_dir }}/{{ container_prefix }}-fail2ban/init:/custom-cont-init.d:ro,z
       - /var/log/kiwi:/var/log/kiwi:ro,z
+{% if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') %}
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/log:/var/log/nginx:ro,z
+{% endif %}

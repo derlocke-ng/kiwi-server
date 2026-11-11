@@ -1,0 +1,4 @@
+# kiwi-server: requests for what no site here serves, as scanners send them
+[Definition]
+failregex = ^<HOST> -[^"]*"(?:GET|POST|HEAD) /[^" ]*(?:wp-login\.php|wp-admin|xmlrpc\.php|phpmyadmin|\.env|\.git/|cgi-bin|\.aspx?|admin\.php|boaform|HNAP1)[^" ]* HTTP/[0-9.]+" (?:3|4)\d\d
+ignoreregex =

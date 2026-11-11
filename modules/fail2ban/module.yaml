@@ -4,7 +4,7 @@ module:
   name: fail2ban
   title: Fail2ban
   version: 1.0.0
-  description: "Bans addresses that keep failing to log in over SSH, and slows down any one address that opens SSH connections too fast. fail2ban runs on the host's network and reads sshd's log, which a small host unit copies out of the journal."
+  description: "Bans addresses that keep failing to log in over SSH, and slows down any one address that opens SSH connections too fast; on a master with public sites also scanners and bad requests there. fail2ban runs on the host's network and reads sshd's log, which a small host unit copies out of the journal, and nginx's."
   category: security
   node_types: [master, node]
 
@@ -25,11 +25,13 @@ templates:
   jail: kiwi.local.j2
   ratelimit: ratelimit.sh.j2
   log_unit: kn-sshd-log.service.j2
+  probe_filter: kiwi-nginx-probe.conf.j2
 
 outputs:
   jail: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/jail.d/kiwi.local", mode: 0644 }
   ratelimit: { path: "{{ container_prefix }}-fail2ban/init/50-kiwi-ratelimit", mode: 0755 }
   log_unit: { kind: host_unit, name: kn-sshd-log.service }
+  probe_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-probe.conf", mode: 0644 }
 
 storage:
   bind_mounts:

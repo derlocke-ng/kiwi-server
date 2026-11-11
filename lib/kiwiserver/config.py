@@ -507,6 +507,9 @@ class Fleet:
 
     def resolve_path(self, p):
         p = os.path.expanduser(str(p))
+        private = os.environ.get("KIWI_SECRETS_DIR")       # a store opened for one process alone (watch)
+        if private and not os.path.isabs(p) and (p == "secrets" or p.startswith("secrets/")):
+            return os.path.join(private, p[len("secrets"):].lstrip("/"))
         return p if os.path.isabs(p) else os.path.join(self.dir, p)
 
     def seed(self):
@@ -518,7 +521,7 @@ class Fleet:
         if not os.path.isfile(p):
             from . import store
             st = store.Store.for_fleet(self.path)
-            if st.exists() and not st.is_open():
+            if st.exists() and not st.is_open() and not os.environ.get("KIWI_SECRETS_DIR"):
                 # never a new seed beside a locked store: every generated secret would differ
                 # (found: a watch run whose store was locked under it made one in a plain secrets/)
                 raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % self.path)

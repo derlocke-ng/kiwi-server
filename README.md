@@ -387,6 +387,13 @@ the role runs (the role script does not stop docker containers). Mesh SSH to a n
 rule: `vpn-client: { extra_dnat_rules: ["2222/tcp:172.128.0.1:22"] }` (the
 docker gateway is the host).
 
+## A cache for the LAN
+
+Add `cache` to one node's modules and the machines on its LAN fetch container images and
+Debian packages from it instead of the internet, by themselves; with the cache off they go to
+the source. `cache: { data_dir: /mnt/data/cache }` puts it on a big disk
+(docs/design/local-first.md).
+
 ## Federation
 
 Two networks can share chosen services with each other (docs/design/federation.md):

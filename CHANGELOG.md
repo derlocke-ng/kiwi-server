@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.57.0 — a cache for the LAN
+
+- kiwi-modules 0.28.0 and kiwi-stack 0.7.0: the `cache` module on a node keeps container
+  images (a mirror per registry at `cache.<hostname>`) and Debian packages (a proxy on 3142)
+  for its LAN. Every node of the fleet on the same LAN uses it without a setting; the master
+  and nodes elsewhere do not (over the mesh every byte would cross the master). When the
+  cache is off, podman and apt go to the source by themselves.
+- docs/design/local-first.md: the plan for the cache, netboot and a control node that starts
+  from a Raspberry Pi; what ublue-os/forge has that is worth taking.
+- Tried: papaya as the cache, lychee pulling an image and updating through it, and both again
+  with the cache stopped.
+
 ## 2.56.3 — watch on a copy of its own
 
 - `watch` with a locked store decrypts it into a copy for itself alone and writes back what it

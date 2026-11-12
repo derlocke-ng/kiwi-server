@@ -1,0 +1,38 @@
+# cache — a pull-through mirror per registry, and a caching proxy for Debian packages
+{% set remotes = {'docker.io': 'https://registry-1.docker.io', 'ghcr.io': 'https://ghcr.io', 'quay.io': 'https://quay.io', 'lscr.io': 'https://lscr.io'} %}
+services:
+{% for r in registries %}
+  {{ container_prefix }}-cache-{{ r.split('.')[0] }}:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-cache-{{ r.split('.')[0] }}
+    environment:
+      - REGISTRY_PROXY_REMOTEURL={{ remotes[r] }}
+      - REGISTRY_STORAGE_DELETE_ENABLED=true
+      - REGISTRY_LOG_LEVEL=warn
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ data_path }}/{{ r }}:/var/lib/registry:z
+{% endfor %}
+{% if apt %}
+  {{ container_prefix }}-cache-apt:
+    image: {{ apt_image }}
+    container_name: {{ container_prefix }}-cache-apt
+    networks:
+      {{ network_name }}: {}
+    ports:
+      - "3142:3142"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-cache/apt-nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - {{ data_path }}/apt:/var/cache/nginx/apt:z
+{% endif %}

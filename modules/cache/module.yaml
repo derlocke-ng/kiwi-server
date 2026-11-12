@@ -1,0 +1,92 @@
+schema_version: "1.0"
+
+module:
+  name: cache
+  title: Cache
+  version: 1.0.0
+  description: "Keeps what the machines on this LAN would each fetch from the internet: container images (a pull-through mirror per registry, at cache.<hostname> behind the reverse proxy) and Debian packages (a proxy on port 3142). The other nodes on the same LAN use it by themselves and go direct when it is off."
+  category: storage
+  node_types: [node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  open_ports: ["{{ '3142/tcp' if apt else '' }}"]
+
+firewall:
+  scope: host
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  apt_conf: apt-nginx.conf.j2
+
+outputs:
+  apt_conf: { path: "{{ container_prefix }}-cache/apt-nginx.conf", mode: 0644, when: apt }
+
+derived:
+  cache_host: "cache.{{ hostname }}"
+  data_path: "{{ data_dir or docker_dir ~ '/' ~ container_prefix ~ '-cache' }}"
+
+storage:
+  bind_mounts:
+    - { host: "{{ data_path }}", type: dir, required: true }
+    - { each: registries, host: "{{ data_path }}/{{ item }}", type: dir }
+    - { host: "{{ data_path }}/apt", type: dir, when: apt }
+
+urls:
+  - "Cache: https://{{ cache_host }} (images of {{ registries | join(', ') }}){{ ', apt proxy on port 3142' if apt else '' }}"
+
+nginx:
+  # /v2/<registry>/… goes to that registry's mirror; podman's mirror location is cache.<hostname>/<registry>
+  upstream:
+    name: cache-ping
+    server: "{{ container_prefix }}-cache-{{ (registries | first | default('docker.io')).split('.')[0] }}:5000"
+  server_name: "{{ cache_host }}"
+  proxy_pass: "http://cache-ping"
+  client_max_body_size: "0"
+  proxy_read_timeout: 900s
+  comment: Cache (container images)
+  extra_locations:
+    - path: "~ ^/v2/docker\\.io/(.*)$"
+      config: "set $mirror http://{{ container_prefix }}-cache-docker:5000; rewrite ^/v2/docker\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
+    - path: "~ ^/v2/ghcr\\.io/(.*)$"
+      config: "set $mirror http://{{ container_prefix }}-cache-ghcr:5000; rewrite ^/v2/ghcr\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
+    - path: "~ ^/v2/quay\\.io/(.*)$"
+      config: "set $mirror http://{{ container_prefix }}-cache-quay:5000; rewrite ^/v2/quay\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
+    - path: "~ ^/v2/lscr\\.io/(.*)$"
+      config: "set $mirror http://{{ container_prefix }}-cache-lscr:5000; rewrite ^/v2/lscr\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
+
+settings:
+  - key: registries
+    type: list
+    label: Registries
+    help: "The registries whose images are kept here: docker.io, ghcr.io, quay.io, lscr.io."
+    default: [docker.io, ghcr.io, quay.io]
+    pattern: '(docker\.io|ghcr\.io|quay\.io|lscr\.io)'
+  - key: apt
+    type: bool
+    label: Debian packages
+    help: "A caching proxy for Debian's package servers on port 3142; Debian nodes on this LAN use it by themselves."
+    default: true
+  - key: apt_size
+    label: Room for packages
+    help: "The most the package cache keeps, e.g. 10g; the oldest go first."
+    default: "10g"
+    pattern: '[0-9]+[mg]'
+  - key: data_dir
+    label: Where the cache lives
+    help: "A disk with room. Empty: under the stack directory."
+    default: ""
+    pattern: '(/[A-Za-z0-9._/-]+)?'
+  - key: image
+    group: Advanced
+    help: "The container image of the registry mirrors, pinned by tag. Change it to try another version or to pin a newer one."
+    default: docker.io/library/registry:2.8.3
+  - key: apt_image
+    group: Advanced
+    help: "The container image of the package proxy (nginx), pinned by tag. Change it to try another version or to pin a newer one."
+    default: docker.io/library/nginx:1

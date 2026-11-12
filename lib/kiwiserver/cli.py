@@ -254,6 +254,7 @@ class Renderer:
             return
         self._scanned = True
         recs, needs_ca, master_ip, node_lan = [], False, "", []
+        self._caches = []       # (LAN interface, hostname, registries, apt) of the nodes that run the cache module
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -270,6 +271,9 @@ class Renderer:
                 lan = static_lan(h)
                 if lan and role.node_type != "master":      # a master's stack lives on the mesh, not its LAN
                     node_lan.append((spec.vpn_ip, lan.ip))
+                    if "cache" in h.modules:
+                        c = h.module_settings["cache"]
+                        self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt"))))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
@@ -282,6 +286,24 @@ class Renderer:
     def dns_records(self):
         self.scan()
         return self._records
+
+    def use_cache(self, host, role):
+        """The cache node on this host's own LAN, when the fleet has one, as the host's registry
+        mirrors and package proxy, unless the fleet file sets them (docs/design/local-first.md).
+        Only there: over the mesh every byte would cross the master."""
+        self.scan()
+        own = static_lan(host)
+        if not own or not role.stack or role.node_type == "master":
+            return
+        cache = next((c for c in self._caches if c[0].ip in own.network), None)
+        if not cache:
+            return
+        lan, name, registries, apt = cache
+        rs = host.role_settings
+        if not rs.get("registry_mirrors") and registries:
+            rs["registry_mirrors"] = {r: "cache.%s/%s" % (name, r) for r in registries}
+        if not rs.get("apt_proxy") and apt and host.target == "debian":
+            rs["apt_proxy"] = "http://%s:3142" % lan.ip
 
     def lan_addresses(self, host, role):
         """{mesh address: LAN address} of the fleet's nodes on this node's own LAN.
@@ -340,6 +362,7 @@ class Renderer:
 
     def script(self, host):
         role = self.prepare(host)
+        self.use_cache(host, role)
         b = self.bundle(host, role)
         return rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
 

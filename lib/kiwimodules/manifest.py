@@ -77,6 +77,8 @@ def stack_manifest(host, profile, version, bundle):
              _bash_var("KS_ROLE_DOCKER_SOURCE", rs.get("docker_source") or ""),
              _bash_var("KS_ROLE_DAILY_VPN_RESTART", rs.get("daily_vpn_restart") or ""),
              _bash_var("KS_ROLE_WEEKLY_UPDATE", rs.get("weekly_update") or ""),
+             _bash_var("KS_ROLE_REGISTRY_MIRRORS", dict(rs.get("registry_mirrors") or {})),
+             _bash_var("KS_ROLE_APT_PROXY", rs.get("apt_proxy") or ""),
              "KS_STACK=1"]
     return "\n".join(lines + stack_vars(host, bundle)) + "\n"
 

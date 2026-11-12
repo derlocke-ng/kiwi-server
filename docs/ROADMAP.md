@@ -808,6 +808,10 @@ Asked for by the owner in November 2026:
   the original returns the two have diverged, so a person decides first
   (`kiwi-server failover <module> <host>`) and automation comes later if at all.
   Overlaps with the standby master.
+- **Local first** (design/local-first.md), asked for 12 November 2026: the LAN's cache
+  (built, 2.57.0: images and Debian packages; install images and locally built images of our
+  own still to come), netboot (below), and the control node with a web UI that starts from a
+  Raspberry Pi image, which needs arm64 builds first.
 - **Netboot at home: PXE and Wake-on-LAN**, raised 10 November 2026; not built. A
   rebuilt VPS needs nobody since 2.38 (`vps install`, the one-time key, apply, and the
   backup restoring itself since kiwi-modules 0.24); a home machine still needs a USB stick.

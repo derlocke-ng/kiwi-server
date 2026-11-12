@@ -670,7 +670,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 21)
+        self.assertEqual(len(ms.names()), 22)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -2041,6 +2041,47 @@ class TestWatchStore(unittest.TestCase):
              mock.patch.object(cli, "_watch_once", look):
             cli.cmd_watch(args)
         self.assertEqual(calls, [])          # opened by the owner: used as it is
+
+
+class TestSeedGuard(Base):
+    def test_no_new_seed_beside_a_locked_store(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        seed = f.resolve_path("secrets/seed")
+        if os.path.exists(seed):
+            os.remove(seed)
+        write(os.path.join(self.tmp, "secrets.age"), "x")             # a store, not open
+        with self.assertRaisesRegex(KiwiError, "secret store is locked"):
+            f.seed()
+        self.assertFalse(os.path.exists(seed))
+
+
+class TestLocalCache(Base):
+    def test_nodes_on_the_caches_lan_use_it_and_nobody_else(self):
+        node = {"vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "store": {"role": "node", "network": {"dhcp": False, "address": "192.168.7.30/24", "gateway": "192.168.7.1"},
+                      "node": dict(node, vpn_ip="10.8.0.9", modules=["vpn-client", "reverse-proxy", "cache"],
+                                   cache={"registries": ["docker.io", "ghcr.io"]})},
+            "near": {"role": "node", "target": "debian",
+                     "network": {"dhcp": False, "address": "192.168.7.31/24", "gateway": "192.168.7.1"},
+                     "node": dict(node, vpn_ip="10.8.0.10", preset="minimal")},
+            "far": {"role": "node", "target": "debian",
+                    "network": {"dhcp": False, "address": "10.44.0.5/24", "gateway": "10.44.0.1"},
+                    "node": dict(node, vpn_ip="10.8.0.11", preset="minimal", apt_proxy="http://10.44.0.9:3142")}}})
+        r = cli.Renderer(f, rolesmod.discover(), self.tmp, None, modmod.discover())
+        got = {}
+        for name in ("gate", "store", "near", "far"):
+            h = f.hosts[name]
+            role = r.prepare(h)
+            r.use_cache(h, role)
+            got[name] = (h.role_settings.get("registry_mirrors") or {}, h.role_settings.get("apt_proxy") or "")
+        self.assertEqual(got["near"], ({"docker.io": "cache.store.kiwi/docker.io", "ghcr.io": "cache.store.kiwi/ghcr.io"},
+                                       "http://192.168.7.30:3142"))
+        self.assertEqual(got["store"][0]["docker.io"], "cache.store.kiwi/docker.io")      # its own mirrors too
+        self.assertEqual(got["far"], ({}, "http://10.44.0.9:3142"))                       # another LAN; its own setting stays
+        self.assertEqual(got["gate"], ({}, ""))                                           # a master is nowhere near
 
 
 class TestCheck(Base):
@@ -4386,7 +4427,7 @@ class TestCli(Base):
         master = [r for r in data["roles"] if r["name"] == "master"][0]
         self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "fail2ban"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 21)
+        self.assertEqual(len(json.loads(out)["modules"]), 22)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "coreos-ram"})
 

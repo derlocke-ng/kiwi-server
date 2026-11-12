@@ -376,6 +376,41 @@ ks_stack_hosts() {
     } | ks_write /etc/hosts 0644
 }
 
+ks_local_cache() {
+    # What the cache node on this LAN keeps is asked there first (kiwi-server's cache module,
+    # docs/design/local-first.md): podman's registry mirrors, which fall back to the registry
+    # by themselves, and apt's proxy through a script that says DIRECT when the cache is away.
+    local conf=/etc/containers/registries.conf.d/50-kiwi-mirrors.conf reg
+    if [[ $KS_STACK_RUNTIME == podman ]] && declare -p KS_ROLE_REGISTRY_MIRRORS >/dev/null 2>&1 \
+       && (( ${#KS_ROLE_REGISTRY_MIRRORS[@]} )); then
+        install -d -m 0755 /etc/containers/registries.conf.d
+        {
+            echo "# kiwi-server: the cache on this LAN first, the registry itself when it does not answer"
+            while IFS= read -r reg; do
+                printf '\n[[registry]]\nprefix = "%s"\nlocation = "%s"\n\n[[registry.mirror]]\nlocation = "%s"\n' \
+                    "$reg" "$reg" "${KS_ROLE_REGISTRY_MIRRORS[$reg]}"
+            done < <(printf '%s\n' "${!KS_ROLE_REGISTRY_MIRRORS[@]}" | sort)
+        } | ks_write "$conf" 0644
+        ks_say "images come through the LAN's cache first (${!KS_ROLE_REGISTRY_MIRRORS[*]})"
+    else
+        rm -f "$conf"
+    fi
+    local aptconf=/etc/apt/apt.conf.d/30kiwi-proxy detect=/usr/local/bin/kiwi-apt-proxy at
+    if ks_is_debian && [[ ${KS_ROLE_APT_PROXY:-} == http://*:* ]]; then
+        at=${KS_ROLE_APT_PROXY#http://}; at=${at%%/*}
+        {
+            echo '#!/bin/sh'
+            echo "# kiwi-server: apt asks this for every http source. The LAN's package cache while it answers, else direct."
+            printf 'if timeout 2 bash -c "</dev/tcp/%s/%s" 2>/dev/null; then echo "%s"; else echo DIRECT; fi\n' \
+                "${at%:*}" "${at##*:}" "$KS_ROLE_APT_PROXY"
+        } | ks_write "$detect" 0755
+        printf 'Acquire::http::Proxy-Auto-Detect "%s";\n' "$detect" | ks_write "$aptconf" 0644
+        ks_say "packages come through the LAN's cache first ($KS_ROLE_APT_PROXY)"
+    else
+        rm -f "$aptconf" "$detect"
+    fi
+}
+
 ks_stack_drop_units() {
     # A host unit the last apply installed and this one does not (a module or a
     # setting such as dns.mullvad_socks turned off) is stopped and removed:
@@ -752,6 +787,7 @@ ks_stack_apply() {
     fi
     ks_stack_host_prep
     ks_stack_hosts
+    ks_local_cache
     ks_stack_unpack
     ks_stack_install_cli
     ks_firewall_trust_mesh

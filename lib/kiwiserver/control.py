@@ -1,0 +1,357 @@
+"""The control node's core, without a web framework: who may log in, the jobs it runs, the
+looks it takes by itself, and the audit log. `serve` (web.py) puts pages and an API in front.
+
+Everything it does is the CLI: a job is `kiwi-server <command> <fleet> ...` in a subprocess,
+its output kept as the job's log, so the web page, the GTK app and the terminal do the same
+thing the same way.
+
+Secrets: the control node holds the fleet's secrets only as the encrypted store (secrets.age).
+Its password and the salt in control/salt make an age key (store.password_identity) that is
+one of the store's recipients; logging in with it opens the store into RAM, and until then
+the node can do nothing with the fleet. No hash of the password and no key is on its disk.
+The fleet file rests encrypted the same way (fleet.yaml.age, for the store's recipients):
+it names every machine and may hold passwords. While the store is open, fleet.yaml is a link
+into RAM, as secrets/ is. What a job prints and what the machines said last stay in RAM too.
+"""
+import hashlib
+import hmac
+import json
+import os
+import re
+import secrets as pysecrets
+import subprocess
+import sys
+import threading
+import time
+
+from . import store as storemod, util
+from .util import KiwiError
+
+HOST = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+FLEET_FILES = ("fleet.yaml", "federation.yaml")     # at rest on the node: <name>.age
+SESSION_HOURS = 12
+MIN_PASSWORD = 12
+# what a page may start: the command and whether it takes hosts
+ACTIONS = {
+    "status": ("status", True), "plan": ("plan", True), "apply": ("apply", True),
+    "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
+}
+CHANGES = {"apply", "backup"}         # these change machines or the fleet: the audit log says who
+
+
+class Control:
+    def __init__(self, fleet_path, kiwi_cmd=None, status_minutes=10, watch_seconds=60, clock=time.time, run_dir=None):
+        self.fleet_path = os.path.abspath(fleet_path)
+        self.fleet_dir = os.path.dirname(self.fleet_path)
+        self.dir = os.path.join(self.fleet_dir, "control")          # on disk: the salt, the audit log, the sync stamp
+        os.makedirs(self.dir, mode=0o700, exist_ok=True)
+        base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"      # in RAM: job logs, the last look
+        self.run = run_dir or os.path.join(base, "kiwi-control-%s" % hashlib.sha256(self.fleet_path.encode()).hexdigest()[:12])
+        self.jobs_dir = os.path.join(self.run, "jobs")
+        os.makedirs(self.jobs_dir, mode=0o700, exist_ok=True)
+        self.store = storemod.Store(self.fleet_dir)
+        self.kiwi = kiwi_cmd or [sys.executable, "-m", "kiwiserver"]
+        self.status_minutes = status_minutes
+        self.watch_seconds = watch_seconds
+        self.clock = clock
+        self.lock = threading.Lock()          # one job at a time: two applies never cross
+        self.failures = {}                    # address -> [times] of failed logins
+        self._session_key = pysecrets.token_bytes(32)   # sessions end with the process, as the open store does
+        self._identity = None                 # the key the password made, while the store is open
+        self._saved = {}                      # name -> sha256 of the fleet file as it was last saved or opened
+        self._age = {}                        # name -> sha256 of its encrypted file on disk, as this process left it
+
+    # ---- the password and the store ----------------------------------------------------
+    @property
+    def salt_file(self):
+        return os.path.join(self.dir, "salt")
+
+    def _fleet_file(self, name):
+        return os.path.join(self.fleet_dir, os.path.basename(self.fleet_path) if name == "fleet.yaml" else name)
+
+    def ready(self):
+        """Is there a store this node's password can open, and a fleet file (encrypted on a
+        control node; a plain file where the operator runs serve on their own computer)?"""
+        fleet = self._fleet_file("fleet.yaml")
+        plain = os.path.isfile(fleet) and not os.path.islink(fleet)
+        return self.store.exists() and os.path.isfile(self.salt_file) and (plain or os.path.isfile(fleet + ".age"))
+
+    def _open(self, identity):
+        """The store into RAM, then the fleet files beside it; fleet.yaml becomes a link there."""
+        self.store.unlock(identity)
+        ram = os.path.join(self.store.runtime(), "fleet")
+        os.makedirs(ram, mode=0o700, exist_ok=True)
+        for name in FLEET_FILES:
+            path = self._fleet_file(name)
+            if not os.path.isfile(path + ".age"):
+                continue
+            data = storemod.decrypt_file(identity, path + ".age")
+            util.write_bytes(os.path.join(ram, name), data, 0o600)
+            if os.path.islink(path) or os.path.exists(path):
+                os.remove(path)
+            os.symlink(os.path.join(ram, name), path)
+            self._saved[name] = hashlib.sha256(data).hexdigest()
+            self._age[name] = util.sha256_file(path + ".age")
+
+    def _pushed(self):
+        """Did someone else replace an encrypted file on disk (`control push`)? The store
+        knows its own file; the fleet files' are remembered here."""
+        try:
+            self.store._unchanged_on_disk()
+        except KiwiError:
+            return True
+        return any(not os.path.isfile(self._fleet_file(n) + ".age") or
+                   util.sha256_file(self._fleet_file(n) + ".age") != sha for n, sha in self._age.items())
+
+    def save_fleet(self):
+        """A fleet file a job changed, encrypted back to disk (needs the public keys only)."""
+        for name, was in list(self._saved.items()):
+            path = self._fleet_file(name)
+            if not os.path.isfile(path):
+                continue
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if hashlib.sha256(data).hexdigest() == was:
+                continue
+            blob = storemod.encrypt_bytes(self.store.recipients, data)
+            with open(os.open(path + ".age.tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:
+                fh.write(blob)
+            os.replace(path + ".age.tmp", path + ".age")
+            self._saved[name] = hashlib.sha256(data).hexdigest()
+            self._age[name] = util.sha256_file(path + ".age")
+
+    def _close(self):
+        if not self._pushed():
+            self.save_fleet()
+        for name in list(self._saved):
+            if os.path.islink(self._fleet_file(name)):
+                os.remove(self._fleet_file(name))
+        self._saved, self._age = {}, {}
+        self.store.lock()
+        self._identity = None
+
+    def locked(self):
+        return not self.store.is_open()
+
+    def set_password(self, password):
+        """On the operator's computer, the store open: the password becomes one more way to
+        open it. `control push` takes the result to the node."""
+        if len(password) < MIN_PASSWORD:
+            raise KiwiError("the control password needs %d characters at least: it guards every secret of the fleet" % MIN_PASSWORD)
+        if not self.store.exists():
+            raise KiwiError("the control node takes the fleet's secrets only as the encrypted store: "
+                            "kiwi-server secrets init %s first" % self.fleet_path)
+        if not self.store.is_open():
+            raise KiwiError("the store is locked: kiwi-server secrets unlock %s first" % self.fleet_path)
+        salt = pysecrets.token_hex(16)
+        public = storemod.public_of(storemod.password_identity(password, salt))
+        if any(name == "control" for name, _key in self.store.ways()):
+            self.store.remove("control")
+        self.store.add("control", public)
+        util.write_text(self.salt_file, salt + "\n", 0o600)
+
+    def _control_key(self):
+        return next((key for name, key in self.store.ways() if name == "control"), None)
+
+    def login(self, password, address="?"):
+        """A session token, or None. The password is right when the key it makes opens the
+        store (locked) or is the store's control key (open). Five wrong ones from one address
+        in ten minutes: it waits until the oldest is ten minutes old."""
+        now = self.clock()
+        recent = [t for t in self.failures.get(address, []) if now - t < 600]
+        self.failures[address] = recent
+        if len(recent) >= 5 or not self.ready():
+            return None
+        identity = storemod.password_identity(password, util.read_text(self.salt_file).strip())
+        try:
+            if self.locked():
+                with self.lock:
+                    self._open(identity)
+                self.audit("admin", "unlocked", address=address)
+            elif storemod.public_of(identity) != self._control_key():
+                raise KiwiError("wrong password")
+        except KiwiError:
+            recent.append(now)
+            self.audit("admin", "login failed", address=address)
+            return None
+        self._identity = identity
+        self.audit("admin", "login", address=address)
+        expires = int(now + SESSION_HOURS * 3600)
+        body = "admin|%d" % expires
+        return "%s|%s" % (body, hmac.new(self._session_key, body.encode(), hashlib.sha256).hexdigest())
+
+    def session(self, token):
+        """The user a token belongs to, or None. A locked store has no sessions: the password opens it."""
+        try:
+            user, expires, mac = (token or "").split("|")
+        except ValueError:
+            return None
+        body = "%s|%s" % (user, expires)
+        good = hmac.new(self._session_key, body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(good, mac) or int(expires) < self.clock() or self.locked():
+            return None
+        return user
+
+    def lock_store(self, user="admin"):
+        with self.lock:                       # after the running job
+            self._close()
+        self.audit(user, "locked")
+
+    def reload_if_pushed(self):
+        """`control push` replaced the encrypted files under the open store: open the new ones.
+        (The push refuses when this node changed its own since the last sync.) When the
+        password changed with it, the old key opens nothing: locked until the new one logs in."""
+        if self.locked() or not self._identity:
+            return None
+        with self.lock:
+            if not self._pushed():
+                return None
+            try:
+                self._open(self._identity)
+                self.audit("control", "took the pushed fleet")
+                return "reloaded"
+            except KiwiError:
+                self._close()
+                self.audit("control", "locked: the pushed store does not open with the old password")
+                return "locked"
+
+    # ---- audit ----------------------------------------------------------------------
+    def audit(self, user, what, **more):
+        line = dict({"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "user": user, "what": what}, **more)
+        path = os.path.join(self.dir, "audit.jsonl")
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a") as fh:
+            fh.write(json.dumps(line) + "\n")
+
+    def audit_tail(self, n=50):
+        path = os.path.join(self.dir, "audit.jsonl")
+        if not os.path.isfile(path):
+            return []
+        with open(path) as fh:
+            return [json.loads(x) for x in fh.readlines()[-n:]][::-1]
+
+    # ---- jobs -----------------------------------------------------------------------
+    def argv(self, action, hosts=()):
+        if action not in ACTIONS:
+            raise KiwiError("unknown action %r" % action)
+        cmd, takes_hosts = ACTIONS[action]
+        argv = list(self.kiwi) + [cmd, self.fleet_path]
+        if takes_hosts:
+            argv += list(hosts)
+        if action == "watch":
+            argv.append("--once")
+        return argv
+
+    def start(self, action, hosts=(), user="admin", wait=False):
+        """A job in a thread; its id. The jobs wait for each other."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        for h in hosts:
+            if not HOST.match(h):
+                raise KiwiError("not a host name: %r" % h)
+        argv = self.argv(action, hosts)
+        jid = time.strftime("%Y%m%d-%H%M%S-") + pysecrets.token_hex(3)
+        meta = {"id": jid, "action": action, "hosts": list(hosts), "user": user,
+                "state": "waiting", "started": None, "ended": None, "rc": None}
+        self._write(meta)
+        if action in CHANGES:
+            self.audit(user, action, hosts=list(hosts), job=jid)
+        t = threading.Thread(target=self._run, args=(meta, argv), daemon=True)
+        t.start()
+        if wait:
+            t.join()
+        return jid
+
+    def _run(self, meta, argv):
+        with self.lock:
+            meta.update(state="running", started=self.clock())
+            self._write(meta)
+            log = os.path.join(self.jobs_dir, meta["id"] + ".log")
+            env = dict(os.environ, PYTHONUNBUFFERED="1")
+            with open(os.open(log, os.O_WRONLY | os.O_CREAT, 0o600), "w") as fh:
+                try:
+                    rc = subprocess.run(argv, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                        env=env, cwd=self.fleet_dir).returncode
+                except OSError as e:
+                    fh.write("could not start: %s\n" % e)
+                    rc = 127
+            try:
+                if not self._pushed():      # a push during the job wins: the next look takes it
+                    self.save_fleet()
+            except (KiwiError, OSError) as e:
+                util.warn("control: the fleet file was not saved: %s" % e)
+            meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
+            self._write(meta)
+
+    def _write(self, meta):
+        os.makedirs(self.jobs_dir, mode=0o700, exist_ok=True)
+        util.write_text(os.path.join(self.jobs_dir, meta["id"] + ".json"), json.dumps(meta), 0o600)
+
+    def job(self, jid):
+        if not jid.replace("-", "").isalnum():
+            return None
+        path = os.path.join(self.jobs_dir, jid + ".json")
+        return json.loads(util.read_text(path)) if os.path.isfile(path) else None
+
+    def log(self, jid, offset=0):
+        path = os.path.join(self.jobs_dir, jid + ".log")
+        if not self.job(jid) or not os.path.isfile(path):
+            return "", offset
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            data = fh.read()
+        return data.decode(errors="replace"), offset + len(data)
+
+    def jobs(self, n=20):
+        names = sorted((f for f in os.listdir(self.jobs_dir) if f.endswith(".json")), reverse=True)[:n]
+        return [json.loads(util.read_text(os.path.join(self.jobs_dir, f))) for f in names]
+
+    # ---- the looks it takes by itself ------------------------------------------------
+    def status(self):
+        """The last `status --porcelain`, or None."""
+        path = os.path.join(self.run, "status.json")
+        return json.loads(util.read_text(path)) if os.path.isfile(path) else None
+
+    def refresh_status(self):
+        if self.locked():
+            return None
+        with self.lock:                     # after the running job: every command saves the store when it ends
+            r = subprocess.run(list(self.kiwi) + ["status", self.fleet_path, "--porcelain"], capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+        try:
+            data = json.loads(r.stdout)
+        except ValueError:
+            data = {"hosts": [], "error": (r.stderr or r.stdout or "no output").strip()[-500:]}
+        data["time"] = self.clock()
+        util.write_text(os.path.join(self.run, "status.json"), json.dumps(data), 0o600)
+        return data
+
+    def loop(self, stop):
+        """The timers: the fleet's status every status_minutes, `watch --once` (RAM masters)
+        every watch_seconds. Runs until `stop` (a threading.Event) is set."""
+        last_status = 0
+        while not stop.is_set():
+            now = self.clock()
+            try:
+                if self.locked():           # nothing to do it with until someone logs in
+                    stop.wait(15)
+                    continue
+                self.reload_if_pushed()
+                if now - last_status >= self.status_minutes * 60:
+                    last_status = now
+                    self.refresh_status()
+                if self.watch_seconds and self.has_ram_masters():
+                    with self.lock:
+                        subprocess.run(self.argv("watch"), capture_output=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+            except Exception as e:              # a look that fails must not end the timers
+                util.warn("control: %s" % e)
+            stop.wait(self.watch_seconds or 60)
+
+    def has_ram_masters(self):
+        try:
+            import yaml
+            with open(self.fleet_path) as fh:
+                data = yaml.safe_load(fh) or {}
+        except (OSError, ValueError):
+            return False
+        default = (data.get("defaults") or {}).get("target")
+        return any(((h or {}).get("target") or default) == "coreos-ram" for h in (data.get("hosts") or {}).values())

@@ -1296,6 +1296,14 @@ def cmd_apply(args):
             if args.no_run:
                 util.say("%s: in place at /var/lib/kiwi-server/role.sh — run it with: sudo bash /var/lib/kiwi-server/role.sh --force" % h.name)
                 continue
+            if os.environ.get("KIWI_CONTROL_HOST") == h.name:
+                # the control node applies itself: the role may restart the container this runs in,
+                # so it runs as a unit of its own on the machine and outlives the connection
+                remote.run(tgt, "systemctl reset-failed kiwi-self-apply 2>/dev/null; systemd-run --collect "
+                                "--unit=kiwi-self-apply bash /var/lib/kiwi-server/role.sh --force")
+                util.say("%s: applying itself, detached (this page may drop for a moment); on the machine: "
+                         "journalctl -u kiwi-self-apply -f" % h.name)
+                continue
             util.say("%s: applying (the output below is the machine's)" % h.name)
             rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force")
             if rc != 0:
@@ -1331,6 +1339,52 @@ def cmd_adopt(args):
     util.say("%s: adopted; now its role" % hosts[0].name)
     args.hosts, args.ssh, args.no_run = [hosts[0].name], tgt, False
     cmd_apply(args)
+
+
+def cmd_control(args):
+    """The fleet directory to the control node, or back from it."""
+    from . import controlsync
+    fleet, roles, ms = load(args)
+    for x in fleet.hosts.values():          # a host's modules are known once its role is resolved
+        if x.role in roles:
+            rolesmod.resolve_settings(roles[x.role], x, ms)
+    h = controlsync.control_host(fleet, args.to)
+    tgt = remote.reach(h, args.ssh)
+    if args.action == "push":
+        n = controlsync.push(fleet, h, tgt, args.force)
+        util.say("%s holds the fleet now (%d files): https://control.%s" % (h.name, n, h.hostname))
+    else:
+        identity = store.Store.for_fleet(args.fleet).identity(args.identity) if args.identity else None
+        n = controlsync.pull(fleet, h, tgt, args.force, identity)
+        util.say("%d files from %s: this copy is the control node's" % (n, h.name))
+
+
+def cmd_serve(args):
+    """The control node's pages and API (needs fastapi, uvicorn; the control image has them)."""
+    from . import control as controlmod
+    c = controlmod.Control(args.fleet, kiwi_cmd=[sys.executable, "-m", "kiwiserver"],
+                           status_minutes=args.status_minutes)
+    if args.set_password:
+        import getpass
+        pw = getpass.getpass("control password: ") if sys.stdin.isatty() else sys.stdin.readline().rstrip("\n")
+        c.set_password(pw)
+        util.say("the control password opens the store now; kiwi-server control push %s takes it to the node" % args.fleet)
+        return
+    if not c.ready():
+        if not args.wait:
+            raise KiwiError("nothing to serve yet: the fleet needs its secret store (kiwi-server secrets init) and "
+                            "a control password (kiwi-server serve %s --set-password)" % args.fleet)
+        util.say("waiting for the fleet: kiwi-server control push <fleet>, from the operator's computer")
+        while not c.ready():
+            time.sleep(10)
+    if c.locked():
+        util.say("the fleet is locked: the first login on the page opens it")
+    try:
+        from . import web
+    except ImportError as e:
+        raise KiwiError("serve needs fastapi and uvicorn (%s): the control image has them" % e)
+    util.say("serving %s on http://%s" % (args.fleet, args.listen))
+    web.serve(c, args.listen)
 
 
 def cmd_watch(args):
@@ -1940,6 +1994,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
+  kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
+  kiwi-server control push|pull <fleet>         the fleet directory to the control node, or back
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
@@ -2044,6 +2100,17 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s = sub("control", cmd_control); s.add_argument("action", choices=["push", "pull"]); s.add_argument("fleet")
+    s.add_argument("--to", metavar="HOST", help="which control node, when several hosts have the module")
+    s.add_argument("--force", action="store_true", help="overwrite a side that changed since the last sync")
+    s.add_argument("--identity", metavar="FILE", help="pull: a file with the age secret key, instead of the keyring")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the control node")
+    s = sub("serve", cmd_serve); s.add_argument("fleet")
+    s.add_argument("--listen", default="127.0.0.1:8740", metavar="ADDR:PORT")
+    s.add_argument("--status-minutes", type=int, default=10, metavar="N", help="how often it looks at every host")
+    s.add_argument("--set-password", action="store_true",
+                   help="set the password that opens the store on the control node (from the terminal or stdin)")
+    s.add_argument("--wait", action="store_true", help="wait for the fleet and its password instead of ending (the control module)")
     s = sub("adopt", cmd_adopt); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--as", required=True, metavar="USER@ADDR",
                    help="the board's own login (root or a sudo user, a password works), e.g. odroid@192.168.2.40")

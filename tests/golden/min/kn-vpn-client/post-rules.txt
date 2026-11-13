@@ -4,7 +4,10 @@
 # what the DNAT rules below redirect; the docker network out through the tunnel.
 iptables -A FORWARD -i eth0 -o eth0 -j REJECT
 iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i tun0 -m conntrack --ctstate DNAT -j ACCEPT
 iptables -A FORWARD -s 172.128.0.0/24 -o tun0 -j ACCEPT
+# mesh SSH: port 22 of the mesh address to the machine's sshd (the docker gateway is the host)
+iptables -t nat -A PREROUTING -d 10.8.0.9 -p tcp --dport 22 -j DNAT --to-destination 172.128.0.1:22
 # NAT: everything leaving through the tunnel
 iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 # replies to what we sent out

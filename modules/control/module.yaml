@@ -1,0 +1,74 @@
+schema_version: "1.0"
+
+module:
+  name: control
+  title: Control
+  version: 1.0.0
+  description: "The control node (design/control-plane.md in kiwi-server): kiwi-server with web pages at control.<hostname>, for the mesh only. It keeps the fleet file and the secrets as the encrypted store, which its password opens into RAM; then it looks at every machine by itself, sends the role to RAM masters, and applies from a phone."
+  category: system
+  node_types: [node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true     # served by the reverse proxy on the mesh address
+  open_ports: []
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  bind_mounts:
+    # fleet.yaml, secrets.age (encrypted), control/ (salt, audit log); kiwi-server control push fills it
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-control", type: dir, required: true }
+
+urls:
+  - "Control: https://{{ control_hostname or 'control.' ~ hostname }} (from the mesh)"
+
+nginx:
+  upstream:
+    name: control
+    server: "{{ container_prefix }}-control:8740"
+  server_name: "{{ control_hostname or 'control.' ~ hostname }}"
+  proxy_pass: "http://control"
+  proxy_read_timeout: 300s
+  comment: Kiwi control
+  extra_directives:
+    - "allow {{ mesh_subnet }};"
+    - "{% if allow_from %}allow {{ allow_from }};{% endif %}"
+    - "allow 127.0.0.1;"
+    - "deny all;"
+
+backup:
+  # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
+  paths: ["${DOCKERDIR}/{{ container_prefix }}-control"]
+
+settings:
+  - key: image
+    label: Image
+    help: "kiwi-server with its web pages; the major tag follows kiwi-server's releases."
+    default: ghcr.io/derlocke-ng/kiwi-server-control:2
+  - key: control_hostname
+    label: Hostname
+    help: "Empty: control.<hostname>."
+    default: ""
+  - key: status_minutes
+    type: int
+    label: Look every (minutes)
+    help: "How often it asks every machine how it is doing."
+    default: 10
+  - key: ram_mb
+    type: int
+    label: RAM for the open store (MiB)
+    help: "The tmpfs that holds the opened secrets, job logs and rendered stacks while the fleet is unlocked."
+    default: 256
+  - key: allow_from
+    label: Also allow
+    help: "One more address or network that may open the page besides the mesh, e.g. the operator's LAN 192.168.0.0/16. Empty: the mesh only."
+    default: ""

@@ -21,7 +21,7 @@ Environment=WIREGUARD_MTU=1376
 Environment=WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=10s
 Environment=DOT_PROVIDERS=quad9
 Environment=BLOCK_MALICIOUS=off
-Environment=FIREWALL_VPN_INPUT_PORTS=80,443
+Environment=FIREWALL_VPN_INPUT_PORTS=80,443,22
 AddHost=m1.home:172.128.0.5
 AddHost=pihole.m1.home:172.128.0.5
 AddHost=dl.m1.home:172.128.0.5

@@ -21,6 +21,7 @@ Environment=WIREGUARD_MTU=1376
 Environment=WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=10s
 Environment=DOT_PROVIDERS=quad9
 Environment=BLOCK_MALICIOUS=off
+Environment=FIREWALL_VPN_INPUT_PORTS=22
 AddHost=min.home:172.128.0.5
 Volume=/home/user/docker/kn-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
 Volume=/home/user/docker/kn-vpn-client/wg0.conf:/gluetun/wireguard/wg0.conf:z

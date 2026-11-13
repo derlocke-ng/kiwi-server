@@ -148,7 +148,7 @@ def resolve_settings(role, host, modset=None):
                 raise KiwiError("%s.%s must be a mapping" % (where, name))
             block = deep_merge(deep_merge(_implied_module_defaults(name, ordered),
                                           role.defaults_for(name, host.role_settings)), block)
-            if name == "fail2ban" and "ssh_port" not in (raw.get(name) or {}):
+            if name in ("fail2ban", "vpn-client") and "ssh_port" not in (raw.get(name) or {}):
                 # the jail and the rate limit watch the port sshd listens on
                 block["ssh_port"] = int((getattr(host, "admin", None) or {}).get("ssh_port") or 22)
             keys = {s.key for s in mod.settings} | {"container_ip"}

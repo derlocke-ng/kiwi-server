@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.77.0 — Nextcloud's database password changes with the seed
+
+kiwi-modules 0.32.0.
+
+- A secret can have several steps that change it where it lives; `rotate seed` runs them
+  in order, each in its container, and the secret counts as changed when all worked.
+- Nextcloud's database password: `config.php` through occ, then the two roles in its
+  Postgres. Its containers then restart with the new value.
+
 ## 2.76.1 — the app protects the keys itself
 
 Save a copy and Restore were run the way the app runs them: both work, with and without a

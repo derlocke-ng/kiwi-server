@@ -5904,6 +5904,20 @@ class TestRotate(Base):
         self.assertEqual(h.module_settings["immich"]["db_password"], new)      # and the files follow
         self.assertEqual(h.module_settings["paperless"]["db_password"], "written by hand")
 
+    def test_a_secret_with_several_steps_runs_them_in_order_in_their_containers(self):
+        f = self.seed_fleet()
+        ran = []
+        self.rotate.seed(f, self.ms, lambda n: 0, say=lambda _x: None,
+                         before=lambda n: self.rotate.in_place(f, f.hosts[n], "core@" + n, self.roles, self.ms, lambda _x: None,
+                                                               lambda tgt, script, data=None: ran.append((tgt, script))))
+        mine = [script for tgt, script in ran if tgt == "core@sh3"]
+        self.assertEqual(len(mine), 2)                                         # Nextcloud's database password: two places
+        self.assertIn("exec -e NEW nextcloud-aio-nextcloud sh -c", mine[0])   # a container with a name of its own
+        self.assertIn("config:system:set dbpassword", mine[0])
+        self.assertIn("exec -e NEW nextcloud-aio-database sh -c", mine[1])
+        self.assertIn("ALTER USER oc_nextcloud", mine[1])
+        self.assertNotIn("sh3.kiwi/cloud/database_password", config.Fleet.load(f.path).pins())
+
     def stack_vars(self, f, name):
         from kiwimodules import manifest
         h = f.hosts[name]

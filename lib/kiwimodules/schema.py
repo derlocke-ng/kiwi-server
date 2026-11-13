@@ -39,18 +39,28 @@ class Setting:
         # the fleet keeps the old value until the module has a step that changes it there.
         # A mapping says how it is changed where it lives, before the restart:
         #   rotate: { in: immich-db, run: "psql … PASSWORD '$NEW'" }
-        # `in` is a container of the module (after the prefix), `run` a shell command in it
-        # with the new value in $NEW. It must work whatever the value is now, and twice.
+        # `in` is a container of the module (after the prefix; `name` instead for a container
+        # with a name of its own), `run` a shell command in it with the new value in $NEW. It
+        # must work whatever the value is now, and twice. A list of such mappings runs in
+        # order: all of them must work before the secret counts as changed.
         rot = d.get("rotate") if self.generate else None
-        self.rotate_in = self.rotate_run = ""
-        if isinstance(rot, dict):
-            self.rotate, self.rotate_in, self.rotate_run = "exec", str(rot.get("in") or ""), str(rot.get("run") or "")
-            if not self.rotate_in or "$NEW" not in self.rotate_run or set(rot) - {"in", "run"}:
-                raise KiwiError("%s: setting %s: rotate needs in: (a container) and run: (a command with $NEW)" % (owner, self.key))
+        self.rotate_steps = []
+        if isinstance(rot, (dict, list)):
+            self.rotate = "exec"
+            for step in (rot if isinstance(rot, list) else [rot]):
+                ok = isinstance(step, dict) and not set(step) - {"in", "name", "run"}
+                where = (str(step.get("in") or ""), str(step.get("name") or "")) if ok else ("", "")
+                run = str(step.get("run") or "") if ok else ""
+                if not ok or bool(where[0]) == bool(where[1]) or "$NEW" not in run:
+                    raise KiwiError("%s: setting %s: rotate needs in: or name: (a container) and run: (a command with $NEW)"
+                                    % (owner, self.key))
+                self.rotate_steps.append({"in": where[0], "name": where[1], "run": run})
         else:
             self.rotate = str(rot or "")
             if self.rotate not in ("", "restart"):
                 raise KiwiError("%s: setting %s: rotate is %r, not restart or {in, run}" % (owner, self.key, self.rotate))
+        first = self.rotate_steps[0] if self.rotate_steps else {"in": "", "run": ""}
+        self.rotate_in, self.rotate_run = first["in"], first["run"]      # (kiwi-server 2.75 reads these)
         # a map of password hashes, one per value of the list setting `generate_each`, for
         # the secret each of those machines derives for itself as `generate_hash_of`
         # ("<module>/<key>"): what a server keeps of its clients' passwords

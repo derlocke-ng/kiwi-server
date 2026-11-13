@@ -246,6 +246,12 @@ Replace them here, one after the other.</p>
 Every machine gets a new key; the old one stops working when the last machine has changed. Nothing restarts.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Replace the keys on every machine now?')">{{ tok }}
 <input type="hidden" name="action" value="rotate"><button class="primary">Replace the keys</button></form>
+{% for n in rot.pending %}<form class="inline" method="post" action="/run" style="margin-top:8px"
+onsubmit="return confirm('Leave {{ n }} out? Its old key stops working when the others are done. Only for a machine that is gone or will be installed anew.')">{{ tok }}
+<input type="hidden" name="action" value="rotate"><input type="hidden" name="host" value="{{ n }}">
+<button>Leave {{ n }} out</button></form>{% endfor %}
+<p class="muted small">Something outside this network that you gave the network's key by hand (a desktop, a NAS) is not
+reached: it needs the new key.</p>
 <p style="margin-top:18px"><strong>2. The password of this page</strong></p>
 <form method="post" action="/controllers/password">{{ tok }}
 <input type="password" name="old" placeholder="Current password" autocomplete="current-password" required>

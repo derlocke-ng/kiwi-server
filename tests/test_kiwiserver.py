@@ -4915,6 +4915,11 @@ class TestControl(StoreBase):
         self.assertTrue(c.login("another long password", "1.1.1.2"))
         self.assertFalse(c.locked())
         self.assertEqual(c.rotation(), {"pending": [], "last": None})
+        write(os.path.join(self.tmp, "secrets", "rotation.json"), json.dumps({"ssh": {"done": ["a"]}, "last": {}}))
+        with mock.patch.object(c, "fleet_info", lambda **_k: {"hosts": [{"name": "a"}, {"name": "b"}]}):
+            self.assertEqual(c.rotation(), {"pending": ["b"], "last": None})
+        self.assertEqual(c.argv("rotate", ["b"])[-5:], ["rotate", self.f.path, "ssh", "--waive", "b"])   # the page's Leave out
+        self.assertEqual(c.argv("rotate")[-3:], ["rotate", self.f.path, "ssh"])
 
     def test_login_opens_the_locked_store_and_lock_closes_it(self):
         self.init()
@@ -5680,6 +5685,9 @@ class TestRotate(Base):
         self.assertFalse(os.path.exists(self.key + ".old"))
         self.assertEqual(self.rotate.pending(self.f), [])
         self.assertIn("replaced 20", str(self.rotate.plan(self.f)))
+        self.assertIn("outside the fleet", said[-1])             # a desktop that got the key by hand is not reached
+        self.assertIn("secrets/admin_ed25519.pub", said[-1])
+        self.assertIn("machines outside the fleet", str(self.rotate.plan(self.f)))
         self.assertIn("a key of yours", str(self.rotate.plan(self.f)))
         self.assertEqual(oct(os.stat(self.key).st_mode & 0o777), "0o600")
 

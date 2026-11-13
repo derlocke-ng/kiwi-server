@@ -220,10 +220,15 @@ def ssh(fleet, names=(), waive=(), why="", reach=None, say=util.say, runner=subp
         say("%s: takes the new key%s" % (n, " and the new SSH CA" if state["ssh"].get("ca") else ""))
     left = pending(fleet, state)
     if left:
-        say("still on the old keys: %s. Run this again when they are on; the old keys work until then." % ", ".join(left))
+        say("still on the old keys: %s. Run this again when they are on; the old keys work until then. "
+            "A machine that is gone or will be installed anew: --waive NAME" % ", ".join(left))
     else:
+        keys = state["ssh"]["keys"]
         finish(fleet, state)
         say("the old SSH keys are gone")
+        if keys:                # (found: a desktop VM that had the fleet's key by hand was locked out)
+            say("anything outside the fleet that you gave the fleet's key by hand (a desktop, a NAS) needs the new "
+                "one in its authorized_keys: %s" % ", ".join(k + ".pub" for k in keys))
     return left
 
 
@@ -238,6 +243,9 @@ def plan(fleet, control_ways=()):
         rows.append(("SSH keys of the machines", "under way: %s still on the old ones" % ", ".join(left), "rotate ssh"))
     elif fleet_keys(fleet) or sshca.exists(fleet):
         rows.append(("SSH keys of the machines", "replaced %s" % last["ssh"][:10] if last.get("ssh") else "never replaced", "rotate ssh"))
+    if fleet_keys(fleet):
+        rows.append(("The fleet's key on machines outside the fleet", "not reached by rotate ssh",
+                     "by hand: the new %s into their authorized_keys" % ", ".join(k + ".pub" for k in fleet_keys(fleet))))
     for k in other_keys(fleet):
         rows.append(("SSH key %s" % (k if not config.is_ssh_key(k) else " ".join(k.split()[2:]) or k.split()[1][-12:]),
                      "a key of yours", "by hand: change admin.ssh_keys, then apply"))

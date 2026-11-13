@@ -2076,7 +2076,8 @@ class Window(Adw.ApplicationWindow):
                          ("stack-host", self.show_stack), ("folder-host", self.open_folder),
                          ("remove-host", self.remove_host_dialog),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
-                         ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self))):
+                         ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
+                         ("rotate", self.rotate_dialog)):
             act = Gio.SimpleAction(name=name)
             act.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(act)
@@ -2102,6 +2103,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Keep it in a synced folder…", "win.folder")
         section.append("A home server that looks after it…", "win.control-setup")
         section.append("Sync now", "win.sync")
+        section.append("A computer was lost or stolen…", "win.rotate")
         section.append("Render every host", "win.render-all")
         section.append("Build every ISO…", "win.build-all")
         menu.append_section(None, section)
@@ -2336,6 +2338,35 @@ class Window(Adw.ApplicationWindow):
             dlg.connect("response", lambda _d, r: CopyDialog(self).present(self) if r == "copy"
                         else FolderDialog(self).present(self) if r == "folder" else None)
         dlg.add_response("close", "Close")
+        dlg.present(self)
+
+    def rotate_dialog(self):
+        """What a lost computer knew is replaced: the keys that open the machines, here; the
+        control page's password, there."""
+        if not self.doc.path:
+            return
+        control = self.control_host()
+        dlg = Adw.AlertDialog(heading="A computer was lost or stolen")
+        body = ("A computer that managed this network knows the keys that open your machines. Replace them: every "
+                "machine gets a new key, and the old one stops working when the last machine has changed. Nothing "
+                "restarts. A machine that is off keeps the old key until you do this again.")
+        if control:
+            name = (self.status.get(control) or {}).get("hostname") or control
+            body += ("\n\nFirst remove that computer on the control page (Computers), and change the page's "
+                     "password there.")
+            dlg.add_response("page", "Open the control page")
+        dlg.set_body(body)
+        dlg.add_response("close", "Not now")
+        dlg.add_response("go", "Replace the keys")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
+
+        def answer(_d, r):
+            if r == "page":
+                Gtk.UriLauncher.new("https://control.%s/controllers" % name).launch(self, None, None)
+            elif r == "go":
+                self._after_spawn = lambda: self.sync(False, True)      # the other computers get the new keys
+                self.spawn(["rotate", self.doc.path, "ssh"], "Replacing the keys…")
+        dlg.connect("response", answer)
         dlg.present(self)
 
     def joined(self):
@@ -3501,6 +3532,9 @@ class Window(Adw.ApplicationWindow):
         self.set_busy(False, "")
         self.toast("Done" if rc == 0 else "Failed — see the output")
         self.poll()
+        after, self._after_spawn = getattr(self, "_after_spawn", None), None
+        if after:
+            after()
         return False
 
     def set_busy(self, busy, msg):

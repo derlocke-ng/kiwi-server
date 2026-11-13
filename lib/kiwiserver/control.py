@@ -35,9 +35,9 @@ MIN_PASSWORD = 12
 ACTIONS = {
     "status": ("status", True), "plan": ("plan", True), "apply": ("apply", True),
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
-    "save": ("backups", True), "update": ("apply", False),
+    "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
 }
-CHANGES = {"apply", "backup", "update", "save"}     # these change machines or the fleet: the audit log says who
+CHANGES = {"apply", "backup", "update", "save", "rotate"}     # these change machines or the fleet: the audit log says who
 
 
 class Control:
@@ -241,6 +241,33 @@ class Control:
             self.store.remove("control")
         self.store.add("control", public)
         util.write_text(self.salt_file, salt + "\n", 0o600)
+
+    def change_password(self, old, new, user="admin"):
+        """A new password for the page. The old one's key leaves the store: it opens nothing
+        any more, not even an older copy of the disk's files made after this."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        salt = util.read_text(self.salt_file).strip()
+        if storemod.public_of(storemod.password_identity(old.strip(), salt)) != self._control_key():
+            raise KiwiError("the current password is not right")
+        with self.lock:
+            self.set_password(new)
+            self._identity = storemod.password_identity(new.strip(), util.read_text(self.salt_file).strip())
+            self._for_the_keys_now()
+        self.audit(user, "changed the control password")
+        self.arm_auto()                     # the ring held the old password's key
+
+    def rotation(self):
+        """{"pending": machines still on the old SSH keys, "last": when they were last replaced}."""
+        path = os.path.join(self.fleet_dir, "secrets", "rotation.json")
+        try:
+            state = json.loads(util.read_text(path))
+        except (OSError, ValueError):
+            return {"pending": [], "last": None}
+        done = (state.get("ssh") or {}).get("done")
+        names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
+        return {"pending": [] if done is None else [n for n in names if n not in done],
+                "last": (state.get("last") or {}).get("ssh")}
 
     def _control_key(self):
         return next((key for name, key in self.store.ways() if name == "control"), None)
@@ -470,6 +497,8 @@ class Control:
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
             return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--now"]
+        if action == "rotate":              # new SSH keys on every machine that still has the old ones
+            return list(self.kiwi) + ["rotate", self.fleet_path, "ssh"]
         cmd, takes_hosts = ACTIONS[action]
         argv = list(self.kiwi) + [cmd, self.fleet_path]
         if takes_hosts:

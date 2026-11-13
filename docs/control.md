@@ -80,8 +80,30 @@ link is from this fleet, fetches the fleet and opens it. Without the app:
 `kiwi-server control join ~/kiwi/fleet.yaml <link>`.
 
 **Remove** on the page takes its key out again: it reads nothing newer. What
-it read before, it knows; rotation is planned
-([design/controllers.md](design/controllers.md)).
+it read before, it knows: see the next section.
+
+## A computer was lost or stolen
+
+Remove it (above), then replace what it knew. On the page, under
+**Computers**; in the app, the menu's **A computer was lost or stolen…**
+
+1. **The keys that open your machines.** Every machine gets a new admin SSH
+   key and a new SSH CA. The old key keeps working until the last machine has
+   changed, so a machine that is off does not lock you out: switch it on and
+   do it again. Nothing restarts. A machine that is gone for good:
+   `--waive NAME`.
+2. **The page's password.** Current password, new password, done. The old
+   one opens nothing any more.
+
+```bash
+kiwi-server rotate ~/kiwi/fleet.yaml          # what can be replaced, and when it last was
+kiwi-server rotate ~/kiwi/fleet.yaml ssh      # new SSH keys on every machine
+```
+
+Not built yet: new passwords for the services (they derive from the seed),
+new VPN keys for the machines, the key that unlocks disks at boot, a new
+certificate authority. A key of your own in `admin.ssh_keys` is yours to
+replace ([design/controllers.md](design/controllers.md)).
 
 ## Without a control node: a synced folder
 

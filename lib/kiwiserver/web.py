@@ -237,9 +237,26 @@ onsubmit="return confirm('Remove {{ name }}? It can no longer open the network.'
 <p>Makes a link. Pasted into Kiwi Server on another computer, it gives that computer the whole network to manage.</p>
 <button class="primary">Add a computer</button></form>{% endif %}
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+<h2>If a computer was lost or stolen</h2>
+<div class="card"><p>Removing it stops it from getting anything new. It still knows the keys it saw.
+Replace them here, one after the other.</p>
+<p><strong>1. The keys that open your machines</strong><br><span class="muted small">
+{% if rot.pending %}Under way: {{ rot.pending|join(", ") }} still on the old keys. Switch them on, then press again.
+{% elif rot.last %}Last replaced {{ rot.last[:10] }}.{% else %}Never replaced.{% endif %}
+Every machine gets a new key; the old one stops working when the last machine has changed. Nothing restarts.</span></p>
+<form method="post" action="/run" onsubmit="return confirm('Replace the keys on every machine now?')">{{ tok }}
+<input type="hidden" name="action" value="rotate"><button class="primary">Replace the keys</button></form>
+<p style="margin-top:18px"><strong>2. The password of this page</strong></p>
+<form method="post" action="/controllers/password">{{ tok }}
+<input type="password" name="old" placeholder="Current password" autocomplete="current-password" required>
+<input type="password" name="new" placeholder="New password (12 characters or more)" autocomplete="new-password" minlength="12" required>
+<input type="password" name="again" placeholder="New password again" autocomplete="new-password" minlength="12" required>
+<button>Change the password</button></form>
+{% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
+<p class="muted small" style="margin-top:18px">Not replaced yet by this page: the passwords of your services (databases,
+admin logins) and the VPN keys of the machines. That comes in a later version.</p></div>
 <details><summary>What happens when I remove one?</summary><p class="muted">It can no longer open the network or get
-anything new. It still knows what it saw before; if that computer was lost or stolen, the keys should be replaced
-(that step is not built yet).</p></details>
+anything new. It still knows what it saw before; if that computer was lost or stolen, replace the keys above.</p></details>
 {% endblock %}""",
 
     "activity.html": """{% extends "base.html" %}{% block main %}
@@ -288,7 +305,7 @@ WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted hubs", "save": "Saving the data of",
-        "update": "Updating every machine"}
+        "update": "Updating every machine", "rotate": "Replacing the SSH keys"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",
@@ -549,7 +566,7 @@ def make_app(control: Control):
         return "%s://%s" % (proto, request.headers.get("host") or request.url.netloc)
 
     def controllers_page(request, **kw):
-        return page("controllers.html", request, "/controllers", ways=control.controllers(), **kw)
+        return page("controllers.html", request, "/controllers", ways=control.controllers(), rot=control.rotation(), **kw)
 
     @app.get("/controllers")
     def controllers(request: Request):
@@ -558,7 +575,8 @@ def make_app(control: Control):
         return controllers_page(request)
 
     @app.post("/controllers/{what}")
-    def controllers_do(request: Request, what: str, name: str = Form(""), csrf: str = Form("")):
+    def controllers_do(request: Request, what: str, name: str = Form(""), csrf: str = Form(""),
+                       old: str = Form(""), new: str = Form(""), again: str = Form("")):
         u = posted(request, csrf)
         if not u:
             return login_page()
@@ -567,6 +585,11 @@ def make_app(control: Control):
                 return controllers_page(request, invite=control.new_invite(base_url(request), u))
             if what == "remove":
                 control.remove(name, u)
+            if what == "password":
+                if new != again:
+                    raise KiwiError("the two new passwords are not the same")
+                control.change_password(old, new, u)
+                return controllers_page(request, changed=True)
         except KiwiError as e:
             return controllers_page(request, error=str(e))
         return RedirectResponse("/controllers", status_code=303)

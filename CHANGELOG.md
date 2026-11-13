@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.73.0 — a computer was lost: new SSH keys, a new control password
+
+design/controllers.md, step 3, first part: what a removed computer knew can be replaced.
+
+- `kiwi-server rotate <fleet>` lists what a computer that managed the network could read,
+  when it was last replaced and how.
+- `kiwi-server rotate <fleet> ssh [hosts…]`: a new admin SSH key (the fleet's own, under
+  `secrets/`) and a new SSH CA. Each machine takes the new key, a login with it alone is
+  tried, and only then the old key is taken out. The old keys stay beside the new ones
+  (`.old`) and ssh tries both until every machine has changed; a machine that was off is
+  done by the next run, `--waive HOST` leaves one out for good. Nothing restarts.
+- The control page, **Computers**: **Replace the keys** runs it as a task and says which
+  machines still wait; **Change the password** replaces the page's password (the old one's
+  key leaves the store, the unlock ring is armed again).
+- The app: **A computer was lost or stolen…** in the menu.
+- Not yet: the seed (service passwords), WireGuard keys, the boot-unlock key, the CA.
+
 ## 2.72.0 — several computers through a synced folder
 
 design/controllers.md, step 2: a network without a control node is shared through a folder

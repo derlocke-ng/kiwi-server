@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -4897,6 +4898,24 @@ class TestControl(StoreBase):
         c.set_password(self.PW + " changed")                     # again: the old way goes, the new one comes
         self.assertEqual([n for n, _k in st.ways()].count("control"), 1)
 
+    def test_a_new_password_replaces_the_old_one(self):
+        self.init()
+        c = self.control()
+        c.set_password(self.PW)
+        store.Store.for_fleet(self.f.path).lock()
+        self.assertTrue(c.login(self.PW))
+        with self.assertRaisesRegex(KiwiError, "current password"):
+            c.change_password("not the password!", "another long password")
+        with self.assertRaisesRegex(KiwiError, "12 characters"):
+            c.change_password(self.PW, "short")
+        c.change_password(self.PW, "another long password")
+        self.assertIn("changed the control password", str(c.audit_tail(5)))
+        c.lock_store()
+        self.assertIsNone(c.login(self.PW, "1.1.1.1"))           # the old one opens nothing
+        self.assertTrue(c.login("another long password", "1.1.1.2"))
+        self.assertFalse(c.locked())
+        self.assertEqual(c.rotation(), {"pending": [], "last": None})
+
     def test_login_opens_the_locked_store_and_lock_closes_it(self):
         self.init()
         now = [1000.0]
@@ -5186,6 +5205,26 @@ class TestWeb(StoreBase):
                 self.cookie = set_cookie.split(";")[0]
             with e:
                 return e.code, e.headers.get("location") or e.read().decode()
+
+    def test_the_page_changes_its_password_and_replaces_the_keys(self):
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        code, body = self.ask("/controllers")
+        self.assertIn("Never replaced", body)
+        tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', body).group(1)
+        new = "another long password"
+        self.assertIn("not the same", self.ask("/controllers/password", {"old": self.PW, "new": new, "again": new + "x", "csrf": tok})[1])
+        self.assertIn("current password", self.ask("/controllers/password", {"old": "wrong wrong wrong", "new": new, "again": new, "csrf": tok})[1])
+        self.assertIn("The password is changed", self.ask("/controllers/password", {"old": self.PW, "new": new, "again": new, "csrf": tok})[1])
+        self.assertEqual(self.ask("/controllers")[0], 200)                        # still logged in
+        code, where = self.ask("/run", {"action": "rotate", "csrf": tok})
+        self.assertEqual(code, 303)
+        for _ in range(100):
+            js = self.c.jobs()
+            if js and js[0]["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertIn("ran rotate %s ssh" % self.f.path, self.ask("/api" + where + "/log")[1])
+        self.assertIn("Replacing the SSH keys", self.ask("/activity")[1])
 
     def test_a_browser_logs_in_unlocks_runs_and_locks(self):
         self.assertIn('"locked":true', self.ask("/healthz")[1].replace(" ", ""))
@@ -5573,6 +5612,149 @@ class TestFolderSync(StoreBase):
         self.assertEqual(controlsync.folder_state(self.folder), "")       # no list: no fleet there (yet)
         write(os.path.join(self.folder, "requests", "x.json"), '{"name": "y", "key": "age1bad"}')
         self.assertEqual(controlsync.requests(self.folder), [])           # a request that is not one is not shown
+
+
+class TestRotate(Base):
+    """New SSH keys. A machine is a directory here; ssh is a function that runs the script
+    with that directory as the admin's home."""
+    def setUp(self):
+        super().setUp()
+        import getpass
+        from kiwiserver import rotate
+        self.rotate = rotate
+        self.user = getpass.getuser()
+        self.bin = os.path.join(self.tmp, "bin")
+        os.makedirs(self.bin)
+        write(os.path.join(self.bin, "getent"), '#!/bin/sh\necho "u:x:0:0::$FAKE_HOME:/bin/sh"\n')
+        os.chmod(os.path.join(self.bin, "getent"), 0o755)
+        self.key = os.path.join(self.tmp, "secrets", "admin_ed25519")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "the fleet", "-f", self.key], check=True)
+        self.old = util.read_text(self.key + ".pub").split()[1]
+        self.f = self.fleet({"defaults": self.base_defaults(admin={"user": self.user, "ssh_keys": ["secrets/admin_ed25519.pub", KEY]}),
+                             "hosts": {"a": {}, "b": {}}})
+        for n in ("a", "b"):            # as Ignition leaves it, and without a newline at the end
+            write(os.path.join(self.home(n), ".ssh", "authorized_keys.d", "ignition"),
+                  KEY + "\n" + util.read_text(self.key + ".pub").strip())
+        self.down, self.refuses = set(), set()
+
+    def home(self, name):
+        return os.path.join(self.tmp, "home-" + name)
+
+    def keys_on(self, name):
+        d = os.path.join(self.home(name), ".ssh")
+        files = [os.path.join(d, "authorized_keys")] + [os.path.join(d, "authorized_keys.d", f)
+                                                         for f in os.listdir(os.path.join(d, "authorized_keys.d"))]
+        return "".join(util.read_text(f) for f in files if os.path.isfile(f))
+
+    def reach(self, h):
+        if h.name in self.down:
+            raise KiwiError("%s: unreachable" % h.name)
+        return "%s@%s" % (self.user, h.name)
+
+    def runner(self, argv, input=None, capture_output=True, stdin=None):
+        name = argv[-2].split("@")[1]
+        if argv[-1] == "true":          # a login with one key alone
+            blob = util.read_text(argv[argv.index("-i") + 1] + ".pub").split()[1]
+            ok = blob in self.keys_on(name) and name not in self.refuses
+            return subprocess.CompletedProcess(argv, 0 if ok else 255, b"", b"")
+        script = shlex.split(argv[-1])[-1]
+        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], FAKE_HOME=self.home(name))
+        return subprocess.run(["sh", "-c", script], capture_output=True, env=env)
+
+    def go(self, *names, **kw):
+        said = []
+        left = self.rotate.ssh(self.f, names, reach=self.reach, say=said.append, runner=self.runner, **kw)
+        return left, said
+
+    def new(self):
+        return util.read_text(self.key + ".pub").split()[1]
+
+    def test_every_machine_takes_the_new_key_and_the_old_one_goes(self):
+        self.assertIn("never replaced", str(self.rotate.plan(self.f)))
+        left, said = self.go()
+        self.assertEqual(left, [])
+        self.assertNotEqual(self.new(), self.old)
+        for n in ("a", "b"):
+            lines = self.keys_on(n).splitlines()
+            self.assertEqual(lines, [KEY, " ".join(util.read_text(self.key + ".pub").split())])     # the operator's own key stays
+        self.assertFalse(os.path.exists(self.key + ".old"))
+        self.assertEqual(self.rotate.pending(self.f), [])
+        self.assertIn("replaced 20", str(self.rotate.plan(self.f)))
+        self.assertIn("a key of yours", str(self.rotate.plan(self.f)))
+        self.assertEqual(oct(os.stat(self.key).st_mode & 0o777), "0o600")
+
+    def test_a_machine_that_is_off_keeps_the_old_key_until_the_next_run(self):
+        self.down = {"b"}
+        left, said = self.go()
+        self.assertEqual(left, ["b"])
+        self.assertIn("still on the old keys: b", said[-1])
+        self.assertIn(self.old, self.keys_on("b"))
+        self.assertNotIn(self.old, self.keys_on("a"))
+        self.assertEqual(cli.fleet_identities(self.f), [self.key, self.key + ".old"])       # ssh tries both meanwhile
+        new = self.new()
+        self.down = set()
+        left, said = self.go()                                  # no second new key: the same rotation goes on
+        self.assertEqual((left, self.new()), ([], new))
+        self.assertEqual([x for x in said if x.startswith("a:")], [])
+        self.assertNotIn(self.old, self.keys_on("b"))
+        self.assertEqual(cli.fleet_identities(self.f), [self.key])
+
+    def test_the_old_key_stays_where_the_new_one_does_not_open(self):
+        self.refuses = {"a"}
+        left, said = self.go("a")
+        self.assertEqual(left, ["a", "b"])
+        self.assertIn("the old one stays", said[0])
+        self.assertIn(self.old, self.keys_on("a"))
+
+    def test_a_machine_left_out_does_not_hold_the_rotation_open(self):
+        self.down = {"b"}
+        left, _said = self.go(waive=["b"])
+        self.assertEqual(left, [])
+        self.assertFalse(os.path.exists(self.key + ".old"))
+        with self.assertRaisesRegex(KiwiError, "no such machine"):
+            self.go(waive=["nope"])
+
+    def test_a_machine_without_the_old_key_gets_the_new_one(self):
+        os.remove(os.path.join(self.home("a"), ".ssh", "authorized_keys.d", "ignition"))
+        self.assertEqual(self.go("a")[0], ["b"])
+        path = os.path.join(self.home("a"), ".ssh", "authorized_keys")
+        self.assertIn(self.new(), util.read_text(path))
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+
+    def test_the_ssh_ca_changes_with_it(self):
+        sshca.init(self.f)
+        was = sshca.public(self.f).split()[1]
+        known = os.path.join(self.tmp, "secrets", "known_hosts")
+        signed = []
+        with mock.patch.object(sshca, "install", lambda fleet, h, tgt: signed.append((h.name, sshca.public(fleet).split()[1]))):
+            self.down = {"b"}
+            self.go()
+            both = [x for x in util.read_text(known).splitlines() if x.startswith("@cert-authority ")]
+            self.assertEqual(len(both), 2)                      # a machine with the old certificate is still known
+            self.down = set()
+            self.go()
+        now = sshca.public(self.f).split()[1]
+        self.assertNotEqual(now, was)
+        self.assertEqual(signed, [("a", now), ("b", now)])
+        lines = [x for x in util.read_text(known).splitlines() if x.startswith("@cert-authority ")]
+        self.assertEqual(len(lines), 1)
+        self.assertIn(now, lines[0])
+        self.assertFalse(os.path.exists(sshca.path(self.f) + ".old"))
+
+    def test_the_command_tells_the_other_computers_before_and_after(self):
+        order = []
+        with mock.patch.object(cli, "share", lambda _p, action: order.append(action) or True), \
+                mock.patch.object(self.rotate, "ssh", lambda *_a, **_k: order.append("machines") or []), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cli.main(["rotate", self.f.path, "ssh"])
+            cli.main(["rotate", self.f.path])                    # the list asks nobody
+        self.assertEqual(order, ["pull", "push", "machines", "push"])
+        self.assertTrue(os.path.isfile(self.key + ".old"))       # made before the first push
+
+    def test_a_fleet_without_keys_of_its_own_says_so(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        with self.assertRaisesRegex(KiwiError, "by hand"):
+            self.rotate.begin(f)
 
 
 if __name__ == "__main__":

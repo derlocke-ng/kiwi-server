@@ -81,6 +81,8 @@ DEFAULTS = {
         # the machine at a provider, for `kiwi-server vps`: netcup's id, name or
         # nickname of the server. Empty: looked up by a master's wg_host.
         "server": None,
+        # the hoster, when kiwi-server can install there by itself (providers.py)
+        "provider": None,
     },
     "coreos": {
         "stream": "stable",

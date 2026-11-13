@@ -15,7 +15,7 @@ import sys
 import time
 
 from . import VERSION, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
-from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
+from . import facts, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -550,6 +550,12 @@ def cmd_init(args):
                           "suggestions": {"masters": setupmod.MASTERS, "nodes": setupmod.NODES,
                                           "addresses": found["addresses"]}}, indent=2))
         return
+    if args.provider_login:     # for the app: sign in through the browser; the page to open is printed
+        providers.get(args.provider).login(args.provider_login, lambda url: print(url, flush=True), args.api)
+        return
+    if args.provider_servers:   # for the app: the servers of the account that signed in
+        print(json.dumps(providers.get(args.provider).servers(args.provider_servers, args.api)))
+        return
     if args.check:              # for the app: what is wrong with these answers, by question
         print(json.dumps(setupmod.check(json.load(sys.stdin if args.check == "-" else open(args.check)))))
         return
@@ -568,13 +574,25 @@ def cmd_init(args):
             answers = json.load(sys.stdin if args.answers == "-" else open(args.answers))
         else:
             print("A new network in %s. Enter takes what is in brackets." % shown_path(os.path.abspath(dest)))
+            def lookup(provider, show):
+                who = providers.get(provider)
+                token = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm", "kiwi-%s-%d.token" % (who.id, os.getpid()))
+                who.login(token, lambda url: show("   Open this page and sign in to %s:\n     %s\n"
+                                                  "   Waiting until you have done that…" % (who.name, url)), args.api)
+                return who.servers(token, args.api), token
             try:
-                answers = setupmod.ask(everything=args.all)
+                answers = setupmod.ask(everything=args.all, lookup=lookup)
             except (EOFError, KeyboardInterrupt):
                 raise KiwiError("stopped. Nothing was written; kiwi-server init starts again")
         fleet_dir = os.path.dirname(os.path.abspath(dest))
         os.makedirs(fleet_dir, mode=0o700, exist_ok=True)
         data, made = setupmod.make(answers, fleet_dir)
+        token = answers.get("provider_token")
+        if token and os.path.isfile(token):     # the login made while asking belongs to this network now
+            keep = os.path.join(fleet_dir, providers.get(answers["master_where"]).token_file())
+            os.makedirs(os.path.dirname(keep), mode=0o700, exist_ok=True)
+            util.write_bytes(keep, util.read_bytes(token), 0o600)
+            os.remove(token)
         setupmod.write(dest, data)
         util.say("wrote %s%s" % (dest, "".join(", %s" % os.path.relpath(p, fleet_dir) for p in made)))
         if not args.no_store and answers.get("store", True):
@@ -733,6 +751,12 @@ def cmd_next(args):
         phase, text = next_step(fleet, roles, h, errs, o)
         if phase != "applied":
             todo.append((h, phase, text, errs, o))
+    if args.host:               # this one, whatever is on record: it was installed anew
+        if args.host not in fleet.hosts:
+            raise KiwiError("no such machine: %s" % args.host)
+        again = fleet.hosts[args.host]
+        todo = [t for t in todo if t[0] is again] or [
+            (again, "install", "", [], Outputs(out_dir, again, media_dir_for(args, fleet)))]
     if not todo:
         util.say("every machine is set up. How they are: kiwi-server status %s" % path)
         util.say("your phone or laptop on the VPN: kiwi-server enroll %s phone (it shows a QR code to scan)" % path)
@@ -775,7 +799,8 @@ def cmd_next(args):
     tgt = "%s@%s" % (h.admin["user"], addr) if addr else None
     if addr and (remote._answers(addr, 22) or remote._answers(addr, remote.ssh_port(h))):
         if go("%s answers at %s. Set it up now (a few minutes; it downloads what it runs)?" % (h.name, addr)):
-            run("apply", path, h.name, "--ssh", tgt)
+            # never set up from here: a key on record for its address is from an older install
+            run("apply", path, h.name, "--ssh", tgt, "--new-host-key")
             util.say("%s is set up. Run this again for the next machine" % h.name)
         return
     iso = shown_path(os.path.abspath(o.iso))
@@ -783,13 +808,16 @@ def cmd_next(args):
     after = ("it turns itself off when it is done: take the media out and switch it on again" if on_done == "poweroff"
              else "it restarts by itself when it is done")
     util.say("the install media for %s: %s" % (h.name, iso))
-    if is_master(h) and os.path.isfile(fleet.resolve_path("secrets/netcup.token")):
-        util.say("at netcup, kiwi-server installs it: kiwi-server vps install %s %s (everything on that server is erased)"
-                 % (path, h.name))
+    where = (h.cfg.get("vps") or {}).get("provider")
+    if where in providers.PROVIDERS:        # a hoster kiwi-server can install at by itself
+        who = providers.get(where)
+        signed_in = os.path.isfile(fleet.resolve_path(who.token_file()))
+        util.say("at %s, kiwi-server installs it (everything on that server is erased):" % who.name)
+        if not signed_in:
+            print("    kiwi-server vps login %s" % path)
+        print("    kiwi-server vps install %s %s" % (path, h.name))
     elif is_master(h):
-        util.say("a rented server: upload the file as an ISO at your hoster and start the server from it. At netcup "
-                 "kiwi-server does it: kiwi-server vps login %s, then kiwi-server vps install %s %s"
-                 % (path, path, h.name))
+        util.say("a rented server: upload the file as an ISO at your hoster and start the server from it")
     else:
         sticks = usb_sticks()
         dev = sticks[0][0] if len(sticks) == 1 else "/dev/sdX"
@@ -1421,6 +1449,8 @@ def cmd_apply(args):
     servers = None
     update = getattr(args, "update", False)
     for h in hosts:
+        if getattr(args, "new_host_key", False) and args.ssh:
+            adoptmod.forget_host_key(args.ssh)      # installed anew: the key it showed before is not its key
         tgt = remote.reach(h, args.ssh)
         try:
             if servers is None and unlock.wanted(h):
@@ -2411,6 +2441,11 @@ def build_parser():
     s.add_argument("--questions", action="store_true", help="the questions as JSON, with what this computer knows filled in (for the app)")
     s.add_argument("--answers", metavar="FILE", help="the answers as JSON (- for stdin) instead of asking")
     s.add_argument("--check", metavar="FILE", help="what is wrong with these answers (JSON, - for stdin), by question: for the app")
+    s.add_argument("--provider", default=next(iter(providers.PROVIDERS)), choices=list(providers.PROVIDERS),
+                   help="the hoster for the two options below (default %(default)s)")
+    s.add_argument("--provider-login", metavar="FILE", help="sign in at the hoster through the browser, the token into FILE: for the app")
+    s.add_argument("--provider-servers", metavar="FILE", help="the servers of the account whose token is in FILE, as JSON: for the app")
+    s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)
     s.add_argument("--all", action="store_true", help="also ask what has an answer that works: names, disks, the system, the name ending")
     s.add_argument("--no-store", action="store_true", help="leave the keys as plain files (for a test)")
     s = sub("names", cmd_names); s.add_argument("fleet", nargs="?")
@@ -2421,6 +2456,7 @@ def build_parser():
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
     s = sub("next", cmd_next); s.add_argument("fleet")
+    s.add_argument("host", nargs="?", help="this machine, also when it was set up before: it was installed anew")
     s.add_argument("--yes", action="store_true", help="do the step without asking first")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
     for name, fn in (("render", cmd_render), ("build", cmd_build)):
@@ -2459,6 +2495,8 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s.add_argument("--new-host-key", action="store_true",
+                   help="with --ssh: the machine was installed anew, forget the SSH host key it showed before")
     s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")

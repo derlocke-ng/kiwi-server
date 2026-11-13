@@ -187,8 +187,8 @@ def _unlock_kargs(host, pins):
     net = host.static_network()
     if not net:
         return ["rd.neednet=1"]
-    if not net["interface"]:
-        raise KiwiError("%s: a static address and unlock: need network.interface, the initramfs must know which one" % host.name)
+    # no interface named: the setting is for the machine's wired card, whichever it is (with
+    # several cards, network.interface says which one)
     addr = ipaddress.ip_interface(net["address"])
     # the connection made here stays the machine's connection once it has booted, so it has
     # to carry the DNS servers too (found: without them an encrypted machine with a fixed

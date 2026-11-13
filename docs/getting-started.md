@@ -24,10 +24,16 @@ A wrong answer is asked again with a sentence that says what is wrong.
 disk, the name ending). `init --example` writes the commented example
 instead. The app's **Start a new network** shows the same questions.
 
+When the master runs at a hoster kiwi-server knows (netcup so far), `init`
+offers to sign in there and lists your servers: you pick one, and its address
+is not typed.
+
 `next` is the guide: it takes the first machine that is not set up, the
 master first, and does its next step (its place on the VPN, the install
 media, the setup once the machine answers). Where a person has to act, such
-as writing a USB stick, it says exactly what to do. By hand, the steps are:
+as writing a USB stick, it says exactly what to do. `next fleet.yaml papaya`
+takes that machine even when it was set up before: for one you installed
+anew. By hand, the steps are:
 
 ```bash
 kiwi-server list fleet.yaml     # every host, where it stands and what comes next

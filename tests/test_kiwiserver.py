@@ -1973,6 +1973,27 @@ class TestSetup(Base):
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
         self.assertEqual(hosts["mango"]["phase"], "build", hosts["mango"]["next"])
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_next_sets_a_fresh_machine_up_at_its_address(self):
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        calls, real_main = [], cli.main
+
+        def phases(fleet, roles, host, errors, out):
+            return ("install", "x") if host.name == "mango" else ("applied", "")
+
+        def fake_main(argv):
+            calls.append(argv)
+            return 0
+        with mock.patch.object(cli, "next_step", phases), mock.patch.object(remote, "_answers", lambda *a, **k: True), \
+                mock.patch.object(cli, "main", fake_main), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            real_main(["next", dest, "--yes"])
+        # not by its name, which resolves on the VPN only; and a key on record for that address is an older install's
+        self.assertEqual(calls, [["apply", dest, "mango", "--ssh", "core@192.168.2.30", "--new-host-key"]])
+
     FOUND = {"subnet": "192.168.1.0/24", "gateway": "192.168.1.1", "timezone": "Europe/Vienna", "keyboard": "at",
              "locale": "de_AT.UTF-8", "ssh_key": "", "addresses": ["192.168.1.31/24", "192.168.1.32/24"]}
 
@@ -2017,6 +2038,50 @@ class TestSetup(Base):
                             "n"], everything=True)
         self.assertEqual((a["domain"], a["master_name"], a["master_disk"], a["nodes"]), ("internal", "parfait", "/dev/sda", []))
         self.assertIn("no place for your files yet", said)
+
+    def test_a_netcup_server_is_picked_from_a_list_instead_of_typed(self):
+        rows = [{"id": 7, "address": "198.51.100.7", "label": "crumble · v2202 · 198.51.100.7"},
+                {"id": 9, "address": "198.51.100.9", "label": "trifle · v2203 · 198.51.100.9"}]
+        a, said = self.ask(["", "", "5", "2",              # netcup, sign in: yes, no such number, the second server
+                            "", "n"],                      # the direct exit, no machine at home
+                           lookup=lambda provider, show: (rows, "/run/x.token"))
+        self.assertEqual((a["master_address"], a["provider_server"], a["provider_token"]), ("198.51.100.9", 9, "/run/x.token"))
+        self.assertNotIn("Its address on the Internet", said)    # not asked: netcup said it
+        data, _made = setupmod.make(dict(a, admin_key="~/.ssh/x.pub"), self.tmp)
+        master = data["hosts"][a["master_name"]]
+        self.assertEqual((master["vps"], master["master"]["vpn-server"]["wg_host"]), ({"provider": "netcup", "server": 9}, "198.51.100.9"))
+
+        def fails(provider, show):
+            raise KiwiError("netcup is not reachable")
+        a, said = self.ask(["", "", "198.51.100.4", "", "n"], lookup=fails)      # then the address is typed after all
+        self.assertIn("Type the address instead", said)
+        self.assertEqual(a["master_address"], "198.51.100.4")
+        a, said = self.ask(["", "n", "198.51.100.4", "", "n"], lookup=fails)     # or the sign-in is declined
+        self.assertEqual((a["master_address"], a.get("provider_server")), ("198.51.100.4", None))
+
+    def test_the_app_signs_in_to_netcup_and_lists_the_servers(self):
+        api = FakeNetcup()
+        self.addCleanup(api.close)
+        token = os.path.join(self.tmp, "t", "netcup.token")
+        rc, out, err = self.run_cli("init", "--provider", "netcup", "--provider-login", token, "--api", api.url)
+        self.assertEqual((rc, out.strip()), (0, "https://login.example/x"), err)     # the page to open, and nothing else
+        self.assertTrue(os.path.isfile(token))
+        rc, out, err = self.run_cli("init", "--provider-servers", token, "--api", api.url)
+        self.assertEqual(json.loads(out), [{"id": 7, "address": "203.0.113.9", "label": "crumble · v2202 · 203.0.113.9"}], err)
+        # the answers carry where the token is: it becomes the network's own
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(dict(self.ANSWERS, provider_server=7, provider_token=token)))
+        dest = os.path.join(self.tmp, "net", "fleet.yaml")
+        os.makedirs(os.path.dirname(dest))
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "net", "secrets", "netcup.token")))
+        self.assertFalse(os.path.exists(token))
+        made = yaml.safe_load(util.read_text(dest))["hosts"]["trifle"]
+        self.assertEqual(made["vps"], {"provider": "netcup", "server": 7})    # the install knows where and which
+        from kiwiserver import providers
+        self.assertEqual(list(providers.PROVIDERS), ["netcup"])               # the first; another is a class there
+        with self.assertRaisesRegex(KiwiError, "no provider kiwi-server knows"):
+            providers.get("elsewhere")
 
     def test_addresses_that_answer_are_not_suggested(self):
         def run(argv, timeout=10):
@@ -2851,10 +2916,10 @@ class TestUnlock(Base):
         self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0::eno1:none:9.9.9.9:149.112.112.112",
                       bu["kernel_arguments"]["should_exist"])
 
-    def test_a_static_coreos_host_has_to_name_its_interface(self):
+    def test_a_static_coreos_host_need_not_name_its_card(self):
         h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1"})
-        with self.assertRaisesRegex(KiwiError, "need network.interface"):
-            coreos_t.build_butane(h, "#!/bin/sh\n")
+        bu = coreos_t.build_butane(h, "#!/bin/sh\n")          # the setting is for the wired card, whichever it is
+        self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0:::none", bu["kernel_arguments"]["should_exist"])
 
     def test_a_coreos_disk_gets_a_key_for_the_console_from_its_own_binding(self):
         h = self.coreos_host()

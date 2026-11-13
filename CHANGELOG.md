@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.79.0 — the rest of the first run: the server from a list, a reinstalled machine
+
+The three items the first-run review had left open.
+
+- **Hosters are providers.** `providers.py` is a small registry; netcup is its first entry,
+  and another hoster is one class there (how to sign in, how to list the account's
+  servers, where its token rests). The wizard, the commands and the fleet file
+  (`vps: { provider, server }`) speak of the provider.
+- **The master's address is picked, not typed**, when it runs at a provider: sign in from
+  the wizard (the terminal prints the page, the app opens it), pick the server from the
+  list. The login becomes the network's own. Typing the address still works.
+- **A machine that was installed anew** shows another SSH key than the one remembered.
+  A first setup (the app's, and `next`) forgets the older key by itself;
+  `kiwi-server next <fleet> <host>` takes a named machine although it was set up before;
+  the app asks "I installed it anew" or stops; `apply --ssh … --new-host-key` by hand.
+- **No card name needed** for a fixed address together with disk unlock: the boot-time
+  setting applies to the machine's wired card. `network.interface` is for a machine with
+  several.
+
 ## 2.78.1 — a locked machine is told what really opens it
 
 Reboot tests on an encrypted uCore node with two rings (either one is enough): with both

@@ -14,7 +14,7 @@ import random
 import re
 import subprocess
 
-from . import config, util
+from . import config, providers, util
 from .util import KiwiError
 
 # design/control-plane.md, Names: fruit dishes for masters, fruits for nodes (DNS-safe, no "kiwi")
@@ -195,10 +195,16 @@ def questions(found=None):
         {"step": "The master", "id": "master",
          "intro": "The master is the machine in the middle. It only passes your connections on. Where does it run?",
          "questions": [
-            {"id": "master_where", "label": "Where it runs", "type": "choice", "default": "netcup", "options": [
-                {"value": "netcup", "label": "A rented server at netcup (Kiwi Server installs it for you)"},
+            {"id": "master_where", "label": "Where it runs", "type": "choice", "default": next(iter(providers.PROVIDERS)),
+             "options": [{"value": p.id, "label": "A rented server at %s (Kiwi Server installs it for you)" % p.name}
+                         for p in providers.PROVIDERS.values()] + [
                 {"value": "vps", "label": "A rented server somewhere else (you start it from the install media)"},
                 {"value": "home", "label": "A machine at home (your router must pass a port on to it)"}]},
+            {"id": "provider_server", "label": "Your server there", "type": "lookup", "lookup": "master_where",
+             "when": "master_where in %s" % ",".join(providers.PROVIDERS),
+             "names": {p.id: p.name for p in providers.PROVIDERS.values()},
+             "help": "Sign in at the hoster in your browser. Kiwi Server then lists your servers and takes the address "
+                     "of the one you pick; nothing is changed there yet. Without it, type the address below."},
             {"id": "master_address", "label": "Its address on the Internet", "required": True,
              "help": "A rented server: the IPv4 address your hoster shows for it, like 203.0.113.7. At home: a name "
                      "from a dynamic DNS service that points at your router, like myhome.example.org. Your phones and "
@@ -375,6 +381,10 @@ def make(answers, fleet_dir):
                                  "server_countries": a.get("mullvad_country") or "Germany"},
                   "vpn-server": {"wg_host": addr}}
     hosts = {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master}}
+    if a.get("master_where") in providers.PROVIDERS:
+        hosts[m]["vps"] = {"provider": a["master_where"]}
+        if a.get("provider_server"):    # picked from the hoster's list: the install knows which one
+            hosts[m]["vps"]["server"] = a["provider_server"]
     try:
         prefix = ipaddress.ip_network(str(a.get("lan_subnet") or "")).prefixlen
     except ValueError:
@@ -419,16 +429,22 @@ def _wrap(text, indent=""):
 
 
 def _when(q, values):
+    """Is this question asked? `key == 'value'`, or `key in a,b,c`."""
     w = q.get("when")
     if not w:
         return True
+    if " in " in w:
+        key, _, vals = w.partition(" in ")
+        return str(values.get(key)) in vals.split(",")
     key, _, val = w.partition(" == ")
     return str(values.get(key)) == val.strip("'")
 
 
-def ask(found=None, read=input, show=print, everything=False):
+def ask(found=None, read=input, show=print, everything=False, lookup=None):
     """The questions in a terminal: Enter takes what is in brackets, a wrong answer is asked
-    again. `everything` also asks what has an answer that works (the advanced ones)."""
+    again. `everything` also asks what has an answer that works (the advanced ones).
+    `lookup(provider, show)` looks a hoster account's servers up instead of asking for an
+    address: it returns (rows of {id, address, label}, where the login's token is)."""
     found = found or detect()
     answers = {}
 
@@ -499,6 +515,38 @@ def ask(found=None, read=input, show=print, everything=False):
                                           ", at %s" % node["address"] if node.get("address") else ""))
                 if not nodes and q.get("none"):
                     show(_wrap(q["none"], "   "))
+                continue
+            if kind == "lookup":
+                if lookup is None:
+                    continue
+                if q.get("help"):
+                    show(_wrap(q["help"], "   "))
+                who = providers.get(answers[q["lookup"]])
+                if not (read("Sign in to %s now and pick your server from a list? [Y/n]: " % who.name).strip().lower()
+                        or "y").startswith(("y", "j")):
+                    continue
+                try:
+                    rows, token = lookup(who.id, show)
+                except KiwiError as e:
+                    show(_wrap("That did not work (%s). Type the address instead." % e, "   "))
+                    continue
+                if not rows:
+                    show("   %s lists no server for this account. Type the address instead." % who.name)
+                    continue
+                pick = 0
+                if len(rows) > 1:
+                    for n, r in enumerate(rows, 1):
+                        show("   %d) %s" % (n, r["label"]))
+                    while True:
+                        got = read("Which one becomes the master [1]: ").strip() or "1"
+                        if got.isdigit() and 1 <= int(got) <= len(rows):
+                            pick = int(got) - 1
+                            break
+                        show("   A number from 1 to %d, please." % len(rows))
+                answers.update({q["id"]: rows[pick]["id"], "master_address": rows[pick]["address"], "provider_token": token})
+                show("   %s: its address is %s" % (rows[pick]["label"], rows[pick]["address"]))
+                continue
+            if q["id"] in answers:              # a lookup gave the answer already
                 continue
             if (q.get("advanced") and not everything) or (kind == "choice" and len(q["options"]) == 1):
                 answers[q["id"]] = q["options"][0]["value"] if kind == "choice" and len(q["options"]) == 1 else q.get("default", "")

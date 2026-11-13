@@ -301,10 +301,13 @@ def in_place(fleet, h, tgt, roles, ms, say=util.say, run=None):
         if (h.role_settings_raw.get(module) or {}).get(s.key):
             continue                    # written in the fleet file: not ours to change
         new = derive_secret(fleet.seed(), hostname, module, s.key)
-        script = "IFS= read -r NEW; export NEW; exec %s exec -e NEW %s sh -c %s" % (
-            shlex.quote(runtime), shlex.quote("%s-%s" % (prefix, s.rotate_in)), shlex.quote(s.rotate_run))
+        steps = getattr(s, "rotate_steps", None) or [{"in": s.rotate_in, "name": "", "run": s.rotate_run}]
         try:
-            run(tgt, script, (new + "\n").encode())        # on stdin: never on a command line or in sudo's log
+            for step in steps:          # in order; each sets the same value, so a second run is harmless
+                container = step.get("name") or "%s-%s" % (prefix, step["in"])
+                script = "IFS= read -r NEW; export NEW; exec %s exec -e NEW %s sh -c %s" % (
+                    shlex.quote(runtime), shlex.quote(container), shlex.quote(step["run"]))
+                run(tgt, script, (new + "\n").encode())    # on stdin: never on a command line or in sudo's log
         except KiwiError as e:
             say("%s: %s.%s keeps its value (changing it did not work: %s)" % (h.name, module, s.key, str(e)[-160:]))
             continue

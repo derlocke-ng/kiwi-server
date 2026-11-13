@@ -249,6 +249,15 @@ settings:
   - key: database_password
     type: secret
     generate: true
+    # Nextcloud keeps it in config.php, its database in two roles: the config first (occ still
+    # gets in with the old one), then the roles. The first step is skipped when it is done.
+    rotate:
+      - name: nextcloud-aio-nextcloud
+        run: |-
+          php -r 'include "/var/www/html/config/config.php"; exit($CONFIG["dbpassword"] === getenv("NEW") ? 0 : 1);' || su-exec www-data php /var/www/html/occ config:system:set dbpassword --value="$NEW" >/dev/null
+      - name: nextcloud-aio-database
+        run: |-
+          psql -v ON_ERROR_STOP=1 -U nextcloud -d nextcloud_database -c "ALTER USER oc_nextcloud WITH PASSWORD '$NEW'" -c "ALTER USER nextcloud WITH PASSWORD '$NEW'"
     group: Generated
     help: "Empty: generated from the fleet's seed, the same at every render."
   - key: redis_password

@@ -47,8 +47,20 @@ ks_is_ostree() { [[ $KS_OS == ostree ]]; }
 ks_apt_update() {
     ks_is_debian || return 0
     (( KS_APT_UPDATED )) && return 0
-    apt-get -o DPkg::Lock::Timeout=600 -q update
-    KS_APT_UPDATED=1
+    # A fresh Debian fetches its own package lists right after its first boot and holds their
+    # lock; apt's lock timeout does not cover that one. Wait for it instead of failing (found:
+    # a setup started a minute after the install stopped here).
+    local n
+    for n in $(seq 90); do
+        if apt-get -o DPkg::Lock::Timeout=600 -q update; then
+            KS_APT_UPDATED=1
+            return 0
+        fi
+        pgrep -x apt-get >/dev/null || pgrep -x apt >/dev/null || pgrep -f unattended-upgrade >/dev/null || break
+        (( n == 1 )) && ks_say "the system is fetching its own package lists: waiting for it"
+        sleep 10
+    done
+    ks_die "apt-get update did not work — is the Internet reachable from this machine?"
 }
 ks_apt() { # package...
     ks_is_debian || { ks_warn "not Debian — cannot install: $*"; return 0; }

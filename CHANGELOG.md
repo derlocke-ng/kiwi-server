@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.80.0 — the drills of the first run, backups and the gateway; what they found
+
+Four drills on real machines, kept in `tests/drills/`, and the fixes for what they met.
+
+- **`kiwi-server next` installs a master at a provider by itself**: it signs in when
+  needed, asks once ("everything on that server is erased"), uploads, installs and
+  switches the server on. Without a terminal it wants `--yes`.
+- **A backup server with a new client is named.** A machine added to
+  `backup-server.clients` was refused (401) until the server had its role again, and
+  nothing said so. `apply` now warns with the command, and `next` does it.
+- **kiwi-stack 0.8.2**: a first apply on a fresh Debian waits for apt's lists lock
+  (the system's own first update held it and the apply failed).
+- Drills (each prints PASS or FAIL per check; results of 13 November 2026):
+  `master-vps.sh` (a master from wizard answers on a spare server at the provider:
+  build, install, set up, a phone enrolled), `first-run-vm.sh` (a machine from an empty
+  disk, CoreOS with unlock rings and Debian; restarts with the rings up, one off, all
+  off), `regenerate-vm.sh` (a file restored from a snapshot; the machine wiped and
+  installed anew brings its data back by itself), `uplink-change.sh` (a client behind
+  the gateway: nothing leaks while the home's connection is gone, back 0 s after 90 s
+  without it; with the old path dead for good the gateway came back from a new port
+  by itself after 41 s, nothing restarted).
+
 ## 2.79.0 — the rest of the first run: the server from a list, a reinstalled machine
 
 The three items the first-run review had left open.

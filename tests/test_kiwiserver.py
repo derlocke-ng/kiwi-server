@@ -2826,6 +2826,15 @@ class TestUnlock(Base):
         h.unlock_pins = [{"url": "http://192.168.2.61:7500", "thp": "THP", "adv": '{"payload":"x"}'}]
         return h
 
+    def test_a_locked_machine_is_told_what_really_opens_it(self):
+        h = self.coreos_host()                                   # its ring is at home, nothing is forwarded
+        said = unlock.locked_advice(h, "fleet.yaml")
+        self.assertIn("Switch one of them on and it opens by itself", said)
+        self.assertIn("secrets/luks/plum.key", said)
+        self.assertNotIn("kiwi-server unlock", said)             # that command could not help here
+        h.cfg["unlock"]["via"] = {"house": "http://127.0.0.1:7500"}
+        self.assertEqual(unlock.locked_advice(h, "fleet.yaml"), "kiwi-server unlock fleet.yaml plum")
+
     def test_ignition_binds_a_coreos_disk_to_the_ring(self):
         bu = coreos_t.build_butane(self.coreos_host(), "#!/bin/sh\n")
         self.assertEqual(bu["boot_device"]["luks"]["tang"], [{"url": "http://192.168.2.61:7500", "thumbprint": "THP", "advertisement": '{"payload":"x"}'}])
@@ -3180,7 +3189,7 @@ class TestUnlock(Base):
 
     def test_nothing_to_forward_is_said(self):
         f = self.unlock_fleet()
-        with self.assertRaisesRegex(KiwiError, "nothing to forward"):
+        with self.assertRaisesRegex(KiwiError, "this computer cannot open it"):
             unlock.forwarded_ring(f.hosts["lychee"])
 
     def fake_podman(self, keys_exist=True):

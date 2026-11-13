@@ -64,6 +64,7 @@ settings:
   - key: server_password
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "Signs this machine in at its backup servers. Leave it empty: generated from the fleet's seed, from which the servers derive the same password; one set by hand is not known to them."
   - key: image

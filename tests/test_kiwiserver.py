@@ -5863,6 +5863,17 @@ class TestRotate(Base):
         spec = rolesmod.stack_spec(h, self.roles[h.role], [("10.8.0.25", "sh3.kiwi")], master_ip="10.8.0.1")
         return "\n".join(manifest.stack_vars(h, modmod.Renderer(self.ms).render(spec)))
 
+    def test_a_pin_goes_once_its_secret_can_follow_the_seed(self):
+        f = self.seed_fleet()
+        was = f.derive_secret("sh3.kiwi", "cloud", "redis_password")
+        write(os.path.join(self.tmp, "secrets", "pins.json"),
+              json.dumps({"sh3.kiwi/cloud/redis_password": was, "sh3.kiwi/cloud/database_password": "kept"}))
+        self.rotate.seed(f, self.ms, lambda n: 0, say=lambda _x: None)
+        pins = config.Fleet.load(f.path).pins()
+        self.assertNotIn("sh3.kiwi/cloud/redis_password", pins)        # an older release pinned it; now it follows
+        self.assertEqual(pins["sh3.kiwi/cloud/database_password"], "kept")
+        self.assertNotEqual(self.secrets_of(f, "sh3")["redis_password"], was)
+
     def test_the_role_script_names_the_seed_it_follows(self):
         f = self.seed_fleet()
         self.assertNotIn("KS_SEED_FROM", self.stack_vars(f, "sh3"))
@@ -5892,6 +5903,36 @@ class TestRotate(Base):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
         with self.assertRaisesRegex(KiwiError, "by hand"):
             self.rotate.begin(f)
+
+
+class TestMerge(unittest.TestCase):
+    """Two copies that both changed, made one: by file, against what both held last."""
+    def merge(self, base, here, there):
+        from kiwiserver import merge
+        enc = lambda d: {k: v.encode() for k, v in d.items()}
+        merged, theirs, both = merge.merge(enc(base), enc(here), enc(there))
+        return {k: v.decode() for k, v in merged.items()}, theirs, both
+
+    def test_each_side_keeps_what_only_it_changed(self):
+        base = {"fleet.yaml": "v1", "secrets/seed": "s", "secrets/a.conf": "a", "secrets/gone": "x"}
+        here = {"fleet.yaml": "v2", "secrets/seed": "s", "secrets/a.conf": "a", "secrets/new-here": "h"}
+        there = {"fleet.yaml": "v1", "secrets/seed": "s", "secrets/a.conf": "A", "secrets/gone": "x", "secrets/new-there": "t"}
+        merged, theirs, both = self.merge(base, here, there)
+        self.assertEqual(merged, {"fleet.yaml": "v2", "secrets/seed": "s", "secrets/a.conf": "A",
+                                  "secrets/new-here": "h", "secrets/new-there": "t"})      # `gone` was removed here
+        self.assertEqual((theirs, both), (["secrets/a.conf", "secrets/new-there"], []))
+
+    def test_host_keys_of_both_sides_are_kept(self):
+        base = {"secrets/known_hosts": "a k1\n"}
+        merged, theirs, both = self.merge(base, {"secrets/known_hosts": "a k1\nb k2\n"}, {"secrets/known_hosts": "a k1\nc k3\n"})
+        self.assertEqual(merged["secrets/known_hosts"], "a k1\nb k2\nc k3\n")
+        self.assertEqual(both, [])
+
+    def test_a_file_both_changed_is_named_and_stays_as_it_is_here(self):
+        merged, theirs, both = self.merge({"fleet.yaml": "v1"}, {"fleet.yaml": "mine"}, {"fleet.yaml": "theirs"})
+        self.assertEqual((merged, both), ({"fleet.yaml": "mine"}, ["fleet.yaml"]))
+        merged, theirs, both = self.merge({"fleet.yaml": "v1"}, {"fleet.yaml": "same"}, {"fleet.yaml": "same"})
+        self.assertEqual((merged, both), ({"fleet.yaml": "same"}, []))             # the same change on both sides
 
 
 if __name__ == "__main__":

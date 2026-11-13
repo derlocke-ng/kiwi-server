@@ -5129,7 +5129,8 @@ class TestWeb(StoreBase):
         self.assertEqual(self.ask("/")[0], 303)                                   # nobody yet
         code, body = self.ask("/login", {"password": "not the password!"})
         self.assertEqual(code, 200)
-        self.assertIn("Wrong password", body)
+        self.assertIn("did not work", body)
+        self.assertIn("keys are locked", body)                                    # said in plain words
         self.assertTrue(self.c.locked())
         self.assertEqual(self.ask("/login", {"password": self.PW + " "})[0], 303)   # Origin: null, a trailing space
         self.assertFalse(self.c.locked())
@@ -5137,23 +5138,29 @@ class TestWeb(StoreBase):
         self.assertEqual(code, 200)
         tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', body).group(1)
         # a form another site makes the browser post: the cookie may come along, the token cannot
-        self.assertEqual(self.ask("/run", {"action": "apply", "host": "a"}), (303, "login"))
-        self.assertEqual(self.ask("/run", {"action": "apply", "host": "a", "csrf": "0" * 64}), (303, "login"))
+        self.assertEqual(self.ask("/run", {"action": "apply", "host": "a"}), (303, "/login"))
+        self.assertEqual(self.ask("/run", {"action": "apply", "host": "a", "csrf": "0" * 64}), (303, "/login"))
         self.assertEqual(self.c.jobs(), [])
         code, where = self.ask("/run", {"action": "apply", "host": "a", "csrf": tok})
         self.assertEqual(code, 303)
-        self.assertRegex(where, r"^jobs/\d{8}-\d{6}-[0-9a-f]{6}$")
+        self.assertRegex(where, r"^/jobs/\d{8}-\d{6}-[0-9a-f]{6}$")
         for _ in range(100):
-            if self.c.jobs()[0]["state"] in ("ok", "failed"):
+            js = self.c.jobs()          # (a listing can miss a file that is being replaced just then)
+            if js and js[0]["state"] in ("ok", "failed"):
                 break
             time.sleep(0.05)
-        code, body = self.ask("/api/" + where + "/log")
+        code, body = self.ask("/api" + where + "/log")
         self.assertIn("ran apply", body)
-        code, body = self.ask("/hosts/a")
+        code, body = self.ask(where)
         self.assertEqual(code, 200)
-        self.assertIn('name="csrf" value="%s"' % tok, body)                       # its buttons carry the token too
-        self.assertEqual(self.ask("/" + where)[0], 200)
-        self.assertEqual(self.ask("/audit")[0], 200)
+        self.assertIn("Applying to a", body)                                      # in words, not a command name
+        for path, has in (("/devices", "Add a phone or laptop"), ("/backups", "The network itself"),
+                          ("/help", "The words"), ("/activity", "Applying to"), ("/controllers", "Add a computer")):
+            code, body = self.ask(path)
+            self.assertEqual(code, 200, path)
+            self.assertIn(has, body)
+            self.assertIn('name="csrf" value="%s"' % tok, body)                   # every page's forms carry the token
+        self.assertEqual(self.ask("/hosts/nosuch"), (303, "/"))
         self.assertEqual(self.ask("/lock", {})[0], 303)                           # no token: nothing happens
         self.assertFalse(self.c.locked())
         self.assertEqual(self.ask("/lock", {"csrf": tok})[0], 303)
@@ -5162,6 +5169,56 @@ class TestWeb(StoreBase):
         self.assertEqual(self.ask("/api/status")[0], 401)
 
 
+
+    def test_home_and_a_machine_in_plain_words(self):
+        self.ask("/login", {"password": self.PW})
+        self.assertIn("Checking your machines", self.ask("/")[1])                 # the look the login started
+        for _ in range(200):
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"groups": {"devices": "10.9.3.0/24"}, "hosts": [
+            {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "backup"],
+             "sites": ["cloud.papaya.home", "vault.papaya.home"], "vpn_ip": "10.9.0.2", "next": ""},
+            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "modules": [], "sites": [], "next": "apply it"}]}))
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "papaya", "state": "warn", "output": "raw words", "notes": ["disk 14%"],
+             "problems": [{"level": "warn", "text": "an update is waiting for a reboot"}],
+             "facts": {"backup": {"last": 1, "age": 7200, "copies": [{"server": "backup.lychee.home"}]}, "reboot": True}}]}))
+        code, body = self.ask("/")
+        self.assertIn("1 machine wants a look", body)
+        self.assertIn("restarts by itself in its update window", body)            # what the problem means
+        self.assertIn("Files (Nextcloud)", body)
+        self.assertIn('href="https://vault.papaya.home"', body)
+        self.assertIn("not checked yet", body)                                    # sorbet said nothing so far
+        code, body = self.ask("/hosts/papaya")
+        self.assertIn("Home server (node)", body)
+        self.assertIn("Changes nothing.", body)                                   # each button says what it does
+        self.assertIn("2 hours ago", body)
+        self.assertIn("raw words", body)
+        self.assertIn("has not answered yet", self.ask("/hosts/sorbet")[1])
+        self.assertIn("saved 2 hours ago", self.ask("/backups")[1])
+        self.assertIn('<option value="devices" selected>', self.ask("/devices")[1])
+
+    def test_a_device_gets_a_qr_code(self):
+        self.ask("/login", {"password": self.PW})
+        tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', self.ask("/")[1]).group(1)
+        conf = "[Interface]\nPrivateKey = abc\n"
+        # the fake kiwi-server "enrolls": it writes the device's config into the open store
+        self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
+                       "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write(%r)" % conf]
+        self.assertEqual(self.ask("/devices/add", {"name": "annas-phone"})[0], 303)       # no token: nothing
+        code, body = self.ask("/devices/add", {"name": "Annas Phone!", "csrf": tok})
+        self.assertIn("lowercase letters", body)
+        code, body = self.ask("/devices/add", {"name": "annas-phone", "group": "devices", "csrf": tok})
+        self.assertIn("annas-phone is ready", body)
+        self.assertIn("PrivateKey = abc", body)                                   # for the download
+        if shutil.which("qrencode"):
+            self.assertIn("<svg", body)
+        self.assertIn("exists already", self.ask("/devices/add", {"name": "annas-phone", "csrf": tok})[1])
+        self.assertIn("annas-phone is ready", self.ask("/devices/show", {"name": "annas-phone", "csrf": tok})[1])
+        self.assertIn("no device called", self.ask("/devices/show", {"name": "nobody", "csrf": tok})[1])
+        self.assertIn("added the device annas-phone", [e["what"] for e in self.c.audit_tail(5)])
 
     def test_the_computers_page(self):
         self.ask("/login", {"password": self.PW})
@@ -5174,7 +5231,7 @@ class TestWeb(StoreBase):
         self.assertIn("<strong>laptop</strong>", self.ask("/controllers")[1])
         self.ask("/controllers/remove", {"name": "laptop"})                       # forged: nothing
         self.assertIn("laptop", [n for n, _k in self.c.controllers()])
-        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "../controllers"))
+        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "/controllers"))
         self.assertNotIn("laptop", [n for n, _k in self.c.controllers()])
         code, body = self.ask("/controllers/remove", {"name": "control", "csrf": tok})
         self.assertIn("own key", body)                                            # said on the page, not a crash

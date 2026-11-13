@@ -660,8 +660,13 @@ def cmd_list(args):
                      "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
     if args.porcelain:
+        groups = {}         # the master's client groups: where a new device may go
+        for h in fleet.hosts.values():
+            if h.role in roles and roles[h.role].node_type == "master" and not groups:
+                groups = {g: (v or {}).get("subnet") for g, v in
+                          (((h.module_settings or {}).get("vpn-server") or {}).get("groups") or {}).items()}
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
-                          "master_ip": master_ip, "hosts": rows}, indent=2))
+                          "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
     print(fmt % ("NAME", "HOSTNAME", "TARGET", "ROLE", "ADDRESS", "OUTPUT"))

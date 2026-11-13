@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.69.0 — the control node unlocks by itself
+
+- `unlock: { control: <ring> }` on the control node: after a restart or a power cut it asks a
+  Tang ring on another machine and opens its keys with nobody there. After a login it keeps
+  the key its password made encrypted for that ring (clevis, `control/auto.jwe`). The ring's
+  machine off: it stays locked, and the login page says which machine it waits for. A stolen
+  disk alone opens nothing.
+- The app's control dialog offers it: "After a power cut: by itself, with the help of …".
+- The control image has clevis and jose.
+
 ## 2.68.0 — a lost phone
 
 - Control page, Devices: **Remove** takes a device off the VPN at once (the master forgets its

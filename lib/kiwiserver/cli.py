@@ -1577,6 +1577,33 @@ def cmd_enroll(args):
                 api.set_address(c["id"], addr)
         return api.configuration(c["id"])
 
+    if args.remove:                     # a lost phone: off the VPN, its config gone from the fleet
+        if host:
+            raise KiwiError("%s is a machine of the fleet, not a device: remove it from the fleet file instead" % name)
+
+        def drop(url):
+            api = wgeasy.WgEasy(url, vs["wg_password"]).login()
+            c = api.client(client_name)
+            if c is not None:
+                api.delete(c["id"])
+            return c is not None
+        if args.api:
+            was = drop(args.api)
+        else:
+            with remote.Tunnel(remote.reach(master, args.ssh), 51821) as url:
+                was = drop(url)
+        dest = fleet.resolve_path("secrets/devices/%s.conf" % name)
+        had = os.path.isfile(dest)
+        if had:
+            os.remove(dest)
+        if not was and not had:
+            raise KiwiError("there is no device called %s" % name)
+        try:
+            backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+        except KiwiError as e:
+            util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
+        util.say("%s is off the VPN: its key no longer works" % name)
+        return
     if args.api:
         text = enroll(args.api)
     else:
@@ -2164,6 +2191,7 @@ def build_parser():
     s.add_argument("--address", help="the mesh address to give the client")
     s.add_argument("--split", action="store_true", help="only the mesh through the tunnel (devices that keep their own internet)")
     s.add_argument("--existing", action="store_true", help="fetch the config of a client that already exists")
+    s.add_argument("--remove", action="store_true", help="take a device off the VPN: its key stops working")
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # wg-easy reachable directly (tests)

@@ -2485,6 +2485,17 @@ class FakeWgEasy:
                 c["address"] = body["address"]
                 self._send(200, b'{"success":true}')
 
+            def do_DELETE(self):
+                fake.calls.append(("DELETE", self.path, None))
+                if not self._authed():
+                    return self._send(401, b'{"error":"Not Logged In"}')
+                m = re.match(r"^/api/wireguard/client/([^/]+)$", self.path)
+                c = fake.by_id(m.group(1)) if m else None
+                if c is None:
+                    return self._send(404, b'{"error":"no such route"}')
+                fake.clients.remove(c)
+                self._send(200, b'{"success":true}')
+
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -3378,6 +3389,16 @@ class TestManage(Base):
         rc, out, err = self.run_cli("enroll", f.path, "router", "--address", "10.8.4.10", "--api", api.url)
         self.assertEqual(rc, 0, err)
         self.assertEqual(api.by_id("id-5")["address"], "10.8.4.10")
+        # a lost phone: off the master, its config gone from the fleet; a machine is not removed that way
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "devices", "phone.conf")))
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--remove", "--api", api.url)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("phone", [c["name"] for c in api.clients])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "secrets", "devices", "phone.conf")))
+        rc, out, err = self.run_cli("enroll", f.path, "phone", "--remove", "--api", api.url)
+        self.assertIn("no device called phone", err)
+        rc, out, err = self.run_cli("enroll", f.path, "sh3", "--remove", "--api", api.url)
+        self.assertIn("a machine of the fleet", err)
         rc, out, err = self.run_cli("enroll", f.path, "x", "--group", "nope", "--api", api.url)
         self.assertEqual(rc, 1)
         self.assertIn("no client group 'nope'", err)
@@ -5229,6 +5250,14 @@ class TestWeb(StoreBase):
         self.assertIn("annas-phone is ready", self.ask("/devices/show", {"name": "annas-phone", "csrf": tok})[1])
         self.assertIn("no device called", self.ask("/devices/show", {"name": "nobody", "csrf": tok})[1])
         self.assertIn("added the device annas-phone", [e["what"] for e in self.c.audit_tail(5)])
+        # a lost phone: the fake kiwi-server "removes" it when asked with --remove
+        self.c.kiwi = [sys.executable, "-c", "import sys,os; assert sys.argv[4]=='--remove'; "
+                       "os.remove(os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices',sys.argv[3]+'.conf'))"]
+        self.assertEqual(self.ask("/devices/remove", {"name": "annas-phone"})[0], 303)    # no token: it stays
+        self.assertIn("annas-phone", self.c.devices())
+        self.assertIn("annas-phone is off the VPN", self.ask("/devices/remove", {"name": "annas-phone", "csrf": tok})[1])
+        self.assertEqual(self.c.devices(), [])
+        self.assertIn("no device called", self.ask("/devices/remove", {"name": "annas-phone", "csrf": tok})[1])
 
     def test_the_computers_page(self):
         self.ask("/login", {"password": self.PW})

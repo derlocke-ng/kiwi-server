@@ -67,6 +67,9 @@ class WgEasy:
             raise KiwiError("wg-easy created the client %r but does not list it" % name)
         return c
 
+    def delete(self, client_id):
+        self._call("DELETE", "/api/wireguard/client/%s" % client_id)
+
     def set_address(self, client_id, address):
         self._call("PUT", "/api/wireguard/client/%s/address" % client_id, {"address": address})
 

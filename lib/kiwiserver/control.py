@@ -553,6 +553,22 @@ class Control:
         self.audit(user, "added the device %s" % name)
         return self.device_config(name)
 
+    def remove_device(self, name, user="admin"):
+        """A device off the VPN (a lost phone): the master forgets its key."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if name not in self.devices():
+            raise KiwiError("there is no device called %s" % name)
+        with self.lock:
+            r = subprocess.run(list(self.kiwi) + ["enroll", self.fleet_path, name, "--remove"], capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+            if not self._pushed():
+                self.save_fleet()
+        if r.returncode != 0:
+            raise KiwiError(((r.stderr or r.stdout).strip().replace("error: ", "").splitlines()
+                             or ["the hub did not remove the device"])[-1][:300])
+        self.audit(user, "removed the device %s" % name)
+
     @staticmethod
     def qr_svg(text):
         """The config as a QR code a phone's WireGuard app scans (qrencode), or ''."""

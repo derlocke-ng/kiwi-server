@@ -758,6 +758,13 @@ def cmd_next(args):
         todo = [t for t in todo if t[0] is again] or [
             (again, "install", "", [], Outputs(out_dir, again, media_dir_for(args, fleet)))]
     if not todo:
+        for server, new in sorted(backup_untold(fleet).items()):
+            util.say("%s does not take the backups of %s yet" % (server, ", ".join(new)))
+            if args.yes or not sys.stdin.isatty() or not input(
+                    "Tell it now? [Enter to go on, n to stop]: ").strip().lower().startswith("n"):
+                rc = main(["apply", path, server])
+                if rc:
+                    raise SystemExit(rc)
         util.say("every machine is set up. How they are: kiwi-server status %s" % path)
         util.say("your phone or laptop on the VPN: kiwi-server enroll %s phone (it shows a QR code to scan)" % path)
         return
@@ -811,11 +818,16 @@ def cmd_next(args):
     where = (h.cfg.get("vps") or {}).get("provider")
     if where in providers.PROVIDERS:        # a hoster kiwi-server can install at by itself
         who = providers.get(where)
-        signed_in = os.path.isfile(fleet.resolve_path(who.token_file()))
-        util.say("at %s, kiwi-server installs it (everything on that server is erased):" % who.name)
-        if not signed_in:
-            print("    kiwi-server vps login %s" % path)
-        print("    kiwi-server vps install %s %s" % (path, h.name))
+        if not os.path.isfile(fleet.resolve_path(who.token_file())):
+            if not go("Sign in to %s (it opens a page in your browser)?" % who.name):
+                return
+            run("vps", "login", path)
+        if not args.yes and not sys.stdin.isatty():     # erasing a server is never taken for granted
+            raise KiwiError("installing %s erases the server at %s: run this in a terminal, or with --yes" % (h.name, who.name))
+        if go("Install %s at %s now? EVERYTHING ON THAT SERVER IS ERASED." % (h.name, who.name)):
+            run("vps", "install", path, h.name, "--yes")    # uploads, installs, takes the media out, switches it on
+            util.say("%s is installed and starting. Run this again in a minute to set it up" % h.name)
+        return
     elif is_master(h):
         util.say("a rented server: upload the file as an ISO at your hoster and start the server from it")
     else:
@@ -864,6 +876,30 @@ def record_applied(fleet, *names, only_new=False):
     except OSError:
         if not only_new:
             raise
+
+
+def _backup_clients(host):
+    return sorted((host.role_settings_raw.get("backup-server") or {}).get("clients") or [])
+
+
+def record_backup_clients(fleet, host):
+    """Remember whose backups this server was told to take when it got its role."""
+    if "backup-server" not in host.role_settings_raw:
+        return
+    state = fleet_state(fleet)
+    state.setdefault("backup_clients", {})[host.name] = _backup_clients(host)
+    util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+
+
+def backup_untold(fleet):
+    """Backup servers whose list of clients grew since they got their role: {server: [new
+    clients]}. Until the server is applied again it refuses the new machine's backups."""
+    told, out = fleet_state(fleet).get("backup_clients") or {}, {}
+    for h in fleet.hosts.values():
+        new = [c for c in _backup_clients(h) if c not in told.get(h.name, [c])]
+        if new:
+            out[h.name] = new
+    return out
 
 
 def shown_path(path):
@@ -1498,10 +1534,14 @@ def cmd_apply(args):
                 sshca.install(fleet, h, tgt)
                 util.say("%s: its host certificate is signed, its sshd takes the fleet's user certificates" % h.name)
             record_applied(fleet, h.name)
+            record_backup_clients(fleet, h)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             failed.append(h.name)
             print("error: %s: %s" % (h.name, e), file=sys.stderr)
+    for server, new in sorted(backup_untold(fleet).items()):
+        util.warn("%s does not take the backups of %s yet: kiwi-server apply %s %s"
+                  % (server, ", ".join(new), shown_path(fleet.path), server))
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
 

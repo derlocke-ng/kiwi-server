@@ -1994,6 +1994,22 @@ class TestSetup(Base):
         # not by its name, which resolves on the VPN only; and a key on record for that address is an older install's
         self.assertEqual(calls, [["apply", dest, "mango", "--ssh", "core@192.168.2.30", "--new-host-key"]])
 
+    def test_a_backup_server_with_a_new_client_is_named_until_it_is_applied(self):
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        fleet = config.Fleet.load(dest)
+        server = fleet.hosts["mango"]
+        server.role_settings_raw["backup-server"] = {"clients": ["a.home"]}
+        self.assertEqual(cli.backup_untold(fleet), {})          # never applied by this release: nothing is known
+        cli.record_backup_clients(fleet, server)
+        self.assertEqual(cli.backup_untold(fleet), {})
+        server.role_settings_raw["backup-server"]["clients"].append("b.home")
+        self.assertEqual(cli.backup_untold(fleet), {"mango": ["b.home"]})
+        cli.record_backup_clients(fleet, server)
+        self.assertEqual(cli.backup_untold(fleet), {})
+
     FOUND = {"subnet": "192.168.1.0/24", "gateway": "192.168.1.1", "timezone": "Europe/Vienna", "keyboard": "at",
              "locale": "de_AT.UTF-8", "ssh_key": "", "addresses": ["192.168.1.31/24", "192.168.1.32/24"]}
 

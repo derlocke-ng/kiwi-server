@@ -1596,6 +1596,17 @@ class ControlSetupDialog(Adw.Dialog):
         self.host = Adw.ComboRow(title="Which home server?", subtitle="One that is always on",
                                  model=Gtk.StringList.new(self.hosts or ["(none is set up yet)"]))
         g.add(self.host)
+        # rings other machines serve: one of them can open this node's keys by itself after a restart
+        self.rings = []
+        for h in win.doc.hosts():
+            served = win.doc.get(h, (win.value_of(h, "role", "node"), "tang", "rings")) or {}
+            self.rings += [(str(r), h) for r in served]
+        self.ring = None
+        if self.rings:
+            self.ring = Adw.ComboRow(title="After a power cut", subtitle="Who unlocks its keys again",
+                                     model=Gtk.StringList.new(["I log in on its page"] + [
+                                         "By itself, with the help of %s" % h for _r, h in self.rings]))
+            g.add(self.ring)
         self.pw1 = Adw.PasswordEntryRow(title="Password for its page (12 characters or more)")
         self.pw2 = Adw.PasswordEntryRow(title="The password again")
         for row in (self.pw1, self.pw2):
@@ -1659,6 +1670,10 @@ class ControlSetupDialog(Adw.Dialog):
             if part not in parts:
                 parts.append(part)
         win.doc.set(host, (role, "modules"), parts)
+        if self.ring is not None and self.ring.get_selected() > 0:
+            ring, server = self.rings[self.ring.get_selected() - 1]
+            if server != host:              # a machine cannot open itself
+                win.doc.set(host, ("unlock", "control"), ring)
         if not win.save():
             return self.finish(False, "The settings could not be saved.", host, "")
         mark(0, "✓")
@@ -1687,7 +1702,7 @@ class ControlSetupDialog(Adw.Dialog):
         self.set_can_close(True)
         name = (self.win.status.get(host) or {}).get("hostname") or host
         text = ("Done. From a device on your VPN, open https://control.%s and log in with the password.\n"
-                "After a restart of %s, log in there once: that unlocks its keys again." % (name, host)) if ok else (
+                "After a restart of %s it unlocks by itself if you chose that; otherwise log in there once." % host) if ok else (
             "It stopped here: %s\nNothing is broken; fix that and start again from the menu." % why)
         if recovery:
             text += ("\n\nWrite this recovery key down now, on paper or in a password manager. It is shown only "

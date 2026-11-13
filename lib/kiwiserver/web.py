@@ -72,7 +72,9 @@ TEMPLATES = {
 <h1>Kiwi</h1><p class="muted">The control page of your network.</p>
 <form method="post" action="/login" class="card">
 {% if locked %}<p class="warn"><strong>The network's keys are locked.</strong> That is normal after a restart or a
-power cut. Your password unlocks them; until then this machine looks after nothing by itself.</p>{% endif %}
+power cut. Your password unlocks them; until then this machine looks after nothing by itself.</p>
+{% if auto %}<p class="muted">It also tries to unlock by itself, with the help of {{ auto.server }}, which has not
+answered yet. Is that machine on?</p>{% endif %}{% endif %}
 <label for="pw">Password</label><input id="pw" type="password" name="password" autocomplete="current-password" autofocus>
 {% if error %}<p class="bad">{{ error }}</p>{% endif %}
 <div class="actions"><button class="primary">{{ "Unlock and log in" if locked else "Log in" }}</button></div></form>
@@ -261,7 +263,10 @@ it. Version {{ version }}.</p>
 <dt>…use my services on the go?</dt><dd><a href="/devices">Add your phone</a>, scan the code with the WireGuard app, switch the VPN on.</dd>
 <dt>…fix a machine with a problem?</dt><dd>Open it from <a href="/">Home</a>, read what it says, then <em>Apply</em>. If it does not answer at all, check that it is on.</dd>
 <dt>…change a setting or add a machine?</dt><dd>In the Kiwi Server app on your computer. It sends the change here by itself.</dd>
-<dt>…get in after a power cut?</dt><dd>Log in here once. That unlocks the keys again.</dd></dl></div>
+<dt>…get in after a power cut?</dt><dd>{% if auto %}Nothing to do: this machine unlocks by itself with the help of
+{{ auto.server }} (the ring “{{ auto.ring }}”). If that machine is off, log in here once.{% else %}Log in here once. That
+unlocks the keys again. It can also unlock by itself with the help of another of your machines: in the app, give this
+machine's settings <code>unlock: { control: &lt;a ring on another machine&gt; }</code>.{% endif %}</dd></dl></div>
 <h2>The words</h2><div class="card"><dl>
 <dt>Machine</dt><dd>A computer of your network: a small server at home, or a rented one.</dd>
 <dt>Hub (master)</dt><dd>The rented machine in the middle. Everything connects to it; it holds none of your data.</dd>
@@ -385,7 +390,7 @@ def make_app(control: Control):
 
     @app.get("/login")
     def login_form():
-        return page("login.html", locked=control.locked())
+        return page("login.html", locked=control.locked(), auto=control.auto_state())
 
     @app.post("/login")
     def login(request: Request, password: str = Form("")):
@@ -393,7 +398,7 @@ def make_app(control: Control):
         token = control.login(password, address(request))    # needs the password itself: nothing to forge
         if not token:
             time.sleep(1)
-            return page("login.html", locked=control.locked(),
+            return page("login.html", locked=control.locked(), auto=control.auto_state(),
                         error="That password did not work. After five wrong tries, wait ten minutes.")
         if was_locked:                          # just unlocked: look at the machines right away
             control.look()
@@ -526,7 +531,7 @@ def make_app(control: Control):
     def help_page(request: Request):
         if not user(request):
             return login_page()
-        return page("help.html", request, "/help")
+        return page("help.html", request, "/help", auto=control.auto_state())
 
     @app.get("/activity")
     def activity(request: Request):

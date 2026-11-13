@@ -123,6 +123,80 @@ class Control:
             self._saved[name] = hashlib.sha256(data).hexdigest()
             self._age[name] = util.sha256_file(path + ".age")
 
+    # ---- unlocking by itself: a ring on another machine ------------------------------
+    # Opt-in (`unlock: { control: <ring> }` on the control node). After a login the key the
+    # password made is encrypted for that Tang ring (clevis) and kept in control/auto.jwe. After
+    # a restart the node asks the ring; when it answers, the store opens with nobody there.
+    # A stolen disk alone opens nothing: the thief would also have to reach the ring, the same
+    # trade the encrypted disks of the fleet make.
+    @property
+    def auto_file(self):
+        return os.path.join(self.dir, "auto.jwe")
+
+    def auto_state(self):
+        """{"ring", "server"} when it unlocks by itself, else None."""
+        path = self.auto_file + ".json"
+        if os.path.isfile(self.auto_file) and os.path.isfile(path):
+            try:
+                return json.loads(util.read_text(path))
+            except ValueError:
+                return None
+        return None
+
+    def arm_auto(self):
+        """After a login: make (or remove) what lets the ring open the store. Says what it did."""
+        if self.locked() or not self._identity:
+            return None
+        r = subprocess.run(list(self.kiwi) + ["control", "ring", self.fleet_path], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+        try:
+            pin = json.loads(r.stdout) if r.returncode == 0 else None
+        except ValueError:
+            pin = None
+        if pin is None and r.returncode == 0:
+            return None
+        if pin is None:
+            self.audit("control", "unlock by itself was not set up: %s" % (
+                (r.stderr or r.stdout).strip().replace("error: ", "").splitlines() or ["?"])[-1][:200])
+            return None
+        if not pin:                              # not wanted (any more)
+            for f in (self.auto_file, self.auto_file + ".json"):
+                if os.path.exists(f):
+                    os.remove(f)
+            return None
+        try:
+            c = subprocess.run(["clevis", "encrypt", "tang", json.dumps({"url": pin["url"], "adv": pin["adv"]})],
+                               input=self._identity.encode(), capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            self.audit("control", "unlock by itself was not set up: %s" % e)
+            return None
+        if c.returncode != 0 or not c.stdout.strip():
+            self.audit("control", "unlock by itself was not set up: clevis refused")
+            return None
+        util.write_bytes(self.auto_file, c.stdout, 0o600)
+        util.write_text(self.auto_file + ".json", json.dumps({"ring": pin["ring"], "server": pin["server"]}), 0o600)
+        return pin["ring"]
+
+    def try_auto(self):
+        """Locked, and a ring may open it: ask the ring. True when it opened."""
+        if not self.locked() or not self.ready() or not os.path.isfile(self.auto_file):
+            return False
+        try:
+            c = subprocess.run(["clevis", "decrypt"], input=util.read_bytes(self.auto_file), capture_output=True, timeout=45)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        identity = c.stdout.decode(errors="replace").strip()
+        if c.returncode != 0 or not identity.startswith("AGE-SECRET-KEY-"):
+            return False
+        try:
+            with self.lock:
+                self._open(identity)
+        except KiwiError:
+            return False                         # an older password's key: the next login makes a new one
+        self._identity = identity
+        self.audit("control", "unlocked by the ring %s" % ((self.auto_state() or {}).get("ring") or "?"))
+        return True
+
     def _for_the_keys_now(self):
         """The store's keys changed: the fleet files are encrypted again, for those keys (the
         store did its own file). Otherwise a new controller could not open them, and a removed
@@ -188,6 +262,7 @@ class Control:
             return None
         self._identity = identity
         self.audit("admin", "login", address=address)
+        threading.Thread(target=self.arm_auto, daemon=True).start()     # the ring, if one is named
         expires = int(now + SESSION_HOURS * 3600)
         body = "admin|%d" % expires
         return "%s|%s" % (body, hmac.new(self._session_key, body.encode(), hashlib.sha256).hexdigest())
@@ -586,8 +661,11 @@ class Control:
         while not stop.is_set():
             now = self.clock()
             try:
-                if self.locked():           # nothing to do it with until someone logs in
-                    stop.wait(15)
+                if self.locked():           # nothing to do it with until someone logs in, or the ring answers
+                    if self.try_auto():
+                        self.look()
+                    else:
+                        stop.wait(30)
                     continue
                 self.reload_if_pushed()
                 if now - last_status >= self.status_minutes * 60:

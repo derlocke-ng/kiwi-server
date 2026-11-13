@@ -4962,6 +4962,39 @@ class TestControl(StoreBase):
         self.assertIsNone(c.job("../../etc/passwd"))
         self.assertFalse(c.has_ram_masters())
 
+    def test_a_ring_on_another_machine_unlocks_it_after_a_restart(self):
+        self.init()
+        c = self.control()
+        c.set_password(self.PW)
+        # clevis stands in: what it "encrypts" only comes back while the ring answers
+        tool = os.path.join(self.tmp, "bin", "clevis")
+        write(tool, '#!/bin/sh\ncase $1 in\n  encrypt) printf JWE:; cat ;;\n'
+                    '  decrypt) [ -e "$FAKE_KEYRING/ring-down" ] && exit 1; sed s/^JWE:// ;;\nesac\n')
+        os.chmod(tool, 0o755)
+        pin = {"ring": "house", "server": "lychee", "url": "http://192.168.2.61:7500", "adv": {"payload": "x"}}
+        c.kiwi = [sys.executable, "-c", "print(%r)" % json.dumps(pin)]
+        self.assertFalse(c.try_auto())                           # nothing armed, and it is open anyway
+        c.login(self.PW)
+        self.assertEqual(c.arm_auto(), "house")
+        self.assertEqual(c.auto_state(), {"ring": "house", "server": "lychee"})
+        self.assertEqual(oct(os.stat(c.auto_file).st_mode & 0o777), "0o600")
+        c.lock_store()                                           # a restart, a power cut
+        fresh = self.control()                                   # the process that starts afterwards
+        write(os.path.join(self.keyring, "ring-down"), "")
+        self.assertFalse(fresh.try_auto())                       # the ring's machine is off: locked, the password works
+        self.assertTrue(fresh.locked())
+        os.remove(os.path.join(self.keyring, "ring-down"))
+        self.assertTrue(fresh.try_auto())
+        self.assertFalse(fresh.locked())
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "seed")), "S" * 32)
+        self.assertIn("unlocked by the ring house", [e["what"] for e in fresh.audit_tail(5)])
+        # the owner takes unlock.control away again: the next login removes what the ring could open
+        fresh.kiwi = [sys.executable, "-c", "print('{}')"]
+        fresh.login(self.PW)
+        self.assertIsNone(fresh.arm_auto())
+        self.assertFalse(os.path.exists(fresh.auto_file))
+        self.assertIsNone(fresh.auto_state())
+
     def test_a_pushed_store_is_taken_and_a_changed_password_locks(self):
         self.init()
         c = self.control()

@@ -54,8 +54,20 @@ Nothing rests on the node in the clear. Its disk holds `secrets.age` and
 | A restart, a power cut, **Lock** | locked again: the node does nothing by itself until the next login. |
 | A stolen disk | holds encrypted files; each guess at the password costs scrypt (64 MiB). Use a long one: 12 characters at least. |
 
-So after a power cut someone logs in once, from the phone. Use a disk
-encrypted with a ring as well ([Security](security.md)) where you can.
+So after a power cut someone logs in once, from the phone. Or the node unlocks
+by itself, with the help of another machine:
+
+```yaml
+papaya:
+  unlock: { control: house }    # a Tang ring that another machine serves
+```
+
+After the next login the node keeps its key encrypted for that ring. After a
+restart it asks the ring and opens with nobody there (seconds). If the ring's
+machine is off it stays locked and the page says which machine it waits for.
+A stolen disk alone opens nothing; a thief would also need to reach the ring
+on your network, the same trade your encrypted disks make. The app's control
+dialog offers this as "After a power cut".
 
 ## More computers
 

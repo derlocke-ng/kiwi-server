@@ -1367,6 +1367,32 @@ def cmd_control(args):
         util.say("joined as %s: the fleet is in %s and stays in step with kiwi-server control pull / push"
                  % (name, fleet_dir))
         return
+    if args.action == "ring":           # for the control node itself: where its unlock ring is, and what it offers
+        fleet, roles, ms = load(args)
+        for x in fleet.hosts.values():
+            if x.role in roles:
+                rolesmod.resolve_settings(roles[x.role], x, ms)
+        h = controlsync.control_host(fleet, args.to)
+        ring = str(h.cfg["unlock"].get("control") or "")
+        if not ring:
+            print(json.dumps({}))
+            return
+        servers = unlock.ring_servers(fleet, lambda x: None)
+        if ring not in servers or isinstance(servers[ring][0], unlock.OperatorRing):
+            raise KiwiError("%s: unlock.control names the ring %s, which no machine of the fleet serves" % (h.name, ring))
+        server, port = servers[ring]
+        if server is h:
+            raise KiwiError("%s cannot open itself: the ring %s is its own. Name a ring on another machine" % (h.name, ring))
+        try:
+            where = unlock.url(h, ring, server, port)
+        except KiwiError:                # not on one LAN: over the mesh (the tang module forwards its rings there)
+            mesh_ip = (server.role_settings or {}).get("vpn_ip")
+            if not mesh_ip:
+                raise
+            where = "http://%s:%d" % (mesh_ip, port)
+        print(json.dumps({"ring": ring, "server": server.name, "url": where,
+                          "adv": json.loads(unlock.advertisement(server, ring))}))
+        return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
             n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
@@ -2159,7 +2185,7 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
-    s = sub("control", cmd_control); s.add_argument("action", choices=["push", "pull", "join"]); s.add_argument("fleet")
+    s = sub("control", cmd_control); s.add_argument("action", choices=["push", "pull", "join", "ring"]); s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
     s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")

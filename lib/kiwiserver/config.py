@@ -128,6 +128,9 @@ DEFAULTS = {
         "via": {},        # ring -> URL, where the LAN is not the way to it
         "ssh": False,     # an SSH server in the initramfs, for `kiwi-server unlock`
         "ssh_from": [],   # where it may be used from (CoreOS only: Dropbear has no from=)
+        # a control node: the ring (on another machine) that opens its secret store by itself after a
+        # restart, so that nobody has to log in after a power cut. Empty: the password, every time.
+        "control": "",
     },
     "tls": {
         # certificates for hosts that run the reverse proxy and bring none:

@@ -811,6 +811,10 @@ Asked for by the owner in November 2026:
 - **Local first** (design/local-first.md), asked for 12 November 2026: the LAN's cache
   (built, 2.57.0: images and Debian packages; install images and locally built images of our
   own still to come), netboot (below), and the control node with a web UI.
+- **Controllers** (design/controllers.md), asked for 13 November 2026: computers join the
+  fleet through the control node and are accepted, denied or removed on its page; sync through
+  its API or a synced folder; rotation of what a removed one knew; later site controllers with
+  their own scope. The control node itself is built (2.60: docs/control.md).
 - **arm64 boards** (Odroid M1 and N2+, Banana Pi 4 LTS; HC2 is 32-bit and left out), asked
   for 13 November 2026. Built in 2.58.0: `kiwi-server adopt` takes a board's own Debian or
   Armbian over SSH, `debian.arch: arm64`, tang and strfry images for arm64; proven on an

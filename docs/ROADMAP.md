@@ -810,8 +810,16 @@ Asked for by the owner in November 2026:
   Overlaps with the standby master.
 - **Local first** (design/local-first.md), asked for 12 November 2026: the LAN's cache
   (built, 2.57.0: images and Debian packages; install images and locally built images of our
-  own still to come), netboot (below), and the control node with a web UI that starts from a
-  Raspberry Pi image, which needs arm64 builds first.
+  own still to come), netboot (below), and the control node with a web UI.
+- **arm64 boards** (Odroid M1 and N2+, Banana Pi 4 LTS; HC2 is 32-bit and left out), asked
+  for 13 November 2026. Built in 2.58.0: `kiwi-server adopt` takes a board's own Debian or
+  Armbian over SSH, `debian.arch: arm64`, tang and strfry images for arm64; proven on an
+  arm64 VM (Debian 13 cloud image under QEMU) as a mesh node. Next: **`target: armbian`**,
+  an image per board from Armbian's build framework (the board name in the host; our files in
+  its `userpatches/customize-image.sh`; its first-login questions answered by its autoconfig
+  file, `/root/.not_logged_in_yet` with `PRESET_*` lines, which also works on a stock image; `CRYPTROOT_ENABLE` with dropbear in the initramfs for the same LUKS + rings + SSH
+  unlock the Debian target has), built in a container like the other images. Then a real
+  board: N2+ first.
 - **Netboot at home: PXE and Wake-on-LAN**, raised 10 November 2026; not built. A
   rebuilt VPS needs nobody since 2.38 (`vps install`, the one-time key, apply, and the
   backup restoring itself since kiwi-modules 0.24); a home machine still needs a USB stick.

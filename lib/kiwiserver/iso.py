@@ -21,7 +21,8 @@ from . import util
 from .util import KiwiError
 from .targets import debian as debian_target
 
-DEBIAN_BASE = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/"
+DEBIAN_BASE = "https://cdimage.debian.org/debian-cd/current/%s/iso-cd/"
+INSTALL_DIR = {"amd64": "/install.amd", "arm64": "/install.a64"}   # where each netinst keeps its installer
 
 
 def _md5(path):
@@ -130,13 +131,13 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
 
 # ---- Debian --------------------------------------------------------------------------
 
-def resolve_netinst(sha256sums_text):
-    """(filename, sha256) of the amd64 netinst listed in a SHA256SUMS file."""
+def resolve_netinst(sha256sums_text, arch="amd64"):
+    """(filename, sha256) of the netinst for `arch` listed in a SHA256SUMS file."""
     for line in sha256sums_text.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[1].endswith("-amd64-netinst.iso"):
+        if len(parts) == 2 and parts[1].endswith("-%s-netinst.iso" % arch):
             return parts[1], parts[0]
-    raise KiwiError("no *-amd64-netinst.iso in SHA256SUMS")
+    raise KiwiError("no *-%s-netinst.iso in SHA256SUMS" % arch)
 
 
 CURRENT_RELEASES = ("stable", "trixie")   # what debian-cd/current/ holds
@@ -144,18 +145,20 @@ CURRENT_RELEASES = ("stable", "trixie")   # what debian-cd/current/ holds
 
 def debian_base_iso(tc, cfg, cache_dir):
     os.makedirs(cache_dir, exist_ok=True)
+    arch = cfg.get("arch") or "amd64"
+    base = DEBIAN_BASE % arch
     url = cfg.get("iso_url")
     if url:
         name, sha = os.path.basename(url), None
     elif str(cfg.get("release") or "stable") not in CURRENT_RELEASES:
         raise KiwiError("debian.release is %s but only the current stable (%s) is at %s — "
                         "set debian.iso_url to that release's netinst image"
-                        % (cfg.get("release"), "/".join(CURRENT_RELEASES), DEBIAN_BASE))
+                        % (cfg.get("release"), "/".join(CURRENT_RELEASES), base))
     else:
-        r = tc.run(["curl", "-fsSL", "--retry", "3", DEBIAN_BASE + "SHA256SUMS"],
+        r = tc.run(["curl", "-fsSL", "--retry", "3", base + "SHA256SUMS"],
                    mounts=[cache_dir], capture=True)
-        name, sha = resolve_netinst(r.stdout)
-        url = DEBIAN_BASE + name
+        name, sha = resolve_netinst(r.stdout, arch)
+        url = base + name
     path = os.path.join(cache_dir, name)
     if os.path.isfile(path) and (sha is None or util.sha256_file(path) == sha):
         util.say("using cached %s" % name)
@@ -190,26 +193,27 @@ def rewrite_isolinux_cfg(text):
     return "\n".join(out + ["default kiwi-auto", "prompt 0", "timeout 10", ""])
 
 
-def auto_txt_cfg(original, title):
+def auto_txt_cfg(original, title, inst="/install.amd"):
     entry = [
         "label kiwi-auto",
         "    menu label ^%s" % title,
-        "    kernel /install.amd/vmlinuz",
-        "    append vga=788 initrd=/install.amd/initrd.gz %s --- quiet" % debian_target.KERNEL_ARGS,
+        "    kernel %s/vmlinuz" % inst,
+        "    append vga=788 initrd=%s/initrd.gz %s --- quiet" % (inst, debian_target.KERNEL_ARGS),
         "",
     ]
     return "\n".join(entry) + original
 
 
-def auto_grub_cfg(original, title):
+def auto_grub_cfg(original, title, inst="/install.amd"):
     body = [ln for ln in original.splitlines()
             if not re.match(r"^\s*set\s+(default|timeout)\s*=", ln)]
     entry = [
         "",
         "menuentry '%s' --id kiwi-auto {" % title,
         "    set background_color=black",
-        "    linux    /install.amd/vmlinuz vga=788 %s --- quiet" % debian_target.KERNEL_ARGS,
-        "    initrd   /install.amd/initrd.gz",
+        "    linux    %s/vmlinuz%s %s --- quiet" % (inst, " vga=788" if inst == "/install.amd" else "",
+                                                   debian_target.KERNEL_ARGS),
+        "    initrd   %s/initrd.gz" % inst,
         "}",
         "",
     ]
@@ -244,8 +248,9 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
 def _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
     title = "Install %s (kiwi-server, unattended: wipes %s)" % (host.hostname, host.cfg["disk"])
 
+    inst = INSTALL_DIR[host.cfg["debian"].get("arch") or "amd64"]
     initrd_gz = os.path.join(workdir, "initrd.gz")
-    _extract(tc, base_iso, "/install.amd/initrd.gz", initrd_gz)
+    _extract(tc, base_iso, inst + "/initrd.gz", initrd_gz)
     grub = os.path.join(workdir, "grub.cfg")
     _extract(tc, base_iso, "/boot/grub/grub.cfg", grub)
     isolinux = os.path.join(workdir, "isolinux.cfg")
@@ -263,12 +268,12 @@ def _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
     tc.run(["sh", "-c", "echo preseed.cfg | cpio -H newc -o -A -F initrd"], mounts=[workdir], cwd=workdir)
     tc.run(["gzip", "-9", "-f", initrd], mounts=[workdir])
 
-    util.write_text(grub, auto_grub_cfg(util.read_text(grub), title))
-    maps = {"/install.amd/initrd.gz": initrd_gz, "/boot/grub/grub.cfg": grub,
+    util.write_text(grub, auto_grub_cfg(util.read_text(grub), title, inst))
+    maps = {inst + "/initrd.gz": initrd_gz, "/boot/grub/grub.cfg": grub,
             "/preseed.cfg": preseed_path, "/kiwi-server": files_dir}
     if has_isolinux:
         util.write_text(isolinux, rewrite_isolinux_cfg(util.read_text(isolinux)))
-        util.write_text(txt, auto_txt_cfg(util.read_text(txt), title))
+        util.write_text(txt, auto_txt_cfg(util.read_text(txt), title, inst))
         maps["/isolinux/isolinux.cfg"] = isolinux
         maps["/isolinux/txt.cfg"] = txt
     if has_md5:

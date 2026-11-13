@@ -100,6 +100,7 @@ DEFAULTS = {
     },
     "debian": {
         "release": "trixie",
+        "arch": "amd64",         # arm64: the arm64 netinst (UEFI machines) or `adopt` on a board's own Debian
         "mirror": "deb.debian.org",
         "directory": "/debian",
         "proxy": "",
@@ -421,6 +422,8 @@ class Host:
         d = c["debian"]
         if d.get("partitioning") not in ("regular", "lvm", "crypto"):
             errs.append("debian.partitioning must be regular, lvm or crypto")
+        if d.get("arch") not in ("amd64", "arm64"):
+            errs.append("debian.arch must be amd64 or arm64")
         if (d.get("encrypt") or d.get("partitioning") == "crypto") and d.get("passphrase"):
             self.warnings.append("debian.passphrase is in the fleet file and on every ISO, and nothing replaces it: "
                                  "without it kiwi-server makes a one-time key and replaces it at the first apply")

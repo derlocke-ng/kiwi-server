@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
+from . import VERSION, adopt as adoptmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import coreos as coreos_t, debian as debian_t, ram as ram_t
@@ -1301,6 +1301,19 @@ def cmd_apply(args):
         raise KiwiError("failed: %s" % ", ".join(failed))
 
 
+def cmd_adopt(args):
+    """A machine that already runs Debian (a board's own image) becomes the host, then applies."""
+    fleet, roles, ms = load(args)
+    hosts = fleet.select([args.host])
+    if len(hosts) != 1:
+        raise KiwiError("which host? kiwi-server adopt <fleet> <host> --as user@address")
+    check(fleet, roles, ms, hosts)      # the fleet's mistakes before the board is touched
+    tgt = adoptmod.run(hosts[0], getattr(args, "as"), new_host_key=args.new_host_key)
+    util.say("%s: adopted; now its role" % hosts[0].name)
+    args.hosts, args.ssh, args.no_run = [hosts[0].name], tgt, False
+    cmd_apply(args)
+
+
 def cmd_watch(args):
     """Home pushes: a RAM master that booted waits blank until its role comes; this sends it,
     and keeps the fleet's copies of a running one fresh."""
@@ -2010,6 +2023,11 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s = sub("adopt", cmd_adopt); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--as", required=True, metavar="USER@ADDR",
+                   help="the board's own login (root or a sudo user, a password works), e.g. odroid@192.168.2.40")
+    s.add_argument("--new-host-key", action="store_true",
+                   help="the board was flashed again: forget the host key the fleet knows for that address")
     s = sub("watch", cmd_watch); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--once", action="store_true", help="one look, then exit (what the timer runs)")

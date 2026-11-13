@@ -56,6 +56,7 @@ Step by step: [docs/getting-started.md](docs/getting-started.md).
 | [Roles and modules](docs/roles.md) | master and node, presets, a public hub, the LAN cache, writing a role |
 | [The network](docs/network.md) | joining the mesh, DNS, the MTU, federation, [routers](docs/routers.md) |
 | [Machines](docs/machines.md) | targets, the output, first boot, updates, a master in RAM |
+| [Boards](docs/boards.md) | Odroid and other arm64 boards: `kiwi-server adopt` |
 | [Backups](docs/backups.md) | the fleet directory, each machine's data, restore |
 | [Security](docs/security.md) | the secret store, encrypted disks, unlock at boot, SSH |
 | [The desktop app](docs/gui.md) | Kiwi Server |

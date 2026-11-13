@@ -18,8 +18,9 @@ keep22=%(keep22)d
 conf=%(conf)s
 svc=$(systemctl is-active -q sshd.service 2>/dev/null && echo sshd || echo ssh)
 if [ "$port" = 22 ]; then
-    [ -f "$conf" ] || exit 0
+    [ -f "$conf" ] || exit 0          # never moved: the port in the target is a forward in front of 22
     rm -f "$conf"
+    echo moved-back
     if command -v semodule >/dev/null && semodule -l 2>/dev/null | grep -qx kiwi-ssh-port; then semodule -r kiwi-ssh-port; fi
 else
     if command -v getenforce >/dev/null && [ "$(getenforce)" != Disabled ]; then
@@ -50,7 +51,7 @@ systemctl reload "$svc"
 
 
 def _run(tgt, port, keep22):
-    remote.run(tgt, _SCRIPT % {"port": port, "keep22": 1 if keep22 else 0, "conf": DROP_IN})
+    return remote.run(tgt, _SCRIPT % {"port": port, "keep22": 1 if keep22 else 0, "conf": DROP_IN})
 
 
 def ensure(h, tgt):
@@ -60,8 +61,9 @@ def ensure(h, tgt):
     if port == 22:
         if remote.port_of(tgt) == 22:
             return tgt                  # nothing moved; a fleet on 22 pays no extra call
-        _run(tgt, 22, False)            # back to 22, over the port it is on now (apply --ssh ssh://…:PORT)
-        return remote.with_port(tgt, 22)
+        if b"moved-back" in (_run(tgt, 22, False) or b""):   # back to 22, over the port it is on now
+            return remote.with_port(tgt, 22)
+        return tgt                      # sshd was on 22 all along, behind a forwarded port
     if remote.port_of(tgt) == port:
         _run(tgt, port, False)          # there already: keeps the firewall and SELinux told
         return tgt

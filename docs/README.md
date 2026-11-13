@@ -15,6 +15,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Roles and modules](roles.md) | everyone | master and node, presets, a public hub, the LAN cache, writing a role |
 | [The network](network.md) | everyone | joining the mesh, DNS, the MTU, federation |
 | [Machines](machines.md) | everyone | targets, the output, first boot, updates, a master in RAM, running machines |
+| [Boards](boards.md) | everyone | an Odroid or other arm64 board with its own Debian or Armbian, `adopt` |
 | [Backups](backups.md) | everyone | the fleet directory, each machine's data, restore, prune |
 | [Security](security.md) | everyone | the secret store, the seed, encrypted disks and unlock at boot, SSH |
 | [The desktop app](gui.md) | everyone | Kiwi Server, the overview, a host's pages |

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.77.1 — the list says whose turn it is
+
+- `kiwi-server rotate <fleet>` names the admin logins of the services apart from the other
+  secrets that keep their value: an admin password is the owner's to change in the service
+  itself (it was only the first password, and may have been changed since).
+- kiwi-modules 0.32.1 and kiwi-stack 0.8.1: no change to what they do, both have a
+  `docs/` folder now.
+
 ## 2.77.0 — Nextcloud's database password changes with the seed
 
 kiwi-modules 0.32.0.

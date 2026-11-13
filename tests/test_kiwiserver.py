@@ -5863,7 +5863,10 @@ class TestRotate(Base):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "secrets", "seed.old")))
         self.assertEqual(config.Fleet.load(f.path).seed_from(), was)          # a late machine is still taken along
         self.assertIn("replaced 20", str(self.rotate.plan(f, (), self.ms)))
-        self.assertIn("kept as they are", str(self.rotate.plan(f, (), self.ms)))
+        rows = str(self.rotate.plan(f, (), self.ms))
+        self.assertIn("kept as they are", rows)
+        self.assertIn("Admin logins of the services", rows)          # the owner's to change, said so
+        self.assertIn("change the password in the service itself", rows)
 
     def test_a_database_password_is_changed_where_it_lives_before_its_files_follow(self):
         write(os.path.join(self.tmp, "secrets", "seed"), "S" * 32)

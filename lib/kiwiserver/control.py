@@ -61,6 +61,7 @@ class Control:
         self._identity = None                 # the key the password made, while the store is open
         self._saved = {}                      # name -> sha256 of the fleet file as it was last saved or opened
         self._age = {}                        # name -> sha256 of its encrypted file on disk, as this process left it
+        self._arming = threading.Lock()       # see arm_auto
         self._join = None                     # the join code that is out, if one is
         self._tokens = {}                     # token -> (controller, expires): who may sync
 
@@ -144,7 +145,12 @@ class Control:
         return None
 
     def arm_auto(self):
-        """After a login: make (or remove) what lets the ring open the store. Says what it did."""
+        """After a login: make (or remove) what lets the ring open the store. Says what it did.
+        One at a time: two logins in a row would write the same file."""
+        with self._arming:
+            return self._arm_auto()
+
+    def _arm_auto(self):
         if self.locked() or not self._identity:
             return None
         r = subprocess.run(list(self.kiwi) + ["control", "ring", self.fleet_path], capture_output=True, text=True,

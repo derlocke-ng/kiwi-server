@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.70.0 — a first run without hurdles
+
+Walked through as a newcomer, start to finish, and fixed what stood in the way:
+
+- **Start a new network** goes straight to the questions; it no longer asks where to save a
+  file first (the network goes into ~/kiwi).
+- The questions are in plain words, in the app and in `kiwi-server init`: Your network, The
+  hub, At home, Keys and passwords, with what each is for and suggestions that work.
+- A question with only one possible answer is not asked; the choices show what is selected.
+- The last page shows the recovery key with a Copy button and one sentence on what comes
+  next; the command output is folded away under Details.
+
 ## 2.69.0 — the control node unlocks by itself
 
 - `unlock: { control: <ring> }` on the control node: after a restart or a power cut it asks a

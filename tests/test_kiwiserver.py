@@ -4710,6 +4710,15 @@ class TestReach(Base):
         with mock.patch.object(remote, "_answers", lambda a, *p: True):
             self.assertEqual(remote.reach(self.host()), "core@a.kiwi")
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen")
+    def test_a_moved_ssh_port_is_found_by_the_record_of_the_address(self):
+        """ssh takes a key on record for the plain address on any port and adds no line
+        for the port: after sshd moved, the address is still one the fleet has met."""
+        self.assertFalse(remote._on_record("192.168.9.9", 41022))
+        self.on_record("192.168.9.9")
+        self.assertTrue(remote._on_record("192.168.9.9", 41022))
+        self.assertFalse(remote._on_record("192.168.9.8", 41022))
+
     def test_an_address_given_wins(self):
         self.assertEqual(remote.reach(self.host(), "root@1.2.3.4"), "root@1.2.3.4")
 

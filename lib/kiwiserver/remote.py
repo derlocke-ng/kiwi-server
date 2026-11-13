@@ -87,12 +87,16 @@ def _on_record(address, port=22):
     """Has this fleet met the machine at that address? ssh-keygen also reads hashed entries."""
     if not KNOWN_HOSTS or not os.path.isfile(KNOWN_HOSTS):
         return False
-    name = address if int(port) == 22 else "[%s]:%d" % (address, int(port))
-    try:
-        r = subprocess.run(["ssh-keygen", "-F", name, "-f", KNOWN_HOSTS], capture_output=True)
-    except FileNotFoundError:
-        return False
-    return r.returncode == 0 and bool(r.stdout.strip())
+    # as ssh does: on another port, a key on record for the address itself counts too
+    names = [address] if int(port) == 22 else ["[%s]:%d" % (address, int(port)), address]
+    for name in names:
+        try:
+            r = subprocess.run(["ssh-keygen", "-F", name, "-f", KNOWN_HOSTS], capture_output=True)
+        except FileNotFoundError:
+            return False
+        if r.returncode == 0 and r.stdout.strip():
+            return True
+    return False
 
 
 def _answers(address, port=22, timeout=2):

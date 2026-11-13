@@ -1747,6 +1747,9 @@ def _watch_once(args):
         except KiwiError as e:
             util.warn("%s: %s" % (h.name, e))
             continue
+        # its key is the fleet's own: on record for its addresses before the first look,
+        # also on a computer that never built its image
+        ram_t.pin(h, ram_t.host_key(h)[1], fleet.resolve_path("secrets/known_hosts"))
         tgt = remote.reach(h, args.ssh)
         st = ram_t.state(tgt)
         if st == "blank":

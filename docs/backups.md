@@ -1,5 +1,9 @@
 # Backups
 
+In the app: menu, **Back up the network now**, **Save a copy of the network…** and
+**Restore a network from a copy…**. On the control page: **Backups**, with
+**Save now** per machine. The commands below do the same.
+
 Two things need a backup: the fleet directory on your computer, and each
 machine's own data.
 

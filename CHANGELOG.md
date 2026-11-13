@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.66.0 — copies, restoring, another computer
+
+- App: **Save a copy of the network…** (one encrypted file, a passphrase typed twice),
+  **Restore a network from a copy…** (also on the welcome page: choose the file, type the
+  passphrase, it opens), and **Use another computer…**, which says which of the two ways
+  fits: a link from the control page, or a copy.
+- Control page, Backups: **Save now** on every machine that is backed up.
+
 ## 2.65.0 — a control node from one dialog
 
 - **A home server that looks after it…** (menu, and What next): pick the home server, type a

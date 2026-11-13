@@ -1460,6 +1460,124 @@ class SetupWizard(Adw.Dialog):
         return False
 
 
+def with_passphrase(cli, args, passphrase, timeout=600):
+    """Run a command that takes --passphrase-file: the passphrase goes through a file in RAM
+    that is gone afterwards. Returns (rc, output)."""
+    tmp = os.path.join(GLib.get_user_runtime_dir(), "kiwi-pass-%d-%d" % (os.getpid(), threading.get_ident()))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(passphrase + "\n")
+    try:
+        rc, out, err = run_cli(cli, list(args) + ["--passphrase-file", tmp], timeout=timeout)
+    finally:
+        os.remove(tmp)
+    return rc, (out + err)
+
+
+class CopyDialog(Adw.Dialog):
+    """Save a copy of the network (its settings and keys) as one encrypted file, or bring one back."""
+
+    def __init__(self, win, restore=False):
+        super().__init__(title="Restore a network from a copy" if restore else "Save a copy of the network",
+                         content_width=520)
+        self.win, self.restore, self.file = win, restore, None
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label=(
+            "Choose the copy (a file named fleet-….tar.enc) and type the passphrase it was saved with."
+            if restore else
+            "One encrypted file with the network's settings and keys: for a USB stick in a drawer, or to move to "
+            "another computer. It is not a backup of your files and photos; the machines save those themselves."),
+            wrap=True, xalign=0))
+        g = Adw.PreferencesGroup()
+        self.where = Adw.ActionRow(title="The copy" if restore else "Folder", subtitle="Choose…", activatable=True)
+        self.where.add_suffix(Gtk.Image(icon_name="folder-open-symbolic"))
+        self.where.connect("activated", lambda *_: self.choose())
+        g.add(self.where)
+        self.pw1 = Adw.PasswordEntryRow(title="Passphrase")
+        self.pw1.connect("changed", lambda *_: self.check())
+        g.add(self.pw1)
+        self.pw2 = None
+        if not restore:
+            self.pw2 = Adw.PasswordEntryRow(title="The passphrase again")
+            self.pw2.connect("changed", lambda *_: self.check())
+            g.add(self.pw2)
+        box.append(g)
+        if not restore:
+            box.append(Gtk.Label(label="Without the passphrase the copy cannot be opened by anyone, you included.",
+                                 wrap=True, xalign=0, css_classes=["dim-label", "caption"]))
+        self.note = Gtk.Label(wrap=True, xalign=0, visible=False, selectable=True)
+        box.append(self.note)
+        self.go = Gtk.Button(label="Restore it" if restore else "Save the copy", css_classes=["suggested-action", "pill"],
+                             halign=Gtk.Align.CENTER, sensitive=False)
+        self.go.connect("clicked", lambda *_: self.run())
+        box.append(self.go)
+        self.set_child(box)
+
+    def choose(self):
+        dlg = Gtk.FileDialog(title="The copy" if self.restore else "Where to save the copy")
+
+        def chosen(d, res):
+            try:
+                f = d.open_finish(res) if self.restore else d.select_folder_finish(res)
+            except GLib.Error:
+                return
+            self.file = f.get_path()
+            self.where.set_subtitle(tilde(self.file))
+            self.check()
+        if self.restore:
+            dlg.open(self.win, None, chosen)
+        else:
+            dlg.select_folder(self.win, None, chosen)
+
+    def check(self):
+        a = self.pw1.get_text()
+        same = self.pw2 is None or a == self.pw2.get_text()
+        self.go.set_sensitive(bool(self.file) and len(a) >= (1 if self.restore else 8) and same)
+
+    def run(self):
+        if getattr(self, "finished", False):
+            self.close()
+            return
+        self.go.set_sensitive(False)
+        self.go.set_label("Working…")
+        pw, win = self.pw1.get_text(), self.win
+        if self.restore:
+            into, n = os.path.expanduser("~/kiwi"), 2
+            while os.path.exists(into) and os.listdir(into):
+                into, n = os.path.expanduser("~/kiwi-%d" % n), n + 1
+            args = ["restore", self.file, "--into", into]
+        else:
+            into, args = self.file, ["backup", win.doc.path, "--local", self.file]
+
+        def work():
+            rc, out = with_passphrase(win.cli, args, pw)
+            GLib.idle_add(self.done, rc, out, into)
+        threading.Thread(target=work, daemon=True).start()
+
+    def done(self, rc, out, into):
+        lines = [ln.replace(":: ", "").replace("error: ", "") for ln in out.strip().splitlines() if ln.strip()]
+        if rc != 0:
+            self.note.set_label((lines or ["It did not work."])[-1])
+            self.note.set_css_classes(["error"])
+            self.note.set_visible(True)
+            self.go.set_label("Restore it" if self.restore else "Save the copy")
+            self.go.set_sensitive(True)
+            return False
+        if self.restore:
+            self.close()
+            self.win.open_path(os.path.join(into, "fleet.yaml"))
+            self.win.toast("Restored into %s" % tilde(into))
+            return False
+        self.note.set_label("Saved in %s. Keep the file and the passphrase in different places." % tilde(into))
+        self.note.set_css_classes([])
+        self.note.set_visible(True)
+        self.finished = True                 # the button closes now
+        self.go.set_label("Done")
+        self.go.set_sensitive(True)
+        return False
+
+
 class ControlSetupDialog(Adw.Dialog):
     """A home server that looks after the network when this computer is off: pick it, choose
     the password of its page, and every step runs by itself (what docs/control.md does by hand)."""
@@ -1701,6 +1819,19 @@ class DeviceDialog(Adw.Dialog):
         dlg.save(self.win, None, chosen)
 
 
+def in_plain_words(text):
+    """What a problem line means and what to do, before the technical words."""
+    low = text.lower()
+    for key, plain in (
+            ("unreachable", "It does not answer. Is it switched on and online, and is this computer on your VPN?"),
+            ("disk is locked", "Its disk is encrypted and waits to be unlocked after a restart."),
+            ("waiting for a reboot", "It installed updates and restarts by itself in its update window. Nothing to do."),
+            ("not running", "A service on it stopped. Apply usually brings it back.")):
+        if key in low:
+            return "%s  (%s)" % (plain, text)
+    return text
+
+
 class JoinDialog(Adw.Dialog):
     """Join a fleet that exists: paste the invite link from its control page. One field."""
 
@@ -1806,6 +1937,9 @@ class Window(Adw.ApplicationWindow):
                          ("join", lambda: JoinDialog(self).present(self)), ("sync", lambda: self.sync(True)),
                          ("device", lambda: self.doc.path and DeviceDialog(self).present(self)),
                          ("control-setup", lambda: self.doc.path and ControlSetupDialog(self).present(self)),
+                         ("copy", lambda: self.doc.path and CopyDialog(self).present(self)),
+                         ("restore", lambda: CopyDialog(self, restore=True).present(self)),
+                         ("move", self.move_dialog),
                          ("backup-now", lambda: self.doc.path and self.spawn(["backup", self.doc.path],
                                                                                "Saving the network…")),
                          ("render-all", lambda: self.render(None)), ("build-all", lambda: self.confirm_build(None)),
@@ -1830,11 +1964,14 @@ class Window(Adw.ApplicationWindow):
         section.append("Open a network from a file…", "win.open")
         section.append("Start a new network…", "win.new")
         section.append("Join a network with a link…", "win.join")
+        section.append("Restore a network from a copy…", "win.restore")
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
         section.append("Add a phone or laptop…", "win.device")
         section.append("Back up the network now", "win.backup-now")
+        section.append("Save a copy of the network…", "win.copy")
+        section.append("Use another computer…", "win.move")
         section.append("A home server that looks after it…", "win.control-setup")
         section.append("Sync with the control node", "win.sync")
         section.append("Render every host", "win.render-all")
@@ -1891,7 +2028,9 @@ class Window(Adw.ApplicationWindow):
         b2.connect("clicked", lambda *_: self.new_dialog())
         b3 = Gtk.Button(label="Join one with an invite link")
         b3.connect("clicked", lambda *_: JoinDialog(self).present(self))
-        for b in (b2, b3, b1):
+        b4 = Gtk.Button(label="Restore one from a copy")
+        b4.connect("clicked", lambda *_: CopyDialog(self, restore=True).present(self))
+        for b in (b2, b3, b1, b4):
             b.add_css_class("pill")
             eb.append(b)
         self.empty.set_child(eb)
@@ -2044,6 +2183,29 @@ class Window(Adw.ApplicationWindow):
             item = Gio.MenuItem.new(tilde(p), None)
             item.set_action_and_target_value("win.open-recent", GLib.Variant.new_string(p))
             self.recent_menu.append_item(item)
+
+    def move_dialog(self):
+        """How to manage the network from another computer: two ways, said plainly."""
+        if not self.doc.path:
+            return
+        control = self.control_host()
+        dlg = Adw.AlertDialog(heading="Use another computer")
+        if control:
+            name = (self.status.get(control) or {}).get("hostname") or control
+            dlg.set_body("Your network has a control page. On it: Computers, Add a computer. Paste the link it shows "
+                         "into Kiwi Server on the other computer (Join a network with a link). Both computers then "
+                         "stay in step by themselves.")
+            dlg.add_response("page", "Open the control page")
+            dlg.connect("response", lambda _d, r: r == "page" and Gtk.UriLauncher.new(
+                "https://control.%s/controllers" % name).launch(self, None, None))
+        else:
+            dlg.set_body("Save a copy of the network here, carry the file to the other computer, and there choose "
+                         "Restore a network from a copy in Kiwi Server. With a home server that looks after the "
+                         "network this gets easier: computers then join with a link and stay in step.")
+            dlg.add_response("copy", "Save a copy…")
+            dlg.connect("response", lambda _d, r: r == "copy" and CopyDialog(self).present(self))
+        dlg.add_response("close", "Close")
+        dlg.present(self)
 
     def joined(self):
         """Does this fleet belong to a control node (it joined one, or pushed to one)?"""
@@ -2496,6 +2658,7 @@ class Window(Adw.ApplicationWindow):
     def attention_group(self, items, with_host):
         g = Adw.PreferencesGroup(title="Needs attention")
         for host, level, text in items:
+            text = in_plain_words(text)
             row = plain_row(host if with_host else text, text if with_host else "")
             row.add_prefix(dot(level))
             if with_host:

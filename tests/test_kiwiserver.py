@@ -4925,6 +4925,9 @@ class TestControl(StoreBase):
         self.assertEqual(c.audit_tail(1)[0]["what"], "apply")                 # a change says who
         self.assertEqual(c.job(c.start("plan", ["bad"], wait=True))["state"], "failed")
         self.assertIn("--once", c.argv("watch"))
+        self.assertEqual(c.argv("save", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--now"])
+        with self.assertRaises(KiwiError):
+            c.argv("save", [])
         with self.assertRaises(KiwiError):
             c.start("apply", ["fig; rm -rf /"])
         with self.assertRaises(KiwiError):

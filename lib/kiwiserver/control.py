@@ -35,6 +35,7 @@ MIN_PASSWORD = 12
 ACTIONS = {
     "status": ("status", True), "plan": ("plan", True), "apply": ("apply", True),
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
+    "save": ("backups", True),
 }
 CHANGES = {"apply", "backup"}         # these change machines or the fleet: the audit log says who
 
@@ -377,6 +378,10 @@ class Control:
     def argv(self, action, hosts=()):
         if action not in ACTIONS:
             raise KiwiError("unknown action %r" % action)
+        if action == "save":                # one machine's data, to its backup machines, now
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--now"]
         cmd, takes_hosts = ACTIONS[action]
         argv = list(self.kiwi) + [cmd, self.fleet_path]
         if takes_hosts:
@@ -429,7 +434,7 @@ class Control:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):
             pass
-        if meta["action"] in ("status", "apply"):
+        if meta["action"] in ("status", "apply", "save"):
             self.look()                         # what the pages show is what is true now
 
     def _write(self, meta):

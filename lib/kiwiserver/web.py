@@ -192,6 +192,8 @@ passwords), every night, and the <strong>network's own settings and keys</strong
 {% if b and b.last %}<span class="state {{ 'ok' if b.age < 129600 else 'bad' }}">saved {{ age(b.age) }} ago</span>
 {% elif "backup" in m.modules %}<span class="state warn">no backup seen yet</span>
 {% else %}<span class="muted">not backed up</span>{% endif %}</div>
+{% if "backup" in m.modules %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="save">
+<input type="hidden" name="host" value="{{ m.name }}"><button>Save now</button></form>{% endif %}
 {% if b and b.copies %}<p class="muted">Kept on: {% for c in b.copies %}{{ c.server }}{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
 {% if "backup" not in m.modules %}<p class="muted small">Nothing on this machine is set to be saved. Machines with your data should have the <em>backup</em> part.</p>{% endif %}
 {% if m.facts.backup_store %}<p class="muted">It keeps the backups of: {% for r in m.facts.backup_store.repos %}{{ r.client }} ({{ r.snapshots }} versions){{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
@@ -270,7 +272,7 @@ KIND = {"master": "Hub (master)", "node": "Home server (node)", "node-gw": "Home
 WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "not reachable", "unknown": "not checked yet"}
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
-        "backup": "Saving the network", "watch": "Looking for restarted hubs"}
+        "backup": "Saving the network", "watch": "Looking for restarted hubs", "save": "Saving the data of"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",
@@ -449,12 +451,12 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":
             say["ok"] = "Done. Nothing was changed; the lines below say what Apply would do."
-        back = "/hosts/" + j["hosts"][0] if j["hosts"] else "/"
+        back = "/backups" if j["action"] in ("save", "backup") else "/hosts/" + j["hosts"][0] if j["hosts"] else "/"
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
 
     @app.get("/api/jobs/{jid}/log")

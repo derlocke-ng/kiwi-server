@@ -96,6 +96,14 @@ def encrypt_bytes(recipients_file, data):
     return r.stdout
 
 
+def encrypt_to(public, data):
+    """Data for one public key."""
+    r = subprocess.run([_tool("age"), "-e", "-r", public], input=data, capture_output=True)
+    if r.returncode != 0:
+        raise KiwiError("age could not encrypt: %s" % r.stderr.decode(errors="replace").strip()[:200])
+    return r.stdout
+
+
 def decrypt_file(identity, path):
     r = subprocess.run([_tool("age"), "-d", "-i", "-", path], input=identity.encode() + b"\n", capture_output=True)
     if r.returncode != 0:

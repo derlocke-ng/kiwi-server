@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.61.0 — controllers join through the control node
+
+- The control page has **controllers**: the computers that can open the fleet, a join code
+  for a new one (fifteen minutes, once, void after three wrong guesses), and Accept, Deny,
+  Remove. Accepting or removing re-encrypts the store and the fleet file for the keys there
+  are.
+- `kiwi-server control join <fleet> --url https://control.<host>`: the computer makes its own
+  key (keyring, or `--identity FILE`), checks that the code is from that fleet (the code
+  names its CA), and sends the public half.
+- A joined computer syncs through the control node's API, with no shell on it: it proves its
+  key by reading a token encrypted to it, then `control pull` and `push` work by revision
+  and refuse to overwrite another controller's change.
+- design/controllers.md: step 1 of 4. Every controller is fully trusted for now; rotation
+  and scopes follow.
+
 ## 2.60.1 — the control page takes a browser's login
 
 - No browser could log in to the control page: under the reverse proxy's no-referrer policy

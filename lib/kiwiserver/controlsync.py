@@ -9,11 +9,17 @@ fleet file names every machine and may hold passwords. Nothing rests on the node
 clear; it opens all of it into RAM with its password (control.py). Not output/, not the
 node's own control/ files.
 """
+import base64
 import hashlib
+import http.client
 import io
+import json
 import os
 import shlex
+import socket
+import ssl
 import tarfile
+import urllib.parse
 
 from . import remote, store as storemod, util
 from .util import KiwiError
@@ -113,13 +119,7 @@ def push(fleet, host, tgt, force=False):
     if there and there != stamp and not force:
         raise KiwiError("the control node's copy changed since the last sync (an apply or enroll there): "
                         "kiwi-server control pull first, or push --force to overwrite it")
-    blobs = {}
-    for name in PLAIN:
-        path = _local(fleet_dir, fleet_name, name)
-        if os.path.isfile(path):
-            blobs[name + ".age"] = storemod.encrypt_bytes(st.recipients, util.read_bytes(path))
-    for name in AS_IS:
-        blobs[name] = util.read_bytes(os.path.join(fleet_dir, name))
+    blobs = _blobs(fleet_dir, fleet_name, st)
     d = blobs_digest(blobs)
     script = ("set -e; d=%(d)s; install -d -m 0700 \"$d\" \"$d/control\"; rm -rf \"$d/.incoming\"; "
               "install -d -m 0700 \"$d/.incoming\"; tar -xz -C \"$d/.incoming\"; cd \"$d\"; "
@@ -157,7 +157,171 @@ def pull(fleet, host, tgt, force=False, identity=None):
         for m in tar.getmembers():
             if m.isfile() and m.name in ON_NODE:
                 got[m.name] = tar.extractfile(m).read()
+    n = _take(fleet_dir, fleet_name, st, got, key)
+    remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
+    _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), there)
+    return n
+
+
+# ---- through the control node's API (design/controllers.md) --------------------------------
+# A controller needs no shell on the control node: it proves it holds its key by opening a
+# challenge encrypted to it, and then fetches or replaces the encrypted fleet by revision.
+REMOTE = "control/remote"       # {"url", "name", "store", "address"?} of the control node this copy syncs with
+CA = "control/ca.pem"
+
+
+def node_digest(fleet_dir):
+    """The revision of the encrypted fleet in a directory: what REMOTE_DIGEST says there."""
+    h = hashlib.sha256()
+    found = False
+    for name in ON_NODE:
+        path = os.path.join(fleet_dir, name)
+        if os.path.isfile(path):
+            found = True
+            h.update(("%s  %s\n" % (util.sha256_file(path), name)).encode())
+    return h.hexdigest() if found and os.path.isfile(os.path.join(fleet_dir, "secrets.age")) else ""
+
+
+class _At(http.client.HTTPSConnection):
+    """Connect to an address, check the certificate for the name."""
+
+    def __init__(self, name, address, port, ctx):
+        super().__init__(name, port, timeout=60, context=ctx)
+        self._at, self._ctx = address, ctx
+
+    def connect(self):
+        self.sock = self._ctx.wrap_socket(socket.create_connection((self._at, self.port), self.timeout),
+                                          server_hostname=self.host)
+
+
+class Api:
+    """HTTPS to the control node, its certificate checked against the fleet's CA. `address`:
+    where to connect when the name does not resolve here (the name still has to match)."""
+
+    def __init__(self, url, ca_file=None, address=None, verify=True):
+        self.u = urllib.parse.urlsplit(url.rstrip("/"))
+        if self.u.scheme not in ("https", "http"):
+            raise KiwiError("the control node's address is a URL: https://control.<host>.<domain>")
+        self.ca_file, self.address, self.verify = ca_file, address, verify
+        self.token = None
+
+    def _connection(self):
+        host, port = self.u.hostname, self.u.port
+        if self.u.scheme == "http":
+            return http.client.HTTPConnection(self.address or host, port or 80, timeout=60)
+        ctx = ssl.create_default_context(cafile=self.ca_file) if self.verify else ssl._create_unverified_context()
+        if self.address:
+            return _At(host, self.address, port or 443, ctx)
+        return http.client.HTTPSConnection(host, port or 443, timeout=60, context=ctx)
+
+    def call(self, method, path, body=None):
+        """(status, parsed JSON or {})."""
+        headers = {"Host": self.u.netloc, "Accept": "application/json"}
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
+        conn = self._connection()
+        try:
+            conn.request(method, (self.u.path or "") + path, body=data, headers=headers)
+            r = conn.getresponse()
+            raw = r.read()
+        except (OSError, ssl.SSLError) as e:
+            raise KiwiError("the control node at %s does not answer: %s" % (self.u.netloc, e))
+        finally:
+            conn.close()
+        try:
+            return r.status, json.loads(raw or b"{}")
+        except ValueError:
+            return r.status, {}
+
+    def login(self, name, key, scratch_dir):
+        """Open the node's challenge with this controller's key; the token in it is the pass."""
+        code, out = self.call("POST", "/api/controller/hello", {"name": name})
+        if code != 200 or "challenge" not in out:
+            raise KiwiError("the control node does not know a controller called %s (not accepted yet, or removed)" % name)
+        tmp = os.path.join(scratch_dir, ".challenge.age")
+        os.makedirs(scratch_dir, mode=0o700, exist_ok=True)
+        try:
+            util.write_bytes(tmp, base64.b64decode(out["challenge"]), 0o600)
+            self.token = storemod.decrypt_file(key, tmp).decode().strip()
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+def remote_of(fleet_dir):
+    p = os.path.join(fleet_dir, REMOTE)
+    return json.loads(util.read_text(p)) if os.path.isfile(p) else None
+
+
+def api_for(fleet_dir, key=None):
+    """(api logged in as this computer, its key) for the control node this copy belongs to."""
+    r = remote_of(fleet_dir)
+    if not r:
+        raise KiwiError("this fleet directory is joined to no control node: kiwi-server control join")
+    key = key or storemod.keyring_get(r["store"])
+    if not key:
+        raise KiwiError("this computer's key for the fleet is not in the keyring: --identity FILE")
+    ca = os.path.join(fleet_dir, CA)
+    api = Api(r["url"], ca if os.path.isfile(ca) else None, r.get("address"))
+    api.login(r["name"], key, os.path.join(fleet_dir, "control"))
+    return api, key
+
+
+def join(fleet_dir, url, name, code, address=None, key_file=None):
+    """Ask the control node to make this computer a controller. Makes its key (keyring, or
+    key_file), learns the fleet's CA and checks it against the code, sends the public key."""
+    code = (code or "").strip()
+    if "." not in code:
+        raise KiwiError("that is not a join code (the control page shows one: Controllers, Add)")
+    first = Api(url, address=address, verify=False)     # who this is gets checked next, by the code
+    status, out = first.call("GET", "/api/ca")
+    if status != 200 or not out.get("ca") or not out.get("store"):
+        raise KiwiError("%s is not a control node, or has no CA to show yet" % url)
+    if hashlib.sha256(out["ca"].encode()).hexdigest()[:8] != code.rsplit(".", 1)[1]:
+        raise KiwiError("the fleet at %s is not the one this code is from: nothing was sent" % url)
+    os.makedirs(os.path.join(fleet_dir, "control"), mode=0o700, exist_ok=True)
+    util.write_text(os.path.join(fleet_dir, CA), out["ca"], 0o644)
+    if key_file and os.path.isfile(key_file):
+        raise KiwiError("%s exists: a key file is written once" % key_file)
+    if not key_file and storemod.keyring_get(out["store"]):
+        raise KiwiError("this computer's keyring already holds a key for this fleet")
+    secret, public = storemod.keygen()
+    if key_file:
+        util.write_text(key_file, secret + "\n", 0o600)
+    elif not storemod.keyring_put(out["store"], secret):
+        raise KiwiError("no keyring took the key (secret-tool): name a file for it with --identity FILE, "
+                        "on a disk that is encrypted")
+    api = Api(url, os.path.join(fleet_dir, CA), address)
+    status, _out = api.call("POST", "/api/join", {"code": code, "name": name, "key": public})
+    if status not in (200, 202):
+        raise KiwiError("the control node did not take the request (the code is used, wrong or older than "
+                        "fifteen minutes, or the name %s is taken)" % name)
+    remote = {"url": url.rstrip("/"), "name": name, "store": out["store"]}
+    if address:
+        remote["address"] = address
+    util.write_text(os.path.join(fleet_dir, REMOTE), json.dumps(remote) + "\n", 0o600)
+    return public
+
+
+def _blobs(fleet_dir, fleet_name, st):
+    blobs = {}
+    for name in PLAIN:
+        path = _local(fleet_dir, fleet_name, name)
+        if os.path.isfile(path):
+            blobs[name + ".age"] = storemod.encrypt_bytes(st.recipients, util.read_bytes(path))
+    for name in AS_IS:
+        blobs[name] = util.read_bytes(os.path.join(fleet_dir, name))
+    return blobs
+
+
+def _take(fleet_dir, fleet_name, st, got, key):
+    """What came from the node, opened with this computer's key and put in place."""
     tmp = os.path.join(fleet_dir, "control", ".pull.age")
+    os.makedirs(os.path.dirname(tmp), mode=0o700, exist_ok=True)
     plain = {}
     try:                    # everything is opened before anything here is replaced
         for name in PLAIN:
@@ -167,13 +331,54 @@ def pull(fleet, host, tgt, force=False, identity=None):
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+    was_open = st.is_open()
     for name, content in list(plain.items()) + [(n, got[n]) for n in AS_IS if n in got]:
         dest = _local(fleet_dir, fleet_name, name)
         os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
         util.write_bytes(dest + ".tmp", content, 0o644 if name == "secrets.recipients" else 0o600)
         os.replace(dest + ".tmp", dest)
-    if st.is_open():
-        st.unlock(key)      # the open tree was the old store's (saved above, so nothing is lost)
-    remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
-    _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), there)
+    if was_open or not os.path.lexists(st.link):
+        st.unlock(key)      # the open tree was the old store's (saved before, so nothing is lost)
     return len(plain) + len([n for n in AS_IS if n in got])
+
+
+def push_api(fleet_dir, fleet_name, force=False, key=None):
+    st = _store(fleet_dir)
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("GET", "/api/fleet/revision")
+    if status != 200:
+        raise KiwiError("the control node refused (%d)" % status)
+    there = out.get("revision") or ""
+    _here, then = _stamp(fleet_dir)
+    if there and there != then and not force:
+        raise KiwiError("the control node's copy changed since this computer last synced (another controller, "
+                        "or an apply there): kiwi-server control pull first, or push --force to overwrite it")
+    blobs = _blobs(fleet_dir, fleet_name, st)
+    status, out = api.call("PUT", "/api/fleet", {"base": there, "files": {
+        n: base64.b64encode(b).decode() for n, b in blobs.items()}})
+    if status == 409:
+        raise KiwiError("the control node's copy changed just now: kiwi-server control pull first")
+    if status != 200:
+        raise KiwiError("the control node did not take the push (%d)" % status)
+    _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
+    return len(blobs)
+
+
+def pull_api(fleet_dir, fleet_name, force=False, key=None):
+    st = storemod.Store(fleet_dir)
+    here, then = _stamp(fleet_dir)
+    if st.exists():
+        st.sync()
+        if here and here_digest(fleet_dir, fleet_name) != here and not force:
+            raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
+                            "or pull --force to overwrite it")
+    api, key = api_for(fleet_dir, key)
+    status, out = api.call("GET", "/api/fleet")
+    if status != 200 or not out.get("files"):
+        raise KiwiError("the control node holds no fleet, or refused (%d)" % status)
+    if out["revision"] == then and st.exists():
+        return 0
+    got = {n: base64.b64decode(b) for n, b in out["files"].items() if n in ON_NODE}
+    n = _take(fleet_dir, fleet_name, st, got, key)
+    _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
+    return n

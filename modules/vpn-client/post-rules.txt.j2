@@ -7,7 +7,8 @@
 # a smaller MSS.
 iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss {{ wg_mtu | int - 40 }}
 {% endif %}
-{% set dnat = enable_vpn_dnat or extra_dnat_rules or module_rules %}
+{% set mesh_ssh_on = mesh_ssh and node_type != 'master' %}
+{% set dnat = enable_vpn_dnat or extra_dnat_rules or module_rules or mesh_ssh_on %}
 # forwarding (gluetun's policy is DROP): no hairpin on eth0; replies to what went out;
 # what the DNAT rules below redirect; the docker network out through the tunnel.
 iptables -A FORWARD -i eth0 -o eth0 -j REJECT
@@ -24,6 +25,10 @@ iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
 # mesh access: traffic for this node's mesh address on 80/443 goes to the reverse proxy
 iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p tcp --dport 443 -j DNAT --to-destination {{ proxy_ip }}:443
 iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p tcp --dport 80 -j DNAT --to-destination {{ proxy_ip }}:80
+{% endif %}
+{% if mesh_ssh_on %}
+# mesh SSH: port 22 of the mesh address to the machine's sshd (the docker gateway is the host)
+iptables -t nat -A PREROUTING -d {{ vpn_ip }} -p tcp --dport 22 -j DNAT --to-destination {{ docker_gateway }}:{{ ssh_port }}
 {% endif %}
 {% for r in extra_dnat_rules %}
 {% set portproto = r.split(':')[0] %}{% set dest = r.split(':', 1)[1] %}

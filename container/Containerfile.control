@@ -1,0 +1,24 @@
+# The control module's image (design/control-plane.md): kiwi-server with its web pages, the
+# ISO tools and what it calls (ssh, age, openssl). The fleet directory is mounted at /fleet.
+# Built for amd64 and arm64 by .github/workflows/control-image.yml.
+FROM registry.fedoraproject.org/fedora:44
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+        python3 python3-pyyaml python3-jinja2 python3-fastapi python3-uvicorn python3-python-multipart \
+        openssh-clients age openssl curl qrencode \
+        butane coreos-installer xorriso cpio gzip xz e2fsprogs util-linux \
+    && dnf clean all
+
+COPY bin /opt/kiwi-server/bin
+COPY lib /opt/kiwi-server/lib
+COPY roles /opt/kiwi-server/roles
+COPY modules /opt/kiwi-server/modules
+COPY data /opt/kiwi-server/data
+COPY kiwi.manifest /opt/kiwi-server/kiwi.manifest
+ENV KIWI_SERVER_HOME=/opt/kiwi-server PYTHONPATH=/opt/kiwi-server/lib PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/opt/kiwi-server/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+LABEL org.opencontainers.image.source=https://github.com/derlocke-ng/kiwi-server
+WORKDIR /fleet
+EXPOSE 8740
+ENTRYPOINT ["python3", "-m", "kiwiserver"]
+CMD ["serve", "/fleet/fleet.yaml", "--listen", "0.0.0.0:8740"]

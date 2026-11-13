@@ -1,0 +1,48 @@
+# The control module's image (container/Containerfile.control): kiwi-server with its web
+# pages. Pushed to GHCR as ghcr.io/<owner>/kiwi-server-control:<version> and :<major> when
+# main changes; a pull request only builds it (amd64).
+name: control image
+
+on:
+  push:
+    branches: [main]
+    paths: ['lib/**', 'roles/**', 'modules/**', 'bin/**', 'data/**', 'kiwi.manifest',
+            'container/Containerfile.control', '.github/workflows/control-image.yml']
+  pull_request:
+    paths: ['lib/kiwiserver/web.py', 'lib/kiwiserver/control.py', 'container/Containerfile.control',
+            '.github/workflows/control-image.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          v=$(sed -n 's/^VERSION=//p' kiwi.manifest)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "major=${v%%.*}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: container/Containerfile.control
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kiwi-server-control:${{ steps.v.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/kiwi-server-control:${{ steps.v.outputs.major }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

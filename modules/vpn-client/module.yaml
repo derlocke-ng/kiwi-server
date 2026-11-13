@@ -108,6 +108,16 @@ settings:
     label: Extra DNAT rules
     help: "port/proto:destination[:port] — forwards mesh traffic for the node's mesh address, e.g. 2224/tcp:172.128.0.251:22; a range as 27000-27100/udp:172.128.0.200 (the ports stay as they are). The reverse proxy's 80/443 are automatic."
     default: []
+  - key: mesh_ssh
+    type: bool
+    label: SSH over the mesh
+    help: "On a node: port 22 of its mesh address goes to the machine's sshd, so the control node and admin devices reach it from anywhere in the VPN, also when its LAN address changes. Keys only, as everywhere. Not on a master (its sshd is on the host)."
+    default: true
+  - key: ssh_port
+    type: int
+    label: The host's SSH port
+    help: "Where mesh SSH ends on the machine; follows admin.ssh_port."
+    default: 22
   - key: mss_clamp
     type: bool
     label: Clamp TCP MSS to the tunnel

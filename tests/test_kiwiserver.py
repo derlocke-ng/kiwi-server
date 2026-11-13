@@ -19,6 +19,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import types
 import unittest
 import urllib.parse
@@ -32,7 +33,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import adopt as adoptmod, facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
+from kiwiserver import adopt as adoptmod, control as controlmod, controlsync, facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
 from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -786,7 +787,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 22)
+        self.assertEqual(len(ms.names()), 23)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -857,7 +858,7 @@ class TestModules(Base):
         with self.assertRaises(KiwiError):
             modmod.Renderer(self.ms).render(spec)
         env = compose["services"]["kn-vpn-client"]["environment"]
-        self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443", env)
+        self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443,22", env)
         self.assertNotIn("WIREGUARD_PRIVATE_KEY=", "\n".join(env))
         self.assertIn("/home/user/docker/kn-vpn-client/wg0.conf:/gluetun/wireguard/wg0.conf:z",
                       compose["services"]["kn-vpn-client"]["volumes"])
@@ -975,7 +976,7 @@ class TestModules(Base):
         self.assertIn("-p udp --dport 27000:27100 -j DNAT --to-destination 172.128.0.200\n", rules)
         self.assertIn("-p tcp --dport 2224 -j DNAT --to-destination 172.128.0.251:22\n", rules)
         env = b.compose["services"]["kn-vpn-client"]["environment"]
-        self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443,2224", env)      # gluetun takes single ports only
+        self.assertIn("FIREWALL_VPN_INPUT_PORTS=80,443,22,2224", env)      # gluetun takes single ports only
 
     def test_secrets_stay_out_of_the_unit_files(self):
         host, role, spec = self.spec("n", role="node", **{"node": self.node_gw(preset="gateway")})
@@ -3598,8 +3599,8 @@ class TestManage(Base):
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
-@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
-class TestStore(Base):
+class StoreBase(Base):
+    """A fleet whose secrets can become a store: a fake keyring, its own runtime directory."""
     def setUp(self):
         super().setUp()
         self.run_dir, self.keyring, fakebin = [os.path.join(self.tmp, d) for d in ("run", "keyring", "bin")]
@@ -3640,6 +3641,9 @@ class TestStore(Base):
         self.assertEqual(rc, 0, err)
         return re.search(r"AGE-SECRET-KEY-1\S+", out).group(0)
 
+
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestStore(StoreBase):
     def read_secret(self, *path):
         with open(os.path.join(self.secrets, *path)) as fh:
             return fh.read()
@@ -4551,7 +4555,7 @@ class TestCli(Base):
         master = [r for r in data["roles"] if r["name"] == "master"][0]
         self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "fail2ban"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 22)
+        self.assertEqual(len(json.loads(out)["modules"]), 23)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -4844,6 +4848,216 @@ class TestCli(Base):
         data = json.loads(out)
         self.assertTrue(data["ok"], data)
         self.assertEqual(data["errors"], [])
+
+
+
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestControl(StoreBase):
+    """The control node's login is the store's key: no password hash, no key file on disk."""
+    PW = "a long enough password"
+
+    def control(self, clock=None):
+        fake = [sys.executable, "-c", "import sys; print('ran', *sys.argv[1:]); sys.exit(3 if 'bad' in sys.argv else 0)"]
+        return controlmod.Control(self.f.path, kiwi_cmd=fake, clock=clock or time.time,
+                                  run_dir=os.path.join(self.tmp, "ram"))
+
+    def test_the_password_is_a_way_into_the_store_and_nothing_else_is_kept(self):
+        c = self.control()
+        with self.assertRaisesRegex(KiwiError, "secrets init"):
+            c.set_password(self.PW)                              # plain secrets/: the node never gets those
+        self.init()
+        with self.assertRaisesRegex(KiwiError, "12 characters"):
+            c.set_password("short")
+        c.set_password(self.PW)
+        st = store.Store.for_fleet(self.f.path)
+        self.assertEqual([n for n, _k in st.ways()], ["desktop", "recovery", "control"])
+        on_disk = "".join(util.read_text(os.path.join(c.dir, f)) for f in os.listdir(c.dir))
+        self.assertRegex(on_disk.strip(), r"^[0-9a-f]{32}$")     # the salt, and only the salt
+        c.set_password(self.PW + " changed")                     # again: the old way goes, the new one comes
+        self.assertEqual([n for n, _k in st.ways()].count("control"), 1)
+
+    def test_login_opens_the_locked_store_and_lock_closes_it(self):
+        self.init()
+        now = [1000.0]
+        c = self.control(lambda: now[0])
+        c.set_password(self.PW)
+        st = store.Store.for_fleet(self.f.path)
+        st.lock()                                                # as after a reboot of the node
+        self.assertTrue(c.locked())
+        self.assertFalse(os.path.exists(os.path.join(self.secrets, "seed")))
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            c.start("apply", ["a"])
+        self.assertIsNone(c.refresh_status())
+        self.assertIsNone(c.login("not the password!", "10.9.3.2"))
+        self.assertTrue(c.locked())
+        token = c.login(self.PW, "10.9.3.2")
+        self.assertFalse(c.locked())
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "seed")), "S" * 32)
+        self.assertEqual(c.session(token), "admin")
+        self.assertIsNone(c.session(token.replace("admin", "root")))          # tampered
+        self.assertTrue(c.login(self.PW, "10.9.3.2"))                         # open already: the key is compared
+        self.assertIsNone(c.login("not the password!", "10.9.3.2"))
+        c.lock_store()
+        self.assertTrue(c.locked())
+        self.assertIsNone(c.session(token))                                   # a locked fleet has no sessions
+        token = c.login(self.PW, "10.9.3.2")
+        now[0] += 13 * 3600
+        self.assertIsNone(c.session(token))                                   # expired
+        for _ in range(5):
+            self.assertIsNone(c.login("wrong wrong wrong", "10.9.3.9"))
+        self.assertIsNone(c.login(self.PW, "10.9.3.9"))                       # five wrong: it waits
+        now[0] += 601
+        self.assertTrue(c.login(self.PW, "10.9.3.9"))
+        self.assertIn("unlocked", [e["what"] for e in c.audit_tail(30)])
+        other = self.control()                                                # another process: its sessions are its own
+        self.assertIsNone(other.session(token))
+
+    def test_jobs(self):
+        self.init()
+        c = self.control()
+        jid = c.start("apply", ["fig"], wait=True)
+        j = c.job(jid)
+        self.assertEqual((j["state"], j["rc"], j["hosts"]), ("ok", 0, ["fig"]))
+        text, off = c.log(jid)
+        self.assertIn("ran apply %s fig" % c.fleet_path, text)
+        self.assertEqual(c.log(jid, off), ("", off))
+        self.assertTrue(c.jobs_dir.startswith(os.path.join(self.tmp, "ram")))  # logs in RAM, not in the fleet directory
+        self.assertEqual(c.audit_tail(1)[0]["what"], "apply")                 # a change says who
+        self.assertEqual(c.job(c.start("plan", ["bad"], wait=True))["state"], "failed")
+        self.assertIn("--once", c.argv("watch"))
+        with self.assertRaises(KiwiError):
+            c.start("apply", ["fig; rm -rf /"])
+        with self.assertRaises(KiwiError):
+            c.start("reboot")
+        self.assertIsNone(c.job("../../etc/passwd"))
+        self.assertFalse(c.has_ram_masters())
+
+    def test_a_pushed_store_is_taken_and_a_changed_password_locks(self):
+        self.init()
+        c = self.control()
+        c.set_password(self.PW)
+        c.login(self.PW)
+        st = store.Store.for_fleet(self.f.path)
+        self.assertIsNone(c.reload_if_pushed())
+        # the operator's computer saved a new store over the node's (control push)
+        tree = os.path.join(self.tmp, "elsewhere")
+        store.extract(store.snapshot(self.secrets), tree)
+        write(os.path.join(tree, "new.conf"), "pushed")
+        subprocess.run([store._tool("age"), "-e", "-R", st.recipients, "-o", st.file],
+                       input=store.snapshot(tree), check=True)
+        self.assertEqual(c.reload_if_pushed(), "reloaded")
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "new.conf")), "pushed")
+        # ... and one whose control password is another: the old key no longer opens it
+        keys = [k for n, k in st.ways() if n != "control"]
+        r2 = os.path.join(self.tmp, "r2")
+        write(r2, "\n".join(keys) + "\n")
+        subprocess.run([store._tool("age"), "-e", "-R", r2, "-o", st.file], input=store.snapshot(tree), check=True)
+        self.assertEqual(c.reload_if_pushed(), "locked")
+        self.assertTrue(c.locked())
+
+
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestControlSync(StoreBase):
+    """push and pull against a 'node' that is a directory here: the scripts run in a local shell."""
+    PW = "a long enough password"
+
+    def setUp(self):
+        super().setUp()
+        self.node = os.path.join(self.tmp, "node", "kn-control")
+        self.h = types.SimpleNamespace(name="papaya", role_settings={"docker_dir": os.path.dirname(self.node)})
+
+        def run(tgt, script, data=None, **kw):
+            r = subprocess.run(["sh", "-c", script], input=data, capture_output=True)
+            if r.returncode:
+                raise KiwiError(r.stderr.decode())
+            return r.stdout
+        p = mock.patch.object(remote, "run", run)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_nothing_travels_or_rests_in_the_clear(self):
+        with self.assertRaisesRegex(KiwiError, "secrets init"):
+            controlsync.push(self.f, self.h, "t")
+        self.init()
+        with self.assertRaisesRegex(KiwiError, "--set-password"):
+            controlsync.push(self.f, self.h, "t")
+        controlmod.Control(self.f.path, run_dir=os.path.join(self.tmp, "ram")).set_password(self.PW)
+        write(os.path.join(self.node, "fleet.yaml"), "an older layout left this\n")
+        self.assertEqual(controlsync.push(self.f, self.h, "t", force=True), 4)
+        self.assertEqual(sorted(os.listdir(self.node)), ["control", "fleet.yaml.age", "secrets.age", "secrets.recipients"])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.node, "control"))), ["salt", "synced"])
+        for root, _d, files in os.walk(self.node):
+            for f in files:
+                with open(os.path.join(root, f), "rb") as fh:
+                    data = fh.read()
+                self.assertNotIn(b"S" * 32, data)                # the seed
+                self.assertNotIn(b"Europe/Berlin", data)         # the fleet file
+        there, stamp = controlsync.remote_state("t", self.node)
+        self.assertEqual(there, stamp)                           # python's digest and the shell's agree
+        controlsync.push(self.f, self.h, "t")                    # nothing changed there: again is fine
+
+    def test_the_node_opens_it_into_ram_and_saves_what_a_job_changed(self):
+        self.init()
+        controlmod.Control(self.f.path, run_dir=os.path.join(self.tmp, "ram")).set_password(self.PW)
+        controlsync.push(self.f, self.h, "t")
+        store.Store.for_fleet(self.f.path).lock()                # (one runtime directory here: the node's turn)
+        fleet = os.path.join(self.node, "fleet.yaml")
+        n = controlmod.Control(fleet, kiwi_cmd=["true"], run_dir=os.path.join(self.tmp, "ram2"))
+        self.assertTrue(n.ready() and n.locked())
+        self.assertFalse(os.path.lexists(fleet))
+        self.assertIsNone(n.login("not the password!"))
+        self.assertTrue(n.login(self.PW))
+        self.assertTrue(os.path.islink(fleet) and os.path.realpath(fleet).startswith(self.run_dir))
+        self.assertIn("Europe/Berlin", util.read_text(fleet))
+        self.assertIsNone(n.reload_if_pushed())
+        before = util.sha256_file(fleet + ".age")
+        with open(fleet, "a") as fh:
+            fh.write("# a job changed it\n")
+        n.save_fleet()
+        self.assertNotEqual(util.sha256_file(fleet + ".age"), before)
+        self.assertIsNone(n.reload_if_pushed())                  # its own save is not a push
+        n.lock_store()
+        self.assertTrue(n.locked())
+        self.assertFalse(os.path.lexists(fleet))
+        self.assertTrue(n.login(self.PW))
+        self.assertIn("# a job changed it", util.read_text(fleet))
+        n.lock_store()
+        # the operator's computer sees the node changed, and gets it with pull
+        store.Store.for_fleet(self.f.path).unlock(util.read_text(os.path.join(self.keyring, "item")).strip())
+        with self.assertRaisesRegex(KiwiError, "control pull first"):
+            controlsync.push(self.f, self.h, "t")
+        self.assertGreater(controlsync.pull(self.f, self.h, "t"), 0)
+        self.assertIn("# a job changed it", util.read_text(self.f.path))
+        self.assertEqual(controlsync.pull(self.f, self.h, "t"), 0)   # in step: nothing to fetch
+        controlsync.push(self.f, self.h, "t")
+
+    def test_who_changed_decides(self):
+        self.init()
+        controlmod.Control(self.f.path, run_dir=os.path.join(self.tmp, "ram")).set_password(self.PW)
+        controlsync.push(self.f, self.h, "t")
+        st = store.Store.for_fleet(self.f.path)
+        # the node enrolled something: its store is another now
+        tree = os.path.join(self.tmp, "nodes-ram")
+        store.extract(store.snapshot(self.secrets), tree)
+        write(os.path.join(tree, "new.conf"), "from the node")
+        subprocess.run([store._tool("age"), "-e", "-R", os.path.join(self.node, "secrets.recipients"),
+                        "-o", os.path.join(self.node, "secrets.age")], input=store.snapshot(tree), check=True)
+        with self.assertRaisesRegex(KiwiError, "control pull first"):
+            controlsync.push(self.f, self.h, "t")
+        self.assertGreater(controlsync.pull(self.f, self.h, "t"), 0)
+        self.assertTrue(st.is_open())                            # opened again with the keyring's key
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "new.conf")), "from the node")
+        controlsync.push(self.f, self.h, "t")                    # in step again
+        write(os.path.join(self.secrets, "local.conf"), "x")     # changed here, not saved yet: pull saves and sees it
+        with self.assertRaisesRegex(KiwiError, "control push first"):
+            controlsync.pull(self.f, self.h, "t")
+        write(os.path.join(self.node, "control", "audit.jsonl"), "{}\n")
+        controlsync.push(self.f, self.h, "t")
+        self.assertTrue(os.path.isfile(os.path.join(self.node, "control", "audit.jsonl")))    # the node's own files stay
+
+    def test_which_control_node(self):
+        with self.assertRaisesRegex(KiwiError, "no host has the control module"):
+            controlsync.control_host(self.f)
 
 
 if __name__ == "__main__":

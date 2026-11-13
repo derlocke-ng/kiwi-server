@@ -16,6 +16,7 @@ services:
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=10s
     - DOT_PROVIDERS=quad9
     - BLOCK_MALICIOUS=off
+    - FIREWALL_VPN_INPUT_PORTS=22
     networks:
       knet-node:
         ipv4_address: 172.128.0.2

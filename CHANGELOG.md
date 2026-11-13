@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.60.0 — the control node
+
+- `kiwi-server serve <fleet>`: web pages and an API over the CLI (FastAPI, Jinja, no build
+  step): every machine's state, a host's page, jobs with a live log (status, plan, apply,
+  check), an audit log. It looks at the fleet every ten minutes and sends the role to RAM
+  masters by itself.
+- Its secrets: the control node holds the fleet only encrypted (`secrets.age`,
+  `fleet.yaml.age`). `serve --set-password` makes the password one more key of the store
+  (an age key from scrypt and a salt; no hash, no key file). Logging in opens store and
+  fleet file into RAM; a restart or **Lock** closes them. Five wrong tries from an address
+  wait ten minutes; sessions are signed per process; posts from other sites are refused.
+- The `control` module (kiwi-modules 0.29.1) runs it on a node at `control.<host>`, for the
+  mesh only; image `ghcr.io/derlocke-ng/kiwi-server-control` for amd64 and arm64.
+- `kiwi-server control push|pull <fleet>`: the encrypted store and the fleet file (encrypted
+  on the way) to the control node and back; a side that changed since the last sync is not
+  overwritten.
+- The control node applies itself detached (`kiwi-self-apply` on the machine), since the role
+  may restart the container the job runs in.
+- Nodes take SSH on their mesh address (vpn-client `mesh_ssh`): the control node and admin
+  devices reach them from anywhere in the VPN.
+
 ## 2.59.1 — the N2+ image checks clean
 
 - An Armbian image gets only the directories it lacks: debugfs's mkdir of an existing one

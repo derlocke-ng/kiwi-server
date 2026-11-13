@@ -44,6 +44,65 @@ def keygen():
     return secret, public
 
 
+# ---- a key from a password: how the control node opens the store ---------------------------
+# No hash and no wrapped key on disk: the password and a salt make an age identity (scrypt),
+# its public key is one more recipient of secrets.age, and the password is right when the
+# store opens. Whoever holds the disk has to guess against scrypt (64 MiB per guess).
+_BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+SCRYPT = {"n": 2 ** 16, "r": 8, "p": 1}
+
+
+def _bech32(hrp, data):
+    def polymod(values):
+        chk = 1
+        for v in values:
+            top = chk >> 25
+            chk = (chk & 0x1ffffff) << 5 ^ v
+            for i, g in enumerate((0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)):
+                chk ^= g if (top >> i) & 1 else 0
+        return chk
+    acc, bits, five = 0, 0, []
+    for b in data:
+        acc, bits = (acc << 8) | b, bits + 8
+        while bits >= 5:
+            bits -= 5
+            five.append((acc >> bits) & 31)
+    if bits:
+        five.append((acc << (5 - bits)) & 31)
+    expand = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    mod = polymod(expand + five + [0] * 6) ^ 1
+    check = [(mod >> 5 * (5 - i)) & 31 for i in range(6)]
+    return hrp + "1" + "".join(_BECH32[d] for d in five + check)
+
+
+def password_identity(password, salt_hex):
+    """The age secret key a password and a salt make."""
+    raw = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), dklen=32, maxmem=2 ** 28, **SCRYPT)
+    return _bech32("age-secret-key-", raw).upper()
+
+
+def public_of(identity):
+    r = subprocess.run([_tool("age-keygen"), "-y"], input=identity + "\n", capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.startswith("age1"):
+        raise KiwiError("age-keygen did not take the key")
+    return r.stdout.strip()
+
+
+def encrypt_bytes(recipients_file, data):
+    """Data for the keys listed in a recipients file; needs no secret key."""
+    r = subprocess.run([_tool("age"), "-e", "-R", recipients_file], input=data, capture_output=True)
+    if r.returncode != 0:
+        raise KiwiError("age could not encrypt: %s" % r.stderr.decode(errors="replace").strip()[:200])
+    return r.stdout
+
+
+def decrypt_file(identity, path):
+    r = subprocess.run([_tool("age"), "-d", "-i", "-", path], input=identity.encode() + b"\n", capture_output=True)
+    if r.returncode != 0:
+        raise KiwiError("that key does not open %s" % os.path.basename(path))
+    return r.stdout
+
+
 def snapshot(root):
     """The tree as a tar, byte for byte the same while the tree is the same."""
     buf = io.BytesIO()
@@ -149,7 +208,9 @@ class Store:
         lines = ["# who can open secrets.age: one public key per way of unlocking it", "# store: %s" % store_id]
         for name, key in ways:
             note = "its secret key is in the keyring" if name == "desktop" else (
-                "kept by the owner" if name == "recovery" else "its secret key is in that computer's keyring")
+                "kept by the owner" if name == "recovery" else
+                "the control node's password makes its secret key" if name == "control" else
+                "its secret key is in that computer's keyring")
             lines += ["# %s (%s)" % (name, note), key]
         tmp = self.recipients + ".tmp"
         with open(tmp, "w") as f:

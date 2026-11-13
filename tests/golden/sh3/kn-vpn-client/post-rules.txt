@@ -9,6 +9,8 @@ iptables -A FORWARD -s 172.128.0.0/24 -o tun0 -j ACCEPT
 # mesh access: traffic for this node's mesh address on 80/443 goes to the reverse proxy
 iptables -t nat -A PREROUTING -d 10.8.0.25 -p tcp --dport 443 -j DNAT --to-destination 172.128.0.5:443
 iptables -t nat -A PREROUTING -d 10.8.0.25 -p tcp --dport 80 -j DNAT --to-destination 172.128.0.5:80
+# mesh SSH: port 22 of the mesh address to the machine's sshd (the docker gateway is the host)
+iptables -t nat -A PREROUTING -d 10.8.0.25 -p tcp --dport 22 -j DNAT --to-destination 172.128.0.1:22
 # NAT: everything leaving through the tunnel
 iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 # replies to what we sent out

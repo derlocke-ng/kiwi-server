@@ -2039,6 +2039,50 @@ class TestSetup(Base):
         self.assertEqual((a["domain"], a["master_name"], a["master_disk"], a["nodes"]), ("internal", "parfait", "/dev/sda", []))
         self.assertIn("no place for your files yet", said)
 
+    def test_a_netcup_server_is_picked_from_a_list_instead_of_typed(self):
+        rows = [{"id": 7, "address": "198.51.100.7", "label": "crumble · v2202 · 198.51.100.7"},
+                {"id": 9, "address": "198.51.100.9", "label": "trifle · v2203 · 198.51.100.9"}]
+        a, said = self.ask(["", "", "5", "2",              # netcup, sign in: yes, no such number, the second server
+                            "", "n"],                      # the direct exit, no machine at home
+                           lookup=lambda provider, show: (rows, "/run/x.token"))
+        self.assertEqual((a["master_address"], a["provider_server"], a["provider_token"]), ("198.51.100.9", 9, "/run/x.token"))
+        self.assertNotIn("Its address on the Internet", said)    # not asked: netcup said it
+        data, _made = setupmod.make(dict(a, admin_key="~/.ssh/x.pub"), self.tmp)
+        master = data["hosts"][a["master_name"]]
+        self.assertEqual((master["vps"], master["master"]["vpn-server"]["wg_host"]), ({"provider": "netcup", "server": 9}, "198.51.100.9"))
+
+        def fails(provider, show):
+            raise KiwiError("netcup is not reachable")
+        a, said = self.ask(["", "", "198.51.100.4", "", "n"], lookup=fails)      # then the address is typed after all
+        self.assertIn("Type the address instead", said)
+        self.assertEqual(a["master_address"], "198.51.100.4")
+        a, said = self.ask(["", "n", "198.51.100.4", "", "n"], lookup=fails)     # or the sign-in is declined
+        self.assertEqual((a["master_address"], a.get("provider_server")), ("198.51.100.4", None))
+
+    def test_the_app_signs_in_to_netcup_and_lists_the_servers(self):
+        api = FakeNetcup()
+        self.addCleanup(api.close)
+        token = os.path.join(self.tmp, "t", "netcup.token")
+        rc, out, err = self.run_cli("init", "--provider", "netcup", "--provider-login", token, "--api", api.url)
+        self.assertEqual((rc, out.strip()), (0, "https://login.example/x"), err)     # the page to open, and nothing else
+        self.assertTrue(os.path.isfile(token))
+        rc, out, err = self.run_cli("init", "--provider-servers", token, "--api", api.url)
+        self.assertEqual(json.loads(out), [{"id": 7, "address": "203.0.113.9", "label": "crumble · v2202 · 203.0.113.9"}], err)
+        # the answers carry where the token is: it becomes the network's own
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(dict(self.ANSWERS, provider_server=7, provider_token=token)))
+        dest = os.path.join(self.tmp, "net", "fleet.yaml")
+        os.makedirs(os.path.dirname(dest))
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "net", "secrets", "netcup.token")))
+        self.assertFalse(os.path.exists(token))
+        made = yaml.safe_load(util.read_text(dest))["hosts"]["trifle"]
+        self.assertEqual(made["vps"], {"provider": "netcup", "server": 7})    # the install knows where and which
+        from kiwiserver import providers
+        self.assertEqual(list(providers.PROVIDERS), ["netcup"])               # the first; another is a class there
+        with self.assertRaisesRegex(KiwiError, "no provider kiwi-server knows"):
+            providers.get("elsewhere")
+
     def test_addresses_that_answer_are_not_suggested(self):
         def run(argv, timeout=10):
             if argv[0] == "ping":

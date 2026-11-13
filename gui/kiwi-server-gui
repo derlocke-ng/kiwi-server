@@ -1310,7 +1310,7 @@ class SetupWizard(Adw.Dialog):
         super().__init__(title="A new network", content_width=660, content_height=700)
         self.win, self.path = win, path
         self.suggest = data.get("suggestions") or {}
-        self.get, self.rows, self.machines = {}, {}, []
+        self.get, self.rows, self.machines, self.entries = {}, {}, [], {}
         self.steps = []
         for st in data["steps"]:            # a question with one possible answer is not a question
             asked = []
@@ -1415,16 +1415,88 @@ class SetupWizard(Adw.Dialog):
         elif kind == "bool":
             row = Adw.SwitchRow(title=q["label"], active=bool(q.get("default")))
             get = row.get_active
+        elif kind == "lookup":
+            row, get = self.lookup_row(q)
         else:
             row = (Adw.PasswordEntryRow if q.get("secret") else Adw.EntryRow)(title=q["label"])
             row.set_text(str(q.get("default") or ""))
             get = lambda r=row: r.get_text().strip()
+            self.entries[q["id"]] = row
         if q.get("help") and not plain:
             row.add_suffix(help_button(q["help"], DOCS + "README.md"))
         (into if into is not None else self.get)[q["id"]] = get
         if into is None:
             self.rows[q["id"]] = (row, q.get("when"))
         return row
+
+    def lookup_row(self, q):
+        """Looked up, not typed: sign in at the hoster in the browser, pick the server from its
+        list. The address then stands in the address row; the login becomes the network's.
+        Which hoster is another question's answer (q["lookup"]); netcup is the first."""
+        row = Adw.ActionRow(use_markup=False, title=q["label"], subtitle="Not chosen. You can also type the address below.")
+        btn = Gtk.Button(label="Sign in and pick it…", valign=Gtk.Align.CENTER)
+        row.add_suffix(btn)
+        picked = {"id": "", "token": ""}
+
+        def failed(why):
+            row.set_subtitle("That did not work: %s. Type the address below instead." % why)
+            btn.set_sensitive(True)
+            return False
+
+        def opened(url, name):
+            row.set_subtitle("Sign in to %s on the page that opened in your browser. This goes on by itself." % name)
+            Gtk.UriLauncher.new(url).launch(self.win, None, None)
+            return False
+
+        def listed(rows, token, name):
+            if not rows:
+                return failed("%s lists no server for this account" % name)
+            names = Gtk.DropDown.new_from_strings([r["label"] for r in rows])
+            names.set_valign(Gtk.Align.CENTER)
+
+            def take(*_):
+                r = rows[names.get_selected()]
+                picked.update(id=r["id"], token=token)
+                if "master_address" in self.entries:
+                    self.entries["master_address"].set_text(r["address"])
+                row.set_subtitle("Its address is %s" % r["address"])
+            names.connect("notify::selected", take)
+            row.remove(btn)
+            row.add_suffix(names)
+            take()
+            return False
+
+        def work(provider, name):
+            token = os.path.join(GLib.get_user_runtime_dir(), "kiwi-%s-%d.token" % (provider, os.getpid()))
+            try:
+                proc = subprocess.Popen([self.win.cli, "init", "--provider", provider, "--provider-login", token],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL)
+                for line in proc.stdout:
+                    if line.startswith("http"):
+                        GLib.idle_add(opened, line.strip(), name)
+                err = proc.stderr.read()
+                if proc.wait() != 0:
+                    return GLib.idle_add(failed, (err.strip().replace("error: ", "").splitlines() or ["no answer"])[-1][:140])
+            except OSError as e:
+                return GLib.idle_add(failed, str(e))
+            rc, out, err = run_cli(self.win.cli, ["init", "--provider", provider, "--provider-servers", token], timeout=120)
+            try:
+                rows = json.loads(out) if rc == 0 else None
+            except ValueError:
+                rows = None
+            if rows is None:
+                return GLib.idle_add(failed, (err.strip().replace("error: ", "").splitlines() or ["no answer"])[-1][:140])
+            GLib.idle_add(listed, rows, token, name)
+
+        def clicked(*_):
+            provider = self.get[q["lookup"]]()
+            name = (q.get("names") or {}).get(provider, provider)
+            btn.set_sensitive(False)
+            row.set_subtitle("Asking %s…" % name)
+            threading.Thread(target=work, args=(provider, name), daemon=True).start()
+        btn.connect("clicked", clicked)
+        self.get["provider_token"] = lambda: picked["token"]
+        return row, lambda: picked["id"]
 
     def machines_group(self, q):
         self.machine_q = q
@@ -1478,6 +1550,9 @@ class SetupWizard(Adw.Dialog):
         def holds(cond, values):
             if not cond:
                 return True
+            if " in " in cond:                  # key in a,b,c
+                key, _sep, vals = cond.partition(" in ")
+                return key in values and str(values[key]()) in vals.split(",")
             key, _sep, val = cond.partition(" == ")
             return key in values and str(values[key]()) == val.strip("'")
         for row, cond in self.rows.values():

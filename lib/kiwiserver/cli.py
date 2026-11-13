@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, adopt as adoptmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
+from . import VERSION, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
@@ -1651,10 +1651,18 @@ def cmd_enroll(args):
         util.say("%s's vpn-client picks it up by itself (wireguard_config falls back to secrets/<hostname>.conf) — "
                  "kiwi-server render %s" % (host.name, os.path.basename(fleet.path)))
     if args.qr:
-        if util.which("qrencode"):
-            subprocess.run(["qrencode", "-t", "ansiutf8"], input=text.encode())
-        else:
-            util.warn("qrencode is not installed — the wg-easy page shows the QR code too")
+        print(qrmod.text_blocks(text))
+
+
+def cmd_qr(args):
+    """A file (a device's WireGuard config) as a QR code: in the terminal, or as an image."""
+    data = util.read_bytes(args.file)
+    if args.png:
+        sys.stdout.buffer.write(qrmod.png(data))
+    elif args.svg:
+        print(qrmod.svg(data))
+    else:
+        print(qrmod.text_blocks(data))
 
 
 def cmd_ca(args):
@@ -2079,6 +2087,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
+  kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
   kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
@@ -2185,6 +2194,9 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s = sub("qr", cmd_qr); s.add_argument("file")
+    s.add_argument("--png", action="store_true", help="a PNG image on standard output")
+    s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control); s.add_argument("action", choices=["push", "pull", "join", "ring"]); s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
@@ -2221,7 +2233,7 @@ def build_parser():
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # wg-easy reachable directly (tests)
-    s.add_argument("--qr", action="store_true", help="print the config as a QR code (qrencode)")
+    s.add_argument("--qr", action="store_true", help="print the config as a QR code for the WireGuard app")
     s = sub("backup", cmd_backup); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")

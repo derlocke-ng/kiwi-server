@@ -79,6 +79,7 @@ settings:
   - key: pihole_password
     type: secret
     generate: true
+    rotate: restart
     label: Admin password
     help: "Empty: generated from the fleet's seed."
   - key: upstream_dns

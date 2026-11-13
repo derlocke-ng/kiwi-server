@@ -523,7 +523,12 @@ ks_stack_unpack() {
     if [[ -f $KS_STACK_ENV ]]; then
         local old_seed
         old_seed=$(sed -n 's/^STACK_SEED_ID=//p' "$KS_STACK_ENV")
-        if [[ -n $old_seed && -n ${KS_SEED_ID:-} && $old_seed != "$KS_SEED_ID" ]]; then
+        if [[ -n $old_seed && -n ${KS_SEED_ID:-} && $old_seed != "$KS_SEED_ID" && $old_seed == "${KS_SEED_FROM:-}" ]]; then
+            # the fleet replaced its seed and says so: what changed with it are secrets the
+            # containers read at every start (the fleet keeps the others as they were), and
+            # the containers that read them restart below
+            ks_say "the fleet's seed was replaced ($old_seed -> $KS_SEED_ID): the secrets that follow it change now"
+        elif [[ -n $old_seed && -n ${KS_SEED_ID:-} && $old_seed != "$KS_SEED_ID" ]]; then
             ks_die "the fleet's seed changed ($old_seed -> $KS_SEED_ID): the generated secrets differ from the ones the" \
                    "running databases were set up with. Restore secrets/seed from the fleet backup; to start over with" \
                    "new secrets on an empty stack, remove $KS_STACK_ENV and the data directories first"

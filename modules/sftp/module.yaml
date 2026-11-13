@@ -46,6 +46,7 @@ settings:
   - key: sftp_password
     type: secret
     generate: true
+    rotate: restart
     help: "Empty: generated from the fleet's seed."
   - key: sftp_uid
     type: int

@@ -63,6 +63,7 @@ settings:
   - key: wg_password
     type: secret
     generate: true
+    rotate: restart
     label: wg-easy admin password
     help: "The web UI listens on 127.0.0.1:51821 of the master only. Empty: generated from the fleet's seed."
   - key: wg_port

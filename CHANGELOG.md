@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.74.0 — a new seed: the secrets inside the services
+
+design/controllers.md, step 3, second part. kiwi-modules 0.30.1, kiwi-stack 0.8.0.
+
+- `kiwi-server rotate <fleet> seed`: a new seed, then every machine is applied. The secrets
+  that containers read at every start follow it (ten kinds: Nextcloud's Redis, OnlyOffice,
+  Imaginary, whiteboard and Talk-internal secrets, Pi-hole's and wg-easy's admin password,
+  Paperless's session key, the sftp and downloader passwords) and those containers
+  restart.
+- Every other generated secret (database and admin passwords, the backup passwords, Talk's
+  TURN and signaling secrets, the federation secret) is pinned to the value it has, in
+  `secrets/pins.json`, before the seed changes: nothing a database knows changes under it.
+- A machine takes a changed seed only from a bundle that names the seed it runs
+  (`KS_SEED_FROM`); any other changed seed is refused as before. The old seed stays as
+  `secrets/seed.old` until every machine has changed.
+- The control page, **Computers**: **Replace the secrets**, with **Leave NAME out**.
+  `kiwi-server rotate <fleet>` counts what follows the seed and names what stays.
+
 ## 2.73.1 — rotate: machines outside the fleet, leaving one out
 
 Found on the test network right after 2.73.0.

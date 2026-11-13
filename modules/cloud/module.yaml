@@ -254,6 +254,7 @@ settings:
   - key: redis_password
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "The password of Nextcloud's Redis cache, which the whiteboard uses as well. Empty: generated from the fleet's seed."
   - key: turn_secret
@@ -269,6 +270,7 @@ settings:
   - key: talk_internal_secret
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "Shared by Talk's signaling server and its recording server. Empty: generated from the fleet's seed."
   - key: recording_secret
@@ -279,11 +281,13 @@ settings:
   - key: onlyoffice_secret
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "Signs what Nextcloud and OnlyOffice send each other. Empty: generated from the fleet's seed."
   - key: imaginary_secret
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "Shared by Nextcloud and Imaginary. Empty: generated from the fleet's seed."
   - key: fulltextsearch_password
@@ -294,6 +298,7 @@ settings:
   - key: whiteboard_secret
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "Signs the tokens Nextcloud hands to the whiteboard server. Empty: generated from the fleet's seed."
   - key: extra_env

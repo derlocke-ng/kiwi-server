@@ -56,6 +56,7 @@ settings:
   - key: transmission_password
     type: secret
     generate: true
+    rotate: restart
     help: "Empty: generated from the fleet's seed."
   - key: transmission_hostname
     label: Transmission hostname

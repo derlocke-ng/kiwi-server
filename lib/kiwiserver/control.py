@@ -36,8 +36,9 @@ ACTIONS = {
     "status": ("status", True), "plan": ("plan", True), "apply": ("apply", True),
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
+    "rotate-seed": ("rotate", False),
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate"}     # these change machines or the fleet: the audit log says who
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed"}     # these change machines or the fleet: the audit log says who
 
 
 class Control:
@@ -258,16 +259,20 @@ class Control:
         self.arm_auto()                     # the ring held the old password's key
 
     def rotation(self):
-        """{"pending": machines still on the old SSH keys, "last": when they were last replaced}."""
+        """Machines still on the old SSH keys (pending) or the old seed (seed_pending), and when
+        each was last replaced."""
         path = os.path.join(self.fleet_dir, "secrets", "rotation.json")
         try:
             state = json.loads(util.read_text(path))
         except (OSError, ValueError):
-            return {"pending": [], "last": None}
-        done = (state.get("ssh") or {}).get("done")
+            return {"pending": [], "last": None, "seed_pending": [], "seed_last": None}
         names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
-        return {"pending": [] if done is None else [n for n in names if n not in done],
-                "last": (state.get("last") or {}).get("ssh")}
+
+        def waits(what):
+            done = (state.get(what) or {}).get("done")
+            return [] if done is None else [n for n in names if n not in done]
+        last = state.get("last") or {}
+        return {"pending": waits("ssh"), "last": last.get("ssh"), "seed_pending": waits("seed"), "seed_last": last.get("seed")}
 
     def _control_key(self):
         return next((key for name, key in self.store.ways() if name == "control"), None)
@@ -497,8 +502,9 @@ class Control:
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
             return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--now"]
-        if action == "rotate":              # new SSH keys on every machine that still has the old ones
-            argv = list(self.kiwi) + ["rotate", self.fleet_path, "ssh"]
+        # new SSH keys, or a new seed, on every machine that still has the old ones
+        if action in ("rotate", "rotate-seed"):
+            argv = list(self.kiwi) + ["rotate", self.fleet_path, "ssh" if action == "rotate" else "seed"]
             for h in hosts:                 # left out: gone for good, or about to be installed anew
                 argv += ["--waive", h]
             return argv

@@ -4914,10 +4914,13 @@ class TestControl(StoreBase):
         self.assertIsNone(c.login(self.PW, "1.1.1.1"))           # the old one opens nothing
         self.assertTrue(c.login("another long password", "1.1.1.2"))
         self.assertFalse(c.locked())
-        self.assertEqual(c.rotation(), {"pending": [], "last": None})
-        write(os.path.join(self.tmp, "secrets", "rotation.json"), json.dumps({"ssh": {"done": ["a"]}, "last": {}}))
+        self.assertEqual(c.rotation(), {"pending": [], "last": None, "seed_pending": [], "seed_last": None})
+        write(os.path.join(self.tmp, "secrets", "rotation.json"),
+              json.dumps({"ssh": {"done": ["a"]}, "seed": {"done": []}, "last": {"seed": "2026-11-13T10:00:00"}}))
         with mock.patch.object(c, "fleet_info", lambda **_k: {"hosts": [{"name": "a"}, {"name": "b"}]}):
-            self.assertEqual(c.rotation(), {"pending": ["b"], "last": None})
+            self.assertEqual(c.rotation(), {"pending": ["b"], "last": None, "seed_pending": ["a", "b"],
+                                            "seed_last": "2026-11-13T10:00:00"})
+        self.assertEqual(c.argv("rotate-seed", ["b"])[-5:], ["rotate", self.f.path, "seed", "--waive", "b"])
         self.assertEqual(c.argv("rotate", ["b"])[-5:], ["rotate", self.f.path, "ssh", "--waive", "b"])   # the page's Leave out
         self.assertEqual(c.argv("rotate")[-3:], ["rotate", self.f.path, "ssh"])
 
@@ -5230,6 +5233,14 @@ class TestWeb(StoreBase):
             time.sleep(0.05)
         self.assertIn("ran rotate %s ssh" % self.f.path, self.ask("/api" + where + "/log")[1])
         self.assertIn("Replacing the SSH keys", self.ask("/activity")[1])
+        code, where = self.ask("/run", {"action": "rotate-seed", "csrf": tok})
+        self.assertEqual(code, 303)
+        for _ in range(100):
+            js = self.c.jobs()
+            if js and js[0]["action"] == "rotate-seed" and js[0]["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertIn("ran rotate %s seed" % self.f.path, self.ask("/api" + where + "/log")[1])
 
     def test_a_browser_logs_in_unlocks_runs_and_locks(self):
         self.assertIn('"locked":true', self.ask("/healthz")[1].replace(" ", ""))
@@ -5758,6 +5769,83 @@ class TestRotate(Base):
             cli.main(["rotate", self.f.path])                    # the list asks nobody
         self.assertEqual(order, ["pull", "push", "machines", "push"])
         self.assertTrue(os.path.isfile(self.key + ".old"))       # made before the first push
+
+    def seed_fleet(self):
+        write(os.path.join(self.tmp, "secrets", "seed"), "S" * 32)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "sh3": {"role": "node-cloud", "node-cloud": self.node_cloud(cloud={})},
+            "sh4": {"role": "node-cloud", "node-cloud": self.node_cloud(cloud={}, vpn_ip="10.8.0.26")}}})
+        for h in f.hosts.values():
+            self.assertEqual(h.validate(self.roles), [])
+            rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        return f
+
+    def secrets_of(self, f, name):
+        h = config.Fleet.load(f.path).hosts[name]
+        rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        return h.module_settings["cloud"]
+
+    def test_a_new_seed_changes_what_a_restart_can_change_and_pins_the_rest(self):
+        f = self.seed_fleet()
+        before = self.secrets_of(f, "sh3")
+        self.assertIn("never replaced", str(self.rotate.plan(f, (), self.ms)))
+        applied, said = [], []
+        left = self.rotate.seed(f, self.ms, lambda n: applied.append(n) or (1 if n == "sh4" else 0), say=said.append)
+        self.assertEqual((applied, left), (["sh3", "sh4"], ["sh4"]))         # sh4's apply did not work
+        after = self.secrets_of(f, "sh3")
+        self.assertNotEqual(after["redis_password"], before["redis_password"])       # read at every start
+        self.assertEqual(after["database_password"], before["database_password"])    # lives in the database
+        self.assertEqual(after["admin_password"], before["admin_password"])
+        self.assertEqual(self.secrets_of(f, "sh4")["database_password"], f.derive_secret("sh4.kiwi", "cloud", "database_password"))
+        pins = json.loads(util.read_text(os.path.join(self.tmp, "secrets", "pins.json")))
+        self.assertIn("sh3.kiwi/cloud/database_password", pins)
+        self.assertNotIn("sh3.kiwi/cloud/redis_password", pins)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "seed.old")))       # a way back until all are done
+        was = config.Fleet.load(f.path).seed_from()
+        self.assertRegex(was, r"^[0-9a-f]{12}$")
+        self.assertNotEqual(was, config.Fleet.load(f.path).seed_id())
+        self.assertIn("under way: sh4", str(self.rotate.plan(f, (), self.ms)))
+        seed = util.read_bytes(os.path.join(self.tmp, "secrets", "seed"))
+        applied.clear()
+        left = self.rotate.seed(f, self.ms, lambda n: applied.append(n) or 0, say=said.append)      # the same rotation goes on
+        self.assertEqual((applied, left), (["sh4"], []))
+        self.assertEqual(util.read_bytes(os.path.join(self.tmp, "secrets", "seed")), seed)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "secrets", "seed.old")))
+        self.assertEqual(config.Fleet.load(f.path).seed_from(), was)          # a late machine is still taken along
+        self.assertIn("replaced 20", str(self.rotate.plan(f, (), self.ms)))
+        self.assertIn("kept as they are", str(self.rotate.plan(f, (), self.ms)))
+
+    def stack_vars(self, f, name):
+        from kiwimodules import manifest
+        h = f.hosts[name]
+        rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        spec = rolesmod.stack_spec(h, self.roles[h.role], [("10.8.0.25", "sh3.kiwi")], master_ip="10.8.0.1")
+        return "\n".join(manifest.stack_vars(h, modmod.Renderer(self.ms).render(spec)))
+
+    def test_the_role_script_names_the_seed_it_follows(self):
+        f = self.seed_fleet()
+        self.assertNotIn("KS_SEED_FROM", self.stack_vars(f, "sh3"))
+        self.rotate.seed(f, self.ms, lambda n: 0, say=lambda _x: None)
+        f = config.Fleet.load(f.path)
+        sh = self.stack_vars(f, "sh3")
+        self.assertIn("KS_SEED_FROM='%s'" % f.seed_from(), sh)
+        self.assertIn("KS_SEED_ID='%s'" % f.seed_id(), sh)
+
+    def test_the_seed_command_tells_the_others_and_applies_each_machine(self):
+        f = self.seed_fleet()
+        order = []
+        real_main = cli.main
+
+        def fake_main(argv):
+            if argv[0] == "apply":
+                order.append("apply " + argv[2])
+                return 0
+            return real_main(argv)
+        with mock.patch.object(cli, "share", lambda _p, action: order.append(action) or True), \
+                mock.patch.object(cli, "main", fake_main), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            real_main(["rotate", f.path, "seed", "--why", "a test"])
+        self.assertEqual(order, ["pull", "push", "apply sh3", "apply sh4", "push"])
 
     def test_a_fleet_without_keys_of_its_own_says_so(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})

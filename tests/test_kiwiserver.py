@@ -4928,6 +4928,12 @@ class TestControl(StoreBase):
         self.assertEqual(c.argv("save", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--now"])
         with self.assertRaises(KiwiError):
             c.argv("save", [])
+        with self.assertRaisesRegex(KiwiError, "no machines"):
+            c.argv("update")
+        util.write_text(os.path.join(c.run, "fleet.json"), json.dumps({"hosts": [{"name": "a"}, {"name": "b"}]}))
+        self.assertEqual(c.argv("update")[-4:], ["apply", c.fleet_path, "a", "b"])
+        with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": "a"}):
+            self.assertEqual(c.argv("update")[-2:], ["b", "a"])               # the control node itself comes last
         with self.assertRaises(KiwiError):
             c.start("apply", ["fig; rm -rf /"])
         with self.assertRaises(KiwiError):
@@ -5190,6 +5196,7 @@ class TestWeb(StoreBase):
              "facts": {"backup": {"last": 1, "age": 7200, "copies": [{"server": "backup.lychee.home"}]}, "reboot": True}}]}))
         code, body = self.ask("/")
         self.assertIn("1 machine wants a look", body)
+        self.assertIn("Update everything", body)
         self.assertIn("restarts by itself in its update window", body)            # what the problem means
         self.assertIn("Files (Nextcloud)", body)
         self.assertIn('href="https://vault.papaya.home"', body)

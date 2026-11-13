@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.67.0 — update everything
+
+- Control page, Home: **Update everything** brings every machine to the current settings and
+  the newest versions of its services, one after the other, the control node itself last.
+
 ## 2.66.0 — copies, restoring, another computer
 
 - App: **Save a copy of the network…** (one encrypted file, a passphrase typed twice),

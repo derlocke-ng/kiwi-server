@@ -1715,7 +1715,7 @@ def cmd_status(args):
         except KiwiError as e:
             at = unlock.waiting_at(h)
             if at:
-                e = "its disk is locked, the machine waits at %s: kiwi-server unlock %s %s" % (at, args.fleet, h.name)
+                e = "its disk is locked, the machine waits at %s: %s" % (at, unlock.locked_advice(h, args.fleet))
             return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down", "locked": bool(at),
                     "problems": [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e}], "notes": [], "facts": {}}
         measured = facts.parse(data)

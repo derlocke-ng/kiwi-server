@@ -481,6 +481,24 @@ def forwarded(host):
     return len(cfg["rings"]) - len(_forwarded_rings(host)) < int(cfg["threshold"])
 
 
+def locked_advice(host, fleet_path):
+    """What to do about a machine that waits at boot with its disk locked, in a sentence.
+    A ring this computer can forward: the unlock command. Rings at home that are away: say
+    which machines serve them, since the waiting machine opens by itself when one is back."""
+    if _forwarded_rings(host):
+        return "kiwi-server unlock %s %s" % (fleet_path, host.name)
+    who = []
+    try:
+        servers = ring_servers(host.fleet, lambda x: None)
+        who = ["%s (%s)" % (servers[r][0].name, r) for r in host.cfg["unlock"].get("rings") or []
+               if r in servers and not isinstance(servers[r][0], OperatorRing)]
+    except (KiwiError, KeyError, AttributeError, TypeError):
+        pass
+    return ("the machines that open it do not answer%s. Switch one of them on and it opens by itself within a minute; "
+            "or type the key in secrets/luks/%s.key at its screen"
+            % (": " + ", ".join(who) if who else "", host.name))
+
+
 def _forwarded_rings(host):
     via = host.cfg["unlock"].get("via") or {}
     return [r for r in host.cfg["unlock"]["rings"] if str(via.get(r) or "").startswith("http://127.0.0.1:")]
@@ -507,7 +525,8 @@ def forwarded_ring(host, ring=None):
     if ring and ring not in choices:
         raise KiwiError("%s: unlock.via does not forward the ring %s to 127.0.0.1" % (host.name, ring))
     if not choices:
-        raise KiwiError("%s: no ring in unlock.via is reached through 127.0.0.1, so there is nothing to forward" % host.name)
+        raise KiwiError("%s: this computer cannot open it (no ring of it is forwarded, unlock.via): %s"
+                        % (host.name, locked_advice(host, host.fleet.path)))
     name = ring or choices[0]
     return name, urllib.parse.urlsplit(str(via[name])).port
 

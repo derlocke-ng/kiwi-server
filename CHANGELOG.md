@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.78.1 — a locked machine is told what really opens it
+
+Reboot tests on an encrypted uCore node with two rings (either one is enough): with both
+up and with one off it came back by itself; with both off it waited, and opened by itself
+ten seconds after one ring was back.
+
+- `status` said "kiwi-server unlock" for such a machine, and that command could only
+  answer that there is nothing to forward. Both now say which machines serve its rings,
+  that it opens by itself when one of them is back, and where its key for the console is.
+
 ## 2.78.0 — the first run, for someone who has never done this
 
 Both wizards were run from an empty home as a beginner would (notes/REVIEW-first-run.md

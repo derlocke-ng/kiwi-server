@@ -18,6 +18,7 @@ Comments in a fleet file are not kept when the GUI saves it.
 import json
 import os
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -1254,10 +1255,10 @@ class HostRow(Gtk.ListBoxRow):
         self.line.set_label(win.machine_line(name))
         self.line.set_tooltip_text(st.get("hostname") or "")
         problems = win.problems_of(name)
-        if win.phase_of(name) == "invalid":
-            self.badge.set_child(pill("INVALID", "bad", "\n".join(st.get("errors") or [])))
-        elif state == "new":
-            self.badge.set_child(pill("NEXT", "new", win.next_of(name)))
+        if state == "new":
+            self.badge.set_child(pill("TO DO", "new", win.guide_step(name)[0]))
+        elif win.phase_of(name) == "invalid":
+            self.badge.set_child(pill("SETTINGS", "bad", "\n".join(st.get("errors") or [])))
         elif problems and state != "down":
             self.badge.set_child(pill(str(len(problems)), state, "\n".join(t for _l, t in problems)))
         else:
@@ -1459,6 +1460,134 @@ class SetupWizard(Adw.Dialog):
         return False
 
 
+CONTROL_HOW = ("1. Open a home server here and add the part \"control\" to it (Parts).\n"
+               "2. In a terminal: kiwi-server serve <fleet> --set-password   (the password for its page)\n"
+               "3. Press Apply on that home server.\n"
+               "4. In a terminal: kiwi-server control push <fleet>\n\n"
+               "Then open https://control.<its name> from a device on your VPN. This computer keeps in step with it "
+               "by itself from then on.")
+
+
+class DeviceDialog(Adw.Dialog):
+    """A phone or laptop onto the VPN: a name, then a QR code to scan or a file to import."""
+
+    def __init__(self, win):
+        super().__init__(title="Add a phone or laptop", content_width=480)
+        self.win = win
+        self.nav = Adw.NavigationView()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="On the VPN a device reaches your services from anywhere. Give it a name.",
+                             wrap=True, xalign=0))
+        g = Adw.PreferencesGroup()
+        self.go = Gtk.Button(label="Add it", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER,
+                             sensitive=False)
+        self.go.connect("clicked", lambda *_: self.add())
+        self.name = Adw.EntryRow(title="Name, like annas-phone")
+        self.name.connect("changed", lambda *_: self.go.set_sensitive(bool(self.clean())))
+        self.name.connect("entry-activated", lambda *_: self.add())
+        g.add(self.name)
+        self.groups = sorted((win.fleet_info.get("groups") or {}))
+        self.group = None
+        if self.groups:
+            self.group = Adw.ComboRow(title="Who is it for?", subtitle="The group decides what it may reach",
+                                      model=Gtk.StringList.new(self.groups))
+            if "devices" in self.groups:
+                self.group.set_selected(self.groups.index("devices"))
+            g.add(self.group)
+        box.append(g)
+        self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
+        box.append(self.note)
+        box.append(self.go)
+        self.nav.add(Adw.NavigationPage(title="Add a phone or laptop", child=box))
+        self.set_child(self.nav)
+
+    def clean(self):
+        name = self.name.get_text().strip().lower().replace(" ", "-")
+        return name if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name) else ""
+
+    def add(self):
+        name = self.clean()
+        if not name:
+            return
+        self.go.set_sensitive(False)
+        self.go.set_label("Adding…")
+        args = ["enroll", self.win.doc.path, name]
+        if self.group is not None:
+            args += ["--group", self.groups[self.group.get_selected()]]
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, args, timeout=180)
+            GLib.idle_add(self.done, rc, (err or out), name)
+        threading.Thread(target=work, daemon=True).start()
+
+    def done(self, rc, text, name):
+        conf = os.path.join(self.win.doc.dir, "secrets", "devices", name + ".conf")
+        if rc != 0 or not os.path.isfile(conf):
+            self.note.set_label((text.replace("error: ", "").strip().splitlines() or ["It did not work."])[-1])
+            self.note.set_visible(True)
+            self.go.set_label("Add it")
+            self.go.set_sensitive(True)
+            return False
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="%s is ready" % name, xalign=0, css_classes=["title-2"]))
+        qr = None
+        tool = shutil.which("qrencode") or shutil.which("qrencode", path="/home/linuxbrew/.linuxbrew/bin")
+        if tool:
+            try:
+                with open(conf, "rb") as f:
+                    r = subprocess.run([tool, "-t", "PNG", "-s", "6", "-m", "2", "-o", "-"], input=f.read(),
+                                       capture_output=True, timeout=20)
+                if r.returncode == 0:
+                    qr = Gtk.Picture.new_for_paintable(Gdk.Texture.new_from_bytes(GLib.Bytes.new(r.stdout)))
+                    qr.set_size_request(280, 280)
+            except (OSError, subprocess.TimeoutExpired, GLib.Error):
+                qr = None
+        control = self.win.control_host()
+        if qr is not None:
+            box.append(Gtk.Label(label="On the phone: install the WireGuard app, tap +, then Scan from QR code.",
+                                 wrap=True, xalign=0))
+            box.append(qr)
+        else:
+            box.append(Gtk.Label(label="For a phone you need its QR code. " + (
+                "Your control page shows it: Devices, then Show its QR code." if control else
+                "Install qrencode on this computer (brew install qrencode) and the code is shown here."),
+                wrap=True, xalign=0))
+        box.append(Gtk.Label(label="On a laptop: install WireGuard and import the file.", wrap=True, xalign=0))
+        buttons = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        save = Gtk.Button(label="Save the file…")
+        save.connect("clicked", lambda *_: self.save(conf, name))
+        buttons.append(save)
+        if control and qr is None:
+            host = (self.win.status.get(control) or {}).get("hostname") or control
+            page = Gtk.Button(label="Open the control page")
+            page.connect("clicked", lambda *_: Gtk.UriLauncher.new("https://control.%s/devices" % host).launch(self.win, None, None))
+            buttons.append(page)
+        close = Gtk.Button(label="Done", css_classes=["suggested-action"])
+        close.connect("clicked", lambda *_: self.close())
+        buttons.append(close)
+        box.append(buttons)
+        box.append(Gtk.Label(label="Whoever has the code or the file is on your VPN as this device.", wrap=True,
+                             xalign=0, css_classes=["dim-label", "caption"]))
+        self.nav.push(Adw.NavigationPage(title="Ready", child=box, can_pop=False))
+        self.win.sync(after_save=True)          # the control node learns the new device
+        return False
+
+    def save(self, conf, name):
+        dlg = Gtk.FileDialog(title="Save the device's file", initial_name=name + ".conf")
+
+        def chosen(d, res):
+            try:
+                dest = d.save_finish(res).get_path()
+            except GLib.Error:
+                return
+            shutil.copyfile(conf, dest)
+            os.chmod(dest, 0o600)
+            self.win.toast("Saved. Import it in WireGuard on the laptop, then delete the file.")
+        dlg.save(self.win, None, chosen)
+
+
 class JoinDialog(Adw.Dialog):
     """Join a fleet that exists: paste the invite link from its control page. One field."""
 
@@ -1562,6 +1691,9 @@ class Window(Adw.ApplicationWindow):
 
         for name, cb in (("open", self.open_dialog), ("new", self.new_dialog), ("refresh", self.poll),
                          ("join", lambda: JoinDialog(self).present(self)), ("sync", lambda: self.sync(True)),
+                         ("device", lambda: self.doc.path and DeviceDialog(self).present(self)),
+                         ("backup-now", lambda: self.doc.path and self.spawn(["backup", self.doc.path],
+                                                                               "Saving the network…")),
                          ("render-all", lambda: self.render(None)), ("build-all", lambda: self.confirm_build(None)),
                          ("render-host", lambda: self.render(self.current_scope)),
                          ("build-host", lambda: self.confirm_build(self.current_scope)),
@@ -1587,6 +1719,8 @@ class Window(Adw.ApplicationWindow):
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
+        section.append("Add a phone or laptop…", "win.device")
+        section.append("Back up the network now", "win.backup-now")
         section.append("Sync with the control node", "win.sync")
         section.append("Render every host", "win.render-all")
         section.append("Build every ISO…", "win.build-all")
@@ -1629,19 +1763,22 @@ class Window(Adw.ApplicationWindow):
         self.store_banner = Adw.Banner(revealed=False, button_label="Unlock",
                                        title="The secret store is locked: nothing can be built, applied or asked until it is open")
         self.store_banner.connect("button-clicked", lambda *_: self.toggle_store())
-        self.empty = Adw.StatusPage(icon_name="folder-open-symbolic", title="No fleet open",
-                                    description="Open a fleet.yaml, start a new one, or join one that exists with an invite link.")
-        eb = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
-        b1 = Gtk.Button(label="Open…")
+        self.empty = Adw.StatusPage(icon_name="network-server-symbolic", title="Welcome",
+                                    description="Kiwi Server sets up and looks after your own private network: a few "
+                                                "machines, your files, photos and passwords on them, reachable from "
+                                                "anywhere over your own VPN.\n\nNew here? Start a new network: a few "
+                                                "questions, then a list of steps with one button each.")
+        eb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER)
+        b1 = Gtk.Button(label="Open one from a file…")
         b1.connect("clicked", lambda *_: self.open_dialog())
-        b2 = Gtk.Button(label="New fleet…")
+        b2 = Gtk.Button(label="Start a new network")
         b2.add_css_class("suggested-action")
         b2.connect("clicked", lambda *_: self.new_dialog())
-        b3 = Gtk.Button(label="Join a fleet…")
+        b3 = Gtk.Button(label="Join one with an invite link")
         b3.connect("clicked", lambda *_: JoinDialog(self).present(self))
-        eb.append(b1)
-        eb.append(b3)
-        eb.append(b2)
+        for b in (b2, b3, b1):
+            b.add_css_class("pill")
+            eb.append(b)
         self.empty.set_child(eb)
 
         self.fleet_column = Column()
@@ -1975,21 +2112,26 @@ class Window(Adw.ApplicationWindow):
         """Not installed yet: never applied from this fleet folder and not answering. What
         comes next is a step, not a problem."""
         live = self.live.get(name)
-        return self.phase_of(name) in NEW_PHASES and not (live and live["ok"]) and not self.last_seen.get(name)
+        st = self.status.get(name) or {}
+        never = not (live and live["ok"]) and not self.last_seen.get(name) and not st.get("applied")
+        # a machine that never ran and whose settings are incomplete is a step too, not an alarm
+        return never and self.phase_of(name) in NEW_PHASES + ("invalid",)
 
     def state_of(self, name):
-        if self.phase_of(name) == "invalid":
-            return "bad"
         if self.is_new(name):
             return "new"
+        if self.phase_of(name) == "invalid":
+            return "bad"
         live = self.live.get(name)
         return live["state"] if live else "unknown"
 
     def problems_of(self, name):
         st = self.status.get(name) or {}
+        if self.is_new(name):
+            return []           # what it needs is in Getting started
         found = [("bad", e) for e in st.get("errors") or []] if self.phase_of(name) == "invalid" else []
         live = self.live.get(name)
-        if not live or self.is_new(name):
+        if not live:
             return found
         return found + [(p["level"], p["text"]) for p in live["problems"]]
 
@@ -2167,6 +2309,75 @@ class Window(Adw.ApplicationWindow):
             else:
                 self.render_host(self.current_scope)
 
+    def guide_step(self, h):
+        """(what to do, in a sentence; the button; what it does) for a machine that is not set up yet."""
+        phase = self.phase_of(h)
+        if phase == "enroll":
+            return ("It needs its place on your VPN first. The hub has to be running for that.", "Connect it",
+                    lambda: self.spawn(["enroll", self.doc.path, h], "Connecting %s to the VPN…" % h))
+        if phase == "build":
+            return ("Make its install media: one file. From a USB stick with it, the machine installs itself.",
+                    "Make install media", lambda: self.confirm_build(h))
+        if phase == "install":
+            return ("Start the machine from the install media and wait until it turns itself off. Switch it on "
+                    "again, then press the button.", "Set it up", lambda: self.confirm_apply(h))
+        if phase == "bare":
+            return ("It has no job yet. Choose what it should be in its settings.", "Open its settings",
+                    lambda: self.select_scope(h))
+        errors = (self.status.get(h) or {}).get("errors") or []
+        why = errors[0].split(": ", 1)[-1] if errors else "something is missing or wrong"
+        return ("Its settings are not complete yet: %s." % why.rstrip("."), "Open its settings",
+                lambda: self.select_scope(h))
+
+    def guide_group(self, fresh):
+        """Getting started: one machine after the other, the hub first; one sentence and one
+        button each, the first one marked."""
+        g = Adw.PreferencesGroup(title="Getting started",
+                                 description="One machine after the other, the hub first. Do the marked step; the "
+                                             "list moves on by itself.")
+        order = {title: i for i, (_r, title) in enumerate(ROLE_GROUPS)}
+        for i, h in enumerate(sorted(fresh, key=lambda x: order.get(self.group_of(x), len(order)))):
+            text, label, action = self.guide_step(h)
+            row = Adw.ActionRow(use_markup=False, title="%d. %s" % (i + 1, h), subtitle=text, subtitle_lines=4)
+            b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+            if i == 0:
+                b.add_css_class("suggested-action")
+            b.connect("clicked", lambda _b, a=action: a())
+            row.add_suffix(b)
+            g.add(row)
+        return g
+
+    def control_host(self):
+        return next((h for h in self.doc.hosts() if "control" in ((self.status.get(h) or {}).get("modules") or [])), None)
+
+    def whats_next_group(self):
+        """Every machine runs: what makes the network useful and safe, each with a button.
+        A step that is done is not listed."""
+        rows = []
+        devices = os.path.join(self.doc.dir, "secrets", "devices")
+        if not (os.path.isdir(devices) and any(f.endswith(".conf") for f in os.listdir(devices))) and not self.locked():
+            rows.append(("Put your phone on the VPN", "Then your files, photos and passwords open from anywhere.",
+                         "Add a device…", lambda: DeviceDialog(self).present(self)))
+        backed = any("backup" in ((self.status.get(h) or {}).get("modules") or []) for h in self.doc.hosts())
+        if not backed:
+            rows.append(("Nothing is backed up yet", "Give the machines with your data the backup part, and one "
+                         "machine the backup-server part: they then save themselves every night.",
+                         "Open the defaults", lambda: self.select_scope("defaults")))
+        if not self.control_host():
+            rows.append(("Let the network look after itself", "A home server can check and manage everything while "
+                         "this computer is off, with a page for your phone. Give one home server the control part.",
+                         "How?", lambda: self.alert("A control node", CONTROL_HOW)))
+        if not rows:
+            return None
+        g = Adw.PreferencesGroup(title="What next", description="Your machines run. These make the network useful and safe.")
+        for title, text, label, action in rows:
+            row = Adw.ActionRow(use_markup=False, title=title, subtitle=text, subtitle_lines=4)
+            b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+            b.connect("clicked", lambda _b, a=action: a())
+            row.add_suffix(b)
+            g.add(row)
+        return g
+
     def attention_group(self, items, with_host):
         g = Adw.PreferencesGroup(title="Needs attention")
         for host, level, text in items:
@@ -2235,17 +2446,11 @@ class Window(Adw.ApplicationWindow):
             parts.append(self.attention_group(n["attention"], True))
         fresh = [h for h in self.doc.hosts() if self.is_new(h)]
         if fresh:
-            g = Adw.PreferencesGroup(title="Next steps",
-                                     description="Machines not installed yet, in the order to do them: the master first.")
-            order = {title: i for i, (_r, title) in enumerate(ROLE_GROUPS)}
-            for h in sorted(fresh, key=lambda x: order.get(self.group_of(x), len(order))):
-                row = plain_row(h, self.next_of(h))
-                row.add_prefix(dot("new"))
-                row.set_activatable(True)
-                row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
-                row.connect("activated", lambda _r, x=h: self.select_scope(x))
-                g.add(row)
-            parts.append(g)
+            parts.append(self.guide_group(fresh))
+        elif self.doc.hosts():
+            more = self.whats_next_group()
+            if more:
+                parts.append(more)
         machines = Adw.PreferencesGroup(title="Machines")
         order = {title: i for i, (_r, title) in enumerate(ROLE_GROUPS)}
         names = sorted(self.doc.hosts(), key=lambda h: order.get(self.group_of(h), len(order)))

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.64.0 — the app guides
+
+- A **welcome** page says what Kiwi Server is and offers three ways in: start a new network,
+  join one with an invite link, open one from a file.
+- **Getting started** replaces the list of command lines: one machine after the other, the hub
+  first, one sentence and one button each (Make install media, Set it up, Connect it, Open its
+  settings). A machine that was never installed is a step there, no longer a wall of red
+  "unreachable" and "invalid" lines.
+- **What next**, once the machines run: put your phone on the VPN, set up backups, let a home
+  server look after the network. Steps that are done are not listed.
+- **Add a phone or laptop** (menu, and What next): a name, then the QR code (with qrencode) or
+  the file to save, and the way to the control page's QR code.
+- **Back up the network now** in the menu.
+
 ## 2.63.0 — a control page that explains itself
 
 The owner's verdict on the control page: it could do nothing and explained nothing. Rebuilt:

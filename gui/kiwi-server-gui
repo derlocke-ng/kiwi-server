@@ -3617,8 +3617,9 @@ class Window(Adw.ApplicationWindow):
             if not address:
                 self.toast("Its address is needed for the first setup")
                 return
-            self.spawn(["apply", self.doc.path, host, "--ssh", "%s@%s" % (self.admin_user(host), address)],
-                       "Setting up %s…" % host)
+            # the first setup: a key remembered for this address is from an older install
+            self.spawn(["apply", self.doc.path, host, "--ssh", "%s@%s" % (self.admin_user(host), address),
+                        "--new-host-key"], "Setting up %s…" % host)
         dlg.connect("response", go)
         dlg.present(self)
 
@@ -3686,26 +3687,54 @@ class Window(Adw.ApplicationWindow):
 
         def worker():
             GLib.idle_add(self.append_log, "\n$ %s\n" % " ".join(shlex.quote(c) for c in cmd))
-            rc = 1
+            rc, said = 1, []
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         text=True, stdin=subprocess.DEVNULL)
                 for line in proc.stdout:
+                    said.append(line)
                     GLib.idle_add(self.append_log, line)
                 rc = proc.wait()
             except Exception as e:  # noqa: BLE001
                 GLib.idle_add(self.append_log, "%s\n" % e)
-            GLib.idle_add(self.after_spawn, rc)
+            GLib.idle_add(self.after_spawn, rc, "".join(said[-40:]), list(args))
         threading.Thread(target=worker, daemon=True).start()
 
-    def after_spawn(self, rc):
+    def after_spawn(self, rc, said="", args=()):
         self.set_busy(False, "")
-        self.toast("Done" if rc == 0 else "Failed — see the output")
+        if rc != 0 and args[:1] == ["apply"] and "host key is not the one on record" in said:
+            self.other_host_key(args, said)
+        else:
+            self.toast("Done" if rc == 0 else "Failed — see the output")
         self.poll()
         after, self._after_spawn = getattr(self, "_after_spawn", None), None
         if after:
             after()
         return False
+
+    def other_host_key(self, args, said):
+        """A machine answers with another key than the one remembered: right after a new
+        install, and the one thing that must not be waved through otherwise."""
+        m = re.search(r"ssh-keygen -R (\S+)", said)
+        host = args[2] if len(args) > 2 else "the machine"
+        dlg = Adw.AlertDialog(
+            heading="%s shows another key" % host,
+            body="Kiwi Server remembers every machine by a key. %s now shows a different one. That is right if you "
+                 "have just installed it anew. If you have not, stop here: something else may be answering at its "
+                 "address." % host)
+        dlg.add_response("stop", "Stop")
+        dlg.add_response("anew", "I installed it anew")
+        dlg.set_close_response("stop")
+
+        def answer(_d, r):
+            if r != "anew":
+                return
+            again = [a for a in args if a != "--new-host-key"]
+            if "--ssh" not in again and m:
+                again += ["--ssh", "%s@%s" % (self.admin_user(host), m.group(1))]
+            self.spawn(again + ["--new-host-key"], "Setting up %s…" % host)
+        dlg.connect("response", answer)
+        dlg.present(self)
 
     def set_busy(self, busy, msg):
         self.busy = busy

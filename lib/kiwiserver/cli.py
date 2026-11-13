@@ -775,7 +775,8 @@ def cmd_next(args):
     tgt = "%s@%s" % (h.admin["user"], addr) if addr else None
     if addr and (remote._answers(addr, 22) or remote._answers(addr, remote.ssh_port(h))):
         if go("%s answers at %s. Set it up now (a few minutes; it downloads what it runs)?" % (h.name, addr)):
-            run("apply", path, h.name, "--ssh", tgt)
+            # never set up from here: a key on record for its address is from an older install
+            run("apply", path, h.name, "--ssh", tgt, "--new-host-key")
             util.say("%s is set up. Run this again for the next machine" % h.name)
         return
     iso = shown_path(os.path.abspath(o.iso))
@@ -1421,6 +1422,8 @@ def cmd_apply(args):
     servers = None
     update = getattr(args, "update", False)
     for h in hosts:
+        if getattr(args, "new_host_key", False) and args.ssh:
+            adoptmod.forget_host_key(args.ssh)      # installed anew: the key it showed before is not its key
         tgt = remote.reach(h, args.ssh)
         try:
             if servers is None and unlock.wanted(h):
@@ -2459,6 +2462,8 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s.add_argument("--new-host-key", action="store_true",
+                   help="with --ssh: the machine was installed anew, forget the SSH host key it showed before")
     s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")

@@ -1973,6 +1973,27 @@ class TestSetup(Base):
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
         self.assertEqual(hosts["mango"]["phase"], "build", hosts["mango"]["next"])
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_next_sets_a_fresh_machine_up_at_its_address(self):
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        calls, real_main = [], cli.main
+
+        def phases(fleet, roles, host, errors, out):
+            return ("install", "x") if host.name == "mango" else ("applied", "")
+
+        def fake_main(argv):
+            calls.append(argv)
+            return 0
+        with mock.patch.object(cli, "next_step", phases), mock.patch.object(remote, "_answers", lambda *a, **k: True), \
+                mock.patch.object(cli, "main", fake_main), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            real_main(["next", dest, "--yes"])
+        # not by its name, which resolves on the VPN only; and a key on record for that address is an older install's
+        self.assertEqual(calls, [["apply", dest, "mango", "--ssh", "core@192.168.2.30", "--new-host-key"]])
+
     FOUND = {"subnet": "192.168.1.0/24", "gateway": "192.168.1.1", "timezone": "Europe/Vienna", "keyboard": "at",
              "locale": "de_AT.UTF-8", "ssh_key": "", "addresses": ["192.168.1.31/24", "192.168.1.32/24"]}
 
@@ -2851,10 +2872,10 @@ class TestUnlock(Base):
         self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0::eno1:none:9.9.9.9:149.112.112.112",
                       bu["kernel_arguments"]["should_exist"])
 
-    def test_a_static_coreos_host_has_to_name_its_interface(self):
+    def test_a_static_coreos_host_need_not_name_its_card(self):
         h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1"})
-        with self.assertRaisesRegex(KiwiError, "need network.interface"):
-            coreos_t.build_butane(h, "#!/bin/sh\n")
+        bu = coreos_t.build_butane(h, "#!/bin/sh\n")          # the setting is for the wired card, whichever it is
+        self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0:::none", bu["kernel_arguments"]["should_exist"])
 
     def test_a_coreos_disk_gets_a_key_for_the_console_from_its_own_binding(self):
         h = self.coreos_host()

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.74.2 — the app's home-server setup, run for real
+
+The dialog **A home server that looks after it…** was run on a real machine for the first
+time (a copy of the test fleet, lychee as the server): all four steps work, the server
+holds only encrypted files and waits for the first login.
+
+- It crashed when it had finished: the closing text had two blanks and one value.
+- The choices for "After a power cut" were cut off before the machine's name, and a machine
+  was offered its own ring (which was then silently not used). Now "papaya opens it", and
+  a machine's own rings are not offered for it.
+
 ## 2.74.1 — rotation, after clicking through the page
 
 - The app's **A computer was lost or stolen…** offers both steps: the keys and the secrets.

@@ -24,5 +24,3 @@ pages:
   - design/ram-master.md: "Design: a master in RAM"
   - design/federation.md: "Design: federation"
   - design/local-first.md: "Design: local first"
-  - HANDOFF.md: Handoff notes
-  - REVIEW-2.1.0.md: Review of 2.1.0

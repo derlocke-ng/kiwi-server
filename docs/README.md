@@ -35,8 +35,6 @@ then sets up and maintains each machine over SSH. Its command is
 | [Federation](design/federation.md) | two networks sharing services |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
-| [Handoff](HANDOFF.md) | notes for a session on the test hardware |
-| [Review of 2.1.0](REVIEW-2.1.0.md) | findings of the 2.1.0 review |
 
 The source of these pages is the `docs/` folder of
 [derlocke-ng/kiwi-server](https://github.com/derlocke-ng/kiwi-server).

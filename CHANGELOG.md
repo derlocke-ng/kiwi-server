@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.71.1 — the docs reach kiwi-network.eu
+
+- `docs/kiwi-docs.yml`: the pages in menu order. kiwi-network's site lists kiwi-server as a
+  source already and skipped it for want of this file; its build script now takes the folder
+  (21 pages under the kiwi-server reference), at the next release tag.
+- The kiwi-docs guide is in `.claude/skills/kiwi-docs/` (a copy from kiwi-network, with its
+  checker: 0 errors), and `.gitignore` lets it be committed.
+- The handoff notes and the 2.1.0 review are internal: they moved from `docs/` to `notes/`,
+  so they are not shown on the site.
+
 ## 2.71.0 — the QR code needs nothing installed
 
 - kiwi-server draws QR codes itself (`lib/kiwiserver/qr.py`: byte mode, level L, up to 858
@@ -1231,7 +1241,7 @@ and the first boot; nothing here has booted on hardware yet.
 
 ## 2.1.1 — the review fixes
 
-What the 2.1.0 review ([docs/REVIEW-2.1.0.md](docs/REVIEW-2.1.0.md)) found,
+What the 2.1.0 review ([notes/REVIEW-2.1.0.md](notes/REVIEW-2.1.0.md)) found,
 fixed. Nothing changes in the fleet file format; new settings have defaults.
 
 - **First boot** (`roles/common/lib.sh`): `kiwi-stack start` no longer

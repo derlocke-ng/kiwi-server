@@ -106,6 +106,12 @@ The old password cannot be read anywhere.</p></details>{% endblock %}""",
 <div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
 <b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% endif %}
 
+<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
+newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
+moment. Do it now and then, and after changing settings in the app.</span></p>
+<form method="post" action="/run" onsubmit="return confirm('Update every machine now? This takes a while; services that changed restart for a moment.')">{{ tok }}
+<input type="hidden" name="action" value="update"><button class="primary">Update everything</button></form></div>
+
 <h2>Do something</h2><div class="tiles">
 <a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
 <a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
@@ -272,7 +278,8 @@ KIND = {"master": "Hub (master)", "node": "Home server (node)", "node-gw": "Home
 WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "not reachable", "unknown": "not checked yet"}
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
-        "backup": "Saving the network", "watch": "Looking for restarted hubs", "save": "Saving the data of"}
+        "backup": "Saving the network", "watch": "Looking for restarted hubs", "save": "Saving the data of",
+        "update": "Updating every machine"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",

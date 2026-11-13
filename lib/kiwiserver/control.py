@@ -35,9 +35,9 @@ MIN_PASSWORD = 12
 ACTIONS = {
     "status": ("status", True), "plan": ("plan", True), "apply": ("apply", True),
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
-    "save": ("backups", True),
+    "save": ("backups", True), "update": ("apply", False),
 }
-CHANGES = {"apply", "backup"}         # these change machines or the fleet: the audit log says who
+CHANGES = {"apply", "backup", "update", "save"}     # these change machines or the fleet: the audit log says who
 
 
 class Control:
@@ -378,6 +378,13 @@ class Control:
     def argv(self, action, hosts=()):
         if action not in ACTIONS:
             raise KiwiError("unknown action %r" % action)
+        if action == "update":              # every machine, one after the other: the maintenance button
+            names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
+            if not names:
+                raise KiwiError("there are no machines yet")
+            me = os.environ.get("KIWI_CONTROL_HOST")    # this node last: its own apply may restart this page
+            names = [n for n in names if n != me] + [n for n in names if n == me]
+            return list(self.kiwi) + ["apply", self.fleet_path] + names
         if action == "save":                # one machine's data, to its backup machines, now
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
@@ -434,7 +441,7 @@ class Control:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):
             pass
-        if meta["action"] in ("status", "apply", "save"):
+        if meta["action"] in ("status", "apply", "save", "update"):
             self.look()                         # what the pages show is what is true now
 
     def _write(self, meta):

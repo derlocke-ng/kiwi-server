@@ -71,6 +71,11 @@ control page runs the list as jobs, each marked done:
 | Disk keys, Tang rings | the existing swap and ring rotation | a reboot window for rings |
 | Outside keys (Mullvad, the hoster's API token, the backup passphrase) | by hand, listed | varies |
 
+Built in 2.73.0: the list (`kiwi-server rotate <fleet>`), the SSH keys (`rotate <fleet>
+ssh`: a new admin key and SSH CA, the old ones kept as `.old` until every machine has
+changed; the page's **Replace the keys**) and the control password (on the page). The
+shared admin key stays one key for now: a key per controller comes with scopes.
+
 A rotation that is open shows on the page until every line is done or waived, with who
 waived it.
 

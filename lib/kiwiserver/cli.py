@@ -1130,6 +1130,8 @@ def fleet_identities(fleet):
             priv = fleet.resolve_path(k[:-4])
             if os.path.isfile(priv) and priv not in out:
                 out.append(priv)
+                if os.path.isfile(priv + ".old"):       # a rotation under way: some machines know only this one
+                    out.append(priv + ".old")
     return out
 
 
@@ -1907,6 +1909,58 @@ def cmd_sshca(args):
     print("trusted for: %s" % ", ".join(sshca.patterns(fleet)))
 
 
+def share(fleet_path, action):
+    """push or pull the way this fleet is shared (a control node, a synced folder). False
+    when it is not shared, or this is the control node itself."""
+    from . import controlsync
+    fleet_dir, name = os.path.dirname(os.path.abspath(fleet_path)), os.path.basename(fleet_path)
+    if os.environ.get("KIWI_CONTROL_HOST"):
+        return False
+    if controlsync.remote_of(fleet_dir):
+        (controlsync.push_api if action == "push" else controlsync.pull_api)(fleet_dir, name)
+    elif controlsync.folder_of(fleet_dir):
+        folder = controlsync.folder_of(fleet_dir)
+        (controlsync.push_dir if action == "push" else controlsync.pull_dir)(fleet_dir, name, folder)
+    else:
+        return False
+    return True
+
+
+def cmd_rotate(args):
+    """What a computer that managed this network could read, made new. Without an action: the
+    list. `ssh`: a new admin key and SSH CA on every machine; the old ones work until the last
+    machine has changed."""
+    from . import rotate
+    if args.action and share(args.fleet, "pull"):      # before anything is made: this copy is the newest
+        util.say("in step with the other computers")
+    fleet, roles, ms = load(args)
+    for h in fleet.hosts.values():
+        try:
+            rolesmod.resolve_settings(roles[h.role], h, ms)
+        except (KiwiError, KeyError):
+            pass
+    if not args.action:
+        ways = [n for n, _k in store.Store.for_fleet(args.fleet).ways()] if store.Store.for_fleet(args.fleet).exists() else []
+        for what, state, how in rotate.plan(fleet, ways):
+            print("%-48s %s" % (what, "  ".join(x for x in (state, how) if x)))
+        return
+    for n in list(args.hosts) + list(args.waive or []):
+        if n not in fleet.hosts:
+            raise KiwiError("no such machine: %s" % n)
+    rotate.begin(fleet, args.why or "")
+    remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))    # the old keys too
+    # the others first: a control node that knows both keys keeps reaching every machine
+    # while they change (found: one that did not learned new host keys meanwhile, and its
+    # copy and this one had both changed)
+    if share(args.fleet, "push"):
+        util.say("the other computers and the control node know the new keys")
+    left = rotate.ssh(fleet, args.hosts, args.waive or (), args.why or "")
+    if share(args.fleet, "push"):
+        util.say("the other computers and the control node have the result")
+    if left:
+        raise SystemExit(1)
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
     mesh and DNS into the other's federation.yaml. What each shares stays empty until written."""
@@ -2299,6 +2353,11 @@ def build_parser():
     s.add_argument("--user", help="sign: the user the key logs in as (default: admin.user)")
     s.add_argument("--days", type=int, default=sshca.USER_DAYS, help="sign: how long it lets the key in (default %(default)s)")
     s.add_argument("--known-hosts", metavar="FILE", help="trust: instead of ~/.ssh/known_hosts")
+    s = sub("rotate", cmd_rotate); s.add_argument("fleet")
+    s.add_argument("action", nargs="?", choices=("ssh",), help="without: the list of what can be replaced")
+    s.add_argument("hosts", nargs="*", help="ssh: only these machines (default: all that still have the old keys)")
+    s.add_argument("--waive", action="append", metavar="HOST", help="ssh: leave this machine out (off for good, or about to be installed anew)")
+    s.add_argument("--why", help="a note for the record, e.g. laptop lost")
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")

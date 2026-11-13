@@ -9,7 +9,7 @@ jobs:
       - name: tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q shellcheck xorriso cpio python3-yaml python3-jinja2 docker-compose-v2 age python3-fastapi python3-uvicorn python3-multipart
+          sudo apt-get install -y -q shellcheck xorriso cpio python3-yaml python3-jinja2 docker-compose-v2 age python3-fastapi python3-uvicorn python3-multipart qrencode
           # out of the project's own image: GitHub's release downloads kept answering 504
           docker create --name butane quay.io/coreos/butane:release
           sudo docker cp butane:/usr/local/bin/butane /usr/local/bin/butane

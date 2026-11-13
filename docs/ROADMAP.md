@@ -815,6 +815,12 @@ Asked for by the owner in November 2026:
   fleet through the control node and are accepted, denied or removed on its page; sync through
   its API or a synced folder; rotation of what a removed one knew; later site controllers with
   their own scope. The control node itself is built (2.60: docs/control.md).
+- **Backups of the desktop and the phone**, asked for 13 November 2026 ("for later"); not
+  built, not designed. The desktop's system and settings, more than what Nextcloud syncs
+  (the owner names ensconce for some settings), and above all a GrapheneOS phone, so that
+  getting a lost or new device back is a short, known path. To look at when it is taken up:
+  the fleet's restic backup server as the target for a desktop, GrapheneOS's own backup
+  (Seedvault) to a place on a node, and a restore that is practised, not only a backup.
 - **arm64 boards** (Odroid M1 and N2+, Banana Pi 4 LTS; HC2 is 32-bit and left out), asked
   for 13 November 2026. Built in 2.58.0: `kiwi-server adopt` takes a board's own Debian or
   Armbian over SSH, `debian.arch: arm64`, tang and strfry images for arm64; proven on an

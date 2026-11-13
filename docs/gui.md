@@ -1,8 +1,10 @@
 # The desktop app
 
 
-New here? Start the app and choose **Start a new network**: a few questions,
-then **Getting started** lists your machines, the hub first, with one sentence
+New here? Start the app and choose **Start a new network**: it says what you
+need, asks where the master runs and what your machine at home does, and
+checks each answer before it goes on. What has an answer that works sits
+under **More settings**. Then **Getting started** lists your machines, the master first, with one sentence
 and one button each. When they run, **What next** offers the phone, backups
 and a home server that looks after everything. **Join one with an invite
 link** takes a link from a network's control page ([control.md](control.md)).

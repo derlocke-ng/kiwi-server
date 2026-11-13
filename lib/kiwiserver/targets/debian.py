@@ -86,7 +86,11 @@ def preseed(host, version):
         "d-i clock-setup/ntp boolean true",
         "",
         "### partitioning — THE WHOLE DISK IS WIPED WITHOUT ASKING",
-        "d-i partman-auto/disk string %s" % (c.get("disk") or "/dev/sda"),
+        # disk: auto. The one disk that holds no mounted file system (the install media does):
+        # with none or several the installer asks at the console instead of guessing
+        ("d-i partman/early_command string D=$(for d in $(list-devices disk); do grep -q \"^$d\" /proc/mounts || echo $d; done); "
+         "[ \"$(echo $D | wc -w)\" = 1 ] && debconf-set partman-auto/disk \"$D\" && debconf-set grub-installer/bootdev \"$D\""
+         if c.get("disk") == "auto" else "d-i partman-auto/disk string %s" % (c.get("disk") or "/dev/sda")),
         "d-i partman-auto/method string %s" % ("crypto" if d.get("encrypt") else d["partitioning"]),
         "d-i partman-auto-lvm/guided_size string max",
         "d-i partman-lvm/device_remove_lvm boolean true",
@@ -127,7 +131,7 @@ def preseed(host, version):
         "### boot loader",
         "d-i grub-installer/only_debian boolean true",
         "d-i grub-installer/with_other_os boolean false",
-        "d-i grub-installer/bootdev string %s" % (c.get("disk") or "default"),
+        "d-i grub-installer/bootdev string %s" % ("default" if c.get("disk") in (None, "", "auto") else c["disk"]),
     ]
     kargs = [str(k) for k in (d.get("kernel_arguments") or [])]
     if kargs:

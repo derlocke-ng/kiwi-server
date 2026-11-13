@@ -83,7 +83,9 @@ def ucore_units(image):
         return {"name": name, "enabled": True, "contents": (
             "[Unit]\nDescription=%s\n%s"
             "After=network-online.target\nWants=network-online.target\n\n"
-            "[Service]\nType=oneshot\nStandardOutput=journal+console\n"
+            # (not in ublue's example: without a retry one name lookup that fails at boot left a
+            # test machine on the unverified image for good)
+            "[Service]\nType=oneshot\nStandardOutput=journal+console\nRestart=on-failure\nRestartSec=30\n"
             "ExecStart=/usr/bin/rpm-ostree rebase --bypass-driver %s\n"
             "ExecStart=/usr/bin/touch %s\n"
             "ExecStart=/usr/bin/systemctl disable %s\n"
@@ -98,6 +100,42 @@ def ucore_units(image):
              ["/etc/ucore-autorebase/unverified", "!/etc/ucore-autorebase/signed"],
              "ostree-image-signed:docker://%s" % image, "/etc/ucore-autorebase/signed"),
     ]
+
+
+# on the machine: is it still on its way from Fedora CoreOS to uCore, and did a step fail?
+_SWITCH = ("if test -d /etc/ucore-autorebase && ! test -e /etc/ucore-autorebase/signed; then echo switching; "
+           "for u in ucore-unsigned-autorebase ucore-signed-autorebase; do "
+           "systemctl is-failed -q $u.service && echo failed $u; done; fi; true")
+
+
+def wait_for_ucore(name, tgt, say=util.say, run=None, sleep=None, tries=120, pause=15):
+    """A machine installed as uCore starts as Fedora CoreOS and switches by itself in two
+    steps, each ending in a restart (the units above). An apply in between is cut off by the
+    restart, and what it left half done broke the second step on a test machine. So an apply
+    waits until the switch is through. True when it had to wait."""
+    import time
+    from .. import remote
+    run, sleep = run or remote.run, sleep or time.sleep
+    waited = False
+    for _ in range(tries):
+        try:
+            out = run(tgt, _SWITCH).decode(errors="replace")
+        except KiwiError:
+            if not waited:
+                raise                       # it never answered: not a restart, it is not there
+            out = "switching"               # it does not answer any more: in the middle of a restart
+        if "failed" in out:
+            unit = out.split("failed", 1)[1].split()[0]
+            raise KiwiError("its switch to uCore stopped (%s failed). On the machine: sudo systemctl restart %s, "
+                            "and journalctl -u %s says why" % (unit, unit, unit))
+        if "switching" not in out:
+            return waited
+        if not waited:
+            say("%s is still switching to uCore (after an install it restarts twice by itself): waiting for it" % name)
+            waited = True
+        sleep(pause)
+    raise KiwiError("it is still switching to uCore after %d minutes: look at its screen, then try again"
+                    % (tries * pause // 60))
 
 
 STAGED_REBOOT_SCRIPT = ROLE_DIR + "/staged-reboot.sh"
@@ -152,7 +190,11 @@ def _unlock_kargs(host, pins):
     if not net["interface"]:
         raise KiwiError("%s: a static address and unlock: need network.interface, the initramfs must know which one" % host.name)
     addr = ipaddress.ip_interface(net["address"])
-    return ["rd.neednet=1", "ip=%s::%s:%s::%s:none" % (addr.ip, net["gateway"] or "", addr.netmask, net["interface"])]
+    # the connection made here stays the machine's connection once it has booted, so it has
+    # to carry the DNS servers too (found: without them an encrypted machine with a fixed
+    # address resolved no name, and never finished its switch to uCore)
+    dns = "".join(":%s" % d for d in (net.get("dns") or [])[:2])
+    return ["rd.neednet=1", "ip=%s::%s:%s::%s:none%s" % (addr.ip, net["gateway"] or "", addr.netmask, net["interface"], dns)]
 
 
 def admin_user(host):

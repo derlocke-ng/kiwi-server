@@ -3,19 +3,38 @@
 ## Make a fleet
 
 ```bash
-kiwi-server init fleet.yaml     # asks: domain, your key, the master, the machines at home
-kiwi-server list fleet.yaml     # every host, where it stands and what comes next
-kiwi-server validate fleet.yaml
-kiwi-server render fleet.yaml   # scripts + configs into ./output/<host>/
-kiwi-server build fleet.yaml    # + the ISOs (base images cached in ~/.cache/kiwi-server)
-sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
+kiwi-server init                # a few questions; the network goes into ~/kiwi/fleet.yaml
+kiwi-server next ~/kiwi/fleet.yaml   # does the next step and says what it did; run it again
 ```
 
-`init` asks a few questions in the terminal. Enter takes the suggestion it
-found on this computer: time zone, keyboard, the router's network. It writes
-a fleet that waits only for its master; `init --example` writes the commented
-example instead. The GUI's *New fleet* asks the same questions, each with a
-(?) for what it means.
+`init` first says what you need: a master (the one machine reachable from
+the Internet, usually a small rented server), a machine at home for your
+files, a USB stick. Then it asks three things: where the master runs, its
+address on the Internet, and what the machine at home does. Everything else
+it finds on this computer or decides for you:
+
+- the time zone, the keyboard and the language come from this computer;
+- the address of a machine at home is one that does not answer right now, so
+  it looks free;
+- the install disk is `auto`: the installer takes the machine's one disk;
+- the keys are made and encrypted, and the recovery key is shown once.
+
+A wrong answer is asked again with a sentence that says what is wrong.
+`init --all` also asks what has an answer that works (names, the system, the
+disk, the name ending). `init --example` writes the commented example
+instead. The app's **Start a new network** shows the same questions.
+
+`next` is the guide: it takes the first machine that is not set up, the
+master first, and does its next step (its place on the VPN, the install
+media, the setup once the machine answers). Where a person has to act, such
+as writing a USB stick, it says exactly what to do. By hand, the steps are:
+
+```bash
+kiwi-server list fleet.yaml     # every host, where it stands and what comes next
+kiwi-server validate fleet.yaml
+kiwi-server build fleet.yaml    # the ISOs (base images cached in ~/.cache/kiwi-server)
+sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
 
 New machines are named after fruits, masters after fruit dishes:
 
@@ -29,8 +48,9 @@ What goes into the file: [The fleet file](fleet.md).
 
 ## Install a machine
 
-Boot the machine from the ISO. **It wipes the disk named in `disk:`, without
-asking.**
+Boot the machine from the ISO. **It wipes the machine's disk without
+asking.** `disk: auto` takes the machine's one disk and stops when there are
+several; a device such as `/dev/nvme0n1` names it.
 
 CoreOS and Debian install and then **power off** (`install.on_done:
 poweroff`, the default). Remove the stick or the provider's ISO before the

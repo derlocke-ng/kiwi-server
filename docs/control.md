@@ -100,9 +100,9 @@ Remove it (above), then replace what it knew. On the page, under
    change (what Nextcloud's parts use among themselves, the ad blocker's and
    the VPN server's admin password, Paperless's session key, sftp and
    downloader passwords). Those containers restart; some ask you to sign in
-   again. Database and admin passwords live in the service itself: they keep
-   their value (`secrets/pins.json`) until their module can change them
-   there.
+   again. A password that lives in the service itself is changed there first
+   when its module knows how (the databases of Immich and Paperless so far);
+   the others keep their value (`secrets/pins.json`) until their module can.
 3. **The page's password.** Current password, new password, done. The old
    one opens nothing any more.
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.75.0 — database passwords change with the seed: Immich and Paperless
+
+kiwi-modules 0.31.0.
+
+- A module can say how a generated secret is changed where it lives (`rotate: { in, run }`).
+  `kiwi-server rotate <fleet> seed` runs that on the machine before its apply: the new
+  value goes in on stdin, and only when the command worked does the pin go and the files
+  follow. One that does not work keeps its value; the next rotation tries again.
+- First: the database passwords of Immich and Paperless. A password written in the fleet
+  file by hand is left alone.
+
 ## 2.74.2 — the app's home-server setup, run for real
 
 The dialog **A home server that looks after it…** was run on a real machine for the first

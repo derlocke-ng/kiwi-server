@@ -266,7 +266,9 @@ def seed_begin(fleet, ms, why=""):
     pins = fleet.pins()
     for hostname, module, s in generated(fleet, ms):
         key = "%s/%s/%s" % (hostname, module, s.key)
-        if not getattr(s, "rotate", "") and key not in pins:
+        # all but the ones a restart alone changes: one that is changed where it lives keeps
+        # its value until that has worked on its machine (in_place)
+        if getattr(s, "rotate", "") != "restart" and key not in pins:
             pins[key] = fleet.derive_secret(hostname, module, s.key)
     util.write_text(fleet.resolve_path(PINS), json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
     path = fleet.resolve_path("secrets/seed")
@@ -278,9 +280,42 @@ def seed_begin(fleet, ms, why=""):
     return state
 
 
-def seed(fleet, ms, apply, names=(), waive=(), why="", say=util.say):
+def in_place(fleet, h, tgt, roles, ms, say=util.say, run=None):
+    """This machine's pinned secrets whose module says how they are changed where they live
+    (`rotate: {in, run}`): the new value is set there, then the pin goes and the next apply
+    brings the files. One that does not work keeps its pin, so nothing breaks; the next run
+    tries again (the command sets the same value)."""
+    from kiwimodules import modules as modmod
+    from kiwimodules.machine import derive_secret
+    run = run or remote.run
+    pins = fleet.pins()
+    prefix = modmod.PREFIX[roles[h.role].node_type]
+    runtime = str((h.role_settings or {}).get("runtime") or "podman")
+    changed = []
+    for hostname, module, s in generated(fleet, ms):
+        key = "%s/%s/%s" % (hostname, module, s.key)
+        if hostname != h.hostname or getattr(s, "rotate", "") != "exec" or key not in pins:
+            continue
+        if (h.role_settings_raw.get(module) or {}).get(s.key):
+            continue                    # written in the fleet file: not ours to change
+        new = derive_secret(fleet.seed(), hostname, module, s.key)
+        script = "IFS= read -r NEW; export NEW; exec %s exec -e NEW %s sh -c %s" % (
+            shlex.quote(runtime), shlex.quote("%s-%s" % (prefix, s.rotate_in)), shlex.quote(s.rotate_run))
+        try:
+            run(tgt, script, (new + "\n").encode())        # on stdin: never on a command line or in sudo's log
+        except KiwiError as e:
+            say("%s: %s.%s keeps its value (changing it did not work: %s)" % (h.name, module, s.key, str(e)[-160:]))
+            continue
+        del pins[key]
+        util.write_text(fleet.resolve_path(PINS), json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
+        changed.append("%s.%s" % (module, s.key))
+        say("%s: %s.%s is changed where it lives" % (h.name, module, s.key))
+    return changed
+
+
+def seed(fleet, ms, apply, names=(), waive=(), why="", say=util.say, before=None):
     """The machines take the new seed: `apply(name)` is an apply of that machine, 0 when it
-    worked. Returns the machines that still wait."""
+    worked; `before(name)` runs ahead of it. Returns the machines that still wait."""
     state = seed_begin(fleet, ms, why)
     for n in list(names) + list(waive):
         if n not in fleet.hosts:
@@ -293,6 +328,8 @@ def seed(fleet, ms, apply, names=(), waive=(), why="", say=util.say):
     todo = [n for n in (names or seed_pending(fleet, state)) if n not in state["seed"]["done"]]
     me = os.environ.get("KIWI_CONTROL_HOST")        # this node last: its apply may restart what runs this
     for n in [x for x in todo if x != me] + [x for x in todo if x == me]:
+        if before:
+            before(n)                   # what is changed where it lives, before the files follow
         if apply(n) != 0:
             say("%s: not changed" % n)
             continue
@@ -335,9 +372,9 @@ def plan(fleet, control_ways=(), ms=None):
         rows.append(("The control page's password", "", "on the page: Computers, Change the password"))
     if ms is not None and fleet.has_seed():
         gen = generated(fleet, ms)
+        waits = seed_pending(fleet, state)
         follow = sorted({"%s.%s" % (m, x.key) for _h, m, x in gen if getattr(x, "rotate", "")})
         stay = sorted({"%s.%s" % (m, x.key) for _h, m, x in gen if not getattr(x, "rotate", "")})
-        waits = seed_pending(fleet, state)
         when = ("under way: %s still on the old ones" % ", ".join(waits) if waits
                 else "replaced %s" % last["seed"][:10] if last.get("seed") else "never replaced")
         if follow:

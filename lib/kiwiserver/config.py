@@ -424,8 +424,8 @@ class Host:
                 raise ValueError
         except (TypeError, ValueError):
             errs.append("updates.length_minutes must be a positive integer")
-        if self.cfg.get("disk") and not str(self.cfg["disk"]).startswith("/dev/"):
-            errs.append("disk must be a device path like /dev/sda or /dev/nvme0n1")
+        if self.cfg.get("disk") and str(self.cfg["disk"]) != "auto" and not str(self.cfg["disk"]).startswith("/dev/"):
+            errs.append("disk must be auto (the machine's one disk) or a device path like /dev/sda or /dev/nvme0n1")
         if self.target == "armbian":
             ab = c["armbian"]
             if not (ab.get("board") or ab.get("image_url")):

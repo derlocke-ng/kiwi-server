@@ -444,6 +444,13 @@ class TestDebian(Base):
         _h, ps, _files = self.make(debian={"encrypt": True})  # the same until the machine's first apply
         self.assertIn("d-i partman-crypto/passphrase password %s\n" % key, ps)
 
+    def test_disk_auto_lets_the_installer_find_the_one_disk(self):
+        _h, ps, _files = self.make(disk="auto")
+        self.assertNotIn("d-i partman-auto/disk string", ps)
+        self.assertIn("d-i partman/early_command string D=$(for d in $(list-devices disk)", ps)
+        self.assertIn('debconf-set partman-auto/disk "$D"', ps)       # only when there is exactly one
+        self.assertIn("d-i grub-installer/bootdev string default", ps)
+
     def test_literal_passphrase_is_kept_and_warned_about(self):
         h, ps, _files = self.make(debian={"encrypt": True, "passphrase": "secret-pass"})
         self.assertIn("d-i partman-crypto/passphrase password secret-pass\n", ps)
@@ -710,6 +717,39 @@ class TestIso(Base):
         iso.coreos_iso(FakeTC(), f2.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
         self.assertNotIn("--post-install", calls[2])
         self.assertNotIn("--live-karg-append", calls[2])
+        # disk: auto: no device is named; a script of the live system finds the machine's one disk
+        f3 = self.fleet({"defaults": self.base_defaults(disk="auto", install={"on_done": "reboot"}), "hosts": {"a": {}}})
+        self.assertEqual(f3.hosts["a"].validate(self.roles), [])
+        calls.clear()
+        iso.coreos_iso(FakeTC(), f3.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
+        self.assertNotIn("--dest-device", calls[2])
+        pre = calls[2][calls[2].index("--pre-install") + 1]
+        script = util.read_text(pre)
+        self.assertIn("dest-device: %s", script)
+        self.assertIn("disk: auto needs a machine with one disk", script)
+        self.assertEqual(subprocess.run(["bash", "-n", pre]).returncode, 0)
+
+    def test_an_apply_waits_until_a_fresh_ucore_machine_has_switched(self):
+        answers = iter([b"switching\n", KiwiError("no route to host"), b"switching\n", b""])
+        slept, said = [], []
+
+        def run(tgt, script):
+            a = next(answers)
+            if isinstance(a, Exception):
+                raise a
+            return a
+        self.assertTrue(coreos_t.wait_for_ucore("papaya", "core@p", said.append, run, slept.append))
+        self.assertEqual((len(slept), len(said)), (3, 1))        # said once, through a restart, until it is done
+        self.assertIn("restarts twice by itself", said[0])
+        self.assertFalse(coreos_t.wait_for_ucore("papaya", "core@p", said.append, lambda t, s: b"", slept.append))
+        with self.assertRaisesRegex(KiwiError, "ucore-signed-autorebase failed"):
+            coreos_t.wait_for_ucore("papaya", "core@p", said.append,
+                                    lambda t, s: b"switching\nfailed ucore-signed-autorebase\n", slept.append)
+        with self.assertRaisesRegex(KiwiError, "no route"):      # it never answered: that is no restart
+            coreos_t.wait_for_ucore("papaya", "core@p", said.append,
+                                    lambda t, s: (_ for _ in ()).throw(KiwiError("no route to host")), slept.append)
+        with self.assertRaisesRegex(KiwiError, "still switching to uCore after"):
+            coreos_t.wait_for_ucore("papaya", "core@p", said.append, lambda t, s: b"switching\n", slept.append, tries=3)
 
     def test_iso_needs_disk(self):
         f = self.fleet({"defaults": self.base_defaults(disk=None), "hosts": {"a": {}}})
@@ -1917,8 +1957,8 @@ class TestSetup(Base):
         rc, out, err = self.run_cli("init", dest, "--answers", answers)
         self.assertEqual(rc, 0, err)
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets", "admin_ed25519")))
-        self.assertIn("kiwi-server vps install fleet.yaml trifle", out)
-        self.assertIn("kiwi-server enroll fleet.yaml mango", out)
+        self.assertIn("kiwi-server next", out)                   # one command goes on from here
+        self.assertEqual(yaml.safe_load(util.read_text(dest))["hosts"]["trifle"]["disk"], "auto")
         rc, out, err = self.run_cli("list", dest, "--porcelain")
         self.assertEqual(rc, 0, err)
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
@@ -1933,40 +1973,90 @@ class TestSetup(Base):
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
         self.assertEqual(hosts["mango"]["phase"], "build", hosts["mango"]["next"])
 
-    def test_the_terminal_asks_and_enter_takes_the_suggestion(self):
-        typed = iter(["", "", "",            # domain, time zone, keyboard
-                      "1",                   # a key of the fleet's own
-                      "parfait", "1", "198.51.100.4", "", "",   # master: name, netcup, address, disk, direct exit
-                      "", "",                # LAN, router
-                      "y", "papaya", "", "", "", "", "",       # a gateway node, all suggestions
-                      "n",                   # no second one
-                      "n"])                  # no secret store
-        found = {"subnet": "192.168.1.0/24", "gateway": "192.168.1.1", "timezone": "Europe/Vienna",
-                 "keyboard": "at", "ssh_key": ""}
-        with contextlib.redirect_stdout(io.StringIO()):
-            a = setupmod.ask(found, read=lambda prompt: next(typed))
-        self.assertEqual((a["timezone"], a["master_where"], a["exit"], a["store"]), ("Europe/Vienna", "netcup", "direct", False))
-        self.assertEqual(a["nodes"], [{"name": "papaya", "preset": "gateway", "target": "ucore",
-                                       "download_dir": "/home/user/downloads", "address": "192.168.1.30/24",
-                                       "disk": "/dev/nvme0n1"}])
+    FOUND = {"subnet": "192.168.1.0/24", "gateway": "192.168.1.1", "timezone": "Europe/Vienna", "keyboard": "at",
+             "locale": "de_AT.UTF-8", "ssh_key": "", "addresses": ["192.168.1.31/24", "192.168.1.32/24"]}
+
+    def ask(self, typed, **kw):
+        typed, said = iter(typed), []
+        a = setupmod.ask(dict(self.FOUND), read=lambda prompt: next(typed), show=said.append, **kw)
+        return a, " ".join("\n".join(said).split())          # (the lines are wrapped: compared as one text)
+
+    def test_the_terminal_asks_little_and_enter_takes_the_suggestion(self):
+        a, said = self.ask(["",                    # the hub: at netcup
+                            "198.51.100.4", "",    # its address, the direct exit
+                            "", "", "",            # a machine at home: yes, files and passwords, the address that looks free
+                            ""])                   # no second one
+        self.assertEqual((a["timezone"], a["keyboard"], a["locale"], a["domain"]), ("Europe/Vienna", "at", "de_AT.UTF-8", "home"))
+        self.assertEqual((a["master_where"], a["exit"], a["master_disk"]), ("netcup", "direct", "auto"))
+        self.assertEqual(a["nodes"], [{"preset": "cloud", "address": "192.168.1.31/24", "name": "papaya",
+                                       "target": "ucore", "disk": "auto"}])
+        self.assertIn("You need three things", said)             # said before anything is asked
+        self.assertIn("time zone Europe/Vienna", said)           # found, shown, not asked
+        self.assertNotIn("Name ending", said)
         data, _made = setupmod.make(dict(a, admin_key="~/.ssh/x.pub"), self.tmp)
-        self.assertEqual(data["hosts"]["papaya"]["network"], {"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1"})
+        self.assertEqual(data["hosts"]["papaya"]["network"], {"dhcp": False, "address": "192.168.1.31/24", "gateway": "192.168.1.1"})
+        self.assertEqual((data["hosts"]["papaya"]["disk"], data["defaults"]["locale"]), ("auto", "de_AT.UTF-8"))
+
+    def test_a_wrong_answer_is_asked_again_and_nothing_is_lost(self):
+        a, said = self.ask(["7", "2",                       # no such choice, then: a rented server elsewhere
+                            "192.168.1.9", "vpn", "vpn.example.org",    # an address at home, no name, a name
+                            "",
+                            "", "2", "192.168.1.1", "10.0.0.5", "-",    # a gateway: the router's address, another network, none
+                            "n"])
+        self.assertIn("A number from 1 to 3", said)
+        self.assertIn("inside a home network", said)
+        self.assertIn("neither an address", said)
+        self.assertIn("is your router's address", said)
+        self.assertIn("is not in your home network", said)
+        self.assertEqual((a["master_where"], a["master_address"]), ("vps", "vpn.example.org"))
+        self.assertEqual((a["nodes"][0]["preset"], a["nodes"][0]["address"]), ("gateway", ""))
+
+    def test_everything_is_asked_on_request_and_no_machine_at_home_is_said(self):
+        a, said = self.ask(["", "", "", "internal", "", "", "",          # the basics, the name ending changed
+                            "3", "home.example.org", "", "parfait", "/dev/sda",
+                            "n"], everything=True)
+        self.assertEqual((a["domain"], a["master_name"], a["master_disk"], a["nodes"]), ("internal", "parfait", "/dev/sda", []))
+        self.assertIn("no place for your files yet", said)
+
+    def test_addresses_that_answer_are_not_suggested(self):
+        def run(argv, timeout=10):
+            if argv[0] == "ping":
+                return "1 received" if argv[-1] == "192.168.1.30" else ""
+            return "192.168.1.32 dev eth0 lladdr aa:bb:cc:dd:ee:ff STALE" if argv[-1] == "192.168.1.32" else ""
+        self.assertEqual(setupmod.free_addresses("192.168.1.0/24", "192.168.1.1", want=3, run=run),
+                         ["192.168.1.31/24", "192.168.1.33/24", "192.168.1.34/24"])
 
     def test_the_questions_and_what_is_refused(self):
         rc, out, err = self.run_cli("init", "--questions")
         self.assertEqual(rc, 0, err)
         d = json.loads(out)
-        ids = [q["id"] for st in d["steps"] for q in st["questions"]]
-        for need in ("domain", "admin_key", "master_name", "master_where", "exit", "nodes", "store"):
-            self.assertIn(need, ids)
+        qs = {q["id"]: q for st in d["steps"] for q in st["questions"]}
+        for need in ("domain", "admin_key", "master_name", "master_where", "master_address", "exit", "nodes"):
+            self.assertIn(need, qs)
+        self.assertNotIn("store", qs)                            # the keys are always encrypted
+        self.assertTrue(qs["domain"]["advanced"] and qs["master_disk"]["advanced"])
+        self.assertFalse(qs["master_address"].get("advanced"))
+        self.assertEqual([st["id"] for st in d["steps"]], ["start", "master", "home", "keys"])
         self.assertIn("subnet", d["found"])
-        bad = dict(self.ANSWERS, nodes=[{"name": "trifle"}])
-        with self.assertRaisesRegex(KiwiError, "called the same"):
-            setupmod.make(bad, self.tmp)
-        with self.assertRaisesRegex(KiwiError, "Mullvad needs"):
+        self.assertEqual(setupmod.check(dict(self.ANSWERS)), {})
+        bad = setupmod.check(dict(self.ANSWERS, master_address="10.1.2.3", exit="mullvad",
+                                  nodes=[{"name": "trifle"}, {"name": "mango", "address": "192.168.2.1", "disk": "sda"}]))
+        self.assertEqual(sorted(bad), ["master_address", "mullvad_address", "mullvad_key", "nodes.0.name",
+                                       "nodes.1.address", "nodes.1.disk"])
+        answers = os.path.join(self.tmp, "a.json")
+        write(answers, json.dumps(dict(self.ANSWERS, master_address="")))
+        rc, out, err = self.run_cli("init", "--check", answers)              # what the app asks at every Next
+        self.assertEqual(list(json.loads(out)), ["master_address"])
+        with self.assertRaisesRegex(KiwiError, "Two machines are called"):
+            setupmod.make(dict(self.ANSWERS, nodes=[{"name": "trifle"}]), self.tmp)
+        with self.assertRaisesRegex(KiwiError, "PrivateKey"):
             setupmod.make(dict(self.ANSWERS, exit="mullvad"), self.tmp)
         with self.assertRaisesRegex(KiwiError, "mDNS"):
             setupmod.make(dict(self.ANSWERS, domain="local"), self.tmp)
+        with mock.patch.object(sys.stdin, "isatty", lambda: False):
+            rc, out, err = self.run_cli("init", os.path.join(self.tmp, "new", "fleet.yaml"))
+        self.assertIn("need a terminal", err)                    # said, not the example written silently
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "new")))
         self.assertEqual(setupmod.suggest("192.168.0.0/16", 0, "192.168.2.1"), "192.168.2.30/16")
         self.assertEqual(setupmod.suggest("10.0.0.0/24", 2), "10.0.0.32/24")
 
@@ -2746,6 +2836,11 @@ class TestUnlock(Base):
         h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1", "interface": "eno1"})
         bu = coreos_t.build_butane(h, "#!/bin/sh\n")
         self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0::eno1:none", bu["kernel_arguments"]["should_exist"])
+        h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1", "interface": "eno1",
+                              "dns": ["9.9.9.9", "149.112.112.112", "1.1.1.1"]})
+        bu = coreos_t.build_butane(h, "#!/bin/sh\n")          # that connection stays after the boot: it needs the DNS
+        self.assertIn("ip=192.168.2.70::192.168.2.1:255.255.0.0::eno1:none:9.9.9.9:149.112.112.112",
+                      bu["kernel_arguments"]["should_exist"])
 
     def test_a_static_coreos_host_has_to_name_its_interface(self):
         h = self.coreos_host({"dhcp": False, "address": "192.168.2.70/16", "gateway": "192.168.2.1"})
@@ -4850,10 +4945,10 @@ class TestCli(Base):
 
     def test_init_and_example_fleet_validates(self):
         dest = os.path.join(self.tmp, "new.yaml")
-        rc, out, err = self.run_cli("init", dest)
+        rc, out, err = self.run_cli("init", dest, "--example")
         self.assertEqual(rc, 0, err)
         self.assertTrue(os.path.isfile(dest))
-        rc, _, _ = self.run_cli("init", dest)
+        rc, _, _ = self.run_cli("init", dest, "--example")
         self.assertEqual(rc, 1)  # never overwrites
         # the example validates once its secrets exist (throw-away ones here)
         home = os.path.join(self.tmp, "home")

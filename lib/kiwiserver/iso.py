@@ -56,6 +56,35 @@ systemctl poweroff
 """
 
 
+# disk: auto on CoreOS. Run by the live system before the installer starts: the machine's one
+# disk that is not the install media becomes the target; with none or several the install
+# stops and the console says which disks there are.
+AUTO_DISK_SCRIPT = r"""#!/bin/bash
+set -u
+src=$(findmnt -no SOURCE /run/media/iso 2>/dev/null || true)
+live=
+if [ -n "$src" ]; then
+    parent=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)
+    live=${parent:+/dev/$parent}
+    live=${live:-$src}
+fi
+mapfile -t disks < <(lsblk -dnbpo NAME,TYPE,RM,RO,SIZE | awk -v live="$live" \
+    '$2=="disk" && $3==0 && $4==0 && $5>=8000000000 && $1!=live && $1!~/zram|loop/ {print $1}')
+if [ "${#disks[@]}" -ne 1 ]; then
+    {
+        echo
+        echo "kiwi-server: the install stopped. disk: auto needs a machine with one disk; this one has ${#disks[@]}:"
+        lsblk -d -o NAME,SIZE,MODEL,TRAN
+        echo "Set the disk in the machine's settings (like /dev/nvme0n1) and make the install media again."
+    } > /dev/console
+    exit 1
+fi
+mkdir -p /etc/coreos/installer.d
+printf 'dest-device: %s\n' "${disks[0]}" > /etc/coreos/installer.d/0090-kiwi-disk.yaml
+echo "kiwi-server: installing to ${disks[0]}" > /dev/console
+"""
+
+
 def live_butane(host):
     """The live installer environment: root and the admin user with the fleet's
     console password and keys, so a stopped install has a shell, and the
@@ -99,8 +128,13 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
     if not disk:
         raise KiwiError("%s: disk: is required to build an unattended ISO" % host.name)
     base = fcos_base_iso(tc, host.cfg["coreos"]["stream"], cache_dir)
-    argv = ["coreos-installer", "iso", "customize",
-            "--dest-ignition", ign_path, "--dest-device", disk]
+    argv = ["coreos-installer", "iso", "customize", "--dest-ignition", ign_path]
+    if disk == "auto":
+        pre = os.path.join(util.parent(ign_path), host.name + ".pre-install.sh")
+        util.write_text(pre, AUTO_DISK_SCRIPT, mode=0o700)
+        argv += ["--pre-install", pre]
+    else:
+        argv += ["--dest-device", disk]
     co = host.cfg["coreos"]
     if co.get("console"):
         argv += ["--dest-console", str(co["console"])]
@@ -246,7 +280,8 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
 
 
 def _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
-    title = "Install %s (kiwi-server, unattended: wipes %s)" % (host.hostname, host.cfg["disk"])
+    title = "Install %s (kiwi-server, unattended: wipes %s)" % (
+        host.hostname, "its disk" if host.cfg["disk"] == "auto" else host.cfg["disk"])
 
     inst = INSTALL_DIR[host.cfg["debian"].get("arch") or "amd64"]
     initrd_gz = os.path.join(workdir, "initrd.gz")

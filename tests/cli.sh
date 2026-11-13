@@ -26,7 +26,7 @@ ks="$HOME/.local/bin/kiwi-server"
 
 mkdir -p "$tmp/fleet/secrets"
 cd "$tmp/fleet"
-"$ks" init fleet.yaml
+"$ks" init fleet.yaml --example
 printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n' > secrets/sh3.home.conf
 printf '[Interface]\nPrivateKey = x\nAddress = 10.8.0.6/24\n' > secrets/m1.home.conf
 "$ks" validate fleet.yaml

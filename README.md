@@ -36,7 +36,8 @@ tools: [docs/install.md](docs/install.md).
 ## Use
 
 ```bash
-kiwi-server init fleet.yaml                  # a new fleet: a few questions
+kiwi-server init                             # a new network: a few questions, into ~/kiwi
+kiwi-server next ~/kiwi/fleet.yaml           # does the next step; run it again until all runs
 kiwi-server list fleet.yaml                  # every host and what comes next
 kiwi-server build fleet.yaml                 # the ISOs, in ./output/<host>/
 kiwi-server apply fleet.yaml sh3             # set up or change a running machine

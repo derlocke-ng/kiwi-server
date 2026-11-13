@@ -304,7 +304,7 @@ unlocks the keys again. It can also unlock by itself with the help of another of
 machine's settings <code>unlock: { control: &lt;a ring on another machine&gt; }</code>.{% endif %}</dd></dl></div>
 <h2>The words</h2><div class="card"><dl>
 <dt>Machine</dt><dd>A computer of your network: a small server at home, or a rented one.</dd>
-<dt>Hub (master)</dt><dd>The rented machine in the middle. Everything connects to it; it holds none of your data.</dd>
+<dt>Master</dt><dd>The machine in the middle, usually a rented server. Everything connects to it; it holds none of your data.</dd>
 <dt>Home server (node)</dt><dd>A machine at your place. Your files, photos and passwords live here.</dd>
 <dt>VPN</dt><dd>The private network between your machines and devices. On it, your services open from anywhere.</dd>
 <dt>Device</dt><dd>A phone, tablet or laptop that uses the VPN.</dd>
@@ -317,12 +317,12 @@ a restart closes them again. A thief with this machine's disk gets nothing reada
 
 
 # what the pages call things
-KIND = {"master": "Hub (master)", "node": "Home server (node)", "node-gw": "Home server and gateway",
+KIND = {"master": "Master", "node": "Home server (node)", "node-gw": "Home server and gateway",
         "node-cloud": "Home server", "bare": "Bare machine"}
 WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "not reachable", "unknown": "not checked yet"}
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
-        "backup": "Saving the network", "watch": "Looking for restarted hubs", "save": "Saving the data of",
+        "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
         "update": "Updating every machine", "rotate": "Replacing the SSH keys",
         "rotate-seed": "Replacing the secrets inside the services"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",

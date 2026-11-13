@@ -668,7 +668,7 @@ class Control:
                 self.save_fleet()
         if r.returncode != 0:
             raise KiwiError(((r.stderr or r.stdout).strip().replace("error: ", "").splitlines()
-                             or ["the hub did not take the new device"])[-1][:300])
+                             or ["the master did not take the new device"])[-1][:300])
         self.audit(user, "added the device %s" % name)
         return self.device_config(name)
 
@@ -685,7 +685,7 @@ class Control:
                 self.save_fleet()
         if r.returncode != 0:
             raise KiwiError(((r.stderr or r.stdout).strip().replace("error: ", "").splitlines()
-                             or ["the hub did not remove the device"])[-1][:300])
+                             or ["the master did not remove the device"])[-1][:300])
         self.audit(user, "removed the device %s" % name)
 
     @staticmethod

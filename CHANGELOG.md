@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.78.0 — the first run, for someone who has never done this
+
+Both wizards were run from an empty home as a beginner would (notes/REVIEW-first-run.md
+lists what that showed). The questionnaire is still one definition for the terminal and
+the app; it now asks three things instead of fourteen.
+
+- It opens with what you need (a master, a machine at home, a USB stick, an hour) and
+  what it found on this computer. Then: where the master runs, its address on the
+  Internet, what the machine at home does. Names, the system, the disk, the name ending
+  and the key have answers that work and sit under **More settings** (`init --all`).
+- It looks before it suggests: a home address that does not answer a ping and is not in
+  the neighbour table, the language from this computer.
+- `disk: auto`, the new default: the install media take the machine's one disk and stop,
+  with the disks listed, when there are several. Nobody has to know `/dev/nvme0n1`
+  before the install.
+- Every answer is checked where it is asked, by one check for both (`init --check`): an
+  address inside a home network is not a master's address, a machine cannot have the
+  router's address. The terminal asks again; the app does not go on.
+- A machine at home starts as the one that keeps files and passwords, not as the gateway
+  that takes over the home's DNS and DHCP.
+- The keys are always encrypted (no question), and the terminal waits until the recovery
+  key is written down.
+- `kiwi-server init` writes into `~/kiwi`, says so without a terminal instead of writing
+  the example, and ends with one command instead of ten.
+- `kiwi-server next <fleet>`: the terminal's guide. It does the next step for the next
+  machine, the master first, and says what a person has to do where one must (it names
+  the USB stick that is plugged in).
+- `validate` calls a machine that is not on the VPN yet a step to do, not an error.
+- The install that follows, found by installing a VM from such a network:
+  - An apply waits until a fresh uCore machine has finished its switch from Fedora CoreOS
+    (two steps, a restart each); before, it was cut off by the restart.
+  - Both switch steps retry: one failure used to leave the machine on the unverified image
+    for good.
+  - An encrypted machine with a fixed address resolved no name after booting: the
+    connection made for unlocking at boot stays, and it had no DNS servers. It carries them
+    now.
+- The master is called the master everywhere; "hub" stays the word for hub software.
+
 ## 2.77.2 — the app has "When the install is done"
 
 - A machine's settings in the app have **When the install is done**: power off (the

@@ -115,6 +115,7 @@ class Outputs:
 
 def host_readme(host, o, bundle=None):
     disk = host.cfg.get("disk") or "<disk: not set>"
+    disk = "the machine's one disk (found at the install)" if disk == "auto" else disk
     L = ["%s — %s" % (host.name, host.hostname),
          "target: %s    role: %s    %s" % (host.target, host.role,
                                               "in RAM, no disk" if host.target == "coreos-ram" else "install disk: %s" % disk)]
@@ -542,36 +543,51 @@ def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
 
 def cmd_init(args):
     """A new fleet: asked step by step in a terminal, from answers the app collected, or the
-    commented example (--example, and whenever nobody can be asked)."""
+    commented example (--example)."""
     if args.questions:
         found = setupmod.detect()
         print(json.dumps({"found": found, "steps": setupmod.questions(found),
                           "suggestions": {"masters": setupmod.MASTERS, "nodes": setupmod.NODES,
-                                          "addresses": [a for a in (setupmod.suggest(found["subnet"], i, found["gateway"])
-                                                                    for i in range(12)) if a]}}, indent=2))
+                                          "addresses": found["addresses"]}}, indent=2))
         return
-    dest = args.path or "fleet.yaml"
+    if args.check:              # for the app: what is wrong with these answers, by question
+        print(json.dumps(setupmod.check(json.load(sys.stdin if args.check == "-" else open(args.check)))))
+        return
+    asking = not (args.answers or args.example or args.domain)
+    # a wizard's network lives in ~/kiwi unless a place is named, as the app's does
+    dest = args.path or (os.path.join(os.path.expanduser("~/kiwi"), "fleet.yaml") if asking else "fleet.yaml")
     if os.path.exists(dest):
-        raise KiwiError("%s exists — not overwriting it" % dest)
-    if args.answers or (not args.example and not args.domain and sys.stdin.isatty()):
+        raise KiwiError("%s exists — not overwriting it%s" % (dest, "" if args.path else
+                        ": name another file, kiwi-server init ~/kiwi-2/fleet.yaml"))
+    if asking and not sys.stdin.isatty():
+        raise KiwiError("the questions need a terminal, and this is none. Run kiwi-server init in a terminal, give the "
+                        "answers as a file (init --answers FILE, see init --questions), or take the commented example "
+                        "(init --example)")
+    if args.answers or asking:
         if args.answers:
             answers = json.load(sys.stdin if args.answers == "-" else open(args.answers))
         else:
-            print("A new fleet in %s. Enter takes what is in brackets." % os.path.abspath(dest))
-            answers = setupmod.ask()
+            print("A new network in %s. Enter takes what is in brackets." % shown_path(os.path.abspath(dest)))
+            try:
+                answers = setupmod.ask(everything=args.all)
+            except (EOFError, KeyboardInterrupt):
+                raise KiwiError("stopped. Nothing was written; kiwi-server init starts again")
         fleet_dir = os.path.dirname(os.path.abspath(dest))
+        os.makedirs(fleet_dir, mode=0o700, exist_ok=True)
         data, made = setupmod.make(answers, fleet_dir)
         setupmod.write(dest, data)
         util.say("wrote %s%s" % (dest, "".join(", %s" % os.path.relpath(p, fleet_dir) for p in made)))
-        if answers.get("store", True):
+        if not args.no_store and answers.get("store", True):
             st = store.Store.for_fleet(dest)
             recovery, saved = st.init()
-            util.say("secrets/ is encrypted now (%s) and open in memory" % store.FILE)
+            util.say("the keys are encrypted now (%s) and open while you work" % store.FILE)
             if not saved:
-                util.warn("no keyring took the desktop key: unlocking will ask for the recovery key below")
-            print("\nYour recovery key. Save it somewhere safe now, on paper or in a password manager.\n"
-                  "It is shown once, and without it a lost keyring means lost secrets:\n\n  %s\n" % recovery)
-        print("Next:\n" + "\n".join(setupmod.next_steps(os.path.basename(dest), answers)))
+                util.warn("no keyring took this computer's key: unlocking will ask for the recovery key below")
+            print("\nYour recovery key. Write it down now, on paper or in a password manager.\n"
+                  "It is shown once. If this computer is lost, it is the only way back to your network's keys:\n\n  %s\n" % recovery)
+            if asking:
+                input("Written down? Press Enter. ")
+        print("\n".join(setupmod.next_steps(shown_path(os.path.abspath(dest)))))
         return
     text = util.read_text(os.path.join(util.home_dir(), "examples", "fleet.yaml"))
     if args.domain:
@@ -622,13 +638,18 @@ def cmd_validate(args):
     hosts = fleet.select(args.hosts)
     errs = check(fleet, roles, ms, hosts, args.porcelain, strict=False)
     warns = list(fleet.warnings) + ["%s: %s" % (h.name, w) for h in hosts for w in h.warnings]
+    # a machine that is not on the VPN yet is a step still to take, not a mistake in the file
+    steps = [e for e in errs if not_enrolled(e)]
+    errs = [e for e in errs if not not_enrolled(e)]
     if args.porcelain:
-        print(json.dumps({"ok": not errs, "errors": errs, "warnings": warns}, indent=2))
+        print(json.dumps({"ok": not errs, "errors": errs, "warnings": warns, "steps": steps}, indent=2))
     else:
         for e in errs:
             print("error: %s" % e, file=sys.stderr)
         for w in warns:
             util.warn(w)
+        for e in steps:
+            util.say("still to do: %s" % e)
         if not errs:
             util.say("%s: %d host(s) valid" % (os.path.basename(fleet.path), len(hosts)))
     if errs:
@@ -679,6 +700,112 @@ def cmd_list(args):
             if r["phase"] == "invalid":
                 print("    error: %s" % e)
         print("    next: %s" % r["next"])
+
+
+def usb_sticks():
+    """[(device, size and model)] of the USB drives plugged in right now."""
+    try:
+        r = subprocess.run(["lsblk", "-dnpo", "NAME,TRAN,RM,SIZE,MODEL"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        f = line.split(None, 4)
+        if len(f) >= 4 and f[1] == "usb":
+            out.append((f[0], " ".join(f[3:])))
+    return out
+
+
+def cmd_next(args):
+    """The next step of building the network, done: the master first, then one machine after the
+    other. Run it again until it says that everything runs. The app's Getting started list
+    is the same steps as buttons."""
+    fleet, roles, ms = load(args)
+    out_dir = out_dir_for(args, fleet)
+    path = args.fleet
+
+    def is_master(h):
+        return h.role in roles and roles[h.role].node_type == "master"
+    todo = []
+    for h in sorted(fleet.hosts.values(), key=lambda x: 0 if is_master(x) else 1):
+        errs = h.validate(roles) or settings_errors(roles, ms, h)
+        o = Outputs(out_dir, h, media_dir_for(args, fleet))
+        phase, text = next_step(fleet, roles, h, errs, o)
+        if phase != "applied":
+            todo.append((h, phase, text, errs, o))
+    if not todo:
+        util.say("every machine is set up. How they are: kiwi-server status %s" % path)
+        util.say("your phone or laptop on the VPN: kiwi-server enroll %s phone (it shows a QR code to scan)" % path)
+        return
+    h, phase, text, errs, o = todo[0]
+    util.say("%s (%d of %d machines still to set up)" % (h.name, len(todo), len(fleet.hosts)))
+
+    def go(what):
+        if args.yes or not sys.stdin.isatty():
+            return True
+        return not input("%s [Enter to go on, n to stop]: " % what).strip().lower().startswith("n")
+
+    def run(*argv):
+        rc = main(list(argv))
+        if rc:
+            raise SystemExit(rc)
+    if phase == "invalid":
+        raise KiwiError("%s: its settings are not complete yet: %s" % (h.name, [e for e in errs if not not_enrolled(e)][0]))
+    if phase == "bare":
+        util.say("%s has no job yet: give it a role in %s (role: node, and node: { preset: cloud }), then run this again"
+                 % (h.name, path))
+        return
+    if phase == "enroll":
+        if go("Give %s its place on your VPN (the master has to be running)?" % h.name):
+            run("enroll", path, h.name)
+            util.say("done. Run this again for the next step")
+        return
+    if phase == "build":
+        if go("Make the install media for %s (a file of about 1 GB; this takes a few minutes)?" % h.name):
+            run("build", path, h.name)
+            phase = "install"
+        else:
+            return
+    # phase == "install": the media exist. Is the machine there already? A machine nobody has
+    # met is not looked for by its name (that resolves on the VPN only): its fixed address at
+    # home, or a master's address on the Internet, is where the first contact goes.
+    net = h.cfg.get("network") or {}
+    addr = (str(net["address"]).split("/")[0] if not net.get("dhcp", True) and net.get("address")
+            else (h.role_settings_raw.get("vpn-server") or {}).get("wg_host") if is_master(h) else None)
+    tgt = "%s@%s" % (h.admin["user"], addr) if addr else None
+    if addr and (remote._answers(addr, 22) or remote._answers(addr, remote.ssh_port(h))):
+        if go("%s answers at %s. Set it up now (a few minutes; it downloads what it runs)?" % (h.name, addr)):
+            run("apply", path, h.name, "--ssh", tgt)
+            util.say("%s is set up. Run this again for the next machine" % h.name)
+        return
+    iso = shown_path(os.path.abspath(o.iso))
+    on_done = (h.cfg.get("install") or {}).get("on_done", "poweroff")
+    after = ("it turns itself off when it is done: take the media out and switch it on again" if on_done == "poweroff"
+             else "it restarts by itself when it is done")
+    util.say("the install media for %s: %s" % (h.name, iso))
+    if is_master(h) and os.path.isfile(fleet.resolve_path("secrets/netcup.token")):
+        util.say("at netcup, kiwi-server installs it: kiwi-server vps install %s %s (everything on that server is erased)"
+                 % (path, h.name))
+    elif is_master(h):
+        util.say("a rented server: upload the file as an ISO at your hoster and start the server from it. At netcup "
+                 "kiwi-server does it: kiwi-server vps login %s, then kiwi-server vps install %s %s"
+                 % (path, path, h.name))
+    else:
+        sticks = usb_sticks()
+        dev = sticks[0][0] if len(sticks) == 1 else "/dev/sdX"
+        util.say("write it to a USB stick (everything on the stick is erased):")
+        print("    sudo dd if=%s of=%s bs=4M status=progress conv=fsync" % (iso, dev))
+        if len(sticks) == 1:
+            util.say("the stick plugged in right now is %s (%s)" % sticks[0])
+        elif sticks:
+            util.say("USB drives plugged in right now: %s" % ", ".join("%s (%s)" % s for s in sticks))
+        else:
+            util.say("no USB stick is plugged in right now; lsblk shows its name once it is")
+        util.say("then start %s from the stick. EVERYTHING ON THAT MACHINE'S DISK IS ERASED." % h.name)
+    util.say("the machine installs itself; %s. Then run this again" % after)
+    if not tgt:
+        util.say("it gets its address from your router: kiwi-server apply %s %s --ssh %s@<its address> sets it up"
+                 % (path, h.name, h.admin["user"]))
 
 
 def _state_path(fleet):
@@ -914,7 +1041,7 @@ def vps_install(args, fleet, client, server):
         return vps_boot_ram(args, fleet, client, server, h)
     disks = client.disks(server["id"])
     want = netcup.device_for(disks[0]) if disks else None
-    if want and h.cfg.get("disk") != want:
+    if want and h.cfg.get("disk") not in (want, "auto"):
         raise KiwiError("%s: disk: says %s, but the server's disk is %s (%s): set disk: %s and build again"
                         % (h.name, h.cfg.get("disk"), want, disks[0].get("storageDriver"), want))
     base = os.path.join(media_dir_for(args, fleet), h.name, h.name)
@@ -1298,6 +1425,8 @@ def cmd_apply(args):
         try:
             if servers is None and unlock.wanted(h):
                 servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+            if not args.no_run and h.target == "ucore":
+                coreos_t.wait_for_ucore(h.name, tgt)    # a fresh one restarts twice by itself first
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
             script, _b = r.script(h)
@@ -2281,6 +2410,9 @@ def build_parser():
     s.add_argument("--example", action="store_true", help="the commented example fleet instead of the questions")
     s.add_argument("--questions", action="store_true", help="the questions as JSON, with what this computer knows filled in (for the app)")
     s.add_argument("--answers", metavar="FILE", help="the answers as JSON (- for stdin) instead of asking")
+    s.add_argument("--check", metavar="FILE", help="what is wrong with these answers (JSON, - for stdin), by question: for the app")
+    s.add_argument("--all", action="store_true", help="also ask what has an answer that works: names, disks, the system, the name ending")
+    s.add_argument("--no-store", action="store_true", help="leave the keys as plain files (for a test)")
     s = sub("names", cmd_names); s.add_argument("fleet", nargs="?")
     s = sub("add", cmd_add); s.add_argument("fleet"); s.add_argument("role", choices=["master", "node", "bare"])
     s.add_argument("name", nargs="?", help="default: a free fruit (a node) or fruit dish (a master)")
@@ -2288,6 +2420,8 @@ def build_parser():
     s.add_argument("--target", choices=["ucore", "coreos", "debian"], help="its system (default: the fleet's)")
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
+    s = sub("next", cmd_next); s.add_argument("fleet")
+    s.add_argument("--yes", action="store_true", help="do the step without asking first")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
     for name, fn in (("render", cmd_render), ("build", cmd_build)):
         s = sub(name, fn); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")

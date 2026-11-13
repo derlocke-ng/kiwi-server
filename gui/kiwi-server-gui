@@ -1320,8 +1320,8 @@ class SetupWizard(Adw.Dialog):
                     self.get[q["id"]] = lambda v=opts[0]["value"]: v
                 else:
                     asked.append(q)
-            if asked:
-                self.steps.append(dict(st, questions=asked))
+            self.steps.append(dict(st, questions=asked))    # (a step without a question still says something)
+        self.problem = {}
         self.nav = Adw.NavigationView()
         self.pages = [self.step_page(i, st) for i, st in enumerate(self.steps)]
         self.nav.add(self.pages[0])
@@ -1332,23 +1332,77 @@ class SetupWizard(Adw.Dialog):
     def step_page(self, i, step):
         page = Adw.PreferencesPage()
         g = Adw.PreferencesGroup(title=step["step"], description=step.get("intro", ""))
+        for note in step.get("notes") or []:
+            g.add(Adw.ActionRow(use_markup=False, title=note, title_lines=0))
         page.add(g)
+        advanced = [q for q in step["questions"] if q.get("advanced")]
         for q in step["questions"]:
             if q.get("type") == "machines":
                 page.add(self.machines_group(q))
-            else:
-                g.add(self.row_for(q))
+            elif not q.get("advanced"):         # one question, and under it the sentence that explains it
+                one = Adw.PreferencesGroup(description=q.get("help", ""))
+                one.add(self.row_for(q, plain=True))
+                self.rows[q["id"]] = (one, q.get("when"))       # hidden with its explanation, not only the row
+                page.add(one)
+        if advanced:
+            more = Adw.PreferencesGroup()
+            exp = Adw.ExpanderRow(title="More settings", subtitle="These have answers that work. Change them only if you know why.")
+            for q in advanced:
+                exp.add_row(self.row_for(q))
+            more.add(exp)
+            page.add(more)
         last = i == len(self.steps) - 1
         go = Gtk.Button(label="Create my network" if last else "Next", css_classes=["suggested-action", "pill"],
                         halign=Gtk.Align.CENTER, margin_top=6, margin_bottom=12)
-        go.connect("clicked", lambda *_: self.create() if last else self.nav.push(self.pages[i + 1]))
+        go.connect("clicked", lambda *_: self.go_on(i))
+        self.problem[i] = Gtk.Label(wrap=True, xalign=0.5, justify=Gtk.Justification.CENTER, visible=False,
+                                    css_classes=["error"], margin_start=18, margin_end=18, margin_top=6)
+        foot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        foot.append(self.problem[i])
+        foot.append(go)
         tv = Adw.ToolbarView(content=page)
         tv.add_top_bar(Adw.HeaderBar())
-        tv.add_bottom_bar(go)
+        tv.add_bottom_bar(foot)
         return Adw.NavigationPage(title="%d of %d · %s" % (i + 1, len(self.steps), step["step"]), child=tv)
 
-    def row_for(self, q, into=None):
-        """A row for one question; its value is read through self.get (or into, for a machine)."""
+    def go_on(self, i):
+        """Next: only when what this page asked is in order. The check is the terminal's
+        (`init --check`), so both say the same about the same answer."""
+        step = self.steps[i]
+        ids = {q["id"] for q in step["questions"]}
+        machines = any(q.get("type") == "machines" for q in step["questions"])
+        a = self.answers()
+        tmp = os.path.join(GLib.get_user_runtime_dir(), "kiwi-check-%d.json" % os.getpid())
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(a, f)
+        try:
+            rc, out, _err = run_cli(self.win.cli, ["init", "--check", tmp], timeout=60)
+        finally:
+            os.remove(tmp)
+        try:
+            bad = json.loads(out) if rc == 0 else {}
+        except ValueError:
+            bad = {}
+        mine = []
+        for key, msg in bad.items():
+            if key in ids:
+                mine.append(msg)
+            elif machines and key.startswith("nodes."):
+                n = int(key.split(".")[1])
+                mine.append("%s: %s" % (a["nodes"][n].get("name") or "machine %d" % (n + 1), msg))
+        self.problem[i].set_label(mine[0] if mine else "")
+        self.problem[i].set_visible(bool(mine))
+        if mine:
+            return
+        if i == len(self.steps) - 1:
+            self.create()
+        else:
+            self.nav.push(self.pages[i + 1])
+
+    def row_for(self, q, into=None, plain=False):
+        """A row for one question; its value is read through self.get (or into, for a machine).
+        `plain`: its help stands above it already, so no "?" button."""
         kind, get = q.get("type", "string"), None
         if kind == "choice":
             opts = q["options"]
@@ -1365,7 +1419,7 @@ class SetupWizard(Adw.Dialog):
             row = (Adw.PasswordEntryRow if q.get("secret") else Adw.EntryRow)(title=q["label"])
             row.set_text(str(q.get("default") or ""))
             get = lambda r=row: r.get_text().strip()
-        if q.get("help"):
+        if q.get("help") and not plain:
             row.add_suffix(help_button(q["help"], DOCS + "README.md"))
         (into if into is not None else self.get)[q["id"]] = get
         if into is None:
@@ -1374,15 +1428,12 @@ class SetupWizard(Adw.Dialog):
 
     def machines_group(self, q):
         self.machine_q = q
-        g = Adw.PreferencesGroup(title=q["label"], description="Add one with +, or none: they can come later.")
-        add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a machine", css_classes=["flat"],
-                         valign=Gtk.Align.CENTER)
+        g = Adw.PreferencesGroup(title=q["label"])
+        self.none_note = Adw.ActionRow(use_markup=False, title=q.get("none", ""), title_lines=0, visible=bool(q.get("none")))
+        g.add(self.none_note)
+        add = Gtk.Button(label=q.get("add", "Add a machine"), css_classes=["pill"], halign=Gtk.Align.CENTER, margin_top=12)
         add.connect("clicked", lambda *_: self.add_machine(g))
-        head = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
-        if q.get("help"):
-            head.append(help_button(q["help"], DOCS + "README.md"))
-        head.append(add)
-        g.set_header_suffix(head)
+        g.add(add)
         self.machine_group = g
         return g
 
@@ -1390,26 +1441,35 @@ class SetupWizard(Adw.Dialog):
         n = len(self.machines)
         taken = {m["name"]() for m in self.machines} | ({self.get["master_name"]()} if "master_name" in self.get else set())
         name = next((x for x in self.suggest.get("nodes", []) if x not in taken), "node%d" % (n + 1))
-        addrs = self.suggest.get("addresses") or []
+        used = {m["fields"]["address"]() for m in self.machines if "address" in m["fields"]}
+        free = [x for x in self.suggest.get("addresses") or [] if x not in used]
         exp = Adw.ExpanderRow(title=name, subtitle="a machine at home", expanded=True)
+        more = Adw.ExpanderRow(title="More settings", subtitle="Its name, its system, its disk")
         fields = {}
         for f in self.machine_q.get("fields") or []:
             f = dict(f)
             if f.get("default_from") == "fruits":
                 f["default"] = name
             elif f.get("default_from") == "suggest":
-                f["default"] = addrs[n] if n < len(addrs) else ""
+                f["default"] = free[0] if free else ""
             row = self.row_for(f, into=fields)
-            exp.add_row(row)
+            (more if f.get("advanced") else exp).add_row(row)
             fields["_row_" + f["id"]] = (row, f.get("when"))
+        exp.add_row(more)
         rm = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove it", css_classes=["flat"],
                         valign=Gtk.Align.CENTER)
         exp.add_suffix(rm)
         entry = {"exp": exp, "fields": fields, "name": fields["name"]}
         name_row = fields["_row_name"][0]
         name_row.connect("changed", lambda r: exp.set_title(r.get_text().strip() or "a machine"))
-        rm.connect("clicked", lambda *_: (g.remove(exp), self.machines.remove(entry)))
+
+        def remove(*_):
+            g.remove(exp)
+            self.machines.remove(entry)
+            self.none_note.set_visible(not self.machines and bool(self.machine_q.get("none")))
+        rm.connect("clicked", remove)
         self.machines.append(entry)
+        self.none_note.set_visible(False)
         g.add(exp)
         self.update_when()
 
@@ -1437,10 +1497,6 @@ class SetupWizard(Adw.Dialog):
 
     def create(self):
         a = self.answers()
-        if not a.get("master_address"):
-            self.win.alert("The hub's address is missing", "Go back to the step \"The hub\" and fill in its address on "
-                           "the Internet: the one your hoster shows for the server, like 203.0.113.7.")
-            return
         # the answers may hold a Mullvad key: they pass through memory, not the disk
         tmp = os.path.join(GLib.get_user_runtime_dir(), "kiwi-init-%d.json" % os.getpid())
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -1477,7 +1533,7 @@ class SetupWizard(Adw.Dialog):
                                                b.set_label("Copied")))
             box.append(copy)
         if ok:
-            box.append(Gtk.Label(label="Next, the app lists your machines, the hub first, with one step and one "
+            box.append(Gtk.Label(label="Next, the app lists your machines, the master first, with one step and one "
                                        "button each.", wrap=True, xalign=0))
         tv = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, vexpand=True)
         text = (out + ("\n" + err if err.strip() else "")).strip()
@@ -2863,7 +2919,7 @@ class Window(Adw.ApplicationWindow):
         """(what to do, in a sentence; the button; what it does) for a machine that is not set up yet."""
         phase = self.phase_of(h)
         if phase == "enroll":
-            return ("It needs its place on your VPN first. The hub has to be running for that.", "Connect it",
+            return ("It needs its place on your VPN first. The master has to be running for that.", "Connect it",
                     lambda: self.spawn(["enroll", self.doc.path, h], "Connecting %s to the VPN…" % h))
         if phase == "build":
             return ("Make its install media: one file. From a USB stick with it, the machine installs itself.",
@@ -2883,10 +2939,10 @@ class Window(Adw.ApplicationWindow):
                 lambda: self.select_scope(h))
 
     def guide_group(self, fresh):
-        """Getting started: one machine after the other, the hub first; one sentence and one
+        """Getting started: one machine after the other, the master first; one sentence and one
         button each, the first one marked."""
         g = Adw.PreferencesGroup(title="Getting started",
-                                 description="One machine after the other, the hub first. Do the marked step; the "
+                                 description="One machine after the other, the master first. Do the marked step; the "
                                              "list moves on by itself.")
         order = {title: i for i, (_r, title) in enumerate(ROLE_GROUPS)}
         for i, h in enumerate(sorted(fresh, key=lambda x: order.get(self.group_of(x), len(order)))):
@@ -3507,7 +3563,7 @@ class Window(Adw.ApplicationWindow):
 
     def first_address(self, host):
         """Where a machine that was never set up answers: before its first setup it has no name
-        on the VPN yet. The hub's address on the Internet, or a home machine's fixed address."""
+        on the VPN yet. The master's address on the Internet, or a home machine's fixed address."""
         role = self.value_of(host, "role", "node")
         wg = self.doc.get(host, (role, "vpn-server", "wg_host"))
         if wg:
@@ -3538,7 +3594,7 @@ class Window(Adw.ApplicationWindow):
 
     def first_apply(self, host):
         """The first setup of a machine: it is reached by its address, which the settings know
-        (the hub's, a fixed one at home) or the owner types (a home machine on DHCP)."""
+        (the master's, a fixed one at home) or the owner types (a home machine on DHCP)."""
         dlg = Adw.AlertDialog(
             heading="Set up %s" % host,
             body="The machine has to be installed and switched on. Kiwi Server connects to it and sets it up; "

@@ -1503,6 +1503,30 @@ def with_passphrase(cli, args, passphrase, timeout=600):
     return rc, (out + err)
 
 
+class RecoveryKeyDialog(Adw.Dialog):
+    """The recovery key of a store that was just made: shown once, to be written down."""
+
+    def __init__(self, key):
+        super().__init__(title="Your recovery key", content_width=520)
+        self.set_can_close(False)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="Your recovery key", xalign=0, css_classes=["title-2"]))
+        box.append(Gtk.Label(label="The network's keys are encrypted now. This computer opens them by itself when you "
+                                   "are logged in.", wrap=True, xalign=0))
+        box.append(Gtk.Label(label="Write this recovery key down now, on paper or in a password manager. It is shown "
+                                   "only once. If this computer is lost, it is the only way back to your network's keys.",
+                             wrap=True, xalign=0, css_classes=["warning"]))
+        box.append(Gtk.Label(label=key, selectable=True, wrap=True, wrap_mode=2, xalign=0, css_classes=["monospace", "card"]))
+        copy = Gtk.Button(label="Copy the key", halign=Gtk.Align.START)
+        copy.connect("clicked", lambda b: (Gdk.Display.get_default().get_clipboard().set(key), b.set_label("Copied")))
+        box.append(copy)
+        done = Gtk.Button(label="I have written it down", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER)
+        done.connect("clicked", lambda *_: (self.set_can_close(True), self.close()))
+        box.append(done)
+        self.set_child(box)
+
+
 class CopyDialog(Adw.Dialog):
     """Save a copy of the network (its settings and keys) as one encrypted file, or bring one back."""
 
@@ -1597,6 +1621,10 @@ class CopyDialog(Adw.Dialog):
             self.close()
             self.win.open_path(os.path.join(into, "fleet.yaml"))
             self.win.toast("Restored into %s" % tilde(into))
+            # a copy holds the keys in the clear inside its passphrase: on this computer they
+            # go into a store of its own right away, with a recovery key of its own
+            if not os.path.isfile(os.path.join(into, "secrets.age")):
+                self.win.protect()
             return False
         self.note.set_label("Saved in %s. Keep the file and the passphrase in different places." % tilde(into))
         self.note.set_css_classes([])
@@ -2961,6 +2989,16 @@ class Window(Adw.ApplicationWindow):
                  "warn" if n["attention"] else "ok" if n["answers"] else None),
             tile(store[0], store[1], store[2]),
         ], 4))
+        if self.store and not self.store.get("store"):
+            g = Adw.PreferencesGroup(title="Protect your network's keys")
+            row = Adw.ActionRow(use_markup=False, title="The keys lie on this computer as plain files",
+                                subtitle="Protect encrypts them. This computer then opens them by itself when you are "
+                                         "logged in, and you get a recovery key to write down.", subtitle_lines=4)
+            b = Gtk.Button(label="Protect", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            b.connect("clicked", lambda *_: self.protect())
+            row.add_suffix(b)
+            g.add(row)
+            parts.append(g)
         if n["attention"]:
             parts.append(self.attention_group(n["attention"], True))
         fresh = [h for h in self.doc.hosts() if self.is_new(h)]
@@ -3199,13 +3237,15 @@ class Window(Adw.ApplicationWindow):
         known = bool(self.doc.path and s)
         self.store_banner.set_revealed(known and self.locked())
         self.store_icon.set_visible(known)
-        self.store_button.set_visible(known and bool(s.get("store")))
+        self.store_button.set_visible(known)
         if not known:
             self.store_label.set_label("")
         elif not s.get("store"):
             self.store_icon.set_from_icon_name("dialog-warning-symbolic")
-            self.store_label.set_label("Secrets are plain files")
-            self.store_label.set_tooltip_text("kiwi-server secrets init %s" % self.doc.path)
+            self.store_label.set_label("Keys are not protected")
+            self.store_label.set_tooltip_text("The network's keys lie on this computer as plain files. Protect "
+                                              "encrypts them; this computer then opens them by itself when you log in.")
+            self.store_button.set_label("Protect")
         elif self.locked():
             self.store_icon.set_from_icon_name("changes-prevent-symbolic")
             self.store_label.set_label("Secrets locked")
@@ -3219,7 +3259,30 @@ class Window(Adw.ApplicationWindow):
             self.store_button.set_label("Lock")
         self.store_button.set_sensitive(not self.busy)
 
+    def protect(self, then=None):
+        """The network's keys into the encrypted store, and the recovery key shown once."""
+        path = self.doc.path
+
+        def worker():
+            rc, out, err = run_cli(self.cli, ["secrets", "init", path])
+            GLib.idle_add(done, rc, out, err)
+
+        def done(rc, out, err):
+            # whatever was opened or reloaded meanwhile: the key exists only in this output
+            key = re.search(r"AGE-SECRET-KEY-1[0-9A-Z]+", out) if rc == 0 else None
+            if rc != 0 or not key:
+                self.alert("The keys were not protected", ((err or out).strip().replace("error: ", "").splitlines() or ["?"])[-1])
+            else:
+                RecoveryKeyDialog(key.group(0)).present(self)
+            self.poll()
+            if then:
+                then()
+            return False
+        threading.Thread(target=worker, daemon=True).start()
+
     def toggle_store(self):
+        if not (self.store or {}).get("store"):
+            return self.protect()
         action = "unlock" if self.locked() else "lock"
         path, gen = self.doc.path, self.generation
 

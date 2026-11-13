@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.76.1 — the app protects the keys itself
+
+Save a copy and Restore were run the way the app runs them: both work, with and without a
+store. What they showed:
+
+- A restored network had its keys as plain files, and the app only said so in a tooltip
+  with a command. Now the overview has a step **Protect your network's keys** with a
+  button, the app does it by itself right after a restore, and the recovery key is shown
+  once with a button to copy it. The foot's button says **Protect** as well.
+- A wrong passphrase said so with a line of OpenSSL's own words after it.
+
 ## 2.76.0 — two sides that both changed become one copy
 
 Found with the key rotation: the control node learned a host key while this computer made

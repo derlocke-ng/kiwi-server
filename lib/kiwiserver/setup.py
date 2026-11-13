@@ -126,48 +126,52 @@ def suggest(subnet, n, gateway=""):
 def questions(found=None):
     """The steps of a new fleet, each a list of questions with what this computer suggests."""
     found = found or detect()
-    keys = [{"value": "generate", "label": "A new key for this fleet, kept with its secrets (recommended)"}]
+    keys = [{"value": "generate", "label": "Make a new key for this network (recommended)"}]
     if found["ssh_key"]:
         keys.append({"value": found["ssh_key"], "label": "My own key, %s" % found["ssh_key"].replace(os.path.expanduser("~"), "~", 1)})
     return [
-        {"step": "The fleet", "intro": "Names, time and keyboard of every machine in it.", "questions": [
-            {"id": "domain", "label": "Domain", "default": "home",
-             "help": "Machines are called <name>.<domain>, services <service>.<name>.<domain>. home can never become a "
-                     "public top-level domain; internal, corp and mail are the other safe ones. Not local (that is mDNS)."},
+        {"step": "Your network", "intro": "A few basics. The suggestions work: press Next when unsure.", "questions": [
+            {"id": "domain", "label": "Name ending", "default": "home",
+             "help": "Your machines are called <name>.home and your services cloud.<name>.home. Keep home unless you "
+                     "know you need another; internal, corp and mail are the other safe ones (not local)."},
             {"id": "timezone", "label": "Time zone", "default": found["timezone"]},
-            {"id": "keyboard", "label": "Keyboard layout", "default": found["keyboard"],
-             "help": "The console's layout: it matters when someone types a disk key there."}]},
-        {"step": "Logging in", "intro": "How kiwi-server reaches the machines: by SSH, with a key, never a password.",
+            {"id": "keyboard", "label": "Keyboard", "default": found["keyboard"],
+             "help": "Which keyboard your machines have (de, us, …): it matters when you type on one of them."}]},
+        {"step": "The key to your machines", "intro": "This computer reaches your machines with a key file instead of a "
+                                                   "password. One is made for you.",
          "questions": [
-            {"id": "admin_key", "label": "SSH key", "type": "choice", "options": keys, "default": "generate",
-             "help": "A key of the fleet's own goes with the fleet to another computer and opens the secret store's "
-                     "machines from there too."}]},
-        {"step": "The master", "intro": "The machine everything connects to: on the Internet, usually a small VPS.",
+            {"id": "admin_key", "label": "Key", "type": "choice", "options": keys, "default": "generate",
+             "help": "A key of the network's own travels with it when you later use another computer."}]},
+        {"step": "The hub", "intro": "The machine in the middle that everything connects to. It has to be reachable from "
+                                   "the Internet: a small rented server (a few euros a month) is the usual choice. None "
+                                   "of your data is kept on it.",
          "questions": [
             {"id": "master_name", "label": "Name", "default": random.choice(MASTERS)},
             {"id": "master_where", "label": "Where it runs", "type": "choice", "default": "netcup", "options": [
-                {"value": "netcup", "label": "A VPS at netcup (kiwi-server installs it through their API)"},
-                {"value": "vps", "label": "A VPS elsewhere (you install Debian 13, or boot its ISO there)"},
-                {"value": "home", "label": "A machine at home with a port open to the Internet"}]},
-            {"id": "master_address", "label": "Its public address or name", "required": True,
-             "help": "What phones, laptops and the other machines connect to, e.g. 203.0.113.7 or vpn.example.org. "
-                     "netcup shows it in its control panel."},
+                {"value": "netcup", "label": "A rented server at netcup (Kiwi Server installs it for you)"},
+                {"value": "vps", "label": "A rented server elsewhere (you start it from the install media)"},
+                {"value": "home", "label": "A machine at home, with a port opened in your router"}]},
+            {"id": "master_address", "label": "Its address on the Internet", "required": True,
+             "help": "The address your hoster shows for the server, like 203.0.113.7, or a name like vpn.example.org. "
+                     "Your phones and machines connect to it."},
             {"id": "master_disk", "label": "Its disk", "default": "/dev/vda",
-             "help": "Wiped by the ISO. A VPS usually has /dev/vda or /dev/sda; `kiwi-server vps install` says when it is "
-                     "the other one."},
-            {"id": "exit", "label": "The Internet for the mesh", "type": "choice", "default": "direct", "options": [
-                {"value": "direct", "label": "Through the master's own connection (nothing else needed)"},
-                {"value": "mullvad", "label": "Through Mullvad (a WireGuard key from your Mullvad account)"}]},
+             "help": "Everything on it is erased at the install. Leave /dev/vda unless the install says it is /dev/sda."},
+            {"id": "exit", "label": "How your devices reach the Internet on the VPN", "type": "choice", "default": "direct",
+             "options": [
+                {"value": "direct", "label": "Through the hub's own connection (simplest)"},
+                {"value": "mullvad", "label": "Through Mullvad (more private; needs a Mullvad account)"}]},
             {"id": "mullvad_key", "label": "Mullvad private key", "secret": True, "when": "exit == 'mullvad'",
              "help": "PrivateKey from a WireGuard config made on mullvad.net. It goes into the secret store's fleet file."},
             {"id": "mullvad_address", "label": "Mullvad address", "when": "exit == 'mullvad'",
              "help": "Address from the same config, e.g. 10.66.1.2/32."},
             {"id": "mullvad_country", "label": "Exit country", "default": "Germany", "when": "exit == 'mullvad'"}]},
-        {"step": "At home", "intro": "Machines on your LAN: each joins the mesh through the master.",
+        {"step": "At home", "intro": "The machines at your place that keep your files, photos and passwords. None yet is "
+                                   "fine: you can add them later.",
          "questions": [
-            {"id": "lan_subnet", "label": "Your LAN", "default": found["subnet"],
-             "help": "As this computer sees it. Machines with a fixed address get one in it."},
-            {"id": "lan_gateway", "label": "Your router", "default": found["gateway"]},
+            {"id": "lan_subnet", "label": "Your home network", "default": found["subnet"],
+             "help": "Found on this computer. Leave it."},
+            {"id": "lan_gateway", "label": "Your router", "default": found["gateway"],
+             "help": "Found on this computer. Leave it."},
             {"id": "nodes", "label": "Machines at home", "type": "machines", "default": [],
              "help": "Each with a name, what it does (%s), a fixed address you know is free and, for a gateway, "
                      "where downloads go; none is fine too, they can be added later."
@@ -182,11 +186,12 @@ def questions(found=None):
                         {"id": "disk", "label": "Its disk, wiped by the ISO", "default": "/dev/nvme0n1"},
                         {"id": "download_dir", "label": "Where downloads go", "default": "/home/user/downloads",
                          "when": "preset == 'gateway'"}]}]},
-        {"step": "Secrets", "intro": "Keys, passwords and certificates live in the fleet folder's secrets/.",
+        {"step": "Keys and passwords", "intro": "Kiwi Server makes every key and password of your network for you and "
+                                              "keeps them in one place.",
          "questions": [
-            {"id": "store", "label": "Keep them encrypted (recommended)", "type": "bool", "default": True,
-             "help": "secrets/ becomes one encrypted file, opened into memory with your desktop's keyring. You get a "
-                     "recovery key once: write it down."}]},
+            {"id": "store", "label": "Encrypt them (recommended)", "type": "bool", "default": True,
+             "help": "They rest encrypted and are only opened while you work. You get a recovery key, shown once: "
+                     "write it down, it is the way back in if this computer is lost."}]},
     ]
 
 

@@ -1303,10 +1303,21 @@ class SetupWizard(Adw.Dialog):
     answers go back to `kiwi-server init --answers`: the terminal and the app ask the same."""
 
     def __init__(self, win, path, data):
-        super().__init__(title="New fleet", content_width=660, content_height=700)
+        super().__init__(title="A new network", content_width=660, content_height=700)
         self.win, self.path = win, path
-        self.steps, self.suggest = data["steps"], data.get("suggestions") or {}
+        self.suggest = data.get("suggestions") or {}
         self.get, self.rows, self.machines = {}, {}, []
+        self.steps = []
+        for st in data["steps"]:            # a question with one possible answer is not a question
+            asked = []
+            for q in st["questions"]:
+                opts = q.get("options") or []
+                if q.get("type") == "choice" and len(opts) == 1:
+                    self.get[q["id"]] = lambda v=opts[0]["value"]: v
+                else:
+                    asked.append(q)
+            if asked:
+                self.steps.append(dict(st, questions=asked))
         self.nav = Adw.NavigationView()
         self.pages = [self.step_page(i, st) for i, st in enumerate(self.steps)]
         self.nav.add(self.pages[0])
@@ -1324,7 +1335,7 @@ class SetupWizard(Adw.Dialog):
             else:
                 g.add(self.row_for(q))
         last = i == len(self.steps) - 1
-        go = Gtk.Button(label="Create the fleet" if last else "Next", css_classes=["suggested-action", "pill"],
+        go = Gtk.Button(label="Create my network" if last else "Next", css_classes=["suggested-action", "pill"],
                         halign=Gtk.Align.CENTER, margin_top=6, margin_bottom=12)
         go.connect("clicked", lambda *_: self.create() if last else self.nav.push(self.pages[i + 1]))
         tv = Adw.ToolbarView(content=page)
@@ -1337,7 +1348,9 @@ class SetupWizard(Adw.Dialog):
         kind, get = q.get("type", "string"), None
         if kind == "choice":
             opts = q["options"]
-            row = Adw.ComboRow(title=q["label"], model=Gtk.StringList.new([o["label"] for o in opts]), use_subtitle=True)
+            # (the subtitle shows the choice only when the row is told how to read an item's text)
+            row = Adw.ComboRow(title=q["label"], model=Gtk.StringList.new([o["label"] for o in opts]), use_subtitle=True,
+                               expression=Gtk.PropertyExpression.new(Gtk.StringObject, None, "string"))
             row.set_selected(next((n for n, o in enumerate(opts) if o["value"] == q.get("default")), 0))
             row.connect("notify::selected", lambda *_: self.update_when())
             get = lambda r=row, o=opts: o[r.get_selected()]["value"]
@@ -1412,7 +1425,8 @@ class SetupWizard(Adw.Dialog):
 
     # ---- the end ----
     def answers(self):
-        a = {k: g() for k, g in self.get.items() if self.rows[k][0].get_visible()}
+        # (a question that was not asked, having one answer, has no row)
+        a = {k: g() for k, g in self.get.items() if k not in self.rows or self.rows[k][0].get_visible()}
         a["nodes"] = [{k: g() for k, g in m["fields"].items() if not k.startswith("_row_") and m["fields"]["_row_" + k][0].get_visible()}
                       for m in self.machines]
         return a
@@ -1420,16 +1434,16 @@ class SetupWizard(Adw.Dialog):
     def create(self):
         a = self.answers()
         if not a.get("master_address"):
-            self.win.alert("The master's address", "What phones and the machines at home connect to: its public address "
-                           "or name, e.g. 203.0.113.7. netcup shows it in its control panel.")
+            self.win.alert("The hub's address is missing", "Go back to the step \"The hub\" and fill in its address on "
+                           "the Internet: the one your hoster shows for the server, like 203.0.113.7.")
             return
         # the answers may hold a Mullvad key: they pass through memory, not the disk
         tmp = os.path.join(GLib.get_user_runtime_dir(), "kiwi-init-%d.json" % os.getpid())
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(a, f)
-        spinner = Adw.StatusPage(title="Making the fleet", description="keys, the fleet file and, if asked, the secret store")
-        self.nav.push(Adw.NavigationPage(title="Making the fleet", child=spinner, can_pop=False))
+        spinner = Adw.StatusPage(title="Making your network", description="its keys and its settings")
+        self.nav.push(Adw.NavigationPage(title="Making your network", child=spinner, can_pop=False))
 
         def work():
             try:
@@ -1443,16 +1457,31 @@ class SetupWizard(Adw.Dialog):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
                       margin_start=18, margin_end=18)
         ok = rc == 0
-        box.append(Gtk.Label(label="The fleet is ready" if ok else "The fleet was not made", xalign=0,
+        box.append(Gtk.Label(label="Your network is ready" if ok else "It was not made", xalign=0,
                              css_classes=["title-2"]))
-        if ok and "recovery key" in out:
-            box.append(Gtk.Label(label="Write the recovery key below down now, on paper or in a password manager: it is "
-                                       "shown only once, and without it a lost keyring means lost secrets.",
-                                 wrap=True, xalign=0, css_classes=["warning"]))
+        key = re.search(r"AGE-SECRET-KEY-1[0-9A-Z]+", out) if ok else None
+        if key:
+            box.append(Gtk.Label(label="Write this recovery key down now, on paper or in a password manager. It is "
+                                       "shown only once. If this computer is lost, it is the only way back to your "
+                                       "network's keys.", wrap=True, xalign=0, css_classes=["warning"]))
+            shown = Gtk.Label(label=key.group(0), selectable=True, wrap=True, wrap_mode=2, xalign=0,
+                              css_classes=["monospace", "card"], margin_top=4, margin_bottom=4)
+            shown.set_margin_start(2)
+            box.append(shown)
+            copy = Gtk.Button(label="Copy the key", halign=Gtk.Align.START)
+            copy.connect("clicked", lambda b: (Gdk.Display.get_default().get_clipboard().set(key.group(0)),
+                                               b.set_label("Copied")))
+            box.append(copy)
+        if ok:
+            box.append(Gtk.Label(label="Next, the app lists your machines, the hub first, with one step and one "
+                                       "button each.", wrap=True, xalign=0))
         tv = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, vexpand=True)
-        tv.get_buffer().set_text((out + ("\n" + err if err.strip() else "")).strip())
-        box.append(Gtk.ScrolledWindow(child=tv, vexpand=True, min_content_height=360))
-        b = Gtk.Button(label="Open the fleet" if ok else "Back", css_classes=["suggested-action", "pill"],
+        text = (out + ("\n" + err if err.strip() else "")).strip()
+        tv.get_buffer().set_text(text.replace(key.group(0), "(the key above)") if key else text)
+        details = Gtk.Expander(label="Details" if ok else "What went wrong", expanded=not ok)
+        details.set_child(Gtk.ScrolledWindow(child=tv, vexpand=True, min_content_height=220))
+        box.append(details)
+        b = Gtk.Button(label="Go to the first step" if ok else "Back", css_classes=["suggested-action", "pill"],
                        halign=Gtk.Align.CENTER)
         b.connect("clicked", lambda *_: (self.close(), ok and self.win.open_path(self.path)))
         box.append(b)
@@ -2287,24 +2316,19 @@ class Window(Adw.ApplicationWindow):
             self.sync()
 
     def new_dialog(self):
+        """A new network: straight to the questions. It goes into ~/kiwi (or ~/kiwi-2, … when
+        that holds one already); nobody is asked for a file name before they know what it is."""
         if not self.confirm_discard(self.new_dialog):
             return
-        dlg = Gtk.FileDialog(title="Where to put the new fleet.yaml", initial_name="fleet.yaml")
-
-        def done(d, res):
-            try:
-                f = d.save_finish(res)
-            except GLib.Error:
-                return
-            path = f.get_path()
-            if os.path.exists(path):
-                os.unlink(path)          # the file dialog asked about replacing it already
-            rc, out, err = run_cli(self.cli, ["init", "--questions"])
-            if rc != 0:
-                self.alert("kiwi-server init --questions failed", err or out)
-                return
-            SetupWizard(self, path, json.loads(out)).present(self)
-        dlg.save(self, None, done)
+        folder, n = os.path.expanduser("~/kiwi"), 2
+        while os.path.exists(folder) and os.listdir(folder):
+            folder, n = os.path.expanduser("~/kiwi-%d" % n), n + 1
+        rc, out, err = run_cli(self.cli, ["init", "--questions"])
+        if rc != 0:
+            self.alert("The questions could not be loaded", err or out)
+            return
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        SetupWizard(self, os.path.join(folder, "fleet.yaml"), json.loads(out)).present(self)
 
     def ask_domain(self, then):
         dlg = Adw.AlertDialog(

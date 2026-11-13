@@ -2388,24 +2388,30 @@ class Window(Adw.ApplicationWindow):
 
     def sync(self, say=False, after_save=False):
         """Keep in step with the control node, in the background: fetch what is newer there
-        (on opening), send what was saved here. A copy that changed on both sides is left
-        alone and said."""
+        (on opening), send what was saved here. Changes on both sides become one copy by
+        themselves; only when both changed the same thing a person is asked which counts."""
         if not self.joined():
             if say:
                 self.toast("This network is not shared yet: Use another computer… in the menu")
             return
         path, generation, dirty = self.doc.path, self.generation, self.doc.dirty
 
+        def stamp():
+            try:
+                return os.stat(path).st_mtime_ns
+            except OSError:
+                return 0
+
         def work():
             steps = ["push"] if after_save else (["pull"] if dirty else ["pull", "push"])
-            rc, text = 0, ""
+            rc, text, was = 0, "", stamp()
             for step in steps:
                 rc, out, err = run_cli(self.cli, ["control", step, path], timeout=180)
                 text = (err or out).strip().replace("error: ", "").replace(":: ", "")
                 if rc != 0:
                     break
-                if step == "pull" and "in step" not in text:
-                    GLib.idle_add(came)
+            if rc == 0 and stamp() != was:      # the file is another now: a pull, or a push that merged
+                GLib.idle_add(came)
             GLib.idle_add(done, rc, text)
             if rc == 0 and os.path.isfile(os.path.join(os.path.dirname(path), "control", "folder")):
                 rc2, out2, _e = run_cli(self.cli, ["control", "requests", path, "--porcelain"], timeout=60)
@@ -2424,12 +2430,38 @@ class Window(Adw.ApplicationWindow):
         def done(rc, text):
             if generation != self.generation and rc == 0:
                 return False
-            if rc != 0:
+            if rc != 0 and "changed on both sides" in text:
+                self.both_changed(path, text)
+            elif rc != 0:
                 self.toast("Not in step: %s" % (text.splitlines() or ["?"])[-1][:160])
             elif say:
                 self.toast("In step")
             return False
         threading.Thread(target=work, daemon=True).start()
+
+    def both_changed(self, path, text):
+        """This computer and another changed the same thing: a person says which counts."""
+        what = text.split("last sync:", 1)[-1].split(". Which", 1)[0].strip()
+        what = what.replace("fleet.yaml", "the settings").replace("secrets/", "")
+        dlg = Adw.AlertDialog(heading="Changed in two places",
+                              body="This computer and another one both changed %s since they last agreed. "
+                                   "Which one should count? The other change is lost." % what)
+        dlg.add_response("later", "Decide later")
+        dlg.add_response("theirs", "The other one's")
+        dlg.add_response("mine", "This computer's")
+
+        def answer(_d, r):
+            if r not in ("mine", "theirs"):
+                return
+            rc, out, err = run_cli(self.cli, ["control", "push" if r == "mine" else "pull", path, "--force"], timeout=180)
+            if rc != 0:
+                self.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
+            elif r == "theirs":
+                self.open_path(path, sync=False)
+            else:
+                self.toast("In step")
+        dlg.connect("response", answer)
+        dlg.present(self)
 
     def join_request(self, path, r):
         """A computer asks, through the synced folder, to manage this network: the owner answers."""

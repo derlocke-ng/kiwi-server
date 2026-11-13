@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.76.0 — two sides that both changed become one copy
+
+Found with the key rotation: the control node learned a host key while this computer made
+new keys, and the only way on was `--force`.
+
+- `control push` and `control pull`, over the control node's API and through a synced
+  folder: when both sides changed since they last agreed, each file is taken from the side
+  that changed it, the host keys of both are kept, and the result goes to the other side.
+  Only a file that changed on both sides stops it, by name.
+- What both sides held at the last sync is kept as `control/base.age`, encrypted for the
+  store's keys.
+- The app: a push that merged shows what came; when both changed the same thing it asks
+  which computer's change counts, instead of a line about `--force`.
+
 ## 2.75.1 — the backup server password follows the seed
 
 kiwi-modules 0.31.1.

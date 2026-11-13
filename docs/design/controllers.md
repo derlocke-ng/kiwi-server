@@ -45,6 +45,10 @@ brings a key per controller.)
 
 - `control pull` and `control push` as today, by revision: a push must build on the
   revision the node has, otherwise pull first. What travels is encrypted, as today.
+- Two sides that both changed (2.76.0): every sync leaves the tree both sides held then as
+  `control/base.age`. With it a push or pull tells per file who changed it, takes each file
+  from the side that did, keeps the host keys of both, and stops only when one file changed
+  on both sides. The merging is done by the controller; the node never needs to.
 - Without a control node, or beside it: the same encrypted files in a folder that something
   else syncs (`control push --dir ~/Nextcloud/kiwi`, `pull --dir`). Nextcloud sees
   `fleet.yaml.age` and `secrets.age`, never a secret. Built in 2.72.0: a manifest written

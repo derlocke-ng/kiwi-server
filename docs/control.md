@@ -137,16 +137,19 @@ node. A folder caught in the middle of syncing is refused, not half taken.
 ## Staying in step
 
 The app does it by itself: it fetches when a fleet is opened and sends after
-a save. When two computers changed the fleet, it says so and changes nothing.
-By hand:
+a save. When two sides changed different things since they last agreed (you
+added a device here, the control node learned a host key there), the two
+become one copy by themselves. Only when both changed the same thing, the
+settings file say, the app asks which one counts. By hand:
 
 ```bash
 kiwi-server control pull ~/kiwi/fleet.yaml    # before working here
 kiwi-server control push ~/kiwi/fleet.yaml    # after changing the fleet here
 ```
 
-Each refuses to overwrite a side that changed since the last sync; `--force`
-overrides. The node takes a push while it is open. A new password
+Both merge the same way; when a file changed on both sides they name it and
+stop, and `pull --force` or `push --force` says which copy counts. The node
+takes a push while it is open. A new password
 (`--set-password`, then push) locks it until that password logs in.
 
 ## Mind

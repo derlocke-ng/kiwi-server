@@ -83,6 +83,23 @@ link is from this fleet, fetches the fleet and opens it. Without the app:
 it read before, it knows; rotation is planned
 ([design/controllers.md](design/controllers.md)).
 
+## Without a control node: a synced folder
+
+Two computers can share a network through a folder that Nextcloud, Syncthing
+or the like keeps the same on both. The network lies there encrypted: whoever
+runs the syncing can delete it or put back an older copy, not read it.
+
+1. On the computer that has the network: menu, **Keep it in a synced
+   folder…** (`kiwi-server control push <fleet> --dir FOLDER`).
+2. On the other computer: **Join**, name the folder. It asks to join
+   (`kiwi-server control join <fleet> --dir FOLDER`).
+3. The first computer shows the request the next time it syncs: **Accept** or
+   **Deny** (`kiwi-server control requests|accept|deny <fleet> [name]`).
+4. On the other computer, **Join** again: the network opens.
+
+From then on both sync with that folder by themselves, like with a control
+node. A folder caught in the middle of syncing is refused, not half taken.
+
 ## Staying in step
 
 The app does it by itself: it fetches when a fleet is opened and sends after

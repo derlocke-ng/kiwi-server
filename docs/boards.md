@@ -30,7 +30,12 @@ and network stay as they are. A password login works; sudo may ask for it.
 - **Flashed again?** The board has a new host key: add `--new-host-key`.
 - **Images:** every module image has arm64 builds.
 
+## A ready image
+
+`target: armbian` with `armbian: { board: odroidn2 }` (the name at
+dl.armbian.com: odroidm1, odroidn2, ...). `kiwi-server build` writes
+`<host>.img`: flash it, boot, then `kiwi-server apply` gives it its role.
+
 ## Not yet
 
-An image per board, built with Armbian's build framework, encrypted disk
-included: see the [roadmap](ROADMAP.md).
+An encrypted disk (Armbian's build framework): see the [roadmap](ROADMAP.md).

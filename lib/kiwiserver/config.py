@@ -26,6 +26,7 @@ TARGETS = {
     "coreos": "Fedora CoreOS, stable stream — Zincati applies updates in your window",
     "ucore":  "uCore — Fedora CoreOS that rebases itself onto a ghcr.io/ublue-os/ucore image",
     "debian": "Debian stable (trixie) netinst with a preseed — unattended-upgrades",
+    "armbian": "Armbian on a board (Odroid, Banana Pi): the board's own image with the first boot written in",
     "coreos-ram": "Fedora CoreOS live, in RAM: every boot starts from the image, the state on one partition (masters)",
 }
 
@@ -113,6 +114,13 @@ DEFAULTS = {
         "non_free_firmware": True,
         "iso_url": None,
     },
+    "armbian": {
+        "board": None,           # its name at dl.armbian.com: odroidn2, odroidm1, uefi-arm64, ...
+        "release": "trixie",
+        "branch": "current",
+        "variant": "minimal",    # minimal or server
+        "image_url": None,       # another .img.xz (its .sha beside it)
+    },
     "unlock": {
         # the Tang rings that may open this machine's disk at boot (the tang module serves them)
         "rings": [],
@@ -196,7 +204,7 @@ _KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@", "
 
 
 # the blocks whose keys are fixed: a misspelled one is an error, not a silently ignored line
-_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "ram", "debian", "unlock", "tls", "backup", "vps")
+_FIXED_BLOCKS = ("admin", "network", "updates", "coreos", "ucore", "ram", "debian", "armbian", "unlock", "tls", "backup", "vps")
 
 
 def unknown_keys(block, roles, where):
@@ -360,7 +368,8 @@ class Host:
             errs.append("role is missing")
         elif roles is not None and self.role not in roles:
             errs.append("unknown role %r (known: %s)" % (self.role, ", ".join(sorted(roles))))
-        elif roles is not None and self.target in TARGETS and self.target not in roles[self.role].targets:
+        elif roles is not None and self.target in TARGETS and \
+                ("debian" if self.target == "armbian" else self.target) not in roles[self.role].targets:
             errs.append("role %s does not support target %s" % (self.role, self.target))
         for label in self.hostname.split("."):
             if not _LABEL.match(label):
@@ -382,7 +391,7 @@ class Host:
             keys = []
         if not keys and not (a.get("password") or a.get("password_hash")):
             errs.append("admin: no ssh_keys and no password — nobody could log in")
-        if self.target == "debian" and a.get("user") == "root":
+        if self.target in ("debian", "armbian") and a.get("user") == "root":
             errs.append("admin.user must not be root on debian (root login is disabled by the preseed)")
         n = c["network"]
         if not n.get("dhcp", True):
@@ -413,7 +422,15 @@ class Host:
             errs.append("updates.length_minutes must be a positive integer")
         if self.cfg.get("disk") and not str(self.cfg["disk"]).startswith("/dev/"):
             errs.append("disk must be a device path like /dev/sda or /dev/nvme0n1")
-        if not self.cfg.get("disk"):
+        if self.target == "armbian":
+            ab = c["armbian"]
+            if not (ab.get("board") or ab.get("image_url")):
+                errs.append("armbian.board is missing (its name at dl.armbian.com, e.g. odroidn2 or odroidm1)")
+            if ab.get("variant") not in ("minimal", "server"):
+                errs.append("armbian.variant must be minimal or server")
+            if (c["unlock"].get("rings") or []):
+                errs.append("unlock.rings: an Armbian image has no encrypted disk yet")
+        elif not self.cfg.get("disk"):
             if self.target != "coreos-ram":     # it touches no disk
                 self.warnings.append("no disk: set — configs render, but an ISO cannot be built")
         if self.target == "coreos-ram":

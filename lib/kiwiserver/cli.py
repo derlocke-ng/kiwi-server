@@ -15,7 +15,7 @@ import time
 from . import VERSION, adopt as adoptmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, luks, mtu, netcup, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
-from .targets import coreos as coreos_t, debian as debian_t, ram as ram_t
+from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
 
 EXIT_INVALID = 2
@@ -92,7 +92,8 @@ class Outputs:
         self.preseed = os.path.join(self.dir, n + ".preseed.cfg")
         self.files = os.path.join(self.dir, n + ".kiwi-server")
         self.stack = os.path.join(self.dir, n + ".stack")
-        self.iso = os.path.join(self.media, n + ".iso")
+        # the install media; on a board, the image to flash
+        self.iso = os.path.join(self.media, n + (".img" if host.target == "armbian" else ".iso"))
         self.bare_mark = self.iso + ".bare"        # the ISO carries no role and no secrets of it
         self.readme = os.path.join(self.dir, "README.txt")
         self.work = os.path.join(self.media, ".work")
@@ -102,7 +103,7 @@ class Outputs:
         debian = self.host.target == "debian"
         return {
             "script": os.path.isfile(self.script),
-            "config": os.path.isfile(self.preseed if debian else self.bu),
+            "config": os.path.isfile(self.script if self.host.target == "armbian" else self.preseed if debian else self.bu),
             "ignition": (not debian) and os.path.isfile(self.ign),
             "stack": os.path.isfile(os.path.join(self.stack, "docker-compose.yml")),
             "iso": os.path.isfile(self.iso),
@@ -120,7 +121,8 @@ def host_readme(host, o, bundle=None):
     L += ["",
           "%s.role.sh" % host.name,
           "    The first-boot script: runs once as root on the installed machine",
-          "    (kiwi-role.service). Also usable on an existing %s system:" % ("Debian" if host.target == "debian" else "CoreOS/uCore"),
+          "    (kiwi-role.service). Also usable on an existing %s system:" % (
+              "Debian" if host.target in ("debian", "armbian") else "CoreOS/uCore"),
           "        scp %s.role.sh host:  &&  ssh host sudo bash %s.role.sh" % (host.name, host.name),
           "    It contains this host's secrets — keep it private.", ""]
     if bundle is not None:
@@ -139,6 +141,14 @@ def host_readme(host, o, bundle=None):
               "    The whole system: boot from it every time (a provider's CD-ROM, a stick).",
               "    After every boot it waits; kiwi-server watch (or apply) sends the role.",
               "    A new image is the OS update.", ""]
+        return "\n".join(L)
+    if host.target == "armbian":
+        L += ["%s.img" % host.name,
+              "    The board's Armbian (%s) with the first boot written in. Flash it to the SD card" % host.cfg["armbian"].get("board"),
+              "    or the eMMC and boot: it makes the admin user with the fleet's keys, then the role runs.",
+              "        sudo dd if=%s.img of=/dev/sdX bs=4M status=progress oflag=sync" % host.name, "",
+              "On the board:",
+              "    journalctl -u kiwi-adopt -u kiwi-role -f   follow the first boot", ""]
         return "\n".join(L)
     if host.target == "debian":
         L += ["%s.preseed.cfg + %s.kiwi-server/" % (host.name, host.name),
@@ -302,7 +312,7 @@ class Renderer:
         rs = host.role_settings
         if not rs.get("registry_mirrors") and registries:
             rs["registry_mirrors"] = {r: "cache.%s/%s" % (name, r) for r in registries}
-        if not rs.get("apt_proxy") and apt and host.target == "debian":
+        if not rs.get("apt_proxy") and apt and host.target in ("debian", "armbian"):
             rs["apt_proxy"] = "http://%s:3142" % lan.ip
 
     def lan_addresses(self, host, role):
@@ -420,6 +430,12 @@ class Renderer:
             for stale in (o.bu, o.ign):
                 if os.path.exists(stale):
                     os.unlink(stale)
+        elif host.target == "armbian":
+            for stale in (o.bu, o.ign, o.preseed, o.files):     # the image is made at build time from the script
+                if os.path.isdir(stale):
+                    shutil.rmtree(stale)
+                elif os.path.exists(stale):
+                    os.unlink(stale)
         else:
             if unlock.wanted(host):      # the thumbprints go into the Ignition: Ignition binds the disk
                 host.unlock_pins = unlock.pins(host, unlock.ring_servers(
@@ -452,10 +468,13 @@ class Renderer:
             # the live system carries no role; its one secret is the machine's SSH host key
             util.write_text(o.bare_mark, "this ISO carries no role and none of its secrets, only the machine's SSH host key\n", 0o644)
             return o
-        if not host.cfg.get("disk"):
+        if host.target != "armbian" and not host.cfg.get("disk"):
             raise KiwiError("%s: disk: is required to build an ISO (it is wiped on boot)" % host.name)
         os.makedirs(o.media, exist_ok=True)
-        if host.target == "debian":
+        if host.target == "armbian":       # the board's own image, the first boot written in
+            base = armbian_t.base_image(self.tc, host.cfg["armbian"], cache_dir)
+            armbian_t.image(self.tc, host, util.read_text(o.script), base, o.iso, o.work)
+        elif host.target == "debian":
             base = isomod.debian_base_iso(self.tc, host.cfg["debian"], cache_dir)
             isomod.debian_iso(self.tc, host, o.preseed, o.files, o.iso, base, o.work)
         else:
@@ -1547,8 +1566,10 @@ def _render_or_build(args, build):
         raise KiwiError("failed: %s" % ", ".join(failed))
     if offline:
         warn_offline(hosts, "ISO")
-    if build and any(h.target != "coreos-ram" for h in hosts):
+    if build and any(h.target not in ("coreos-ram", "armbian") for h in hosts):
         util.say("done — these ISOs wipe their target disk on boot; label them")
+    elif build and any(h.target == "armbian" for h in hosts):
+        util.say("done — flash the .img to the board's SD card or eMMC and boot it")
     elif build:
         util.say("done — boot from it every time; kiwi-server watch (or apply) sends the role after every boot")
     if not getattr(args, "no_backup", False):
@@ -1940,7 +1961,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
-  kiwi-server targets                           coreos, ucore, debian
+  kiwi-server targets                           coreos, ucore, debian, armbian, coreos-ram
   kiwi-server toolchain [status|build]          butane / coreos-installer / xorriso, native or container
   kiwi-server doctor                            is everything here?
 

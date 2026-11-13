@@ -21,6 +21,11 @@ sends changes here by itself.
 
 ## Set it up
 
+In the app: menu, **A home server that looks after it…**. Pick the home
+server, type a password twice. Done.
+
+By hand, the same steps:
+
 ```yaml
 papaya:
   node:

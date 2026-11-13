@@ -136,6 +136,7 @@ class Control:
     def set_password(self, password):
         """On the operator's computer, the store open: the password becomes one more way to
         open it. `control push` takes the result to the node."""
+        password = password.strip()         # a phone's keyboard likes to add a space
         if len(password) < MIN_PASSWORD:
             raise KiwiError("the control password needs %d characters at least: it guards every secret of the fleet" % MIN_PASSWORD)
         if not self.store.exists():
@@ -162,7 +163,7 @@ class Control:
         self.failures[address] = recent
         if len(recent) >= 5 or not self.ready():
             return None
-        identity = storemod.password_identity(password, util.read_text(self.salt_file).strip())
+        identity = storemod.password_identity(password.strip(), util.read_text(self.salt_file).strip())
         try:
             if self.locked():
                 with self.lock:
@@ -191,6 +192,10 @@ class Control:
         if not hmac.compare_digest(good, mac) or int(expires) < self.clock() or self.locked():
             return None
         return user
+
+    def csrf(self, token):
+        """What a form of this session carries, so that only a page of ours can post for it."""
+        return hmac.new(self._session_key, ("csrf|%s" % (token or "")).encode(), hashlib.sha256).hexdigest()
 
     def lock_store(self, user="admin"):
         with self.lock:                       # after the running job

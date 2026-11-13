@@ -3,10 +3,12 @@ with Jinja templates and a few lines of JavaScript for a job's live log: no buil
 Meant behind the reverse proxy on the mesh (the control module); the login is the password
 set with `kiwi-server serve FLEET --set-password`; it opens the encrypted store (control.py).
 """
+import hmac
 import threading
 import time
 
 import jinja2
+import markupsafe
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -54,11 +56,11 @@ TEMPLATES = {
     "index.html": """{% extends "base.html" %}{% block main %}
 <header><h1>Kiwi control</h1>
 <span class="muted">kiwi-server {{ version }} · <a href="audit">log</a> ·
-<form class="inline" method="post" action="logout"><button>Log out</button></form>
-<form class="inline" method="post" action="lock" onsubmit="return confirm('Lock the fleet? Nothing runs by itself until the next login.')"><button>Lock</button></form></span></header>
+<form class="inline" method="post" action="logout">{{ tok }}<button>Log out</button></form>
+<form class="inline" method="post" action="lock" onsubmit="return confirm('Lock the fleet? Nothing runs by itself until the next login.')">{{ tok }}<button>Lock</button></form></span></header>
 <div class="actions">
-<form class="inline" method="post" action="refresh"><button>Look now</button></form>
-<form class="inline" method="post" action="run"><input type="hidden" name="action" value="check"><button>Check names</button></form>
+<form class="inline" method="post" action="refresh">{{ tok }}<button>Look now</button></form>
+<form class="inline" method="post" action="run">{{ tok }}<input type="hidden" name="action" value="check"><button>Check names</button></form>
 </div>
 <p class="muted">{% if status and status.time %}Last look {{ ago(status.time) }} ago{% else %}No look yet{% endif %}
 {% if status and status.error %} · <span class="bad">{{ status.error }}</span>{% endif %}</p>
@@ -79,7 +81,7 @@ TEMPLATES = {
 <pre>{{ host.output }}</pre>{% else %}<p class="muted">Not in the last look.</p>{% endif %}
 <div class="actions">{% for a in ["status", "plan", "apply"] %}
 <form class="inline" method="post" action="../run" {% if a == "apply" %}onsubmit="return confirm('Apply {{ name }} now?')"{% endif %}>
-<input type="hidden" name="action" value="{{ a }}"><input type="hidden" name="host" value="{{ name }}">
+{{ tok }}<input type="hidden" name="action" value="{{ a }}"><input type="hidden" name="host" value="{{ name }}">
 <button {% if a == "apply" %}class="primary"{% endif %}>{{ a|capitalize }}</button></form>{% endfor %}</div>
 {% endblock %}""",
     "job.html": """{% extends "base.html" %}{% block main %}
@@ -110,8 +112,13 @@ def make_app(control: Control):
     env.globals.update(version=VERSION, ago=ago)
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
 
-    def page(name, **kw):
-        return HTMLResponse(env.get_template(name).render(**kw))
+    def page(template, request=None, **kw):
+        # tok: the hidden field every form of a logged-in page carries (see posted())
+        tok = ""
+        if request is not None:
+            tok = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">'
+                                    % control.csrf(request.cookies.get(COOKIE)))
+        return HTMLResponse(env.get_template(template).render(tok=tok, **kw))
 
     def user(request):
         return control.session(request.cookies.get(COOKIE))
@@ -119,11 +126,15 @@ def make_app(control: Control):
     def address(request):
         return request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
 
-    def same_origin(request):
-        """A form posted from another site carries its own Origin: refused (the cookie is
-        SameSite=Strict as well)."""
-        origin = request.headers.get("origin")
-        return not origin or origin.split("://", 1)[-1] == request.headers.get("host")
+    def posted(request, csrf):
+        """The user, when the form came from one of this session's own pages. Not by the
+        Origin header: under the proxy's no-referrer policy browsers send `Origin: null` with
+        a form, the same as a hostile page can. The session's token in the form is what another
+        site cannot know, and the cookie is SameSite=Strict besides."""
+        u = user(request)
+        if u and hmac.compare_digest(control.csrf(request.cookies.get(COOKIE)), csrf or ""):
+            return u
+        return None
 
     def login_page():
         return RedirectResponse("login", status_code=303)
@@ -138,7 +149,7 @@ def make_app(control: Control):
 
     @app.post("/login")
     def login(request: Request, password: str = Form("")):
-        token = control.login(password, address(request)) if same_origin(request) else None
+        token = control.login(password, address(request))    # needs the password itself: nothing to forge
         if not token:
             time.sleep(1)
             return page("login.html", locked=control.locked(),
@@ -149,15 +160,17 @@ def make_app(control: Control):
         return r
 
     @app.post("/logout")
-    def logout():
+    def logout(request: Request, csrf: str = Form("")):
         r = RedirectResponse("login", status_code=303)
+        if not posted(request, csrf):
+            return r
         r.delete_cookie(COOKIE)
         return r
 
     @app.post("/lock")
-    def lock(request: Request):
-        u = user(request)
-        if not u or not same_origin(request):
+    def lock(request: Request, csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
             return login_page()
         control.lock_store(u)
         return login_page()
@@ -167,7 +180,7 @@ def make_app(control: Control):
         if not user(request):
             return login_page()
         st = control.status() or {}
-        return page("index.html", status=st, hosts=st.get("hosts") or [], jobs=control.jobs(10))
+        return page("index.html", request, status=st, hosts=st.get("hosts") or [], jobs=control.jobs(10))
 
     @app.get("/hosts/{name}")
     def host(request: Request, name: str):
@@ -175,19 +188,19 @@ def make_app(control: Control):
             return RedirectResponse("../login", status_code=303)
         st = control.status() or {}
         found = next((h for h in st.get("hosts") or [] if h.get("host") == name), None)
-        return page("host.html", name=name, host=found)
+        return page("host.html", request, name=name, host=found)
 
     @app.post("/refresh")
-    def refresh(request: Request):
-        if not user(request) or not same_origin(request):
+    def refresh(request: Request, csrf: str = Form("")):
+        if not posted(request, csrf):
             return login_page()
         threading.Thread(target=control.refresh_status, daemon=True).start()
         return RedirectResponse("./", status_code=303)
 
     @app.post("/run")
-    def run(request: Request, action: str = Form(...), host: str = Form("")):
-        u = user(request)
-        if not u or not same_origin(request):
+    def run(request: Request, action: str = Form(...), host: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
             return login_page()
         if action not in ACTIONS:
             return JSONResponse({"error": "unknown action"}, status_code=400)

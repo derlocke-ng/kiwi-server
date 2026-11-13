@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.60.1 — the control page takes a browser's login
+
+- No browser could log in to the control page: under the reverse proxy's no-referrer policy
+  a form carries `Origin: null`, which the page took for another site. Forms of a session now
+  carry that session's token instead (and the cookie stays SameSite=Strict); the login needs
+  no such check, it needs the password.
+- A host's page answered with an error.
+- The password is taken without spaces around it.
+- A test asks the pages over a socket the way a browser does; CI installs FastAPI for it.
+
 ## 2.60.0 — the control node
 
 - `kiwi-server serve <fleet>`: web pages and an API over the CLI (FastAPI, Jinja, no build

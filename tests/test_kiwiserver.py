@@ -5060,5 +5060,107 @@ class TestControlSync(StoreBase):
             controlsync.control_host(self.f)
 
 
+
+def _have_web():
+    try:
+        import fastapi, uvicorn, multipart  # noqa: F401,E401
+        return True
+    except ImportError:
+        try:
+            import fastapi, uvicorn, python_multipart  # noqa: F401,E401
+            return True
+        except ImportError:
+            return False
+
+
+@unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
+class TestWeb(StoreBase):
+    """The pages over a real socket, asked the way a browser asks: a form posted under the
+    proxy's no-referrer policy carries `Origin: null`."""
+    PW = "a long enough password"
+
+    def setUp(self):
+        super().setUp()
+        import uvicorn
+        from kiwiserver import web
+        self.init()
+        fake = [sys.executable, "-c", "import sys; print('ran', *sys.argv[1:])"]
+        self.c = controlmod.Control(self.f.path, kiwi_cmd=fake, run_dir=os.path.join(self.tmp, "ram"))
+        self.c.set_password(self.PW)
+        store.Store.for_fleet(self.f.path).lock()                # as on a node that just started
+        port = remote.free_port()
+        self.server = uvicorn.Server(uvicorn.Config(web.make_app(self.c), host="127.0.0.1", port=port, log_level="error"))
+        t = threading.Thread(target=self.server.run, daemon=True)
+        t.start()
+        self.addCleanup(lambda: (setattr(self.server, "should_exit", True), t.join(5)))
+        self.url = "http://127.0.0.1:%d" % port
+        for _ in range(100):
+            if self.server.started:
+                break
+            time.sleep(0.05)
+        self.cookie = ""
+
+    def ask(self, path, form=None, origin="null"):
+        """(status, Location or body). A form is posted with the Origin a browser sends."""
+        import urllib.error
+        import urllib.request
+
+        class Stay(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **kw):
+                return None
+        headers = {"Cookie": self.cookie} if self.cookie else {}
+        data = None
+        if form is not None:
+            data = urllib.parse.urlencode(form).encode()
+            headers["Origin"] = origin
+        req = urllib.request.Request(self.url + path, data=data, headers=headers)
+        try:
+            with urllib.request.build_opener(Stay).open(req) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            set_cookie = e.headers.get("set-cookie") or ""
+            if set_cookie.startswith("kiwi_session=") and '""' not in set_cookie.split(";")[0]:
+                self.cookie = set_cookie.split(";")[0]
+            with e:
+                return e.code, e.headers.get("location") or e.read().decode()
+
+    def test_a_browser_logs_in_unlocks_runs_and_locks(self):
+        self.assertIn('"locked":true', self.ask("/healthz")[1].replace(" ", ""))
+        self.assertEqual(self.ask("/")[0], 303)                                   # nobody yet
+        code, body = self.ask("/login", {"password": "not the password!"})
+        self.assertEqual(code, 200)
+        self.assertIn("Wrong password", body)
+        self.assertTrue(self.c.locked())
+        self.assertEqual(self.ask("/login", {"password": self.PW + " "})[0], 303)   # Origin: null, a trailing space
+        self.assertFalse(self.c.locked())
+        code, body = self.ask("/")
+        self.assertEqual(code, 200)
+        tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', body).group(1)
+        # a form another site makes the browser post: the cookie may come along, the token cannot
+        self.assertEqual(self.ask("/run", {"action": "apply", "host": "a"}), (303, "login"))
+        self.assertEqual(self.ask("/run", {"action": "apply", "host": "a", "csrf": "0" * 64}), (303, "login"))
+        self.assertEqual(self.c.jobs(), [])
+        code, where = self.ask("/run", {"action": "apply", "host": "a", "csrf": tok})
+        self.assertEqual(code, 303)
+        self.assertRegex(where, r"^jobs/\d{8}-\d{6}-[0-9a-f]{6}$")
+        for _ in range(100):
+            if self.c.jobs()[0]["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        code, body = self.ask("/api/" + where + "/log")
+        self.assertIn("ran apply", body)
+        code, body = self.ask("/hosts/a")
+        self.assertEqual(code, 200)
+        self.assertIn('name="csrf" value="%s"' % tok, body)                       # its buttons carry the token too
+        self.assertEqual(self.ask("/" + where)[0], 200)
+        self.assertEqual(self.ask("/audit")[0], 200)
+        self.assertEqual(self.ask("/lock", {})[0], 303)                           # no token: nothing happens
+        self.assertFalse(self.c.locked())
+        self.assertEqual(self.ask("/lock", {"csrf": tok})[0], 303)
+        self.assertTrue(self.c.locked())
+        self.assertEqual(self.ask("/")[0], 303)                                   # the session went with it
+        self.assertEqual(self.ask("/api/status")[0], 401)
+
+
 if __name__ == "__main__":
     unittest.main()

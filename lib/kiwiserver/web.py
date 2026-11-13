@@ -185,9 +185,13 @@ services from anywhere and browses through your network.</p>
 <div class="actions"><button class="primary">Add it</button></div></form>
 <h2>Devices on your VPN</h2>
 {% for d in devices %}<div class="card row"><strong>{{ d }}</strong>
-<form class="inline" method="post" action="/devices/show">{{ tok }}<input type="hidden" name="name" value="{{ d }}"><button>Show its QR code</button></form></div>
+<span><form class="inline" method="post" action="/devices/show">{{ tok }}<input type="hidden" name="name" value="{{ d }}"><button>Show its QR code</button></form>
+<form class="inline" method="post" action="/devices/remove" onsubmit="return confirm('Take {{ d }} off the VPN? Its connection stops working at once.')">{{ tok }}
+<input type="hidden" name="name" value="{{ d }}"><button>Remove</button></form></span></div>
 {% else %}<p class="muted">None yet.</p>{% endfor %}
-<p class="muted small">To take a device off the VPN, open <em>VPN devices</em> on the Home page and delete it there.</p>
+{% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
+<details><summary>A phone was lost or stolen</summary><p class="muted">Remove it here. From that moment it cannot reach
+your network, even with the WireGuard app still on it.</p></details>
 {% endblock %}""",
 
     "backups.html": """{% extends "base.html" %}{% block main %}
@@ -501,6 +505,9 @@ def make_app(control: Control):
             return login_page()
         name = name.strip().lower()
         try:
+            if what == "remove":
+                control.remove_device(name, u)
+                return devices_page(request, removed=name)
             config = control.add_device(name, group, u) if what == "add" else control.device_config(name)
         except KiwiError as e:
             return devices_page(request, error=str(e))

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.68.0 — a lost phone
+
+- Control page, Devices: **Remove** takes a device off the VPN at once (the master forgets its
+  key), with what to do when a phone is lost or stolen.
+- `kiwi-server enroll <fleet> <device> --remove` does it from a terminal.
+
 ## 2.67.0 — update everything
 
 - Control page, Home: **Update everything** brings every machine to the current settings and

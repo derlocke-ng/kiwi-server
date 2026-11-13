@@ -1965,7 +1965,13 @@ def cmd_rotate(args):
 
         def apply(name):
             return main(["apply", args.fleet, name])
-        left = rotate.seed(fleet, ms, apply, args.hosts, args.waive or (), args.why or "")
+        def before(name):
+            h = fleet.hosts[name]
+            try:
+                rotate.in_place(fleet, h, remote.reach(h), roles, ms)
+            except KiwiError:
+                pass                    # not reachable: the apply says so
+        left = rotate.seed(fleet, ms, apply, args.hosts, args.waive or (), args.why or "", before=before)
         if share(args.fleet, "push"):
             util.say("the other computers and the control node have the result")
         if left:

@@ -107,6 +107,9 @@ settings:
   - key: db_password
     type: secret
     generate: true
+    rotate:
+      in: paperless-db
+      run: psql -v ON_ERROR_STOP=1 -U paperless -d paperless -c "ALTER USER paperless WITH PASSWORD '$NEW'"
     group: Generated
     help: "The password of Paperless's database, used only between its containers. Empty: generated from the fleet's seed."
   - key: extra_env

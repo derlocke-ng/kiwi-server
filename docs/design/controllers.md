@@ -85,6 +85,11 @@ an account knows changes under it. The bundle names the seed it replaced
 steps for the pinned ones (ALTER USER, the services' own password commands, restic's key
 change) come one module at a time: each removes pins.
 
+Built in 2.75.0: the first module steps. `rotate: { in: <container>, run: <command with
+$NEW> }` on a generated secret; `rotate seed` runs it on the machine before that machine's
+apply (the new value on stdin, never on a command line), and only when it worked the pin
+goes and the files follow. The databases of Immich and Paperless have one.
+
 A rotation that is open shows on the page until every line is done or waived, with who
 waived it.
 

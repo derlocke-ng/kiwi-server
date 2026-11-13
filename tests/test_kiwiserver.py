@@ -5817,6 +5817,45 @@ class TestRotate(Base):
         self.assertIn("replaced 20", str(self.rotate.plan(f, (), self.ms)))
         self.assertIn("kept as they are", str(self.rotate.plan(f, (), self.ms)))
 
+    def test_a_database_password_is_changed_where_it_lives_before_its_files_follow(self):
+        write(os.path.join(self.tmp, "secrets", "seed"), "S" * 32)
+        node = {"modules": ["vpn-client", "immich", "paperless"], "vpn_ip": "10.8.0.25",
+                "vpn-client": {"wireguard_config": "secrets/wg.conf"}, "paperless": {"db_password": "written by hand"}}
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"sh3": {"role": "node", "node": node}}})
+        h = f.hosts["sh3"]
+        self.assertEqual(h.validate(self.roles), [])
+        rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        old = h.module_settings["immich"]["db_password"]
+        ran, said, fails = [], [], [True]
+
+        def run(tgt, script, data=None):
+            ran.append((tgt, script, data))
+            if fails[0]:
+                raise KiwiError("the container is not running")
+
+        def before(n):
+            self.rotate.in_place(f, f.hosts[n], "core@sh3", self.roles, self.ms, said.append, run)
+        self.rotate.seed(f, self.ms, lambda n: 0, say=said.append, before=before)
+        pins = json.loads(util.read_text(os.path.join(self.tmp, "secrets", "pins.json")))
+        self.assertEqual(pins["sh3.kiwi/immich/db_password"], old)             # it did not work: the old one stays
+        self.assertIn("keeps its value", "".join(said))
+        self.assertEqual(len(ran), 1)                                          # the one written by hand is not ours
+        fails[0] = False
+        self.rotate.seed(f, self.ms, lambda n: 0, say=said.append, before=before)      # the next rotation tries again
+        tgt, script, data = ran[-1]
+        new = data.decode().strip()
+        self.assertRegex(new, r"^[A-Za-z0-9]{32}$")
+        self.assertNotEqual(new, old)
+        self.assertNotIn(new, script)                                          # on stdin, not on a command line
+        self.assertIn("podman exec -e NEW kn-immich-db sh -c", script)
+        self.assertIn("ALTER USER immich", script)
+        pins = json.loads(util.read_text(os.path.join(self.tmp, "secrets", "pins.json")))
+        self.assertNotIn("sh3.kiwi/immich/db_password", pins)
+        h = config.Fleet.load(f.path).hosts["sh3"]
+        rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        self.assertEqual(h.module_settings["immich"]["db_password"], new)      # and the files follow
+        self.assertEqual(h.module_settings["paperless"]["db_password"], "written by hand")
+
     def stack_vars(self, f, name):
         from kiwimodules import manifest
         h = f.hosts[name]

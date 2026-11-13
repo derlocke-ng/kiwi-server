@@ -79,6 +79,9 @@ settings:
   - key: db_password
     type: secret
     generate: true
+    rotate:
+      in: immich-db
+      run: psql -v ON_ERROR_STOP=1 -U immich -d immich -c "ALTER USER immich WITH PASSWORD '$NEW'"
     group: Generated
     help: "The password of Immich's database, used only between its containers. Empty: generated from the fleet's seed."
   - key: extra_env

@@ -1819,6 +1819,19 @@ class DeviceDialog(Adw.Dialog):
         dlg.save(self.win, None, chosen)
 
 
+def in_plain_words(text):
+    """What a problem line means and what to do, before the technical words."""
+    low = text.lower()
+    for key, plain in (
+            ("unreachable", "It does not answer. Is it switched on and online, and is this computer on your VPN?"),
+            ("disk is locked", "Its disk is encrypted and waits to be unlocked after a restart."),
+            ("waiting for a reboot", "It installed updates and restarts by itself in its update window. Nothing to do."),
+            ("not running", "A service on it stopped. Apply usually brings it back.")):
+        if key in low:
+            return "%s  (%s)" % (plain, text)
+    return text
+
+
 class JoinDialog(Adw.Dialog):
     """Join a fleet that exists: paste the invite link from its control page. One field."""
 
@@ -2645,6 +2658,7 @@ class Window(Adw.ApplicationWindow):
     def attention_group(self, items, with_host):
         g = Adw.PreferencesGroup(title="Needs attention")
         for host, level, text in items:
+            text = in_plain_words(text)
             row = plain_row(host if with_host else text, text if with_host else "")
             row.add_prefix(dot(level))
             if with_host:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.80.1 — a master whose SSH port moved is found from a computer off the VPN
+
+- After `admin.ssh_port` moved a machine's sshd, a computer that does not resolve the
+  VPN's names lost it: `status` and `watch` said "unreachable" although its address was
+  on record. ssh keeps no separate line for the new port, and the lookup wanted one.
+  Found when a RAM master was put back on a spare server.
+- `watch` puts a RAM master's own key on record for its addresses before each look,
+  so a computer that never built the image finds the booted, blank machine.
+
 ## 2.80.0 — the drills of the first run, backups and the gateway; what they found
 
 Four drills on real machines, kept in `tests/drills/`, and the fixes for what they met.

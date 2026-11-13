@@ -2805,10 +2805,13 @@ class Window(Adw.ApplicationWindow):
         col.append(caption(" · ".join(x for x in (word, st.get("hostname"), self.checked_line()) if x)))
         hero.append(col)
         parts = [hero]
-        if state == "new" and self.next_of(name):
+        if state == "new":
+            text, label, action = self.guide_step(name)
             g = Adw.PreferencesGroup(title="Next step")
-            row = plain_row(self.next_of(name))
-            row.set_title_selectable(True)
+            row = Adw.ActionRow(use_markup=False, title=text, title_lines=4)
+            b = Gtk.Button(label=label, valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            b.connect("clicked", lambda _b, a=action: a())
+            row.add_suffix(b)
             g.add(row)
             parts.append(g)
         if problems:
@@ -3230,22 +3233,65 @@ class Window(Adw.ApplicationWindow):
                                "Building %s…" % (host or "every host")))
         dlg.present(self)
 
+    def first_address(self, host):
+        """Where a machine that was never set up answers: before its first setup it has no name
+        on the VPN yet. The hub's address on the Internet, or a home machine's fixed address."""
+        role = self.value_of(host, "role", "node")
+        wg = self.doc.get(host, (role, "vpn-server", "wg_host"))
+        if wg:
+            return str(wg)
+        net = self.doc.get(host, ("network",)) or {}
+        if net.get("address") and not net.get("dhcp", False):
+            return str(net["address"]).split("/", 1)[0]
+        return ""
+
     def confirm_apply(self, host):
         if not self.ensure_saved():
             return
+        if self.is_new(host):
+            return self.first_apply(host)
         where = (self.live.get(host) or {}).get("target") or "%s@%s" % (
             self.admin_user(host), (self.status.get(host) or {}).get("hostname") or host)
         dlg = Adw.AlertDialog(
             heading="Apply %s?" % host,
-            body="The role script is re-rendered, sent to %s over SSH (your key or agent must open the "
-                 "connection; nothing asks for a password) and run as root with --force: the stack is rewritten "
-                 "and restarted. Secrets and modules that changed take effect; the disk is not touched." % where)
+            body="Sets %s up the way the settings say now. Services that changed restart for a moment; its disk "
+                 "and your data are not touched. (Reached as %s.)" % (host, where))
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("apply", "Apply")
         dlg.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
         dlg.set_close_response("cancel")
         dlg.connect("response", lambda _d, r: r == "apply" and
                     self.spawn(["apply", self.doc.path, host], "Applying %s…" % host))
+        dlg.present(self)
+
+    def first_apply(self, host):
+        """The first setup of a machine: it is reached by its address, which the settings know
+        (the hub's, a fixed one at home) or the owner types (a home machine on DHCP)."""
+        dlg = Adw.AlertDialog(
+            heading="Set up %s" % host,
+            body="The machine has to be installed and switched on. Kiwi Server connects to it and sets it up; "
+                 "that takes a few minutes. Where does it answer?")
+        entry = Gtk.Entry(text=self.first_address(host), placeholder_text="its address, like 192.168.1.50",
+                          activates_default=True)
+        dlg.set_extra_child(entry)
+        if not entry.get_text():
+            dlg.set_body(dlg.get_body() + " Your router's list of devices shows its address.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("apply", "Set it up")
+        dlg.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("apply")
+        dlg.set_close_response("cancel")
+
+        def go(_d, r):
+            address = entry.get_text().strip()
+            if r != "apply":
+                return
+            if not address:
+                self.toast("Its address is needed for the first setup")
+                return
+            self.spawn(["apply", self.doc.path, host, "--ssh", "%s@%s" % (self.admin_user(host), address)],
+                       "Setting up %s…" % host)
+        dlg.connect("response", go)
         dlg.present(self)
 
     def show_status(self):

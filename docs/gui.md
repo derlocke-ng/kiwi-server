@@ -1,5 +1,12 @@
 # The desktop app
 
+
+New here? Start the app and choose **Start a new network**: a few questions,
+then **Getting started** lists your machines, the hub first, with one sentence
+and one button each. When they run, **What next** offers the phone, backups
+and a home server that looks after everything. **Join one with an invite
+link** takes a link from a network's control page ([control.md](control.md)).
+
 **Kiwi Server** in the app grid opens the fleet you had last. On the left the
 overview, one row per host and the defaults. Each host row says whether the
 machine answers, how long it has been up and how many of its services run.

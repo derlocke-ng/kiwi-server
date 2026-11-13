@@ -266,6 +266,8 @@ def seed_begin(fleet, ms, why=""):
     pins = fleet.pins()
     for hostname, module, s in generated(fleet, ms):
         key = "%s/%s/%s" % (hostname, module, s.key)
+        if getattr(s, "rotate", "") == "restart":
+            pins.pop(key, None)         # pinned by an older release that could not change it yet
         # all but the ones a restart alone changes: one that is changed where it lives keeps
         # its value until that has worked on its machine (in_place)
         if getattr(s, "rotate", "") != "restart" and key not in pins:

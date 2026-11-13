@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.75.1 — the backup server password follows the seed
+
+kiwi-modules 0.31.1.
+
+- backup: the password a machine signs in with at its backup servers follows a new seed
+  (the machine reads it at every backup, the servers keep a hash of the same value).
+  Between the two applies of one `rotate seed` that machine's backups to that server are
+  refused; when the run is through, both sides agree again.
+- A secret that an older release pinned because it could not change it yet loses its pin
+  at the next `rotate seed`, once its module says it can follow.
+
 ## 2.75.0 — database passwords change with the seed: Immich and Paperless
 
 kiwi-modules 0.31.0.

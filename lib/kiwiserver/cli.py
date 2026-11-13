@@ -1116,6 +1116,10 @@ def cmd_secrets(args):
     print(found[matches[0]])
 
 
+# on the machine, after an apply: the containers whose image is newer than the one they run
+UPDATE_IMAGES = "if [ -x /usr/local/bin/kiwi-stack ]; then /usr/local/bin/kiwi-stack update; fi"
+
+
 def fleet_identities(fleet):
     """The private keys the fleet itself holds for its machines: every
     admin.ssh_keys entry that is a path to a .pub with the private key next
@@ -1288,6 +1292,7 @@ def cmd_apply(args):
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
     failed = []
     servers = None
+    update = getattr(args, "update", False)
     for h in hosts:
         tgt = remote.reach(h, args.ssh)
         try:
@@ -1309,7 +1314,8 @@ def cmd_apply(args):
                 # the control node applies itself: the role may restart the container this runs in,
                 # so it runs as a unit of its own on the machine and outlives the connection
                 remote.run(tgt, "systemctl reset-failed kiwi-self-apply 2>/dev/null; systemd-run --collect "
-                                "--unit=kiwi-self-apply bash /var/lib/kiwi-server/role.sh --force")
+                                "--unit=kiwi-self-apply bash -c %s" % shlex.quote(
+                                    "bash /var/lib/kiwi-server/role.sh --force" + (" && " + UPDATE_IMAGES if update else "")))
                 util.say("%s: applying itself, detached (this page may drop for a moment); on the machine: "
                          "journalctl -u kiwi-self-apply -f" % h.name)
                 continue
@@ -1317,6 +1323,10 @@ def cmd_apply(args):
             rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force")
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
+            if update:      # an apply fetches newer images; this brings them into use (only what changed restarts)
+                util.say("%s: newer images into use" % h.name)
+                if remote.run_stream(tgt, UPDATE_IMAGES) != 0:
+                    util.warn("%s: the images were not updated — sudo kiwi-stack update on the machine" % h.name)
             if unlock.wanted(h):
                 unlock.bind(h, tgt, servers)
             if backupmod.carries_wireguard(h):
@@ -2309,6 +2319,7 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
+    s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")

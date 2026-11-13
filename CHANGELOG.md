@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.74.1 — rotation, after clicking through the page
+
+- The app's **A computer was lost or stolen…** offers both steps: the keys and the secrets.
+- `kiwi-server apply --update`: after the apply, the containers a newer image came for
+  restart (`kiwi-stack update`). The page's **Update everything** does that now: an apply
+  alone fetched newer images and left the old ones running (found: the control node
+  stayed on its old version).
+- The page: a rotation that leaves machines waiting no longer reads as "did not work", and
+  its task leads back to Computers; the password change is confirmed at the top of the
+  page, where it is seen; the hint for a machine that is gone names the **Leave out** button.
+
 ## 2.74.0 — a new seed: the secrets inside the services
 
 design/controllers.md, step 3, second part. kiwi-modules 0.30.1, kiwi-stack 0.8.0.

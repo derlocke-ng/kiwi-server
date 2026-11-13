@@ -2347,9 +2347,12 @@ class Window(Adw.ApplicationWindow):
             return
         control = self.control_host()
         dlg = Adw.AlertDialog(heading="A computer was lost or stolen")
-        body = ("A computer that managed this network knows the keys that open your machines. Replace them: every "
-                "machine gets a new key, and the old one stops working when the last machine has changed. Nothing "
-                "restarts. A machine that is off keeps the old key until you do this again.")
+        body = ("A computer that managed this network knows its keys. Replace them, one after the other.\n\n"
+                "The keys: every machine gets a new key to open it, and the old one stops working when the last "
+                "machine has changed. Nothing restarts.\n\n"
+                "The secrets: the passwords your services use among themselves change, and each machine is updated. "
+                "Some services restart for a moment. Database and admin passwords stay as they are for now.\n\n"
+                "A machine that is off waits until you do this again.")
         if control:
             name = (self.status.get(control) or {}).get("hostname") or control
             body += ("\n\nFirst remove that computer on the control page (Computers), and change the page's "
@@ -2357,15 +2360,17 @@ class Window(Adw.ApplicationWindow):
             dlg.add_response("page", "Open the control page")
         dlg.set_body(body)
         dlg.add_response("close", "Not now")
+        dlg.add_response("seed", "Replace the secrets")
         dlg.add_response("go", "Replace the keys")
         dlg.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
 
         def answer(_d, r):
             if r == "page":
                 Gtk.UriLauncher.new("https://control.%s/controllers" % name).launch(self, None, None)
-            elif r == "go":
-                self._after_spawn = lambda: self.sync(False, True)      # the other computers get the new keys
-                self.spawn(["rotate", self.doc.path, "ssh"], "Replacing the keys…")
+            elif r in ("go", "seed"):
+                self._after_spawn = lambda: self.sync(False, True)      # the other computers get the result
+                self.spawn(["rotate", self.doc.path, "ssh" if r == "go" else "seed"],
+                           "Replacing the keys…" if r == "go" else "Replacing the secrets…")
         dlg.connect("response", answer)
         dlg.present(self)
 

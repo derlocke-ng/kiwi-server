@@ -4923,6 +4923,8 @@ class TestControl(StoreBase):
         self.assertEqual(c.argv("rotate-seed", ["b"])[-5:], ["rotate", self.f.path, "seed", "--waive", "b"])
         self.assertEqual(c.argv("rotate", ["b"])[-5:], ["rotate", self.f.path, "ssh", "--waive", "b"])   # the page's Leave out
         self.assertEqual(c.argv("rotate")[-3:], ["rotate", self.f.path, "ssh"])
+        with mock.patch.object(c, "fleet_info", lambda **_k: {"hosts": [{"name": "a"}]}):
+            self.assertEqual(c.argv("update")[-4:], ["apply", self.f.path, "--update", "a"])    # newer images into use
 
     def test_login_opens_the_locked_store_and_lock_closes_it(self):
         self.init()
@@ -4979,7 +4981,7 @@ class TestControl(StoreBase):
         with self.assertRaisesRegex(KiwiError, "no machines"):
             c.argv("update")
         util.write_text(os.path.join(c.run, "fleet.json"), json.dumps({"hosts": [{"name": "a"}, {"name": "b"}]}))
-        self.assertEqual(c.argv("update")[-4:], ["apply", c.fleet_path, "a", "b"])
+        self.assertEqual(c.argv("update")[-5:], ["apply", c.fleet_path, "--update", "a", "b"])
         with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": "a"}):
             self.assertEqual(c.argv("update")[-2:], ["b", "a"])               # the control node itself comes last
         with self.assertRaises(KiwiError):

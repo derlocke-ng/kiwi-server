@@ -5163,20 +5163,18 @@ class TestWeb(StoreBase):
 
 
 
-    def test_the_controllers_page(self):
+    def test_the_computers_page(self):
         self.ask("/login", {"password": self.PW})
         tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', self.ask("/")[1]).group(1)
-        self.assertEqual(self.ask("/controllers/code", {})[0], 303)               # no token: no code
-        code, body = self.ask("/controllers/code", {"csrf": tok})
+        self.assertEqual(self.ask("/controllers/invite", {})[0], 303)             # no token: no invite
+        code, body = self.ask("/controllers/invite", {"csrf": tok})
         self.assertEqual(code, 200)
-        join = re.search(r"<pre>([a-z0-9-]+\.[0-9a-f]{8})</pre>", body).group(1)
-        self.assertTrue(self.c.join_request(join, "laptop", store.keygen()[1], "10.9.3.2"))
-        self.assertIn("laptop", self.ask("/controllers")[1])
-        self.ask("/controllers/accept", {"name": "laptop"})                       # forged: nothing
-        self.assertNotIn("laptop", [n for n, _k in self.c.controllers()])
-        self.assertEqual(self.ask("/controllers/accept", {"name": "laptop", "csrf": tok}), (303, "../controllers"))
+        link = re.search(r'<pre id="inv">(http://127\.0\.0\.1:\d+/#join=[a-z0-9]+\.[0-9a-f]{8})</pre>', body).group(1)
+        self.assertEqual(self.c.join(controlsync.parse_invite(link)[1], "laptop", store.keygen()[1], "10.9.3.2"), "laptop")
+        self.assertIn("<strong>laptop</strong>", self.ask("/controllers")[1])
+        self.ask("/controllers/remove", {"name": "laptop"})                       # forged: nothing
         self.assertIn("laptop", [n for n, _k in self.c.controllers()])
-        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok})[0], 303)
+        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "../controllers"))
         self.assertNotIn("laptop", [n for n, _k in self.c.controllers()])
         code, body = self.ask("/controllers/remove", {"name": "control", "csrf": tok})
         self.assertIn("own key", body)                                            # said on the page, not a crash
@@ -5227,27 +5225,27 @@ class TestControllers(StoreBase):
                            input=stdin, capture_output=True, text=True, env=self.env)
         return r.returncode, r.stdout + r.stderr
 
-    def test_join_accept_sync_remove(self):
-        code = self.n.new_join_code()
-        rc, out = self.laptop_does("join", "--url", self.url, "--name", "laptop", stdin="aaaa-bbbb-cccc-dddd.00000000\n")
+    def test_join_sync_remove(self):
+        link = self.n.new_invite(self.url)
+        url, code = controlsync.parse_invite(link)
+        self.assertEqual(url, self.url)
+        rc, out = self.laptop_does("join", self.url + "/#join=aaaaaaaaaaaaaaaaaaaa.00000000")
         self.assertNotEqual(rc, 0)
-        self.assertIn("not the one this code is from", out)       # another fleet's code: nothing sent
-        rc, out = self.laptop_does("join", "--url", self.url, "--name", "laptop", stdin=code + "\n")
+        self.assertIn("not the one this invite is from", out)     # another fleet's invite: nothing sent
+        rc, out = self.laptop_does("join", "--name", "desktop", stdin=link + "\n")       # the link on stdin
         self.assertEqual(rc, 0, out)
-        self.assertEqual([r["name"] for r in self.n.requests()], ["laptop"])
-        self.assertFalse(self.n.join_request(code, "other", "age1" + "q" * 58))          # the code worked once
-        rc, out = self.laptop_does("pull")
-        self.assertNotEqual(rc, 0)
-        self.assertIn("not accepted yet", out)
-        self.n.accept("laptop")
-        self.assertIn("laptop", [n for n, _k in self.n.controllers()])
-        rc, out = self.laptop_does("pull")
-        self.assertEqual(rc, 0, out)
+        self.assertIn("joined as desktop-2", out)                                         # the name was taken
+        self.assertIn("desktop-2", [n for n, _k in self.n.controllers()])
+        self.assertIsNone(self.n.join(code, "other", store.keygen()[1]))                  # the invite worked once
+        # joining fetched the fleet at once, opened with its own key, into its RAM
         self.assertIn("Europe/Berlin", util.read_text(self.laptop))
         seed = os.path.join(os.path.dirname(self.laptop), "secrets", "seed")
-        self.assertEqual(util.read_text(seed), "S" * 32)                                  # its own key opened the store
-        self.assertTrue(os.path.realpath(seed).startswith(self.env["XDG_RUNTIME_DIR"]))   # into its RAM
-        self.assertEqual(self.laptop_does("pull")[0], 0)                                  # in step
+        self.assertEqual(util.read_text(seed), "S" * 32)
+        self.assertTrue(os.path.realpath(seed).startswith(self.env["XDG_RUNTIME_DIR"]))
+        self.assertIn("in step", self.laptop_does("pull")[1])
+        rc, out = self.laptop_does("join", self.n.new_invite(self.url))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("holds a fleet already", out)                                       # not twice into one folder
         # the laptop changes the fleet and pushes: the open node takes it
         with open(self.laptop, "a") as fh:
             fh.write("# from the laptop\n")
@@ -5269,28 +5267,38 @@ class TestControllers(StoreBase):
         self.assertEqual(self.laptop_does("pull", "--force")[0], 0)
         self.assertIn("# from the node", util.read_text(self.laptop))
         # removed: it gets nothing any more, and the store is no longer encrypted to it
-        self.n.remove("laptop")
+        self.n.remove("desktop-2")
         rc, out = self.laptop_does("pull", "--force")
         self.assertNotEqual(rc, 0)
-        self.assertNotIn("laptop", [n for n, _k in self.n.controllers()])
+        self.assertNotIn("desktop-2", [n for n, _k in self.n.controllers()])
         with self.assertRaisesRegex(KiwiError, "own key"):
             self.n.remove("control")
 
-    def test_a_join_code_is_short_lived_and_guess_proof(self):
-        key = "age1" + "q" * 58
-        self.assertFalse(self.n.join_request("anything", "x", key))                       # no code out
-        code = self.n.new_join_code()
+    def test_a_second_fleet_folder_on_one_computer_keeps_its_key(self):
+        write(os.path.join(self.env["FAKE_KEYRING"], "item"), "AGE-SECRET-KEY-1THEKEYTHISCOMPUTERHASALREADY")
+        rc, out = self.laptop_does("join", self.n.new_invite(self.url))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("already has a key", out)
+        self.assertIn("THEKEYTHISCOMPUTERHASALREADY", util.read_text(os.path.join(self.env["FAKE_KEYRING"], "item")))
+        self.assertEqual([n for n, _k in self.n.controllers()], ["desktop", "recovery", "control"])
+
+    def test_an_invite_is_short_lived_and_guess_proof(self):
+        key = store.keygen()[1]
+        self.assertIsNone(self.n.join("anything", "x", key))                              # no invite out
+        code = controlsync.parse_invite(self.n.new_invite(self.url))[1]
         for _ in range(3):
-            self.assertFalse(self.n.join_request("aaaa-bbbb-cccc-dddd." + code.rsplit(".", 1)[1], "x", key))
-        self.assertFalse(self.n.join_request(code, "x", key))                             # three wrong guesses voided it
-        code = self.n.new_join_code()
-        self.assertFalse(self.n.join_request(code, "Not A Name", key))
-        self.assertFalse(self.n.join_request(code, "control", key))                       # a name that is taken
-        self.assertTrue(self.n.join_request(code, "x", key))
-        self.n.deny("x")
-        self.assertEqual(self.n.requests(), [])
-        self.assertIsNone(self.n.challenge("x"))                                          # denied: not a controller
+            self.assertIsNone(self.n.join("a" * 20 + "." + code.rsplit(".", 1)[1], "x", key))
+        self.assertIsNone(self.n.join(code, "x", key))                                    # three wrong guesses voided it
+        code = controlsync.parse_invite(self.n.new_invite(self.url))[1]
+        self.assertIsNone(self.n.join(code, "Not A Name", key))
+        self.assertEqual(self.n.join(code, "x", key), "x")
+        self.assertIsNone(self.n.challenge("nobody"))
         self.assertIsNone(self.n.controller("no such token"))
+        self.n.lock_store()
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            self.n.new_invite(self.url)
+        with self.assertRaises(KiwiError):
+            controlsync.parse_invite("https://example.org/no-invite")
 
 
 if __name__ == "__main__":

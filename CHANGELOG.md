@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.62.0 — join a fleet: paste one link
+
+- Joining was a code, a command, an accept step and a pull. Now: the control page's
+  **Add a computer** gives an invite link; Kiwi Server's new **Join a fleet** takes it, and
+  the fleet is there. The invite is the approval (made by someone logged in, once, fifteen
+  minutes); the Accept and Deny steps are gone, Remove stays.
+- The app keeps a joined fleet in step by itself: it fetches when the fleet is opened and
+  sends after a save, and says when two computers changed it.
+- `kiwi-server control join <fleet> <link>` does the same in a terminal, fetch included.
+- The first computer syncs through the control page too after its next push, no SSH needed.
+- A computer that already has a key for the fleet is refused before anything is sent: its
+  keyring's key is not overwritten.
+
 ## 2.61.0 — controllers join through the control node
 
 - The control page has **controllers**: the computers that can open the fleet, a join code

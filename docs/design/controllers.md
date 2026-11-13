@@ -15,20 +15,21 @@ the backup server; and what a removed one knew can be rotated. Builds on
 - **One acts**: every host names the controller that applies to it and runs its timers
   (`controller:` on the host, the main one unless set). The others may look.
 
-## Joining, accepting, removing
+## Joining and removing
 
-```
-laptop$ kiwi-server control join https://control.papaya.home     # asks for the join code
-```
+Built in 2.62.0, after the owner found the first version (a code, a command, an accept
+step, a pull) far too much:
 
-1. The page's **Add a controller** shows a join code, good for fifteen minutes, once.
-2. `join` makes the computer's key (age, in its keyring), checks the fleet's CA against the
-   code, and sends the public half with the code. Nothing secret leaves the computer.
-3. The request waits on the page: **Accept** (as main or for a site) or **Deny**.
-4. Accept adds the key to the store (the fleet file is encrypted again for the keys there
-   are). The computer then syncs.
-5. **Remove** takes the key out again, re-encrypts store and fleet file, and (later) opens
-   a rotation (below) for what that controller could read.
+1. The page's **Add a computer** shows an invite link: the control node's address and a
+   one-time code after the `#` (a browser never sends that part). Fifteen minutes, once,
+   void after three wrong guesses.
+2. In the app on the new computer: **Join a fleet**, paste. It makes its key (age, in its
+   keyring), checks the fleet's CA against the code before sending anything, sends the
+   public half, and fetches the fleet.
+
+The invite is the owner's yes: it was made by someone logged in. There is no waiting list.
+**Remove** takes the key out again, re-encrypts store and fleet file, and (later) opens a
+rotation (below) for what that controller could read.
 
 The controllers are the store's keys (`secrets.recipients`), so the list travels with the
 fleet and every change of it is in the audit log. Scopes will need more than a name there.

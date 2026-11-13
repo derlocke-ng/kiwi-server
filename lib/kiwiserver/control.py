@@ -61,7 +61,6 @@ class Control:
         self._saved = {}                      # name -> sha256 of the fleet file as it was last saved or opened
         self._age = {}                        # name -> sha256 of its encrypted file on disk, as this process left it
         self._join = None                     # the join code that is out, if one is
-        self._requests = {}                   # name -> a computer that asked to join
         self._tokens = {}                     # token -> (controller, expires): who may sync
 
     # ---- the password and the store ----------------------------------------------------
@@ -233,9 +232,9 @@ class Control:
 
     # ---- controllers: the computers that can open the store ------------------------------
     # (design/controllers.md, step 1: every controller is fully trusted.) A controller is one
-    # of the store's keys. A computer asks to become one with a join code from the page; the
-    # owner accepts or denies; a controller proves who it is by opening a challenge encrypted
-    # to its key, and may then fetch and replace the encrypted fleet.
+    # of the store's keys. A computer becomes one with an invite link from the page;
+    # an invite made on the page lets one computer in; a controller proves who it is by opening
+    # a challenge encrypted to its key, and may then fetch and replace the encrypted fleet.
     def controllers(self):
         return self.store.ways() if self.store.exists() else []
 
@@ -249,56 +248,46 @@ class Control:
                 util.write_text(cached, util.read_text(live), 0o644)
         return util.read_text(cached) if os.path.isfile(cached) else ""
 
-    def new_join_code(self, user="admin"):
-        """A code for one computer, good for fifteen minutes. Its last part names the CA, so
-        the computer knows it talks to this fleet before it sends anything."""
+    def new_invite(self, base_url, user="admin"):
+        """A link for one computer, good for fifteen minutes: the control node's address and a
+        code after the #, which a browser never sends anywhere. The code's last part names the
+        CA, so the computer knows it talks to this fleet before it sends anything."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
         fp = hashlib.sha256(self.ca_pem().encode()).hexdigest()[:8]
-        raw = "".join(pysecrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(16))
-        code = "%s-%s-%s-%s.%s" % (raw[:4], raw[4:8], raw[8:12], raw[12:], fp)
+        raw = "".join(pysecrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(20))
+        code = "%s.%s" % (raw, fp)
         self._join = {"hash": hashlib.sha256(code.encode()).hexdigest(), "expires": self.clock() + 900, "wrong": 0}
-        self.audit(user, "made a join code")
-        return code
+        self.audit(user, "made an invite")
+        return "%s/#join=%s" % (base_url.rstrip("/"), code)
 
-    def join_request(self, code, name, key, address="?"):
-        """A computer asks to become a controller. True when the request now waits for the owner."""
+    def join(self, code, name, key, address="?"):
+        """A computer joins with an invite. The invite is the owner's yes: it was made on the
+        page by someone logged in, works once and for fifteen minutes. Returns the name it got
+        (a taken one gets a number), or None."""
         j = getattr(self, "_join", None)
-        if not j or j["expires"] < self.clock():
-            return False
+        if not j or j["expires"] < self.clock() or self.locked():
+            return None
         if not hmac.compare_digest(j["hash"], hashlib.sha256((code or "").strip().encode()).hexdigest()):
             j["wrong"] += 1
-            if j["wrong"] >= 3:                 # three wrong guesses: the code is void
+            if j["wrong"] >= 3:                 # three wrong guesses: the invite is void
                 self._join = None
-            self.audit("?", "join refused: wrong code", address=address)
-            return False
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", name or "") or not re.fullmatch(r"age1[0-9a-z]{58}", key or ""):
-            return False
-        if any(n == name or k == key for n, k in self.controllers()):
-            return False
+            self.audit("?", "join refused: wrong invite", address=address)
+            return None
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,27}", name or "") or not re.fullmatch(r"age1[0-9a-z]{58}", key or ""):
+            return None
+        taken = dict(self.controllers())
+        if key in taken.values():
+            return None
+        base, n = name, 2
+        while name in taken:
+            name, n = "%s-%d" % (base, n), n + 1
         self._join = None                       # used
-        self._requests[name] = {"key": key, "address": address, "time": self.clock()}
-        self.audit(name, "asked to join", address=address)
-        return True
-
-    def requests(self):
-        return [dict(v, name=k) for k, v in sorted(self._requests.items())]
-
-    def accept(self, name, user="admin"):
-        req = self._requests.get(name)
-        if not req:
-            raise KiwiError("nobody called %s asked to join" % name)
-        if self.locked():
-            raise KiwiError("the fleet is locked: log in")
         with self.lock:
-            self.store.add(name, req["key"])
+            self.store.add(name, key)
             self._for_the_keys_now()
-        del self._requests[name]
-        self.audit(user, "accepted controller %s" % name)
-
-    def deny(self, name, user="admin"):
-        if self._requests.pop(name, None):
-            self.audit(user, "denied controller %s" % name)
+        self.audit(name, "joined with an invite", address=address)
+        return name
 
     def remove(self, name, user="admin"):
         """Its key leaves the store: it reads nothing newer. What it read before, it knows

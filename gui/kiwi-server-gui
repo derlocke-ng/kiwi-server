@@ -1459,6 +1459,80 @@ class SetupWizard(Adw.Dialog):
         return False
 
 
+class JoinDialog(Adw.Dialog):
+    """Join a fleet that exists: paste the invite link from its control page. One field."""
+
+    def __init__(self, win):
+        super().__init__(title="Join a fleet", content_width=520)
+        self.win = win
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="On the fleet's control page: Computers, Add a computer. Paste the link here.",
+                             wrap=True, xalign=0))
+        g = Adw.PreferencesGroup()
+        self.go = Gtk.Button(label="Join", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER,
+                             sensitive=False)
+        self.go.connect("clicked", lambda *_: self.join())
+        self.link = Adw.EntryRow(title="Invite link")
+        self.link.connect("entry-activated", lambda *_: self.join())
+        self.link.connect("changed", lambda *_: self.go.set_sensitive("#join=" in self.link.get_text()))
+        g.add(self.link)
+        folder = os.path.expanduser("~/kiwi")
+        n = 2
+        while os.path.exists(folder) and os.listdir(folder):
+            folder, n = os.path.expanduser("~/kiwi-%d" % n), n + 1
+        self.folder = folder
+        g.add(Adw.ActionRow(title="Folder", subtitle=tilde(folder)))
+        box.append(g)
+        self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
+        box.append(self.note)
+        box.append(self.go)
+        self.set_child(box)
+        # a link on the clipboard: it is what the user came with
+        Gdk.Display.get_default().get_clipboard().read_text_async(None, self.pasted)
+
+    def pasted(self, clip, res):
+        try:
+            text = (clip.read_text_finish(res) or "").strip()
+        except GLib.Error:
+            return
+        if "#join=" in text and not self.link.get_text():
+            self.link.set_text(text)
+
+    def join(self):
+        link = self.link.get_text().strip()
+        if "#join=" not in link:
+            return
+        self.go.set_sensitive(False)
+        self.go.set_label("Joining…")
+        self.note.set_visible(False)
+        path = os.path.join(self.folder, "fleet.yaml")
+
+        def work():
+            os.makedirs(self.folder, mode=0o700, exist_ok=True)
+            # the link on stdin, not among the arguments other programs can read
+            try:
+                r = subprocess.run([self.win.cli, "control", "join", path], input=link + "\n",
+                                   capture_output=True, text=True, timeout=180)
+                rc, err = r.returncode, (r.stderr or r.stdout)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                rc, err = 1, str(e)
+            GLib.idle_add(self.done, rc, err, path)
+        threading.Thread(target=work, daemon=True).start()
+
+    def done(self, rc, err, path):
+        if rc == 0:
+            self.close()
+            self.win.open_path(path)
+            self.win.toast("Joined: this computer keeps in step with the fleet by itself")
+        else:
+            self.note.set_label(err.replace("error: ", "").strip())
+            self.note.set_visible(True)
+            self.go.set_label("Join")
+            self.go.set_sensitive(True)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # the window
 # ---------------------------------------------------------------------------
@@ -1487,6 +1561,7 @@ class Window(Adw.ApplicationWindow):
         self.set_size_request(480, 420)
 
         for name, cb in (("open", self.open_dialog), ("new", self.new_dialog), ("refresh", self.poll),
+                         ("join", lambda: JoinDialog(self).present(self)), ("sync", lambda: self.sync(True)),
                          ("render-all", lambda: self.render(None)), ("build-all", lambda: self.confirm_build(None)),
                          ("render-host", lambda: self.render(self.current_scope)),
                          ("build-host", lambda: self.confirm_build(self.current_scope)),
@@ -1508,9 +1583,11 @@ class Window(Adw.ApplicationWindow):
         section = Gio.Menu()
         section.append("Open a fleet…", "win.open")
         section.append("New fleet…", "win.new")
+        section.append("Join a fleet…", "win.join")
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
+        section.append("Sync with the control node", "win.sync")
         section.append("Render every host", "win.render-all")
         section.append("Build every ISO…", "win.build-all")
         menu.append_section(None, section)
@@ -1553,14 +1630,17 @@ class Window(Adw.ApplicationWindow):
                                        title="The secret store is locked: nothing can be built, applied or asked until it is open")
         self.store_banner.connect("button-clicked", lambda *_: self.toggle_store())
         self.empty = Adw.StatusPage(icon_name="folder-open-symbolic", title="No fleet open",
-                                    description="Open a fleet.yaml, or start a new one: a few questions, and it is ready to build.")
+                                    description="Open a fleet.yaml, start a new one, or join one that exists with an invite link.")
         eb = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
         b1 = Gtk.Button(label="Open…")
         b1.connect("clicked", lambda *_: self.open_dialog())
         b2 = Gtk.Button(label="New fleet…")
         b2.add_css_class("suggested-action")
         b2.connect("clicked", lambda *_: self.new_dialog())
+        b3 = Gtk.Button(label="Join a fleet…")
+        b3.connect("clicked", lambda *_: JoinDialog(self).present(self))
         eb.append(b1)
+        eb.append(b3)
         eb.append(b2)
         self.empty.set_child(eb)
 
@@ -1713,7 +1793,48 @@ class Window(Adw.ApplicationWindow):
             item.set_action_and_target_value("win.open-recent", GLib.Variant.new_string(p))
             self.recent_menu.append_item(item)
 
-    def open_path(self, path):
+    def joined(self):
+        """Does this fleet belong to a control node (it joined one, or pushed to one)?"""
+        return bool(self.doc.path) and os.path.isfile(os.path.join(os.path.dirname(self.doc.path), "control", "remote"))
+
+    def sync(self, say=False, after_save=False):
+        """Keep in step with the control node, in the background: fetch what is newer there
+        (on opening), send what was saved here. A copy that changed on both sides is left
+        alone and said."""
+        if not self.joined():
+            if say:
+                self.toast("This fleet has no control node")
+            return
+        path, generation, dirty = self.doc.path, self.generation, self.doc.dirty
+
+        def work():
+            steps = ["push"] if after_save else (["pull"] if dirty else ["pull", "push"])
+            rc, text = 0, ""
+            for step in steps:
+                rc, out, err = run_cli(self.cli, ["control", step, path], timeout=180)
+                text = (err or out).strip().replace("error: ", "").replace(":: ", "")
+                if rc != 0:
+                    break
+                if step == "pull" and "in step" not in text:
+                    GLib.idle_add(came)
+            GLib.idle_add(done, rc, text)
+
+        def came():
+            if generation == self.generation and not self.doc.dirty:
+                self.open_path(path, sync=False)      # what came is what is shown
+            return False
+
+        def done(rc, text):
+            if generation != self.generation and rc == 0:
+                return False
+            if rc != 0:
+                self.toast("Not in step with the control node: %s" % (text.splitlines() or ["?"])[-1][:160])
+            elif say:
+                self.toast("In step with the control node")
+            return False
+        threading.Thread(target=work, daemon=True).start()
+
+    def open_path(self, path, sync=True):
         try:
             self.doc = FleetDoc(path)
         except Exception as e:  # noqa: BLE001
@@ -1733,6 +1854,8 @@ class Window(Adw.ApplicationWindow):
         self.mark_dirty()
         self.set_actions_sensitive()
         self.poll()
+        if sync:
+            self.sync()
 
     def new_dialog(self):
         if not self.confirm_discard(self.new_dialog):
@@ -1794,6 +1917,7 @@ class Window(Adw.ApplicationWindow):
         self.mark_dirty()
         self.poll()
         self.toast("Saved %s" % os.path.basename(self.doc.path))
+        self.sync(after_save=True)
         return True
 
     def mark_dirty(self):

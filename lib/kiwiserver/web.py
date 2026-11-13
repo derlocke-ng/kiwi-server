@@ -58,7 +58,7 @@ TEMPLATES = {
 <button class="primary">Log in</button></form>{% endblock %}""",
     "index.html": """{% extends "base.html" %}{% block main %}
 <header><h1>Kiwi control</h1>
-<span class="muted">kiwi-server {{ version }} · <a href="controllers">controllers</a> · <a href="audit">log</a> ·
+<span class="muted">kiwi-server {{ version }} · <a href="controllers">computers</a> · <a href="audit">log</a> ·
 <form class="inline" method="post" action="logout">{{ tok }}<button>Log out</button></form>
 <form class="inline" method="post" action="lock" onsubmit="return confirm('Lock the fleet? Nothing runs by itself until the next login.')">{{ tok }}<button>Lock</button></form></span></header>
 <div class="actions">
@@ -98,26 +98,20 @@ if(d.text)log.scrollTop=log.scrollHeight;if(d.state=="waiting"||d.state=="runnin
 poll();
 </script>{% endblock %}""",
     "controllers.html": """{% extends "base.html" %}{% block main %}
-<header><h1>Controllers</h1><a href="./">back</a></header>
-<p class="muted">The computers that can open this fleet. Removing one stops it from reading anything new;
-what it read before, it knows.</p>
-{% for name, key in ways %}<div class="card row"><span><strong>{{ name }}</strong>
-<span class="muted">{{ key[:16] }}…</span></span>
-{% if name != "control" %}<form class="inline" method="post" action="controllers/remove"
+<header><h1>Computers</h1><a href="./">back</a></header>
+<p class="muted">The computers that can open this fleet.</p>
+{% for name, key in ways %}<div class="card row"><strong>{{ name }}</strong>
+{% if name == "control" %}<span class="muted">this node</span>
+{% elif name == "recovery" %}<span class="muted">your recovery key</span>
+{% else %}<form class="inline" method="post" action="controllers/remove"
 onsubmit="return confirm('Remove {{ name }}? It can no longer open the fleet.')">{{ tok }}
-<input type="hidden" name="name" value="{{ name }}"><button>Remove</button></form>
-{% else %}<span class="muted">this node's password</span>{% endif %}</div>{% endfor %}
-<h2>Asking to join</h2>
-{% for r in requests %}<div class="card"><div class="row"><strong>{{ r.name }}</strong>
-<span class="muted">from {{ r.address }} · {{ r.key[:16] }}…</span></div><div class="actions">
-<form class="inline" method="post" action="controllers/accept">{{ tok }}<input type="hidden" name="name" value="{{ r.name }}">
-<button class="primary">Accept</button></form>
-<form class="inline" method="post" action="controllers/deny">{{ tok }}<input type="hidden" name="name" value="{{ r.name }}">
-<button>Deny</button></form></div></div>{% else %}<p class="muted">Nobody.</p>{% endfor %}
-<h2>Add a controller</h2>
-{% if code %}<div class="card"><p>Join code, good for fifteen minutes, once:</p><pre>{{ code }}</pre>
-<p class="muted">On the new computer: <code>kiwi-server control join ~/kiwi/fleet.yaml --url {{ url }}</code></p></div>
-{% else %}<form method="post" action="controllers/code">{{ tok }}<button>Make a join code</button></form>{% endif %}
+<input type="hidden" name="name" value="{{ name }}"><button>Remove</button></form>{% endif %}</div>{% endfor %}
+<h2>Add a computer</h2>
+{% if invite %}<div class="card"><p>In <strong>Kiwi Server</strong> on the new computer: <strong>Join a fleet</strong>, paste this link.
+It works once, for fifteen minutes.</p>
+<pre id="inv">{{ invite }}</pre>
+<button onclick="navigator.clipboard.writeText(document.getElementById('inv').textContent);this.textContent='Copied'">Copy</button></div>
+{% else %}<form method="post" action="controllers/invite">{{ tok }}<button class="primary">Add a computer</button></form>{% endif %}
 {% if error %}<p class="bad">{{ error }}</p>{% endif %}
 {% endblock %}""",
     "audit.html": """{% extends "base.html" %}{% block main %}
@@ -260,10 +254,12 @@ def make_app(control: Control):
         return control.status() or {}
 
     # ---- controllers (design/controllers.md) -----------------------------------------------
+    def base_url(request):
+        proto = "https" if request.headers.get("x-forwarded-proto") == "https" else request.url.scheme
+        return "%s://%s" % (proto, request.headers.get("host") or request.url.netloc)
+
     def controllers_page(request, **kw):
-        return page("controllers.html", request, ways=control.controllers(), requests=control.requests(),
-                    url=str(request.base_url).rstrip("/").replace("http://", "https://")
-                    if request.headers.get("x-forwarded-proto") == "https" else str(request.base_url).rstrip("/"), **kw)
+        return page("controllers.html", request, ways=control.controllers(), **kw)
 
     @app.get("/controllers")
     def controllers(request: Request):
@@ -277,13 +273,9 @@ def make_app(control: Control):
         if not u:
             return RedirectResponse("../login", status_code=303)
         try:
-            if what == "code":
-                return controllers_page(request, code=control.new_join_code(u))
-            if what == "accept":
-                control.accept(name, u)
-            elif what == "deny":
-                control.deny(name, u)
-            elif what == "remove":
+            if what == "invite":
+                return controllers_page(request, invite=control.new_invite(base_url(request), u))
+            if what == "remove":
                 control.remove(name, u)
         except KiwiError as e:
             return controllers_page(request, error=str(e))
@@ -303,12 +295,12 @@ def make_app(control: Control):
             body = await request.json()
         except ValueError:
             body = {}
-        ok = control.join_request(str(body.get("code") or ""), str(body.get("name") or ""),
-                                  str(body.get("key") or ""), address(request))
-        if not ok:
+        name = await run_in_threadpool(control.join, str(body.get("code") or ""), str(body.get("name") or ""),
+                                       str(body.get("key") or ""), address(request))
+        if not name:
             await asyncio.sleep(1)
             return JSONResponse({"error": "refused"}, status_code=403)
-        return JSONResponse({"waiting": True}, status_code=202)
+        return {"name": name}
 
     @app.post("/api/controller/hello")
     async def api_hello(request: Request):

@@ -271,40 +271,66 @@ def api_for(fleet_dir, key=None):
     return api, key
 
 
-def join(fleet_dir, url, name, code, address=None, key_file=None):
-    """Ask the control node to make this computer a controller. Makes its key (keyring, or
-    key_file), learns the fleet's CA and checks it against the code, sends the public key."""
-    code = (code or "").strip()
-    if "." not in code:
-        raise KiwiError("that is not a join code (the control page shows one: Controllers, Add)")
+def parse_invite(link):
+    """(the control node's URL, the code) of an invite link: https://control.<host>/#join=<code>."""
+    link = (link or "").strip()
+    url, sep, frag = link.partition("#join=")
+    if not sep or "." not in frag or not url.startswith(("https://", "http://")):
+        raise KiwiError("that is not an invite link (the control page makes one: Computers, Add a computer)")
+    return url.rstrip("/"), frag.strip()
+
+
+def join(fleet_dir, link, name, address=None, key_file=None):
+    """This computer joins the fleet an invite is from, and fetches it. Makes its key (keyring,
+    or key_file), learns the fleet's CA and checks it against the invite before sending
+    anything, sends the public key. Returns the name it got."""
+    url, code = parse_invite(link)
+    address = address or os.environ.get("KIWI_CONTROL_ADDRESS") or None     # where its name does not resolve
+    if os.path.exists(os.path.join(fleet_dir, "secrets.age")) or remote_of(fleet_dir):
+        raise KiwiError("%s holds a fleet already: join into an empty folder" % fleet_dir)
     first = Api(url, address=address, verify=False)     # who this is gets checked next, by the code
     status, out = first.call("GET", "/api/ca")
     if status != 200 or not out.get("ca") or not out.get("store"):
         raise KiwiError("%s is not a control node, or has no CA to show yet" % url)
     if hashlib.sha256(out["ca"].encode()).hexdigest()[:8] != code.rsplit(".", 1)[1]:
-        raise KiwiError("the fleet at %s is not the one this code is from: nothing was sent" % url)
-    os.makedirs(os.path.join(fleet_dir, "control"), mode=0o700, exist_ok=True)
-    util.write_text(os.path.join(fleet_dir, CA), out["ca"], 0o644)
+        raise KiwiError("the fleet at %s is not the one this invite is from: nothing was sent" % url)
     if key_file and os.path.isfile(key_file):
         raise KiwiError("%s exists: a key file is written once" % key_file)
     if not key_file and storemod.keyring_get(out["store"]):
-        raise KiwiError("this computer's keyring already holds a key for this fleet")
+        raise KiwiError("this computer already has a key for this fleet in its keyring (it holds the fleet "
+                        "somewhere, or joined before): nothing was sent")
     secret, public = storemod.keygen()
+    os.makedirs(os.path.join(fleet_dir, "control"), mode=0o700, exist_ok=True)
+    util.write_text(os.path.join(fleet_dir, CA), out["ca"], 0o644)
+    api = Api(url, os.path.join(fleet_dir, CA), address)
+    status, got = api.call("POST", "/api/join", {"code": code, "name": name, "key": public})
+    if status != 200 or not got.get("name"):
+        raise KiwiError("the invite did not work: it is used, or older than fifteen minutes. Make a new one on the control page")
+    # only now is the key worth keeping
     if key_file:
         util.write_text(key_file, secret + "\n", 0o600)
     elif not storemod.keyring_put(out["store"], secret):
-        raise KiwiError("no keyring took the key (secret-tool): name a file for it with --identity FILE, "
-                        "on a disk that is encrypted")
-    api = Api(url, os.path.join(fleet_dir, CA), address)
-    status, _out = api.call("POST", "/api/join", {"code": code, "name": name, "key": public})
-    if status not in (200, 202):
-        raise KiwiError("the control node did not take the request (the code is used, wrong or older than "
-                        "fifteen minutes, or the name %s is taken)" % name)
-    remote = {"url": url.rstrip("/"), "name": name, "store": out["store"]}
+        raise KiwiError("joined as %s, but no keyring took this computer's key (secret-tool): remove %s on the "
+                        "control page and join again with --identity FILE, on a disk that is encrypted"
+                        % (got["name"], got["name"]))
+    remote = {"url": url, "name": got["name"], "store": out["store"]}
     if address:
         remote["address"] = address
     util.write_text(os.path.join(fleet_dir, REMOTE), json.dumps(remote) + "\n", 0o600)
-    return public
+    pull_api(fleet_dir, "fleet.yaml", key=secret)
+    return got["name"]
+
+
+def remember(fleet_dir, host):
+    """The first computer pushed over SSH: from now on it can sync through the control node's
+    page like every other one (its key is the store's `desktop` key)."""
+    st = storemod.Store(fleet_dir)
+    ca = os.path.join(os.path.realpath(os.path.join(fleet_dir, "secrets")), "ca", "kiwiCA.pem")
+    if remote_of(fleet_dir) or not os.path.isfile(ca) or not any(n == "desktop" for n, _k in st.ways()):
+        return
+    util.write_text(os.path.join(fleet_dir, CA), util.read_text(ca), 0o644)
+    util.write_text(os.path.join(fleet_dir, REMOTE), json.dumps(
+        {"url": "https://control.%s" % host.hostname, "name": "desktop", "store": st.store_id()}) + "\n", 0o600)
 
 
 def _blobs(fleet_dir, fleet_name, st):

@@ -5475,5 +5475,105 @@ class TestQr(unittest.TestCase):
             self.assertEqual(qr.matrix(text, mask), theirs, "%d bytes" % n)
 
 
+
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestFolderSync(StoreBase):
+    """Two computers and a folder something else syncs (design/controllers.md, step 2): the
+    first pushes, the second asks to join, the first accepts, both stay in step."""
+
+    def setUp(self):
+        super().setUp()
+        self.init()
+        self.folder = os.path.join(self.tmp, "Nextcloud", "kiwi")
+        self.laptop = os.path.join(self.tmp, "laptop", "fleet.yaml")
+        self.env = dict(os.environ, XDG_RUNTIME_DIR=os.path.join(self.tmp, "laptop-run"),
+                        FAKE_KEYRING=os.path.join(self.tmp, "laptop-keyring"),
+                        PYTHONPATH=os.path.join(ROOT, "lib"), PYTHONDONTWRITEBYTECODE="1")
+        for d in ("laptop", "laptop-run", "laptop-keyring"):
+            os.makedirs(os.path.join(self.tmp, d))
+
+    def laptop_does(self, *args):
+        r = subprocess.run([sys.executable, "-m", "kiwiserver", "control", args[0], self.laptop] + list(args[1:]),
+                           capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_push_join_accept_and_stay_in_step(self):
+        rc, out, err = self.run_cli("control", "requests", self.f.path)
+        self.assertIn("keeps no synced folder", err)
+        rc, out, err = self.run_cli("control", "push", self.f.path, "--dir", self.folder)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(sorted(os.listdir(self.folder)),
+                         ["control", "fleet.yaml.age", "kiwi-fleet.json", "secrets.age", "secrets.recipients"])
+        for root, _d, files in os.walk(self.folder):
+            for f in files:
+                with open(os.path.join(root, f), "rb") as fh:
+                    data = fh.read()
+                self.assertNotIn(b"S" * 32, data)                # the seed
+                self.assertNotIn(b"Europe/Berlin", data)         # the fleet file
+        rc, out, err = self.run_cli("control", "push", self.f.path)          # remembered: no --dir needed
+        self.assertEqual(rc, 0, err)
+        # the laptop asks; until it is accepted its key opens nothing
+        rc, out = self.laptop_does("pull", "--dir", self.folder)
+        self.assertIn("no key for the fleet", out)
+        rc, out = self.laptop_does("join", "--dir", self.folder, "--name", "laptop")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("asks to join as laptop", out)
+        rc, out = self.laptop_does("join", "--dir", self.folder, "--name", "laptop")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not accepted yet", out)
+        rc, out, err = self.run_cli("control", "requests", self.f.path, "--porcelain")
+        self.assertEqual([r["name"] for r in json.loads(out)["requests"]], ["laptop"])
+        rc, out, err = self.run_cli("control", "accept", self.f.path, "nobody")
+        self.assertIn("nobody called nobody", err)
+        rc, out, err = self.run_cli("control", "accept", self.f.path, "laptop")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(os.listdir(os.path.join(self.folder, "requests")), [])
+        self.assertIn("laptop", [n for n, _k in store.Store.for_fleet(self.f.path).ways()])
+        rc, out = self.laptop_does("join", "--dir", self.folder, "--name", "laptop")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Europe/Berlin", util.read_text(self.laptop))
+        seed = os.path.join(os.path.dirname(self.laptop), "secrets", "seed")
+        self.assertEqual(util.read_text(seed), "S" * 32)
+        self.assertTrue(os.path.realpath(seed).startswith(self.env["XDG_RUNTIME_DIR"]))    # opened into its own RAM
+        self.assertIn("in step", self.laptop_does("pull")[1])
+        # a change travels both ways; two changes are not overwritten
+        with open(self.laptop, "a") as fh:
+            fh.write("# from the laptop\n")
+        self.assertEqual(self.laptop_does("push")[0], 0)
+        with open(self.f.path, "a") as fh:
+            fh.write("# from the desktop\n")
+        rc, out, err = self.run_cli("control", "push", self.f.path)
+        self.assertIn("control pull first", err)
+        rc, out, err = self.run_cli("control", "pull", self.f.path)
+        self.assertIn("control push first", err)                 # both changed: the owner decides
+        rc, out, err = self.run_cli("control", "pull", self.f.path, "--force")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("# from the laptop", util.read_text(self.f.path))
+        # a second request, denied: nothing is added
+        os.makedirs(os.path.join(self.tmp, "other"))
+        env2 = dict(self.env, FAKE_KEYRING=os.path.join(self.tmp, "other"), XDG_RUNTIME_DIR=os.path.join(self.tmp, "other"))
+        subprocess.run([sys.executable, "-m", "kiwiserver", "control", "join", os.path.join(self.tmp, "other", "fleet.yaml"),
+                        "--dir", self.folder, "--name", "stranger"], capture_output=True, env=env2, check=True)
+        rc, out, err = self.run_cli("control", "push", self.f.path)
+        self.assertIn("stranger", out)                           # said when this computer syncs
+        rc, out, err = self.run_cli("control", "deny", self.f.path, "stranger")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("stranger", [n for n, _k in store.Store.for_fleet(self.f.path).ways()])
+        self.assertEqual(controlsync.requests(self.folder), [])
+
+    def test_a_folder_caught_mid_sync_is_refused(self):
+        self.run_cli("control", "push", self.f.path, "--dir", self.folder)
+        with open(os.path.join(self.folder, "secrets.age"), "ab") as fh:
+            fh.write(b"half of the next version")
+        with self.assertRaisesRegex(KiwiError, "not complete yet"):
+            controlsync.folder_state(self.folder)
+        rc, out, err = self.run_cli("control", "push", self.f.path)
+        self.assertIn("not complete yet", err)
+        os.remove(os.path.join(self.folder, "kiwi-fleet.json"))
+        self.assertEqual(controlsync.folder_state(self.folder), "")       # no list: no fleet there (yet)
+        write(os.path.join(self.folder, "requests", "x.json"), '{"name": "y", "key": "age1bad"}')
+        self.assertEqual(controlsync.requests(self.folder), [])           # a request that is not one is not shown
+
+
 if __name__ == "__main__":
     unittest.main()

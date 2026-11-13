@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.72.0 — several computers through a synced folder
+
+design/controllers.md, step 2: a network without a control node is shared through a folder
+that Nextcloud, Syncthing or the like syncs.
+
+- `kiwi-server control push|pull <fleet> --dir FOLDER`: the encrypted store and the fleet file
+  (encrypted for the store's keys) in that folder, with a manifest written last; a folder
+  caught in the middle of syncing is refused. The folder is remembered: later syncs need no
+  `--dir`.
+- A computer asks to join through the folder (`control join <fleet> --dir FOLDER`: its own
+  key, the public half left in `requests/`); a computer that has the network accepts or denies
+  (`control requests|accept|deny`). Whoever runs the syncing never sees a secret.
+- The app: **Keep it in a synced folder…**, a folder field in **Join**, and a question
+  "… wants to join: Accept / Not now / Deny" when it syncs. A request that was made continues
+  where it stopped; it is not asked twice.
+
 ## 2.71.1 — the docs reach kiwi-network.eu
 
 - `docs/kiwi-docs.yml`: the pages in menu order. kiwi-network's site lists kiwi-server as a

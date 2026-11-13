@@ -15,6 +15,8 @@ import http.client
 import io
 import json
 import os
+import time
+import re
 import shlex
 import socket
 import ssl
@@ -82,16 +84,16 @@ def pack(blobs):
     return buf.getvalue()
 
 
-def _stamp(fleet_dir):
-    """(this side's digest, the node's digest) at the last sync."""
-    p = os.path.join(fleet_dir, STAMP)
+def _stamp(fleet_dir, name=STAMP):
+    """(this side's digest, the other side's digest) at the last sync."""
+    p = os.path.join(fleet_dir, name)
     parts = util.read_text(p).split() if os.path.isfile(p) else []
     return (parts[0], parts[1]) if len(parts) == 2 else ("", "")
 
 
-def _set_stamp(fleet_dir, here, there):
+def _set_stamp(fleet_dir, here, there, name=STAMP):
     os.makedirs(os.path.join(fleet_dir, "control"), mode=0o700, exist_ok=True)
-    util.write_text(os.path.join(fleet_dir, STAMP), "%s %s\n" % (here, there), 0o600)
+    util.write_text(os.path.join(fleet_dir, name), "%s %s\n" % (here, there), 0o600)
 
 
 def remote_state(tgt, rdir):
@@ -340,7 +342,8 @@ def _blobs(fleet_dir, fleet_name, st):
         if os.path.isfile(path):
             blobs[name + ".age"] = storemod.encrypt_bytes(st.recipients, util.read_bytes(path))
     for name in AS_IS:
-        blobs[name] = util.read_bytes(os.path.join(fleet_dir, name))
+        if os.path.isfile(os.path.join(fleet_dir, name)):      # (control/salt: only a fleet with a control node)
+            blobs[name] = util.read_bytes(os.path.join(fleet_dir, name))
     return blobs
 
 
@@ -408,3 +411,188 @@ def pull_api(fleet_dir, fleet_name, force=False, key=None):
     n = _take(fleet_dir, fleet_name, st, got, key)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
     return n
+
+
+# ---- a synced folder (Nextcloud, Syncthing, a stick): design/controllers.md, step 2 ---------
+# The same encrypted files in a folder that something else carries between computers: for a
+# fleet without a control node, or beside one. Whoever runs the syncing sees fleet.yaml.age and
+# secrets.age, never a secret; they can delete or put back an older copy, not read or forge.
+# A manifest, written last, says which files belong together: a folder caught in the middle of
+# syncing is refused, not half taken. A computer asks to join by leaving its public key in
+# requests/; a computer that can open the store accepts or denies it.
+FOLDER = "control/folder"           # the synced folder this copy keeps in step with
+FOLDER_STAMP = "control/synced-folder"
+MANIFEST = "kiwi-fleet.json"
+REQUESTS = "requests"
+
+
+def folder_of(fleet_dir):
+    p = os.path.join(fleet_dir, FOLDER)
+    return util.read_text(p).strip() if os.path.isfile(p) else None
+
+
+def _remember_folder(fleet_dir, folder):
+    os.makedirs(os.path.join(fleet_dir, "control"), mode=0o700, exist_ok=True)
+    util.write_text(os.path.join(fleet_dir, FOLDER), os.path.abspath(folder) + "\n", 0o600)
+
+
+def folder_state(folder):
+    """The revision of the fleet in the folder ('' when it holds none). KiwiError when its
+    files do not match its manifest: still syncing, or tampered with."""
+    path = os.path.join(folder, MANIFEST)
+    if not os.path.isfile(path):
+        return ""
+    try:
+        manifest = json.loads(util.read_text(path))
+        files = dict(manifest["files"])
+    except (ValueError, KeyError, TypeError):
+        raise KiwiError("%s is not readable: is the folder still syncing?" % path)
+    for name, sha in files.items():
+        f = os.path.join(folder, name)
+        if name not in ON_NODE or not os.path.isfile(f) or util.sha256_file(f) != sha:
+            raise KiwiError("the folder %s is not complete yet (%s differs from its list): wait until it has "
+                            "finished syncing, then try again" % (folder, name))
+    return str(manifest.get("revision") or "")
+
+
+def _plain_store(fleet_dir):
+    st = storemod.Store(fleet_dir)
+    if not st.exists():
+        raise KiwiError("only an encrypted store goes into a synced folder: kiwi-server secrets init first")
+    st.sync()
+    return st
+
+
+def push_dir(fleet_dir, fleet_name, folder, force=False):
+    st = _plain_store(fleet_dir)
+    folder = os.path.abspath(os.path.expanduser(folder))
+    there = folder_state(folder)
+    _here, then = _stamp(fleet_dir, FOLDER_STAMP)
+    if there and there != then and not force:
+        raise KiwiError("the folder's copy changed since this computer last synced (another computer saved "
+                        "there): kiwi-server control pull first, or push --force to overwrite it")
+    blobs = _blobs(fleet_dir, fleet_name, st)
+    os.makedirs(os.path.join(folder, "control"), exist_ok=True)
+    manifest = os.path.join(folder, MANIFEST)
+    if os.path.exists(manifest):
+        os.remove(manifest)                 # from here to the new manifest the folder is "not complete"
+    for name in ON_NODE:
+        path = os.path.join(folder, name)
+        if name in blobs:
+            util.write_bytes(path, blobs[name], 0o600)
+        elif os.path.isfile(path):
+            os.remove(path)
+    revision = blobs_digest(blobs)
+    util.write_text(manifest, json.dumps({"revision": revision, "files": {
+        n: hashlib.sha256(b).hexdigest() for n, b in blobs.items()}}, indent=1) + "\n", 0o644)
+    _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), revision, FOLDER_STAMP)
+    _remember_folder(fleet_dir, folder)
+    return len(blobs)
+
+
+def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None):
+    folder = os.path.abspath(os.path.expanduser(folder))
+    st = storemod.Store(fleet_dir)
+    here, then = _stamp(fleet_dir, FOLDER_STAMP)
+    if st.exists() and os.path.isfile(_local(fleet_dir, fleet_name, "fleet.yaml")):
+        st.sync()
+        if here and here_digest(fleet_dir, fleet_name) != here and not force:
+            raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
+                            "or pull --force to overwrite it")
+    there = folder_state(folder)
+    if not there:
+        raise KiwiError("%s holds no fleet yet: kiwi-server control push --dir, on a computer that has it" % folder)
+    if there == then and os.path.isfile(_local(fleet_dir, fleet_name, "fleet.yaml")):
+        _remember_folder(fleet_dir, folder)
+        return 0
+    got = {n: util.read_bytes(os.path.join(folder, n)) for n in ON_NODE if os.path.isfile(os.path.join(folder, n))}
+    if not st.exists():                     # a new computer: the list of keys first, to find its own
+        util.write_bytes(st.recipients, got["secrets.recipients"], 0o644)
+    key = key or storemod.keyring_get(st.store_id())
+    if not key:
+        raise KiwiError("this computer has no key for the fleet in its keyring: --identity FILE, or join first "
+                        "(kiwi-server control join <fleet> --dir %s)" % folder)
+    try:
+        n = _take(fleet_dir, fleet_name, st, got, key)
+    except KiwiError:
+        raise KiwiError("this computer's key does not open the fleet in %s: it is not accepted yet (on a computer "
+                        "that has the fleet: kiwi-server control accept), or it was removed" % folder)
+    _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), there, FOLDER_STAMP)
+    _remember_folder(fleet_dir, folder)
+    return n
+
+
+def request_join(fleet_dir, folder, name, key_file=None):
+    """A new computer asks to join through the folder: it makes its key and leaves the public
+    half in requests/. Returns the public key."""
+    folder = os.path.abspath(os.path.expanduser(folder))
+    if not folder_state(folder):
+        raise KiwiError("%s holds no fleet: has the computer that has it pushed there, and has the folder synced?" % folder)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,27}", name or ""):
+        raise KiwiError("a name for this computer: lowercase letters, digits and dashes, like laptop")
+    st = storemod.Store(fleet_dir)
+    if st.exists() or os.path.isfile(os.path.join(fleet_dir, "fleet.yaml")):
+        raise KiwiError("%s holds a fleet already: join into an empty folder" % fleet_dir)
+    os.makedirs(os.path.join(fleet_dir, "control"), mode=0o700, exist_ok=True)
+    util.write_bytes(st.recipients, util.read_bytes(os.path.join(folder, "secrets.recipients")), 0o644)
+    if any(n == name for n, _k in st.ways()):
+        os.remove(st.recipients)
+        raise KiwiError("a computer called %s can open this fleet already: choose another name (--name)" % name)
+    if key_file and os.path.isfile(key_file):
+        raise KiwiError("%s exists: a key file is written once" % key_file)
+    if not key_file and storemod.keyring_get(st.store_id()):
+        raise KiwiError("this computer already has a key for this fleet in its keyring (it holds the fleet "
+                        "somewhere, or asked before): kiwi-server control pull %s --dir %s"
+                        % (os.path.join(fleet_dir, "fleet.yaml"), folder))
+    secret, public = storemod.keygen()
+    if key_file:
+        util.write_text(key_file, secret + "\n", 0o600)
+    elif not storemod.keyring_put(st.store_id(), secret):
+        raise KiwiError("no keyring took this computer's key (secret-tool): name a file for it with --identity FILE, "
+                        "on a disk that is encrypted")
+    os.makedirs(os.path.join(folder, REQUESTS), exist_ok=True)
+    util.write_text(os.path.join(folder, REQUESTS, name + ".json"), json.dumps(
+        {"name": name, "key": public, "host": socket.gethostname(), "time": int(time.time())}) + "\n", 0o644)
+    _remember_folder(fleet_dir, folder)
+    return public
+
+
+def requests(folder):
+    """The computers that ask to join: [{"name", "key", "host", "time"}]."""
+    d = os.path.join(os.path.abspath(os.path.expanduser(folder)), REQUESTS)
+    out = []
+    for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if not f.endswith(".json"):
+            continue
+        try:
+            r = json.loads(util.read_text(os.path.join(d, f)))
+        except ValueError:
+            continue
+        if (isinstance(r, dict) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,27}", str(r.get("name") or ""))
+                and r["name"] + ".json" == f and re.fullmatch(r"age1[0-9a-z]{58}", str(r.get("key") or ""))):
+            out.append({"name": r["name"], "key": r["key"], "host": str(r.get("host") or "?")[:60],
+                        "time": int(r.get("time") or 0)})
+    return out
+
+
+def answer(fleet_dir, fleet_name, folder, name, accept):
+    """Accept (the computer's key becomes one of the store's, and the folder gets the fleet
+    encrypted for it too) or deny a request. Needs the open store to accept."""
+    folder = os.path.abspath(os.path.expanduser(folder))
+    req = next((r for r in requests(folder) if r["name"] == name), None)
+    if not req:
+        raise KiwiError("nobody called %s asks to join" % name)
+    path = os.path.join(folder, REQUESTS, name + ".json")
+    if not accept:
+        os.remove(path)
+        return
+    st = _plain_store(fleet_dir)
+    if not st.is_open():
+        raise KiwiError("the store is locked: kiwi-server secrets unlock first")
+    there = folder_state(folder)
+    _here, then = _stamp(fleet_dir, FOLDER_STAMP)
+    if there and there != then:
+        raise KiwiError("the folder's copy is newer than this computer's: kiwi-server control pull first")
+    st.add(name, req["key"])
+    os.remove(path)
+    push_dir(fleet_dir, fleet_name, folder)

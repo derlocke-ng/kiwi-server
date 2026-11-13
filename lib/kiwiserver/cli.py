@@ -1359,11 +1359,56 @@ def cmd_control(args):
             key = next((line.strip() for line in f if line.startswith("AGE-SECRET-KEY-")), None)
         if not key:
             raise KiwiError("%s holds no age secret key" % args.identity)
+    me = args.name or socket.gethostname().split(".")[0].lower()
+    folder = args.dir or (None if args.ssh else controlsync.folder_of(fleet_dir))
+    if args.action == "join" and args.dir:      # through a synced folder: ask, then (once accepted) fetch
+        if controlsync.folder_of(fleet_dir):
+            if args.identity and os.path.isfile(args.identity):
+                key = store.Store.for_fleet(args.fleet).identity(args.identity)
+            n = controlsync.pull_dir(fleet_dir, fleet_name, args.dir, args.force, key)
+            util.say("accepted: the fleet is in %s (%d files) and stays in step with kiwi-server control pull / push"
+                     % (fleet_dir, n))
+            return
+        controlsync.request_join(fleet_dir, args.dir, me, args.identity)
+        util.say("%s asks to join as %s. On a computer that has the fleet, accept it (Kiwi Server shows the request, "
+                 "or: kiwi-server control accept <fleet> %s). Then run this command again here." % (socket.gethostname(), me, me))
+        return
+    if args.action in ("requests", "accept", "deny"):
+        if not folder:
+            raise KiwiError("this fleet keeps no synced folder: kiwi-server control push <fleet> --dir FOLDER first")
+        if args.action == "requests":
+            found = controlsync.requests(folder)
+            if args.porcelain:
+                print(json.dumps({"folder": folder, "requests": found}))
+            else:
+                for r in found:
+                    print("%s (the computer %s) asks to join: kiwi-server control accept %s %s" % (
+                        r["name"], r["host"], args.fleet, r["name"]))
+                if not found:
+                    util.say("nobody asks to join")
+            return
+        if not args.link:
+            raise KiwiError("which computer? kiwi-server control %s <fleet> <name>" % args.action)
+        controlsync.answer(fleet_dir, fleet_name, folder, args.link, args.action == "accept")
+        util.say("%s can open the fleet now; it fetches it with its next sync" % args.link if args.action == "accept"
+                 else "%s was denied" % args.link)
+        return
+    if args.action in ("push", "pull") and folder and (args.dir or not controlsync.remote_of(fleet_dir)):
+        if args.action == "push":
+            n = controlsync.push_dir(fleet_dir, fleet_name, folder, args.force)
+            util.say("the folder %s holds this copy now (%d files, encrypted)" % (folder, n))
+            waiting = controlsync.requests(folder)
+            for r in waiting:
+                util.say("%s (the computer %s) asks to join: kiwi-server control accept %s %s"
+                         % (r["name"], r["host"], args.fleet, r["name"]))
+        else:
+            n = controlsync.pull_dir(fleet_dir, fleet_name, folder, args.force, key)
+            util.say("%d files from %s: this copy is the folder's" % (n, folder) if n else "in step with %s" % folder)
+        return
     if args.action == "join":
         link = args.link or (getpass.getpass("invite link (the control page: Computers, Add a computer): ")
                              if sys.stdin.isatty() else sys.stdin.readline().strip())
-        name = controlsync.join(fleet_dir, link, args.name or socket.gethostname().split(".")[0].lower(),
-                                args.address, args.identity)
+        name = controlsync.join(fleet_dir, link, me, args.address, args.identity)
         util.say("joined as %s: the fleet is in %s and stays in step with kiwi-server control pull / push"
                  % (name, fleet_dir))
         return
@@ -2090,6 +2135,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
   kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
+  kiwi-server control push|pull|join <fleet> --dir FOLDER     the same through a synced folder (Nextcloud, …);
+                                                then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
@@ -2197,8 +2244,10 @@ def build_parser():
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
-    s = sub("control", cmd_control); s.add_argument("action", choices=["push", "pull", "join", "ring"]); s.add_argument("fleet")
-    s.add_argument("link", nargs="?", help="join: the invite link from the control page")
+    s = sub("control", cmd_control)
+    s.add_argument("action", choices=["push", "pull", "join", "requests", "accept", "deny", "ring"]); s.add_argument("fleet")
+    s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name")
+    s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
     s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")
     s.add_argument("--to", metavar="HOST", help="which control node, when several hosts have the module")

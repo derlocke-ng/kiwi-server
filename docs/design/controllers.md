@@ -47,7 +47,11 @@ brings a key per controller.)
   revision the node has, otherwise pull first. What travels is encrypted, as today.
 - Without a control node, or beside it: the same encrypted files in a folder that something
   else syncs (`control push --dir ~/Nextcloud/kiwi`, `pull --dir`). Nextcloud sees
-  `fleet.yaml.age` and `secrets.age`, never a secret.
+  `fleet.yaml.age` and `secrets.age`, never a secret. Built in 2.72.0: a manifest written
+  last says which files belong together (a folder caught mid-sync is refused); a computer
+  asks to join by leaving its public key in `requests/`, and a computer that can open the
+  store accepts or denies it (`control join --dir`, `control requests|accept|deny`; the app
+  shows the request when it syncs).
 
 ## Rotation
 

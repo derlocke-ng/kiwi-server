@@ -1872,6 +1872,62 @@ def in_plain_words(text):
     return text
 
 
+def likely_folder():
+    """A folder something already syncs on this computer, with kiwi in it."""
+    for base in ("~/Nextcloud", "~/Syncthing", "~/Sync", "~/Dropbox"):
+        if os.path.isdir(os.path.expanduser(base)):
+            return os.path.join(os.path.expanduser(base), "kiwi")
+    return os.path.expanduser("~/Nextcloud/kiwi")
+
+
+class FolderDialog(Adw.Dialog):
+    """Keep the network in a folder that something else syncs (Nextcloud, Syncthing): other
+    computers then join from that folder. For a network without a home server that looks
+    after it."""
+
+    def __init__(self, win):
+        super().__init__(title="Keep the network in a synced folder", content_width=540)
+        self.win = win
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="Choose a folder that Nextcloud, Syncthing or the like keeps the same on your "
+                                   "computers. The network goes there encrypted: whoever runs the syncing cannot read "
+                                   "it. Your other computers join from that folder.", wrap=True, xalign=0))
+        g = Adw.PreferencesGroup()
+        self.path = Adw.EntryRow(title="Folder")
+        self.path.set_text(tilde(likely_folder()))
+        self.path.connect("entry-activated", lambda *_: self.go())
+        g.add(self.path)
+        box.append(g)
+        self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
+        box.append(self.note)
+        self.b = Gtk.Button(label="Use this folder", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER)
+        self.b.connect("clicked", lambda *_: self.go())
+        box.append(self.b)
+        self.set_child(box)
+
+    def go(self):
+        folder = os.path.expanduser(self.path.get_text().strip())
+        if not folder or (self.win.doc.dirty and not self.win.save()):
+            return
+        self.b.set_sensitive(False)
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["control", "push", self.win.doc.path, "--dir", folder], timeout=180)
+            GLib.idle_add(done, rc, (err or out))
+
+        def done(rc, text):
+            if rc == 0:
+                self.close()
+                self.win.toast("The network is in %s now. On another computer: Join, with that folder." % tilde(folder))
+            else:
+                self.note.set_label((text.replace("error: ", "").strip().splitlines() or ["It did not work."])[-1])
+                self.note.set_visible(True)
+                self.b.set_sensitive(True)
+            return False
+        threading.Thread(target=work, daemon=True).start()
+
+
 class JoinDialog(Adw.Dialog):
     """Join a fleet that exists: paste the invite link from its control page. One field."""
 
@@ -1880,7 +1936,8 @@ class JoinDialog(Adw.Dialog):
         self.win = win
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
                       margin_start=18, margin_end=18)
-        box.append(Gtk.Label(label="On the fleet's control page: Computers, Add a computer. Paste the link here.",
+        box.append(Gtk.Label(label="With a link: on the network's control page, Computers, Add a computer. Paste the "
+                                   "link here.\nWithout a control page: name the synced folder the network is kept in.",
                              wrap=True, xalign=0))
         g = Adw.PreferencesGroup()
         self.go = Gtk.Button(label="Join", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER,
@@ -1888,17 +1945,33 @@ class JoinDialog(Adw.Dialog):
         self.go.connect("clicked", lambda *_: self.join())
         self.link = Adw.EntryRow(title="Invite link")
         self.link.connect("entry-activated", lambda *_: self.join())
-        self.link.connect("changed", lambda *_: self.go.set_sensitive("#join=" in self.link.get_text()))
+        self.link.connect("changed", lambda *_: self.ready())
         g.add(self.link)
-        folder = os.path.expanduser("~/kiwi")
-        n = 2
+        self.shared = Adw.EntryRow(title="…or the synced folder")
+        if os.path.isfile(os.path.join(likely_folder(), "kiwi-fleet.json")):
+            self.shared.set_text(tilde(likely_folder()))          # a network is waiting there
+        self.shared.connect("changed", lambda *_: self.ready())
+        self.shared.connect("entry-activated", lambda *_: self.join())
+        g.add(self.shared)
+        folder, n, asked = os.path.expanduser("~/kiwi"), 2, ""
         while os.path.exists(folder) and os.listdir(folder):
+            waiting = os.path.join(folder, "control", "folder")
+            if os.path.isfile(waiting) and not os.path.isfile(os.path.join(folder, "fleet.yaml")):
+                with open(waiting) as f:                 # this computer asked to join from here before:
+                    asked = f.read().strip()             # the same request goes on, not a second one
+                break
             folder, n = os.path.expanduser("~/kiwi-%d" % n), n + 1
         self.folder = folder
-        g.add(Adw.ActionRow(title="Folder", subtitle=tilde(folder)))
+        g.add(Adw.ActionRow(title="It goes into", subtitle=tilde(folder)))
         box.append(g)
         self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
         box.append(self.note)
+        if asked:
+            self.shared.set_text(tilde(asked))
+            self.note.set_css_classes([])
+            self.note.set_label("This computer asked to join before. Once it was accepted on a computer that has "
+                                "the network, press Join.")
+            self.note.set_visible(True)
         box.append(self.go)
         self.set_child(box)
         # a link on the clipboard: it is what the user came with
@@ -1912,9 +1985,12 @@ class JoinDialog(Adw.Dialog):
         if "#join=" in text and not self.link.get_text():
             self.link.set_text(text)
 
+    def ready(self):
+        self.go.set_sensitive("#join=" in self.link.get_text() or bool(self.shared.get_text().strip()))
+
     def join(self):
-        link = self.link.get_text().strip()
-        if "#join=" not in link:
+        link, shared = self.link.get_text().strip(), os.path.expanduser(self.shared.get_text().strip())
+        if "#join=" not in link and not shared:
             return
         self.go.set_sensitive(False)
         self.go.set_label("Joining…")
@@ -1923,26 +1999,36 @@ class JoinDialog(Adw.Dialog):
 
         def work():
             os.makedirs(self.folder, mode=0o700, exist_ok=True)
-            # the link on stdin, not among the arguments other programs can read
             try:
-                r = subprocess.run([self.win.cli, "control", "join", path], input=link + "\n",
-                                   capture_output=True, text=True, timeout=180)
-                rc, err = r.returncode, (r.stderr or r.stdout)
+                if "#join=" in link:         # the link on stdin, not among the arguments other programs can read
+                    r = subprocess.run([self.win.cli, "control", "join", path], input=link + "\n",
+                                       capture_output=True, text=True, timeout=180)
+                else:
+                    r = subprocess.run([self.win.cli, "control", "join", path, "--dir", shared],
+                                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+                rc, out = r.returncode, (r.stderr or r.stdout)
             except (OSError, subprocess.TimeoutExpired) as e:
-                rc, err = 1, str(e)
-            GLib.idle_add(self.done, rc, err, path)
+                rc, out = 1, str(e)
+            GLib.idle_add(self.done, rc, out, path)
         threading.Thread(target=work, daemon=True).start()
 
-    def done(self, rc, err, path):
-        if rc == 0:
+    def done(self, rc, out, path):
+        text = out.replace("error: ", "").replace(":: ", "").strip()
+        if rc == 0 and os.path.isfile(path):
             self.close()
             self.win.open_path(path)
-            self.win.toast("Joined: this computer keeps in step with the fleet by itself")
+            self.win.toast("Joined: this computer keeps in step with the network by itself")
+            return False
+        if rc == 0 or "not accepted yet" in text:      # asked through the folder: the other computer answers
+            self.note.set_css_classes([])
+            self.note.set_label("This computer asked to join. On a computer that has the network, open Kiwi Server "
+                                "and accept it; wait until the folder has synced, then press Join again here.")
         else:
-            self.note.set_label(err.replace("error: ", "").strip())
-            self.note.set_visible(True)
-            self.go.set_label("Join")
-            self.go.set_sensitive(True)
+            self.note.set_css_classes(["error"])
+            self.note.set_label(text)
+        self.note.set_visible(True)
+        self.go.set_label("Join")
+        self.go.set_sensitive(True)
         return False
 
 
@@ -1980,6 +2066,7 @@ class Window(Adw.ApplicationWindow):
                          ("copy", lambda: self.doc.path and CopyDialog(self).present(self)),
                          ("restore", lambda: CopyDialog(self, restore=True).present(self)),
                          ("move", self.move_dialog),
+                         ("folder", lambda: self.doc.path and FolderDialog(self).present(self)),
                          ("backup-now", lambda: self.doc.path and self.spawn(["backup", self.doc.path],
                                                                                "Saving the network…")),
                          ("render-all", lambda: self.render(None)), ("build-all", lambda: self.confirm_build(None)),
@@ -2003,7 +2090,7 @@ class Window(Adw.ApplicationWindow):
         section = Gio.Menu()
         section.append("Open a network from a file…", "win.open")
         section.append("Start a new network…", "win.new")
-        section.append("Join a network with a link…", "win.join")
+        section.append("Join a network…", "win.join")
         section.append("Restore a network from a copy…", "win.restore")
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
@@ -2012,8 +2099,9 @@ class Window(Adw.ApplicationWindow):
         section.append("Back up the network now", "win.backup-now")
         section.append("Save a copy of the network…", "win.copy")
         section.append("Use another computer…", "win.move")
+        section.append("Keep it in a synced folder…", "win.folder")
         section.append("A home server that looks after it…", "win.control-setup")
-        section.append("Sync with the control node", "win.sync")
+        section.append("Sync now", "win.sync")
         section.append("Render every host", "win.render-all")
         section.append("Build every ISO…", "win.build-all")
         menu.append_section(None, section)
@@ -2066,7 +2154,7 @@ class Window(Adw.ApplicationWindow):
         b2 = Gtk.Button(label="Start a new network")
         b2.add_css_class("suggested-action")
         b2.connect("clicked", lambda *_: self.new_dialog())
-        b3 = Gtk.Button(label="Join one with an invite link")
+        b3 = Gtk.Button(label="Join one (a link, or a synced folder)")
         b3.connect("clicked", lambda *_: JoinDialog(self).present(self))
         b4 = Gtk.Button(label="Restore one from a copy")
         b4.connect("clicked", lambda *_: CopyDialog(self, restore=True).present(self))
@@ -2233,23 +2321,27 @@ class Window(Adw.ApplicationWindow):
         if control:
             name = (self.status.get(control) or {}).get("hostname") or control
             dlg.set_body("Your network has a control page. On it: Computers, Add a computer. Paste the link it shows "
-                         "into Kiwi Server on the other computer (Join a network with a link). Both computers then "
+                         "into Kiwi Server on the other computer (Join a network). Both computers then "
                          "stay in step by themselves.")
             dlg.add_response("page", "Open the control page")
             dlg.connect("response", lambda _d, r: r == "page" and Gtk.UriLauncher.new(
                 "https://control.%s/controllers" % name).launch(self, None, None))
         else:
-            dlg.set_body("Save a copy of the network here, carry the file to the other computer, and there choose "
-                         "Restore a network from a copy in Kiwi Server. With a home server that looks after the "
-                         "network this gets easier: computers then join with a link and stay in step.")
+            dlg.set_body("Two ways. If Nextcloud or the like syncs a folder between your computers: keep the network in "
+                         "that folder, and on the other computer choose Join in Kiwi Server; both stay in step from "
+                         "then on. Or carry it over once: save a copy here and choose Restore a network from a copy "
+                         "there.")
             dlg.add_response("copy", "Save a copy…")
-            dlg.connect("response", lambda _d, r: r == "copy" and CopyDialog(self).present(self))
+            dlg.add_response("folder", "Use a synced folder…")
+            dlg.connect("response", lambda _d, r: CopyDialog(self).present(self) if r == "copy"
+                        else FolderDialog(self).present(self) if r == "folder" else None)
         dlg.add_response("close", "Close")
         dlg.present(self)
 
     def joined(self):
         """Does this fleet belong to a control node (it joined one, or pushed to one)?"""
-        return bool(self.doc.path) and os.path.isfile(os.path.join(os.path.dirname(self.doc.path), "control", "remote"))
+        d = os.path.join(os.path.dirname(self.doc.path or ""), "control")
+        return bool(self.doc.path) and (os.path.isfile(os.path.join(d, "remote")) or os.path.isfile(os.path.join(d, "folder")))
 
     def sync(self, say=False, after_save=False):
         """Keep in step with the control node, in the background: fetch what is newer there
@@ -2257,7 +2349,7 @@ class Window(Adw.ApplicationWindow):
         alone and said."""
         if not self.joined():
             if say:
-                self.toast("This fleet has no control node")
+                self.toast("This network is not shared yet: Use another computer… in the menu")
             return
         path, generation, dirty = self.doc.path, self.generation, self.doc.dirty
 
@@ -2272,6 +2364,14 @@ class Window(Adw.ApplicationWindow):
                 if step == "pull" and "in step" not in text:
                     GLib.idle_add(came)
             GLib.idle_add(done, rc, text)
+            if rc == 0 and os.path.isfile(os.path.join(os.path.dirname(path), "control", "folder")):
+                rc2, out2, _e = run_cli(self.cli, ["control", "requests", path, "--porcelain"], timeout=60)
+                try:
+                    asking = json.loads(out2)["requests"] if rc2 == 0 else []
+                except (ValueError, KeyError):
+                    asking = []
+                for r in asking:
+                    GLib.idle_add(self.join_request, path, r)
 
         def came():
             if generation == self.generation and not self.doc.dirty:
@@ -2282,11 +2382,42 @@ class Window(Adw.ApplicationWindow):
             if generation != self.generation and rc == 0:
                 return False
             if rc != 0:
-                self.toast("Not in step with the control node: %s" % (text.splitlines() or ["?"])[-1][:160])
+                self.toast("Not in step: %s" % (text.splitlines() or ["?"])[-1][:160])
             elif say:
-                self.toast("In step with the control node")
+                self.toast("In step")
             return False
         threading.Thread(target=work, daemon=True).start()
+
+    def join_request(self, path, r):
+        """A computer asks, through the synced folder, to manage this network: the owner answers."""
+        if path != self.doc.path or r["name"] in getattr(self, "_asked", set()):
+            return False
+        self._asked = getattr(self, "_asked", set()) | {r["name"]}
+        dlg = Adw.AlertDialog(
+            heading="%s wants to join" % r["name"],
+            body="The computer “%s” asks to manage this network, through your synced folder. Accept only if you "
+                 "set that computer up yourself just now: it will be able to open every key of the network."
+                 % r["host"])
+        dlg.add_response("deny", "Deny")
+        dlg.add_response("later", "Not now")
+        dlg.add_response("accept", "Accept")
+        dlg.set_response_appearance("accept", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_response_appearance("deny", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_close_response("later")
+
+        def answer(_d, what):
+            self._asked.discard(r["name"])
+            if what not in ("accept", "deny"):
+                return
+
+            def work():
+                rc, out, err = run_cli(self.cli, ["control", what, path, r["name"]], timeout=180)
+                text = (err or out).replace("error: ", "").replace(":: ", "").strip().splitlines()
+                GLib.idle_add(self.toast, (text or ["Done"])[-1][:160])
+            threading.Thread(target=work, daemon=True).start()
+        dlg.connect("response", answer)
+        dlg.present(self)
+        return False
 
     def open_path(self, path, sync=True):
         try:

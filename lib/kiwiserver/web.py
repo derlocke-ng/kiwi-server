@@ -3,6 +3,8 @@ with Jinja templates and a few lines of JavaScript for a job's live log: no buil
 Meant behind the reverse proxy on the mesh (the control module); the login is the password
 set with `kiwi-server serve FLEET --set-password`; it opens the encrypted store (control.py).
 """
+import asyncio
+import base64
 import hmac
 import threading
 import time
@@ -10,6 +12,7 @@ import time
 import jinja2
 import markupsafe
 from fastapi import FastAPI, Form, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from . import VERSION
@@ -55,7 +58,7 @@ TEMPLATES = {
 <button class="primary">Log in</button></form>{% endblock %}""",
     "index.html": """{% extends "base.html" %}{% block main %}
 <header><h1>Kiwi control</h1>
-<span class="muted">kiwi-server {{ version }} · <a href="audit">log</a> ·
+<span class="muted">kiwi-server {{ version }} · <a href="controllers">controllers</a> · <a href="audit">log</a> ·
 <form class="inline" method="post" action="logout">{{ tok }}<button>Log out</button></form>
 <form class="inline" method="post" action="lock" onsubmit="return confirm('Lock the fleet? Nothing runs by itself until the next login.')">{{ tok }}<button>Lock</button></form></span></header>
 <div class="actions">
@@ -94,6 +97,29 @@ const d=await r.json();log.textContent+=d.text;off=d.offset;st.textContent=d.sta
 if(d.text)log.scrollTop=log.scrollHeight;if(d.state=="waiting"||d.state=="running")setTimeout(poll,1500)}
 poll();
 </script>{% endblock %}""",
+    "controllers.html": """{% extends "base.html" %}{% block main %}
+<header><h1>Controllers</h1><a href="./">back</a></header>
+<p class="muted">The computers that can open this fleet. Removing one stops it from reading anything new;
+what it read before, it knows.</p>
+{% for name, key in ways %}<div class="card row"><span><strong>{{ name }}</strong>
+<span class="muted">{{ key[:16] }}…</span></span>
+{% if name != "control" %}<form class="inline" method="post" action="controllers/remove"
+onsubmit="return confirm('Remove {{ name }}? It can no longer open the fleet.')">{{ tok }}
+<input type="hidden" name="name" value="{{ name }}"><button>Remove</button></form>
+{% else %}<span class="muted">this node's password</span>{% endif %}</div>{% endfor %}
+<h2>Asking to join</h2>
+{% for r in requests %}<div class="card"><div class="row"><strong>{{ r.name }}</strong>
+<span class="muted">from {{ r.address }} · {{ r.key[:16] }}…</span></div><div class="actions">
+<form class="inline" method="post" action="controllers/accept">{{ tok }}<input type="hidden" name="name" value="{{ r.name }}">
+<button class="primary">Accept</button></form>
+<form class="inline" method="post" action="controllers/deny">{{ tok }}<input type="hidden" name="name" value="{{ r.name }}">
+<button>Deny</button></form></div></div>{% else %}<p class="muted">Nobody.</p>{% endfor %}
+<h2>Add a controller</h2>
+{% if code %}<div class="card"><p>Join code, good for fifteen minutes, once:</p><pre>{{ code }}</pre>
+<p class="muted">On the new computer: <code>kiwi-server control join ~/kiwi/fleet.yaml --url {{ url }}</code></p></div>
+{% else %}<form method="post" action="controllers/code">{{ tok }}<button>Make a join code</button></form>{% endif %}
+{% if error %}<p class="bad">{{ error }}</p>{% endif %}
+{% endblock %}""",
     "audit.html": """{% extends "base.html" %}{% block main %}
 <header><h1>Log</h1><a href="./">back</a></header>
 {% for e in entries %}<div class="card row"><span>{{ e.what }} {{ (e.hosts or [])|join(" ") }}</span>
@@ -232,6 +258,102 @@ def make_app(control: Control):
         if not user(request):
             return JSONResponse({"error": "log in"}, status_code=401)
         return control.status() or {}
+
+    # ---- controllers (design/controllers.md) -----------------------------------------------
+    def controllers_page(request, **kw):
+        return page("controllers.html", request, ways=control.controllers(), requests=control.requests(),
+                    url=str(request.base_url).rstrip("/").replace("http://", "https://")
+                    if request.headers.get("x-forwarded-proto") == "https" else str(request.base_url).rstrip("/"), **kw)
+
+    @app.get("/controllers")
+    def controllers(request: Request):
+        if not user(request):
+            return login_page()
+        return controllers_page(request)
+
+    @app.post("/controllers/{what}")
+    def controllers_do(request: Request, what: str, name: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return RedirectResponse("../login", status_code=303)
+        try:
+            if what == "code":
+                return controllers_page(request, code=control.new_join_code(u))
+            if what == "accept":
+                control.accept(name, u)
+            elif what == "deny":
+                control.deny(name, u)
+            elif what == "remove":
+                control.remove(name, u)
+        except KiwiError as e:
+            return controllers_page(request, error=str(e))
+        return RedirectResponse("../controllers", status_code=303)
+
+    @app.get("/api/ca")
+    def api_ca():
+        """Public: the fleet CA's certificate and the store's id, for a computer that joins."""
+        pem = control.ca_pem()
+        if not pem:
+            return JSONResponse({"error": "no CA yet"}, status_code=404)
+        return {"ca": pem, "store": control.store.store_id()}
+
+    @app.post("/api/join")
+    async def api_join(request: Request):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        ok = control.join_request(str(body.get("code") or ""), str(body.get("name") or ""),
+                                  str(body.get("key") or ""), address(request))
+        if not ok:
+            await asyncio.sleep(1)
+            return JSONResponse({"error": "refused"}, status_code=403)
+        return JSONResponse({"waiting": True}, status_code=202)
+
+    @app.post("/api/controller/hello")
+    async def api_hello(request: Request):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        blob = control.challenge(str(body.get("name") or ""))
+        if blob is None:
+            return JSONResponse({"error": "unknown"}, status_code=404)
+        return {"challenge": base64.b64encode(blob).decode()}
+
+    def bearer(request):
+        auth = request.headers.get("authorization") or ""
+        return control.controller(auth[7:]) if auth.startswith("Bearer ") else None
+
+    @app.get("/api/fleet/revision")
+    def api_revision(request: Request):
+        if not bearer(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        return {"revision": control.revision()}
+
+    @app.get("/api/fleet")
+    def api_fleet(request: Request):
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        revision, files = control.export()
+        control.audit(who, "fetched the fleet", address=address(request))
+        return {"revision": revision, "files": {n: base64.b64encode(b).decode() for n, b in files.items()}}
+
+    @app.put("/api/fleet")
+    async def api_fleet_put(request: Request):
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+            files = {str(n): base64.b64decode(b) for n, b in (body.get("files") or {}).items()}
+            new = await run_in_threadpool(control.replace, str(body.get("base") or ""), files, who)
+        except (ValueError, KiwiError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        if new is None:
+            return JSONResponse({"error": "the fleet here is another than the one you built on"}, status_code=409)
+        return {"revision": new}
 
     @app.get("/audit")
     def audit(request: Request):

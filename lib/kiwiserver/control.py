@@ -60,6 +60,9 @@ class Control:
         self._identity = None                 # the key the password made, while the store is open
         self._saved = {}                      # name -> sha256 of the fleet file as it was last saved or opened
         self._age = {}                        # name -> sha256 of its encrypted file on disk, as this process left it
+        self._join = None                     # the join code that is out, if one is
+        self._requests = {}                   # name -> a computer that asked to join
+        self._tokens = {}                     # token -> (controller, expires): who may sync
 
     # ---- the password and the store ----------------------------------------------------
     @property
@@ -119,6 +122,14 @@ class Control:
             os.replace(path + ".age.tmp", path + ".age")
             self._saved[name] = hashlib.sha256(data).hexdigest()
             self._age[name] = util.sha256_file(path + ".age")
+
+    def _for_the_keys_now(self):
+        """The store's keys changed: the fleet files are encrypted again, for those keys (the
+        store did its own file). Otherwise a new controller could not open them, and a removed
+        one still could."""
+        for name in self._saved:
+            self._saved[name] = ""
+        self.save_fleet()
 
     def _close(self):
         if not self._pushed():
@@ -219,6 +230,145 @@ class Control:
                 self._close()
                 self.audit("control", "locked: the pushed store does not open with the old password")
                 return "locked"
+
+    # ---- controllers: the computers that can open the store ------------------------------
+    # (design/controllers.md, step 1: every controller is fully trusted.) A controller is one
+    # of the store's keys. A computer asks to become one with a join code from the page; the
+    # owner accepts or denies; a controller proves who it is by opening a challenge encrypted
+    # to its key, and may then fetch and replace the encrypted fleet.
+    def controllers(self):
+        return self.store.ways() if self.store.exists() else []
+
+    def ca_pem(self):
+        """The fleet CA's certificate (public): from the open store, remembered on disk so a
+        joining computer can be given it while the store is locked."""
+        cached = os.path.join(self.dir, "ca.pem")
+        live = os.path.join(self.fleet_dir, "secrets", "ca", "kiwiCA.pem")
+        if not self.locked() and os.path.isfile(live):
+            if not os.path.isfile(cached) or util.read_text(cached) != util.read_text(live):
+                util.write_text(cached, util.read_text(live), 0o644)
+        return util.read_text(cached) if os.path.isfile(cached) else ""
+
+    def new_join_code(self, user="admin"):
+        """A code for one computer, good for fifteen minutes. Its last part names the CA, so
+        the computer knows it talks to this fleet before it sends anything."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        fp = hashlib.sha256(self.ca_pem().encode()).hexdigest()[:8]
+        raw = "".join(pysecrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(16))
+        code = "%s-%s-%s-%s.%s" % (raw[:4], raw[4:8], raw[8:12], raw[12:], fp)
+        self._join = {"hash": hashlib.sha256(code.encode()).hexdigest(), "expires": self.clock() + 900, "wrong": 0}
+        self.audit(user, "made a join code")
+        return code
+
+    def join_request(self, code, name, key, address="?"):
+        """A computer asks to become a controller. True when the request now waits for the owner."""
+        j = getattr(self, "_join", None)
+        if not j or j["expires"] < self.clock():
+            return False
+        if not hmac.compare_digest(j["hash"], hashlib.sha256((code or "").strip().encode()).hexdigest()):
+            j["wrong"] += 1
+            if j["wrong"] >= 3:                 # three wrong guesses: the code is void
+                self._join = None
+            self.audit("?", "join refused: wrong code", address=address)
+            return False
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", name or "") or not re.fullmatch(r"age1[0-9a-z]{58}", key or ""):
+            return False
+        if any(n == name or k == key for n, k in self.controllers()):
+            return False
+        self._join = None                       # used
+        self._requests[name] = {"key": key, "address": address, "time": self.clock()}
+        self.audit(name, "asked to join", address=address)
+        return True
+
+    def requests(self):
+        return [dict(v, name=k) for k, v in sorted(self._requests.items())]
+
+    def accept(self, name, user="admin"):
+        req = self._requests.get(name)
+        if not req:
+            raise KiwiError("nobody called %s asked to join" % name)
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        with self.lock:
+            self.store.add(name, req["key"])
+            self._for_the_keys_now()
+        del self._requests[name]
+        self.audit(user, "accepted controller %s" % name)
+
+    def deny(self, name, user="admin"):
+        if self._requests.pop(name, None):
+            self.audit(user, "denied controller %s" % name)
+
+    def remove(self, name, user="admin"):
+        """Its key leaves the store: it reads nothing newer. What it read before, it knows
+        (design/controllers.md, Rotation)."""
+        if name == "control":
+            raise KiwiError("that is this node's own key: a new password replaces it (serve --set-password, then push)")
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        with self.lock:
+            self.store.remove(name)
+            self._for_the_keys_now()
+        self._tokens = {t: v for t, v in self._tokens.items() if v[0] != name}
+        self.audit(user, "removed controller %s" % name)
+
+    def challenge(self, name):
+        """A token only that controller can read: encrypted to its key. None when there is no
+        such controller."""
+        key = dict(self.controllers()).get(name)
+        if not key:
+            return None
+        token = pysecrets.token_hex(32)
+        self._tokens[token] = (name, self.clock() + 600)
+        return storemod.encrypt_to(key, token.encode())
+
+    def controller(self, token):
+        name, expires = self._tokens.get(token or "", (None, 0))
+        if not name or expires < self.clock() or name not in dict(self.controllers()):
+            return None
+        return name
+
+    def revision(self):
+        from . import controlsync
+        return controlsync.node_digest(self.fleet_dir)
+
+    def export(self):
+        """(revision, {name: bytes}) of the encrypted fleet as it rests here."""
+        from . import controlsync
+        with self.lock:
+            if not self.locked() and not self._pushed():
+                self.save_fleet()
+            files = {}
+            for name in controlsync.ON_NODE:
+                path = os.path.join(self.fleet_dir, name)
+                if os.path.isfile(path):
+                    files[name] = util.read_bytes(path)
+            return controlsync.node_digest(self.fleet_dir), files
+
+    def replace(self, base, files, name):
+        """A controller's push: taken when it builds on what is here. Returns the new revision,
+        or None when this node's copy is another than `base` (pull first)."""
+        from . import controlsync
+        if set(files) - set(controlsync.ON_NODE) or not {"secrets.age", "secrets.recipients", "fleet.yaml.age"} <= set(files):
+            raise KiwiError("not a fleet: %s" % ", ".join(sorted(files)))
+        with self.lock:
+            if not self.locked() and not self._pushed():
+                self.save_fleet()
+            if base != controlsync.node_digest(self.fleet_dir):
+                return None
+            for n in controlsync.ON_NODE:
+                path = os.path.join(self.fleet_dir, n)
+                if n in files:
+                    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+                    util.write_bytes(path + ".tmp", files[n], 0o644 if n == "secrets.recipients" else 0o600)
+                    os.replace(path + ".tmp", path)
+                elif os.path.isfile(path):
+                    os.remove(path)
+            new = controlsync.node_digest(self.fleet_dir)
+        self.audit(name, "pushed the fleet")
+        self.reload_if_pushed()
+        return new
 
     # ---- audit ----------------------------------------------------------------------
     def audit(self, user, what, **more):

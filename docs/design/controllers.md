@@ -22,22 +22,25 @@ laptop$ kiwi-server control join https://control.papaya.home     # asks for the 
 ```
 
 1. The page's **Add a controller** shows a join code, good for fifteen minutes, once.
-2. `join` makes the computer's two keys (age: keyring; SSH: its fleet directory) and sends
-   their public halves with the code. Nothing secret leaves the computer.
+2. `join` makes the computer's key (age, in its keyring), checks the fleet's CA against the
+   code, and sends the public half with the code. Nothing secret leaves the computer.
 3. The request waits on the page: **Accept** (as main or for a site) or **Deny**.
-4. Accept adds the age key to the store and the SSH key to the hosts in its scope (at their
-   next apply, which the control node queues). The computer then syncs.
-5. **Remove** takes both keys out again, re-encrypts the store, and opens a rotation
-   (below) for what that controller could read.
+4. Accept adds the key to the store (the fleet file is encrypted again for the keys there
+   are). The computer then syncs.
+5. **Remove** takes the key out again, re-encrypts store and fleet file, and (later) opens
+   a rotation (below) for what that controller could read.
 
-The fleet file lists them (`controllers:` name, keys, scope, since when), so the list
-travels with the fleet and every change of it is in the audit log.
+The controllers are the store's keys (`secrets.recipients`), so the list travels with the
+fleet and every change of it is in the audit log. Scopes will need more than a name there.
 
 ## Sync
 
-The main control node holds the truth. A controller talks to its API over the mesh, each
-request signed with its SSH key (`ssh-keygen -Y sign`; the node checks it against the
-accepted keys). No controller gets a shell on the control node for syncing.
+The main control node holds the truth. A controller talks to its API over the mesh and
+proves who it is with its age key: the node encrypts a token to that key, and only its holder
+can read and return it. No controller gets a shell on the control node for syncing. (Built in
+2.61.0. The first version of this page had SSH signatures here; one key per controller is
+simpler, and the machines' SSH access stays the fleet's shared admin key until rotation
+brings a key per controller.)
 
 - `control pull` and `control push` as today, by revision: a push must build on the
   revision the node has, otherwise pull first. What travels is encrypted, as today.

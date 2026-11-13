@@ -41,18 +41,38 @@ Nothing rests on the node in the clear. Its disk holds `secrets.age` and
 So after a power cut someone logs in once, from the phone. Use a disk
 encrypted with a ring as well ([Security](security.md)) where you can.
 
-## Two copies
+## More computers
 
-The node works on its copy (an apply from the phone, an enroll). So:
+Another computer becomes a controller through the page, not by copying keys:
+
+1. On the page: **controllers**, **Make a join code** (fifteen minutes, once).
+2. On the new computer:
+   ```bash
+   kiwi-server control join ~/kiwi/fleet.yaml --url https://control.papaya.<domain>
+   ```
+   It makes its own key (in its keyring), checks that the code is from this
+   fleet, and sends the public half.
+3. On the page: **Accept** or **Deny**.
+4. On the new computer: `kiwi-server control pull ~/kiwi/fleet.yaml`.
+
+**Remove** takes its key out again: it reads nothing newer. What it read
+before, it knows; rotation is planned
+([design/controllers.md](design/controllers.md)).
+
+## Staying in step
+
+Every copy works by itself, so:
 
 ```bash
-kiwi-server control pull ~/kiwi/fleet.yaml    # before working here again
+kiwi-server control pull ~/kiwi/fleet.yaml    # before working here
 kiwi-server control push ~/kiwi/fleet.yaml    # after changing the fleet here
 ```
 
 Each refuses to overwrite a side that changed since the last sync; `--force`
-overrides. The node takes a push while it is open. A new password
-(`--set-password`, then push) locks it until that password logs in.
+overrides. A joined computer syncs through the page's API and needs no shell
+on the node; the first computer uses SSH. The node takes a push while it is
+open. A new password (`--set-password`, then push) locks it until that
+password logs in.
 
 ## Mind
 

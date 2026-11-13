@@ -425,6 +425,12 @@ class Control:
                 util.warn("control: the fleet file was not saved: %s" % e)
             meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
             self._write(meta)
+        try:
+            self.fleet_info(fresh=True)         # an apply changes what the next step is
+        except (OSError, ValueError):
+            pass
+        if meta["action"] in ("status", "apply"):
+            self.look()                         # what the pages show is what is true now
 
     def _write(self, meta):
         os.makedirs(self.jobs_dir, mode=0o700, exist_ok=True)
@@ -455,19 +461,95 @@ class Control:
         path = os.path.join(self.run, "status.json")
         return json.loads(util.read_text(path)) if os.path.isfile(path) else None
 
+    looking = False                         # a look at every machine is under way
+
+    def look(self):
+        """A look at every machine, in the background; one at a time."""
+        if not self.looking and not self.locked():
+            self.looking = True             # from now, so that the page that follows says so
+            threading.Thread(target=self.refresh_status, daemon=True).start()
+
     def refresh_status(self):
         if self.locked():
             return None
-        with self.lock:                     # after the running job: every command saves the store when it ends
-            r = subprocess.run(list(self.kiwi) + ["status", self.fleet_path, "--porcelain"], capture_output=True,
-                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+        self.looking = True
+        try:
+            with self.lock:                 # after the running job: every command saves the store when it ends
+                r = subprocess.run(list(self.kiwi) + ["status", self.fleet_path, "--porcelain"], capture_output=True,
+                                   text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+        finally:
+            self.looking = False
         try:
             data = json.loads(r.stdout)
         except ValueError:
             data = {"hosts": [], "error": (r.stderr or r.stdout or "no output").strip()[-500:]}
         data["time"] = self.clock()
         util.write_text(os.path.join(self.run, "status.json"), json.dumps(data), 0o600)
+        try:
+            self.fleet_info(fresh=True)
+        except (OSError, ValueError):
+            pass
         return data
+
+    def fleet_info(self, fresh=False):
+        """What the fleet file says: every machine with its role, web addresses and next step
+        (`list --porcelain`). Kept in RAM; asked again after a job and with every look."""
+        path = os.path.join(self.run, "fleet.json")
+        if self.locked():
+            return None
+        if fresh or not os.path.isfile(path):
+            r = subprocess.run(list(self.kiwi) + ["list", self.fleet_path, "--porcelain"], capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+            try:
+                json.loads(r.stdout)
+            except ValueError:
+                return None
+            util.write_text(path, r.stdout, 0o600)
+        return json.loads(util.read_text(path))
+
+    # ---- devices: phones and laptops on the VPN ---------------------------------------
+    def devices(self):
+        d = os.path.join(self.fleet_dir, "secrets", "devices")
+        if self.locked() or not os.path.isdir(d):
+            return []
+        return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".conf") and HOST.match(f[:-5]))
+
+    def device_config(self, name):
+        """A device's WireGuard config (from the open store), or None."""
+        if self.locked() or not HOST.match(name or ""):
+            return None
+        path = os.path.join(self.fleet_dir, "secrets", "devices", name + ".conf")
+        return util.read_text(path) if os.path.isfile(path) else None
+
+    def add_device(self, name, group="", user="admin"):
+        """A new phone or laptop on the VPN: the master makes its key and address
+        (`enroll`). Returns its config; KiwiError says why not."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not HOST.match(name or ""):
+            raise KiwiError("a name for the device: lowercase letters, digits and dashes, like annas-phone")
+        if name in self.devices():
+            raise KiwiError("a device called %s exists already" % name)
+        argv = list(self.kiwi) + ["enroll", self.fleet_path, name] + (["--group", group] if group else [])
+        with self.lock:
+            r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+            if not self._pushed():
+                self.save_fleet()
+        if r.returncode != 0:
+            raise KiwiError(((r.stderr or r.stdout).strip().replace("error: ", "").splitlines()
+                             or ["the hub did not take the new device"])[-1][:300])
+        self.audit(user, "added the device %s" % name)
+        return self.device_config(name)
+
+    @staticmethod
+    def qr_svg(text):
+        """The config as a QR code a phone's WireGuard app scans (qrencode), or ''."""
+        try:
+            r = subprocess.run(["qrencode", "-t", "SVG", "-m", "2", "-o", "-"], input=text.encode(), capture_output=True)
+        except OSError:
+            return ""
+        svg = r.stdout.decode(errors="replace") if r.returncode == 0 else ""
+        return svg[svg.find("<svg"):] if "<svg" in svg else ""
 
     def loop(self, stop):
         """The timers: the fleet's status every status_minutes, `watch --once` (RAM masters)

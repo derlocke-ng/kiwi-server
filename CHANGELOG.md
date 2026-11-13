@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.63.0 — a control page that explains itself
+
+The owner's verdict on the control page: it could do nothing and explained nothing. Rebuilt:
+
+- **Home** says in one line how the network is ("All 6 machines are fine"), lists what wants
+  a look with what it means and what to do, shows every machine, and has a tile for every
+  service (Files, Photos, Passwords, …) that opens it.
+- **A machine's page** says what it is, what runs on it, when it was last saved, and what each
+  button does ("Changes nothing." / "Services that changed restart for a moment.").
+- **Devices**: add a phone or laptop to the VPN; the page shows the QR code for the WireGuard
+  app and a file to download, with the three steps to take.
+- **Backups**: when each machine was last saved and where, and the network's own backup.
+- **Help**: how do I…, and what the words mean. **Activity**: tasks and the log.
+- Tasks say what happens in words and keep the command output folded away; the first check
+  after unlocking starts by itself; the login page says why it is locked.
+- `list --porcelain` names the master's client groups.
+
 ## 2.62.0 — join a fleet: paste one link
 
 - Joining was a code, a command, an accept step and a pull. Now: the control page's

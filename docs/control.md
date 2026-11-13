@@ -4,9 +4,20 @@ One node at home runs kiwi-server by itself, so the fleet needs no desktop
 that is always on. It has a page for the phone: `https://control.<host>`,
 open to the mesh only.
 
-It looks at every machine every ten minutes, sends the role to RAM masters
-that booted, and runs what you start from the page: status, plan, apply,
-check. Every change is in its log.
+It checks every machine every ten minutes and sends the role to RAM masters
+that booted. The page:
+
+| | |
+|---|---|
+| **Home** | how the network is, in one line; what wants a look and what that means; every machine; a tile per service |
+| **A machine** | what it is, what runs on it; Check now, Preview, Apply, each with what it does |
+| **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
+| **Backups** | when each machine was last saved and where; save the network itself |
+| **Computers** | who may manage the network; add one with a link |
+| **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
+
+Changing settings and adding machines stays in the Kiwi Server app, which
+sends changes here by itself.
 
 ## Set it up
 

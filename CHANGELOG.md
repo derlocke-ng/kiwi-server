@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.59.0 — Armbian images
+
+- `target: armbian` with `armbian: { board: odroidn2 }`: `build` takes the board's Armbian
+  image from dl.armbian.com (checksum checked) and writes the first boot into it with debugfs,
+  no root needed. Flash, boot: the admin user with the fleet's keys, root locked, no console
+  autologin, then the role. Proven with the uefi-arm64 image in QEMU, then `apply` made it a
+  mesh node.
+- The toolchain image has xz and e2fsprogs.
+
 ## 2.58.0 — boards
 
 - `kiwi-server adopt <fleet> <host> --as user@address`: a machine that already runs Debian or

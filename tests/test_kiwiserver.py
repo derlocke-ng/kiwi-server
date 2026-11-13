@@ -33,7 +33,7 @@ import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
 from kiwiserver import adopt as adoptmod, facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
-from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
+from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
@@ -552,6 +552,68 @@ class TestAdopt(Base):
         self.assertIn("linux-image-arm64", debian_t.preseed(h, VERSION))
         h = self.host(debian={"arch": "armhf"})
         self.assertIn("fig: debian.arch must be amd64 or arm64", h.validate(self.roles))
+
+
+class TestArmbian(Base):
+    def host(self, **over):
+        f = self.fleet({"defaults": self.base_defaults(target="armbian", role="bare",
+                                                       admin={"user": "kiwi", "password": "pw", "ssh_keys": [KEY]}),
+                        "hosts": {"n2": dict({"hostname": "n2.home", "armbian": {"board": "odroidn2"}}, **over)}})
+        return f.hosts["n2"]
+
+    def test_checks(self):
+        self.assertEqual(self.host().validate(self.roles), [])
+        self.assertIn("n2: armbian.board is missing (its name at dl.armbian.com, e.g. odroidn2 or odroidm1)",
+                      self.host(armbian={"board": None}).validate(self.roles))
+        self.assertTrue(any("no encrypted disk" in e for e in self.host(unlock={"rings": ["infra"]}).validate(self.roles)))
+        self.assertEqual(armbian_t.download_url(self.host().cfg["armbian"]),
+                         "https://dl.armbian.com/odroidn2/Trixie_current_minimal")
+
+    def test_first_boot_files(self):
+        fs = armbian_t.files(self.host(), "#!/bin/bash\necho role\n")
+        self.assertIn("passwd -l root", fs["/var/lib/kiwi-server/adopt/adopt.sh"][0])   # Armbian's root is 1234
+        self.assertIn("After=network-online.target kiwi-adopt.service", fs["/etc/systemd/system/kiwi-role.service"][0])
+        self.assertIn("After=network-online.target armbian-firstrun.service", fs["/etc/systemd/system/kiwi-adopt.service"][0])
+        self.assertEqual(fs["/var/lib/kiwi-server/role.sh"][1], 0o700)
+        cmds = armbian_t.debugfs_commands({"/var/lib/kiwi-server/role.sh": ("/tmp/x", 0o700)})
+        self.assertIn("sif /var/lib/kiwi-server/role.sh mode 0100700", cmds)
+        self.assertIn("symlink /etc/systemd/system/multi-user.target.wants/kiwi-role.service", cmds)
+        self.assertIn("rm /root/.not_logged_in_yet", cmds)
+        self.assertIn("rm /etc/systemd/system/serial-getty@.service.d/override.conf", cmds)   # no root on the console
+        self.assertEqual(armbian_t.root_partition({"partitions": [
+            {"start": 8192, "size": 500, "type": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},
+            {"start": 9000, "size": 9000, "type": "B921B045-1DF0-41C3-AF44-4C6F280D3FAE"}]}), (9000, 9000))
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ("debugfs", "mkfs.ext4", "sfdisk", "xz", "e2fsck")),
+                         "needs e2fsprogs, sfdisk and xz")
+    def test_image_is_written_into_the_root_filesystem(self):
+        w = os.path.join(self.tmp, "img")
+        os.makedirs(os.path.join(w, "tree", "root"))
+        write(os.path.join(w, "tree", "root", ".not_logged_in_yet"), "")
+        os.makedirs(os.path.join(w, "tree", "etc", "systemd", "system", "multi-user.target.wants"))
+        raw, fs = os.path.join(w, "board.img"), os.path.join(w, "root.ext4")
+        subprocess.run(["truncate", "-s", "40M", raw], check=True)
+        subprocess.run(["sfdisk", "-q", raw], input="label: dos\nstart=2048, type=83\n", text=True, check=True)
+        subprocess.run(["mkfs.ext4", "-q", "-F", "-d", os.path.join(w, "tree"), fs, "38M"], check=True)
+        subprocess.run(["dd", "if=" + fs, "of=" + raw, "bs=512", "seek=2048", "conv=notrunc", "status=none"], check=True)
+        subprocess.run(["xz", "-0", raw], check=True)
+        out = os.path.join(w, "out", "n2.img")
+        os.makedirs(os.path.dirname(out))
+        armbian_t.image(Toolchain("native"), self.host(), "#!/bin/bash\necho role\n", raw + ".xz", out, os.path.join(w, "work"))
+        self.assertEqual(oct(os.stat(out).st_mode & 0o777), "0o600")
+        self.assertFalse(os.path.exists(os.path.join(w, "work")))      # the copy of the role is gone
+        back = os.path.join(w, "back.ext4")
+        subprocess.run(["dd", "if=" + out, "of=" + back, "bs=512", "skip=2048", "status=none"], check=True)
+
+        def dbg(cmd):
+            return subprocess.run(["debugfs", "-R", cmd, back], capture_output=True, text=True).stdout
+        self.assertEqual(dbg("cat /var/lib/kiwi-server/role.sh"), "#!/bin/bash\necho role\n")
+        self.assertIn("passwd -l root", dbg("cat /var/lib/kiwi-server/adopt/adopt.sh"))
+        self.assertIn("kiwi-adopt.service", dbg("ls /etc/systemd/system/multi-user.target.wants"))
+        self.assertNotIn(".not_logged_in_yet", dbg("ls -l /root"))
+        stat = dbg("stat /var/lib/kiwi-server/role.sh")
+        self.assertIn("Mode:  0700", stat)
+        self.assertRegex(stat, r"User:\s+0\s+Group:\s+0")
 
 
 class TestIso(Base):
@@ -4488,7 +4550,7 @@ class TestCli(Base):
         rc, out, _ = self.run_cli("modules", "--porcelain")
         self.assertEqual(len(json.loads(out)["modules"]), 22)
         rc, out, _ = self.run_cli("targets", "--porcelain")
-        self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "coreos-ram"})
+        self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
     def test_validate_render_list_show(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

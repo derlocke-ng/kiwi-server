@@ -13,7 +13,7 @@ import subprocess
 from . import util
 from .util import KiwiError
 
-TOOLS = ("butane", "coreos-installer", "xorriso", "cpio", "gzip", "curl")
+TOOLS = ("butane", "coreos-installer", "xorriso", "cpio", "gzip", "curl", "xz", "sfdisk", "debugfs", "e2fsck")
 IMAGE = "localhost/kiwi-server-toolchain"
 
 

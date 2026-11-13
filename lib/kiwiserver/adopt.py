@@ -50,6 +50,7 @@ install -m 0644 "$D/sshd-kiwi.conf" /etc/ssh/sshd_config.d/50-kiwi.conf
 install -m 0644 "$D/kiwi-reboot-if-required.service" "$D/kiwi-reboot-if-required.timer" /etc/systemd/system/
 install -d -m 0700 %(role_dir)s
 %(updates)s
+%(lock_root)s
 systemctl daemon-reload
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl reload sshd
@@ -62,7 +63,7 @@ install -m 0644 "$D/20auto-upgrades" "$D/52kiwi-updates" /etc/apt/apt.conf.d/
 systemctl enable kiwi-reboot-if-required.timer"""
 
 
-def script(host):
+def script(host, lock_root=False):
     a = host.admin
     pw = host.password_hash()
     return _SCRIPT % {
@@ -73,15 +74,26 @@ def script(host):
         "password": ("usermod -p %s \"$U\"" % shlex.quote(pw)) if pw else "",
         "role_dir": debian.ROLE_DIR,
         "updates": _UPDATES_ON if host.updates()["enabled"] else "",
+        # an image's root has the maker's well-known password (Armbian: 1234); a running board's is the owner's
+        "lock_root": ("passwd -l root >/dev/null\n"
+                      "grep -ls -- '--autologin root' /etc/systemd/system/*getty@.service.d/*.conf | xargs -r rm -f")
+                     if lock_root else "",
     }
+
+
+def bundle_files(host, lock_root=False):
+    """The script and its files: name -> (text, mode)."""
+    files = debian.iso_files(host, "")
+    out = {"adopt.sh": (script(host, lock_root), 0o700)}
+    out.update((f, files[f]) for f in _FILES)
+    return out
 
 
 def bundle(host):
     """A tar.gz of the script and its files, as bytes."""
-    files = debian.iso_files(host, "")
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, (text, mode) in [("adopt.sh", (script(host), 0o700))] + [(f, files[f]) for f in _FILES]:
+        for name, (text, mode) in bundle_files(host).items():
             data = text.encode()
             info = tarfile.TarInfo(name)
             info.size, info.mode = len(data), mode
@@ -111,8 +123,8 @@ def forget_host_key(login, runner=subprocess.run):
 def run(host, login, runner=subprocess.run, new_host_key=False):
     """Copy the bundle and run it, asking for the login's password and sudo's on this
     terminal if they are needed. Returns the admin target."""
-    if host.target != "debian":
-        raise KiwiError("%s: adopt is for target: debian (its target is %s)" % (host.name, host.target))
+    if host.target not in ("debian", "armbian"):
+        raise KiwiError("%s: adopt is for target: debian or armbian (its target is %s)" % (host.name, host.target))
     user = (login[len("ssh://"):] if login.startswith("ssh://") else login).rsplit("@", 1)
     if len(user) != 2:
         raise KiwiError("--as wants the board's login, user@address (as in: odroid@192.168.2.40)")

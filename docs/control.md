@@ -91,7 +91,10 @@ Remove it (above), then replace what it knew. On the page, under
    key and a new SSH CA. The old key keeps working until the last machine has
    changed, so a machine that is off does not lock you out: switch it on and
    do it again. Nothing restarts. A machine that is gone for good:
-   `--waive NAME`.
+   **Leave it out** on the page, or `--waive NAME`. Something outside the
+   fleet that you gave the fleet's key by hand (a desktop, a NAS) is not
+   reached: put the new `secrets/admin_ed25519.pub` into its
+   `authorized_keys` yourself.
 2. **The page's password.** Current password, new password, done. The old
    one opens nothing any more.
 

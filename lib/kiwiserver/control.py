@@ -498,7 +498,10 @@ class Control:
                 raise KiwiError("which machine?")
             return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--now"]
         if action == "rotate":              # new SSH keys on every machine that still has the old ones
-            return list(self.kiwi) + ["rotate", self.fleet_path, "ssh"]
+            argv = list(self.kiwi) + ["rotate", self.fleet_path, "ssh"]
+            for h in hosts:                 # left out: gone for good, or about to be installed anew
+                argv += ["--waive", h]
+            return argv
         cmd, takes_hosts = ACTIONS[action]
         argv = list(self.kiwi) + [cmd, self.fleet_path]
         if takes_hosts:

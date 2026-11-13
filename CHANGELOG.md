@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.73.1 — rotate: machines outside the fleet, leaving one out
+
+Found on the test network right after 2.73.0.
+
+- A machine outside the fleet that had the fleet's key by hand (a desktop VM here) was locked
+  out by `rotate ssh`: the list, the command's last line, the page and the docs now say that
+  such machines need the new public key.
+- The control page offers **Leave NAME out** for each machine that still waits (a machine
+  that is gone, or will be installed anew); the command's message names `--waive`.
+
 ## 2.73.0 — a computer was lost: new SSH keys, a new control password
 
 design/controllers.md, step 3, first part: what a removed computer knew can be replaced.

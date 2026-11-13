@@ -7,7 +7,7 @@ One `fleet.yaml` describes every machine. The full reference is the commented
 
 ```yaml
 defaults:                          # every host, unless it says otherwise
-  target: ucore                    # coreos | ucore | debian | coreos-ram (a master in RAM)
+  target: ucore                    # coreos | ucore | debian | armbian | coreos-ram (a master in RAM)
   role: bare                       # bare | master | node
   domain: home                     # sh3 becomes sh3.home
   timezone: Europe/Berlin

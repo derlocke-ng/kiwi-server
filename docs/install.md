@@ -44,13 +44,14 @@ kiwi-server doctor              # python, pyyaml, build tools, container runtime
 | `butane` | Butane → Ignition (`--strict`) |
 | `coreos-installer` | downloading and verifying the Fedora CoreOS ISO, `iso customize` |
 | `xorriso`, `cpio`, `gzip`, `curl` | the Debian netinst rebuild and download |
+| `xz`, `sfdisk`, `debugfs`, `e2fsck` | Armbian board images |
 
 They run natively when installed, otherwise in a small podman/docker image,
 so nothing has to be layered onto the desktop. On a desktop that does not
 have them:
 
 ```bash
-kiwi-server toolchain build     # one image with all three, used automatically
+kiwi-server toolchain build     # one image with all of them, used automatically
 ```
 
 `kiwi-server toolchain` shows which run natively and which would use the

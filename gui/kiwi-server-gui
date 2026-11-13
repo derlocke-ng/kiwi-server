@@ -80,6 +80,10 @@ BASE_GROUPS = [
              help="What the machine becomes on first boot"),
         dict(path=("disk",), type="string", label="Install disk", default="",
              help="WIPED by the ISO without asking — /dev/sda, /dev/nvme0n1, /dev/vda"),
+        dict(path=("install", "on_done"), type="enum", label="When the install is done", options=["poweroff", "reboot"],
+             default="poweroff",
+             help="poweroff: the machine turns off, you pull the stick and switch it on again. reboot: it starts the "
+                  "installed system by itself; for a virtual machine, or when its own disk comes first in the boot order"),
         dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
              help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
         dict(path=("timezone",), type="string", label="Time zone", default="UTC", help="An IANA name, e.g. Europe/Berlin: the clock of logs, backups and the reboot time"),
@@ -2865,8 +2869,11 @@ class Window(Adw.ApplicationWindow):
             return ("Make its install media: one file. From a USB stick with it, the machine installs itself.",
                     "Make install media", lambda: self.confirm_build(h))
         if phase == "install":
-            return ("Start the machine from the install media and wait until it turns itself off. Switch it on "
-                    "again, then press the button.", "Set it up", lambda: self.confirm_apply(h))
+            on_done = self.doc.get(h, ("install", "on_done")) or self.doc.get("defaults", ("install", "on_done")) or "poweroff"
+            how = ("wait until it has restarted by itself" if on_done == "reboot" else
+                   "wait until it turns itself off. Take the install media out and switch it on again")
+            return ("Start the machine from the install media and %s. Then press the button." % how,
+                    "Set it up", lambda: self.confirm_apply(h))
         if phase == "bare":
             return ("It has no job yet. Choose what it should be in its settings.", "Open its settings",
                     lambda: self.select_scope(h))

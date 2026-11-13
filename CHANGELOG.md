@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.77.2 — the app has "When the install is done"
+
+- A machine's settings in the app have **When the install is done**: power off (the
+  default: pull the stick, switch it on) or reboot (a virtual machine, or a disk that comes
+  first in the boot order). The setting `install.on_done` existed, the app did not show it.
+- The guide's install step says what to wait for by that setting.
+
 ## 2.77.1 — the list says whose turn it is
 
 - `kiwi-server rotate <fleet>` names the admin logins of the services apart from the other

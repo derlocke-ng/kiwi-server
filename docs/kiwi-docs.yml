@@ -1,0 +1,28 @@
+# The pages of this docs/ folder, in menu order, with their menu titles.
+# kiwi-network.eu builds its menu from this list. Every page in the folder
+# must be listed here; README.md is the index and is not listed.
+# Format: one "- file.md: Menu title" per line.
+pages:
+  - install.md: Install
+  - getting-started.md: Getting started
+  - gui.md: The desktop app
+  - control.md: The control node
+  - fleet.md: The fleet file
+  - roles.md: Roles and modules
+  - network.md: The network
+  - machines.md: Machines
+  - boards.md: Boards
+  - backups.md: Backups
+  - security.md: Security
+  - routers.md: Routers
+  - modules.md: Module reference
+  - development.md: Development
+  - testing-hardware.md: Testing on real hardware
+  - ROADMAP.md: Roadmap
+  - design/control-plane.md: "Design: the control plane"
+  - design/controllers.md: "Design: controllers"
+  - design/ram-master.md: "Design: a master in RAM"
+  - design/federation.md: "Design: federation"
+  - design/local-first.md: "Design: local first"
+  - HANDOFF.md: Handoff notes
+  - REVIEW-2.1.0.md: Review of 2.1.0

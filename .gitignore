@@ -9,4 +9,6 @@ __pycache__/
 *.pyc
 *.swp
 CLAUDE.md
-.claude/
+# session files stay out; the kiwi-docs guide (a copy from kiwi-network) is committed
+.claude/*
+!.claude/skills/

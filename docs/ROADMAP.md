@@ -184,7 +184,7 @@ UX and ecosystem:
     it shows the machines' state and finds their addresses.)
 29. Not every command has `--porcelain`; the exit-code contract is
     undocumented. The API in the control plane design replaces this.
-30. docs/REVIEW-2.1.0.md should be retired to its status table.
+30. notes/REVIEW-2.1.0.md (moved out of docs/ in 2.71.1) should be retired to its status table.
 31. The kiwi-network site describes 2.2.0 (tracked in a separate report).
 32. The mesh subnet is spread over six settings that do not follow each
     other: the stack's `mesh_subnet`, the vpn-server's `server_ip`,

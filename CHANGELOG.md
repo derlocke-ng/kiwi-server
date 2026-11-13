@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.70.1 — the app's device dialog asks who it is for
+
+- Add a phone or laptop in the app had no "Who is it for?" choice: the app dropped the groups
+  it had been told. Found by clicking the dialog through on a real fleet.
+
 ## 2.70.0 — a first run without hurdles
 
 Walked through as a newcomer, start to finish, and fixed what stood in the way:

@@ -384,9 +384,14 @@ def plan(fleet, control_ways=(), ms=None):
                 else "replaced %s" % last["seed"][:10] if last.get("seed") else "never replaced")
         if follow:
             rows.append(("Secrets inside the services (%d kinds)" % len(follow), when, "rotate seed"))
-        if stay:
-            rows.append(("Database and admin passwords (%d kinds)" % len(stay), "kept as they are",
-                         "not built yet: %s" % ", ".join(stay)))
+        admin = [x for x in stay if x.endswith(".admin_password")]
+        rest = [x for x in stay if x not in admin]
+        if admin:
+            rows.append(("Admin logins of the services (%d)" % len(admin), "kept as they are",
+                         "yours: change the password in the service itself (%s)" % ", ".join(a.split(".")[0] for a in admin)))
+        if rest:
+            rows.append(("Other generated secrets (%d kinds)" % len(rest), "kept as they are",
+                         "not built yet: %s" % ", ".join(rest)))
     else:
         rows.append(("Generated passwords (databases, admin logins)", "", "rotate seed"))
     rows.append(("WireGuard keys of the machines", "not built yet", "a later release"))

@@ -3080,6 +3080,7 @@ class Window(Adw.ApplicationWindow):
         if listing:
             self.status = {h["name"]: h for h in listing["hosts"]}
             self.fleet_info = {k: listing.get(k) or "" for k in ("domain", "mesh", "master_ip")}
+            self.fleet_info["groups"] = listing.get("groups") or {}      # where a new device may go
         if err:
             self.append_log(err + "\n")
             self.toast(err.splitlines()[-1])

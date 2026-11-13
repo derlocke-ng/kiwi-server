@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.70.2 — the first setup finds the machine
+
+- The first **Set it up** of a machine failed for a newcomer: before its first setup a machine
+  has no name on the VPN, and the app tried that name. It now asks where the machine answers,
+  with the hub's address or a home machine's fixed address filled in.
+- A machine's own page shows its next step as the same sentence and button as Getting started,
+  where it had a command line.
+- Apply's question says what it does in plain words.
+
 ## 2.70.1 — the app's device dialog asks who it is for
 
 - Add a phone or laptop in the app had no "Who is it for?" choice: the app dropped the groups

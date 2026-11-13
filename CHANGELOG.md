@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.65.0 — a control node from one dialog
+
+- **A home server that looks after it…** (menu, and What next): pick the home server, type a
+  password twice, and the app does the rest by itself: protects the keys if they were plain
+  files (and shows the recovery key once), adds the control part, sets the password, applies
+  the machine and sends it the network. Each step is ticked off; a step that fails says why.
+  It replaces four terminal commands.
+
 ## 2.64.0 — the app guides
 
 - A **welcome** page says what Kiwi Server is and offers three ways in: start a new network,

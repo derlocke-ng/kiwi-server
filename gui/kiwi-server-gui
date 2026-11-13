@@ -1460,12 +1460,125 @@ class SetupWizard(Adw.Dialog):
         return False
 
 
-CONTROL_HOW = ("1. Open a home server here and add the part \"control\" to it (Parts).\n"
-               "2. In a terminal: kiwi-server serve <fleet> --set-password   (the password for its page)\n"
-               "3. Press Apply on that home server.\n"
-               "4. In a terminal: kiwi-server control push <fleet>\n\n"
-               "Then open https://control.<its name> from a device on your VPN. This computer keeps in step with it "
-               "by itself from then on.")
+class ControlSetupDialog(Adw.Dialog):
+    """A home server that looks after the network when this computer is off: pick it, choose
+    the password of its page, and every step runs by itself (what docs/control.md does by hand)."""
+
+    def __init__(self, win):
+        super().__init__(title="A home server that looks after the network", content_width=560)
+        self.win = win
+        self.nav = Adw.NavigationView()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="One home server checks every machine day and night, and gets a page for your phone: "
+                                   "see how everything is, bring a machine up to date, add a device. This computer "
+                                   "can then be off.", wrap=True, xalign=0))
+        self.hosts = [h for h in win.doc.hosts() if win.group_of(h) != "Masters" and not win.is_new(h)]
+        g = Adw.PreferencesGroup()
+        self.host = Adw.ComboRow(title="Which home server?", subtitle="One that is always on",
+                                 model=Gtk.StringList.new(self.hosts or ["(none is set up yet)"]))
+        g.add(self.host)
+        self.pw1 = Adw.PasswordEntryRow(title="Password for its page (12 characters or more)")
+        self.pw2 = Adw.PasswordEntryRow(title="The password again")
+        for row in (self.pw1, self.pw2):
+            row.connect("changed", lambda *_: self.check())
+            g.add(row)
+        box.append(g)
+        box.append(Gtk.Label(label="The password unlocks the network's keys on that server after a restart. It cannot "
+                                   "be read back anywhere: keep it in your password manager.", wrap=True, xalign=0,
+                             css_classes=["dim-label", "caption"]))
+        self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
+        box.append(self.note)
+        self.go = Gtk.Button(label="Set it up", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER,
+                             sensitive=False)
+        self.go.connect("clicked", lambda *_: self.start())
+        box.append(self.go)
+        self.nav.add(Adw.NavigationPage(title="A home server that looks after the network", child=box))
+        self.set_child(self.nav)
+
+    def check(self):
+        a, b = self.pw1.get_text(), self.pw2.get_text()
+        problem = ("" if not a else "The password needs 12 characters or more." if len(a.strip()) < 12
+                   else "The two passwords differ." if b and a != b else "")
+        self.note.set_label(problem)
+        self.note.set_visible(bool(problem))
+        self.go.set_sensitive(bool(self.hosts) and len(a.strip()) >= 12 and a == b)
+
+    def start(self):
+        win, host, password = self.win, self.hosts[self.host.get_selected()], self.pw1.get_text().strip()
+        if win.doc.dirty and not win.save():
+            return
+        path = win.doc.path
+        steps = []
+        if not (win.store or {}).get("store"):
+            steps.append(("Protecting the network's keys", ["secrets", "init", path], None, 120))
+        steps += [("Setting the password", ["serve", path, "--set-password"], password + "\n", 120),
+                  ("Setting up %s (this takes a few minutes)" % host, ["apply", path, host], None, 3600),
+                  ("Sending the network to %s, encrypted" % host, ["control", "push", path], None, 300)]
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        labels = []
+        for title, *_rest in [("Adding the control part to %s" % host,)] + steps:
+            lbl = Gtk.Label(label="○  " + title, xalign=0)
+            labels.append((lbl, title))
+            box.append(lbl)
+        self.out = Gtk.Label(wrap=True, xalign=0, selectable=True, visible=False)
+        box.append(self.out)
+        self.close_b = Gtk.Button(label="Close", halign=Gtk.Align.CENTER, visible=False)
+        self.close_b.connect("clicked", lambda *_: self.close())
+        box.append(self.close_b)
+        self.nav.push(Adw.NavigationPage(title="Setting it up", child=box, can_pop=False))
+        self.set_can_close(False)
+
+        def mark(i, sign):
+            labels[i][0].set_label("%s  %s" % (sign, labels[i][1]))
+            return False
+
+        # step 1 is ours: the part goes into the machine's settings
+        role = win.value_of(host, "role", "node")
+        parts = list((win.status.get(host) or {}).get("modules") or [])
+        for part in ("reverse-proxy", "control"):
+            if part not in parts:
+                parts.append(part)
+        win.doc.set(host, (role, "modules"), parts)
+        if not win.save():
+            return self.finish(False, "The settings could not be saved.", host, "")
+        mark(0, "✓")
+
+        def work():
+            recovery = ""
+            for i, (title, args, stdin, timeout) in enumerate(steps, start=1):
+                GLib.idle_add(mark, i, "…")
+                try:
+                    r = subprocess.run([win.cli] + args, input=stdin, capture_output=True, text=True, timeout=timeout)
+                    rc, out = r.returncode, (r.stdout + r.stderr)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    rc, out = 1, str(e)
+                if rc != 0:
+                    GLib.idle_add(mark, i, "✗")
+                    why = [ln for ln in out.replace("error: ", "").strip().splitlines() if ln.strip()]
+                    GLib.idle_add(self.finish, False, (why or ["It did not work."])[-1], host, recovery)
+                    return
+                if args[:2] == ["secrets", "init"]:
+                    recovery = next((w for w in out.split() if w.startswith("AGE-SECRET-KEY-")), "")
+                GLib.idle_add(mark, i, "✓")
+            GLib.idle_add(self.finish, True, "", host, recovery)
+        threading.Thread(target=work, daemon=True).start()
+
+    def finish(self, ok, why, host, recovery):
+        self.set_can_close(True)
+        name = (self.win.status.get(host) or {}).get("hostname") or host
+        text = ("Done. From a device on your VPN, open https://control.%s and log in with the password.\n"
+                "After a restart of %s, log in there once: that unlocks its keys again." % (name, host)) if ok else (
+            "It stopped here: %s\nNothing is broken; fix that and start again from the menu." % why)
+        if recovery:
+            text += ("\n\nWrite this recovery key down now, on paper or in a password manager. It is shown only "
+                     "once, and it opens the network's keys if this computer is lost:\n%s" % recovery)
+        self.out.set_label(text)
+        self.out.set_visible(True)
+        self.close_b.set_visible(True)
+        self.win.poll()
+        return False
 
 
 class DeviceDialog(Adw.Dialog):
@@ -1692,6 +1805,7 @@ class Window(Adw.ApplicationWindow):
         for name, cb in (("open", self.open_dialog), ("new", self.new_dialog), ("refresh", self.poll),
                          ("join", lambda: JoinDialog(self).present(self)), ("sync", lambda: self.sync(True)),
                          ("device", lambda: self.doc.path and DeviceDialog(self).present(self)),
+                         ("control-setup", lambda: self.doc.path and ControlSetupDialog(self).present(self)),
                          ("backup-now", lambda: self.doc.path and self.spawn(["backup", self.doc.path],
                                                                                "Saving the network…")),
                          ("render-all", lambda: self.render(None)), ("build-all", lambda: self.confirm_build(None)),
@@ -1713,14 +1827,15 @@ class Window(Adw.ApplicationWindow):
         self.recent_menu = Gio.Menu()
         menu = Gio.Menu()
         section = Gio.Menu()
-        section.append("Open a fleet…", "win.open")
-        section.append("New fleet…", "win.new")
-        section.append("Join a fleet…", "win.join")
+        section.append("Open a network from a file…", "win.open")
+        section.append("Start a new network…", "win.new")
+        section.append("Join a network with a link…", "win.join")
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
         section.append("Add a phone or laptop…", "win.device")
         section.append("Back up the network now", "win.backup-now")
+        section.append("A home server that looks after it…", "win.control-setup")
         section.append("Sync with the control node", "win.sync")
         section.append("Render every host", "win.render-all")
         section.append("Build every ISO…", "win.build-all")
@@ -2366,7 +2481,7 @@ class Window(Adw.ApplicationWindow):
         if not self.control_host():
             rows.append(("Let the network look after itself", "A home server can check and manage everything while "
                          "this computer is off, with a page for your phone. Give one home server the control part.",
-                         "How?", lambda: self.alert("A control node", CONTROL_HOW)))
+                         "Set it up…", lambda: ControlSetupDialog(self).present(self)))
         if not rows:
             return None
         g = Adw.PreferencesGroup(title="What next", description="Your machines run. These make the network useful and safe.")

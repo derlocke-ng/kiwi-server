@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.59.1 — the N2+ image checks clean
+
+- An Armbian image gets only the directories it lacks: debugfs's mkdir of an existing one
+  left a wrong link count, and the Odroid N2+ image failed its check.
+
 ## 2.59.0 — Armbian images
 
 - `target: armbian` with `armbian: { board: odroidn2 }`: `build` takes the board's Armbian

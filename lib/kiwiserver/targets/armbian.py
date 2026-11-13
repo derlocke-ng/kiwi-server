@@ -107,16 +107,20 @@ def root_partition(table):
     return p["start"], p["size"]
 
 
-def debugfs_commands(entries):
+def debugfs_commands(entries, existing=()):
     """entries: absolute path -> local file. Directories first, then files, owned by root;
     the units enabled; Armbian's first-login wizard skipped."""
     dirs = sorted({os.path.dirname(p) for p in entries} | {ROLE_DIR})
-    L = []
+    L, L_made = [], set()
     for d in dirs:
         parts = d.strip("/").split("/")
         for i in range(1, len(parts) + 1):
             sub = "/" + "/".join(parts[:i])
-            L.append("mkdir %s" % sub)          # an existing one only prints an error
+            # never one that exists: debugfs 1.47's mkdir of an existing directory still counts a
+            # link on its parent, and the filesystem no longer checks clean (found on the N2+ image)
+            if sub not in existing and sub not in L_made:
+                L.append("mkdir %s" % sub)
+                L_made.add(sub)
     for d in dirs:
         if d.startswith(ROLE_DIR):
             L += ["sif %s mode 040700" % d, "sif %s uid 0" % d, "sif %s gid 0" % d]
@@ -160,11 +164,20 @@ def _image(tc, host, role_script, base_xz, out_img, workdir):
         local = os.path.join(workdir, "f%03d" % i)
         util.write_text(local, text, 0o600)
         entries[path] = (local, mode)
+    existing = set()
+    for d in sorted({os.path.dirname(p) for p in entries} | {ROLE_DIR}):
+        parts = d.strip("/").split("/")
+        for i in range(1, len(parts) + 1):
+            sub = "/" + "/".join(parts[:i])
+            if sub not in existing:
+                r = tc.run(["debugfs", "-R", "stat " + sub, root], mounts=mounts, capture=True, check=False)
+                if "Type: directory" in (r.stdout or ""):
+                    existing.add(sub)
     cmds = os.path.join(workdir, "debugfs.cmds")
-    util.write_text(cmds, debugfs_commands(entries), 0o600)
+    util.write_text(cmds, debugfs_commands(entries, existing), 0o600)
     tc.run(["debugfs", "-w", "-f", cmds, root], mounts=mounts, capture=True)
     r = tc.run(["e2fsck", "-fn", root], mounts=mounts, capture=True, check=False)
-    if r.returncode not in (0, 1):
+    if r.returncode != 0:
         raise KiwiError("the image's root filesystem does not check clean after writing:\n%s" % (r.stdout or "")[-800:])
     tc.run(["sh", "-c", "dd if=%s of=%s bs=512 seek=%d conv=notrunc status=none" % (
         shlex.quote(root), shlex.quote(part), start)], mounts=mounts)

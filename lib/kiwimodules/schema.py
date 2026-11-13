@@ -33,6 +33,13 @@ class Setting:
         # a secret the renderer makes up when it is empty: derived from the
         # fleet's seed, so every render gives the same value (see config.Fleet.seed)
         self.generate = bool(d.get("generate", False)) and self.type == "secret"
+        # how a generated secret takes a new value when the fleet's seed is replaced. "restart":
+        # the containers read it at every start and keep it nowhere else, so new files and a
+        # restart are all it takes. Empty: it lives somewhere (a database, an account), and
+        # the fleet keeps the old value until the module has a step that changes it there.
+        self.rotate = str(d.get("rotate") or "") if self.generate else ""
+        if self.rotate not in ("", "restart"):
+            raise KiwiError("%s: setting %s: rotate is %r, not restart" % (owner, self.key, self.rotate))
         # a map of password hashes, one per value of the list setting `generate_each`, for
         # the secret each of those machines derives for itself as `generate_hash_of`
         # ("<module>/<key>"): what a server keeps of its clients' passwords
@@ -61,7 +68,7 @@ class Setting:
         return {"key": self.key, "type": self.type, "label": self.label, "help": self.help,
                 "required": self.required, "options": self.options, "targets": self.targets,
                 "default": self.default, "placeholder": self.placeholder, "group": self.group,
-                "generate": self.generate, "fallback_file": self.fallback_file, "pattern": self.pattern}
+                "generate": self.generate, "rotate": self.rotate, "fallback_file": self.fallback_file, "pattern": self.pattern}
 
 
 def coerce(setting, value, where):

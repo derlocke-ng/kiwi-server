@@ -12,6 +12,7 @@ this module only merges those blocks; roles.py validates them.
 import copy
 import ipaddress
 import difflib
+import json
 import os
 import sys
 import re
@@ -567,12 +568,31 @@ class Fleet:
         from kiwimodules.machine import seed_id
         return seed_id(self.seed())
 
+    def pins(self):
+        """{"hostname/module/key": value}: generated secrets that keep their value although
+        the seed was replaced, because they live somewhere a restart does not reach (a
+        database, an account). Written by `rotate seed`."""
+        p = self.resolve_path("secrets/pins.json")
+        if not os.path.isfile(p):
+            return {}
+        return json.loads(util.read_text(p))
+
+    def seed_from(self):
+        """The id of the seed this one replaced, or "": a machine takes a changed seed from
+        that one only."""
+        p = self.resolve_path("secrets/rotation.json")
+        if not os.path.isfile(p):
+            return ""
+        state = json.loads(util.read_text(p))
+        return str((state.get("seed") or {}).get("from") or (state.get("last") or {}).get("seed_from") or "")
+
     def derive_secret(self, *parts, length=32):
         """A generated secret, stable for the same seed and the same parts:
         the derivation lives in kiwimodules.machine, shared with the
-        standalone render."""
+        standalone render. A pinned one keeps its value."""
         from kiwimodules.machine import derive_secret
-        return derive_secret(self.seed(), *parts, length=length)
+        pin = self.pins().get("/".join(str(x) for x in parts)) if length == 32 else None
+        return pin or derive_secret(self.seed(), *parts, length=length)
 
     def names(self):
         return list(self.hosts)

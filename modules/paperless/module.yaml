@@ -101,6 +101,7 @@ settings:
   - key: secret_key
     type: secret
     generate: true
+    rotate: restart
     group: Generated
     help: "Signs Paperless's login sessions; a new one signs everybody out. Empty: generated from the fleet's seed."
   - key: db_password

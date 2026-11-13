@@ -252,15 +252,27 @@ onsubmit="return confirm('Leave {{ n }} out? Its old key stops working when the 
 <button>Leave {{ n }} out</button></form>{% endfor %}
 <p class="muted small">Something outside this network that you gave the network's key by hand (a desktop, a NAS) is not
 reached: it needs the new key.</p>
-<p style="margin-top:18px"><strong>2. The password of this page</strong></p>
+<p style="margin-top:18px"><strong>2. The secrets inside your services</strong><br><span class="muted small">
+{% if rot.seed_pending %}Under way: {{ rot.seed_pending|join(", ") }} still on the old ones. Switch them on, then press again.
+{% elif rot.seed_last %}Last replaced {{ rot.seed_last[:10] }}.{% else %}Never replaced.{% endif %}
+The passwords your services use among themselves, and the ones of the ad blocker's and the VPN's admin pages. Each
+machine is updated; some services restart for a moment and may ask you to sign in again. Database and
+admin passwords of Nextcloud, Immich and the like stay as they are for now.</span></p>
+<form method="post" action="/run" onsubmit="return confirm('Replace the secrets on every machine now? Some services restart.')">{{ tok }}
+<input type="hidden" name="action" value="rotate-seed"><button class="primary">Replace the secrets</button></form>
+{% for n in rot.seed_pending %}<form class="inline" method="post" action="/run" style="margin-top:8px"
+onsubmit="return confirm('Leave {{ n }} out? It takes the new secrets at its next update.')">{{ tok }}
+<input type="hidden" name="action" value="rotate-seed"><input type="hidden" name="host" value="{{ n }}">
+<button>Leave {{ n }} out</button></form>{% endfor %}
+<p style="margin-top:18px"><strong>3. The password of this page</strong></p>
 <form method="post" action="/controllers/password">{{ tok }}
 <input type="password" name="old" placeholder="Current password" autocomplete="current-password" required>
 <input type="password" name="new" placeholder="New password (12 characters or more)" autocomplete="new-password" minlength="12" required>
 <input type="password" name="again" placeholder="New password again" autocomplete="new-password" minlength="12" required>
 <button>Change the password</button></form>
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
-<p class="muted small" style="margin-top:18px">Not replaced yet by this page: the passwords of your services (databases,
-admin logins) and the VPN keys of the machines. That comes in a later version.</p></div>
+<p class="muted small" style="margin-top:18px">Not replaced yet by this page: database and admin passwords of the
+services, and the VPN keys of the machines. That comes in a later version.</p></div>
 <details><summary>What happens when I remove one?</summary><p class="muted">It can no longer open the network or get
 anything new. It still knows what it saw before; if that computer was lost or stolen, replace the keys above.</p></details>
 {% endblock %}""",
@@ -311,7 +323,8 @@ WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted hubs", "save": "Saving the data of",
-        "update": "Updating every machine", "rotate": "Replacing the SSH keys"}
+        "update": "Updating every machine", "rotate": "Replacing the SSH keys",
+        "rotate-seed": "Replacing the secrets inside the services"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",

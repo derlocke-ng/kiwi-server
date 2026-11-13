@@ -1929,7 +1929,8 @@ def share(fleet_path, action):
 def cmd_rotate(args):
     """What a computer that managed this network could read, made new. Without an action: the
     list. `ssh`: a new admin key and SSH CA on every machine; the old ones work until the last
-    machine has changed."""
+    machine has changed. `seed`: a new seed; each machine is applied and restarts the
+    containers whose secrets follow it."""
     from . import rotate
     if args.action and share(args.fleet, "pull"):      # before anything is made: this copy is the newest
         util.say("in step with the other computers")
@@ -1941,12 +1942,25 @@ def cmd_rotate(args):
             pass
     if not args.action:
         ways = [n for n, _k in store.Store.for_fleet(args.fleet).ways()] if store.Store.for_fleet(args.fleet).exists() else []
-        for what, state, how in rotate.plan(fleet, ways):
+        for what, state, how in rotate.plan(fleet, ways, ms):
             print("%-48s %s" % (what, "  ".join(x for x in (state, how) if x)))
         return
     for n in list(args.hosts) + list(args.waive or []):
         if n not in fleet.hosts:
             raise KiwiError("no such machine: %s" % n)
+    if args.action == "seed":
+        rotate.seed_begin(fleet, ms, args.why or "")
+        if share(args.fleet, "push"):       # the others first, as with the keys
+            util.say("the other computers and the control node know the new seed")
+
+        def apply(name):
+            return main(["apply", args.fleet, name])
+        left = rotate.seed(fleet, ms, apply, args.hosts, args.waive or (), args.why or "")
+        if share(args.fleet, "push"):
+            util.say("the other computers and the control node have the result")
+        if left:
+            raise SystemExit(1)
+        return
     rotate.begin(fleet, args.why or "")
     remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))    # the old keys too
     # the others first: a control node that knows both keys keeps reaching every machine
@@ -2354,9 +2368,10 @@ def build_parser():
     s.add_argument("--days", type=int, default=sshca.USER_DAYS, help="sign: how long it lets the key in (default %(default)s)")
     s.add_argument("--known-hosts", metavar="FILE", help="trust: instead of ~/.ssh/known_hosts")
     s = sub("rotate", cmd_rotate); s.add_argument("fleet")
-    s.add_argument("action", nargs="?", choices=("ssh",), help="without: the list of what can be replaced")
-    s.add_argument("hosts", nargs="*", help="ssh: only these machines (default: all that still have the old keys)")
-    s.add_argument("--waive", action="append", metavar="HOST", help="ssh: leave this machine out (off for good, or about to be installed anew)")
+    s.add_argument("action", nargs="?", choices=("ssh", "seed"), help="without: the list of what can be replaced. "
+                   "ssh: the admin key and SSH CA. seed: the secrets inside the services that a restart can change")
+    s.add_argument("hosts", nargs="*", help="only these machines (default: all that still wait)")
+    s.add_argument("--waive", action="append", metavar="HOST", help="leave this machine out (off for good, or about to be installed anew)")
     s.add_argument("--why", help="a note for the record, e.g. laptop lost")
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")

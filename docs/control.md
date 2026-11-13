@@ -95,16 +95,25 @@ Remove it (above), then replace what it knew. On the page, under
    fleet that you gave the fleet's key by hand (a desktop, a NAS) is not
    reached: put the new `secrets/admin_ed25519.pub` into its
    `authorized_keys` yourself.
-2. **The page's password.** Current password, new password, done. The old
+2. **The secrets inside your services.** The fleet gets a new seed, and
+   every machine is applied: the secrets its containers read at every start
+   change (what Nextcloud's parts use among themselves, the ad blocker's and
+   the VPN server's admin password, Paperless's session key, sftp and
+   downloader passwords). Those containers restart; some ask you to sign in
+   again. Database and admin passwords live in the service itself: they keep
+   their value (`secrets/pins.json`) until their module can change them
+   there.
+3. **The page's password.** Current password, new password, done. The old
    one opens nothing any more.
 
 ```bash
 kiwi-server rotate ~/kiwi/fleet.yaml          # what can be replaced, and when it last was
 kiwi-server rotate ~/kiwi/fleet.yaml ssh      # new SSH keys on every machine
+kiwi-server rotate ~/kiwi/fleet.yaml seed     # a new seed, every machine applied
 ```
 
-Not built yet: new passwords for the services (they derive from the seed),
-new VPN keys for the machines, the key that unlocks disks at boot, a new
+Not built yet: new database and admin passwords for the services, new VPN
+keys for the machines, the key that unlocks disks at boot, a new
 certificate authority. A key of your own in `admin.ssh_keys` is yours to
 replace ([design/controllers.md](design/controllers.md)).
 

@@ -76,6 +76,15 @@ ssh`: a new admin key and SSH CA, the old ones kept as `.old` until every machin
 changed; the page's **Replace the keys**) and the control password (on the page). The
 shared admin key stays one key for now: a key per controller comes with scopes.
 
+Built in 2.74.0: the seed (`rotate <fleet> seed`). A module marks a generated secret
+`rotate: restart` when its containers read it at every start and keep it nowhere else;
+those follow the new seed. Every other generated secret is pinned to the value it has
+(`secrets/pins.json`, in the store) before the seed is replaced, so nothing a database or
+an account knows changes under it. The bundle names the seed it replaced
+(`KS_SEED_FROM`); a machine takes a changed seed from that one only. The module `rotate`
+steps for the pinned ones (ALTER USER, the services' own password commands, restic's key
+change) come one module at a time: each removes pins.
+
 A rotation that is open shows on the page until every line is done or waived, with who
 waived it.
 

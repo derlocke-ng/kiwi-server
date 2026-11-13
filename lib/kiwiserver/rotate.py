@@ -1,8 +1,13 @@
 """What a removed controller knew, made new (docs/design/controllers.md, Rotation).
 
-Built so far: the SSH keys. The fleet's own admin key and its SSH CA are made anew, and
-each machine takes the new ones while the old still open it; the old ones go when every
-machine has changed. A run that could not reach a machine is finished by the next run.
+The SSH keys: the fleet's own admin key and its SSH CA are made anew, and each machine
+takes the new ones while the old still open it; the old ones go when every machine has
+changed. A run that could not reach a machine is finished by the next run.
+
+The seed: a new one, so every generated secret that its containers read at every start
+(`rotate: restart` in the module) changes at the machine's next apply. The others live in
+a database or an account: they are pinned to the value they have (secrets/pins.json) until
+their module has a step that changes them there.
 """
 import json
 import os
@@ -232,7 +237,84 @@ def ssh(fleet, names=(), waive=(), why="", reach=None, say=util.say, runner=subp
     return left
 
 
-def plan(fleet, control_ways=()):
+PINS = "secrets/pins.json"
+
+
+def generated(fleet, ms):
+    """[(hostname, module, setting)]: every generated secret of the fleet's machines."""
+    out = []
+    for h in fleet.hosts.values():
+        for m in h.modules:
+            out += [(h.hostname, m, s) for s in ms.get(m).settings if s.generate]
+    return out
+
+
+def seed_pending(fleet, state=None):
+    seed = (state if state is not None else load(fleet)).get("seed")
+    return [n for n in fleet.hosts if n not in seed["done"]] if seed else []
+
+
+def seed_begin(fleet, ms, why=""):
+    """A new seed. Before: what does not follow it is pinned to the value it has. The old
+    seed stays beside it (.old) until every machine has changed, as a way back."""
+    from kiwimodules.machine import seed_id
+    state = load(fleet)
+    if state.get("seed"):
+        return state
+    if not fleet.has_seed():
+        raise KiwiError("this fleet has no seed: no secret of it is generated")
+    pins = fleet.pins()
+    for hostname, module, s in generated(fleet, ms):
+        key = "%s/%s/%s" % (hostname, module, s.key)
+        if not getattr(s, "rotate", "") and key not in pins:
+            pins[key] = fleet.derive_secret(hostname, module, s.key)
+    util.write_text(fleet.resolve_path(PINS), json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
+    path = fleet.resolve_path("secrets/seed")
+    was = seed_id(util.read_bytes(path))
+    os.replace(path, path + OLD)
+    util.write_bytes(path, os.urandom(32), 0o600)
+    state["seed"] = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "why": why, "from": was, "done": []}
+    _save(fleet, state)
+    return state
+
+
+def seed(fleet, ms, apply, names=(), waive=(), why="", say=util.say):
+    """The machines take the new seed: `apply(name)` is an apply of that machine, 0 when it
+    worked. Returns the machines that still wait."""
+    state = seed_begin(fleet, ms, why)
+    for n in list(names) + list(waive):
+        if n not in fleet.hosts:
+            raise KiwiError("no such machine: %s" % n)
+    for n in waive:
+        if n not in state["seed"]["done"]:
+            state["seed"]["done"].append(n)
+            say("%s: left out (its next apply brings the new secrets)" % n)
+    _save(fleet, state)
+    todo = [n for n in (names or seed_pending(fleet, state)) if n not in state["seed"]["done"]]
+    me = os.environ.get("KIWI_CONTROL_HOST")        # this node last: its apply may restart what runs this
+    for n in [x for x in todo if x != me] + [x for x in todo if x == me]:
+        if apply(n) != 0:
+            say("%s: not changed" % n)
+            continue
+        state["seed"]["done"].append(n)
+        _save(fleet, state)
+        say("%s: runs with the new secrets" % n)
+    left = seed_pending(fleet, state)
+    if left:
+        say("still on the old secrets: %s. Run this again when they are on. "
+            "A machine that is gone or will be installed anew: --waive NAME" % ", ".join(left))
+    else:
+        old = fleet.resolve_path("secrets/seed") + OLD
+        if os.path.isfile(old):
+            os.remove(old)
+        state.setdefault("last", {}).update(seed=time.strftime("%Y-%m-%dT%H:%M:%S"), seed_from=state["seed"]["from"])
+        state["seed"] = None
+        _save(fleet, state)
+        say("every machine runs with the new secrets; the old seed is gone")
+    return left
+
+
+def plan(fleet, control_ways=(), ms=None):
     """[(what, state, how)]: what a computer that managed this network could read, and how
     each is replaced."""
     state = load(fleet)
@@ -251,7 +333,20 @@ def plan(fleet, control_ways=()):
                      "a key of yours", "by hand: change admin.ssh_keys, then apply"))
     if "control" in control_ways:
         rows.append(("The control page's password", "", "on the page: Computers, Change the password"))
-    rows.append(("Generated passwords (databases, admin logins)", "not built yet", "a new seed: a later release"))
+    if ms is not None and fleet.has_seed():
+        gen = generated(fleet, ms)
+        follow = sorted({"%s.%s" % (m, x.key) for _h, m, x in gen if getattr(x, "rotate", "")})
+        stay = sorted({"%s.%s" % (m, x.key) for _h, m, x in gen if not getattr(x, "rotate", "")})
+        waits = seed_pending(fleet, state)
+        when = ("under way: %s still on the old ones" % ", ".join(waits) if waits
+                else "replaced %s" % last["seed"][:10] if last.get("seed") else "never replaced")
+        if follow:
+            rows.append(("Secrets inside the services (%d kinds)" % len(follow), when, "rotate seed"))
+        if stay:
+            rows.append(("Database and admin passwords (%d kinds)" % len(stay), "kept as they are",
+                         "not built yet: %s" % ", ".join(stay)))
+    else:
+        rows.append(("Generated passwords (databases, admin logins)", "", "rotate seed"))
     rows.append(("WireGuard keys of the machines", "not built yet", "a later release"))
     rows.append(("The key that unlocks disks at boot", "not built yet", "a later release"))
     rows.append(("The certificate authority", "not built yet", "a later release; every device imports the new one"))

@@ -55,8 +55,8 @@ def encrypt(data, passphrase):
 def decrypt(data, passphrase):
     try:
         return _openssl(["-d"] + ENC_ARGS, data, passphrase)
-    except KiwiError as e:
-        raise KiwiError("cannot decrypt the backup — wrong passphrase? (%s)" % e)
+    except KiwiError:
+        raise KiwiError("the passphrase does not open this copy")
 
 
 def _walk(path):

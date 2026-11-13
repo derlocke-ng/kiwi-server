@@ -579,6 +579,9 @@ class TestArmbian(Base):
         self.assertIn("sif /var/lib/kiwi-server/role.sh mode 0100700", cmds)
         self.assertIn("symlink /etc/systemd/system/multi-user.target.wants/kiwi-role.service", cmds)
         self.assertIn("rm /root/.not_logged_in_yet", cmds)
+        self.assertNotIn("mkdir /var\n", armbian_t.debugfs_commands({"/var/lib/kiwi-server/role.sh": ("/tmp/x", 0o700)},
+                                                                     {"/var", "/var/lib"}))   # existing: never again
+        self.assertIn("mkdir /var/lib/kiwi-server\n", cmds)
         self.assertIn("rm /etc/systemd/system/serial-getty@.service.d/override.conf", cmds)   # no root on the console
         self.assertEqual(armbian_t.root_partition({"partitions": [
             {"start": 8192, "size": 500, "type": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},

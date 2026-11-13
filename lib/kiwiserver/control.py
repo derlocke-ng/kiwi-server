@@ -652,13 +652,12 @@ class Control:
 
     @staticmethod
     def qr_svg(text):
-        """The config as a QR code a phone's WireGuard app scans (qrencode), or ''."""
+        """The config as a QR code a phone's WireGuard app scans, or ''."""
+        from . import qr
         try:
-            r = subprocess.run(["qrencode", "-t", "SVG", "-m", "2", "-o", "-"], input=text.encode(), capture_output=True)
-        except OSError:
+            return qr.svg(text)
+        except KiwiError:
             return ""
-        svg = r.stdout.decode(errors="replace") if r.returncode == 0 else ""
-        return svg[svg.find("<svg"):] if "<svg" in svg else ""
 
     def loop(self, stop):
         """The timers: the fleet's status every status_minutes, `watch --once` (RAM masters)

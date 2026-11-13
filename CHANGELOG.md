@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.71.0 — the QR code needs nothing installed
+
+- kiwi-server draws QR codes itself (`lib/kiwiserver/qr.py`: byte mode, level L, up to 858
+  bytes), checked module for module against qrencode in the tests. So:
+- the app's **Add a phone or laptop** shows the code on any computer (it needed qrencode);
+- `kiwi-server enroll … --qr` prints it in any terminal, light or dark;
+- `kiwi-server qr <file> [--png|--svg]` makes one of a device's config;
+- the control page no longer depends on the qrencode program.
+
 ## 2.70.2 — the first setup finds the machine
 
 - The first **Set it up** of a machine failed for a newcomer: before its first setup a machine

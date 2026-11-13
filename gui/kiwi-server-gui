@@ -1808,26 +1808,22 @@ class DeviceDialog(Adw.Dialog):
                       margin_start=18, margin_end=18)
         box.append(Gtk.Label(label="%s is ready" % name, xalign=0, css_classes=["title-2"]))
         qr = None
-        tool = shutil.which("qrencode") or shutil.which("qrencode", path="/home/linuxbrew/.linuxbrew/bin")
-        if tool:
-            try:
-                with open(conf, "rb") as f:
-                    r = subprocess.run([tool, "-t", "PNG", "-s", "6", "-m", "2", "-o", "-"], input=f.read(),
-                                       capture_output=True, timeout=20)
-                if r.returncode == 0:
-                    qr = Gtk.Picture.new_for_paintable(Gdk.Texture.new_from_bytes(GLib.Bytes.new(r.stdout)))
-                    qr.set_size_request(280, 280)
-            except (OSError, subprocess.TimeoutExpired, GLib.Error):
-                qr = None
+        try:                                 # kiwi-server draws it itself: nothing else to install
+            r = subprocess.run([self.win.cli, "qr", conf, "--png"], capture_output=True, timeout=30)
+            if r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
+                qr = Gtk.Picture.new_for_paintable(Gdk.Texture.new_from_bytes(GLib.Bytes.new(r.stdout)))
+                qr.set_size_request(300, 300)
+                qr.set_can_shrink(False)
+        except (OSError, subprocess.TimeoutExpired, GLib.Error):
+            qr = None
         control = self.win.control_host()
         if qr is not None:
             box.append(Gtk.Label(label="On the phone: install the WireGuard app, tap +, then Scan from QR code.",
                                  wrap=True, xalign=0))
             box.append(qr)
         else:
-            box.append(Gtk.Label(label="For a phone you need its QR code. " + (
-                "Your control page shows it: Devices, then Show its QR code." if control else
-                "Install qrencode on this computer (brew install qrencode) and the code is shown here."),
+            box.append(Gtk.Label(label="The QR code could not be drawn here." + (
+                " Your control page shows it: Devices, then Show its QR code." if control else ""),
                 wrap=True, xalign=0))
         box.append(Gtk.Label(label="On a laptop: install WireGuard and import the file.", wrap=True, xalign=0))
         buttons = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)

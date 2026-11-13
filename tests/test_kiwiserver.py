@@ -5430,5 +5430,50 @@ class TestControllers(StoreBase):
             controlsync.parse_invite("https://example.org/no-invite")
 
 
+
+class TestQr(unittest.TestCase):
+    """The QR encoder against qrencode, module for module, and by itself."""
+
+    def test_shapes(self):
+        from kiwiserver import qr
+        self.assertEqual(len(qr.matrix("x")), 21)                       # version 1
+        self.assertEqual(qr.version_for(17), 1)
+        self.assertEqual(qr.version_for(18), 2)
+        self.assertEqual(qr.version_for(271), 10)
+        self.assertEqual(qr.version_for(272), 11)
+        with self.assertRaises(KiwiError):
+            qr.version_for(900)
+        m = qr.matrix("[Interface]\nPrivateKey = abc\n" * 9)
+        size = len(m)
+        self.assertTrue(all(len(row) == size for row in m))
+        self.assertEqual(m[size - 8][8], 1)                              # the dark module
+        for r0, c0 in ((0, 0), (0, size - 7), (size - 7, 0)):            # the three finders
+            self.assertEqual([m[r0][c0 + i] for i in range(7)], [1] * 7)
+            self.assertEqual(m[r0 + 3][c0 + 3], 1)
+        # the format information reads back: level L, a mask, and its error correction agrees
+        info = sum(m[8][size - 1 - i] << i for i in range(8)) | sum(m[size - 15 + i][8] << i for i in range(8, 15))
+        data = (info ^ 0x5412) >> 10
+        self.assertEqual(data >> 3, 0b01)
+        self.assertEqual(qr._bch(data, 5, 0x537, 11) ^ 0x5412, info)
+        self.assertTrue(qr.png("hello").startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn("<svg", qr.svg("hello"))
+        self.assertEqual(len(qr.text_blocks("hello").splitlines()), (21 + 4 + 1) // 2)
+
+    @unittest.skipUnless(have("qrencode"), "qrencode not installed")
+    def test_every_module_is_qrencodes(self):
+        import random
+        from kiwiserver import qr
+        rnd = random.Random(7)
+        for n in (1, 17, 18, 100, 154, 271, 272, 330, 458, 520, 644, 858):
+            text = "".join(rnd.choice("abcdefghijklmnopqrstuvwxyzABCDEFGH0123456789=/+ \n[]") for _ in range(n))
+            out = subprocess.run(["qrencode", "-l", "L", "-8", "-m", "0", "-t", "ASCII", "-o", "-"],
+                                 input=text.encode(), capture_output=True, check=True).stdout.decode()
+            theirs = [[1 if line[i:i + 2] == "##" else 0 for i in range(0, len(line), 2)] for line in out.splitlines() if line]
+            size = len(theirs)
+            info = sum(theirs[8][size - 1 - i] << i for i in range(8)) | sum(theirs[size - 15 + i][8] << i for i in range(8, 15))
+            mask = ((info ^ 0x5412) >> 10) & 7                           # qrencode's choice of mask: the same one here
+            self.assertEqual(qr.matrix(text, mask), theirs, "%d bytes" % n)
+
+
 if __name__ == "__main__":
     unittest.main()

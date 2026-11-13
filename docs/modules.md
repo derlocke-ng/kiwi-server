@@ -2,16 +2,18 @@
 
 A module is one service of a Kiwi Network machine: the VPN client, the
 WireGuard server, Pi-hole, the reverse proxy, Nextcloud … A **role** picks a
-set of modules (`master`, `node-gw`, `node-cloud`), kiwi-server renders them
-for one host into a *stack* — a `docker-compose.yml`, the module config files,
-the host units — and the host's role script unpacks and starts it on first
-boot. The machine needs docker and nothing else; all templating happens on
-the machine that runs `kiwi-server`.
+set of modules (`master`, or `node` with a preset), kiwi-server renders them
+for one host into a *stack* — a `docker-compose.yml`, podman quadlets, the
+module config files, the host units — and the host's role script unpacks and
+starts it when the role is applied. The machine needs podman (or docker under
+`runtime: docker`) and nothing else; all templating happens on the machine
+that runs `kiwi-server`. [Roles and modules](roles-and-modules.md) lists the
+modules this release ships.
 
 The module format is kiwi-v2's (`kiwi-network-docker/kiwi-v2/modules`), with
-the gaps its TODO listed filled in and a few keys added so a module can say
-everything the generator needs. The modules shipped here are the live v1
-stacks (kiwi-master, kiwi-node-gw, kiwi-cloud) taken apart.
+the gaps its to-do list named filled in and a few keys added so a module can
+say everything the generator needs. The first modules were the live v1 stacks
+(kiwi-master, kiwi-node-gw, kiwi-cloud) taken apart.
 
 ## A module directory
 
@@ -235,19 +237,23 @@ host units. `docker compose config` validates the result when the plugin is
 installed.
 
 `output/<host>/<host>.stack/` holds the bundle for review; the role script
-carries the same files and, on first boot, `ks_stack_apply` from
+carries the same files and, when the role is applied, `ks_stack_apply` from
 `roles/common/lib.sh`:
 
-1. creates the service user, installs or enables docker, loads kernel
-   modules, applies sysctls, turns off systemd-resolved's stub listener when
-   the dns module is present;
+1. creates the service user, makes sure podman is there (or installs or
+   enables docker under `runtime: docker`), loads kernel modules, applies
+   sysctls, turns off systemd-resolved's stub listener when the dns module is
+   present;
 2. unpacks the bundle into the stack directory (owned by the service user,
-   compose file 0600), installs the host units;
-3. installs `/usr/local/bin/kiwi-stack` (`start|stop|restart|update|status|logs|vpn-restart`)
+   compose file 0600), installs the quadlets and the host units;
+3. installs `/usr/local/bin/kiwi-stack` (`start|stop|restart|update|status|verify|logs|vpn-restart`,
+   plus `backup|snapshots|restore` with the backup module)
    and `/etc/kiwi-server/stack.env`;
 4. opens the ports in firewalld or ufw;
-5. enables `kiwi-stack.service` (compose up at boot), the daily VPN restart
-   and weekly update timers the stack settings ask for, and the host units.
+5. pulls the images, enables `kiwi-stack.service` (the stack at boot), starts
+   the stack or restarts what changed, checks that every container runs
+   (`kiwi-stack verify`), and enables the daily VPN restart and weekly update
+   timers the stack settings ask for and the host units.
 
 ## Rendering one machine without a fleet: kiwi-modules
 

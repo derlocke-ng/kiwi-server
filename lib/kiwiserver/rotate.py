@@ -226,7 +226,7 @@ def ssh(fleet, names=(), waive=(), why="", reach=None, say=util.say, runner=subp
     left = pending(fleet, state)
     if left:
         say("still on the old keys: %s. Run this again when they are on; the old keys work until then. "
-            "A machine that is gone or will be installed anew: --waive NAME" % ", ".join(left))
+            "A machine that is gone or will be installed anew: Leave out on the page, or --waive NAME" % ", ".join(left))
     else:
         keys = state["ssh"]["keys"]
         finish(fleet, state)
@@ -302,7 +302,7 @@ def seed(fleet, ms, apply, names=(), waive=(), why="", say=util.say):
     left = seed_pending(fleet, state)
     if left:
         say("still on the old secrets: %s. Run this again when they are on. "
-            "A machine that is gone or will be installed anew: --waive NAME" % ", ".join(left))
+            "A machine that is gone or will be installed anew: Leave out on the page, or --waive NAME" % ", ".join(left))
     else:
         old = fleet.resolve_path("secrets/seed") + OLD
         if os.path.isfile(old):

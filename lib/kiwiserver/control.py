@@ -497,7 +497,7 @@ class Control:
                 raise KiwiError("there are no machines yet")
             me = os.environ.get("KIWI_CONTROL_HOST")    # this node last: its own apply may restart this page
             names = [n for n in names if n != me] + [n for n in names if n == me]
-            return list(self.kiwi) + ["apply", self.fleet_path] + names
+            return list(self.kiwi) + ["apply", self.fleet_path, "--update"] + names
         if action == "save":                # one machine's data, to its backup machines, now
             if len(hosts) != 1:
                 raise KiwiError("which machine?")

@@ -219,6 +219,7 @@ and the machine's page in the Kiwi Server app.</p></details>
 {% endblock %}""",
 
     "controllers.html": """{% extends "base.html" %}{% block main %}
+{% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
 <h1>Computers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
 {% for name, key in ways %}<div class="card row"><span><strong>{{ name }}</strong>
 {% if name == "control" %}<span class="muted"> · this machine (your password)</span>
@@ -270,7 +271,6 @@ onsubmit="return confirm('Leave {{ n }} out? It takes the new secrets at its nex
 <input type="password" name="new" placeholder="New password (12 characters or more)" autocomplete="new-password" minlength="12" required>
 <input type="password" name="again" placeholder="New password again" autocomplete="new-password" minlength="12" required>
 <button>Change the password</button></form>
-{% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
 <p class="muted small" style="margin-top:18px">Not replaced yet by this page: database and admin passwords of the
 services, and the VPN keys of the machines. That comes in a later version.</p></div>
 <details><summary>What happens when I remove one?</summary><p class="muted">It can no longer open the network or get
@@ -508,7 +508,11 @@ def make_app(control: Control):
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":
             say["ok"] = "Done. Nothing was changed; the lines below say what Apply would do."
-        back = "/backups" if j["action"] in ("save", "backup") else "/hosts/" + j["hosts"][0] if j["hosts"] else "/"
+        if j["action"] in ("rotate", "rotate-seed"):      # a machine that is off is no failure: it waits
+            say["failed"] = ("Not every machine could be changed. The ones that wait are listed under Computers; "
+                             "the lines below say why.")
+        back = ("/backups" if j["action"] in ("save", "backup") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
+                else "/hosts/" + j["hosts"][0] if j["hosts"] else "/")
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
 
     @app.get("/api/jobs/{jid}/log")

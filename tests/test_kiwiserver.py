@@ -5439,7 +5439,17 @@ class TestControllers(StoreBase):
         self.assertEqual(rc, 0, out)
         self.assertIn("# from the laptop", util.read_text(self.n.fleet_path))
         self.assertIn("pushed the fleet", [e["what"] for e in self.n.audit_tail(5)])
-        # the node changes it too (a job); the laptop's next push is refused until it pulls
+        # the node learned a host key meanwhile, the laptop changed the fleet file: one copy from both
+        write(os.path.join(os.path.dirname(self.n.fleet_path), "secrets", "known_hosts"), "m1 a-key-the-node-saw\n")
+        self.n.store.sync()
+        with open(self.laptop, "a") as fh:
+            fh.write("# and once more\n")
+        rc, out = self.laptop_does("push")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a-key-the-node-saw", util.read_text(os.path.join(os.path.dirname(self.laptop), "secrets", "known_hosts")))
+        self.assertIn("# and once more", util.read_text(self.n.fleet_path))
+        self.assertIn("a-key-the-node-saw", util.read_text(os.path.join(os.path.dirname(self.n.fleet_path), "secrets", "known_hosts")))
+        # the node changes the fleet file too (a job), and so does the laptop: that is for a person
         with open(self.n.fleet_path, "a") as fh:
             fh.write("# from the node\n")
         self.n.save_fleet()
@@ -5447,9 +5457,9 @@ class TestControllers(StoreBase):
             fh.write("# again from the laptop\n")
         rc, out = self.laptop_does("push")
         self.assertNotEqual(rc, 0)
-        self.assertIn("control pull first", out)
+        self.assertIn("changed on both sides since the last sync: fleet.yaml", out)
         rc, out = self.laptop_does("pull")
-        self.assertIn("control push first", out)                                          # both changed: the owner decides
+        self.assertIn("Which copy counts?", out)                                          # both changed it: the owner decides
         self.assertEqual(self.laptop_does("pull", "--force")[0], 0)
         self.assertIn("# from the node", util.read_text(self.laptop))
         # removed: it gets nothing any more, and the store is no longer encrypted to it
@@ -5600,9 +5610,9 @@ class TestFolderSync(StoreBase):
         with open(self.f.path, "a") as fh:
             fh.write("# from the desktop\n")
         rc, out, err = self.run_cli("control", "push", self.f.path)
-        self.assertIn("control pull first", err)
+        self.assertIn("changed on both sides since the last sync: fleet.yaml", err)
         rc, out, err = self.run_cli("control", "pull", self.f.path)
-        self.assertIn("control push first", err)                 # both changed: the owner decides
+        self.assertIn("Which copy counts?", err)                 # the same file on both sides: the owner decides
         rc, out, err = self.run_cli("control", "pull", self.f.path, "--force")
         self.assertEqual(rc, 0, err)
         self.assertIn("# from the laptop", util.read_text(self.f.path))
@@ -5617,6 +5627,44 @@ class TestFolderSync(StoreBase):
         self.assertEqual(rc, 0, err)
         self.assertNotIn("stranger", [n for n, _k in store.Store.for_fleet(self.f.path).ways()])
         self.assertEqual(controlsync.requests(self.folder), [])
+
+    def both_joined(self):
+        self.assertEqual(self.run_cli("control", "push", self.f.path, "--dir", self.folder)[0], 0)
+        self.assertEqual(self.laptop_does("join", "--dir", self.folder, "--name", "laptop")[0], 0)
+        self.assertEqual(self.run_cli("control", "accept", self.f.path, "laptop")[0], 0)
+        rc, out = self.laptop_does("join", "--dir", self.folder, "--name", "laptop")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.run_cli("control", "pull", self.f.path)[0], 0)
+        return os.path.join(os.path.dirname(self.laptop), "secrets")
+
+    def test_changes_to_different_files_on_both_sides_become_one_copy(self):
+        there = self.both_joined()
+        write(os.path.join(there, "devices", "phone.conf"), "made on the laptop")
+        write(os.path.join(there, "known_hosts"), "sh3 key-the-laptop-saw\n")
+        rc, out = self.laptop_does("push")
+        self.assertEqual(rc, 0, out)
+        write(os.path.join(self.secrets, "known_hosts"), "m1 key-the-desktop-saw\n")
+        with open(self.f.path, "a") as fh:
+            fh.write("# from the desktop\n")
+        rc, out, err = self.run_cli("control", "push", self.f.path)            # both changed, not the same files
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "devices", "phone.conf")), "made on the laptop")
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "known_hosts")),
+                         "m1 key-the-desktop-saw\nsh3 key-the-laptop-saw\n")       # host keys of both
+        rc, out = self.laptop_does("pull")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("# from the desktop", util.read_text(self.laptop))
+        self.assertIn("m1 key-the-desktop-saw", util.read_text(os.path.join(there, "known_hosts")))
+        self.assertIn("in step", self.run_cli("control", "pull", self.f.path)[1] + self.run_cli("control", "pull", self.f.path)[2])
+        # and a pull does it as well, when it is this side that looks first
+        write(os.path.join(there, "note"), "laptop again")
+        self.assertEqual(self.laptop_does("push")[0], 0)
+        write(os.path.join(self.secrets, "other"), "desktop again")
+        rc, out, err = self.run_cli("control", "pull", self.f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "note")), "laptop again")
+        self.assertEqual(self.laptop_does("pull")[0], 0)
+        self.assertEqual(util.read_text(os.path.join(there, "other")), "desktop again")
 
     def test_a_folder_caught_mid_sync_is_refused(self):
         self.run_cli("control", "push", self.f.path, "--dir", self.folder)

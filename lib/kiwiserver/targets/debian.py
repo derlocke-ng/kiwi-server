@@ -114,7 +114,7 @@ def preseed(host, version):
     L += [
         "",
         "### packages",
-        "d-i base-installer/kernel/image string linux-image-amd64",
+        "d-i base-installer/kernel/image string linux-image-%s" % d.get("arch", "amd64"),
         "d-i apt-setup/non-free-firmware boolean %s" % ("true" if d.get("non_free_firmware", True) else "false"),
         "d-i apt-setup/services-select multiselect security, updates",
         "d-i apt-setup/security_host string security.debian.org",

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.58.0 — boards
+
+- `kiwi-server adopt <fleet> <host> --as user@address`: a machine that already runs Debian or
+  Armbian (an Odroid, a Banana Pi from its SD card or eMMC) becomes the host without a
+  reinstall: the admin user, the fleet's keys, sshd and update settings, then its role. The
+  board's login may use a password; the fleet is checked before the board is touched.
+- `debian.arch: arm64`: the arm64 netinst for UEFI machines, and the right kernel.
+- An apply over a forwarded SSH port (a VM, a router's port forward) no longer takes it for a
+  moved sshd and switches to port 22.
+- kiwi-stack 0.7.1 (nftables for podman on minimal Debian, Docker on Ubuntu-based Armbian),
+  kiwi-modules 0.28.1 (tang and strfry for arm64).
+- Proven on an arm64 VM: adopted, a node of the mesh through the master's exit.
+
 ## 2.57.0 — a cache for the LAN
 
 - kiwi-modules 0.28.0 and kiwi-stack 0.7.0: the `cache` module on a node keeps container

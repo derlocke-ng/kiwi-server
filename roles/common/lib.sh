@@ -165,7 +165,7 @@ ks_ensure_docker() { # [ce|distro]
 ks_ensure_podman() {
     if ! command -v podman >/dev/null 2>&1; then
         case $KS_OS in
-            debian) ks_apt podman netavark aardvark-dns catatonit curl ;;
+            debian) ks_apt podman netavark aardvark-dns catatonit nftables curl ;;
             ostree) ks_die "this image has no podman — every Fedora CoreOS and uCore image ships it; is this one stripped?" ;;
             *)      ks_die "podman is not installed and this is not Debian — install it first" ;;
         esac
@@ -173,6 +173,10 @@ ks_ensure_podman() {
     # the modules' `init: true` needs catatonit (a Recommends on Debian, not a Depends)
     if [[ $KS_OS == debian ]] && ! ls /usr/libexec/podman/catatonit /usr/bin/catatonit >/dev/null 2>&1; then
         ks_apt catatonit
+    fi
+    # netavark sets up the networks with nft; a minimal Debian (a cloud image, Armbian minimal) lacks it
+    if [[ $KS_OS == debian ]] && ! command -v nft >/dev/null 2>&1; then
+        ks_apt nftables
     fi
     local pv
     pv=$(podman --version 2>/dev/null | awk '{print $NF}')
@@ -200,11 +204,12 @@ ks_docker_ce() {
     ks_say "installing Docker CE from download.docker.com"
     ks_apt ca-certificates curl gnupg
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+    local codename distro
+    distro=$(. /etc/os-release && { [[ $ID == ubuntu || ${ID_LIKE:-} == *ubuntu* ]] && echo ubuntu || echo debian; })  # Armbian comes as either
+    curl -fsSL "https://download.docker.com/linux/$distro/gpg" -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
-    local codename
     codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $codename stable" \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$distro $codename stable" \
         > /etc/apt/sources.list.d/docker.list
     KS_APT_UPDATED=0
     ks_apt docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin

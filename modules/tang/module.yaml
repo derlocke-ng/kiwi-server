@@ -45,4 +45,4 @@ settings:
   - key: image
     group: Advanced
     help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default is this repository's build (images/tang)."
-    default: ghcr.io/derlocke-ng/tang:15-kiwi2
+    default: ghcr.io/derlocke-ng/tang:15-kiwi3

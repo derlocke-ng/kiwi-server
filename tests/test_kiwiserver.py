@@ -32,7 +32,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
+from kiwiserver import adopt as adoptmod, facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
 from kiwiserver.targets import coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -510,6 +510,50 @@ class TestDebian(Base):
             self.assertEqual(r.returncode, 0, r.stdout)
 
 
+class TestAdopt(Base):
+    def host(self, **over):
+        f = self.fleet({"defaults": self.base_defaults(target="debian", admin={"user": "kiwi", "password": "pw",
+                                                                            "ssh_keys": [KEY], "groups": ["wheel"]}),
+                        "hosts": {"fig": dict({"hostname": "fig.home"}, **over)}})
+        return f.hosts["fig"]
+
+    def test_script_and_bundle(self):
+        h = self.host()
+        s = adoptmod.script(h)
+        self.assertIn("U=kiwi\n", s)
+        self.assertIn("hostnamectl set-hostname fig", s)
+        self.assertIn("usermod -p ", s)                     # the fleet's console password, as on a fresh install
+        self.assertIn("unattended-upgrades", s)
+        self.assertIn("for g in wheel;", s)
+        import tarfile, io as _io
+        names = tarfile.open(fileobj=_io.BytesIO(adoptmod.bundle(h)), mode="r:gz").getnames()
+        self.assertIn("adopt.sh", names)
+        self.assertIn("authorized_keys", names)
+        self.assertNotIn("role.sh", names)                  # apply sends the role, not adopt
+
+    def test_admin_target_and_other_targets(self):
+        h = self.host()
+        self.assertEqual(adoptmod.admin_target(h, "odroid@192.168.2.40"), "kiwi@192.168.2.40")
+        self.assertEqual(adoptmod.admin_target(h, "ssh://root@127.0.0.1:2260"), "ssh://kiwi@127.0.0.1:2260")
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"u": {}}})
+        with self.assertRaisesRegex(KiwiError, "target: debian"):
+            adoptmod.run(f.hosts["u"], "root@x", runner=None)
+
+    def test_new_host_key_forgets_the_address(self):
+        calls = []
+        with mock.patch.object(remote, "KNOWN_HOSTS", "/k"):
+            adoptmod.forget_host_key("ssh://board@127.0.0.1:2260", lambda argv, **kw: calls.append(argv))
+            adoptmod.forget_host_key("odroid@192.168.2.40", lambda argv, **kw: calls.append(argv))
+        self.assertEqual(calls, [["ssh-keygen", "-R", "[127.0.0.1]:2260", "-f", "/k"],
+                                 ["ssh-keygen", "-R", "192.168.2.40", "-f", "/k"]])
+
+    def test_arm64_preseed_and_bad_arch(self):
+        h = self.host(debian={"arch": "arm64"})
+        self.assertIn("linux-image-arm64", debian_t.preseed(h, VERSION))
+        h = self.host(debian={"arch": "armhf"})
+        self.assertIn("fig: debian.arch must be amd64 or arm64", h.validate(self.roles))
+
+
 class TestIso(Base):
     def test_other_release_needs_iso_url(self):
         with self.assertRaisesRegex(KiwiError, "debian.iso_url"):
@@ -522,6 +566,13 @@ class TestIso(Base):
         self.assertEqual(iso.resolve_netinst(text), ("debian-13.1.0-amd64-netinst.iso", "abc"))
         with self.assertRaises(KiwiError):
             iso.resolve_netinst("x  something-else.iso\n")
+        self.assertEqual(iso.resolve_netinst("abc  debian-13.1.0-arm64-netinst.iso\n" + text, "arm64"),
+                         ("debian-13.1.0-arm64-netinst.iso", "abc"))
+
+    def test_arm64_installer_paths(self):
+        grub = iso.auto_grub_cfg("menuentry 'Install' {\n}\n", "T", "/install.a64")
+        self.assertIn("linux    /install.a64/vmlinuz auto=true", grub)     # no vga= on arm64
+        self.assertIn("initrd   /install.a64/initrd.gz", grub)
 
     def test_cfg_rewrites(self):
         iso_cfg = "# D-I config version 2.0\ninclude menu.cfg\ndefault vesamenu.c32\nprompt 0\ntimeout 0\n"
@@ -1992,6 +2043,14 @@ class TestSshPort(Base):
             now = sshport.ensure(h, "core@203.0.113.7")
         self.assertEqual((now, len(scripts)), ("core@203.0.113.7", 1))   # not proven: 22 stays
         self.assertIn("sshd -t", scripts[0][1])
+
+    def test_a_forwarded_port_in_front_of_22_is_kept(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"fig": {"target": "debian"}}})
+        h = f.hosts["fig"]
+        with mock.patch.object(remote, "run", lambda tgt, script, **kw: b""):
+            self.assertEqual(sshport.ensure(h, "ssh://core@127.0.0.1:2260"), "ssh://core@127.0.0.1:2260")
+        with mock.patch.object(remote, "run", lambda tgt, script, **kw: b"moved-back\n"):
+            self.assertEqual(sshport.ensure(h, "ssh://core@203.0.113.7:41022"), "core@203.0.113.7")
 
     def test_the_port_is_a_port(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

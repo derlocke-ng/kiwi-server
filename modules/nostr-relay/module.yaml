@@ -146,7 +146,7 @@ settings:
   - key: image
     group: Advanced
     help: "Members need this build (images/strfry): stock strfry does not tell the write policy which key a connection proved."
-    default: ghcr.io/derlocke-ng/strfry:1.1.3-kiwi1
+    default: ghcr.io/derlocke-ng/strfry:1.1.3-kiwi2
   - key: config_path
     group: Advanced
     label: Config path in the image

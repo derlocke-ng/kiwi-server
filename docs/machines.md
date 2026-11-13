@@ -5,7 +5,8 @@
 - `coreos`: Fedora CoreOS stable.
 - `ucore`: CoreOS that rebases itself onto a `ghcr.io/ublue-os/ucore*` image,
   like the uCore project's own autorebase example.
-- `debian`: trixie netinst, preseeded.
+- `debian`: trixie netinst, preseeded; `debian.arch: arm64` for arm64. A board
+  that runs its own Debian or Armbian: [Boards](boards.md).
 - `coreos-ram`: a master that lives in RAM (see below).
 
 ## What you get

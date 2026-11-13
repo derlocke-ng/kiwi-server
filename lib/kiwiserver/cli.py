@@ -1355,14 +1355,12 @@ def cmd_control(args):
         if not key:
             raise KiwiError("%s holds no age secret key" % args.identity)
     if args.action == "join":
-        if not args.url:
-            raise KiwiError("which control node? kiwi-server control join <fleet> --url https://control.<host>.<domain>")
-        name = args.name or socket.gethostname().split(".")[0].lower()
-        code = getpass.getpass("join code (the control page: Controllers): ") if sys.stdin.isatty() \
-            else sys.stdin.readline().strip()
-        controlsync.join(fleet_dir, args.url, name, code, args.address, args.identity)
-        util.say("%s asked to join as %s. Once it is accepted on the control page: kiwi-server control pull %s"
-                 % (socket.gethostname(), name, args.fleet))
+        link = args.link or (getpass.getpass("invite link (the control page: Computers, Add a computer): ")
+                             if sys.stdin.isatty() else sys.stdin.readline().strip())
+        name = controlsync.join(fleet_dir, link, args.name or socket.gethostname().split(".")[0].lower(),
+                                args.address, args.identity)
+        util.say("joined as %s: the fleet is in %s and stays in step with kiwi-server control pull / push"
+                 % (name, fleet_dir))
         return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
@@ -1380,6 +1378,7 @@ def cmd_control(args):
     tgt = remote.reach(h, args.ssh)
     if args.action == "push":
         n = controlsync.push(fleet, h, tgt, args.force)
+        controlsync.remember(fleet_dir, h)
         util.say("%s holds the fleet now (%d files): https://control.%s" % (h.name, n, h.hostname))
     else:
         n = controlsync.pull(fleet, h, tgt, args.force, key)
@@ -2023,7 +2022,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
-  kiwi-server control join <fleet> --url URL    this computer asks to become a controller (a join code from the page)
+  kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
@@ -2129,9 +2128,9 @@ def build_parser():
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
     s = sub("control", cmd_control); s.add_argument("action", choices=["push", "pull", "join"]); s.add_argument("fleet")
-    s.add_argument("--url", help="join: the control node, https://control.<host>.<domain>")
+    s.add_argument("link", nargs="?", help="join: the invite link from the control page")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
-    s.add_argument("--address", help="join: where to connect when that name does not resolve here")
+    s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")
     s.add_argument("--to", metavar="HOST", help="which control node, when several hosts have the module")
     s.add_argument("--force", action="store_true", help="overwrite a side that changed since the last sync")
     s.add_argument("--identity", metavar="FILE",

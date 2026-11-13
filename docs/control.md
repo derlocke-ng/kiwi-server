@@ -43,25 +43,23 @@ encrypted with a ring as well ([Security](security.md)) where you can.
 
 ## More computers
 
-Another computer becomes a controller through the page, not by copying keys:
+1. On the page: **computers**, **Add a computer**. Copy the link (it works once, for
+   fifteen minutes).
+2. On the new computer, in Kiwi Server: **Join a fleet**, paste the link.
 
-1. On the page: **controllers**, **Make a join code** (fifteen minutes, once).
-2. On the new computer:
-   ```bash
-   kiwi-server control join ~/kiwi/fleet.yaml --url https://control.papaya.<domain>
-   ```
-   It makes its own key (in its keyring), checks that the code is from this
-   fleet, and sends the public half.
-3. On the page: **Accept** or **Deny**.
-4. On the new computer: `kiwi-server control pull ~/kiwi/fleet.yaml`.
+That is all: the computer makes its own key (in its keyring), checks that the
+link is from this fleet, fetches the fleet and opens it. Without the app:
+`kiwi-server control join ~/kiwi/fleet.yaml <link>`.
 
-**Remove** takes its key out again: it reads nothing newer. What it read
-before, it knows; rotation is planned
+**Remove** on the page takes its key out again: it reads nothing newer. What
+it read before, it knows; rotation is planned
 ([design/controllers.md](design/controllers.md)).
 
 ## Staying in step
 
-Every copy works by itself, so:
+The app does it by itself: it fetches when a fleet is opened and sends after
+a save. When two computers changed the fleet, it says so and changes nothing.
+By hand:
 
 ```bash
 kiwi-server control pull ~/kiwi/fleet.yaml    # before working here
@@ -69,10 +67,8 @@ kiwi-server control push ~/kiwi/fleet.yaml    # after changing the fleet here
 ```
 
 Each refuses to overwrite a side that changed since the last sync; `--force`
-overrides. A joined computer syncs through the page's API and needs no shell
-on the node; the first computer uses SSH. The node takes a push while it is
-open. A new password (`--set-password`, then push) locks it until that
-password logs in.
+overrides. The node takes a push while it is open. A new password
+(`--set-password`, then push) locks it until that password logs in.
 
 ## Mind
 

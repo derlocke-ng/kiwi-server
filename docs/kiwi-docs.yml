@@ -5,6 +5,7 @@
 pages:
   - install.md: Install
   - getting-started.md: Getting started
+  - using.md: Using your network
   - gui.md: The desktop app
   - control.md: The control node
   - fleet.md: The fleet file

@@ -11,6 +11,7 @@ then sets up and maintains each machine over SSH. Its command is
 |---|---|---|
 | [Install](install.md) | everyone | kiwi or the checkout, what it needs, the ISO toolchain |
 | [Getting started](getting-started.md) | everyone | a new fleet, the first ISO, apply, offline media, netcup servers |
+| [Using your network](using.md) | everyone whose machines run | your devices onto the network, opening a service, logins, keeping it well |
 | [The fleet file](fleet.md) | everyone | the settings, the role block, names and the domain, `kiwi-stack` on the machine |
 | [Roles and modules](roles.md) | everyone | master and node, presets, a public hub, the LAN cache, writing a role |
 | [The network](network.md) | everyone | joining the mesh, DNS, the MTU, federation |

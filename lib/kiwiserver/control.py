@@ -1086,6 +1086,33 @@ class Control:
             pass
         return data
 
+    def recover(self):
+        """After a look: what the fleet's `recovery:` allows done about a machine that is gone
+        (`kiwi-server recover`): told on the page, or restarted at its provider."""
+        seen = os.path.join(self.run, "status.json")
+        if self.locked() or not os.path.isfile(seen):
+            return self.gone()
+        with self.lock:
+            r = subprocess.run(list(self.kiwi) + ["recover", self.fleet_path, "--porcelain", "--status", seen],
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        try:
+            events = json.loads((r.stdout.strip().splitlines() or [""])[-1])["events"]
+        except (ValueError, KeyError, TypeError):
+            return self.gone()
+        util.write_text(os.path.join(self.run, "recover.json"), json.dumps(events), 0o600)
+        for e in events:
+            if e.get("kind") == "restarted":
+                self.audit("control", "restarted %s at its provider: it did not answer" % e["host"], host=e["host"])
+        return events
+
+    def gone(self):
+        """What the last look said about machines that do not answer: [{host, kind, text}]."""
+        path = os.path.join(self.run, "recover.json")
+        try:
+            return json.loads(util.read_text(path)) if os.path.isfile(path) else []
+        except ValueError:
+            return []
+
     def fleet_info(self, fresh=False):
         """What the fleet file says: every machine with its role, web addresses and next step
         (`list --porcelain`). Kept in RAM; asked again after a job and with every look."""
@@ -1199,6 +1226,8 @@ class Control:
                 if now - last_status >= self.status_minutes * 60:
                     last_status = now
                     self.refresh_status()
+                    if any(e.get("kind") == "restarted" for e in self.recover()):
+                        last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                 if self.watch_seconds and self.has_ram_masters():
                     with self.lock:
                         subprocess.run(self.argv("watch"), capture_output=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)

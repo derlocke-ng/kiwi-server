@@ -34,6 +34,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [The control plane](design/control-plane.md) | where kiwi-server is going |
 | [A master in RAM](design/ram-master.md) | `target: coreos-ram` |
 | [Federation](design/federation.md) | two networks sharing services |
+| [Recovery](design/recovery.md) | what runs by itself when something breaks, and what is planned |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
 

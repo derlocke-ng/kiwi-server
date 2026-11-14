@@ -146,6 +146,11 @@ DEFAULTS = {
         "name_constraints": [],  # e.g. [kiwi]: the CA may only sign names under these domains
     },
     "post_script": "",
+    # what the control node may do by itself when a machine is gone (watchdog.py, design/recovery.md)
+    "recovery": {
+        "master": {"after": 15, "do": "tell"},
+        "node": {"after": 60, "do": "tell"},
+    },
     "backup": {
         # the fleet directory itself (fleet file, secrets/, the CA), encrypted,
         # to these hosts after every render or build — kiwi-server restore

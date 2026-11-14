@@ -38,6 +38,7 @@ from kiwiserver import address as addressmod, adopt as adoptmod, control as cont
 from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
+from kiwiserver import watchdog as watchdogmod  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEh+test+kiwi+server+key+0000000000000000000 test@kiwi"
@@ -4708,6 +4709,123 @@ class TestVps(Base):
         self.assertIn("boom", err)
         self.assertNotIn(("DELETE", "/users/94774/isos/kiwi-x.iso"), self.api.seen())
 
+    def test_restart_is_a_power_cycle_and_touches_nothing_else(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "restart", f.path, "x")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([b["state"] for m, _p, b in self.api.calls if m == "PATCH"], ["OFF", "ON"])
+        self.assertEqual([m for m, _p, _b in self.api.calls if m in ("POST", "PUT", "DELETE")], [])
+        self.api.calls.clear()
+        self.api.state = "SHUTOFF"                               # already off: only switched on
+        rc, out, err = self.run_cli("vps", "restart", f.path, "x")
+        self.assertEqual([b["state"] for m, _p, b in self.api.calls if m == "PATCH"], ["ON"])
+
+    def recover(self, f, ok, *more):
+        seen = os.path.join(self.tmp, "seen.json")
+        write(seen, json.dumps({"hosts": [{"host": "x", "ok": ok}]}))
+        rc, out, err = self.run_cli("recover", f.path, "--porcelain", "--status", seen, *more)
+        self.assertEqual(rc, 0, err)
+        return json.loads(out.strip().splitlines()[-1])["events"]
+
+    def test_recover_restarts_a_machine_that_is_gone_when_the_fleet_says_so(self):
+        d = self.base_defaults(recovery={"node": {"after": 5, "do": "restart"}})
+        f = self.fleet({"defaults": d, "hosts": {"x": {"role": "bare", "target": "debian", "vps": {"server": 7}}}})
+        self.logged_in()
+        self.assertEqual(self.recover(f, False), [])             # never set up: not looked after
+        cli.record_applied(f, "x")
+        self.assertEqual([e["kind"] for e in self.recover(f, False)], ["waiting"])
+        state = cli.fleet_state(f)
+        state["gone"]["x"] -= 600
+        write(cli._state_path(f), json.dumps(state))
+        self.assertEqual([e["kind"] for e in self.recover(f, False, "--dry-run")], ["restarted"])
+        self.assertEqual([m for m, _p, _b in self.api.calls if m == "PATCH"], [])        # a dry run asks nobody
+        self.assertFalse(cli.fleet_state(f).get("acted"))
+        self.assertEqual([e["kind"] for e in self.recover(f, False)], ["restarted"])
+        self.assertEqual([b["state"] for m, _p, b in self.api.calls if m == "PATCH"], ["OFF", "ON"])
+        self.assertEqual([e["kind"] for e in self.recover(f, False)], ["held"])          # not twice within the hour
+        self.assertEqual(len([1 for m, _p, _b in self.api.calls if m == "PATCH"]), 2)
+        self.assertEqual(self.recover(f, True), [])              # it is back
+        self.assertEqual(cli.fleet_state(f)["gone"], {})
+
+    def test_recover_does_nothing_without_a_login_at_the_provider(self):
+        d = self.base_defaults(recovery={"node": {"after": 1, "do": "restart"}})
+        f = self.fleet({"defaults": d, "hosts": {"x": {"role": "bare", "target": "debian", "vps": {"server": 7}}}})
+        cli.record_applied(f, "x")
+        state = cli.fleet_state(f)
+        state["gone"] = {"x": time.time() - 600}
+        write(cli._state_path(f), json.dumps(state))
+        ev = self.recover(f, False)
+        self.assertEqual([e["kind"] for e in ev], ["tell"])
+        self.assertIn("not known at a provider", ev[0]["text"])
+        self.assertEqual(self.api.calls, [])
+
+
+class TestWatchdog(unittest.TestCase):
+    """watchdog.step: what one look does about machines that do not answer."""
+    NOW = 1_000_000
+
+    def fleet(self, **recovery):
+        hosts = {n: types.SimpleNamespace(name=n, cfg={"vps": {"server": 7}} if n == "gate" else {}) for n in ("gate", "pi")}
+        return types.SimpleNamespace(defaults={"recovery": recovery}, hosts=hosts)
+
+    def step(self, fleet, said, state, now=None, fail=False):
+        done = []
+
+        def restart(name):
+            if fail:
+                raise KiwiError("netcup: no answer")
+            done.append(name)
+        ev = watchdogmod.step(fleet, {"gate": "master", "pi": "node"}, said, state, now or self.NOW, restart)
+        return ev, done
+
+    def test_a_machine_that_answers_or_was_not_seen_is_left_alone(self):
+        state = {"gone": {"old": 1}}
+        ev, done = self.step(self.fleet(master={"do": "restart"}), {"gate": True}, state)        # pi: not in the look
+        self.assertEqual((ev, done, state["gone"]), ([], [], {}))
+
+    def test_it_waits_then_tells_by_default(self):
+        f, state = self.fleet(), {}
+        ev, _d = self.step(f, {"gate": False, "pi": False}, state)
+        self.assertEqual([e["kind"] for e in ev], ["waiting", "waiting"])
+        ev, done = self.step(f, {"gate": False, "pi": False}, state, self.NOW + 16 * 60)
+        self.assertEqual([(e["host"], e["kind"]) for e in ev], [("gate", "tell"), ("pi", "waiting")])
+        self.assertIn("gate (the master) has not answered for 16 minutes", ev[0]["text"])
+        self.assertEqual(done, [])
+        ev, _d = self.step(f, {"gate": False, "pi": True}, state, self.NOW + 17 * 60)
+        self.assertEqual(sorted(state["gone"]), ["gate"])       # pi is back
+
+    def test_a_restart_has_its_guards(self):
+        f, state = self.fleet(master={"after": 5, "do": "restart"}, node={"after": 5, "do": "restart"}), {}
+        self.step(f, {"gate": False, "pi": False}, state)
+        t = self.NOW + 6 * 60
+        ev, done = self.step(f, {"gate": False, "pi": False}, state, t)
+        self.assertEqual([(e["host"], e["kind"]) for e in ev], [("gate", "restarted"), ("pi", "tell")])     # pi: at no provider
+        self.assertEqual(done, ["gate"])
+        ev, done = self.step(f, {"gate": False}, state, t + 600)
+        self.assertEqual(([e["kind"] for e in ev], done), (["held"], []))                # within the hour
+        for n in (1, 2):
+            ev, done = self.step(f, {"gate": False}, state, t + n * 3700)
+            self.assertEqual(done, ["gate"])
+        ev, done = self.step(f, {"gate": False}, state, t + 3 * 3700)
+        self.assertEqual(([e["kind"] for e in ev], done), (["held"], []))                # three a day
+        self.assertIn("3 times today", ev[0]["text"])
+        ev, done = self.step(f, {"gate": False}, state, t + 2 * 3700 + 86400 + 60)       # the next day
+        self.assertEqual(done, ["gate"])
+
+    def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
+        f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}
+        ev, done = self.step(f, {"gate": False}, state, fail=True)
+        self.assertEqual([e["kind"] for e in ev], ["held"])
+        self.assertIn("nothing was done", ev[0]["text"])
+        self.assertEqual(state.get("acted", {}).get("gate"), [])
+
+    def test_a_policy_that_makes_no_sense_is_said(self):
+        for bad in ({"do": "explode"}, {"after": "soon"}, {"after": 0}):
+            with self.assertRaisesRegex(KiwiError, "recovery.master"):
+                watchdogmod.policy(self.fleet(master=bad), "master")
+        self.assertEqual(watchdogmod.policy(self.fleet(), "node"), (60.0, "tell"))
+
 
 class TestCerts(Base):
     def test_ca_and_host_cert(self):
@@ -5933,6 +6051,20 @@ class TestControl(StoreBase):
             c.argv("backup")
         self.fleet({"defaults": self.base_defaults(backup={"hosts": ["a"]}), "hosts": {"a": {}}})
         self.assertEqual(c.argv("backup")[-2:], ["backup", fleet])      # backup.hosts: the command knows where
+
+    def test_after_a_look_it_does_what_the_fleet_allows_about_a_machine_that_is_gone(self):
+        self.init()
+        events = [{"host": "a", "kind": "restarted", "text": "a has not answered for 20 minutes: restarted at its provider"}]
+        fake = [sys.executable, "-c", "import sys; print(':: a: powering on'); print(%r)" % json.dumps({"events": events})]
+        c = controlmod.Control(self.f.path, kiwi_cmd=fake, run_dir=os.path.join(self.tmp, "ram"))
+        c.set_password(self.PW)
+        self.assertEqual(c.recover(), [])                       # no look yet: nothing to go by
+        write(os.path.join(c.run, "status.json"), json.dumps({"hosts": [{"host": "a", "ok": False}]}))
+        self.assertEqual(c.recover(), events)
+        self.assertEqual(c.gone(), events)                      # what Home shows until the next look
+        self.assertIn("restarted a at its provider", str(c.audit_tail(3)))
+        c.kiwi = [sys.executable, "-c", "print('not json')"]
+        self.assertEqual(c.recover(), events)                   # a look that fails changes nothing
 
 
 @unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")

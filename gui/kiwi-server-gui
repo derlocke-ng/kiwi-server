@@ -129,6 +129,18 @@ BASE_GROUPS = [
         dict(path=("updates", "time"), type="string", label="Reboot time", default="03:30", help="HH:MM local time"),
         dict(path=("updates", "length_minutes"), type="int", label="Window length (minutes)", default=90, help="How long after the reboot time a reboot may still start"),
     ]),
+    ("When a machine is gone", [
+        dict(path=("recovery", "master", "do"), type="enum", label="A master that does not answer", options=["tell", "restart"],
+             scope="defaults", default="tell",
+             help="tell: the control node says so on its page. restart: it also switches the server off and on at its "
+                  "provider; nothing on it is touched. Needs a control node that is signed in to the provider"),
+        dict(path=("recovery", "master", "after"), type="int", label="…after this many minutes", scope="defaults", default=15,
+             help="How long a master must be gone before that happens"),
+        dict(path=("recovery", "node", "do"), type="enum", label="A node that does not answer", options=["tell", "restart"],
+             scope="defaults", default="tell", help="restart works for a node at a provider; one at home can only be told about"),
+        dict(path=("recovery", "node", "after"), type="int", label="…after this many minutes", scope="defaults", default=60,
+             help="How long a node must be gone before that happens"),
+    ]),
     ("uCore", [
         dict(path=("ucore", "image"), type="string", label="Image", default="ghcr.io/ublue-os/ucore:stable",
              help="ucore-minimal, ucore, ucore-hci — with -nvidia / -zfs variants; :stable or :testing"),

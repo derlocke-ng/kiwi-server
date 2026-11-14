@@ -25,3 +25,4 @@ pages:
   - design/ram-master.md: "Design: a master in RAM"
   - design/federation.md: "Design: federation"
   - design/local-first.md: "Design: local first"
+  - design/recovery.md: "Design: autonomy and recovery"

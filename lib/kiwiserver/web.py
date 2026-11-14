@@ -267,6 +267,11 @@ machines at home, then your phone.</p>{% endblock %}""",
 <div class="row"><span class="muted">{% if looked %}Checked {{ ago(looked) }} ago. It checks every ten minutes by itself.{% endif %}
 {% if error %}<span class="bad">{{ error }}</span>{% endif %}</span>
 <form class="inline" method="post" action="/refresh">{{ tok }}<button>Check now</button></form></div>
+{% for e in gone %}<div class="card"><div class="row"><strong><span class="dot {{ "warn" if e.kind in ["waiting", "restarted"] else "bad" }}"></span>{{ e.host }}</strong>
+<a class="btn" href="/hosts/{{ e.host }}">Open</a></div><p>{{ e.text }}.</p>
+{% if e.kind == "waiting" %}<p class="muted">Nothing is done yet: a short break is normal.</p>
+{% elif e.kind == "restarted" %}<p class="muted">It needs a few minutes to come back. Activity says when it was done.</p>
+{% elif e.kind == "tell" %}<p class="muted">Nothing is done by itself here. <a href="/help#gone">What you can do, and how to let the control node restart it.</a></p>{% endif %}</div>{% endfor %}
 
 {% set todo = machines|selectattr("problems")|list %}{% if todo %}<h2>Needs a look</h2>
 {% for m in todo %}{% for p in m.problems %}<div class="card"><div class="row"><strong><span class="dot {{ p.level }}"></span>{{ m.name }}</strong>
@@ -618,6 +623,11 @@ user name of each service and show the password when you ask.</dd>
 <dt>…change a setting?</dt><dd>Open the machine from <a href="/">Home</a> and choose <em>Settings</em>. What all machines
 share is under <a href="/settings">Settings for every machine</a>. Then <em>Apply</em> brings it to the machine.</dd>
 <dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine at home</em>.</dd>
+<dt id="gone" style="scroll-margin-top:64px">…get a machine back that stopped answering?</dt><dd>Check that it is on and has a
+connection. A rented server: restart it in its provider's panel. This machine can do that by itself: under
+<a href="/settings">Settings for every machine</a>, <em>When a machine is gone</em>, choose <em>restart</em>. It then
+switches a master that has been gone for 15 minutes off and on at its provider, at most three times a day, and
+<a href="/activity">Activity</a> says when.</dd>
 <dt>…get in after a power cut?</dt><dd>{% if auto %}Nothing to do: this machine unlocks by itself with the help of
 {{ auto.server }} (the ring “{{ auto.ring }}”). If that machine is off, log in here once.{% else %}Log in here once. That
 unlocks the keys again. It can also unlock by itself with the help of another of your machines: in the app, give this
@@ -1072,7 +1082,7 @@ def make_app(control: Control):
         ms, st, _info = machines()
         from . import setup as setupmod
         return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
-                    error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS,
+                    error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
                     add_error=request.query_params.get("add_error"))
 
     @app.post("/machines/add")

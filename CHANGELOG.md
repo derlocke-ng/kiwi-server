@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.91.1 — "Back up the network now" has somewhere to go
+
+- `kiwi-server backup <fleet>` without a place named (no host given, `backup.hosts`
+  empty, which is how a new network starts) sends the copy to every machine that is set
+  up. Before, it stopped with "nowhere to back up to", and so did the app's "Back up
+  the network now".
+
 ## 2.91.0 — a network leaves through its partner over the link they have
 
 - **`kiwi-server federate A B --exit`**: network A leaves to the internet through

@@ -7144,6 +7144,20 @@ class TestNetworkCopy(StoreBase):
         self.init()
         self.assertTrue(backup.archive_name(self.f, 0).endswith("Z.tar"))
 
+    def test_a_copy_with_no_place_named_goes_to_every_machine_that_is_set_up(self):
+        self.init()
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}, "b": {}, "c": {}}})
+        rc, out, err = self.run_cli("backup", f.path)
+        self.assertEqual(rc, 1)
+        self.assertIn("no machine is set up yet", err)                  # nobody to give it to
+        cli.record_applied(f, "a", "c")
+        sent = []
+        with mock.patch.object(backup, "store_remote", lambda data, tgt, name, keep=10, **kw: sent.append(tgt) or [name]):
+            rc, out, err = self.run_cli("backup", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(sent), 2)                                  # a and c, not b
+        self.assertIn("every machine that is set up (a, c)", err + out)
+
     def test_a_render_sends_the_copy_without_a_passphrase(self):
         self.init()
         f = self.fleet({"defaults": self.base_defaults(backup={"hosts": ["a"]}), "hosts": {"a": {}}})

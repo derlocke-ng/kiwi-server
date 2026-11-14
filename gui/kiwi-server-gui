@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import shlex
+import socket
 import subprocess
 import sys
 import threading
@@ -46,10 +47,11 @@ CSS = b"""
 .ks-mono { font-family: monospace; font-size: 0.9em; }
 .ks-dot { min-width: 10px; min-height: 10px; border-radius: 999px; background: alpha(currentColor, .25); }
 .ks-dot.ks-big { min-width: 16px; min-height: 16px; }
-.ks-dot.ok   { background: @success_color; }
-.ks-dot.warn { background: @warning_color; }
-.ks-dot.bad  { background: @error_color; }
-.ks-dot.down { background: none; box-shadow: inset 0 0 0 2px @error_color; }
+/* the solid colours: the lighter ones are mixed at run time, and one renderer (Broadway) showed the green as red */
+.ks-dot.ok   { background: @success_bg_color; }
+.ks-dot.warn { background: @warning_bg_color; }
+.ks-dot.bad  { background: @error_bg_color; }
+.ks-dot.down { background: none; box-shadow: inset 0 0 0 2px @error_bg_color; }
 .ks-dot.new  { background: none; box-shadow: inset 0 0 0 2px @accent_color; }
 .ks-pill.new { background: alpha(@accent_bg_color, .24); color: @accent_color; }
 .ks-help { min-width: 22px; min-height: 22px; padding: 0; }
@@ -2300,6 +2302,7 @@ class Window(Adw.ApplicationWindow):
         self.status = {}          # `list --porcelain` by host: what the fleet file and the output say
         self.fleet_info = {}      # the same answer's domain, mesh and master
         self.live = {}            # `status --porcelain` by host: what the machines say
+        self.on_network = None    # do the network's names open from this computer? None: not looked yet
         self.last_seen = {}       # host: when it last answered
         self.store = {}           # `secrets status --porcelain`
         self.checked = None       # when the machines last answered
@@ -3244,6 +3247,16 @@ class Window(Adw.ApplicationWindow):
             row.add_suffix(b)
             g.add(row)
             parts.append(g)
+        if self.on_network is False:
+            g = Adw.PreferencesGroup(title="This computer is not on your network yet")
+            row = Adw.ActionRow(use_markup=False, title="Its services do not open from here",
+                                subtitle="Connect gives this computer its place on your VPN. Only your network goes "
+                                         "through it; everything else on this computer stays as it is.", subtitle_lines=4)
+            b = Gtk.Button(label="Connect", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            b.connect("clicked", lambda *_: self.connect_dialog())
+            row.add_suffix(b)
+            g.add(row)
+            parts.append(g)
         if n["attention"]:
             parts.append(self.attention_group(n["attention"], True))
         fresh = [h for h in self.doc.hosts() if self.is_new(h)]
@@ -3317,6 +3330,9 @@ class Window(Adw.ApplicationWindow):
             parts.append(g)
         if live and live.get("locked"):
             parts.append(self.locked_group(name))
+        web = self.web_group(name, st)       # what a person came for, before the machine's inner life
+        if web:
+            parts.append(web)
         backups = self.backup_group(name, f)
         if backups:
             parts.append(backups)
@@ -3324,12 +3340,6 @@ class Window(Adw.ApplicationWindow):
             parts.append(self.machine_group(f))
             parts.append(self.services_group(f))
         parts.append(self.network_group(name, st, live, f))
-        web = self.web_group(st)
-        if web:
-            parts.append(web)
-        logins = self.logins_group(name, st)
-        if logins:
-            parts.append(logins)
         parts.append(self.deploy_group(name, st, f))
         self.host_column.show(parts)
 
@@ -3447,28 +3457,28 @@ class Window(Adw.ApplicationWindow):
             g.add(info_row("Tunnels here", "%d of %d connected" % (p["recent"], p["total"])))
         return g
 
-    def web_group(self, st):
-        if not st.get("sites"):
+    def web_group(self, name, st):
+        """What runs on the machine for people: each service by what it is, opened with a click,
+        and the way to its user names and passwords (LoginsDialog)."""
+        sites, found = st.get("sites") or [], st.get("logins") or []
+        if not sites and not found:
             return None
-        g = Adw.PreferencesGroup(title="Web interfaces", description="Open from a device on the mesh")
-        for site in st["sites"]:
-            row = plain_row(site, activatable=True)
+        g = Adw.PreferencesGroup(title="Open a service", description="From a device that is on your network")
+        named = {}
+        for x in found:             # a login knows what its address is for
+            host = (x.get("address") or "").split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+            named.setdefault(host, x["label"])
+        for site in sites:
+            row = plain_row(named.get(site, site), site if site in named else "", activatable=True)
             row.add_suffix(Gtk.Image(icon_name="adw-external-link-symbolic"))
             row.connect("activated", lambda _r, s=site: Gtk.UriLauncher.new("https://" + s).launch(self, None, None))
             g.add(row)
-        return g
-
-    def logins_group(self, name, st):
-        """The way to the user names and passwords of the machine's services (LoginsDialog)."""
-        found = st.get("logins") or []
-        if not found:
-            return None
-        g = Adw.PreferencesGroup(title="Logins")
-        row = plain_row("User names and passwords", ", ".join(x["label"] for x in found))
-        b = Gtk.Button(label="Logins…", valign=Gtk.Align.CENTER, css_classes=["flat"])
-        b.connect("clicked", lambda *_: LoginsDialog(self, name).present(self))
-        row.add_suffix(b)
-        g.add(row)
+        if found:
+            row = plain_row("User names and passwords", "What to type when a service asks you to log in")
+            b = Gtk.Button(label="Logins…", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            b.connect("clicked", lambda *_: LoginsDialog(self, name).present(self))
+            row.add_suffix(b)
+            g.add(row)
         return g
 
     def deploy_group(self, name, st, f):
@@ -3597,6 +3607,20 @@ class Window(Adw.ApplicationWindow):
                 GLib.idle_add(self.answer_machines, gen, None)
                 return
             listing, err = ask(["list", path, "--porcelain"])
+            # the services open by name, and only from a device on the network: is this computer one?
+            # (a name that resolves is not enough: some resolvers answer every name with something)
+            # (only the network's own names: a public one, a relay's, opens from anywhere)
+            ending = "." + str((listing or {}).get("domain") or "")
+            sites = [s for h in (listing or {}).get("hosts") or [] if h.get("phase") == "applied"
+                     for s in h.get("sites") or [] if s.endswith(ending)]
+            if sites:
+                def opens(n):
+                    try:
+                        socket.create_connection((n, 443), timeout=3).close()
+                        return True
+                    except OSError:
+                        return False
+                self.on_network = any(opens(n) for n in sites[:3])
             GLib.idle_add(self.answer_fleet, gen, store, listing, err)
             live, _err = ask(["status", path, "--porcelain"], 90)
             GLib.idle_add(self.answer_machines, gen, live)

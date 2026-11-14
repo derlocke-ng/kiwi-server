@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.89.0 — the app leads with what you came for
+
+- **A machine's page starts with "Open a service"**: each service by what it is
+  (Files (Nextcloud), Ad blocker (Pi-hole)…), opened with a click, and "Logins…" right
+  there. The machine's inner life (backups, kernel, network) follows.
+- **"This computer is not on your network yet"** on the overview, with a Connect
+  button, when the network's services do not open from the computer the app runs on.
+- The status dots use the solid colours: the lighter ones are mixed at run time, and
+  one renderer showed the green of "All good" as red.
+- `connect` over SSH says why NetworkManager refuses, and where to run it.
+
 ## 2.88.0 — the logins of your services, where you look for them
 
 Opening a service led to a login page and nothing said what to type: the passwords are

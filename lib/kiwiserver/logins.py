@@ -24,7 +24,29 @@ def for_host(host, role, ms):
     if not role.stack:
         return []
     found = modmod.Renderer(ms).logins(rolesmod.stack_spec(host, role))
-    return [dict(x, has_password=bool(x["password"])) for x in found]
+    return [dict(x, has_password=bool(x["password"])) for x in found] + at_home(host, role)
+
+
+def at_home(host, role):
+    """Not a login, and what people miss most: how the devices at home use a gateway machine.
+    Only with a fixed address, since devices are pointed at it."""
+    net = host.cfg.get("network") or {}
+    if net.get("dhcp", True) or not net.get("address") or role.node_type == "master":
+        return []
+    ip = str(net["address"]).split("/")[0]
+    if "gateway" in host.modules:
+        label, note = "Your home through this machine", (
+            "Not a page. A device that uses %s as its DNS server and as its gateway is on your network without an app, "
+            "has the ad blocker, and reaches the Internet through the VPN. Set both on the device, or in your router "
+            "for the whole home." % ip)
+    elif "dns" in host.modules:
+        label, note = "The ad blocker for your home", (
+            "Not a page. A device that uses %s as its DNS server has the ad blocker and finds your network's names. "
+            "Set it on the device, or in your router for the whole home." % ip)
+    else:
+        return []
+    return [{"module": "gateway" if "gateway" in host.modules else "dns", "label": label, "address": "", "user": "",
+             "password": "", "has_password": False, "note": note}]
 
 
 def public(logins):

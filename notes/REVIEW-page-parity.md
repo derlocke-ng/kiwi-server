@@ -33,3 +33,18 @@ run included. Compared command by command and setting by setting.
 
 `vps login/list/probe/install` (the terminal's `next` does it), `adopt`, `validate`, `mtu`,
 `openwrt`, `secrets show/join/add/remove` by name.
+
+## Since then (14 November 2026, 2.86.0 to 2.90.1)
+
+| What | CLI | App | Page |
+|---|---|---|---|
+| The logins of a machine's services | `logins` | "Logins…" on the machine, under "Open a service" | "Logins" card, password on "Show password" |
+| This computer on the network | `connect` | "Connect this computer…", offered on the overview when the services do not open | not needed: the page is opened from a device that is on the network |
+| The network's own copy, opened by the recovery key | `backup`, `restore` | "Back up the network now" (its restore dialog still says "passphrase") | "Save it now", "Fetch a copy", "bring it back from a copy" on a fresh machine |
+| A machine leaves for good | `remove` | "Remove" on a saved fleet | "Remove this machine" |
+| A board's fixed address | reaches the board with an apply | the same, through Apply | the same, through Apply |
+
+Still open on the page: federation, SSH certificates, prune, the role script, doctor, the
+hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in the app:
+preview, "update everything", removing a phone, "leave NAME out", activity.
+

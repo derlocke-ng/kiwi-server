@@ -6272,6 +6272,68 @@ class TestFirstRunPage(StoreBase):
         self.c.lock_store()
         self.assertTrue(self.c.login(self.PW))
 
+    def made(self):
+        """A network made on the page: (cookie, csrf token)."""
+        _s, _b, cookie = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        self.c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
+                       "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
+        self.c.fleet_info(fresh=True)
+        return cookie, re.search(r'name="csrf" value="([^"]+)"', self.ask("/", cookie=cookie)[1]).group(1)
+
+    def test_the_machines_are_set_up_from_the_page(self):
+        cookie, csrf = self.made()
+        body = self.ask("/", cookie=cookie)[1]
+        self.assertIn("Still to set up", body)
+        self.assertIn("Make its install media", body)                   # the master first
+        self.assertIn("Its turn comes when the master is set up", body)
+        self.assertNotIn("Checking your machines", body)                # nothing to check yet
+        # one more machine at home; the fleet file stays a link into memory
+        status, where, _ = self.ask("/machines/add", {"csrf": csrf, "preset": "gateway", "address": "192.168.1.31", "name": "fig"},
+                                    cookie=cookie)
+        self.assertEqual((status, where), (303, "/hosts/fig"))
+        self.assertTrue(os.path.islink(os.path.join(self.dir, "fleet.yaml")))
+        self.assertNotIn("fleet.yaml.tmp", os.listdir(self.dir))
+        fig = config.Fleet.load(os.path.join(self.dir, "fleet.yaml")).hosts["fig"]
+        self.assertEqual((fig.cfg["network"]["address"], fig.cfg["network"]["gateway"], fig.cfg["disk"]),
+                         ("192.168.1.31/24", "192.168.1.1", "auto"))
+        self.c.lock_store()                                             # and it rests encrypted with the new machine
+        self.assertTrue(self.c.login(self.PW))
+        self.assertIn("fig", config.Fleet.load(os.path.join(self.dir, "fleet.yaml")).hosts)
+        self.assertIn("An+address+looks+like", self.ask("/machines/add", {"csrf": csrf, "preset": "cloud", "address": "x"},
+                                                        cookie=cookie)[1])
+        # install media: made in memory, fetched by someone who is logged in, removed
+        self.assertTrue(self.c.media_dir().startswith(os.path.join(self.tmp, "ram")))
+        self.assertEqual(self.c.argv("build", ["fig"])[-3:], ["build", os.path.join(self.dir, "fleet.yaml"), "fig"])
+        with self.assertRaises(KiwiError):
+            self.c.argv("build", [])                                    # never every machine at once
+        iso = os.path.join(self.c.media_dir(), "fig", "fig.iso")
+        write(iso, "an image")
+        self.assertEqual(self.ask("/hosts/fig/media")[:2], (303, "/login"))
+        self.assertEqual(self.ask("/hosts/fig/media", cookie=cookie)[:2], (200, "an image"))
+        self.assertEqual(self.ask("/hosts/fig/media/drop", {"csrf": csrf}, cookie=cookie)[0], 303)
+        self.assertFalse(os.path.exists(iso))
+        # the next step is `next` for that machine; one the router gave an address is set up at the address typed
+        self.assertEqual(self.c.argv("setup", ["fig"])[-4:], ["next", os.path.join(self.dir, "fleet.yaml"), "fig", "--yes"])
+        self.assertEqual(self.c.argv("setup", ["fig"], "192.168.1.77")[-5:],
+                         ["apply", os.path.join(self.dir, "fleet.yaml"), "fig", "--ssh", "core@192.168.1.77", "--new-host-key"][-5:])
+        with self.assertRaises(KiwiError):
+            self.c.argv("setup", ["fig"], "not an address; rm -rf")
+
+    def test_the_recovery_key_sets_a_new_password(self):
+        _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        recovery = re.search(r"AGE-SECRET-KEY-[A-Z0-9]+", body).group(0)
+        self.c.lock_store()
+        new = "another password, long too"
+        status, body, _ = self.ask("/recover", {"recovery": "AGE-SECRET-KEY-1NOTTHEONE", "password": new, "again": new})
+        self.assertIn("not this network", body)
+        status, where, _ = self.ask("/recover", {"recovery": recovery.lower(), "password": new, "again": new})
+        self.assertEqual((status, where), (303, "/"))
+        self.assertFalse(self.c.locked())
+        self.c.lock_store()
+        self.assertIsNone(self.c.login(self.PW))                       # the old password opens nothing
+        self.assertTrue(self.c.login(new))
+        self.assertTrue(os.path.islink(os.path.join(self.dir, "fleet.yaml")))
+
     def test_five_wrong_codes_and_the_page_waits(self):
         for _ in range(5):
             self.assertFalse(self.c.setup_code_ok("0000-0000", "10.0.0.9"))

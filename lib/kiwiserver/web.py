@@ -8,12 +8,13 @@ import base64
 import hmac
 import threading
 import time
+import urllib.parse
 
 import jinja2
 import markupsafe
 from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from . import VERSION
 from .control import ACTIONS, Control
@@ -66,8 +67,45 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 <form class="inline" method="post" action="/logout">{{ tok }}<button style="padding:6px 12px">Log out</button></form></nav>{% endif %}
 <main>{% block main %}{% endblock %}</main></body></html>"""
 
+STEP = """{% macro step(m, tok) %}<div class="card"><div class="row"><strong>{{ m.name }}</strong>
+<span class="muted">{{ kind(m.role) }}</span></div>
+{% if m.phase == "invalid" %}<p class="bad">Its settings are not complete: {{ m.next }}</p>
+{% elif m.phase == "bare" %}<p>It has no job yet. <span class="muted">Give it one in the app.</span></p>
+{% elif m.phase == "enroll" and not m.master_ready %}<p>Its turn comes when the master is set up.</p>
+{% elif m.phase == "enroll" %}<p>First it gets its place on your VPN.</p>
+<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="setup"><input type="hidden" name="host" value="{{ m.name }}">
+<button class="primary">Give it its place on the VPN</button></form>
+{% elif m.phase == "build" and m.provider %}<p>It is a rented server at {{ m.provider }}: Kiwi Server makes its install media
+and installs it there by itself. <strong>Everything on that server is erased.</strong>
+<span class="muted">The first time, the task shows a page of {{ m.provider }} to sign in at.</span></p>
+<form method="post" action="/run" onsubmit="return confirm('Install {{ m.name }} at {{ m.provider }} now? EVERYTHING ON THAT SERVER IS ERASED.')">{{ tok }}
+<input type="hidden" name="action" value="setup"><input type="hidden" name="host" value="{{ m.name }}">
+<button class="primary">Install it at {{ m.provider }}</button></form>
+{% elif m.phase == "build" %}<p>Next: its install media, a file of about 1 GB. <span class="muted">Making it takes a few minutes.</span></p>
+<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="build"><input type="hidden" name="host" value="{{ m.name }}">
+<button class="primary">Make its install media</button></form>
+{% elif m.phase == "install" %}{% if m.media %}<p><strong>1.</strong> Fetch its install media ({{ (m.media / 1048576) | round | int }} MB)
+{% if m.role == "master" %}and upload them as an ISO at your hoster (a master at home: write them to a USB stick).
+{% else %}and write them to a USB stick.{% endif %}
+<span class="muted">Fedora Media Writer and balenaEtcher write sticks. The file holds this machine's keys: delete it
+from your computer afterwards.</span></p>
+<div class="actions"><a class="btn" href="/hosts/{{ m.name }}/media">Fetch the install media</a>
+<form class="inline" method="post" action="/hosts/{{ m.name }}/media/drop">{{ tok }}<button>Remove them from here</button></form></div>
+<p><strong>2.</strong> Start the machine from {{ "them" if m.role == "master" else "the stick" }}. It erases its disk, installs itself and
+{{ "turns itself off: take the stick out and switch it on again" if m.on_done != "reboot" else "restarts" }}.</p>
+<p><strong>3.</strong> When it is on again:</p>{% else %}<p>Its install media are not here any more (they are kept in memory
+only). When the machine is installed and on:</p>{% endif %}
+<div class="actions"><form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="setup">
+<input type="hidden" name="host" value="{{ m.name }}">{% if m.address == "dhcp" and m.role != "master" %}
+<label for="at-{{ m.name }}">Its address right now</label><p class="muted" style="margin:0 0 4px">Your router gave it one;
+the router's page lists it under the name {{ m.name }}.</p><input id="at-{{ m.name }}" name="at" required>{% endif %}
+<button class="primary" style="margin-top:8px">Set it up</button></form>
+{% if not m.media %}<form class="inline" method="post" action="/hosts/{{ m.name }}/media/make">{{ tok }}<button>Make the install media again</button></form>{% endif %}</div>
+{% endif %}</div>{% endmacro %}"""
+
 TEMPLATES = {
     "base.html": BASE,
+    "step.html": STEP,
     "login.html": """{% extends "base.html" %}{% block main %}
 <h1>Kiwi</h1><p class="muted">The control page of your network.</p>
 <form method="post" action="/login" class="card">
@@ -78,7 +116,8 @@ answered yet. Is that machine on?</p>{% endif %}{% endif %}
 <label for="pw">Password</label><input id="pw" type="password" name="password" autocomplete="current-password" autofocus>
 {% if error %}<p class="bad">{{ error }}</p>{% endif %}
 <div class="actions"><button class="primary">{{ "Unlock and log in" if locked else "Log in" }}</button></div></form>
-<details><summary>I forgot the password</summary><p class="muted">On the computer the network was set up with:
+<details><summary>I forgot the password</summary><p><a href="/recover">Set a new one with your recovery key</a>,
+the one you wrote down when the network was made.</p><p class="muted">Or on the computer the network was set up with:
 <code>kiwi-server serve &lt;fleet&gt; --set-password</code>, then <code>kiwi-server control push &lt;fleet&gt;</code>.
 The old password cannot be read anywhere.</p></details>{% endblock %}""",
 
@@ -181,9 +220,21 @@ It is shown once. If you forget the password of this page, it is the only way ba
 <div class="actions"><a class="btn primary" href="/">I have written it down</a></div></div>
 <p class="muted">Next, on the page that follows: the machines, one after the other. The master first, then the
 machines at home, then your phone.</p>{% endblock %}""",
+    "recover.html": """{% extends "base.html" %}{% block main %}
+<p><a href="/login">← Back</a></p><h1>A new password with the recovery key</h1>
+<form method="post" action="/recover" class="card" autocomplete="off">
+<label for="rk">Recovery key</label><p class="muted" style="margin:0 0 4px">It starts with AGE-SECRET-KEY-.</p>
+<input id="rk" name="recovery" autocomplete="off">
+<label for="pw">New password</label><p class="muted" style="margin:0 0 4px">12 characters at least.</p>
+<input id="pw" type="password" name="password" autocomplete="new-password">
+<label for="pw2">The password again</label><input id="pw2" type="password" name="again" autocomplete="new-password">
+{% if error %}<p class="bad">{{ error }}</p>{% endif %}
+<div class="actions"><button class="primary">Set the password and log in</button></div></form>{% endblock %}""",
     "index.html": """{% extends "base.html" %}{% block main %}
 {% set bad = machines|selectattr("state", "in", ["bad", "down"])|list %}{% set warn = machines|selectattr("state", "equalto", "warn")|list %}
-{% if looking or not looked %}<div class="banner warn">Checking your machines… this takes a minute.</div>
+{% set running = machines|rejectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
+{% if machines and not running %}<div class="banner ok">Your network is made. Now its machines, one after the other.</div>
+{% elif looking or not looked %}<div class="banner warn">Checking your machines… this takes a minute.</div>
 <script>setTimeout(function(){location.reload()},6000)</script>
 {% elif bad %}<div class="banner bad">{{ bad|length }} of {{ machines|length }} machines {{ "has" if bad|length == 1 else "have" }} a problem</div>
 {% elif warn %}<div class="banner warn">Everything runs. {{ warn|length }} {{ "machine wants" if warn|length == 1 else "machines want" }} a look.</div>
@@ -197,21 +248,37 @@ machines at home, then your phone.</p>{% endblock %}""",
 <a class="btn" href="/hosts/{{ m.name }}">Open</a></div><p>{{ p.text }}</p>
 {% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}</div>{% endfor %}{% endfor %}{% endif %}
 
+{% from "step.html" import step with context %}
+{% set fresh = machines|selectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
+{% if fresh %}<h2>Still to set up</h2><p class="muted">One machine after the other: the master first.</p>
+{% for m in fresh %}{{ step(m, tok) }}{% endfor %}{% endif %}
+
 <h2>Your machines</h2>
 {% for m in machines %}<a class="tile" href="/hosts/{{ m.name }}" style="margin:8px 0"><div class="row">
 <b><span class="dot {{ m.state }}"></span>{{ m.name }}</b><span class="state {{ m.state }}">{{ words(m.state) }}</span></div>
 <span>{{ kind(m.role) }}{% if m.sites %} · {{ m.sites|length }} services{% endif %}</span></a>
 {% else %}<p class="muted">No machines yet.</p>{% endfor %}
+<details><summary>Add a machine at home</summary><form method="post" action="/machines/add" class="card">{{ tok }}
+<label for="preset">What it does</label><select id="preset" name="preset">{% for value, label in presets.items() %}
+<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+<label for="address">Its address at home</label><p class="muted" style="margin:0 0 4px">A fixed address in your home
+network that nothing else uses, like 192.168.1.30. Empty: your router gives it one.</p><input id="address" name="address">
+<details><summary>More settings</summary><label for="mname">Name</label><p class="muted" style="margin:0 0 4px">Empty: it is
+named after a fruit.</p><input id="mname" name="name">
+<label for="target">System</label><select id="target" name="target"><option value="ucore">uCore (updates itself, rolls back)</option>
+<option value="debian">Debian 13</option></select></details>
+{% if add_error %}<p class="bad">{{ add_error }}</p>{% endif %}
+<div class="actions"><button class="primary">Add it</button></div></form></details>
 
-{% if tiles %}<h2>Open a service</h2><p class="muted">These open from a device that is on your VPN.</p>
+{% if tiles and running %}<h2>Open a service</h2><p class="muted">These open from a device that is on your VPN.</p>
 <div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
 <b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% endif %}
 
-<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
+{% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
 moment. Do it now and then, and after changing settings in the app.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Update every machine now? This takes a while; services that changed restart for a moment.')">{{ tok }}
-<input type="hidden" name="action" value="update"><button class="primary">Update everything</button></form></div>
+<input type="hidden" name="action" value="update"><button class="primary">Update everything</button></form></div>{% endif %}
 
 <h2>Do something</h2><div class="tiles">
 <a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
@@ -226,7 +293,9 @@ moment. Do it now and then, and after changing settings in the app.</span></p>
 <p class="muted">{{ kind(m.role) }} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}{% if m.facts.uptime is number %} · on for {{ age(m.facts.uptime) }}{% elif m.facts.uptime %} · {{ m.facts.uptime }}{% endif %}</p>
 {% for p in m.problems %}<div class="card"><p><span class="dot {{ p.level }}"></span>{{ p.text }}</p>
 {% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}</div>{% endfor %}
-{% if not m.known %}<div class="card"><p>This machine has not answered yet.</p><p class="muted">{{ m.next }}</p></div>{% endif %}
+{% from "step.html" import step with context %}
+{% if m.phase and m.phase != "applied" %}<h2>Still to set up</h2>{{ step(m, tok) }}
+{% elif not m.known %}<div class="card"><p>This machine has not answered yet.</p></div>{% endif %}
 
 <h2>What you can do</h2><div class="card"><div class="what">
 <form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="status"><input type="hidden" name="host" value="{{ m.name }}"><button>Check now</button></form>
@@ -254,6 +323,7 @@ moment. Do it now and then, and after changing settings in the app.</span></p>
     "job.html": """{% extends "base.html" %}{% block main %}
 <p><a href="{{ back }}">← Back</a></p><h1>{{ title }}</h1>
 <p id="say" class="banner {{ 'ok' if job.state == 'ok' else 'bad' if job.state == 'failed' else 'warn' }}">{{ say[job.state] }}</p>
+<p id="open" class="card" style="display:none">Open this page to go on: <a id="openlink" target="_blank" rel="noopener"></a></p>
 <details {% if job.state == 'failed' %}open{% endif %}><summary>What is happening, line by line</summary><pre id="log"></pre></details>
 <script>
 const say={{ say|tojson }};let off=0;const log=document.getElementById("log"),el=document.getElementById("say");
@@ -261,6 +331,8 @@ async function poll(){const r=await fetch("/api/jobs/{{ job.id }}/log?offset="+o
 const d=await r.json();log.textContent+=d.text;off=d.offset;el.textContent=say[d.state];
 el.className="banner "+(d.state=="ok"?"ok":d.state=="failed"?"bad":"warn");
 if(d.state=="failed")log.parentElement.open=true;
+const u=log.textContent.match(/https:\\/\\/[^\\s"']+/g),o=document.getElementById("open");
+if(u&&d.state=="running"){const a=document.getElementById("openlink");a.href=a.textContent=u[u.length-1];o.style.display=""}else o.style.display="none";
 if(d.state=="waiting"||d.state=="running")setTimeout(poll,1500)}
 poll();
 </script>{% endblock %}""",
@@ -422,7 +494,7 @@ WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
-        "update": "Updating every machine", "rotate": "Replacing the SSH keys",
+        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of",
         "rotate-seed": "Replacing the secrets inside the services"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
@@ -508,13 +580,18 @@ def make_app(control: Control):
             s = said.get(h["name"])
             out.append({"name": h["name"], "hostname": h["hostname"], "role": h["role"], "modules": h.get("modules") or [],
                         "sites": h.get("sites") or [], "vpn_ip": h.get("vpn_ip") or "", "next": h.get("next") or "",
+                        "phase": h.get("phase") or "", "provider": h.get("provider") or "", "address": h.get("address") or "",
+                        "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",
                         "problems": (s or {}).get("problems") or [], "notes": (s or {}).get("notes") or [],
                         "facts": (s or {}).get("facts") or {}, "output": (s or {}).get("output") or ""})
+        ready = all(m["phase"] == "applied" for m in out if m["role"] == "master")
+        for m in out:
+            m["master_ready"] = ready
         for name, s in said.items():            # a look at a machine the fleet file no longer names
             if name not in [m["name"] for m in out]:
                 out.append({"name": name, "hostname": name, "role": "", "modules": [], "sites": [], "vpn_ip": "",
-                            "next": "", "known": True, "state": s.get("state") or "unknown",
+                            "next": "", "phase": "", "provider": "", "address": "", "media": 0, "on_done": "", "master_ready": True, "known": True, "state": s.get("state") or "unknown",
                             "problems": s.get("problems") or [], "notes": s.get("notes") or [],
                             "facts": s.get("facts") or {}, "output": s.get("output") or ""})
         return out, st, info
@@ -634,6 +711,33 @@ def make_app(control: Control):
         r.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
         return r
 
+    @app.get("/recover")
+    def recover_form():
+        if control.fresh():
+            return RedirectResponse("/setup", status_code=303)
+        return page("recover.html")
+
+    @app.post("/recover")
+    def recover(request: Request, recovery: str = Form(""), password: str = Form(""), again: str = Form("")):
+        if control.fresh():
+            return RedirectResponse("/setup", status_code=303)
+        if len(password.strip()) < 12:
+            return page("recover.html", error="The password needs 12 characters at least.")
+        if password.strip() != again.strip():
+            return page("recover.html", error="The two passwords are not the same.")
+        try:
+            token = control.reset_password(recovery, password, address(request))
+        except KiwiError as e:
+            return page("recover.html", error=str(e))
+        if not token:
+            time.sleep(1)
+            return page("recover.html", error="That is not this network's recovery key. After five wrong tries, wait ten minutes.")
+        control.look()
+        r = RedirectResponse("/", status_code=303)
+        secure = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
+        r.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
+        return r
+
     @app.post("/logout")
     def logout(request: Request, csrf: str = Form("")):
         r = login_page()
@@ -655,8 +759,46 @@ def make_app(control: Control):
         if not user(request):
             return login_page()
         ms, st, _info = machines()
+        from . import setup as setupmod
         return page("index.html", request, "/", machines=ms, tiles=tiles(ms), looked=st.get("time"),
-                    error=st.get("error"), looking=control.looking)
+                    error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS,
+                    add_error=request.query_params.get("add_error"))
+
+    @app.post("/machines/add")
+    def machines_add(request: Request, preset: str = Form("cloud"), address: str = Form(""), name: str = Form(""),
+                     target: str = Form("ucore"), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            made = control.add_machine(preset, address, name, target, user=u)
+        except KiwiError as e:
+            return RedirectResponse("/?" + urllib.parse.urlencode({"add_error": str(e)}), status_code=303)
+        return RedirectResponse("/hosts/" + made, status_code=303)
+
+    @app.get("/hosts/{name}/media")
+    def media(request: Request, name: str):
+        if not user(request):
+            return login_page()
+        m = control.media(name)
+        if not m:
+            return RedirectResponse("/hosts/" + name, status_code=303)
+        control.audit(user(request), "install media fetched", hosts=[name], address=address(request))
+        return FileResponse(m[0], media_type="application/x-iso9660-image", filename=name + ".iso")
+
+    @app.post("/hosts/{name}/media/{what}")
+    def media_do(request: Request, name: str, what: str, csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        if what == "drop":
+            control.drop_media(name, user=u)
+            return RedirectResponse("/hosts/" + name, status_code=303)
+        try:
+            jid = control.start("build", [name], user=u)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return RedirectResponse("/jobs/" + jid, status_code=303)
 
     @app.get("/hosts/{name}")
     def host(request: Request, name: str):
@@ -676,14 +818,14 @@ def make_app(control: Control):
         return RedirectResponse("/", status_code=303)
 
     @app.post("/run")
-    def run(request: Request, action: str = Form(...), host: str = Form(""), csrf: str = Form("")):
+    def run(request: Request, action: str = Form(...), host: str = Form(""), csrf: str = Form(""), at: str = Form("")):
         u = posted(request, csrf)
         if not u:
             return login_page()
         if action not in ACTIONS:
             return JSONResponse({"error": "unknown action"}, status_code=400)
         try:
-            jid = control.start(action, [host] if host else [], user=u)
+            jid = control.start(action, [host] if host else [], user=u, at=at if action == "setup" else "")
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return RedirectResponse("/jobs/" + jid, status_code=303)
@@ -696,11 +838,15 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":
             say["ok"] = "Done. Nothing was changed; the lines below say what Apply would do."
+        if j["action"] == "build":
+            say["ok"] = "Done. Go back: the machine's page has the install media and says what to do with them."
+        if j["action"] == "setup":
+            say["ok"] = "Done. Go back for the next step."
         if j["action"] in ("rotate", "rotate-seed"):      # a machine that is off is no failure: it waits
             say["failed"] = ("Not every machine could be changed. The ones that wait are listed under Computers; "
                              "the lines below say why.")

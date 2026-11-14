@@ -72,6 +72,31 @@ password for the page. The page then shows the recovery key once: write it down.
 - A control node that waits for `kiwi-server control push` shows the same page; a push
   from the computer the network was made on takes its place.
 
+### Then the machines
+
+Home lists the machines that are still to set up, the master first, each with its next
+step as a button:
+
+| Step | What the button does |
+|---|---|
+| Make its install media | builds the machine's ISO (about 1 GB, a few minutes) |
+| Fetch the install media | downloads it to your computer, for a USB stick or your hoster's ISO upload |
+| Install it at netcup | for a master at a provider: makes the media, signs in (the task shows the page to open) and installs it there; everything on that server is erased |
+| Give it its place on the VPN | a machine at home, once the master runs |
+| Set it up | when the machine is installed and on: gives it its role |
+
+"Add a machine at home" under the list adds another one. A machine without a fixed
+address is set up at the address your router gave it; the page asks for it.
+
+Install media hold the machine's keys, so they are made in memory and never on this
+machine's disk: they are gone after a restart and after the machine is set up, and
+"Make the install media again" brings them back. Two fit at a time with the control
+module's default (`ram_mb: 2048`).
+
+### The password is forgotten
+
+"I forgot the password" on the login page takes the recovery key and a new password.
+
 ## Secrets
 
 Nothing rests on the node in the clear. Its disk holds `secrets.age` and

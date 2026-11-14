@@ -66,8 +66,8 @@ settings:
   - key: ram_mb
     type: int
     label: RAM for the open store (MiB)
-    help: "The tmpfs that holds the opened secrets, job logs and rendered stacks while the fleet is unlocked."
-    default: 256
+    help: "The most the folder in memory may grow to: the opened secrets, job logs, rendered stacks, and the install media made on the page (about 1 GB each, until they are fetched). Memory is only used by what is in it."
+    default: 2048
   - key: allow_from
     label: Also allow
     help: "One more address or network that may open the page besides the mesh, e.g. the operator's LAN 192.168.0.0/16. Empty: the mesh only."

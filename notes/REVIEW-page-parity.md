@@ -7,9 +7,9 @@ run included. Compared command by command and setting by setting.
 
 | # | The app has | The page | State |
 |---|---|---|---|
-| 1 | The first run: the questionnaire, the recovery key | nothing; a node waits for `control push` | **built** (this release): a machine with nothing on it shows the questionnaire, guarded by a setup code |
+| 1 | The first run: the questionnaire, the recovery key | nothing; a node waits for `control push` | **built** in 2.81.0: a machine with nothing on it shows the questionnaire, guarded by a setup code; 2.82.0: a new password by recovery key |
 | 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | open |
-| 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | open |
+| 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | **built** in 2.82.0: "Still to set up" with one button per step, media made in memory and fetched from the page, "Add a machine at home" |
 | 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | open |
 | 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | open |
 | 6 | A copy of the network (`backup --local`), restore a network from a copy, a synced folder | "Save it now" only | open |

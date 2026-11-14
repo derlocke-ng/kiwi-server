@@ -41,6 +41,8 @@ def read_text(path):
 
 def write_text(path, text, mode=0o644):
     """Write a file atomically with the requested mode (secrets get 0600)."""
+    if os.path.islink(path):        # the file the link names (see write_bytes)
+        path = os.path.realpath(path)
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
@@ -53,6 +55,8 @@ def write_text(path, text, mode=0o644):
 
 
 def write_bytes(path, data, mode=0o644):
+    if os.path.islink(path):        # the file the link names: a control node's fleet file is a
+        path = os.path.realpath(path)   # link into RAM, and a copy beside the link would be on disk
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)

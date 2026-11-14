@@ -30,7 +30,9 @@ def cache_dir_for(args):
 
 def media_dir_for(args, fleet):
     """Where ISOs go: on disk, since they have to reach a stick or a provider anyway."""
-    return os.path.abspath(getattr(args, "output_dir", None) or os.path.join(fleet.dir, "output"))
+    # KIWI_MEDIA_DIR: a control node keeps them in memory, since nothing of the fleet rests on its disk in the clear
+    return os.path.abspath(getattr(args, "output_dir", None) or os.environ.get("KIWI_MEDIA_DIR")
+                           or os.path.join(fleet.dir, "output"))
 
 
 def out_dir_for(args, fleet):
@@ -690,7 +692,9 @@ def cmd_list(args):
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
-                     "phase": nxt[0], "next": nxt[1], "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
+                     "phase": nxt[0], "next": nxt[1], "provider": (h.cfg.get("vps") or {}).get("provider") or "",
+                     "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
+                     "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
@@ -780,6 +784,7 @@ def cmd_next(args):
         rc = main(list(argv))
         if rc:
             raise SystemExit(rc)
+    built = False
     if phase == "invalid":
         raise KiwiError("%s: its settings are not complete yet: %s" % (h.name, [e for e in errs if not not_enrolled(e)][0]))
     if phase == "bare":
@@ -794,7 +799,7 @@ def cmd_next(args):
     if phase == "build":
         if go("Make the install media for %s (a file of about 1 GB; this takes a few minutes)?" % h.name):
             run("build", path, h.name)
-            phase = "install"
+            phase, built = "install", True
         else:
             return
     # phase == "install": the media exist. Is the machine there already? A machine nobody has
@@ -810,6 +815,11 @@ def cmd_next(args):
             run("apply", path, h.name, "--ssh", tgt, "--new-host-key")
             util.say("%s is set up. Run this again for the next machine" % h.name)
         return
+    where = (h.cfg.get("vps") or {}).get("provider")
+    if args.host and not built and not sys.stdin.isatty() and where not in providers.PROVIDERS:
+        # asked for by a page or a script, with nobody to read the steps below: it is not there
+        raise KiwiError("%s does not answer%s yet. Start it from its install media, wait until it is on again, then set it up"
+                        % (h.name, " at %s" % addr if addr else ""))
     iso = shown_path(os.path.abspath(o.iso))
     on_done = (h.cfg.get("install") or {}).get("on_done", "poweroff")
     after = ("it turns itself off when it is done: take the media out and switch it on again" if on_done == "poweroff"

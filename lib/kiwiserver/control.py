@@ -32,14 +32,15 @@ HOST = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 FLEET_FILES = ("fleet.yaml", "federation.yaml")     # at rest on the node: <name>.age
 SESSION_HOURS = 12
 MIN_PASSWORD = 12
+MEDIA_ROOM = 1000 * 1024 * 1024     # what one machine's install media may take
 # what a page may start: the command and whether it takes hosts
 ACTIONS = {
     "status": ("status", True), "plan": ("plan", True), "apply": ("apply", True),
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
-    "rotate-seed": ("rotate", False),
+    "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed"}     # these change machines or the fleet: the audit log says who
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build"}     # these change machines or the fleet: the audit log says who
 
 
 class Control:
@@ -328,6 +329,34 @@ class Control:
         self.audit(user, "changed the control password")
         self.arm_auto()                     # the ring held the old password's key
 
+    def reset_password(self, recovery, new, address="?"):
+        """The recovery key in place of a forgotten password: it opens the store, and the page
+        gets a new password. A session token, or None when the key is not the store's."""
+        now = self.clock()
+        recent = [t for t in self.failures.get(address, []) if now - t < 600]
+        self.failures[address] = recent
+        if len(recent) >= 5 or not self.ready():
+            return None
+        recovery = "".join((recovery or "").split()).upper()
+        try:
+            if not recovery.startswith("AGE-SECRET-KEY-") or storemod.public_of(recovery) != dict(self.store.ways()).get("recovery"):
+                raise KiwiError("not the recovery key")
+        except KiwiError:
+            recent.append(now)
+            self.audit("admin", "recovery failed", address=address)
+            return None
+        if len((new or "").strip()) < MIN_PASSWORD:
+            raise KiwiError("the password needs %d characters at least" % MIN_PASSWORD)
+        with self.lock:
+            if self.locked():
+                self._open(recovery)
+            self.set_password(new)
+            self._identity = storemod.password_identity(new.strip(), util.read_text(self.salt_file).strip())
+            self._for_the_keys_now()
+        self.audit("admin", "the recovery key set a new control password", address=address)
+        self.arm_auto()
+        return self.login(new, address)
+
     def rotation(self):
         """Machines still on the old SSH keys (pending) or the old seed (seed_pending), and when
         each was last replaced."""
@@ -558,7 +587,7 @@ class Control:
             return [json.loads(x) for x in fh.readlines()[-n:]][::-1]
 
     # ---- jobs -----------------------------------------------------------------------
-    def argv(self, action, hosts=()):
+    def argv(self, action, hosts=(), at=""):
         if action not in ACTIONS:
             raise KiwiError("unknown action %r" % action)
         if action == "update":              # every machine, one after the other: the maintenance button
@@ -578,6 +607,28 @@ class Control:
             for h in hosts:                 # left out: gone for good, or about to be installed anew
                 argv += ["--waive", h]
             return argv
+        if action == "setup":               # a machine's next step, as `kiwi-server next` takes it
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            if at:      # it got its address from the router: the person at the page says which
+                import ipaddress
+                try:
+                    ipaddress.ip_address(at)
+                except ValueError:
+                    raise KiwiError("An address looks like 192.168.1.30.")
+                row = next((h for h in (self.fleet_info() or {}).get("hosts") or [] if h["name"] == hosts[0]), None)
+                if not row:
+                    raise KiwiError("no such machine: %s" % hosts[0])
+                return list(self.kiwi) + ["apply", self.fleet_path, hosts[0], "--ssh",
+                                          "%s@%s" % (row.get("admin_user") or "core", at), "--new-host-key"]
+            return list(self.kiwi) + ["next", self.fleet_path, hosts[0], "--yes"]
+        if action == "build":       # about 1 GB of memory each: one at a time, asked for by name
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            os.makedirs(self.media_dir(), mode=0o700, exist_ok=True)
+            if shutil.disk_usage(self.media_dir()).free < MEDIA_ROOM:
+                raise KiwiError("there is no room for more install media here: remove another machine's first "
+                                "(on its page), or give this machine more memory for them (the control module's ram_mb)")
         cmd, takes_hosts = ACTIONS[action]
         argv = list(self.kiwi) + [cmd, self.fleet_path]
         if takes_hosts:
@@ -586,14 +637,14 @@ class Control:
             argv.append("--once")
         return argv
 
-    def start(self, action, hosts=(), user="admin", wait=False):
+    def start(self, action, hosts=(), user="admin", wait=False, at=""):
         """A job in a thread; its id. The jobs wait for each other."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
         for h in hosts:
             if not HOST.match(h):
                 raise KiwiError("not a host name: %r" % h)
-        argv = self.argv(action, hosts)
+        argv = self.argv(action, hosts, at.strip())
         jid = time.strftime("%Y%m%d-%H%M%S-") + pysecrets.token_hex(3)
         meta = {"id": jid, "action": action, "hosts": list(hosts), "user": user,
                 "state": "waiting", "started": None, "ended": None, "rc": None}
@@ -611,7 +662,7 @@ class Control:
             meta.update(state="running", started=self.clock())
             self._write(meta)
             log = os.path.join(self.jobs_dir, meta["id"] + ".log")
-            env = dict(os.environ, PYTHONUNBUFFERED="1")
+            env = self._env()
             with open(os.open(log, os.O_WRONLY | os.O_CREAT, 0o600), "w") as fh:
                 try:
                     rc = subprocess.run(argv, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -630,8 +681,76 @@ class Control:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):
             pass
-        if meta["action"] in ("status", "apply", "save", "update"):
+        if meta["action"] == "setup" and rc == 0:       # set up: its install media have done their work
+            row = next((h for h in (self.fleet_info() or {}).get("hosts") or [] if h["name"] in meta["hosts"]), None)
+            if row and row.get("phase") == "applied" and self.media(row["name"]):
+                os.remove(self.media(row["name"])[0])
+        if meta["action"] in ("status", "apply", "save", "update", "setup"):
             self.look()                         # what the pages show is what is true now
+
+    # ---- machines: a new one, its install media ---------------------------------------
+    def media_dir(self):
+        """Where install media are made. They carry the machine's secrets: on a control node
+        (the fleet file is a link into memory) they stay in memory and go with a restart."""
+        if os.path.islink(self._fleet_file("fleet.yaml")):
+            return os.path.join(self.run, "media")
+        return os.path.join(self.fleet_dir, "output")
+
+    def _env(self):
+        return dict(os.environ, PYTHONUNBUFFERED="1", KIWI_MEDIA_DIR=self.media_dir())
+
+    def media(self, name):
+        """The install media of a machine, when they are made: (path, size)."""
+        if not HOST.match(name or ""):
+            return None
+        path = os.path.join(self.media_dir(), name, name + ".iso")
+        return (path, os.path.getsize(path)) if os.path.isfile(path) else None
+
+    def drop_media(self, name, user="admin"):
+        m = self.media(name)
+        if m:
+            os.remove(m[0])
+            self.audit(user, "install media removed", hosts=[name])
+            self.fleet_info(fresh=True)
+
+    def add_machine(self, preset, address="", name="", target="", user="admin"):
+        """A machine at home, added to the fleet file as the first run's questions add one."""
+        from . import setup as setupmod
+        import ipaddress
+        import yaml
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if preset not in setupmod.PRESETS:
+            raise KiwiError("what should it do?")
+        if target not in ("", "ucore", "debian"):
+            raise KiwiError("the system is ucore or debian")
+        with self.lock:
+            path = os.path.realpath(self.fleet_path)
+            data = yaml.safe_load(util.read_text(path)) or {}
+            taken = set(data.get("hosts") or {})
+            name = (name or "").strip().lower() or setupmod.free_name("node", taken)
+            nets = [h.get("network") or {} for h in (data.get("hosts") or {}).values() if isinstance(h, dict)]
+            gateway = next((str(n["gateway"]) for n in nets if n.get("gateway")), "")     # as the machines it has
+            like = next((str(n["address"]) for n in nets if "/" in str(n.get("address") or "")), "")
+            address = (address or "").strip()
+            net = None
+            if address:
+                try:
+                    ip = ipaddress.ip_interface(address)
+                except ValueError:
+                    raise KiwiError("An address looks like 192.168.1.30.")
+                prefix = ip.network.prefixlen if "/" in address else int(like.rsplit("/", 1)[1]) if like else 24
+                net = "{ dhcp: false, address: %s/%d%s }" % (ip.ip, prefix, ", gateway: %s" % gateway if gateway else "")
+            setupmod.add_host(path, name, "node", preset, target or "ucore")
+            if net:
+                text = util.read_text(path).rstrip("\n")
+                util.write_text(path, text + "\n    disk: auto\n    network: %s\n" % net, 0o600)
+            else:
+                util.write_text(path, util.read_text(path).rstrip("\n") + "\n    disk: auto\n", 0o600)
+            self.save_fleet()
+        self.audit(user, "machine added", hosts=[name])
+        self.fleet_info(fresh=True)
+        return name
 
     def _write(self, meta):
         os.makedirs(self.jobs_dir, mode=0o700, exist_ok=True)
@@ -700,7 +819,7 @@ class Control:
             return None
         if fresh or not os.path.isfile(path):
             r = subprocess.run(list(self.kiwi) + ["list", self.fleet_path, "--porcelain"], capture_output=True,
-                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
             try:
                 json.loads(r.stdout)
             except ValueError:

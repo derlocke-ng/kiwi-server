@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.82.0 — machines are added, installed and set up from the page
+
+- **"Still to set up" on the control page**: every machine that is not running yet, the
+  master first, with its next step as one button: make its install media, fetch them,
+  install it at the provider, give it its place on the VPN, set it up. The page's
+  counterpart of `kiwi-server next` and of the app's buttons.
+- **Install media from the page.** Made in memory (they hold the machine's keys, and
+  nothing of the network rests on a control node's disk in the clear), fetched by
+  someone who is logged in, gone after a restart and once the machine is set up.
+  kiwi-modules 0.32.2 gives the control module 2048 MiB for that (`ram_mb`, a limit).
+- **"Add a machine at home"** on Home: what it does, its address, name and system.
+- **A forgotten password**: the login page takes the recovery key and a new password.
+- A task that waits for a sign-in at a hoster shows the page to open as a link.
+- Fixed: a command that wrote the fleet file on a control node (it is a link into
+  memory there) left a plain copy on the disk beside the link. Files behind a link are
+  written where the link points (kiwi-modules 0.32.2).
+- `next <fleet> <host> --yes` without a terminal ends with an error when the machine
+  does not answer, instead of printing the steps for a person and saying it went well.
+- Home is quiet until the first machine runs: no checking loop, no service tiles.
+
 ## 2.81.0 — a network can be started from a machine's page
 
 - **The first run on the control page.** A machine with nothing on it (`serve --wait`,

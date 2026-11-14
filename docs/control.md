@@ -255,6 +255,42 @@ stop, and `pull --force` or `push --force` says which copy counts. The node
 takes a push while it is open. A new password
 (`--set-password`, then push) locks it until that password logs in.
 
+## When a machine does not answer
+
+The control node looks at every machine every ten minutes. One that does not
+answer is named on Home, with how long it has been gone. By default nothing
+more happens. The fleet file can allow more:
+
+```yaml
+defaults:
+  recovery:
+    master: { after: 15, do: restart }   # minutes; tell or restart
+    node:   { after: 60, do: tell }
+```
+
+On the page this is "Settings for every machine", "When a machine is gone".
+
+`restart` switches the machine off and on at its provider, and touches nothing
+on it. It needs a machine at a provider and a control node that is signed in
+there (`kiwi-server vps login`, see [getting-started.md](getting-started.md)). A machine at
+home can only be told about.
+
+The control node holds back in three cases, whatever the fleet file says:
+
+- It restarted the same machine less than an hour ago.
+- It restarted it three times in the last 24 hours. Then a person has to look.
+- The provider does not answer. Then the control node itself may be the one
+  without a connection, and it does nothing.
+
+Every restart is in Activity. A machine whose disk waits to be unlocked counts
+as there, not as gone. By hand, and without doing anything:
+
+```bash
+kiwi-server recover ~/kiwi/fleet.yaml --dry-run
+```
+
+What is planned beyond a restart: [design/recovery.md](design/recovery.md).
+
 ## Mind
 
 - Never put the module on a rented master: while it is unlocked, the machine

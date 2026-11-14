@@ -1299,10 +1299,65 @@ def cmd_vps(args):
         server = vps_server(client, fleet, args.target, args.server)
         if args.action == "install":
             vps_install(args, fleet, client, server)
+        elif args.action == "restart":          # a power cycle: nothing on the server is touched
+            label = server.get("nickname") or server.get("name")
+            if client.state(server["id"]) != "SHUTOFF":
+                util.say("%s: powering off" % label)
+                client.power(server["id"], False)
+            util.say("%s: powering on" % label)
+            client.power(server["id"], True)
         elif args.porcelain:
             print(json.dumps(netcup.probe(client, server), indent=2))
         else:
             print_probe(netcup.probe(client, server))
+
+
+def cmd_recover(args):
+    """One look at the machines that are gone, and what the policy allows done about it
+    (watchdog.py). The control node runs this after every look at the machines."""
+    import contextlib
+    import io
+    from . import watchdog
+    fleet, roles, ms = load(args)
+    state = fleet_state(fleet)
+    applied = state.get("applied") or {}
+    kinds = {h.name: ("master" if h.role in roles and roles[h.role].node_type == "master" else "node")
+             for h in fleet.hosts.values() if h.name in applied}
+    if args.status:
+        with open(args.status) as fh:
+            seen = json.load(fh)
+    else:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["status", args.fleet, "--porcelain"])
+        seen = json.loads(buf.getvalue() or "{}")
+    said = {h["host"]: bool(h.get("ok")) or bool(h.get("locked")) for h in seen.get("hosts") or []}   # a locked disk is not gone
+
+    def where(name):
+        h = fleet.hosts[name]
+        if not os.path.isfile(fleet.resolve_path("secrets/netcup.token")):
+            return None             # nobody signed in to the provider from here
+        return (h.cfg.get("vps") or {}).get("server") or (h.role_settings_raw.get("vpn-server") or {}).get("wg_host")
+
+    def restart(name):
+        if args.dry_run:
+            return
+        rc = main(["vps", "restart", args.fleet, name] + (["--api", args.api] if args.api else []))
+        if rc:
+            raise KiwiError("the provider did not do it")
+    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where)
+    if not args.dry_run:
+        try:
+            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        except OSError:
+            pass
+    if args.porcelain:
+        print(json.dumps({"events": events}))
+        return
+    for e in events:
+        (util.warn if e["kind"] in ("tell", "held") else util.say)(e["text"])
+    if not events:
+        util.say("every machine that is set up answers")
 
 
 def cmd_mtu(args):
@@ -2727,6 +2782,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
+  kiwi-server recover <fleet> [--dry-run]             machines that are gone: what the recovery policy allows done
   kiwi-server remove <fleet> <host> [--yes]            a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
@@ -2832,11 +2888,15 @@ def build_parser():
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")
     s.add_argument("--write", action="store_true", help="a node's result: write wg_mtu into the fleet file")
-    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install"]); s.add_argument("fleet")
+    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart"]); s.add_argument("fleet")
     s.add_argument("target", nargs="?", help="a fleet host, or a server's id, address, name or nickname")
     s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")
     s.add_argument("--yes", action="store_true", help="install: wipe the server's disk without asking")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake netcup (tests)
+    s = sub("recover", cmd_recover); s.add_argument("fleet")
+    s.add_argument("--status", metavar="FILE", help="what `status --porcelain` said, instead of asking the machines again")
+    s.add_argument("--dry-run", action="store_true", help="say what would be done, do nothing, remember nothing")
+    s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake provider (tests)
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
     s.add_argument("--wireguard", metavar="FILE", help="the client config the master issued for the router")
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")

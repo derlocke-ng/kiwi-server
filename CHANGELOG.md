@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.93.0 — the control node restarts a master that is gone
+
+- **A machine that does not answer** is named on the control page's Home, with how long
+  it has been gone. `recovery:` in the fleet's defaults (page and app: Settings, "When
+  a machine is gone") says what may be done without a person:
+  `master: { after: 15, do: restart }` lets the control node switch a master that has
+  been gone for 15 minutes off and on at its provider. Nothing on the server is
+  touched. The default stays `tell`.
+- It holds back when it restarted the same machine within the hour, three times within
+  a day, or when the provider does not answer (then the control node is the one that
+  is cut off). Every restart is in Activity.
+- `kiwi-server recover <fleet> [--dry-run]` does one such look by hand;
+  `kiwi-server vps restart <fleet> <host>` is the power cycle alone.
+- [docs/design/recovery.md](docs/design/recovery.md): what runs by itself today and
+  what is planned, from a dead service to a home that is gone, and the emergency
+  channel over Tor.
+
 ## 2.92.0 — a clean boot for a machine with its own ad blocker; the app catches up
 
 - kiwi-stack 0.9.6: a machine that runs Pi-hole asked it for every name, also at boot,

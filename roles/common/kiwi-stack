@@ -119,6 +119,26 @@ misrouted() {
         fi
     done
 }
+own_dns() { # on|off
+    # The machine asks its own Pi-hole only while the stack runs. Set for good, it had nobody
+    # to ask at boot until the stack was up: the time service could not find its servers, and
+    # the stack, which waits for the clock, started a minute and a half late with a failed
+    # unit to show for it; Pi-hole's own first fetch of its blocklist failed the same way.
+    [[ -n ${STACK_DNS_IP:-} ]] || return 0
+    systemctl is-active -q systemd-resolved 2>/dev/null || return 0
+    # (a name of its own: a file in /etc of the same name would hide this one)
+    local f=/run/systemd/resolved.conf.d/91-kiwi-stack-dns.conf want
+    if [[ $1 == on ]]; then
+        want=$(printf '%s\n' '[Resolve]' "DNS=$STACK_DNS_IP 9.9.9.9 149.112.112.112" 'Domains=~.')
+        [[ -f $f && $(cat "$f") == "$want" ]] && return 0
+        mkdir -p /run/systemd/resolved.conf.d
+        printf '%s\n' "$want" > "$f"
+    else
+        [[ -f $f ]] || return 0
+        rm -f "$f"
+    fi
+    systemctl restart systemd-resolved 2>/dev/null || true
+}
 verify() {
     # every service of the stack is running, or the names of those that are not;
     # a unit still (re)starting counts as down — a pull that cannot finish must not pass.
@@ -160,9 +180,9 @@ vpn_restart() {
 }
 if [[ $STACK_RUNTIME == podman ]]; then
     case "${1:-}" in
-        start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; host_units restart --no-block ;;
-        up)      systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route ;;
-        stop)    host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
+        start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on; host_units restart --no-block ;;
+        up)      systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on ;;
+        stop)    own_dns off; host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
         update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then podman auto-update; podman image prune -f >/dev/null; else echo "auto_update is off: images change with an apply"; fi; mesh_route; host_units restart --no-block ;;
         status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager; verify || true ;;
@@ -173,9 +193,9 @@ if [[ $STACK_RUNTIME == podman ]]; then
     esac
 else
     case "${1:-}" in
-        start)   compose up --detach --remove-orphans; mesh_route; host_units restart --no-block ;;
-        up)      compose up --detach --remove-orphans; mesh_route ;;
-        stop)    host_units stop; compose down ;;
+        start)   compose up --detach --remove-orphans; mesh_route; own_dns on; host_units restart --no-block ;;
+        up)      compose up --detach --remove-orphans; mesh_route; own_dns on ;;
+        stop)    own_dns off; host_units stop; compose down ;;
         restart) "$0" stop; "$0" start ;;
         update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then compose pull; fi; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
         status)  compose ps; host_units status --no-pager; verify || true ;;

@@ -49,5 +49,5 @@ switches for leaving to the Internet through a partner. Linking a new network st
 
 Still open on the page: SSH certificates, prune, the role script, doctor, the
 hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in the app:
-preview, "update everything", removing a phone, "leave NAME out", activity.
+"leave NAME out", activity. (Preview, "update everything" and removing a phone: built in 2.92.0.)
 

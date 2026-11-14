@@ -130,19 +130,26 @@ def snapshot(root):
 
 
 def extract(data, target):
+    """A store's tar into a directory. A store is encrypted for public keys, which anyone can
+    read: a file that opens is not proof of who made it. So nothing in it may write outside
+    the directory, not by its name and not through a link an earlier entry made."""
     os.makedirs(target, mode=0o700, exist_ok=True)
+    root = os.path.realpath(target)
     with tarfile.open(fileobj=io.BytesIO(data), mode="r") as tar:
         for m in tar.getmembers():
             if os.path.isabs(m.name) or ".." in m.name.split("/"):
                 raise KiwiError("the store holds a path that is not allowed: %s" % m.name)
             dest = os.path.join(target, m.name)
+            if os.path.commonpath([root, os.path.realpath(os.path.dirname(dest))]) != root or (
+                    os.path.islink(dest) and not m.issym()):
+                raise KiwiError("the store holds a path that leaves it through a link: %s" % m.name)
             if m.isdir():
                 os.makedirs(dest, mode=0o700, exist_ok=True)
             elif m.issym():
                 os.symlink(m.linkname, dest)
             elif m.isreg():
                 os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
-                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, "wb") as out:
                     shutil.copyfileobj(tar.extractfile(m), out)
                 os.chmod(dest, m.mode & 0o777)

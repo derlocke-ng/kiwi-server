@@ -15,13 +15,14 @@ import jinja2
 import markupsafe
 from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import VERSION, form as formmod
 from .control import ACTIONS, Control
 from .util import KiwiError
 
 COOKIE = "kiwi_session"
+COPY_MAX = 64 * 1024 * 1024         # a copy of a network is a few hundred KB; an upload larger than this is refused
 
 BASE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -137,6 +138,25 @@ The old password cannot be read anywhere.</p></details>{% endblock %}""",
 {% if err %}<p class="bad">{{ err }}</p>{% endif %}</div>{% endif %}{% endmacro %}
 <h1>A new network</h1>
 <p class="muted">Nothing is set up on this machine yet. Answer the questions; the suggestions are fine for most homes.</p>
+<details class="card"{% if back_error %} open{% endif %}><summary>I already have a network: bring it back from a copy</summary>
+<p>For a network whose computer or control node is gone. You need two things: a <strong>copy of the network</strong>
+(a file named <code>fleet-….tar</code>, from "Fetch a copy" on the Backups page, or kept on one of your machines) and
+its <strong>recovery key</strong>, the one you wrote down when the network was made.</p>
+{% if back_error %}<p class="banner bad">{{ back_error }}</p>{% endif %}
+<form method="post" action="/setup/restore" enctype="multipart/form-data" autocomplete="off">
+<label for="b-copy">The copy</label><input id="b-copy" type="file" name="copy" required>
+<label for="b-key">Recovery key</label><p class="muted" style="margin:0 0 4px">It starts with AGE-SECRET-KEY-.</p>
+<input id="b-key" name="recovery" autocomplete="off" required>
+<label for="b-code">Setup code</label><p class="muted" style="margin:0 0 4px">Shown where this page was started: in the
+terminal, or with <code>podman logs kn-control</code>. It proves that this is your machine.</p>
+<input id="b-code" name="code" value="{{ back_code }}" required>
+<label for="b-pw">A new password for this page</label><p class="muted" style="margin:0 0 4px">12 characters at least.
+The password of the page you had before stops working.</p>
+<input id="b-pw" type="password" name="password" autocomplete="new-password" required>
+<label for="b-pw2">The password again</label><input id="b-pw2" type="password" name="again" autocomplete="new-password" required>
+<p class="muted">A copy carries no signature. When it is back, look at the machines' names on the first page: they
+should be yours.</p>
+<div class="actions"><button class="primary">Bring my network back</button></div></form></details>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
 <form method="post" action="/setup" autocomplete="off">
 {% for step in steps %}<div class="card"><h2 style="margin-top:0">{{ step.step }}</h2>
@@ -441,13 +461,19 @@ passwords), every night, and the <strong>network's own settings and keys</strong
 {% if "backup" not in m.modules %}<p class="muted small">Nothing on this machine is set to be saved. Machines with your data should have the <em>backup</em> part.</p>{% endif %}
 {% if m.facts.backup_store %}<p class="muted">It keeps the backups of: {% for r in m.facts.backup_store.repos %}{{ r.client }} ({{ r.snapshots }} versions){{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
 </div>{% else %}<p class="muted">No machines yet.</p>{% endfor %}
-<h2>The network itself</h2><div class="card"><p>Its settings and keys, encrypted, copied to your machines.
-With it and your recovery key, the whole network can be rebuilt on a new computer.</p>
-<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="backup"><button class="primary">Save it now</button></form></div>
+<h2>The network itself</h2><div class="card"><p>Its settings and keys, as one encrypted file: a copy.
+<strong>A copy and your recovery key are the whole network</strong>, so keep a copy somewhere else than on this machine:
+a USB stick, another computer.</p>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+<div class="actions"><a class="btn primary" href="/backups/network.tar">Fetch a copy</a>
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="backup"><button>Save it now</button></form></div>
+<p class="muted">"Fetch a copy" gives you the file as it is now. "Save it now" puts one on each of your machines that is
+set up. Only the recovery key opens a copy: the password of this page does not.</p></div>
 <details><summary>How do I get something back?</summary><p class="muted">A file: open the service (Nextcloud, Immich…) and use its
 own trash or versions first. A whole service as it was on another day: "Bring something back" at its machine above.
-A machine that was lost: install it anew (Home lists the steps); it fetches its data by itself. The network itself on a new
-computer: <code>kiwi-server restore</code> there, with the recovery key.</p></details>
+A machine that was lost: install it anew (Home lists the steps); it fetches its data by itself. The network itself: a new
+control node asks on its first page ("I already have a network"); on a computer,
+<code>kiwi-server restore</code>. Both take a copy and the recovery key.</p></details>
 {% endblock %}""",
 
     "snapshots.html": """{% extends "base.html" %}{% block main %}
@@ -686,8 +712,9 @@ def make_app(control: Control):
     def healthz():
         return {"ok": True, "version": VERSION, "locked": control.locked()}
 
-    def setup_page(values=None, errors=None, error=None, host=""):
-        """The questionnaire of `kiwi-server init`, as the terminal and the app ask it."""
+    def setup_page(values=None, errors=None, error=None, host="", back_error=None, back_code=""):
+        """The questionnaire of `kiwi-server init`, as the terminal and the app ask it; above it,
+        the way back for a network that exists (back_error: what went wrong with that)."""
         from . import setup as setupmod
         found = setupmod.detect()
         at = host.rsplit(":", 1)[0].strip("[]")
@@ -709,7 +736,8 @@ def make_app(control: Control):
         errors = errors or {}
         opened = [st["id"] for st in steps if any(q.get("advanced") and q["id"] in errors for q in st["questions"])]
         return page("setup.html", steps=steps, values=values, errors=errors, error=error, machines=machines,
-                    blank=blank, free=free, open=opened, guess=not values and found["timezone"] in ("UTC", "Etc/UTC"))
+                    blank=blank, free=free, open=opened, guess=not values and found["timezone"] in ("UTC", "Etc/UTC"),
+                    back_error=back_error, back_code=back_code)
 
     def setup_answers(form):
         """The posted form as the answers `setup.make` takes; a question that does not apply is left out."""
@@ -772,6 +800,92 @@ def make_app(control: Control):
         except KiwiError as e:
             return await run_in_threadpool(setup_page, shown, {}, str(e), request.headers.get("host", ""))
         r = page("recovery.html", recovery=recovery)
+        secure = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
+        r.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
+        return r
+
+    async def upload(request, limit):
+        """A multipart form whose body may be `limit` bytes: ({field: text}, {field: bytes}),
+        or "large" or "broken" when it is not. The file stays in memory. What is over the limit
+        is read and dropped, not kept: a browser shows the answer only once it has sent it all."""
+        from starlette.formparsers import MultiPartException, MultiPartParser
+        seen = 0
+
+        async def body():
+            nonlocal seen
+            async for chunk in request.stream():
+                seen += len(chunk)
+                if seen <= limit:
+                    yield chunk
+            if seen > limit:
+                raise MultiPartException("too large")     # (the parser closes what it opened)
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            declared = 0
+        multipart = request.headers.get("content-type", "").startswith("multipart/form-data")
+        if declared > limit or not multipart:
+            async for _chunk in request.stream():
+                pass
+            return "large" if declared > limit else "broken"
+        parser = MultiPartParser(request.headers, body(), max_files=1, max_fields=8)
+        parser.spool_max_size = limit
+        try:
+            form = await parser.parse()
+        except MultiPartException:
+            return "large" if seen > limit else "broken"
+        try:
+            fields, files = {}, {}
+            for key, value in form.multi_items():
+                if isinstance(value, str):
+                    fields[key] = value
+                else:
+                    files[key] = await value.read()
+            return fields, files
+        finally:
+            await form.close()
+
+    @app.post("/setup/restore")
+    async def setup_restore(request: Request):
+        """A network back from its copy, on a machine with nothing on it (Control.restore_run)."""
+        if not control.fresh():
+            return login_page()
+        host = request.headers.get("host", "")
+
+        async def again(why, code="", status=200):
+            r = await run_in_threadpool(setup_page, None, None, None, host, why, code)
+            r.status_code = status
+            return r
+        large = "That file is too large to be a copy of a network (%d MB at most)." % (COPY_MAX >> 20)
+        got = await upload(request, COPY_MAX + 65536)      # (the other fields and the form's own lines)
+        if got == "large":
+            return await again(large, status=413)
+        if got == "broken":
+            return await again("The form did not arrive whole. Choose the copy and send it again.")
+        fields, files = got
+        code, pw = fields.get("code", "").strip(), fields.get("password", "").strip()
+        if not files.get("copy"):
+            return await again("Choose the copy: a file named fleet-….tar.", code)
+        if len(files["copy"]) > COPY_MAX:
+            return await again(large, code, 413)
+        if len(pw) < 12:
+            return await again("The password needs 12 characters at least.", code)
+        if pw != fields.get("again", "").strip():
+            return await again("The two passwords are not the same.", code)
+        if not control.setup_code_ok(code, address(request)):
+            await asyncio.sleep(1)
+            return await again("That is not the setup code. After five wrong tries, wait ten minutes.", code)
+        try:
+            token = await run_in_threadpool(control.restore_run, code, pw, files["copy"], fields.get("recovery", ""),
+                                            address(request))
+        except KiwiError as e:
+            await asyncio.sleep(1)
+            said = str(e)
+            return await again(said[:1].upper() + said[1:] + ("" if said.endswith(".") else "."), code)
+        if not token:
+            return login_page()
+        control.look()
+        r = RedirectResponse("/", status_code=303)
         secure = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
         r.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
         return r
@@ -989,6 +1103,9 @@ def make_app(control: Control):
             jid = control.start(action, [host] if host else [], user=u, at=at if action in ("setup", "restore") else "",
                                 module=module if action == "restore" else "")
         except KiwiError as e:
+            if action == "backup":              # said where the button is
+                ms, _st, _info = machines()
+                return page("backups.html", request, "/backups", machines=ms, error="Nothing was saved: %s" % e)
             return JSONResponse({"error": str(e)}, status_code=400)
         return RedirectResponse("/jobs/" + jid, status_code=303)
 
@@ -1060,6 +1177,21 @@ def make_app(control: Control):
         if not config:
             return devices_page(request, error="There is no device called %s." % name)
         return devices_page(request, config=config, shown=name, qr=markupsafe.Markup(control.qr_svg(config)))
+
+    @app.get("/backups/network.tar")
+    def network_copy(request: Request):
+        """A copy of the network as it is now, as a download: made in memory, nothing kept here."""
+        u = user(request)
+        if not u:
+            return login_page()
+        try:
+            name, data = control.network_copy(u)
+        except KiwiError as e:
+            ms, _st, _info = machines()
+            return page("backups.html", request, "/backups", machines=ms, error="No copy was made: %s" % e)
+        name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
+        return Response(data, media_type="application/x-tar", headers={
+            "Content-Disposition": 'attachment; filename="%s"' % name, "Cache-Control": "no-store"})
 
     @app.get("/backups")
     def backups(request: Request):

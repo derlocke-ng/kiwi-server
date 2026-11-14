@@ -159,6 +159,9 @@ Management and security:
 21. The fleet backup is encrypted but not authenticated, and it is restored
     from the nodes it will later trust. Document the two bootstrap secrets
     now; move to `age` if the format is touched.
+    Moved to `age` for a fleet with a secret store: its recovery key opens
+    the copy (backups.md). Still open: a copy is not signed, so whoever can
+    replace the file on a node can hand back another network.
 22. `enroll <name>` is unvalidated and used in a path and as the wg-easy
     client name; validate against a DNS label.
 23. Mesh address collisions: `enroll --address` is not checked, hand-set

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.86.0 — the recovery key brings the network back
+
+Until now nothing a wizard-made network could do saved the network itself: the copy was
+encrypted with a passphrase no wizard asked for, "Save it now" failed, and the recovery
+key shown at the first run opened nothing once the one computer was lost.
+
+- **The network's copy is the encrypted store plus the fleet file** (design/control-plane.md,
+  The secret store): `kiwi-server backup` makes `fleet-<name>-<time>.tar` with
+  `secrets.age`, the fleet file encrypted for the same keys, and a manifest. No
+  passphrase. A fleet without a store keeps the old `.tar.enc`.
+- **`kiwi-server restore <copy>`** asks for the recovery key (`--recovery-file`,
+  `KIWI_RECOVERY_KEY`), recreates the folder and gives this computer its own way to
+  open the store.
+- **On the page**: "Save it now" works for a network made on the page; "Fetch a copy"
+  on Backups downloads one; a machine with nothing on it offers "I already have a
+  network: bring it back from a copy" (the copy, the recovery key, the setup code, a
+  new password).
+- The setup code of a fresh page now reaches `podman logs` at once (it sat in a
+  buffer), and unpacking a store refuses entries that would write through a link.
+- A copy is not signed: someone who can replace the file on a machine could hand back
+  another network. Compare the machines' names after a restore (ROADMAP, problem 21).
+
 ## 2.85.0 — the page brings data back and unlocks a waiting disk
 
 - **"Bring something back"** on the Backups page, per machine: every part's snapshots

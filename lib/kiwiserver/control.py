@@ -39,9 +39,9 @@ ACTIONS = {
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
-    "restore": ("backups", True), "unlock": ("unlock", True),
+    "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock"}
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock", "remove"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
 
@@ -721,6 +721,12 @@ class Control:
                 raise KiwiError("not a snapshot's time: %r" % at)
             return (list(self.kiwi) + ["backups", self.fleet_path, hosts[0]] + ([module] if module else [])
                     + ["--restore"] + (["--at", at] if at else []))
+        if action == "remove":              # a machine leaves the network for good
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            if hosts[0] == os.environ.get("KIWI_CONTROL_HOST"):
+                raise KiwiError("this is the machine the page runs on: it cannot remove itself")
+            return list(self.kiwi) + ["remove", self.fleet_path, hosts[0], "--yes"]
         if action == "unlock":              # a machine whose encrypted disk waits at boot
             if len(hosts) != 1:
                 raise KiwiError("which machine?")

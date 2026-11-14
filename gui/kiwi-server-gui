@@ -3720,15 +3720,25 @@ class Window(Adw.ApplicationWindow):
 
     def remove_host_dialog(self):
         name = self.current_scope
+        saved = bool(self.doc.path) and not self.doc.dirty
         dlg = Adw.AlertDialog(heading="Remove %s?" % name,
-                              body="Only from the fleet file. Generated files in the output directory stay.")
+                              body=("It leaves the network for good: its place on the VPN, its keys on this computer and "
+                                    "its entry in the fleet file go. The machine itself is not touched: wipe it, or "
+                                    "switch it off.") if saved else
+                                   "Only from the fleet file, with your other changes that are not saved yet.")
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("remove", "Remove")
         dlg.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
         dlg.set_close_response("cancel")
 
         def resp(_d, r):
-            if r == "remove":
+            if r != "remove":
+                return
+            if saved:           # `kiwi-server remove`: everything that knows the machine, not only the file
+                path = self.doc.path
+                self._after_spawn = lambda: self.open_path(path, sync=False)
+                self.spawn(["remove", path, name, "--yes"], "Removing %s…" % name)
+            else:
                 self.doc.remove_host(name)
                 self.mark_dirty()
                 self.rebuild_sidebar(FLEET)

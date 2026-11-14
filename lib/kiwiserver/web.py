@@ -350,6 +350,14 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <dt>Parts</dt><dd>{{ m.modules|join(", ") }}</dd></dl>
 {% if m.notes %}<ul class="muted">{% for n in m.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
 {% if m.output %}<details><summary>What the machine said, word for word</summary><pre>{{ m.output }}</pre></details>{% endif %}</div>{% endif %}
+
+<details style="margin-top:28px"><summary>Remove this machine</summary><div class="card"><p>{{ m.name }} leaves the network
+for good: its place on the VPN, its keys and its entry in the settings go. <span class="muted">The machine itself is not
+touched: wipe it, or switch it off. A machine that keeps the backups of others, or helps another one unlock its disk,
+is named first.</span></p>
+<form method="post" action="/run" onsubmit="return confirm('Remove {{ m.name }} from the network for good?')">{{ tok }}
+<input type="hidden" name="action" value="remove"><input type="hidden" name="host" value="{{ m.name }}">
+<button>Remove {{ m.name }}</button></form></div></details>
 {% endblock %}""",
 
     "settings.html": """{% extends "base.html" %}{% block main %}
@@ -668,7 +676,7 @@ JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "
 FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's phases before it is set up
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
-        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking",
+        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "remove": "Removing",
         "rotate-seed": "Replacing the secrets inside the services"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
@@ -1208,7 +1216,7 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "remove") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":
@@ -1220,7 +1228,7 @@ def make_app(control: Control):
         if j["action"] in ("rotate", "rotate-seed"):      # a machine that is off is no failure: it waits
             say["failed"] = ("Not every machine could be changed. The ones that wait are listed under Computers; "
                              "the lines below say why.")
-        back = ("/backups" if j["action"] in ("save", "backup", "restore") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
+        back = ("/" if j["action"] == "remove" else "/backups" if j["action"] in ("save", "backup", "restore") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
                 else "/hosts/" + j["hosts"][0] if j["hosts"] else "/")
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
 

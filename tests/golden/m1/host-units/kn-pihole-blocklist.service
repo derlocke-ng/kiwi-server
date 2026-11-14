@@ -1,0 +1,12 @@
+[Unit]
+Description=Kiwi Network: Pi-hole's blocklist is there (m1.home)
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=kiwi-stack.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=15min
+ExecStart=/usr/bin/bash /home/user/docker/kiwi/pihole-blocklist.sh
+
+# no [Install]: kn-pihole-blocklist.timer starts it

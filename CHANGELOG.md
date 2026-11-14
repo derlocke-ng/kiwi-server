@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.89.1 — the ad blocker blocks
+
+- kiwi-modules 0.33.1: no Pi-hole of the test network had ever loaded its blocklist.
+  Pi-hole fetches it when its container starts, before it can resolve a name itself,
+  and on a machine that resolves through that Pi-hole the fetch failed for good. A
+  timer now looks at the list after every start and once an hour and fetches an empty
+  one again. Apply the machines once.
+
 ## 2.89.0 — the app leads with what you came for
 
 - **A machine's page starts with "Open a service"**: each service by what it is

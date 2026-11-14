@@ -38,6 +38,9 @@ templates:
   mullvad_socks_service: mullvad-socks.service.j2
   mullvad_socks_timer: mullvad-socks.timer.j2
   mullvad_socks_about: mullvad-socks.about.j2
+  blocklist_script: blocklist.sh.j2
+  blocklist_service: blocklist.service.j2
+  blocklist_timer: blocklist.timer.j2
 
 # the fleet's DNS records go in as FTLCONF_dns_hosts (pihole.toml dns.hosts):
 # Pi-hole 6 regenerates hosts/custom.list itself, a file put there is ignored.
@@ -51,6 +54,10 @@ outputs:
   mullvad_socks_service: { kind: host_unit, name: "{{ container_prefix }}-mullvad-socks.service", when: mullvad_socks }
   mullvad_socks_timer: { kind: host_unit, name: "{{ container_prefix }}-mullvad-socks.timer", when: mullvad_socks }
   mullvad_socks_about: { path: "{{ container_prefix }}-pihole/mullvad-socks/.kiwi-server", mode: 0644, when: mullvad_socks }
+  # an empty blocklist is fetched again (blocklist.sh.j2 says why it can be empty)
+  blocklist_script: { path: "kiwi/pihole-blocklist.sh", mode: 0755 }
+  blocklist_service: { kind: host_unit, name: "{{ container_prefix }}-pihole-blocklist.service" }
+  blocklist_timer: { kind: host_unit, name: "{{ container_prefix }}-pihole-blocklist.timer" }
 
 storage:
   bind_mounts:

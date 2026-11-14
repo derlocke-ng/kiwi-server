@@ -25,7 +25,11 @@ def connection_name(domain):
 def _nm(*argv, check=True, runner=subprocess.run):
     r = runner(["nmcli"] + list(argv), capture_output=True, text=True)
     if check and r.returncode != 0:
-        raise KiwiError("NetworkManager: %s" % ((r.stderr or r.stdout).strip().splitlines() or ["nmcli failed"])[-1])
+        said = ((r.stderr or r.stdout).strip().splitlines() or ["nmcli failed"])[-1]
+        if "nsufficient privileges" in said:        # a login over SSH, or a session that is not at the screen
+            said += (". NetworkManager lets the person at the computer add a connection: run this in a terminal on "
+                     "the computer itself, not over SSH")
+        raise KiwiError("NetworkManager: %s" % said)
     return r
 
 

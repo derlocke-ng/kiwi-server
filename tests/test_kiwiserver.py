@@ -2448,6 +2448,40 @@ class TestFederation(Base):
         self.assertEqual((partner["mesh"], partner["domain"], partner["share"]), ("10.10.0.0/16", "internal", []))
         loaded = config.Fleet.load(a.path)
         self.assertEqual(loaded.hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]["as"], "10.9.255.1")
+        self.assertFalse(loaded.hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]["exit"])
+        # the first network leaves through the second, over the link: it says so, the second allows it
+        mine_name = os.path.basename(self.tmp)
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path, "--exit")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("leaves to the internet through other, over their link", err + out)
+        self.assertEqual(fedmod.exit_through(self.tmp), "other")
+        self.assertTrue(fedmod.partners(other)[mine_name]["internet"])
+        self.assertFalse(fedmod.partners(other)[mine_name]["exit"])
+        fed = config.Fleet.load(a.path).hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]
+        self.assertEqual((fed["exit"], fed["internet"]), (True, False))
+        rc, out, err = TestManage.run_cli(self, "validate", a.path)
+        self.assertIn("leave to the internet through other, over the link", err + out)
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)         # linking again keeps it
+        self.assertEqual(fedmod.exit_through(self.tmp), "other")
+        # not through each other, and not through two
+        fedmod.set_flag(self.tmp, "other", "internet", True)
+        with self.assertRaises(KiwiError) as e:
+            fedmod.partners(self.tmp)
+        self.assertIn("cannot leave through each other", str(e.exception))
+        fedmod.set_flag(self.tmp, "other", "internet", False)
+        with open(os.path.join(self.tmp, "federation.yaml")) as fh:
+            two = yaml.safe_load(fh)
+        two["third"] = dict(two["other"], mesh="10.11.0.0/16", exit=True)
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(two))
+        with self.assertRaises(KiwiError) as e:
+            fedmod.partners(self.tmp)
+        self.assertIn("only one partner can be this network's way to the internet", str(e.exception))
+        del two["third"]
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(two))
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path, "--no-exit")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(fedmod.exit_through(self.tmp))
+        self.assertFalse(fedmod.partners(other)[mine_name]["internet"])
 
 
 class TestPlan(unittest.TestCase):
@@ -4988,6 +5022,12 @@ class TestConnect(Base):
         self.assertEqual(calls[3], ["connection", "up", "kiwi-home"])
         self.assertEqual([n for n in os.listdir(self.tmp) if n.startswith("kiwi-connect-")], [])   # no copy of the key is left
         self.assertEqual(connectmod.connection_name("my-long-network-name.example"), "kiwi-mylongnetw")   # 15 at most
+
+    def test_the_computers_own_connection_is_known(self):
+        from kiwiserver import connect as connectmod
+        listed = lambda argv, **kw: types.SimpleNamespace(returncode=0, stdout="Wired connection 1\nkiwi-home\nlo\n", stderr="")   # noqa: E731
+        self.assertTrue(connectmod.exists("home", runner=listed))
+        self.assertFalse(connectmod.exists("internal", runner=listed))
 
     def test_a_refusal_of_networkmanager_is_said(self):
         from kiwiserver import connect as connectmod

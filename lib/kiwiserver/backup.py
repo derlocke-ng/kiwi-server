@@ -401,7 +401,9 @@ def passphrase(fleet=None, path=None, confirm=False):
 # ---- the nodes -------------------------------------------------------------------
 
 def ssh_target(host, override=None):
-    return remote.target(host, override)
+    # where it answers from here: its name resolves on the VPN only, and the computer that
+    # holds the fleet may not be on it (the copy went nowhere from such a computer)
+    return remote.reach(host, override)
 
 
 def _ssh(target, script, data=None, runner=subprocess.run):

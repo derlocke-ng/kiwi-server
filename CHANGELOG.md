@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.91.0 — a network leaves through its partner over the link they have
+
+- **`kiwi-server federate A B --exit`**: network A leaves to the internet through
+  network B (multi-hop), over the federation link that is there. `exit: true` for the
+  partner in A's `federation.yaml`, `internet: true` in B's (kiwi-modules 0.34.0). The
+  earlier plan made A's master a client of B's VPN server: a VPN client container, a
+  second tunnel and a login there. None of that is needed now. B sees A's master only,
+  A gets out to the internet only, and with the link down A's devices have no internet
+  instead of falling back. `--no-exit` puts it back; `validate` says which way a
+  network leaves. docs/network.md, Leave to the Internet through a partner.
+- The app's Federation dialog has the two switches per partner: "Leave to the Internet
+  through it" and "It may leave to the Internet through this network".
+- `kiwi-server backup <fleet> <machine>` reaches the machine where it answers from this
+  computer. It used its name, which resolves on the VPN only, so a computer that is not
+  on the VPN could not send the network's copy anywhere.
+- `connect` stops when a device of this computer's name exists and the computer has no
+  connection yet: two computers sharing one device cut each other off. `--existing`
+  when it is this computer, `--name` for another one.
+- The multi-hop drill knows both ways.
+
 ## 2.90.1 — a gateway says how the home uses it
 
 - The logins of a machine with the gateway (or only the ad blocker) and a fixed address

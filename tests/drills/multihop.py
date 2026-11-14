@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Multi-hop: a client of one network's master leaves the internet at another network's master.
 
-The entry master's VPN client holds a config the exit master issued in a group with no reach
-and no peers (`vpn_provider: custom`, `wireguard_config: secrets/<x>.conf`). This enrolls a
+Two ways are known. Over the federation link (`exit: true` for a partner in federation.yaml,
+`internet: true` in the partner's): the way to use between two Kiwi networks. Or the older
+one: the entry master's VPN client holds a config the exit master issued in a group with no
+reach and no peers (`vpn_provider: custom`, `wireguard_config: secrets/<x>.conf`). This enrolls a
 client on the entry master (the device `drill-multihop`, made once, fetched after), runs it
 here in a gluetun container, and expects: its public address is the exit master's (the
 Endpoint of the entry master's config), the entry master's names resolve to its own mesh
@@ -30,10 +32,14 @@ master = m["master"]
 h = master.host
 vc = h.module_settings.get("vpn-client") or {}
 conf = (h.role_settings_raw.get("vpn-client") or {}).get("wireguard_config") or ""     # the path, as the fleet file says it
-if vc.get("vpn_provider") != "custom" or not conf:
-    raise SystemExit("drill: %s does not exit through another master (vpn_provider: custom)" % h.name)
-text = open(fleet.resolve_path(conf)).read() if not conf.startswith("[") else conf
-exit_ip = re.search(r"^\s*Endpoint\s*=\s*([^:\s]+)", text, re.M).group(1)
+linked = {n: p for n, p in (h.module_settings["vpn-server"].get("federation") or {}).items() if p.get("exit")}
+if linked:                              # over the federation link
+    exit_ip = str(list(linked.values())[0]["endpoint"]).split(":")[0]
+elif vc.get("vpn_provider") == "custom" and conf:
+    text = open(fleet.resolve_path(conf)).read() if not conf.startswith("[") else conf
+    exit_ip = re.search(r"^\s*Endpoint\s*=\s*([^:\s]+)", text, re.M).group(1)
+else:
+    raise SystemExit("drill: %s does not exit through another master (federation.yaml: exit, or vpn_provider: custom)" % h.name)
 own_ip = h.module_settings["vpn-server"].get("server_ip")
 say("%s exits through %s; its own mesh address %s" % (h.name, exit_ip, own_ip))
 

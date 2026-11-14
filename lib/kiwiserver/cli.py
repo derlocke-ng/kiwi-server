@@ -761,6 +761,11 @@ def cmd_validate(args):
             util.say("still to do: %s" % e)
         if not errs:
             util.say("%s: %d host(s) valid" % (os.path.basename(fleet.path), len(hosts)))
+            for name, x in fedmod.partners(fleet.dir).items():
+                if x["exit"]:
+                    util.say("its devices leave to the internet through %s, over the link (federation.yaml: exit)" % name)
+                if x["internet"]:
+                    util.say("%s leaves to the internet through this network (federation.yaml: internet)" % name)
     if errs:
         sys.exit(EXIT_INVALID)
 
@@ -2085,6 +2090,12 @@ def cmd_connect(args):
             raise SystemExit(rc)
         return
     conf = fleet.resolve_path("secrets/devices/%s.conf" % name)
+    if (os.path.isfile(conf) and not args.existing and connectmod.have_networkmanager()
+            and not connectmod.exists(domain)):
+        # two computers with one name would share one key, and each would cut the other off
+        raise KiwiError("a device called %s is part of the network already, and this computer has no connection to it yet. "
+                        "If it is this computer (it was connected before), run this again with --existing. If it is "
+                        "another computer of the same name, give this one its own: --name %s-2" % (name, name))
     if not os.path.isfile(conf):
         util.say("%s gets its place on the VPN" % name)
         rc = main(["enroll", path, name, "--split"] + (["--group", args.group] if args.group else [])
@@ -2435,6 +2446,20 @@ def cmd_federate(args):
         raise KiwiError("the two meshes must be set and differ (%s, %s): every network has its own /16" % (ea["mesh"], eb["mesh"]))
     fedmod.write(fa.dir, nb, eb)
     fedmod.write(fb.dir, na, ea)
+    if args.exit or args.no_exit:
+        # the first network leaves to the internet through the second, over the link: the
+        # first says so (exit), the second allows it (internet)
+        on = bool(args.exit)
+        fedmod.set_flag(fa.dir, nb, "exit", on)
+        fedmod.set_flag(fb.dir, na, "internet", on)
+        fedmod.partners(fa.dir)             # says so when two partners would be the exit, or the two leave through each other
+        fedmod.partners(fb.dir)
+        if on:
+            util.say("%s leaves to the internet through %s, over their link. Apply %s's master first (it lets %s out), "
+                     "then %s's: until both are done, %s's devices have no internet" % (na, nb, nb, na, na, na))
+        else:
+            util.say("%s leaves by its own way again. Apply %s's master, then %s's" % (na, na, nb))
+        return
     util.say("%s and %s are linked; nothing is shared yet: share and from in each federation.yaml, then apply both masters"
              % (na, nb))
 
@@ -2856,6 +2881,7 @@ def build_parser():
     s.add_argument("--name", help="what this computer is called on the VPN (default: its own name)")
     s.add_argument("--group", help="a client group of the master")
     s.add_argument("--remove", action="store_true", help="take this computer off the network again")
+    s.add_argument("--existing", action="store_true", help="the device of this name is this computer: use its place again")
     s.add_argument("--no-trust", action="store_true", help="leave the browsers' certificate stores alone")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
     s = sub("enroll", cmd_enroll); s.add_argument("fleet"); s.add_argument("name", help="a fleet host, or a device name")
@@ -2893,6 +2919,8 @@ def build_parser():
     s.add_argument("--waive", action="append", metavar="HOST", help="leave this machine out (off for good, or about to be installed anew)")
     s.add_argument("--why", help="a note for the record, e.g. laptop lost")
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
+    s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
+    s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")

@@ -398,6 +398,7 @@ ks_local_cache() {
     # docs/design/local-first.md): podman's registry mirrors, which fall back to the registry
     # by themselves, and apt's proxy through a script that says DIRECT when the cache is away.
     local conf=/etc/containers/registries.conf.d/50-kiwi-mirrors.conf reg
+    local sigs=/etc/containers/registries.d/50-kiwi-mirrors.yaml
     if [[ $KS_STACK_RUNTIME == podman ]] && declare -p KS_ROLE_REGISTRY_MIRRORS >/dev/null 2>&1 \
        && (( ${#KS_ROLE_REGISTRY_MIRRORS[@]} )); then
         install -d -m 0755 /etc/containers/registries.conf.d
@@ -408,9 +409,22 @@ ks_local_cache() {
                     "$reg" "$reg" "${KS_ROLE_REGISTRY_MIRRORS[$reg]}"
             done < <(printf '%s\n' "${!KS_ROLE_REGISTRY_MIRRORS[@]}" | sort)
         } | ks_write "$conf" 0644
+        # A signed image (the system's own, checked at every update) is checked where it is
+        # fetched: without this the cache counts as a place without signatures, the check
+        # fails and the registry itself is never asked.
+        {
+            echo "# kiwi-server: signatures are read at the LAN's cache too"
+            echo "docker:"
+            while IFS= read -r reg; do
+                printf '  %s:\n    use-sigstore-attachments: true\n' "$reg"
+            done < <(for reg in "${KS_ROLE_REGISTRY_MIRRORS[@]}"; do printf '%s\n' "${reg%%/*}"; done | sort -u)
+        } | ks_write "$sigs" 0644
+        if systemctl is-failed --quiet rpm-ostreed-automatic.service 2>/dev/null; then
+            systemctl reset-failed rpm-ostreed-automatic.service     # it failed on the cache; the timer asks again
+        fi
         ks_say "images come through the LAN's cache first (${!KS_ROLE_REGISTRY_MIRRORS[*]})"
     else
-        rm -f "$conf"
+        rm -f "$conf" "$sigs"
     fi
     local aptconf=/etc/apt/apt.conf.d/30kiwi-proxy detect=/usr/local/bin/kiwi-apt-proxy at
     if ks_is_debian && [[ ${KS_ROLE_APT_PROXY:-} == http://*:* ]]; then

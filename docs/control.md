@@ -16,8 +16,11 @@ that booted. The page:
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 
-Changing settings and adding machines stays in the Kiwi Server app, which
-sends changes here by itself.
+Settings are changed on the page too: "Settings" on a machine's page, and "Settings
+for every machine" on Home for what all of them inherit. They are the fields the app
+shows, from one shared list. A change is checked before it is kept; "Apply" then
+brings it to the machine. The app does the same from a computer and sends its changes
+here by itself.
 
 ## Set it up
 

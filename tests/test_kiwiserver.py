@@ -34,7 +34,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import adopt as adoptmod, control as controlmod, controlsync, facts, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
+from kiwiserver import adopt as adoptmod, control as controlmod, controlsync, facts, form as formmod, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
 from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -2494,6 +2494,172 @@ class TestGuiHelp(unittest.TestCase):
         self.assertEqual(missing, [])
 
 
+class TestForm(Base):
+    """form.py: the settings a person can edit, without a page around them."""
+    FLEET = {"defaults": {"domain": "home", "timezone": "Europe/Berlin", "updates": {"time": "03:30"},
+                          "admin": {"user": "core", "password": "the-defaults-s3cr3t"}},
+             "hosts": {"gate": {"role": "master", "target": "debian", "master": {
+                           "modules": ["vpn-server", "dns"], "vpn-server": {"wg_host": "vpn.example.org", "wg_password": "wg-s3cr3t"}}},
+                       "papaya": {"role": "node", "node": {"preset": "cloud"}, "network": {"dhcp": False, "address": "192.168.1.30/24"}}}}
+
+    def schema(self):
+        return {"roles": [r.as_dict(self.ms) for r in self.roles.values()], "modules": [m.as_dict() for m in self.ms.modules.values()]}
+
+    def groups(self, data, host):
+        return formmod.groups(self.schema(), list(config.TARGETS), data, host)
+
+    def field(self, groups, name):
+        return next(f for g in groups for f in g["fields"] if f["name"] == name)
+
+    def test_the_app_and_the_page_have_the_same_base_fields(self):
+        """The app (gui/kiwi-server-gui) still has its own copy of the base fields. Until it
+        reads them from `roles --porcelain` ("base"), this holds the two copies equal: a field
+        added to one and not the other fails here."""
+        import ast
+        with open(os.path.join(ROOT, "gui", "kiwi-server-gui")) as fh:
+            tree = ast.parse(fh.read())
+
+        def of_the_app(name):
+            node = next(n.value for n in tree.body if isinstance(n, ast.Assign)
+                        and any(getattr(t, "id", "") == name for t in n.targets))
+            # literals and dict(...) calls only: evaluated with nothing else in reach
+            return eval(compile(ast.Expression(node), "kiwi-server-gui", "eval"), {"__builtins__": {}, "dict": dict})
+        self.assertEqual(of_the_app("BASE_GROUPS"), formmod.BASE_GROUPS)
+        self.assertEqual(of_the_app("SECTION_TARGETS"), formmod.SECTION_TARGETS)
+
+    def test_text_and_values(self):
+        for ftype, value, text in (("list", ["Sat", "Sun"], "Sat Sun"), ("lines", ["a b", "c"], "a b\nc"),
+                                   ("map", {"A": "1", "B": "x=y"}, "A=1\nB=x=y"), ("int", 22, "22"), ("string", "x", "x"),
+                                   ("object", {"guests": {"reach": ["nodes"]}}, "guests:\n  reach:\n  - nodes")):
+            self.assertEqual(formmod.to_text(ftype, value), text)
+            self.assertEqual(formmod.from_text(ftype, text + "\n"), value)
+        for ftype in ("string", "int", "list", "lines", "map", "text", "object"):
+            self.assertEqual(formmod.to_text(ftype, None), "")
+            self.assertIsNone(formmod.from_text(ftype, "  "))
+        self.assertIsNone(formmod.from_text("int", "abc"))
+        self.assertEqual(formmod.from_text("text", " indented\n\n"), " indented")
+
+    def test_a_machine_inherits_what_it_does_not_set(self):
+        doc = formmod.Doc(yaml.safe_load(yaml.safe_dump(self.FLEET)))
+        self.assertIsNone(doc.get("papaya", ("timezone",)))
+        self.assertEqual(doc.inherited("papaya", ("timezone",), "UTC"), "Europe/Berlin")
+        self.assertEqual(doc.inherited(None, ("timezone",), "UTC"), "UTC")                  # the defaults: the built-in value
+        self.assertEqual(doc.inherited("papaya", ("locale",), "en_US.UTF-8"), "en_US.UTF-8")
+        doc.set("papaya", ("timezone",), "Europe/Vienna")
+        doc.set("papaya", ("updates", "time"), "04:15")
+        self.assertEqual((doc.get("papaya", ("timezone",)), doc.get("papaya", ("updates",))), ("Europe/Vienna", {"time": "04:15"}))
+        doc.set("papaya", ("timezone",), "Europe/Berlin")           # what it inherits anyway: no override
+        doc.set("papaya", ("updates", "time"), None)                # empty: the override goes, and the empty block with it
+        self.assertEqual((doc.get("papaya", ("timezone",)), doc.get("papaya", ("updates",))), (None, None))
+        doc.set(None, ("locale",), "en_US.UTF-8", "en_US.UTF-8")    # the built-in value is not written either
+        self.assertNotIn("locale", doc.data["defaults"])
+        doc.set("papaya", ("debian", "release"), None)              # nothing there: nothing made
+        self.assertNotIn("debian", doc.data["hosts"]["papaya"])
+        self.assertEqual(doc.apply("papaya", {("keyboard",): "de", "updates.days": ["Sat"], ("motd",): None}), ["keyboard", "updates.days"])
+        with self.assertRaises(KiwiError):
+            doc.set("nobody", ("timezone",), "UTC")
+        text = doc.dump()
+        self.assertEqual(text.splitlines()[0][:13], "# fleet.yaml ")
+        self.assertTrue(text.splitlines()[1].startswith("# "))
+        self.assertEqual(list(yaml.safe_load(text)), ["defaults", "hosts"])             # hosts stays the last section
+        self.assertEqual(yaml.safe_load(text)["hosts"]["papaya"]["updates"], {"days": ["Sat"]})
+        self.assertEqual(list(formmod.Doc({"hosts": {"a": None}}).data), ["defaults", "hosts"])
+        with self.assertRaises(KiwiError):
+            formmod.Doc.parse("defaults: [1")
+
+    def test_a_form_for_a_machine_and_for_the_defaults(self):
+        data = yaml.safe_load(yaml.safe_dump(self.FLEET))
+        found = self.groups(data, "papaya")
+        self.assertEqual([g["id"] for g in found if not g["advanced"]], ["base:Machine", "role", "base:Network", "base:Updates"])
+        ids = [g["id"] for g in found]
+        self.assertIn("mod:cloud", ids)                             # one group per module it runs
+        self.assertIn("mod:vpn-client", ids)
+        self.assertNotIn("mod:immich", ids)
+        self.assertIn("base:uCore", ids)                            # its own target's group only
+        self.assertNotIn("base:Debian", ids)
+        self.assertIn("base:Debian", [g["id"] for g in self.groups(data, "gate")])
+        names = [f["name"] for g in found for f in g["fields"]]
+        self.assertIn("hostname", names)                            # scope host
+        self.assertNotIn("domain", names)                           # scope defaults
+        tz = self.field(found, "timezone")
+        self.assertEqual((tz["value"], tz["inherited"], tz["type"], tz["secret"]), (None, "Europe/Berlin", "string", False))
+        self.assertEqual(self.field(found, "network.address")["value"], "192.168.1.30/24")
+        self.assertEqual(self.field(found, "locale")["inherited"], "en_US.UTF-8")            # the built-in value
+        self.assertEqual([o["value"] for o in self.field(found, "node.preset")["options"]], ["gateway", "cloud", "minimal"])
+        parts = self.field(found, "node.modules")
+        self.assertEqual([o["value"] for o in parts["options"] if o["on"]], ["cloud", "portainer", "reverse-proxy", "vault", "vpn-client"])
+        self.assertNotIn("vpn-server", [o["value"] for o in parts["options"]])              # a master's part
+        self.assertEqual(self.field(found, "role")["options"][0], {"value": "bare", "label": "bare"})
+        # a module's default is the preset's where the preset has one
+        gw = self.groups({"defaults": {}, "hosts": {"g": {"role": "node", "node": {"preset": "gateway"}}}}, "g")
+        self.assertIs(self.field(gw, "node.dns.expose_web_ui")["inherited"], True)
+        # the defaults: what only they have, every target's group, no machine's own fields
+        every = self.groups(data, None)
+        names = [f["name"] for g in every for f in g["fields"]]
+        self.assertIn("domain", names)
+        self.assertNotIn("hostname", names)
+        self.assertLessEqual({"base:uCore", "base:Debian", "base:RAM"}, {g["id"] for g in every})
+        self.assertEqual(self.field(every, "timezone")["value"], "Europe/Berlin")
+        self.assertEqual(self.field(every, "timezone")["inherited"], "UTC")
+        # a secret's value is in none of it, only that there is one
+        for host in ("gate", "papaya", None):
+            self.assertNotIn("s3cr3t", repr(self.groups(data, host)))
+        pw = self.field(self.groups(data, "gate"), "master.vpn-server.wg_password")
+        self.assertEqual((pw["secret"], pw["set"], pw["value"]), (True, True, None))
+        inherited = self.field(found, "admin.password")
+        self.assertEqual((inherited["set"], inherited["inherited_set"], inherited["inherited"]), (False, True, None))
+
+    def test_only_what_was_changed_is_a_change(self):
+        data = yaml.safe_load(yaml.safe_dump(self.FLEET))
+        found = self.groups(data, "papaya")
+        shown = {f["name"]: formmod.to_text(f["type"], f["value"]) for g in found for f in g["fields"]
+                 if f["type"] not in ("modules", "bool", "secret")}
+        shown["node.modules"] = [o["value"] for o in self.field(found, "node.modules")["options"] if o["on"]]
+        self.assertEqual(formmod.changes(found, shown), ({}, {}))                           # sent back untouched
+        got, wrong = formmod.changes(found, dict(shown, **{
+            "timezone": "Europe/Vienna", "updates.time": "03:30", "network.dhcp": "no", "network.address": "",
+            "updates.days": "Sat  Sun", "admin.ssh_port": "2222", "updates.enabled": "no", "admin.password": "typed-secret",
+            "node.cloud.shared_folders": "/mnt/a=/a\r\n/mnt/b=/b\r\n", "node.docker_dir": ""}))
+        self.assertEqual(wrong, {})
+        self.assertEqual(got, {("timezone",): "Europe/Vienna", ("network", "address"): None, ("updates", "days"): ["Sat", "Sun"],
+                               ("admin", "ssh_port"): 2222, ("updates", "enabled"): False, ("admin", "password"): "typed-secret",
+                               ("node", "cloud", "shared_folders"): {"/mnt/a": "/a", "/mnt/b": "/b"}})
+        # what cannot be meant is said, with the field's name, and is no change
+        got, wrong = formmod.changes(found, {"admin.ssh_port": "abc", "node.variables": "no equals sign", "target": "amiga",
+                                             "keyboard": "de"})
+        self.assertEqual(got, {("keyboard",): "de"})
+        self.assertEqual(sorted(wrong), ["admin.ssh_port", "node.variables", "target"])
+        self.assertTrue(wrong["admin.ssh_port"].startswith("SSH port: "))
+        # a secret: empty keeps it, None removes one that is set
+        gate = self.groups(data, "gate")
+        self.assertEqual(formmod.changes(gate, {"master.vpn-server.wg_password": ""})[0], {})
+        self.assertEqual(formmod.changes(gate, {"master.vpn-server.wg_password": None})[0], {("master", "vpn-server", "wg_password"): None})
+        self.assertEqual(formmod.changes(found, {"admin.password": None})[0], {})
+        # parts: one more is the preset's list and it; the preset's list again is no list of its own
+        on = shown["node.modules"]
+        got, _ = formmod.changes(found, {"node.modules": on + ["immich"]})
+        self.assertEqual(got, {("node", "modules"): ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "immich"]})
+        doc = formmod.Doc(data)
+        doc.apply("papaya", got)
+        more = self.groups(doc, "papaya")
+        self.assertIn("mod:immich", [g["id"] for g in more])
+        self.assertEqual(formmod.changes(more, {"node.modules": on})[0], {("node", "modules"): None})
+        # a part another one needs comes along: leaving it out alone changes nothing
+        self.assertEqual(formmod.changes(found, {"node.modules": [m for m in on if m != "reverse-proxy"]})[0], {})
+        # another preset: its list counts, a list of the machine's own goes
+        got, _ = formmod.changes(more, {"node.preset": "minimal", "node.modules": on + ["immich", "tor"]})
+        self.assertEqual(got, {("node", "preset"): "minimal", ("node", "modules"): None})
+        # another role: the old role's settings are not written into the file
+        got, _ = formmod.changes(found, {"role": "master", "node.docker_dir": "/srv/docker", "timezone": "Europe/Vienna"})
+        self.assertEqual(got, {("role",): "master", ("timezone",): "Europe/Vienna"})
+
+    def test_an_error_names_the_field(self):
+        found = self.groups(yaml.safe_load(yaml.safe_dump(self.FLEET)), "papaya")
+        self.assertEqual(formmod.plain("papaya: updates.time must be HH:MM (24h)", found, "papaya"), "“Reboot time” must be HH:MM (24h)")
+        self.assertEqual(formmod.plain("papaya: node.wg_mtu must be an integer", found, "papaya"), "“WireGuard MTU” must be an integer")
+        self.assertEqual(formmod.plain("gate: something else", found, "papaya"), "gate: something else")
+
+
 class TestOutputInMemory(Base):
     def test_rendered_files_go_to_the_open_store_and_the_disk_keeps_the_iso(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
@@ -4770,6 +4936,9 @@ class TestCli(Base):
         self.assertIn("vpn-client", [m["name"] for m in data["modules"]])
         master = [r for r in data["roles"] if r["name"] == "master"][0]
         self.assertEqual([m["name"] for m in master["module_schemas"]], ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "fail2ban"])
+        # the fields every machine has, for a front end that builds its form from this
+        self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
+        self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
         self.assertEqual(len(json.loads(out)["modules"]), 23)
         rc, out, _ = self.run_cli("targets", "--porcelain")
@@ -5119,6 +5288,46 @@ class TestControl(StoreBase):
         self.assertEqual(c.argv("rotate")[-3:], ["rotate", self.f.path, "ssh"])
         with mock.patch.object(c, "fleet_info", lambda **_k: {"hosts": [{"name": "a"}]}):
             self.assertEqual(c.argv("update")[-4:], ["apply", self.f.path, "--update", "a"])    # newer images into use
+
+    def test_settings_are_saved_only_when_the_check_says_so(self):
+        self.init()
+        c = self.control()
+        c.set_password(self.PW)
+        before = util.read_text(self.f.path)
+        with self.assertRaises(KiwiError):                      # this check answers nothing that can be read: not saved
+            c.save_settings("a", {("timezone",): "Europe/Vienna"})
+        self.assertEqual(util.read_text(self.f.path), before)
+        with self.assertRaisesRegex(KiwiError, "no such machine"):
+            c.save_settings("nobody", {("timezone",): "UTC"})
+        self.assertEqual(c.save_settings("a", {("timezone",): "Europe/Berlin"}), [])      # what it inherits anyway
+        self.assertEqual(util.read_text(self.f.path), before)                              # nothing to write: not rewritten
+        with self.assertRaisesRegex(KiwiError, "could not be read"):
+            c.settings("a")
+        c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
+                  "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
+        self.assertEqual(c.save_settings("a", {("timezone",): "Europe/Vienna", "admin.password": "a-new-s3cr3t"}, "anna"),
+                         ["timezone", "admin.password"])
+        self.assertEqual(config.Fleet.load(self.f.path).hosts["a"].cfg["timezone"], "Europe/Vienna")
+        last = c.audit_tail(1)[0]
+        self.assertEqual((last["user"], last["what"], last["hosts"], last["keys"]),
+                         ("anna", "settings changed", ["a"], ["timezone", "admin.password"]))
+        self.assertNotIn("s3cr3t", util.read_text(os.path.join(c.dir, "audit.jsonl")))     # which setting, never its value
+        saved = util.read_text(self.f.path)
+        with self.assertRaisesRegex(KiwiError, "Reboot time.*HH:MM"):
+            c.save_settings("a", {("updates", "time"): "25:00"})
+        self.assertEqual(util.read_text(self.f.path), saved)
+        # a mistake that was there before is not this change's: the file can be put right step by step
+        write(self.f.path, saved + "  b:\n    updates:\n      time: '26:00'\n")
+        self.assertEqual(c.save_settings("a", {("keyboard",): "de"}), ["keyboard"])
+        with self.assertRaisesRegex(KiwiError, "Reboot days"):
+            c.save_settings("a", {("updates", "days"): ["Funday"]})
+        self.assertEqual(c.save_settings("b", {("updates", "time"): None}), ["updates.time"])
+        self.assertEqual([f["name"] for f in c.settings()["groups"][0]["fields"]][:2], ["target", "role"])
+        c.lock_store()
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            c.save_settings("a", {("keyboard",): "us"})
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            c.settings("a")
 
     def test_login_opens_the_locked_store_and_lock_closes_it(self):
         self.init()
@@ -6318,6 +6527,253 @@ class TestFirstRunPage(StoreBase):
                          ["apply", os.path.join(self.dir, "fleet.yaml"), "fig", "--ssh", "core@192.168.1.77", "--new-host-key"][-5:])
         with self.assertRaises(KiwiError):
             self.c.argv("setup", ["fig"], "not an address; rm -rf")
+
+    # ---- settings ----
+    def data(self):
+        return yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))
+
+    def node(self):
+        return next(n for n, h in self.data()["hosts"].items() if h["role"] == "node")
+
+    @staticmethod
+    def shown(body):
+        """What a browser sends back for the settings form of a page, nothing touched: [(name, value)]."""
+        from html.parser import HTMLParser
+        out = []
+
+        class Form(HTMLParser):
+            on, select, area = False, None, None
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag == "form":
+                    self.on = (a.get("action") or "").endswith("settings")
+                if not self.on:
+                    return
+                if tag == "input" and a.get("type") == "checkbox":
+                    if "checked" in a:
+                        out.append((a["name"], a.get("value", "on")))
+                elif tag == "input":
+                    out.append((a["name"], a.get("value", "")))
+                elif tag == "select":
+                    self.select = [a["name"], None, None]
+                elif tag == "option" and self.select:
+                    if self.select[2] is None:
+                        self.select[2] = a.get("value", "")
+                    if "selected" in a:
+                        self.select[1] = a.get("value", "")
+                elif tag == "textarea":
+                    self.area = [a["name"], ""]
+
+            def handle_data(self, data):
+                if self.area:
+                    self.area[1] += data
+
+            def handle_endtag(self, tag):
+                if tag == "select" and self.select:
+                    out.append((self.select[0], self.select[2] if self.select[1] is None else self.select[1]))
+                    self.select = None
+                elif tag == "textarea" and self.area:
+                    out.append(tuple(self.area))
+                    self.area = None
+                elif tag == "form":
+                    self.on = False
+        Form().feed(body)
+        return out
+
+    def change(self, path, cookie, changes):
+        """The page's whole form sent back, as a browser does, with these fields changed (a list: the boxes ticked)."""
+        pairs = [(n, v) for n, v in self.shown(self.ask(path, cookie=cookie)[1]) if n not in changes]
+        self.assertIn("csrf", dict(pairs))
+        for name, value in changes.items():
+            pairs += [(name, v) for v in (value if isinstance(value, list) else [value])]
+        return self.ask(path, pairs, cookie)
+
+    def at_rest(self):
+        """Nothing readable beside the link, after whatever the page just did."""
+        self.assertTrue(os.path.islink(os.path.join(self.dir, "fleet.yaml")))
+        self.assertEqual([n for n in os.listdir(self.dir) if ".tmp" in n], [])
+        on_disk = sorted(n for n in os.listdir(self.dir) if not os.path.islink(os.path.join(self.dir, n)))
+        self.assertEqual(on_disk, ["control", "fleet.yaml.age", "secrets.age", "secrets.recipients"])
+
+    def test_a_machines_time_zone_and_update_time_are_changed_on_its_page(self):
+        cookie, csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        self.assertIn('href="%s"' % page, self.ask("/hosts/" + node, cookie=cookie)[1])
+        self.assertEqual(self.ask(page)[:2], (303, "/login"))                              # not without a login
+        self.assertEqual(self.ask(page, {"f:timezone": "Europe/Vienna"})[:2], (303, "/login"))
+        self.assertEqual(self.ask(page, {"f:timezone": "Europe/Vienna", "csrf": "x"}, cookie)[:2], (303, "/login"))
+        self.assertEqual(self.ask("/hosts/nobody/settings", cookie=cookie)[:2], (303, "/"))
+        before, age = self.data(), util.sha256_file(os.path.join(self.dir, "fleet.yaml.age"))
+        self.assertNotIn("timezone", before["hosts"][node])
+        status, body, _ = self.ask(page, cookie=cookie)
+        self.assertEqual(status, 200)
+        for said in ("Settings of " + node, "<h2 style=\"margin-top:0\">Machine</h2>", "<summary>Nextcloud</summary>", ">Save</button>"):
+            self.assertIn(said, body)
+        status, where, _ = self.change(page, cookie, {"f:timezone": "Europe/Vienna", "f:updates.time": "04:15"})
+        self.assertEqual((status, where), (303, page + "?saved=1"))
+        before["hosts"][node].update(timezone="Europe/Vienna", updates={"time": "04:15"})
+        self.assertEqual(self.data(), before)                                               # these two, and nothing else
+        host = config.Fleet.load(os.path.join(self.dir, "fleet.yaml")).hosts[node]
+        self.assertEqual((host.cfg["timezone"], host.cfg["updates"]["time"], host.cfg["updates"]["days"]), ("Europe/Vienna", "04:15", ["Sun"]))
+        self.at_rest()
+        self.assertNotEqual(util.sha256_file(os.path.join(self.dir, "fleet.yaml.age")), age)   # and it rests encrypted, changed
+        last = self.c.audit_tail(1)[0]
+        self.assertEqual((last["what"], last["hosts"], last["keys"]), ("settings changed", [node], ["timezone", "updates.time"]))
+        # after the save: a machine that is set up gets it with Apply; this one is not set up yet
+        body = self.ask(where, cookie=cookie)[1]
+        self.assertIn("Saved. The machine gets it when it is set up.", body)
+        self.assertNotIn('name="action" value="apply"', body)
+        info = self.c.fleet_info()
+        for h in info["hosts"]:
+            h["phase"] = "applied"
+        with mock.patch.object(self.c, "fleet_info", lambda **_k: info):
+            body = self.ask(where, cookie=cookie)[1]
+        self.assertIn("Saved. Apply brings it to the machine.", body)
+        self.assertIn('<input type="hidden" name="action" value="apply"><input type="hidden" name="host" value="%s">' % node, body)
+        # the whole form sent back untouched changes nothing
+        text = util.read_text(os.path.join(self.dir, "fleet.yaml"))
+        self.assertEqual(self.change(page, cookie, {})[:2], (303, page + "?saved=0"))
+        self.assertIn("Nothing was changed.", self.ask(page + "?saved=0", cookie=cookie)[1])
+        self.assertEqual(util.read_text(os.path.join(self.dir, "fleet.yaml")), text)
+        self.c.lock_store()                                                                 # a restart: it is what was saved
+        self.assertTrue(self.c.login(self.PW))
+        self.assertEqual(self.data(), before)
+        for t in threading.enumerate():         # the login looks for a ring in the background: before the folder goes
+            if "arm_auto" in t.name:
+                t.join(20)
+
+    def test_an_override_is_set_and_taken_away_again(self):
+        cookie, _csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        usual = self.data()["defaults"]["keyboard"]
+        body = self.ask(page, cookie=cookie)[1]
+        self.assertIn('name="f:keyboard" value="" placeholder="%s"' % usual, body)         # empty: what it inherits, in grey
+        self.assertRegex(body, r'name="f:updates.enabled"><option value="">as inherited \(yes\)</option>')
+        self.assertEqual(self.change(page, cookie, {"f:keyboard": "fr", "f:updates.enabled": "no", "f:updates.days": "Sat Sun"})[0], 303)
+        own = self.data()["hosts"][node]
+        self.assertEqual((own["keyboard"], own["updates"]), ("fr", {"enabled": False, "days": ["Sat", "Sun"]}))
+        body = self.ask(page, cookie=cookie)[1]
+        self.assertIn('name="f:keyboard" value="fr" placeholder="%s"' % usual, body)
+        self.assertIn('<option value="no" selected>no</option>', body)
+        self.assertRegex(body, r'name="f:updates.days" rows="2" placeholder="Sun">Sat Sun</textarea>')
+        # empty again, or the inherited value itself: the override goes, the machine follows the defaults
+        self.assertEqual(self.change(page, cookie, {"f:keyboard": "", "f:updates.enabled": "yes", "f:updates.days": "Sun"})[:2],
+                         (303, page + "?saved=1"))
+        own = self.data()["hosts"][node]
+        self.assertNotIn("keyboard", own)
+        self.assertNotIn("updates", own)
+        self.assertIn('name="f:keyboard" value="" placeholder="%s"' % usual, self.ask(page, cookie=cookie)[1])
+        self.at_rest()
+
+    def test_a_node_gets_one_more_part_and_the_part_a_setting(self):
+        cookie, _csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        body = self.ask(page, cookie=cookie)[1]
+        on = [v for n, v in self.shown(body) if n == "f:node.modules"]
+        self.assertEqual(sorted(on), ["cloud", "portainer", "reverse-proxy", "vault", "vpn-client"])    # the preset's
+        self.assertIn('name="f:node.modules" value="immich">', body)                       # offered, not ticked
+        self.assertNotIn("f:node.immich.library_dir", body)
+        self.assertIn('<option value="cloud" selected>Cloud (cloud)</option>', body)
+        self.assertEqual(self.change(page, cookie, {"f:node.modules": on + ["immich"]})[:2], (303, page + "?saved=1"))
+        self.assertEqual(self.data()["hosts"][node]["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "immich"])
+        body = self.ask(page, cookie=cookie)[1]
+        self.assertIn('name="f:node.modules" value="immich" checked>', body)
+        self.assertIn("<summary>Immich</summary>", body)
+        self.assertIn('name="f:node.immich.library_dir"', body)
+        self.assertEqual(self.change(page, cookie, {"f:node.immich.library_dir": "/mnt/photos", "f:node.immich.machine_learning": "no"})[0], 303)
+        own = self.data()["hosts"][node]["node"]
+        self.assertEqual(own["immich"], {"library_dir": "/mnt/photos", "machine_learning": False})
+        self.assertEqual(own["preset"], "cloud")
+        self.assertIn("immich", next(h for h in self.c.fleet_info()["hosts"] if h["name"] == node)["modules"])
+        # the preset's parts again: no list of its own any more
+        self.assertEqual(self.change(page, cookie, {"f:node.modules": on})[0], 303)
+        self.assertNotIn("modules", self.data()["hosts"][node]["node"])
+        self.at_rest()
+
+    def test_a_value_that_cannot_be_is_refused_and_nothing_is_written(self):
+        cookie, _csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        path = os.path.realpath(os.path.join(self.dir, "fleet.yaml"))
+        text, age = util.read_text(path), util.sha256_file(os.path.join(self.dir, "fleet.yaml.age"))
+        # the fleet's own check says no
+        status, body, _ = self.change(page, cookie, {"f:updates.time": "25:00", "f:keyboard": "fr", "f:admin.password": "typed-s3cr3t"})
+        self.assertEqual(status, 200)
+        self.assertIn('<p class="banner bad">Not saved: “Reboot time” must be HH:MM (24h)</p>', body)
+        self.assertIn('name="f:updates.time" value="25:00"', body)                         # what was typed stays
+        self.assertIn('name="f:keyboard" value="fr"', body)
+        self.assertNotIn("typed-s3cr3t", body)                                              # but never a secret
+        self.assertNotIn("Saved", body)
+        # the form says no before the check is asked
+        status, body, _ = self.change(page, cookie, {"f:admin.ssh_port": "abc", "f:keyboard": "fr"})
+        self.assertEqual(status, 200)
+        self.assertIn("Not saved: SSH port: a whole number is needed", body)
+        self.assertIn('name="f:admin.ssh_port" value="abc"', body)
+        self.assertRegex(body, r'<details class="card" open><summary>Admin user</summary>')      # where the mistake is
+        self.assertEqual(util.read_text(path), text)                                        # the file, to the letter
+        self.assertEqual(util.sha256_file(os.path.join(self.dir, "fleet.yaml.age")), age)
+        self.assertNotIn("settings changed", str(self.c.audit_tail(5)))
+        self.at_rest()
+
+    def test_a_secret_is_set_and_never_shown(self):
+        cookie, _csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        self.assertEqual(self.change(page, cookie, {"f:node.cloud.admin_password": "nextcloud-s3cr3t"})[:2], (303, page + "?saved=1"))
+        self.assertEqual(self.data()["hosts"][node]["node"]["cloud"], {"admin_password": "nextcloud-s3cr3t"})
+        body = self.ask(page, cookie=cookie)[1]
+        self.assertNotIn("s3cr3t", body)
+        self.assertRegex(body, r'type="password" name="f:node.cloud.admin_password" autocomplete="new-password"\s+'
+                               r'placeholder="set; leave empty to keep it">')
+        self.assertNotIn("s3cr3t", util.read_text(os.path.join(self.c.dir, "audit.jsonl")))
+        self.assertEqual(self.c.audit_tail(1)[0]["keys"], ["node.cloud.admin_password"])
+        for name in os.listdir(self.dir):                                                   # nor readable on the disk
+            if os.path.isfile(os.path.join(self.dir, name)) and not os.path.islink(os.path.join(self.dir, name)):
+                self.assertNotIn(b"s3cr3t", util.read_bytes(os.path.join(self.dir, name)))
+        # left empty it stays; ticked away it goes
+        self.assertEqual(self.change(page, cookie, {"f:keyboard": "fr"})[0], 303)
+        self.assertEqual(self.data()["hosts"][node]["node"]["cloud"], {"admin_password": "nextcloud-s3cr3t"})
+        self.assertEqual(self.change(page, cookie, {"clear:node.cloud.admin_password": "1"})[0], 303)
+        self.assertNotIn("cloud", self.data()["hosts"][node]["node"])
+        self.at_rest()
+
+    def test_the_settings_for_every_machine(self):
+        cookie, _csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        self.assertEqual(self.ask("/settings")[:2], (303, "/login"))
+        self.assertIn('<a class="tile" href="/settings"><b>Settings for every machine</b>', self.ask("/", cookie=cookie)[1])
+        body = self.ask("/settings", cookie=cookie)[1]
+        self.assertIn("Settings for every machine", body)
+        self.assertIn('name="f:domain"', body)                                             # what only the defaults have
+        self.assertNotIn('name="f:hostname"', body)                                        # what only a machine has
+        self.assertIn("the usual (yes)", body)
+        before = self.data()
+        self.assertEqual(self.change("/settings", cookie, {"f:keyboard": "fr", "f:updates.days": "Sat"})[:2], (303, "/settings?saved=1"))
+        before["defaults"]["keyboard"] = "fr"
+        before["defaults"]["updates"]["days"] = ["Sat"]
+        self.assertEqual(self.data(), before)
+        fleet = config.Fleet.load(os.path.join(self.dir, "fleet.yaml"))
+        self.assertEqual({h.cfg["keyboard"] for h in fleet.hosts.values()}, {"fr"})        # every machine inherits it
+        self.assertEqual([h.cfg["updates"]["days"] for h in fleet.hosts.values()], [["Sat"], ["Sat"]])
+        self.assertIn('name="f:keyboard" value="" placeholder="fr"', self.ask(page, cookie=cookie)[1])
+        self.assertEqual(self.c.audit_tail(1)[0]["hosts"], [])
+        body = self.ask("/settings?saved=1", cookie=cookie)[1]
+        self.assertIn("Saved. Every machine gets it when it is set up.", body)
+        info = self.c.fleet_info()
+        for h in info["hosts"]:
+            h["phase"] = "applied"
+        with mock.patch.object(self.c, "fleet_info", lambda **_k: info):
+            body = self.ask("/settings?saved=1", cookie=cookie)[1]
+        self.assertIn("Saved. Update everything brings it to every machine.", body)
+        self.assertIn('<input type="hidden" name="action" value="update">', body)
+        # a domain that cannot be is refused here as well
+        text = util.read_text(os.path.join(self.dir, "fleet.yaml"))
+        status, body, _ = self.change("/settings", cookie, {"f:domain": "local"})
+        self.assertEqual(status, 200)
+        self.assertIn("Not saved: domain", body)
+        self.assertEqual(util.read_text(os.path.join(self.dir, "fleet.yaml")), text)
+        self.assertEqual(self.ask("/machines/add", {"csrf": _csrf, "preset": "cloud", "name": "fig"}, cookie=cookie)[:2],
+                         (303, "/hosts/fig"))                                               # a machine can still be added
+        self.at_rest()
 
     def test_the_recovery_key_sets_a_new_password(self):
         _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))

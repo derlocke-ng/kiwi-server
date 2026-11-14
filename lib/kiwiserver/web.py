@@ -16,7 +16,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from . import VERSION
+from . import VERSION, form as formmod
 from .control import ACTIONS, Control
 from .util import KiwiError
 
@@ -56,7 +56,9 @@ form.inline{display:inline}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-t
 .what p{margin:0}ul{margin:6px 0;padding-left:20px}li{margin:3px 0}
 pre{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:12px;
 padding:12px;font-size:.85rem;max-height:60vh;overflow:auto}
-input,select{font:inherit;padding:9px;border-radius:10px;border:1px solid var(--line);width:100%;background:var(--card);color:var(--fg)}
+input,select,textarea{font:inherit;padding:9px;border-radius:10px;border:1px solid var(--line);width:100%;background:var(--card);color:var(--fg)}
+input[type=checkbox]{width:auto;margin:0}.check{display:flex;gap:8px;align-items:baseline;font-weight:400;margin:8px 0}
+details.card>summary{font-weight:600}
 label{display:block;margin:10px 0 4px;font-weight:600}details{margin:8px 0}summary{cursor:pointer;color:var(--accent)}
 .qr{background:#fff;padding:10px;border-radius:12px;display:inline-block}.qr svg{display:block;width:260px;height:260px}
 dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{color:var(--muted)}dd{margin:0}
@@ -70,7 +72,9 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 STEP = """{% macro step(m, tok) %}<div class="card"><div class="row"><strong>{{ m.name }}</strong>
 <span class="muted">{{ kind(m.role) }}</span></div>
 {% if m.phase == "invalid" %}<p class="bad">Its settings are not complete: {{ m.next }}</p>
-{% elif m.phase == "bare" %}<p>It has no job yet. <span class="muted">Give it one in the app.</span></p>
+<div class="actions"><a class="btn primary" href="/hosts/{{ m.name }}/settings">Open its settings</a></div>
+{% elif m.phase == "bare" %}<p>It has no job yet. <span class="muted">Give it one in its settings, under Role.</span></p>
+<div class="actions"><a class="btn primary" href="/hosts/{{ m.name }}/settings">Open its settings</a></div>
 {% elif m.phase == "enroll" and not m.master_ready %}<p>Its turn comes when the master is set up.</p>
 {% elif m.phase == "enroll" %}<p>First it gets its place on your VPN.</p>
 <form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="setup"><input type="hidden" name="host" value="{{ m.name }}">
@@ -276,13 +280,14 @@ named after a fruit.</p><input id="mname" name="name">
 
 {% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
-moment. Do it now and then, and after changing settings in the app.</span></p>
+moment. Do it now and then, and after changing the settings for every machine.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Update every machine now? This takes a while; services that changed restart for a moment.')">{{ tok }}
 <input type="hidden" name="action" value="update"><button class="primary">Update everything</button></form></div>{% endif %}
 
 <h2>Do something</h2><div class="tiles">
 <a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
 <a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
+<a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
 <a class="tile" href="/backups"><b>Backups</b><span>See when everything was last saved</span></a>
 <a class="tile" href="/help"><b>Help</b><span>What the words on this page mean</span></a></div>
 {% endblock %}""",
@@ -305,7 +310,9 @@ moment. Do it now and then, and after changing settings in the app.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Apply to {{ m.name }} now? Services that changed restart for a moment.')">{{ tok }}
 <input type="hidden" name="action" value="apply"><input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Apply</button></form>
 <p>Sets the machine up the way your network's settings say: new settings, updates of its services, repairs.
-<span class="muted">Services that changed restart for a moment. Safe to run again.</span></p></div></div>
+<span class="muted">Services that changed restart for a moment. Safe to run again.</span></p>
+<a class="btn" href="/hosts/{{ m.name }}/settings">Settings</a>
+<p>What this machine does and how: its parts, its address, its updates. <span class="muted">Apply brings a change to it.</span></p></div></div>
 
 {% if tiles %}<h2>Its services</h2><div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
 <b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% endif %}
@@ -318,6 +325,55 @@ moment. Do it now and then, and after changing settings in the app.</span></p>
 <dt>Parts</dt><dd>{{ m.modules|join(", ") }}</dd></dl>
 {% if m.notes %}<ul class="muted">{% for n in m.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
 {% if m.output %}<details><summary>What the machine said, word for word</summary><pre>{{ m.output }}</pre></details>{% endif %}</div>{% endif %}
+{% endblock %}""",
+
+    "settings.html": """{% extends "base.html" %}{% block main %}
+{% macro field(f) %}{% set id = "f-" + f.name %}<div class="q">
+{% if f.type == "modules" %}<label>{{ f.label }}</label><p class="muted" style="margin:0 0 4px">{{ f.help }}</p>
+<input type="hidden" name="shown:{{ f.name }}" value="1">
+{% for o in f.options %}<label class="check"><input type="checkbox" name="f:{{ f.name }}" value="{{ o.value }}"
+{%- if ((o.value in typed[f.name]) if f.name in typed else o.on) %} checked{% endif %}><span>{{ o.label }}
+<span class="muted small">{{ o.help }}{% if o.needs %} (needs {{ o.needs|join(", ") }}){% endif %}</span></span></label>{% endfor %}
+{% else %}<label for="{{ id }}">{{ f.label }}</label>
+{% if f.help %}<p class="muted" style="margin:0 0 4px">{{ f.help }}</p>{% endif %}
+{% if f.secret %}<input id="{{ id }}" type="password" name="f:{{ f.name }}" autocomplete="new-password"
+placeholder="{{ "set; leave empty to keep it" if f.set else "set for every machine; leave empty to keep it" if f.inherited_set else "" }}">
+{% if f.set %}<label class="check"><input type="checkbox" name="clear:{{ f.name }}" value="1"><span>Remove it</span></label>{% endif %}
+{% elif f.type in ("bool", "enum") %}{% set now = typed[f.name] if f.name in typed else yesno(f.value) if f.type == "bool" else (f.value or "") %}
+{% set usual = yesno(f.inherited) if f.type == "bool" else f.inherited %}
+<select id="{{ id }}" name="f:{{ f.name }}"><option value="">{{ same }}{% if usual %} ({{ usual }}){% endif %}</option>
+{% for o in ([{"value": "yes", "label": "yes"}, {"value": "no", "label": "no"}] if f.type == "bool" else f.options) %}
+<option value="{{ o.value }}"{% if o.value == now %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</select>
+{% elif f.type in ("list", "lines", "map", "text", "object") %}
+<textarea id="{{ id }}" name="f:{{ f.name }}" rows="{{ 2 if f.type == "list" else 4 }}" placeholder="{{ to_text(f.type, f.inherited) }}">
+{{- typed[f.name] if f.name in typed else to_text(f.type, f.value) }}</textarea>
+{% else %}<input id="{{ id }}" name="f:{{ f.name }}" value="{{ typed[f.name] if f.name in typed else to_text(f.type, f.value) }}"
+{%- if f.type == "int" %} inputmode="numeric"{% endif %} placeholder="{{ to_text(f.type, f.inherited) or (f.placeholder and "e.g. " + f.placeholder) }}">
+{% endif %}{% endif %}{% if wrong.get(f.name) %}<p class="bad">{{ wrong[f.name] }}</p>{% endif %}</div>{% endmacro %}
+<p><a href="{{ "/hosts/" + host if host else "/" }}">← {{ host or "Home" }}</a></p>
+<h1>{{ "Settings of " + host if host else "Settings for every machine" }}</h1>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+{% if saved == "1" and host and running %}<p class="banner ok">Saved. Apply brings it to the machine.</p>
+<form method="post" action="/run" onsubmit="return confirm('Apply to {{ host }} now? Services that changed restart for a moment.')">{{ tok }}
+<input type="hidden" name="action" value="apply"><input type="hidden" name="host" value="{{ host }}"><button class="primary">Apply</button></form>
+{% elif saved == "1" and host %}<p class="banner ok">Saved. The machine gets it when it is set up.</p>
+{% elif saved == "1" and running %}<p class="banner ok">Saved. Update everything brings it to every machine.</p>
+<form method="post" action="/run" onsubmit="return confirm('Update every machine now? This takes a while; services that changed restart for a moment.')">{{ tok }}
+<input type="hidden" name="action" value="update"><button class="primary">Update everything</button></form>
+{% elif saved == "1" %}<p class="banner ok">Saved. Every machine gets it when it is set up.</p>
+{% elif saved %}<p class="banner warn">Nothing was changed.</p>{% endif %}
+{% if groups %}<p class="muted">{% if host %}What you leave empty is as for every machine; the grey text says what that is.
+{% else %}What a machine does not set for itself, it takes from here.{% endif %} Only what you change is saved.</p>
+<form method="post" action="{{ "/hosts/" + host + "/settings" if host else "/settings" }}" autocomplete="off">{{ tok }}
+{% for g in groups %}{% set more = g.fields|selectattr("more")|list %}
+{% if g.advanced %}<details class="card"{% if g.id in open %} open{% endif %}><summary>{{ g.title }}</summary>
+{% else %}<div class="card"><h2 style="margin-top:0">{{ g.title }}</h2>{% endif %}
+{% if g.help %}<p class="muted">{{ g.help }}</p>{% endif %}
+{% for f in g.fields if not f.more %}{{ field(f) }}{% else %}{% if not more %}<p class="muted">Nothing to set: it is on or off.</p>{% endif %}{% endfor %}
+{% if more %}<details{% if more|selectattr("name", "in", touched)|list %} open{% endif %}><summary>More settings</summary>
+{% for f in more %}{{ field(f) }}{% endfor %}</details>{% endif %}
+{{ "</details>"|safe if g.advanced else "</div>"|safe }}{% endfor %}
+<div class="actions"><button class="primary">Save</button></div></form>{% endif %}
 {% endblock %}""",
 
     "job.html": """{% extends "base.html" %}{% block main %}
@@ -468,7 +524,9 @@ it. Version {{ version }}.</p>
 <h2>How do I…</h2><div class="card"><dl>
 <dt>…use my services on the go?</dt><dd><a href="/devices">Add your phone</a>, scan the code with the WireGuard app, switch the VPN on.</dd>
 <dt>…fix a machine with a problem?</dt><dd>Open it from <a href="/">Home</a>, read what it says, then <em>Apply</em>. If it does not answer at all, check that it is on.</dd>
-<dt>…change a setting or add a machine?</dt><dd>In the Kiwi Server app on your computer. It sends the change here by itself.</dd>
+<dt>…change a setting?</dt><dd>Open the machine from <a href="/">Home</a> and choose <em>Settings</em>. What all machines
+share is under <a href="/settings">Settings for every machine</a>. Then <em>Apply</em> brings it to the machine.</dd>
+<dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine at home</em>.</dd>
 <dt>…get in after a power cut?</dt><dd>{% if auto %}Nothing to do: this machine unlocks by itself with the help of
 {{ auto.server }} (the ring “{{ auto.ring }}”). If that machine is off, log in here once.{% else %}Log in here once. That
 unlocks the keys again. It can also unlock by itself with the help of another of your machines: in the app, give this
@@ -492,6 +550,7 @@ KIND = {"master": "Master", "node": "Home server (node)", "node-gw": "Home serve
         "node-cloud": "Home server", "bare": "Bare machine"}
 WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "not reachable", "unknown": "not checked yet"}
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
+FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's phases before it is set up
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of",
@@ -540,7 +599,8 @@ def tiles(machines):
 def make_app(control: Control):
     env = jinja2.Environment(loader=jinja2.DictLoader(TEMPLATES), autoescape=True)
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
-                       kind=lambda r: KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s))
+                       kind=lambda r: KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
+                       to_text=formmod.to_text, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
 
     def page(template, request=None, nav=None, **kw):
@@ -809,6 +869,80 @@ def make_app(control: Control):
         if not m:
             return RedirectResponse("/", status_code=303)
         return page("host.html", request, "/", m=m, tiles=tiles([m]))
+
+    # ---- settings: a machine's, and the defaults every machine inherits (form.py) -----------
+    def settings_page(request, host, typed=None, wrong=None, error=None, touched=()):
+        rows = {h["name"]: h for h in (control.fleet_info() or {}).get("hosts") or []}
+        if host is not None and host not in rows:
+            return RedirectResponse("/", status_code=303)
+        try:
+            groups = control.settings(host)["groups"]
+        except KiwiError as e:
+            groups, error = [], error or str(e)
+        # Apply reaches a machine that is set up; one that is not gets its settings with its first step
+        running = [n for n, h in rows.items() if (h.get("phase") or "") not in FRESH and host in (None, n)]
+        return page("settings.html", request, "/", host=host, groups=groups, typed=typed or {}, wrong=wrong or {},
+                    error=error, touched=list(touched), running=running, saved=request.query_params.get("saved"),
+                    open=[g["id"] for g in groups if any(f["name"] in touched for f in g["fields"])],
+                    same="as inherited" if host else "the usual")
+
+    def settings_save(request, host, sent, u):
+        """The posted form against what the form showed: only what was changed is written."""
+        try:
+            groups = control.settings(host)["groups"]
+        except KiwiError as e:
+            return settings_page(request, host, error=str(e))
+        typed, secrets = {}, {}
+        for g in groups:
+            for f in g["fields"]:
+                name = f["name"]
+                if f["type"] == "modules":
+                    if sent.get("shown:" + name):
+                        typed[name] = [str(x) for x in sent.getlist("f:" + name)]
+                elif f["secret"]:               # never shown again, not even after a mistake elsewhere
+                    if sent.get("clear:" + name):
+                        secrets[name] = None
+                    elif str(sent.get("f:" + name) or "").strip():
+                        secrets[name] = str(sent.get("f:" + name))
+                elif "f:" + name in sent:
+                    typed[name] = str(sent.get("f:" + name)).replace("\r\n", "\n")
+        changes, wrong = formmod.changes(groups, dict(typed, **secrets))
+        touched = set(wrong) | {".".join(path) for path in changes}
+        if wrong:
+            return settings_page(request, host, typed, wrong, "Not saved: %s" % next(iter(wrong.values())), touched)
+        try:
+            keys = control.save_settings(host, changes, u)
+        except KiwiError as e:
+            return settings_page(request, host, typed, None, "Not saved: %s" % e, touched)
+        where = "/hosts/%s/settings" % host if host else "/settings"
+        return RedirectResponse("%s?saved=%d" % (where, 1 if keys else 0), status_code=303)
+
+    async def settings_post(request, host):
+        sent = await request.form()
+        u = posted(request, str(sent.get("csrf") or ""))
+        if not u:
+            return login_page()
+        return await run_in_threadpool(settings_save, request, host, sent, u)
+
+    @app.get("/settings")
+    def settings(request: Request):
+        if not user(request):
+            return login_page()
+        return settings_page(request, None)
+
+    @app.post("/settings")
+    async def settings_do(request: Request):
+        return await settings_post(request, None)
+
+    @app.get("/hosts/{name}/settings")
+    def host_settings(request: Request, name: str):
+        if not user(request):
+            return login_page()
+        return settings_page(request, name)
+
+    @app.post("/hosts/{name}/settings")
+    async def host_settings_do(request: Request, name: str):
+        return await settings_post(request, name)
 
     @app.post("/refresh")
     def refresh(request: Request, csrf: str = Form("")):

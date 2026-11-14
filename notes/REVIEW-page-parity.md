@@ -8,7 +8,7 @@ run included. Compared command by command and setting by setting.
 | # | The app has | The page | State |
 |---|---|---|---|
 | 1 | The first run: the questionnaire, the recovery key | nothing; a node waits for `control push` | **built** in 2.81.0: a machine with nothing on it shows the questionnaire, guarded by a setup code; 2.82.0: a new password by recovery key |
-| 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | open |
+| 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | **built** in 2.83.0 from one shared list of fields (`form.py`). Left: the VPN groups are a text box and not the app's list editor, a file setting is a typed path, `unlock.control`, removing a machine |
 | 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | **built** in 2.82.0: "Still to set up" with one button per step, media made in memory and fetched from the page, "Add a machine at home" |
 | 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | open |
 | 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | open |

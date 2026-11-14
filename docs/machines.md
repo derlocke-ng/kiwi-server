@@ -133,3 +133,21 @@ The command prints the passwords on the screen. The control page and the
 desktop app show the same list and keep a password hidden until you ask for
 it: see [The control node](control.md#logins) and
 [The desktop app](gui.md#a-host).
+
+## Remove a machine
+
+```bash
+kiwi-server remove fleet.yaml lime
+```
+
+The machine leaves the network for good. Its place on the VPN goes, so its key stops
+working; its keys and rendered files on this computer go; its block is taken out of the
+fleet file, and the comments of the other machines stay. The app's "Remove" and the
+control page's "Remove this machine" do the same.
+
+The command first names who still counts on the machine: a backup server that lists
+it, a machine that sends its backups to it, a disk it helps unlock. Those settings are
+yours to change. It refuses the last master of other machines and the last machine of
+a network.
+
+The machine itself is not touched. It still has what it had: wipe it, or switch it off.

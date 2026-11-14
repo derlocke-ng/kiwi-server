@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.90.0 — a machine leaves for good; using your network
+
+- **`kiwi-server remove <fleet> <machine>`**: off the VPN (its key stops working), its
+  keys and files on this computer gone, its block out of the fleet file with the
+  comments of the others kept. It names who still counts on the machine (a backup
+  server that lists it, a disk it helps unlock) and refuses the last master of other
+  machines. The app's "Remove" does this now, where it only edited the file and left
+  the machine its place on the VPN; the page has "Remove this machine".
+- **docs/using.md, "Using your network"**: your devices onto the network, opening a
+  service and its login, keeping it well.
+- kiwi-modules 0.33.2: an empty blocklist database left by a first start is made anew.
+
 ## 2.89.1 — the ad blocker blocks
 
 - kiwi-modules 0.33.1: no Pi-hole of the test network had ever loaded its blocklist.

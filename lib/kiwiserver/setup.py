@@ -29,6 +29,39 @@ PRESETS = {         # what a machine at home does, in the words the wizard shows
 }
 
 
+def remove_host(path, name):
+    """A host's block out of the fleet file, as text, so the comments of the others stay."""
+    import yaml
+    text = util.read_text(path)
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, x in enumerate(lines) if x.rstrip() == "  %s:" % name or x.startswith("  %s: " % name)), None)
+    data = yaml.safe_load(text) or {}
+    if start is None or name not in (data.get("hosts") or {}):
+        raise KiwiError("there is no host called %s in %s" % (name, path))
+    while start > 0 and lines[start - 1].startswith("  #"):     # the comment right above a host is that host's
+        start -= 1
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("  #"):    # (past its own comment, to its name)
+        end += 1
+    end += 1
+    while end < len(lines):
+        x = lines[end]
+        if x.strip() and not x.startswith("   ") and not x.startswith("  #"):      # the next host, or a new section
+            break
+        end += 1
+    while end > start + 1 and lines[end - 1].lstrip().startswith("#") and lines[end - 1].startswith("  #"):
+        end -= 1                                # a comment right above the next host is that host's
+    new = "".join(lines[:start] + lines[end:])
+    left = yaml.safe_load(new) or {}
+    want = {k: v for k, v in (data.get("hosts") or {}).items() if k != name}
+    if (left.get("hosts") or {}) != want:
+        raise KiwiError("%s could not be taken out of %s as text without touching another host: remove its block by hand"
+                        % (name, path))
+    if not want:                                # hosts: with nothing under it is not a mapping any more
+        new = new.rstrip("\n").rsplit("hosts:", 1)[0] + "hosts: {}\n"
+    util.write_text(path, new, 0o600)
+
+
 def free_name(role, taken=()):
     """A name for a new machine nobody uses yet: a fruit dish for a master, a fruit otherwise."""
     pool = MASTERS if role == "master" else NODES

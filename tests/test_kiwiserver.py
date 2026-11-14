@@ -3782,6 +3782,52 @@ class TestManage(Base):
         self.assertIn("no client group 'nope'", err)
         self.assertIn("devices", err)
 
+    def test_a_machine_leaves_for_good(self):
+        api = FakeWgEasy("w")
+        self.addCleanup(api.stop)
+        f = self.manage_fleet()
+        self.assertEqual(self.run_cli("enroll", f.path, "sh3", "--api", api.url)[0], 0)
+        conf = os.path.join(self.tmp, "secrets", "sh3.kiwi.conf")
+        self.assertTrue(os.path.isfile(conf))
+        # the master of other machines stays; and nothing is taken for granted without a person
+        rc, out, err = self.run_cli("remove", f.path, "gate", "--yes", "--api", api.url)
+        self.assertIn("gate is the master of 1 other machine(s)", err)
+        rc, out, err = self.run_cli("remove", f.path, "sh3", "--api", api.url)
+        self.assertIn("add --yes to go ahead", err)
+        self.assertTrue(os.path.isfile(conf))
+        rc, out, err = self.run_cli("remove", f.path, "sh3", "--yes", "--api", api.url)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([c["name"] for c in api.clients], [])          # off the VPN: its key no longer works
+        self.assertFalse(os.path.exists(conf))
+        self.assertEqual(sorted(config.Fleet.load(f.path).hosts), ["gate"])
+        self.assertEqual(self.run_cli("validate", f.path)[0], 0)
+        rc, out, err = self.run_cli("remove", f.path, "sh3", "--yes", "--api", api.url)
+        self.assertIn("no such machine: sh3", err)
+        # the last machine stays: a network without machines is not a network
+        rc, out, err = self.run_cli("remove", f.path, "gate", "--yes", "--api", api.url)
+        self.assertIn("gate is the last machine of this network", err)
+        self.assertEqual(sorted(config.Fleet.load(f.path).hosts), ["gate"])
+
+    def test_a_host_is_taken_out_as_text_and_the_comments_of_the_others_stay(self):
+        path = os.path.join(self.tmp, "f.yaml")
+        write(path, "defaults:\n  domain: home\nhosts:\n"
+                    "  # the master, rented\n  strudel:\n    role: master\n    master:\n      modules: [vpn-server]\n"
+                    "  # the one with the files\n  papaya:\n    role: node\n    # its data disk\n    node:\n      preset: cloud\n\n"
+                    "  # a board\n  lime:\n    role: node\n    node: { preset: minimal }\n")
+        setupmod.remove_host(path, "papaya")
+        text = open(path).read()
+        self.assertNotIn("papaya", text)
+        self.assertNotIn("its data disk", text)
+        self.assertNotIn("the one with the files", text.split("lime")[0].split("strudel")[1])
+        self.assertIn("  # the master, rented\n  strudel:", text)
+        self.assertIn("  # a board\n  lime:", text)            # the comment above the next host is that host's
+        setupmod.remove_host(path, "lime")
+        setupmod.remove_host(path, "strudel")
+        import yaml
+        self.assertEqual(yaml.safe_load(open(path).read())["hosts"], {})
+        with self.assertRaises(KiwiError):
+            setupmod.remove_host(path, "strudel")
+
     def test_enroll_refusals(self):
         api = FakeWgEasy("other")
         self.addCleanup(api.stop)
@@ -7529,6 +7575,12 @@ class TestFirstRunPage(StoreBase):
             with self.assertRaises(KiwiError):
                 self.c.argv("restore", ["papaya"], at, module)
         self.assertEqual(self.c.argv("unlock", ["papaya"])[-3:], ["unlock", fleet, "papaya"])
+        self.assertEqual(self.c.argv("remove", ["papaya"])[-4:], ["remove", fleet, "papaya", "--yes"])
+        with self.assertRaises(KiwiError):
+            self.c.argv("remove", [])
+        with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": "papaya"}), self.assertRaises(KiwiError):
+            self.c.argv("remove", ["papaya"])                   # the page's own machine
+        self.assertIn("Remove this machine", self.ask("/hosts/papaya", cookie=cookie)[1])
         # a machine that keeps no answer: the page says so and still opens
         self.c.kiwi = [sys.executable, "-c", "import sys; print('error: papaya does not back up', file=sys.stderr); sys.exit(1)"]
         self.assertIn("papaya does not back up", self.ask("/backups/papaya", cookie=cookie)[1])

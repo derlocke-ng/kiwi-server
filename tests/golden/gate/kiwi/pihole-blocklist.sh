@@ -13,6 +13,9 @@ n=$(count)
 [[ ${n:-0} -gt 0 ]] && exit 0
 "$RT" exec "$C" true 2>/dev/null || exit 0          # not running: nothing to look at
 echo "[kiwi-dns] Pi-hole's blocklist is empty: fetching it"
+# a first start without names can leave a database file with nothing in it, and the fetch
+# cannot build on that: an empty file goes, so that a new one is made
+"$RT" exec "$C" sh -c '[ -s /etc/pihole/gravity.db ] || rm -f /etc/pihole/gravity.db' 2>/dev/null || true
 "$RT" exec "$C" pihole -g >/dev/null 2>&1
 n=$(count)
 if [[ ${n:-0} -gt 0 ]]; then

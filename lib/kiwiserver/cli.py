@@ -653,6 +653,95 @@ def cmd_add(args):
         util.say("next: kiwi-server build %s %s" % (fname, name))
 
 
+def cmd_remove(args):
+    """A machine leaves the network for good: its place on the VPN, its keys here, its block
+    in the fleet file. The machine itself is not touched: wipe it, or switch it off."""
+    fleet, roles, ms = load(args)
+    path, name = args.fleet, args.host
+    h = fleet.hosts.get(name)
+    if h is None:
+        raise KiwiError("no such machine: %s" % name)
+
+    def is_master(x):
+        return x.role in roles and roles[x.role].node_type == "master"
+    others = [x for x in fleet.hosts.values() if x is not h]
+    if not others:
+        raise KiwiError("%s is the last machine of this network. A network without machines is its folder: delete %s "
+                        "when you do not want it any more" % (name, shown_path(fleet.dir)))
+    if is_master(h) and not any(is_master(x) for x in others):
+        raise KiwiError("%s is the master of %d other machine(s): they would lose their network. Remove them first, or "
+                        "set up another master" % (name, len(others)))
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise KiwiError("this takes %s out of the network for good: add --yes to go ahead" % name)
+        if input("%s leaves the network for good. Type its name to go ahead: " % name).strip() != name:
+            raise KiwiError("not confirmed, nothing touched")
+    # who still counts on it: said, not changed (their settings are the owner's)
+    for x in others:
+        raw = x.role_settings_raw
+        if h.hostname in ((raw.get("backup-server") or {}).get("clients") or []):
+            util.warn("%s still lists %s as a machine whose backups it takes (backup-server.clients)" % (x.name, h.hostname))
+        if any(h.hostname in str(u) for u in (raw.get("backup") or {}).get("servers") or []):
+            util.warn("%s still sends its backups to %s (backup.servers): it has one copy less from now on" % (x.name, name))
+        via = (x.cfg.get("unlock") or {})
+        if name in str(via.get("via") or "") or any(name == str(r.get("host")) for r in (via.get("rings") or []) if isinstance(r, dict)):
+            util.warn("%s unlocks its disk with the help of %s: give it another ring before its next restart" % (x.name, name))
+    # its place on the VPN
+    if not is_master(h):
+        try:
+            master = _master_of(fleet, roles, ms, args.master)
+            vs = master.module_settings.get("vpn-server") or {}
+
+            def drop(url):
+                api = wgeasy.WgEasy(url, vs["wg_password"]).login()
+                c = api.client(h.hostname)
+                if c is not None:
+                    api.delete(c["id"])
+                return c is not None
+            if args.api:
+                was = drop(args.api)
+            else:
+                with remote.Tunnel(remote.reach(master, args.ssh), 51821) as url:
+                    was = drop(url)
+            if was:
+                util.say("%s is off the VPN: its key no longer works" % name)
+                if not args.api:
+                    try:
+                        backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+                    except KiwiError as e:
+                        util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
+        except KiwiError as e:
+            util.warn("its place on the VPN could not be taken away (%s): do it on the master's VPN page (wg.<master>), "
+                      "or run this again when the master answers" % str(e).splitlines()[0])
+    # what this computer keeps of it
+    for rel in ("secrets/%s.conf" % h.hostname, "secrets/ram/%s" % name):
+        p = fleet.resolve_path(rel)
+        if os.path.isdir(p):
+            shutil.rmtree(p)
+        elif os.path.isfile(p):
+            os.remove(p)
+    known = fleet.resolve_path("secrets/known_hosts")
+    if os.path.isfile(known):
+        port = remote.ssh_port(h)
+        for a in remote.addresses(h):
+            for n in (a, "[%s]:%d" % (a, port)):
+                subprocess.run(["ssh-keygen", "-q", "-R", n, "-f", known], capture_output=True)
+        if os.path.isfile(known + ".old"):
+            os.remove(known + ".old")
+    for d in {os.path.join(out_dir_for(args, fleet), name), os.path.join(media_dir_for(args, fleet), name)}:
+        if os.path.isdir(d):
+            shutil.rmtree(d)
+    state = fleet_state(fleet)
+    for key in ("applied", "backup_clients"):
+        (state.get(key) or {}).pop(name, None)
+    try:
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    except OSError:
+        pass
+    setupmod.remove_host(fleet.path, name)
+    util.say("%s is out of %s. The machine itself still has what it had: wipe it, or switch it off" % (name, shown_path(fleet.path)))
+
+
 def cmd_validate(args):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
@@ -2606,6 +2695,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
+  kiwi-server remove <fleet> <host> [--yes]            a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
@@ -2679,6 +2769,11 @@ def build_parser():
     s.add_argument("name", nargs="?", help="default: a free fruit (a node) or fruit dish (a master)")
     s.add_argument("--preset", choices=["gateway", "cloud", "minimal"], help="a node's module list (default minimal)")
     s.add_argument("--target", choices=["ucore", "coreos", "debian"], help="its system (default: the fleet's)")
+    s = sub("remove", cmd_remove); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--yes", action="store_true", help="do not ask")
+    s.add_argument("--master", help="which master, when the fleet has more than one")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
+    s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # wg-easy reachable directly (tests)
     s = sub("validate", cmd_validate); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     sub("list", cmd_list).add_argument("fleet")
     s = sub("next", cmd_next); s.add_argument("fleet")

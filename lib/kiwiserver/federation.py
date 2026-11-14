@@ -173,6 +173,18 @@ def write(fleet_dir, partner, entry):
     util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
 
 
+def set_share(fleet_dir, partner, share):
+    """What one partner may reach here, the rest of the file as it is."""
+    p = os.path.join(fleet_dir, FILE)
+    data = (yaml.safe_load(util.read_text(p)) or {}) if os.path.isfile(p) else {}
+    if partner not in data:
+        raise KiwiError("%s: no partner called %s" % (p, partner))
+    data[partner] = dict(data[partner] or {}, share=list(share))
+    head = ("# federation.yaml — the partner networks and what each may reach here "
+            "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
+    util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+
+
 def set_flag(fleet_dir, partner, key, on):
     """`exit` or `internet` of one partner, the rest of the file as it is."""
     p = os.path.join(fleet_dir, FILE)

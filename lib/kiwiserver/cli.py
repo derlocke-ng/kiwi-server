@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
+from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, form as formmod, logins as loginsmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
@@ -250,6 +250,7 @@ class Renderer:
         self._node_lan = []
         self._needs_ca = False
         self._master_ip = ""
+        self._groups = {}
 
     def prepare(self, host):
         role = self.roles[host.role]
@@ -283,6 +284,7 @@ class Renderer:
                     continue
                 if role.node_type == "master" and not master_ip:
                     master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
+                    self._groups = (h.module_settings.get("vpn-server") or {}).get("groups") or {}
                 lan = static_lan(h)
                 if lan and role.node_type != "master":      # a master's stack lives on the mesh, not its LAN
                     node_lan.append((spec.vpn_ip, lan.ip))
@@ -369,6 +371,11 @@ class Renderer:
             return None
         records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
+        if role.node_type != "master" and "reverse-proxy" in host.modules:
+            # a VPN group that reaches this node for some services only: refused at its other names
+            rules = accessmod.node_rules(self._groups, host.name, host.hostname)
+            if rules:
+                host.module_settings["reverse-proxy"]["access"] = rules
         spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
                                    lan_addresses=self.lan_addresses(host, role))
         b = modmod.Renderer(self.ms).render(spec)
@@ -2482,6 +2489,106 @@ def cmd_rotate(args):
         raise SystemExit(1)
 
 
+def _access_facts(args):
+    """What `access` works on: the fleet, its one master, the groups as the master has them,
+    the partners, the machines a rule can name and where each device's address is."""
+    fleet, roles, ms = load(args)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms)
+    domain, _master_ip, mesh, _mtu = fleet_facts(fleet, roles, ms, r)
+    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"
+               and "vpn-server" in (h.modules or [])]
+    if len(masters) != 1:
+        raise KiwiError("access is about the VPN of one master: this fleet has %d with a VPN server" % len(masters))
+    master = masters[0]
+    groups = (master.module_settings.get("vpn-server") or {}).get("groups") or {}
+    found = accessmod.machines(fleet, roles, r.dns_records())
+    devices = {}
+    ddir = fleet.resolve_path("secrets/devices")
+    for f in sorted(os.listdir(ddir)) if os.path.isdir(ddir) else []:
+        if f.endswith(".conf") and not f.startswith("."):
+            m = re.search(r"^\s*Address\s*=\s*([0-9.]+)", util.read_text(os.path.join(ddir, f)), re.M)
+            if m:
+                devices[f[:-5]] = m.group(1)
+    partners = fedmod.partners(os.path.dirname(fleet.path))
+    return fleet, master, groups, partners, found, domain, mesh, devices
+
+
+def cmd_access(args):
+    """Who on the VPN may reach what: the VPN's groups and the linked networks, shown or
+    changed (access.py). The rules reach the machines with the next apply."""
+    fleet, master, groups, partners, found, domain, mesh, devices = _access_facts(args)
+    yes = {"yes": True, "no": False, None: None}
+    flags = {k: yes[getattr(args, k)] for k in accessmod.FLAGS}
+    changing = args.who and (args.what or args.new or args.add or args.remove or any(v is not None for v in flags.values()))
+    if not changing:
+        rows = accessmod.view(groups, partners, found, domain, devices)
+        if args.who:
+            rows = [x for x in rows if x["name"] == args.who]
+            if not rows:
+                raise KiwiError("no group or linked network called %s" % args.who)
+        if args.porcelain:
+            print(json.dumps({"master": master.name, "who": rows, "machines": found}, indent=2))
+            return
+        for x in rows:
+            more = ""
+            if x["kind"] == "group":
+                more = "   (%s)" % ", ".join("%s: %s" % (w, "yes" if x[k] else "no") for k, w in
+                                             (("peers", "other devices"), ("internet", "internet"), ("admin", "admin pages")))
+            print("%-10s %-15s %s%s" % (x["name"], x["range"] if x["kind"] == "group" else "linked network", x["says"], more))
+            if x["devices"]:
+                print("%-10s %-15s devices: %s" % ("", "", ", ".join(x["devices"])))
+        grouped = {d for x in rows for d in x["devices"]}
+        loose = sorted(d for d in devices if d not in grouped)
+        if loose and not args.who:
+            print("%-10s %-15s everything\n%-10s %-15s devices: %s" % ("(no group)", "", "", "", ", ".join(loose)))
+        print("\nmachines: %s" % "; ".join("%s%s" % (m["name"], (" (%s)" % ", ".join(m["services"])) if m["services"] else "")
+                                           for m in found if not m["master"]))
+        print("change:   kiwi-server access %s <who> <what…>    what: all, nodes, nothing, a machine, service.machine, machine:port"
+              % os.path.basename(fleet.path))
+        return
+    what = [w for w in args.what if w != "nothing"]
+    if args.who in groups and args.who in partners:
+        raise KiwiError("%s is a group and a linked network: rename one of them" % args.who)
+    touched = set()             # the nodes whose own web server refuses something else from now on
+    if args.who in partners:
+        if args.new or any(v is not None for v in flags.values()):
+            raise KiwiError("%s is a linked network: it is given machines and services, nothing else" % args.who)
+        have = [] if not (args.add or args.remove) else list(partners[args.who]["share"])
+        gone = [accessmod.canon(e, found, domain, False) for e in what] if args.remove else []
+        for e in ([] if args.remove else what):
+            e = accessmod.canon(e, found, domain, False)
+            if e not in have:
+                have.append(e)
+        have = [e for e in have if e not in gone]
+        names = {m["name"] for m in found}
+        touched = {e.split(".")[-1] for e in list(partners[args.who]["share"]) + have
+                   if ":" not in e and "." in e and e.split(".")[-1] in names} | \
+                  ({m["name"] for m in found if not m["master"]} if set(have) != set(partners[args.who]["share"]) and not have else set())
+        fedmod.set_share(os.path.dirname(os.path.realpath(fleet.path)), args.who, have)
+        util.say("%s (linked network) may reach: %s" % (args.who, accessmod.words(have)))
+    else:
+        new = accessmod.change(groups, args.who, found, domain, mesh, reach=None if (args.add or args.remove) else what,
+                               add=what if args.add else (), remove=what if args.remove else (), new=args.new, flags=flags)
+        touched = {m["name"] for m in found if not m["master"] and
+                   accessmod.node_rules(groups, m["name"], m["hostname"]) != accessmod.node_rules(new, m["name"], m["hostname"])}
+        path = os.path.realpath(fleet.path)
+        before = util.read_text(path)
+        text, kept = accessmod.rewrite(before, master.name, master.role, new)
+        util.write_text(path, text, 0o600)
+        errs = config.Fleet.load(fleet.path).errors
+        if errs:
+            util.write_text(path, before, 0o600)
+            raise KiwiError(errs[0])
+        g = new[args.who]
+        util.say("%s (%s) may reach: %s" % (args.who, g["subnet"], accessmod.words(g["reach"])))
+        if args.new:
+            util.say("a device joins it with: kiwi-server enroll %s <device> --group %s" % (os.path.basename(fleet.path), args.who))
+        if not kept and any(x.lstrip().startswith("#") for x in before.splitlines()[2:]):
+            util.say("%s was written anew: the comments in it are not kept" % os.path.basename(fleet.path))
+    util.say("bring it to the machines: kiwi-server apply %s %s" % (os.path.basename(fleet.path),
+                                                                    " ".join([master.name] + sorted(touched - {master.name}))))
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
     mesh and DNS into the other's federation.yaml. What each shares stays empty until written."""
@@ -2800,7 +2907,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
   kiwi-server check <fleet>                      after an update: every name over HTTPS, DNS, the exit
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
-  kiwi-server federate <fleet> <other fleet>         link two networks (then share in federation.yaml)
+  kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
+  kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -2988,6 +3096,14 @@ def build_parser():
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
     s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
+    s = sub("access", cmd_access); s.add_argument("fleet"); s.add_argument("who", nargs="?", help="a group of the VPN or a linked network")
+    s.add_argument("what", nargs="*", help="all, nodes, nothing, a machine, service.machine or machine:port")
+    s.add_argument("--add", action="store_true", help="give these too, and keep what it has")
+    s.add_argument("--remove", action="store_true", help="take these away, and keep the rest")
+    s.add_argument("--new", action="store_true", help="make the group, with the next free range of addresses")
+    s.add_argument("--peers", choices=["yes", "no"], help="may the group reach other devices on the VPN")
+    s.add_argument("--internet", choices=["yes", "no"], help="may the group leave to the internet through the VPN")
+    s.add_argument("--admin", choices=["yes", "no"], help="may the group open the master's admin pages")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")

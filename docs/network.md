@@ -133,6 +133,70 @@ that arrives whole.
 A packet split on the way out and put together by the far end cannot be seen
 from here.
 
+## Who may reach what
+
+A device on the VPN belongs to a group: you choose it when you add the device
+(`enroll --group`, or "Who is it for?" on the page). A group is a range of
+addresses on the master. Each group reaches what it is given, and nothing else.
+A new network has four:
+
+| Group | Reaches | Other devices | Admin pages |
+|---|---|---|---|
+| `devices` | everything | yes | yes |
+| `routers` | everything | yes | no |
+| `guests` | every node | no | no |
+| `pentest` | nothing | no | no |
+
+A device outside every group reaches everything. The master is always
+reachable: it answers the names.
+
+```bash
+kiwi-server access ~/kiwi/fleet.yaml
+```
+
+That lists every group and every linked network with what it reaches. To change
+one, name it and what it gets:
+
+```bash
+kiwi-server access ~/kiwi/fleet.yaml guests cloud.papaya paperless.papaya
+```
+
+What a group or a linked network can be given:
+
+- `all`: everything on the VPN (a group only).
+- `nodes`: every node.
+- `papaya`: one machine, all of it.
+- `cloud.papaya`: one service, its web address only.
+- `papaya:22`: one port of a machine.
+- `nothing`.
+
+`--add` and `--remove` change the list by single entries. `--new` makes a group
+with the next free range. `--internet no` keeps a group off the Internet through
+the VPN, `--peers no` away from other devices, `--admin yes` lets it open the
+master's admin pages.
+
+```bash
+kiwi-server access ~/kiwi/fleet.yaml family --new papaya lychee:22
+```
+
+The change is in the fleet file (`vpn-server.groups`); the lines around it and
+their comments stay. It reaches the machines with the next apply: the master
+always, and a node when single services of it are named. The command says which.
+
+Two places enforce it. The master's firewall lets through what is given and
+drops the rest. All services of a node share one address and port, so a node
+that a group reaches for some services only refuses that group its other names
+in its own web server.
+
+On the control page this is "Who may reach what", in the app the same entry in
+the menu: a tick per machine and service.
+
+To see that the rules hold, with a real VPN client per group:
+
+```bash
+python3 tests/drills/access.py ~/kiwi/fleet.yaml sorbet
+```
+
 ## Federation
 
 Two networks can share chosen services with each other
@@ -140,14 +204,16 @@ Two networks can share chosen services with each other
 
 ```bash
 kiwi-server federate ~/kiwi/fleet.yaml ~/kiwi2/fleet.yaml   # the link, nothing shared yet
-$EDITOR ~/kiwi/federation.yaml                             # share: [cloud.papaya], from: []
+kiwi-server access ~/kiwi/fleet.yaml kiwi2 cloud.papaya     # what the partner may reach here
 kiwi-server plan ~/kiwi/fleet.yaml && kiwi-server apply ~/kiwi/fleet.yaml
 ```
 
 Each network keeps its fleet, seed, CA and mesh (every network its own /16).
 The masters are linked by WireGuard on UDP 51822, each Pi-hole asks the other
-for the other's domain, and a partner reaches only what is listed under
-`share`, from the addresses under `from`.
+for the other's domain, and a partner reaches only what it is given, in the
+same words as a group ([above](#who-may-reach-what)). `federation.yaml` next to
+the fleet file holds it as `share`; `from` there limits which addresses of the
+partner may come.
 
 ### Leave to the Internet through a partner
 

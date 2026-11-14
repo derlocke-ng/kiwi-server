@@ -39,6 +39,7 @@ from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian 
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
 from kiwiserver import watchdog as watchdogmod  # noqa: E402
+from kiwiserver import access as accessmod  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEh+test+kiwi+server+key+0000000000000000000 test@kiwi"
@@ -2407,6 +2408,157 @@ class TestCheck(Base):
         self.assertRegex(out, r"FAILED gate +https pihole.gate.kiwi 000")
         self.assertRegex(out, r"FAILED gate +dns +quad9.net none")
         self.assertIn("NAMES=", seen[0])
+
+
+class TestAccess(Base):
+    """Who may reach what: the VPN's groups and the linked networks, in the same words."""
+    FOUND = [{"name": "gate", "hostname": "gate.home", "ip": "10.8.0.1", "master": True, "services": ["pihole", "wg"]},
+             {"name": "papaya", "hostname": "papaya.home", "ip": "10.8.0.25", "master": False, "services": ["cloud", "vault"]},
+             {"name": "lychee", "hostname": "lychee.home", "ip": "10.8.0.6", "master": False, "services": []}]
+
+    def test_a_rule_names_a_machine_a_service_or_a_port(self):
+        c = lambda e, group=True: accessmod.canon(e, self.FOUND, "home", group)      # noqa: E731
+        self.assertEqual([c(e) for e in ("all", "nodes", "papaya", "Papaya.home", "cloud.papaya", "cloud.papaya.home",
+                                         "lychee:22", "10.8.0.99", "10.8.7.0/24")],
+                         ["all", "nodes", "papaya", "papaya", "cloud.papaya", "cloud.papaya", "lychee:22", "10.8.0.99", "10.8.7.0/24"])
+        for bad, why in (("mail.papaya", "no service called mail"), ("grape", "no machine called grape"),
+                         ("wg.gate", "admin"), ("papaya:99999", "1 to 65535"), ("-x", "not a machine")):
+            with self.assertRaisesRegex(KiwiError, why):
+                c(bad)
+        with self.assertRaisesRegex(KiwiError, "not all"):
+            c("all", group=False)                                # a linked network is given things by name
+        with self.assertRaisesRegex(KiwiError, "no machine"):
+            c("10.8.0.99", group=False)
+
+    def test_a_node_refuses_a_limited_group_its_other_names(self):
+        groups = {"guests": {"subnet": "10.8.1.0/24", "reach": ["cloud.papaya", "lychee:22"]},
+                  "family": {"subnet": "10.8.5.0/24", "reach": ["vault.papaya.home"]},
+                  "devices": {"subnet": "10.8.3.0/24"}, "kids": {"subnet": "10.8.6.0/24", "reach": ["papaya"]},
+                  "ops": {"subnet": "10.8.7.0/24", "reach": ["nodes"]}}
+        rules = accessmod.node_rules(groups, "papaya", "papaya.home")
+        self.assertEqual(rules["others"], ["10.8.1.0/24", "10.8.5.0/24"])        # the whole machine, nodes, all: no rule
+        self.assertEqual(rules["names"], {"cloud.papaya.home": ["10.8.5.0/24"], "vault.papaya.home": ["10.8.1.0/24"]})
+        self.assertEqual(accessmod.node_rules(groups, "lychee", "lychee.home"), {})   # a port: the master's firewall alone
+
+    def test_what_the_page_ticks(self):
+        rows = accessmod.view({"guests": {"subnet": "10.8.1.0/24", "reach": ["nodes"], "peers": False},
+                               "work": {"subnet": "10.8.5.0/24", "reach": ["cloud.papaya", "lychee:22", "10.8.0.99", "gone"]},
+                               "devices": {"subnet": "10.8.3.0/24", "admin": True}},
+                              {"other": {"share": ["papaya"], "mesh": "10.10.0.0/16", "from": []}}, self.FOUND, "home",
+                              {"phone": "10.8.3.2", "tv": "10.8.1.7", "laptop": "10.8.0.40"})
+        by = {r["name"]: r for r in rows}
+        self.assertEqual([r["kind"] for r in rows], ["group", "group", "group", "network"])
+        self.assertTrue(all(m["whole"] for m in by["guests"]["open"]["machines"].values()))
+        self.assertEqual((by["guests"]["devices"], by["guests"]["peers"], by["guests"]["says"]), (["tv"], False, "every node"))
+        self.assertEqual(by["work"]["open"]["machines"], {"papaya": {"whole": False, "services": ["cloud"], "ports": []},
+                                                          "lychee": {"whole": False, "services": [], "ports": ["22"]}})
+        self.assertEqual(by["work"]["open"]["other"], ["10.8.0.99", "gone"])      # as written: nothing is dropped unseen
+        self.assertEqual((by["devices"]["open"]["all"], by["devices"]["admin"], by["devices"]["devices"]), (True, True, ["phone"]))
+        self.assertTrue(by["other"]["open"]["machines"]["papaya"]["whole"])
+        self.assertNotIn("gate", by["guests"]["open"]["machines"])               # the master: always there, never ticked
+
+    def test_a_group_is_changed_and_a_new_one_gets_a_free_range(self):
+        groups = {"guests": {"subnet": "10.8.1.0/24", "reach": ["nodes"], "peers": False}, "devices": {"subnet": "10.8.3.0/24"}}
+        ch = lambda name, **kw: accessmod.change(groups, name, self.FOUND, "home", "10.8.0.0/16", **kw)      # noqa: E731
+        self.assertEqual(ch("guests", reach=["cloud.papaya", "cloud.papaya.home"])["guests"]["reach"], ["cloud.papaya"])
+        self.assertEqual(ch("guests", add=["lychee:22"])["guests"]["reach"], ["nodes", "lychee:22"])
+        self.assertEqual(ch("guests", remove=["nodes"], flags={"internet": False})["guests"], {
+            "subnet": "10.8.1.0/24", "reach": [], "peers": False, "internet": False})
+        self.assertEqual(groups["guests"]["reach"], ["nodes"])                   # a copy: nothing changed in place
+        with self.assertRaisesRegex(KiwiError, "reaches everything"):
+            ch("devices", remove=["papaya"])
+        with self.assertRaisesRegex(KiwiError, "--new makes it"):
+            ch("family", reach=["papaya"])
+        self.assertEqual(ch("family", reach=["papaya"], new=True)["family"], {"subnet": "10.8.2.0/24", "reach": ["papaya"], "peers": False})
+        with self.assertRaisesRegex(KiwiError, "small letters"):
+            ch("Fam ily", new=True)
+
+    def test_the_fleet_file_keeps_its_comments(self):
+        text = ("# my network\ndefaults:\n  domain: home   # the names\n  master:\n    vpn-server:\n      wg_host: v\n"
+                "      groups:\n        guests:  { subnet: 10.8.1.0/24, reach: [nodes] }   # visitors\n\n"
+                "      # the password\n      wg_password: w\nhosts:\n  gate:\n    role: master\n")
+        out, kept = accessmod.rewrite(text, "gate", "master", {"guests": {"subnet": "10.8.1.0/24", "reach": ["cloud.papaya"]}})
+        self.assertTrue(kept)
+        for line in ("# my network", "  domain: home   # the names", "      # the password", "      wg_password: w"):
+            self.assertIn(line, out.split("\n"))
+        self.assertIn("        guests: {subnet: 10.8.1.0/24, reach: [cloud.papaya]}", out.split("\n"))
+        self.assertEqual(yaml.safe_load(out)["defaults"]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.papaya"])
+        # groups the file does not have yet, or written on one line: the whole file is written anew, and right
+        for text in ("defaults: {domain: home}\nhosts:\n  gate: {role: master}\n",
+                     "defaults:\n  master: {vpn-server: {groups: {guests: {subnet: 10.8.1.0/24}}}}\nhosts:\n  gate:\n    role: master\n"):
+            out, kept = accessmod.rewrite(text, "gate", "master", {"guests": {"subnet": "10.8.1.0/24", "reach": []}})
+            self.assertFalse(kept)
+            data = yaml.safe_load(out)
+            where = data["defaults"] if "master" in data["defaults"] else data["hosts"]["gate"]
+            self.assertEqual(where["master"]["vpn-server"]["groups"], {"guests": {"subnet": "10.8.1.0/24", "reach": []}})
+
+    def net(self):
+        groups = {"guests": {"subnet": "10.8.1.0/24", "reach": ["nodes"], "peers": False},
+                  "devices": {"subnet": "10.8.3.0/24", "reach": ["all"], "admin": True}}
+        f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master(**{"vpn-server": {
+                "wg_host": "vpn.example.org", "wg_password": "w", "groups": groups}})},
+            "papaya": {"role": "node", "node": self.node_cloud(preset="cloud")}}})
+        write(os.path.join(self.tmp, "secrets", "devices", "tv.conf"), "[Interface]\nAddress = 10.8.1.7/32\n")
+        return f
+
+    def test_the_command_shows_and_changes_and_the_machines_follow(self):
+        f = self.net()
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        a = json.loads(out)
+        self.assertEqual(a["master"], "gate")
+        self.assertEqual([(w["name"], w["says"], w["devices"]) for w in a["who"]],
+                         [("guests", "every node", ["tv"]), ("devices", "everything", [])])
+        self.assertIn("cloud", next(m for m in a["machines"] if m["name"] == "papaya")["services"])
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "guests", "cloud.papaya", "--internet", "no")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("guests (10.8.1.0/24) may reach: cloud.papaya", out + err)
+        self.assertIn("apply fleet.yaml gate papaya", out + err)
+        g = config.Fleet.load(f.path).hosts["gate"].cfg["master"]["vpn-server"]["groups"]["guests"]
+        self.assertEqual((g["reach"], g["internet"], g["peers"]), (["cloud.papaya"], False, False))
+        # the master lets the group to that address for the web only; the node refuses it the other names
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        start = r.bundle(fleet.hosts["gate"], r.prepare(fleet.hosts["gate"])).files["km-vpn-server/start.sh"][0]
+        self.assertIn("-s 10.8.1.0/24 -d 10.8.0.25 -p tcp --dport 443 -j ACCEPT", start)
+        self.assertNotIn("-s 10.8.1.0/24 -d 10.8.0.25 -j ACCEPT", start)
+        self.assertIn("-s 10.8.1.0/24 ! -d 10.8.0.0/16 -j DROP", start)          # no internet
+        node = fleet.hosts["papaya"]
+        nginx = r.bundle(node, r.prepare(node)).files["kn-nginx/nginx.conf"][0]
+        cloud = nginx.split("server_name cloud.papaya.home;", 1)[1].split("server {", 1)[0]
+        vault = nginx.split("server_name vault.papaya.home;", 1)[1].split("server {", 1)[0]
+        self.assertNotIn("deny 10.8.1.0/24;", cloud)
+        self.assertIn("deny 10.8.1.0/24;", vault)
+        # a new group, a name that is none, and taking a thing away
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "--new", "papaya:22")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("enroll fleet.yaml <device> --group family", out + err)
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "grape")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("no machine called grape", err)
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "--remove", "papaya:22")
+        self.assertEqual(rc, 0, err)
+        rc, out, err = TestManage.run_cli(self, "access", f.path)
+        self.assertRegex(out, r"family +10\.8\.2\.0/24 +nothing")
+        self.assertRegex(out, r"guests +10\.8\.1\.0/24 +cloud\.papaya +\(other devices: no, internet: no, admin pages: no\)")
+
+    def test_a_linked_network_is_given_things_the_same_way(self):
+        f = self.net()
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump({"other": {
+            "endpoint": "198.51.100.9", "public_key": "cGFydG5lci1wdWJsaWMta2V5LW5vdC1yZWFsLTAwMDA9", "mesh": "10.10.0.0/16",
+            "domain": "internal", "dns": "10.10.0.1", "share": [], "from": ["10.10.3.0/24"]}}))
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "other", "cloud.papaya.home", "papaya:22")
+        self.assertEqual(rc, 0, err)
+        p = fedmod.partners(self.tmp)["other"]
+        self.assertEqual((p["share"], p["from"]), (["cloud.papaya", "papaya:22"], ["10.10.3.0/24"]))      # the rest stays
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "other", "--remove", "papaya:22")
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["share"], ["cloud.papaya"])
+        for bad in (["all"], ["--internet", "no"], ["10.8.0.99"]):
+            rc, out, err = TestManage.run_cli(self, "access", f.path, "other", *bad)
+            self.assertNotEqual(rc, 0, bad)
+        rc, out, err = TestManage.run_cli(self, "access", f.path)
+        self.assertRegex(out, r"other +linked network +cloud\.papaya")
 
 
 class TestFederation(Base):
@@ -7807,6 +7959,43 @@ class TestFirstRunPage(StoreBase):
         body = self.ask("/federation", {"csrf": csrf, "share.kiwi2": "rm -rf", "from.kiwi2": ""}, cookie=cookie)[1]
         self.assertIn("is not a machine", body)
         self.assertEqual(self.ask("/federation")[:2], (303, "/login"))
+
+    def test_who_may_reach_what_is_ticked_on_the_page(self):
+        cookie, csrf = self.made()
+        path = os.path.join(self.dir, "fleet.yaml")
+        node = self.node()
+        master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
+        write(config.Fleet.load(path).resolve_path("secrets/%s.home.conf" % node), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.9/32\n")
+        body = self.ask("/access", cookie=cookie)[1]
+        self.assertIn("Who may reach what", body)
+        for g in ("guests", "pentest", "devices", "routers"):
+            self.assertIn("<strong>%s</strong>" % g, body)
+        self.assertIn('name="s.guests.%s.cloud"' % node, body)
+        self.assertNotIn('name="m.guests.%s"' % master, body)            # the master is never ticked
+        # as the page shows it, but: guests only the cloud's page, and a new group
+        shown = {"csrf": csrf, "internet.guests": "on", "internet.pentest": "on",
+                 "all.devices": "on", "peers.devices": "on", "internet.devices": "on", "admin.devices": "on",
+                 "all.routers": "on", "peers.routers": "on", "internet.routers": "on"}
+        status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on", "new": "family"}), cookie=cookie)
+        self.assertEqual((status, where), (303, "/access?saved=family%2C%20guests"))
+        groups = self.data()["hosts"][master]["master"]["vpn-server"]["groups"]
+        self.assertEqual(groups["guests"], {"subnet": "10.8.1.0/24", "reach": ["cloud.%s" % node], "peers": False})
+        self.assertEqual(groups["family"], {"subnet": "10.8.5.0/24", "reach": [], "peers": False})
+        self.assertEqual(groups["devices"]["reach"], ["all"])
+        self.assertTrue(os.path.islink(path))                           # still a link into memory
+        self.assertIn("who may reach what changed", str(self.c.audit_tail(3)))
+        body = self.ask("/access?saved=family%2C%20guests", cookie=cookie)[1]
+        self.assertIn("Saved: family, guests", body)
+        self.assertIn("Now: cloud.%s." % node, body)
+        # nothing changed: nothing written; a name that is none is said and nothing is kept of it
+        shown["internet.family"] = "on"
+        status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on"}), cookie=cookie)
+        self.assertEqual((status, where), (303, "/access"))
+        body = self.ask("/access", dict(shown, **{"p.guests": "grape:22"}), cookie=cookie)[1]
+        self.assertIn("no machine called grape", body)
+        self.assertEqual(self.data()["hosts"][master]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
+        self.assertEqual(self.ask("/access")[:2], (303, "/login"))
+        self.assertIn('href="/access"', self.ask("/", cookie=cookie)[1])
 
     def test_the_recovery_key_sets_a_new_password(self):
         _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))

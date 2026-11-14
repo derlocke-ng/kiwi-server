@@ -2229,8 +2229,15 @@ def cmd_backup(args):
     hosts = fleet.select(args.hosts or [str(h) for h in (cfg.get("hosts") or [])])
     if args.hosts == [] and not cfg.get("hosts"):
         hosts = []
+        if not args.local:          # nobody said where: every machine that is set up keeps a copy
+            applied = fleet_state(fleet).get("applied") or {}
+            hosts = [h for h in fleet.hosts.values() if h.name in applied]
+            if hosts:
+                util.say("no place is named for the copy (backup.hosts): it goes to every machine that is set up (%s)"
+                         % ", ".join(h.name for h in hosts))
     if not hosts and not args.local:
-        raise KiwiError("nowhere to back up to: name hosts, set backup.hosts in the fleet, or give --local DIR")
+        raise KiwiError("nowhere to back up to: no machine is set up yet. Name hosts, set backup.hosts in the fleet, "
+                        "or give --local DIR")
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
     if backupmod.has_store(fleet):          # the store's keys encrypt it: the recovery key opens it

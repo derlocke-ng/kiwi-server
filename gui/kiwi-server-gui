@@ -1777,29 +1777,35 @@ class CopyDialog(Adw.Dialog):
         super().__init__(title="Restore a network from a copy" if restore else "Save a copy of the network",
                          content_width=520)
         self.win, self.restore, self.file = win, restore, None
+        # where the keys are protected (a secret store), the store's keys encrypt the copy:
+        # nothing to choose, and the recovery key opens it
+        self.keyed = not restore and bool(win.store and win.store.get("store"))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
                       margin_start=18, margin_end=18)
         box.append(Gtk.Label(label=(
-            "Choose the copy (a file named fleet-….tar.enc) and type the passphrase it was saved with."
+            "Choose the copy and type what opens it: your recovery key for a file named fleet-….tar, the "
+            "passphrase it was saved with for an older fleet-….tar.enc."
             if restore else
             "One encrypted file with the network's settings and keys: for a USB stick in a drawer, or to move to "
-            "another computer. It is not a backup of your files and photos; the machines save those themselves."),
+            "another computer. It is not a backup of your files and photos; the machines save those themselves."
+            + (" Your recovery key opens it." if self.keyed else "")),
             wrap=True, xalign=0))
         g = Adw.PreferencesGroup()
         self.where = Adw.ActionRow(title="The copy" if restore else "Folder", subtitle="Choose…", activatable=True)
         self.where.add_suffix(Gtk.Image(icon_name="folder-open-symbolic"))
         self.where.connect("activated", lambda *_: self.choose())
         g.add(self.where)
-        self.pw1 = Adw.PasswordEntryRow(title="Passphrase")
+        self.pw1 = Adw.PasswordEntryRow(title="Recovery key, or passphrase" if restore else "Passphrase")
         self.pw1.connect("changed", lambda *_: self.check())
-        g.add(self.pw1)
+        if not self.keyed:
+            g.add(self.pw1)
         self.pw2 = None
-        if not restore:
+        if not restore and not self.keyed:
             self.pw2 = Adw.PasswordEntryRow(title="The passphrase again")
             self.pw2.connect("changed", lambda *_: self.check())
             g.add(self.pw2)
         box.append(g)
-        if not restore:
+        if not restore and not self.keyed:
             box.append(Gtk.Label(label="Without the passphrase the copy cannot be opened by anyone, you included.",
                                  wrap=True, xalign=0, css_classes=["dim-label", "caption"]))
         self.note = Gtk.Label(wrap=True, xalign=0, visible=False, selectable=True)
@@ -1827,6 +1833,9 @@ class CopyDialog(Adw.Dialog):
             dlg.select_folder(self.win, None, chosen)
 
     def check(self):
+        if self.keyed:
+            self.go.set_sensitive(bool(self.file))
+            return
         a = self.pw1.get_text()
         same = self.pw2 is None or a == self.pw2.get_text()
         self.go.set_sensitive(bool(self.file) and len(a) >= (1 if self.restore else 8) and same)
@@ -1847,7 +1856,11 @@ class CopyDialog(Adw.Dialog):
             into, args = self.file, ["backup", win.doc.path, "--local", self.file]
 
         def work():
-            rc, out = with_passphrase(win.cli, args, pw)
+            if self.keyed:
+                rc, o, e = run_cli(win.cli, args, timeout=600)
+                out = (o + e)
+            else:
+                rc, out = with_passphrase(win.cli, args, pw)
             GLib.idle_add(self.done, rc, out, into)
         threading.Thread(target=work, daemon=True).start()
 
@@ -1869,7 +1882,8 @@ class CopyDialog(Adw.Dialog):
             if not os.path.isfile(os.path.join(into, "secrets.age")):
                 self.win.protect()
             return False
-        self.note.set_label("Saved in %s. Keep the file and the passphrase in different places." % tilde(into))
+        self.note.set_label("Saved in %s. Keep the file and the %s in different places."
+                            % (tilde(into), "recovery key" if self.keyed else "passphrase"))
         self.note.set_css_classes([])
         self.note.set_visible(True)
         self.finished = True                 # the button closes now
@@ -2052,8 +2066,61 @@ class DeviceDialog(Adw.Dialog):
         self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
         box.append(self.note)
         box.append(self.go)
+        self.have = Adw.PreferencesGroup(title="On your VPN already")
+        box.append(self.have)
+        self.have_rows = []
+        self.fill()
         self.nav.add(Adw.NavigationPage(title="Add a phone or laptop", child=box))
         self.set_child(self.nav)
+
+    def fill(self):
+        """The devices this network has, each with its code again and a way off the VPN."""
+        for row in self.have_rows:
+            self.have.remove(row)
+        self.have_rows = []
+        folder = os.path.join(self.win.doc.dir, "secrets", "devices")
+        names = sorted(n[:-5] for n in os.listdir(folder) if n.endswith(".conf")) if os.path.isdir(folder) else []
+        self.have.set_visible(bool(names))
+        for name in names:
+            row = Adw.ActionRow(use_markup=False, title=name)
+            show = Gtk.Button(label="Show its code", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            show.connect("clicked", lambda _b, n=name: self.done(0, "", n))
+            drop = Gtk.Button(label="Remove", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            drop.connect("clicked", lambda _b, n=name: self.ask_remove(n))
+            row.add_suffix(show)
+            row.add_suffix(drop)
+            self.have.add(row)
+            self.have_rows.append(row)
+
+    def ask_remove(self, name):
+        dlg = Adw.AlertDialog(heading="Remove %s?" % name,
+                              body="It is off your VPN at once and its code and file stop working. For a lost or "
+                                   "sold phone. To use the device again, add it anew.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("go", "Remove")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_close_response("cancel")
+
+        def resp(_d, r):
+            if r != "go":
+                return
+
+            def work():
+                rc, out, err = run_cli(self.win.cli, ["enroll", self.win.doc.path, name, "--remove"], timeout=180)
+                GLib.idle_add(self.removed, rc, (err or out), name)
+            threading.Thread(target=work, daemon=True).start()
+        dlg.connect("response", resp)
+        dlg.present(self)
+
+    def removed(self, rc, text, name):
+        if rc != 0:
+            self.note.set_label((text.replace("error: ", "").strip().splitlines() or ["It did not work."])[-1])
+            self.note.set_visible(True)
+        else:
+            self.win.toast("%s is off your VPN" % name)
+            self.win.sync(after_save=True)
+        self.fill()
+        return False
 
     def clean(self):
         name = self.name.get_text().strip().lower().replace(" ", "-")
@@ -2120,7 +2187,8 @@ class DeviceDialog(Adw.Dialog):
         box.append(Gtk.Label(label="Whoever has the code or the file is on your VPN as this device.", wrap=True,
                              xalign=0, css_classes=["dim-label", "caption"]))
         self.nav.push(Adw.NavigationPage(title="Ready", child=box, can_pop=False))
-        self.win.sync(after_save=True)          # the control node learns the new device
+        if text is not None and rc == 0 and text != "":
+            self.win.sync(after_save=True)      # the control node learns the new device
         return False
 
     def save(self, conf, name):
@@ -2352,6 +2420,7 @@ class Window(Adw.ApplicationWindow):
                          ("render-host", lambda: self.render(self.current_scope)),
                          ("build-host", lambda: self.confirm_build(self.current_scope)),
                          ("status-host", self.show_status), ("script-host", self.show_script),
+                         ("plan-host", self.preview_host), ("update-all", self.update_all),
                          ("stack-host", self.show_stack), ("folder-host", self.open_folder),
                          ("remove-host", self.remove_host_dialog),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
@@ -2382,6 +2451,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Use another computer…", "win.move")
         section.append("Keep it in a synced folder…", "win.folder")
         section.append("A home server that looks after it…", "win.control-setup")
+        section.append("Update everything…", "win.update-all")
         section.append("Sync now", "win.sync")
         section.append("A computer was lost or stolen…", "win.rotate")
         section.append("Render every host", "win.render-all")
@@ -2487,6 +2557,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Render", "win.render-host")
         host_menu.append_section(None, section)
         section = Gio.Menu()
+        section.append("Preview what Apply would change", "win.plan-host")
         section.append("Full status", "win.status-host")
         section.append("Role script", "win.script-host")
         section.append("Compose file", "win.stack-host")
@@ -3773,7 +3844,8 @@ class Window(Adw.ApplicationWindow):
         host = self.is_host()
         for name in ("render-all", "build-all"):
             self.lookup_action(name).set_enabled(ok)
-        for name in ("render-host", "build-host", "status-host", "script-host", "stack-host", "folder-host"):
+        self.lookup_action("update-all").set_enabled(ok)
+        for name in ("render-host", "build-host", "status-host", "script-host", "stack-host", "folder-host", "plan-host"):
             self.lookup_action(name).set_enabled(ok and host)
         self.lookup_action("remove-host").set_enabled(host and not self.busy)
         self.lookup_action("refresh").set_enabled(bool(self.doc.path))
@@ -3826,6 +3898,37 @@ class Window(Adw.ApplicationWindow):
         if net.get("address") and not net.get("dhcp", False):
             return str(net["address"]).split("/", 1)[0]
         return ""
+
+    def preview_host(self):
+        """What Apply would change on the machine, without changing anything (`plan`)."""
+        host = self.current_scope
+        if not self.ensure_saved():
+            return
+        self.spawn(["plan", self.doc.path, host], "Looking at what Apply would change on %s…" % host)
+
+    def update_all(self):
+        """Every machine to the network's current settings and the newest versions of its
+        services, one after the other (`apply --update`), as the control page's button does."""
+        if not self.ensure_saved():
+            return
+        names = [h for h in self.doc.hosts() if self.phase_of(h) == "applied"]
+        if not names:
+            self.toast("No machine is set up yet")
+            return
+        control = self.control_host()       # the one that looks after the network goes last
+        names = [n for n in names if n != control] + [n for n in names if n == control]
+        dlg = Adw.AlertDialog(
+            heading="Update everything?",
+            body="Brings %s to your network's current settings and the newest versions of their services, one "
+                 "machine after the other. Services that changed restart for a moment. This takes a while."
+                 % ("all %d machines" % len(names) if len(names) > 1 else names[0]))
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("go", "Update")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda _d, r: r == "go" and
+                    self.spawn(["apply", self.doc.path, "--update"] + names, "Updating every machine…"))
+        dlg.present(self)
 
     def confirm_apply(self, host):
         if not self.ensure_saved():

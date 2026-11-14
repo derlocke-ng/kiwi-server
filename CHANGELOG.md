@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.92.0 — a clean boot for a machine with its own ad blocker; the app catches up
+
+- kiwi-stack 0.9.6: a machine that runs Pi-hole asked it for every name, also at boot,
+  when it was not up yet. The time service could not find its servers, the stack waited
+  90 seconds for the clock, and `status` showed "failed units: chrony-wait.service" on a
+  machine with no problem (seen on papaya). The machine now asks its own Pi-hole only
+  while the stack runs, and the wait for the clock ends without counting as a failure.
+  Apply the machines once.
+- The app, as the control page has it:
+  - "Preview what Apply would change" in a machine's menu (`plan`).
+  - "Update everything…" in the main menu (`apply --update`, the control node last).
+  - "Add a phone or laptop…" lists the devices on the VPN, each with "Show its code"
+    and "Remove".
+  - "Save a copy of the network…" asks for no passphrase where the keys are protected:
+    the recovery key opens the copy. "Restore a network from a copy…" takes the
+    recovery key or, for an older copy, its passphrase.
+
 ## 2.91.3 — connect tells the browsers, and only them
 
 - `kiwi-server connect` put the network's certificate authority into every Flatpak app

@@ -381,7 +381,7 @@ ks_stack_host_prep() {
         # host itself asks this stack's Pi-hole (Quad9 behind it while the stack is down),
         # so the fleet's names and the blocklist hold for the host, not only its containers
         if [[ -n ${KS_STACK_DNS_IP:-} ]]; then
-            ks_say "systemd-resolved: the host resolves through this stack's Pi-hole at $KS_STACK_DNS_IP (Quad9 while it is down); stub listener off"
+            ks_say "systemd-resolved: the host resolves through this stack's Pi-hole at $KS_STACK_DNS_IP while the stack runs (its own resolvers before and after); stub listener off"
         else
             ks_say "turning off systemd-resolved's stub listener (port 53 goes to the dns module)"
         fi
@@ -389,7 +389,9 @@ ks_stack_host_prep() {
         {
             echo '[Resolve]'
             (( KS_STACK_NO_RESOLVED_STUB )) && echo 'DNSStubListener=no'
-            if [[ -n ${KS_STACK_DNS_IP:-} ]]; then echo "DNS=$KS_STACK_DNS_IP 9.9.9.9 149.112.112.112"; echo 'Domains=~.'; fi
+            # not the Pi-hole here: set for good, the machine had nobody to ask at boot until the
+            # stack was up (kiwi-stack sets it in /run while the stack runs)
+            (( KS_STACK_NO_RESOLVED_STUB )) || echo '# nothing set for good: see /run/systemd/resolved.conf.d'
         } > /etc/systemd/resolved.conf.d/90-kiwi-stack.conf
         (( KS_STACK_NO_RESOLVED_STUB )) && ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
         systemctl restart systemd-resolved
@@ -708,6 +710,7 @@ ks_stack_unpack() {
         echo "STACK_VPN_DEPENDENTS=\"${KS_STACK_VPN_DEPENDENTS[*]}\""
         echo "STACK_MESH_SUBNET=$KS_STACK_MESH_SUBNET"
         echo "STACK_MESH_VIA=$KS_STACK_MESH_VIA"
+        echo "STACK_DNS_IP=${KS_STACK_DNS_IP:-}"
         echo "STACK_UNITS=\"${KS_STACK_UNITS[*]}\""
         echo "STACK_FILES=\"${files[*]}\""
         echo "STACK_MODULES=\"${KS_STACK_MODULES[*]}\""
@@ -770,9 +773,20 @@ ks_time_sync_at_boot() {
     elif [[ ! -x /usr/lib/systemd/systemd-time-wait-sync ]]; then
         return 0
     fi
-    printf '%s\n' '[Service]' 'TimeoutStartSec=90' |
+    # Bounded, and ending well either way: run into systemd's timeout the waiter counted as a
+    # failed unit, which `status` then showed as a problem of a machine that had none.
+    local cmd
+    if [[ $wait == chrony-wait.service ]]; then
+        cmd="$(command -v chronyc || echo /usr/bin/chronyc) -h 127.0.0.1,::1 waitsync 30 0.1 0.0 3"
+    else
+        cmd="timeout 90 /usr/lib/systemd/systemd-time-wait-sync"
+    fi
+    printf '%s\n' '[Service]' 'ExecStart=' \
+        "ExecStart=/bin/sh -c '$cmd || echo \"the clock is not synchronized after 90 seconds: going on\"'" \
+        'TimeoutStartSec=120' |
         ks_unit "$wait.d/90-kiwi.conf"
     systemctl enable -q "$wait"
+    systemctl reset-failed "$wait" 2>/dev/null || true
 }
 
 ks_stack_units() { # the service that brings the stack up, and the two maintenance timers

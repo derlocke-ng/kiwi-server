@@ -514,8 +514,9 @@ UX and ecosystem:
     recreate a namespace sharer by hand. Still open: on 5G and other mobile
     paths (often IPv6-only with 464XLAT, nested encapsulation) the owner sees
     it fail. `kiwi-server mtu` (2.14.0) measures a connected node or device
-    from the right end. Still to add: `--mtu` on `enroll`, with a lower
-    default such as 1280 for phones, and `kiwi-stack health` reporting
+    from the right end. Since 2.84.0 `enroll` writes `MTU = 1280` into a device's config
+    (`--mtu` for another size), found again on 14 November 2026 by the users drill
+    through a path that carries 1344. Still to add: `kiwi-stack health` reporting
     fragmentation — the snmp
     counters above, per namespace (`nsenter -t <pid> -n`), sampled across a
     transfer; any growth of `FragCreates` or `ReasmOKs` is a warning.

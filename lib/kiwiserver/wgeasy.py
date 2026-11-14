@@ -88,6 +88,26 @@ def next_address(subnet, taken, exclude=()):
     raise KiwiError("no free address left in %s" % subnet)
 
 
+DEVICE_MTU = 1280   # a phone or laptop roams: mobile networks and tunnels inside tunnels carry less than a home line
+
+
+def with_mtu(config_text, mtu):
+    """The client config with `MTU = mtu` in its [Interface]. A device's tunnel has to fit
+    every network it will ever sit in; packets that are too big vanish there without a word
+    (pages load, uploads hang)."""
+    lines = config_text.splitlines()
+    if any(re.match(r"^\s*MTU\s*=", x) for x in lines):
+        return "\n".join("MTU = %d" % mtu if re.match(r"^\s*MTU\s*=", x) else x for x in lines) + "\n"
+    try:
+        at = next(i for i, x in enumerate(lines) if x.strip() == "[Peer]")
+    except StopIteration:
+        raise KiwiError("the config has no [Peer] section")
+    while at > 0 and not lines[at - 1].strip():     # the end of [Interface], before the empty line
+        at -= 1
+    lines.insert(at, "MTU = %d" % mtu)
+    return "\n".join(lines) + "\n"
+
+
 def split_tunnel(config_text, allowed):
     """The client config with AllowedIPs narrowed to the mesh: a device that
     should reach the network but keep its own internet."""

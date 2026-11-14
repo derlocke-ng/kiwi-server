@@ -3656,6 +3656,17 @@ class TestRemote(Base):
         finally:
             remote.configure("")
 
+    def test_a_device_gets_a_tunnel_size_that_fits_everywhere(self):
+        have = "[Interface]\nPrivateKey = x\nAddress = 10.8.0.5/24\nMTU = 1376\n\n[Peer]\nPublicKey = y\n"
+        self.assertIn("\nMTU = 1280\n\n[Peer]", wgeasy.with_mtu(have, 1280))
+        self.assertNotIn("1376", wgeasy.with_mtu(have, 1280))
+        for none in ("[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = y\n", "[Interface]\nPrivateKey = x\n[Peer]\nPublicKey = y\n"):
+            out = wgeasy.with_mtu(none, 1280)
+            self.assertEqual(out.count("MTU = 1280"), 1)
+            self.assertLess(out.index("MTU"), out.index("[Peer]"))
+        with self.assertRaises(KiwiError):
+            wgeasy.with_mtu("[Interface]\nPrivateKey = x\n", 1280)
+
     def test_next_address_and_split_tunnel(self):
         self.assertEqual(wgeasy.next_address("10.8.2.0/24", []), "10.8.2.2")        # .1 is the server's
         self.assertEqual(wgeasy.next_address("10.8.2.0/24", ["10.8.2.2/32", "10.8.2.3"]), "10.8.2.4")
@@ -3734,9 +3745,17 @@ class TestManage(Base):
         self.assertEqual(rc, 0, err)
         self.assertIn(("PUT", "/api/wireguard/client/id-3/address", {"address": "10.8.3.2"}), api.calls)
         with open(os.path.join(self.tmp, "secrets", "devices", "phone.conf")) as fh:
-            self.assertIn("Address = 10.8.3.2/24", fh.read())
-        rc, out, err = self.run_cli("enroll", f.path, "laptop", "--group", "devices", "--api", api.url)
+            phone = fh.read()
+        self.assertIn("Address = 10.8.3.2/24", phone)
+        # a device roams: its tunnel is the size that fits a mobile network; the node keeps the master's
+        self.assertIn("MTU = 1280\n", phone)
+        self.assertNotIn("MTU = 1280", conf)
+        rc, out, err = self.run_cli("enroll", f.path, "laptop", "--group", "devices", "--api", api.url, "--mtu", "1300")
         self.assertEqual(rc, 0, err)
+        with open(os.path.join(self.tmp, "secrets", "devices", "laptop.conf")) as fh:
+            self.assertIn("MTU = 1300\n", fh.read())
+        rc, out, err = self.run_cli("enroll", f.path, "tablet", "--api", api.url, "--mtu", "1500")
+        self.assertIn("--mtu is between 1280 and", err)
         self.assertEqual(api.by_id("id-4")["address"], "10.8.3.3")
         rc, out, err = self.run_cli("enroll", f.path, "router", "--address", "10.8.4.10", "--api", api.url)
         self.assertEqual(rc, 0, err)

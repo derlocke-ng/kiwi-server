@@ -889,6 +889,196 @@ class SnapshotsDialog(Adw.Dialog):
         dlg.present(self)
 
 
+def long_row(title, subtitle="", **kw):
+    """A row whose text is shown whole, over as many lines as it takes: `<` and `&` are just
+    characters (use_markup is set before the text, which the constructor does not promise)."""
+    row = Adw.ActionRow(use_markup=False, title_lines=0, subtitle_lines=0, **kw)
+    row.set_title(title)
+    row.set_subtitle(subtitle)
+    return row
+
+
+class RecoveryDialog(Adw.Dialog):
+    """If something breaks (`recovery --porcelain`): could the network come back, as rows with
+    an icon, gaps first; then each case to open, with a button where the app does what it needs."""
+    ICONS = {True: ("emblem-ok-symbolic", "success"), False: ("dialog-warning-symbolic", "warning"),
+             None: ("dialog-question-symbolic", "dim-label")}
+    BUTTONS = {"snapshots": "Snapshots…", "rebuild": "Steps…", "unlock": "Unlock", "copy": "Save a copy…",
+               "restore-copy": "Restore…", "rotate": "Replace…", "device": "Devices…"}
+
+    def __init__(self, win):
+        super().__init__(title="If something breaks", content_width=680, content_height=720)
+        self.win = win
+        # what the machines said at the last look: how old each one's backup is
+        self.looked = {"hosts": list(win.live.values()), "time": win.checked} if win.live else None
+        self.page = Adw.PreferencesPage()
+        self.status = Adw.StatusPage(title="Looking at the network…", child=Adw.Spinner())
+        self.stack = Gtk.Stack()
+        self.stack.add_named(self.status, "wait")
+        self.stack.add_named(self.page, "list")
+        tb = Adw.ToolbarView(content=self.stack)
+        tb.add_top_bar(Adw.HeaderBar())
+        self.set_child(tb)
+        threading.Thread(target=self.load, daemon=True).start()
+
+    def load(self):
+        import tempfile
+        args, tmp = ["recovery", self.win.doc.path, "--porcelain"], None
+        try:
+            if self.looked:
+                fd, tmp = tempfile.mkstemp(prefix="kiwi-status-", suffix=".json", dir=GLib.get_user_runtime_dir())
+                with os.fdopen(fd, "w") as fh:
+                    json.dump(self.looked, fh)
+                args += ["--status", tmp]
+            rc, out, err = run_cli(self.win.cli, args)
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
+        try:
+            data = json.loads(out) if rc == 0 else None
+        except ValueError:
+            data = None
+        GLib.idle_add(self.show, data, err.strip())
+
+    def action(self, app):
+        """What the app does for a case's step, or None where it has nothing for it."""
+        w = self.win
+        kind, _, host = (app or "").partition(":")
+        if kind in ("snapshots", "rebuild", "unlock") and host not in w.doc.hosts():
+            return None
+        return {"snapshots": lambda: SnapshotsDialog(w, host).present(w),
+                "rebuild": lambda: RebuildDialog(w, host).present(w),
+                "unlock": lambda: w.spawn(["unlock", w.doc.path, host], "Unlocking %s…" % host),
+                "copy": lambda: CopyDialog(w).present(w),
+                "restore-copy": lambda: CopyDialog(w, restore=True).present(w),
+                "rotate": w.rotate_dialog,
+                "device": lambda: DeviceDialog(w).present(w)}.get(kind)
+
+    def show(self, data, err):
+        if data is None:
+            self.status.set_title("No answer")
+            self.status.set_description(err.splitlines()[-1] if err else "")
+            self.status.set_child(None)
+            return False
+        gaps = sum(1 for c in data["checks"] if c["ok"] is False)
+        g = Adw.PreferencesGroup(title="Ready?", description=(
+            "%d gap%s: each says what to do. " % (gaps, "" if gaps == 1 else "s") if gaps else "No gaps found. ")
+            + "A question mark: it cannot be told from here.")
+        for c in data["checks"]:
+            icon, css = self.ICONS.get(c["ok"], self.ICONS[None])
+            row = long_row(c["text"], c["fix"] if c["ok"] is not True else "")
+            img = Gtk.Image(icon_name=icon, valign=Gtk.Align.CENTER)
+            img.add_css_class(css)
+            row.add_prefix(img)
+            g.add(row)
+        self.page.add(g)
+        g = Adw.PreferencesGroup(title="If…", description="What happens by itself, and what you do.")
+        for k in data["cases"]:
+            exp = Adw.ExpanderRow(use_markup=False)
+            exp.set_title(k["title"])
+            for title, text in (("By itself", k["by_itself"]), ("What you do", k["you"])):
+                exp.add_row(long_row(title, text, css_classes=["property"]))
+            for h in k["how"]:
+                act = self.action(h.get("app"))
+                if not act and not h.get("command"):
+                    continue
+                row = long_row(h["label"], h.get("command") or "")
+                if act:
+                    b = Gtk.Button(label=self.BUTTONS.get(h["app"].partition(":")[0], "Open…"), valign=Gtk.Align.CENTER)
+                    b.connect("clicked", lambda _b, a=act: (self.close(), a()))
+                    row.add_suffix(b)
+                exp.add_row(row)
+            g.add(exp)
+        self.page.add(g)
+        self.stack.set_visible_child_name("list")
+        return False
+
+
+class RebuildDialog(Adw.Dialog):
+    """A machine that was set up and is lost or replaced: the steps of its first install again.
+    It keeps its name; with the backup part it brings its data back by itself once it is set up."""
+
+    def __init__(self, win, host):
+        super().__init__(title="%s was lost or replaced" % host, content_width=560)
+        self.win, self.host = win, host
+        st = win.status.get(host) or {}
+        provider, role = st.get("provider") or "", st.get("role") or ""
+        if "backup" in (st.get("modules") or []):
+            data = "Once it is set up, it finds itself in its backups and brings its data back by itself."
+        elif role == "master":
+            data = "It keeps no data of its own; its place on the VPN comes back from the fleet's copy, when there is one."
+        else:
+            data = "It has no backups: after the set-up it starts empty."
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="Install %s anew, under the same name. %s" % (host, data), wrap=True, xalign=0))
+        g = Adw.PreferencesGroup()
+        self.address = None
+        if provider:
+            row = long_row("Install it at %s" % provider, "Kiwi Server makes its install media, installs it there and "
+                                                          "starts it. Everything on that server is erased.")
+            row.add_suffix(self.button("Install…", self.install, provider))
+            g.add(row)
+        else:
+            row = long_row("1. Make its install media", "One file of about 1 GB.")
+            row.add_suffix(self.button("Make…", lambda: (self.close(), win.confirm_build(host))))
+            g.add(row)
+            on_done = (win.doc.get(host, ("install", "on_done")) or win.doc.get("defaults", ("install", "on_done"))
+                       or "poweroff")
+            g.add(long_row("2. Start the machine from them", (
+                "Upload them as an ISO at your hoster, or write them to a USB stick. Its disk is erased; " +
+                ("it restarts by itself." if on_done == "reboot" else
+                 "it turns itself off: take the stick out and switch it on again."))))
+            if st.get("address") == "dhcp" and role != "master":
+                self.address = Adw.EntryRow(title="Its address right now (your router's page lists it)")
+                g.add(self.address)
+            row = long_row("3. Set it up", "When it is on again.")
+            row.add_suffix(self.button("Set it up", self.setup))
+            g.add(row)
+        box.append(g)
+        self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])
+        box.append(self.note)
+        self.set_child(Adw.ToolbarView(content=box))
+        self.get_child().add_top_bar(Adw.HeaderBar())
+
+    def button(self, label, then, *args):
+        b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+        b.connect("clicked", lambda *_: then(*args))
+        return b
+
+    def install(self, provider):
+        dlg = Adw.AlertDialog(heading="Install %s at %s now?" % (self.host, provider),
+                              body="Everything on that server is erased. It is installed anew and set up.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("go", "Install")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_close_response("cancel")
+
+        def resp(_d, r):
+            if r == "go":
+                self.close()
+                self.win.spawn(["next", self.win.doc.path, self.host, "--yes"], "Installing %s at %s…" % (self.host, provider))
+        dlg.connect("response", resp)
+        dlg.present(self)
+
+    def setup(self):
+        import ipaddress
+        if self.address is None:
+            args = ["next", self.win.doc.path, self.host, "--yes"]
+        else:
+            at = self.address.get_text().strip()
+            try:
+                ipaddress.ip_address(at)
+            except ValueError:
+                self.note.set_text("An address looks like 192.168.1.30.")
+                self.note.set_visible(True)
+                return
+            args = ["apply", self.win.doc.path, self.host, "--ssh", "%s@%s" % (self.win.admin_user(self.host), at),
+                    "--new-host-key"]
+        self.close()
+        self.win.spawn(args, "Setting up %s…" % self.host)
+
+
 class LoginsDialog(Adw.Dialog):
     """What a person types to get into a machine's services (`kiwi-server logins`): the address,
     the user name and the password of each. A password shows as dots until it is asked for."""
@@ -2552,7 +2742,9 @@ class Window(Adw.ApplicationWindow):
                          ("access", self.access_dialog),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
-                         ("rotate", self.rotate_dialog), ("connect", self.connect_dialog)):
+                         ("rotate", self.rotate_dialog), ("connect", self.connect_dialog),
+                         ("recovery", lambda: self.doc.path and RecoveryDialog(self).present(self)),
+                         ("rebuild-host", lambda: self.is_host() and RebuildDialog(self, self.current_scope).present(self))):
             act = Gio.SimpleAction(name=name)
             act.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(act)
@@ -2581,6 +2773,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Update everything…", "win.update-all")
         section.append("Sync now", "win.sync")
         section.append("A computer was lost or stolen…", "win.rotate")
+        section.append("If something breaks…", "win.recovery")
         section.append("Render every host", "win.render-all")
         section.append("Build every ISO…", "win.build-all")
         menu.append_section(None, section)
@@ -2692,6 +2885,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Open the output folder", "win.folder-host")
         host_menu.append_section(None, section)
         section = Gio.Menu()
+        section.append("This machine was lost or replaced…", "win.rebuild-host")
         section.append("Remove from the fleet…", "win.remove-host")
         host_menu.append_section(None, section)
         self.b_more = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=host_menu, tooltip_text="More for this host",
@@ -3981,10 +4175,12 @@ class Window(Adw.ApplicationWindow):
         for name in ("render-all", "build-all"):
             self.lookup_action(name).set_enabled(ok)
         self.lookup_action("update-all").set_enabled(ok)
-        for name in ("render-host", "build-host", "status-host", "script-host", "stack-host", "folder-host", "plan-host"):
+        for name in ("render-host", "build-host", "status-host", "script-host", "stack-host", "folder-host", "plan-host",
+                     "rebuild-host"):
             self.lookup_action(name).set_enabled(ok and host)
         self.lookup_action("remove-host").set_enabled(host and not self.busy)
         self.lookup_action("refresh").set_enabled(bool(self.doc.path))
+        self.lookup_action("recovery").set_enabled(bool(self.doc.path) and not self.locked())
         self.b_apply.set_sensitive(ok and host)
 
     def ensure_saved(self):

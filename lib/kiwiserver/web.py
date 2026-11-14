@@ -315,6 +315,7 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
 <a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
 <a class="tile" href="/backups"><b>Backups</b><span>See when everything was last saved</span></a>
+<a class="tile" href="/recovery"><b>If something breaks</b><span>Could you bring it back, and what to press</span></a>
 <a class="tile" href="/access"><b>Who may reach what</b><span>Which devices and linked networks open which machine or service</span></a>
 <a class="tile" href="/federation"><b>Linked networks</b><span>What other networks may reach here, and the way out</span></a>
 <a class="tile" href="/help"><b>Help</b><span>What the words on this page mean</span></a></div>
@@ -358,6 +359,7 @@ moment. Do it now and then, and after changing the settings for every machine.</
 {% if m.notes %}<ul class="muted">{% for n in m.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
 {% if m.output %}<details><summary>What the machine said, word for word</summary><pre>{{ m.output }}</pre></details>{% endif %}</div>{% endif %}
 
+{% include "rebuild.html" %}
 <details style="margin-top:28px"><summary>Remove this machine</summary><div class="card"><p>{{ m.name }} leaves the network
 for good: its place on the VPN, its keys and its entry in the settings go. <span class="muted">The machine itself is not
 touched: wipe it, or switch it off. A machine that keeps the backups of others, or helps another one unlock its disk,
@@ -658,6 +660,9 @@ it. Version {{ version }}.</p>
 user name of each service and show the password when you ask.</dd>
 <dt>…change a setting?</dt><dd>Open the machine from <a href="/">Home</a> and choose <em>Settings</em>. What all machines
 share is under <a href="/settings">Settings for every machine</a>. Then <em>Apply</em> brings it to the machine.</dd>
+<dt>…bring something back that broke?</dt><dd><a href="/recovery">If something breaks</a> says what happens by
+itself and what to press: for a service's data, a lost machine, the master, a lost phone or computer. It also says
+now whether you could.</dd>
 <dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine at home</em>.</dd>
 <dt id="gone" style="scroll-margin-top:64px">…get a machine back that stopped answering?</dt><dd>Check that it is on and has a
 connection. A rented server: restart it in its provider's panel. This machine can do that by itself: under
@@ -739,6 +744,44 @@ when you ask for it; Activity notes that it was shown.</p>
   });
 })();
 </script>{% endif %}"""
+
+
+# a machine that is set up and was lost or replaced: the steps of its first install again, with
+# the "Still to set up" card's macro in the phase that fits (recovery.py, docs/recovery.md)
+TEMPLATES["rebuild.html"] = """{% if m.phase == "applied" %}{% from "step.html" import step with context %}
+<details id="rebuild" style="margin-top:28px;scroll-margin-top:64px"{% if m.media %} open{% endif %}>
+<summary>This machine is lost or was replaced</summary>
+<p>Install {{ m.name }} anew, under the same name. {% if m.provider %}A server that still answers is set up again as it
+is. One that does not is erased and installed anew at {{ m.provider }}.{% else %}Its install media erase the disk of the machine they start.{% endif %}</p>
+<p class="muted">{% if "backup" in m.modules %}Once it is set up, it finds itself in its backups and brings its data
+back by itself, then backs up as before.{% elif m.role == "master" %}It keeps no data of its own. Its place on the VPN
+comes back from the copy the fleet keeps of it; <a href="/recovery">If something breaks</a> says whether there is one.
+{% else %}It has no backups: after the set-up it starts empty.{% endif %}</p>
+{{ step(dict(m, phase="build" if m.provider or not m.media else "install"), tok) }}</details>{% endif %}"""
+
+# if something breaks: the report of `kiwi-server recovery`, its checks and its cases
+TEMPLATES["breaks.html"] = """{% extends "base.html" %}{% block main %}
+<p><a href="/">← Home</a></p><h1>If something breaks</h1>
+<p class="muted">Before anything breaks: could you bring your network back? When something breaks: what happens by
+itself, and what you do.</p>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+{% if rep %}{% set gaps = rep.checks|selectattr("ok", "sameas", false)|list %}<h2>Ready?</h2>
+{% if gaps %}<p class="banner warn">{{ gaps|length }} {{ "gap" if gaps|length == 1 else "gaps" }}: each says what to do.</p>
+{% else %}<p class="banner ok">No gaps found.</p>{% endif %}
+<div class="card">{% for c in rep.checks %}<div{% if not loop.first %} style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"{% endif %}>
+<p><span class="dot {{ 'ok' if c.ok else 'warn' if c.ok is sameas false else '' }}"></span>{{ c.text }}</p>
+{% if c.fix and c.ok is not sameas true %}<p class="muted small" style="margin-left:18px">{{ c.fix }}</p>{% endif %}</div>{% endfor %}
+<p class="muted small" style="margin-top:12px">Green: ready. Amber: a gap. Grey: this page cannot tell.
+{% if rep.looked %}The machines were last asked {{ ago(rep.looked) }} ago.{% endif %}</p></div>
+<h2>If…</h2>
+{% for k in rep.cases %}<details class="card" id="{{ k.id }}"><summary>{{ k.title }}</summary>
+<p><strong>By itself:</strong> {{ k.by_itself }}</p><p><strong>What you do:</strong> {{ k.you }}</p>
+{% set links = k.how|selectattr("page")|list %}{% if links %}<div class="actions">{% for h in links
+if h.page.startswith("/") and not h.page.startswith("//") %}<a class="btn" href="{{ h.page }}">{{ h.label }}</a>{% endfor %}</div>{% endif %}
+{% set cmds = k.how|selectattr("command")|list %}{% if cmds %}<details><summary>In a terminal</summary>
+<pre>{% for h in cmds %}{{ h.command }}
+{% endfor %}</pre></details>{% endif %}</details>{% endfor %}{% endif %}
+{% endblock %}"""
 
 
 # what the pages call things
@@ -1463,6 +1506,17 @@ def make_app(control: Control):
         if not user(request):
             return login_page()
         return page("help.html", request, "/help", auto=control.auto_state())
+
+    @app.get("/recovery")
+    def recovery(request: Request):
+        """If something breaks: could the network be brought back, and what to do (recovery.py)."""
+        if not user(request):
+            return login_page()
+        try:
+            rep, error = control.recovery(), None
+        except (KiwiError, OSError) as e:
+            rep, error = None, "The report could not be made: %s" % e
+        return page("breaks.html", request, "/", rep=rep, error=error)
 
     @app.get("/activity")
     def activity(request: Request):

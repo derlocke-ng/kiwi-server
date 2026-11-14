@@ -231,6 +231,8 @@ class Control:
         with self.lock:                       # after the running job: it may be changing the store
             fleet = config.Fleet.load(self.fleet_path)
             data, name = backupmod.create_copy(fleet), backupmod.archive_name(fleet)
+        from . import recovery
+        recovery.record_copy(fleet, fetched=True)
         self.audit(user, "fetched a copy of the network")
         return name, data
 
@@ -932,6 +934,30 @@ class Control:
                 times[sn["module"]][sn["time"][:16]] = (max(at, sn["time"]), servers)
         parts = {m: [(at, sorted(servers)) for _k, (at, servers) in sorted(t.items(), reverse=True)[:30]] for m, t in sorted(times.items())}
         return {"parts": parts, "missed": [sv["server"] for sv in data.get("servers") or [] if not sv.get("ok")]}
+
+    # ---- if something breaks: the report of `kiwi-server recovery` --------------------
+    def recovery(self):
+        """{checks, cases} (recovery.py), with how old each machine's backup was at the last
+        look when there was one. Reads only what is here; asks no machine."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        argv = list(self.kiwi) + ["recovery", self.fleet_path, "--porcelain"]
+        looked = os.path.join(self.run, "status.json")
+        if os.path.isfile(looked):
+            argv += ["--status", looked]
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir,
+                               env=self._env(), timeout=120)
+        except subprocess.TimeoutExpired:
+            raise KiwiError("the report took too long to work out")
+        try:
+            data = json.loads(r.stdout)
+            if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
+                raise ValueError
+            return data
+        except ValueError:
+            lines = [x for x in (r.stderr or "").strip().splitlines() if x.strip()]
+            raise KiwiError((lines[-1] if lines else "no answer").replace("error: ", "")[:300])
 
     # ---- machines: a new one, its install media ---------------------------------------
     def media_dir(self):

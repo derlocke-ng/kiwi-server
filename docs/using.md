@@ -66,3 +66,6 @@ make the admin account, and in Vaultwarden everyone makes their own.
 
 The recovery key you wrote down at the start and a copy of the network are what
 brings everything back when the computer or the control node is lost.
+
+What happens when something breaks, and whether you could bring it back
+today: [When something breaks](recovery.md).

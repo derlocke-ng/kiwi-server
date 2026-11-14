@@ -16,6 +16,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, form as formmod, logins as loginsmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
+from . import recovery as recoverymod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -2279,6 +2280,7 @@ def auto_backup(fleet):
         try:
             backupmod.store_remote(data, backupmod.ssh_target(h), name, int(cfg.get("keep") or 10))
             util.say("fleet backed up to %s (%s)" % (h.name, name))
+            recoverymod.record_copy(fleet, [h.name])
         except KiwiError as e:
             util.warn("fleet backup to %s failed: %s" % (h.name, e))
 
@@ -2314,11 +2316,13 @@ def cmd_backup(args):
     name = backupmod.archive_name(fleet)
     if args.local:
         util.say("%s (%d files, %d KB)" % (backupmod.store_local(data, args.local, name), n, len(data) >> 10))
+        recoverymod.record_copy(fleet, local=args.local)
     failed = []
     for h in hosts:                         # a machine that is off does not keep the others from their copy
         try:
             kept = backupmod.store_remote(data, backupmod.ssh_target(h, args.ssh), name, int(cfg.get("keep") or 10))
             util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
+            recoverymod.record_copy(fleet, [h.name])
         except KiwiError as e:
             if len(hosts) == 1:
                 raise
@@ -2907,6 +2911,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
   kiwi-server check <fleet>                      after an update: every name over HTTPS, DNS, the exit
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
+  kiwi-server recovery <fleet>                  if something breaks: could it come back, and what to do
   kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
   kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
@@ -3081,6 +3086,8 @@ def build_parser():
     s.add_argument("--restore", action="store_true", help="bring these modules back from the backups (none named: all of them)")
     s.add_argument("--at", metavar="TIME", help="with --restore: the newest snapshot from then or before, e.g. '2026-11-10 19:00'")
     s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("recovery", recoverymod.cmd); s.add_argument("fleet")
+    s.add_argument("--status", metavar="FILE", help="what status --porcelain said last: then it also says how old each machine's backup is")
     s = sub("sshca", cmd_sshca); s.add_argument("fleet")
     s.add_argument("action", nargs="?", choices=("init", "sign", "trust"))
     s.add_argument("key", nargs="?", help="sign: the public key to let in")

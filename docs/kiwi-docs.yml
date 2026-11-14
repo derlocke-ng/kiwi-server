@@ -14,6 +14,7 @@ pages:
   - machines.md: Machines
   - boards.md: Boards
   - backups.md: Backups
+  - recovery.md: When something breaks
   - security.md: Security
   - routers.md: Routers
   - modules.md: Module reference

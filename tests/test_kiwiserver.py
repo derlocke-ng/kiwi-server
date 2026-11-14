@@ -5044,11 +5044,13 @@ class TestConnect(Base):
     def test_the_browsers_of_this_user_are_found_and_told(self):
         from kiwiserver import connect as connectmod
         home = os.path.join(self.tmp, "home")
-        for d in (".pki/nssdb", ".mozilla/firefox/abc.default", ".var/app/org.mozilla.firefox/.mozilla/firefox/xyz.default-release"):
+        for d in (".pki/nssdb", ".mozilla/firefox/abc.default", ".var/app/org.mozilla.firefox/.mozilla/firefox/xyz.default-release",
+                  ".var/app/com.valvesoftware.Steam/.pki/nssdb"):                 # a store, but not a browser's
             write(os.path.join(home, d, "cert9.db"), "")
         write(os.path.join(home, ".mozilla/firefox/profiles.ini"), "")                  # not a profile: no store in it
         stores = connectmod.browser_stores(home)
         self.assertEqual(len(stores), 3)
+        self.assertFalse([x for x in stores if "Steam" in x])
         ran = []
 
         class Tc:

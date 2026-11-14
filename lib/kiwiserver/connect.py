@@ -67,15 +67,23 @@ def down(domain, runner=subprocess.run):
     return _nm("connection", "delete", connection_name(domain), check=False, runner=runner).returncode == 0
 
 
+BROWSER_APPS = ("com.brave.Browser", "org.chromium.Chromium", "com.google.Chrome", "com.microsoft.Edge",
+                "com.vivaldi.Vivaldi", "io.github.ungoogled_software.ungoogled_chromium", "com.opera.Opera")
+
+
 def browser_stores(home=None):
     """The certificate stores of this user's browsers (NSS): Chromium and its kin share one,
     each Firefox profile has its own; Flatpak browsers keep theirs under ~/.var/app."""
     home = home or os.path.expanduser("~")
     found = [os.path.join(home, ".pki", "nssdb")]
     for pattern in (".mozilla/firefox/*", ".var/app/org.mozilla.firefox/.mozilla/firefox/*",
-                    ".var/app/*/.pki/nssdb", "snap/firefox/common/.mozilla/firefox/*", ".librewolf/*",
+                    "snap/firefox/common/.mozilla/firefox/*", ".librewolf/*",
                     ".var/app/io.gitlab.librewolf-community/.librewolf/*"):
         found += glob.glob(os.path.join(home, pattern))
+    # Flatpak browsers of the Chromium kind keep their own store. Only browsers: other apps
+    # carry one too (Steam does), and they are not this network's business
+    for app in BROWSER_APPS:
+        found.append(os.path.join(home, ".var", "app", app, ".pki", "nssdb"))
     return [d for d in found if os.path.isfile(os.path.join(d, "cert9.db"))]
 
 

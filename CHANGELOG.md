@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.91.3 — connect tells the browsers, and only them
+
+- `kiwi-server connect` put the network's certificate authority into every Flatpak app
+  that keeps a certificate store, Steam included. It now tells the browsers only:
+  Firefox and LibreWolf profiles, Chromium's own store, and the Flatpak browsers of the
+  Chromium kind by name (Brave, Chromium, Chrome, Edge, Vivaldi, ungoogled Chromium,
+  Opera).
+
 ## 2.91.2 — linked networks on the page; every login tried for real
 
 - **"Linked networks"** on the control page (from Home): per partner what is shared

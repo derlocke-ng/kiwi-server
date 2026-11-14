@@ -7649,6 +7649,31 @@ class TestFirstRunPage(StoreBase):
         self.assertIn("papaya does not back up", self.ask("/backups/papaya", cookie=cookie)[1])
         self.assertEqual(self.ask("/backups/papaya")[:2], (303, "/login"))
 
+    def test_linked_networks_are_seen_and_changed_on_the_page(self):
+        cookie, csrf = self.made()
+        self.assertIn("linked to no other", self.ask("/federation", cookie=cookie)[1])
+        fed = os.path.join(self.dir, "federation.yaml")
+        write(fed, yaml.safe_dump({"kiwi2": {"endpoint": "198.51.100.9", "public_key": "cGFydG5lci1wdWJsaWMta2V5LW5vdC1yZWFsLTAwMDA9",
+                                             "mesh": "10.10.0.0/16", "domain": "internal", "dns": "10.10.0.1",
+                                             "share": [], "from": []}}))
+        body = self.ask("/federation", cookie=cookie)[1]
+        self.assertIn("kiwi2", body)
+        self.assertIn("Leave to the Internet through kiwi2", body)
+        status, where, _ = self.ask("/federation", {"csrf": csrf, "share.kiwi2": "cloud.papaya papaya:22", "from.kiwi2": "10.10.3.0/24",
+                                                    "exit.kiwi2": "on"}, cookie=cookie)
+        self.assertEqual((status, where), (303, "/federation?saved=1"))
+        got = fedmod.partners(self.dir)["kiwi2"]
+        self.assertEqual((got["share"], got["from"], got["exit"], got["internet"]),
+                         (["cloud.papaya", "papaya:22"], ["10.10.3.0/24"], True, False))
+        # what makes no sense is said, and the file stays as it was
+        body = self.ask("/federation", {"csrf": csrf, "share.kiwi2": "", "from.kiwi2": "", "exit.kiwi2": "on",
+                                        "internet.kiwi2": "on"}, cookie=cookie)[1]
+        self.assertIn("cannot leave through each other", body)
+        self.assertEqual(fedmod.partners(self.dir)["kiwi2"]["share"], ["cloud.papaya", "papaya:22"])
+        body = self.ask("/federation", {"csrf": csrf, "share.kiwi2": "rm -rf", "from.kiwi2": ""}, cookie=cookie)[1]
+        self.assertIn("is not a machine", body)
+        self.assertEqual(self.ask("/federation")[:2], (303, "/login"))
+
     def test_the_recovery_key_sets_a_new_password(self):
         _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
         recovery = re.search(r"AGE-SECRET-KEY-[A-Z0-9]+", body).group(0)

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.91.2 — linked networks on the page; every login tried for real
+
+- **"Linked networks"** on the control page (from Home): per partner what is shared
+  with it, who of it may come, and the two switches for leaving to the Internet
+  through it or letting it out through this network. A change that makes no sense
+  (two exits, out through each other) is refused and the file stays as it was.
+- `tests/drills/logins.py`: every login `kiwi-server logins` names, tried through the
+  service's own API from a device on the network. On the test network, from the dev
+  VM: 15 of 15 in (wg-easy, Pi-hole, Transmission, JDownloader, Portainer, SFTP,
+  Nextcloud, OpenCloud, Paperless).
+
 ## 2.91.1 — "Back up the network now" has somewhere to go
 
 - `kiwi-server backup <fleet>` without a place named (no host given, `backup.hosts`

@@ -798,6 +798,61 @@ class Control:
         if meta["action"] in ("status", "apply", "save", "update", "setup", "restore", "unlock"):
             self.look()                         # what the pages show is what is true now
 
+    # ---- linked networks (federation.yaml): what each may reach, and the way out -------
+    def federation(self):
+        """The partners as federation.yaml has them: {name: entry}. Linking a network needs
+        both fleets, so it stays with the computer that holds them (`kiwi-server federate`)."""
+        from . import federation as fedmod
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        return fedmod.partners(self.fleet_dir)
+
+    def save_federation(self, changes, user="admin"):
+        """{partner: {share: [...], from: [...], exit: bool, internet: bool}} into federation.yaml.
+        The file says no when the change makes no sense (two exits, out through each other)."""
+        import ipaddress
+        import yaml
+        from . import federation as fedmod
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        path = os.path.realpath(self._fleet_file(fedmod.FILE))
+        with self.lock:
+            if not os.path.isfile(path):
+                raise KiwiError("this network is linked to no other")
+            before = util.read_text(path)
+            data = yaml.safe_load(before) or {}
+            for name, c in changes.items():
+                if name not in data:
+                    raise KiwiError("no partner called %s" % name)
+                share = [x for x in c.get("share") or [] if x]
+                frm = [x for x in c.get("from") or [] if x]
+                for x in share:
+                    if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,120}(:[0-9]{1,5})?", x):
+                        raise KiwiError("%r is not a machine, machine:port or service.machine" % x)
+                for x in frm:
+                    try:
+                        ipaddress.ip_network(x, strict=False)
+                    except ValueError:
+                        raise KiwiError("%r is not an address or a network like 10.10.3.0/24" % x)
+                entry = dict(data[name] or {}, share=share, **{"from": frm})
+                for k in ("exit", "internet"):
+                    if c.get(k):
+                        entry[k] = True
+                    else:
+                        entry.pop(k, None)
+                data[name] = entry
+            head = ("# federation.yaml — the partner networks and what each may reach here "
+                    "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
+            util.write_text(path, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+            try:
+                fedmod.partners(self.fleet_dir)
+            except KiwiError:
+                util.write_text(path, before, 0o644)
+                raise
+            self.save_fleet()
+        self.audit(user, "federation changed", partners=sorted(changes))
+        self.fleet_info(fresh=True)
+
     # ---- what a machine's backups hold ------------------------------------------------
     def snapshots(self, host):
         """The snapshots of a machine, by part: {part: [(time, [servers])]}, newest first, and the

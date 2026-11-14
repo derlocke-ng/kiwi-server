@@ -310,6 +310,7 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
 <a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
 <a class="tile" href="/backups"><b>Backups</b><span>See when everything was last saved</span></a>
+<a class="tile" href="/federation"><b>Linked networks</b><span>What other networks may reach here, and the way out</span></a>
 <a class="tile" href="/help"><b>Help</b><span>What the words on this page mean</span></a></div>
 {% endblock %}""",
 
@@ -507,6 +508,32 @@ time: <strong>what it has now is replaced.</strong> The part stops for a moment.
 <button>Bring everything back</button></form></div>{% endif %}{% endif %}
 {% endblock %}""",
 
+    "federation.html": """{% extends "base.html" %}{% block main %}
+<p><a href="/">← Home</a></p><h1>Linked networks</h1>
+<p class="muted">Other networks this one is linked to. Each reaches here only what is shared with it. Linking a new
+network needs both networks' settings, so it is done on the computer that has them:
+<code>kiwi-server federate</code>, or "Federation…" in the app.</p>
+{% if saved %}<p class="banner ok">Saved. Apply this network's master, and the machines that share something, to bring it there.</p>{% endif %}
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+{% if partners %}<form method="post" action="/federation">{{ tok }}
+{% for name, p in partners.items() %}<div class="card"><div class="row"><strong>{{ name }}</strong>
+<span class="muted">its names end in .{{ p.domain or "?" }} · {{ p.mesh }}</span></div>
+<label for="s-{{ name }}">Shared with it</label><p class="muted" style="margin:0 0 4px">A machine (lychee), one of its
+ports (lychee:22) or one service (cloud.papaya), separated by spaces. Empty: nothing.</p>
+<input id="s-{{ name }}" name="share.{{ name }}" value="{{ p.share | join(' ') }}">
+<label for="f-{{ name }}">Who of it may come</label><p class="muted" style="margin:0 0 4px">Addresses or networks of
+{{ name }}, like 10.10.3.0/24. Empty: all of {{ name }}.</p>
+<input id="f-{{ name }}" name="from.{{ name }}" value="{{ p['from'] | join(' ') }}">
+<label><input type="checkbox" name="exit.{{ name }}" style="width:auto"{% if p.exit %} checked{% endif %}>
+Leave to the Internet through {{ name }}</label><p class="muted" style="margin:0">Your devices come out at its master.
+It has to allow that on its side.</p>
+<label><input type="checkbox" name="internet.{{ name }}" style="width:auto"{% if p.internet %} checked{% endif %}>
+{{ name }} may leave to the Internet through this network</label><p class="muted" style="margin:0">Its devices come
+out at your master. To the Internet only, never to your machines.</p>
+</div>{% endfor %}
+<div class="actions"><button class="primary">Save</button></div></form>
+{% else %}<p class="muted">This network is linked to no other.</p>{% endif %}
+{% endblock %}""",
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
 <h1>Computers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
@@ -1308,6 +1335,34 @@ def make_app(control: Control):
         except (KiwiError, OSError, subprocess.TimeoutExpired) as e:
             said = "Its backup machines took too long to answer." if isinstance(e, subprocess.TimeoutExpired) else str(e)
             return page("snapshots.html", request, "/backups", host=name, snaps=None, error=said)
+
+    def federation_page(request, **kw):
+        try:
+            partners = control.federation()
+        except KiwiError as e:
+            partners, kw = {}, dict(kw, error=kw.get("error") or str(e))
+        return page("federation.html", request, "/", partners=partners, **kw)
+
+    @app.get("/federation")
+    def federation(request: Request):
+        if not user(request):
+            return login_page()
+        return federation_page(request, saved=request.query_params.get("saved") == "1")
+
+    @app.post("/federation")
+    async def federation_do(request: Request):
+        form = dict(await request.form())
+        u = posted(request, str(form.get("csrf", "")))
+        if not u:
+            return login_page()
+        try:
+            names = list(control.federation())
+            changes = {n: {"share": str(form.get("share." + n, "")).split(), "from": str(form.get("from." + n, "")).split(),
+                           "exit": "exit." + n in form, "internet": "internet." + n in form} for n in names}
+            await run_in_threadpool(control.save_federation, changes, u)
+        except KiwiError as e:
+            return federation_page(request, error=str(e))
+        return RedirectResponse("/federation?saved=1", status_code=303)
 
     @app.get("/help")
     def help_page(request: Request):

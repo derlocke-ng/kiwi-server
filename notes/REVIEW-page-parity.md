@@ -44,7 +44,10 @@ run included. Compared command by command and setting by setting.
 | A machine leaves for good | `remove` | "Remove" on a saved fleet | "Remove this machine" |
 | A board's fixed address | reaches the board with an apply | the same, through Apply | the same, through Apply |
 
-Still open on the page: federation, SSH certificates, prune, the role script, doctor, the
+Since 2.91.2 the page has "Linked networks": what each partner may reach, who of it may come, and the two
+switches for leaving to the Internet through a partner. Linking a new network stays on a computer that holds both.
+
+Still open on the page: SSH certificates, prune, the role script, doctor, the
 hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in the app:
 preview, "update everything", removing a phone, "leave NAME out", activity.
 

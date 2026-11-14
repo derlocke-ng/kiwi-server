@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 
-from . import store as storemod, util
+from . import VERSION, store as storemod, util
 from .util import KiwiError
 
 HOST = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -751,6 +751,92 @@ class Control:
         self.audit(user, "machine added", hosts=[name])
         self.fleet_info(fresh=True)
         return name
+
+    # ---- settings: what the app's form edits, from the page ---------------------------
+    def schema(self):
+        """The settings every role and module has, the base fields and the targets, as the CLI
+        publishes them (`roles --porcelain`, `targets --porcelain`). They change with the
+        program only: asked once per version, kept in RAM."""
+        path = os.path.join(self.run, "schema-%s.json" % VERSION)
+        if not os.path.isfile(path):
+            out = {}
+            for what in ("roles", "targets"):
+                r = subprocess.run(list(self.kiwi) + [what, "--porcelain"], capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+                try:
+                    out.update(json.loads(r.stdout))
+                except (ValueError, TypeError):
+                    raise KiwiError("the settings could not be read here: %s" % (
+                        (r.stderr or r.stdout).strip().replace("error: ", "").splitlines() or ["no answer"])[-1][:200])
+            util.write_text(path, json.dumps(out), 0o600)
+        return json.loads(util.read_text(path))
+
+    def settings(self, host=None):
+        """What the settings form shows for one machine, or for the defaults every machine
+        inherits (host None): {"host", "groups"} (form.groups)."""
+        from . import form
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if host is not None and not HOST.match(host):
+            raise KiwiError("not a host name: %r" % host)
+        schema = self.schema()
+        doc = form.Doc.parse(util.read_text(os.path.realpath(self.fleet_path)))
+        doc.block(host)             # says so when there is no such machine
+        return {"host": host, "groups": form.groups(schema, schema.get("targets") or {}, doc, host)}
+
+    def _problems(self):
+        """What `validate` finds wrong in the fleet file as it is now. A machine that is not on
+        the VPN yet is a step still to take ("steps"), not a mistake. KiwiError when it cannot say."""
+        r = subprocess.run(list(self.kiwi) + ["validate", self.fleet_path, "--porcelain"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        try:
+            return [str(e) for e in json.loads(r.stdout).get("errors") or []]
+        except (ValueError, AttributeError):
+            # no answer is not "nothing wrong": the file could not even be read, or the check broke
+            lines = (r.stderr or r.stdout).strip().splitlines()
+            said = [x[7:] for x in lines if x.startswith("error: ")] or lines[-1:] or ["the fleet file could not be checked"]
+            raise KiwiError(said[0][:300])
+
+    def save_settings(self, host, changes, user="admin"):
+        """Changed settings of a machine, or of the defaults (host None), into the fleet file:
+        {path: value}, None takes an override away. `validate` has the last word: when the
+        change brings a mistake, the file stays as it was and KiwiError says the first one.
+        What was wrong before is not held against the change, or two machines with a mistake
+        each could never be put right. Returns the paths that changed."""
+        from . import form
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        with self.lock:
+            path = os.path.realpath(self.fleet_path)        # in RAM on a control node: nothing beside the link
+            before = util.read_text(path)
+            doc = form.Doc.parse(before)
+            keys = doc.apply(host, changes)
+            if not keys:
+                return []
+            text = doc.dump()
+            kept = False
+            try:
+                util.write_text(path, text, 0o600)
+                wrong = self._problems()
+                if wrong:
+                    util.write_text(path, before, 0o600)
+                    was = self._problems()
+                    wrong = [e for e in wrong if e not in was]
+                    if wrong:
+                        schema = self.schema()
+                        found = form.groups(schema, schema.get("targets") or {}, form.Doc.parse(before), host)
+                        raise KiwiError(form.plain(wrong[0], found, host) + (
+                            "" if len(wrong) == 1 else " (and %d more)" % (len(wrong) - 1)))
+                    util.write_text(path, text, 0o600)
+                kept = True
+            finally:
+                if not kept:        # whatever went wrong: the file as it was
+                    util.write_text(path, before, 0o600)
+            self.save_fleet()
+        # which settings, never what they are now: a value may be a secret
+        self.audit(user, "settings changed", hosts=[host] if host else [], keys=keys)
+        self.fleet_info(fresh=True)
+        return keys
 
     def _write(self, meta):
         os.makedirs(self.jobs_dir, mode=0o700, exist_ok=True)

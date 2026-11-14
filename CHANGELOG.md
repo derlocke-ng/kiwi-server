@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.83.0 — settings are changed on the page
+
+- **"Settings" on a machine's page and "Settings for every machine" on Home.** The
+  fields the app shows: the machine, its network, updates, what it does (the preset and
+  its parts), and every setting of each part. Empty means "as for every machine", and
+  the page says what that is. Only what was changed is written.
+- A change is checked (`validate`) before it is kept: a mistake it would bring is said
+  in plain words and the fleet file stays as it was. Then "Apply" brings it to the
+  machine.
+- A secret is never shown: its field is empty, typing replaces it, a tick removes it.
+- One list of fields for the app and the page (`lib/kiwiserver/form.py`, published as
+  `base` in `kiwi-server roles --porcelain`); a test keeps the app's copy the same
+  until the app reads it from there.
+- Not on the page yet: the VPN groups as a list editor (a text box for now), choosing a
+  file, the control node's own unlock ring, removing a machine.
+
 ## 2.82.0 — machines are added, installed and set up from the page
 
 - **"Still to set up" on the control page**: every machine that is not running yet, the

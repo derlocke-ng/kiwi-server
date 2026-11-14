@@ -15,7 +15,7 @@ import sys
 import time
 
 from . import VERSION, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
-from . import facts, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
+from . import facts, form as formmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -983,8 +983,10 @@ def cmd_roles(args):
     roles = rolesmod.discover()
     ms = modmod.discover()
     if args.porcelain:
+        # base: the fields every machine has, which no role publishes (form.py); a tuple is a list here
         print(json.dumps({"roles": [r.as_dict(ms) for r in roles.values()],
-                          "modules": [m.as_dict() for m in ms.modules.values()]}, indent=2))
+                          "modules": [m.as_dict() for m in ms.modules.values()],
+                          "base": formmod.BASE_GROUPS}, indent=2))
         return
     for r in roles.values():
         flag = "" if r.status == "stable" else "  [%s]" % r.status

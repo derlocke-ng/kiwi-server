@@ -58,6 +58,23 @@ reliably in the mesh. A host timer refreshes them every 6 hours from the
 [mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5) list, which
 also has FoxyProxy imports that use these names.
 
+## Phones and laptops: 1280
+
+A phone or laptop is in a different network every day: mobile data, a hotel, another
+VPN around it. Many of those carry smaller packets than a home line, and a packet that
+is too big vanishes without a word: pages open, uploads and photo syncs hang. So the
+config `kiwi-server enroll` (and the page's "Add a phone or laptop") makes for a device
+says `MTU = 1280`, which fits everywhere. A machine of the network keeps the master's
+`wg_mtu`: its path is fixed and measured.
+
+```bash
+kiwi-server enroll fleet.yaml laptop --mtu 1340      # another size for this one
+```
+
+```bash
+kiwi-server enroll fleet.yaml phone --existing --qr  # a device made before 2.84.0: its config anew, with 1280
+```
+
 ## Measuring the MTU
 
 To find out what a path really carries, connect the node or device and

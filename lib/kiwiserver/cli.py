@@ -1861,6 +1861,9 @@ def cmd_enroll(args):
     if args.group and args.group not in groups:
         raise KiwiError("no client group %r on %s (have: %s)" % (args.group, master.name, ", ".join(groups) or "none"))
     mesh = (master.role_settings or {}).get("mesh_subnet") or "10.8.0.0/16"
+    wg_mtu = int(vs.get("wg_mtu") or 1420)
+    if args.mtu and not 1280 <= args.mtu <= wg_mtu:     # said before the master is touched
+        raise KiwiError("--mtu is between 1280 and %d, what %s's tunnel carries (wg_mtu)" % (wg_mtu, master.name))
 
     def enroll(url):
         api = wgeasy.WgEasy(url, vs["wg_password"]).login()
@@ -1912,6 +1915,10 @@ def cmd_enroll(args):
             text = enroll(url)
     if args.split:
         text = wgeasy.split_tunnel(text, mesh)
+    # a device roams, a machine stays where its path was measured: the device gets the size that fits everywhere
+    mtu = args.mtu or (min(wgeasy.DEVICE_MTU, wg_mtu) if not host else None)
+    if mtu:
+        text = wgeasy.with_mtu(text, mtu)
     if host:
         dest = fleet.resolve_path("secrets/%s.conf" % host.hostname)
     else:
@@ -2594,6 +2601,8 @@ def build_parser():
     s.add_argument("--address", help="the mesh address to give the client")
     s.add_argument("--split", action="store_true", help="only the mesh through the tunnel (devices that keep their own internet)")
     s.add_argument("--existing", action="store_true", help="fetch the config of a client that already exists")
+    s.add_argument("--mtu", type=int, metavar="N",
+                   help="the tunnel's packet size in this config (a device gets 1280, which fits mobile networks; a machine the master's wg_mtu)")
     s.add_argument("--remove", action="store_true", help="take a device off the VPN: its key stops working")
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")

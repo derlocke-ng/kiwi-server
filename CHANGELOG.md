@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.84.0 — phones and laptops get a tunnel that fits every network
+
+- **A device's config says `MTU = 1280`.** It used to carry the master's `wg_mtu`,
+  measured for the home line (1376 here). On a path that carries less (mobile data,
+  a tunnel inside a tunnel) pages opened and every upload hung, with no error anywhere.
+  `kiwi-server enroll` and the page's "Add a phone or laptop" now write 1280 for a
+  device; `enroll --mtu N` sets another size; a machine keeps `wg_mtu`.
+  A device made before: `kiwi-server enroll <fleet> <name> --existing --qr` and scan
+  it again. docs/network.md, Phones and laptops.
+- Found by the users drill: two of three synthetic users, behind a path that carries
+  1344, could not upload 30 kB to any machine while 1 kB went through. The drill now
+  says which answer failed and for whom (`000/curl28` is a timeout).
+
 ## 2.83.0 — settings are changed on the page
 
 - **"Settings" on a machine's page and "Settings for every machine" on Home.** The

@@ -175,7 +175,7 @@ iptables -I INPUT 4 -i wg-fed -j DROP
 {% for pname, p in federation.items() %}
 {% set ep = p.endpoint ~ ('' if ':' in (p.endpoint | string) else ':' ~ federation_port) %}
 # {{ pname }}: {{ p.mesh }} at {{ ep }}
-wg set wg-fed peer {{ p.public_key }} endpoint {{ ep }} allowed-ips {{ p.mesh }} persistent-keepalive 25
+wg set wg-fed peer {{ p.public_key }} endpoint {{ ep }} allowed-ips {{ p.mesh }}{{ ',0.0.0.0/0' if p.exit else '' }} persistent-keepalive 25
 ip route replace {{ p.mesh }} dev wg-fed
 {% if p['as'] %}
 # its connections reach the mesh from {{ p['as'] }}, an address of this mesh: a node routes
@@ -198,5 +198,52 @@ iptables -A KIWI_FED -s {{ src }} -d {{ ip }} -j ACCEPT
 {% endfor %}
 {% endfor %}
 {% endfor %}
+{% for pname, p in federation.items() if p.internet %}
+{% if loop.first %}
+# The exit for a partner: what it sends on from its own clients may leave to the internet
+# here, and only to the internet: never to an address of a private network, this one's
+# mesh included (that is what `share` is for).
+iptables -N KIWI_FED_OUT 2>/dev/null || iptables -F KIWI_FED_OUT
+{% for net in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16', '127.0.0.0/8', '224.0.0.0/3'] %}
+iptables -A KIWI_FED_OUT -d {{ net }} -j RETURN
+{% endfor %}
+iptables -A KIWI_FED_OUT -j ACCEPT
+{% endif %}
+# {{ pname }} leaves through this master: it arrives as its master's address (it hides who of
+# its clients asks), and goes out like this master's own clients
+iptables -A KIWI_FED -s {{ p.dns or p.mesh }} -j KIWI_FED_OUT
+iptables -t nat -A POSTROUTING -s {{ p.mesh }} -o eth0 -j MASQUERADE
+{% endfor %}
 iptables -A KIWI_FED -j DROP
+{% for pname, p in federation.items() if p.exit %}
+{% if loop.first %}
+
+# {{ pname }} is this network's exit: what its clients send to the internet leaves over the
+# link and comes out at {{ pname }}'s master. The link is there anyway, so this master is
+# not a client of the other's VPN server, needs no second tunnel and no login there.
+# What comes in from the clients looks in table 202 first: the internet through the link,
+# everything of the meshes and of this machine as before (throw: on to the main table).
+while ip rule del iif wg0 table 202 2>/dev/null; do :; done
+ip rule add iif wg0 table 202
+ip route flush table 202 2>/dev/null
+ip route add default dev wg-fed table 202
+# the answers from the internet come in on the link, from addresses this master would
+# itself reach another way: a strict reverse-path check would drop them
+echo 2 > /proc/sys/net/ipv4/conf/wg-fed/rp_filter 2>/dev/null || true
+ip route add throw {{ mesh_subnet }} table 202
+ip route add throw {{ docker_subnet }} table 202
+# the partner sees this master and not who of its clients asks; what goes to a partner's
+# mesh keeps its address, their sharing rules filter on it
+iptables -t nat -N KIWI_FED_SNAT 2>/dev/null || iptables -t nat -F KIWI_FED_SNAT
+{% for qname, q in federation.items() %}
+ip route add throw {{ q.mesh }} table 202
+iptables -t nat -A KIWI_FED_SNAT -d {{ q.mesh }} -j RETURN
+{% endfor %}
+iptables -t nat -A KIWI_FED_SNAT -j SNAT --to-source {{ server_ip }}
+iptables -t nat -A POSTROUTING -o wg-fed -j KIWI_FED_SNAT
+# the kill switch: with the link down the clients have no internet, they do not fall back
+# to this master's own connection
+iptables -I FORWARD 1 -i wg0 -o eth0 ! -d {{ docker_subnet }} -j DROP
+{% endif %}
+{% endfor %}
 {% endif %}

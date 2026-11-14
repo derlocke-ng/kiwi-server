@@ -38,6 +38,12 @@ def have_networkmanager():
                                                           capture_output=True, text=True).stdout.strip() == "running"
 
 
+def exists(domain, runner=subprocess.run):
+    """Does this computer have the network's connection already?"""
+    r = _nm("-t", "-f", "NAME", "connection", "show", check=False, runner=runner)
+    return connection_name(domain) in (r.stdout or "").splitlines()
+
+
 def up(conf_path, domain, runner=subprocess.run):
     """The config as a NetworkManager connection that is up and comes up by itself. Returns its name."""
     name = connection_name(domain)

@@ -977,7 +977,10 @@ class FederationDialog(Adw.Dialog):
         intro = Adw.PreferencesGroup(description="Networks linked to this one. Each sees only what is shared here.")
         intro.set_header_suffix(help_button("A partner reaches the names listed under Shared here (a node, node:port "
                                             "or service.node, e.g. cloud.papaya) from the addresses under From "
-                                            "(empty: its whole network). Apply the master and the nodes after a change.",
+                                            "(empty: its whole network). One network can also leave to the Internet "
+                                            "through the other, over the same link: switch it on here, and the "
+                                            "matching switch in the other network. Apply the master and the nodes "
+                                            "after a change.",
                                             DOCS + "docs/design/federation.md"))
         link = Adw.ButtonRow(title="Link another network…", start_icon_name="list-add-symbolic")
         link.connect("activated", lambda *_: self.link())
@@ -993,7 +996,14 @@ class FederationDialog(Adw.Dialog):
             frm = Adw.EntryRow(title="From", text=" ".join(p.get("from") or []))
             g.add(share)
             g.add(frm)
-            self.rows[name] = (share, frm)
+            # the way to the internet over the link: this network through the partner, or the partner through this one
+            out = Adw.SwitchRow(title="Leave to the Internet through it", active=bool(p.get("exit")),
+                                subtitle="Your devices come out at %s's master. It has to allow that on its side." % name)
+            let = Adw.SwitchRow(title="It may leave to the Internet through this network", active=bool(p.get("internet")),
+                                subtitle="%s's devices come out at your master. To the Internet only." % name)
+            g.add(out)
+            g.add(let)
+            self.rows[name] = (share, frm, out, let)
             page.add(g)
         save = Gtk.Button(label="Save", css_classes=["suggested-action"], sensitive=bool(self.rows))
         save.connect("clicked", lambda *_: self.save())
@@ -1004,8 +1014,20 @@ class FederationDialog(Adw.Dialog):
         self.set_child(tb)
 
     def save(self):
-        for name, (share, frm) in self.rows.items():
-            self.data[name] = dict(self.data.get(name) or {}, share=share.get_text().split(), **{"from": frm.get_text().split()})
+        leaving = [n for n, r in self.rows.items() if r[2].get_active()]
+        both = [n for n, r in self.rows.items() if r[2].get_active() and r[3].get_active()]
+        if len(leaving) > 1 or both:
+            self.win.toast("Two networks cannot leave through each other" if both else
+                           "Only one partner can be the way to the Internet")
+            return
+        for name, (share, frm, out, let) in self.rows.items():
+            entry = dict(self.data.get(name) or {}, share=share.get_text().split(), **{"from": frm.get_text().split()})
+            for key, row in (("exit", out), ("internet", let)):
+                if row.get_active():
+                    entry[key] = True
+                else:
+                    entry.pop(key, None)
+            self.data[name] = entry
         text = ("# federation.yaml — the partner networks and what each may reach here.\n"
                 + yaml.safe_dump(self.data, sort_keys=False, default_flow_style=None))
         with open(self.path, "w") as fh:

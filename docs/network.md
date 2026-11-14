@@ -81,6 +81,10 @@ the command prints one line to run with `sudo`. The app has the same under
 Run it on the computer itself, in its own desktop session: over SSH NetworkManager
 refuses to add a connection.
 
+Two computers must not share one device: each would cut the other off. When a device of
+this computer's name exists and the computer has no connection yet, the command stops and
+asks: `--existing` when it is this computer, `--name` for another one of the same name.
+
 ## A machine's address at home
 
 A machine installed from install media gets its fixed address from the installer. A
@@ -144,3 +148,31 @@ Each network keeps its fleet, seed, CA and mesh (every network its own /16).
 The masters are linked by WireGuard on UDP 51822, each Pi-hole asks the other
 for the other's domain, and a partner reaches only what is listed under
 `share`, from the addresses under `from`.
+
+### Leave to the Internet through a partner
+
+One network can use the other as its way to the Internet: a device of the first comes
+out at the second's master (multi-hop).
+
+```bash
+kiwi-server federate ~/kiwi/fleet.yaml ~/kiwi2/fleet.yaml --exit
+```
+
+The first network leaves through the second. The command writes `exit: true` for the
+partner into the first network's `federation.yaml` and `internet: true` into the
+second's, which is what lets the first one out. Apply the second network's master, then
+the first's.
+
+- It rides the link that is there. The first master is not a client of the second's
+  VPN server, and needs no VPN client and no second tunnel for it.
+- The second network sees the first one's master, not which of its devices asks.
+- The first network gets out to the Internet only: never to a private address of the
+  second network. What it may reach there is still `share`.
+- With the link down, the first network's devices have no Internet. They do not fall
+  back to their master's own connection.
+- A network has one such exit, and two networks cannot leave through each other.
+- The names a device asks for are still answered by its own master's Pi-hole, which
+  asks its resolvers from the first master, not through the partner.
+
+`kiwi-server federate … --no-exit` puts it back. `kiwi-server validate` says which way
+a network's devices leave.

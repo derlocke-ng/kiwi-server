@@ -10,6 +10,10 @@
       dns: 10.10.0.1
       share: [cloud.papaya, lychee, papaya:22]
       from: [10.10.3.0/24]           # empty: the partner's whole mesh
+      exit: true                     # this network leaves to the internet through that partner …
+      internet: true                 # … which that partner allows with this, in its own file
+
+The exit rides the link: the master is not a client of the partner's VPN server.
 
 The master's vpn-server and the nodes' reverse-proxy get their settings from it at load time.
 """
@@ -24,7 +28,7 @@ from . import util
 from .util import KiwiError
 
 FILE = "federation.yaml"
-KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as")
+KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet")
 
 _P = 2 ** 255 - 19
 
@@ -79,8 +83,24 @@ def partners(fleet_dir):
             raise KiwiError("%s: %s lacks %s" % (p, name, ", ".join(missing)))
         spec["share"] = [str(x) for x in spec.get("share") or []]
         spec["from"] = [str(x) for x in spec.get("from") or []]
+        for k in ("exit", "internet"):
+            if spec.get(k) not in (None, True, False):
+                raise KiwiError("%s: %s: %s is true or false" % (p, name, k))
+            spec[k] = bool(spec.get(k))
+        if spec["exit"] and spec["internet"]:
+            raise KiwiError("%s: %s is both this network's way to the internet (exit) and let out through it (internet): "
+                            "two networks cannot leave through each other" % (p, name))
         out[str(name)] = {k: spec.get(k) for k in KEYS}
+    exits = [n for n, x in out.items() if x["exit"]]
+    if len(exits) > 1:
+        raise KiwiError("%s: only one partner can be this network's way to the internet (exit: true for %s)"
+                        % (p, ", ".join(exits)))
     return out
+
+
+def exit_through(fleet_dir):
+    """The partner this network leaves to the internet through, or None."""
+    return next((n for n, x in partners(fleet_dir).items() if x["exit"]), None)
 
 
 def with_addresses(found, mesh):
@@ -144,7 +164,26 @@ def write(fleet_dir, partner, entry):
     data = (yaml.safe_load(util.read_text(p)) or {}) if os.path.isfile(p) else {}
     old = data.get(partner) or {}
     entry = dict(entry, share=old.get("share") or [], **{"from": old.get("from") or []})
+    for k in ("exit", "internet"):          # the owner's, like share and from
+        if old.get(k):
+            entry[k] = True
     data[partner] = entry
     head = ("# federation.yaml — the partner networks and what each may reach here "
             "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
     util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+
+
+def set_flag(fleet_dir, partner, key, on):
+    """`exit` or `internet` of one partner, the rest of the file as it is."""
+    p = os.path.join(fleet_dir, FILE)
+    data = (yaml.safe_load(util.read_text(p)) or {}) if os.path.isfile(p) else {}
+    if partner not in data:
+        raise KiwiError("%s: no partner called %s" % (p, partner))
+    if on:
+        data[partner][key] = True
+    else:
+        data[partner].pop(key, None)
+    head = ("# federation.yaml — the partner networks and what each may reach here "
+            "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
+    util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+

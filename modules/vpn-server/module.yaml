@@ -106,7 +106,7 @@ settings:
   - key: federation
     type: object
     label: Federation partners
-    help: "Other networks this one is linked to, from federation.yaml next to the fleet file (kiwi-server federate): per partner endpoint, public_key, mesh, domain, dns, and what it may reach here (share: nodes, node:port or service.node; from: its groups' subnets or addresses, empty: its whole mesh; as: the address of this mesh its connections come from)."
+    help: "Other networks this one is linked to, from federation.yaml next to the fleet file (kiwi-server federate): per partner endpoint, public_key, mesh, domain, dns, and what it may reach here (share: nodes, node:port or service.node; from: its groups' subnets or addresses, empty: its whole mesh; as: the address of this mesh its connections come from; exit: true makes that partner this network's way to the internet, over the link; internet: true lets that partner leave to the internet through this master)."
     default: {}
   - key: federation_port
     type: int

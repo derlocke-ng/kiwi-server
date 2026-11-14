@@ -2,8 +2,8 @@
 
 Two networks give each other access to some of their services, nodes or people. Not a
 merger: each keeps its fleet, seed, CA, master and mesh; each decides alone what it shares.
-Multi-hop (one master leaving the internet through another) is a different feature and stays
-one (Exits, and per client further down).
+Multi-hop (one network leaving the internet through another) rides the same link since
+2.91.0 (The exit, below).
 
 ## The link
 
@@ -53,6 +53,38 @@ side, `--accept FILE` answers it.
 A drill like `tests/drills/multihop.py`: a client of A reaches the service B shares, not the
 one B does not share, not B's other nodes; B's names resolve through A's Pi-hole; the link
 comes back after a reboot of either master (crumble is a RAM master).
+
+## The exit
+
+Decided on 14 November 2026, after the owner called the first plan weird: it had the entry
+master's VPN client log in to the exit master's VPN server as one of its clients (a group
+with no reach, `vpn_provider: custom`). That needed a second tunnel, a VPN client container
+on the entry master, and an enrolment across networks.
+
+The link is there already, so the exit rides it. Per partner, two keys:
+
+```yaml
+kiwi2:
+  exit: true         # in the first network's file: we leave through that partner
+```
+
+```yaml
+kiwi:
+  internet: true     # in the second network's file: that partner may leave through us
+```
+
+Entry master: the partner's peer on `wg-fed` also takes `0.0.0.0/0`; what comes in on `wg0`
+looks in a table of its own (default over `wg-fed`, the meshes and the machine itself thrown
+back to the main table); it is sent on as the master's own address, so the exit sees one
+address; a rule drops what the clients send towards the master's own uplink, which is the
+kill switch. Exit master: what arrives from the partner's master may go on to any address
+that is not private, masqueraded like its own clients. Both keys have to be set for a
+packet to pass: `exit` alone leaves the first network without internet, `internet` alone
+does nothing.
+
+One exit per network; two networks cannot leave through each other. The older way stays
+for an exit that is not a Kiwi network (any WireGuard provider, `vpn_provider: custom`).
+Not done: the entry network's DNS lookups still leave from its own master.
 
 ## Later: multi-hop per client
 

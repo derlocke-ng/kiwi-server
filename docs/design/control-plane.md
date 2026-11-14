@@ -214,12 +214,13 @@ The first two exist today; the setting that names them does not yet.
   reverse-proxy]` in the master's block (the double-hop block of `start.sh`
   is skipped, the client groups are masqueraded out of `eth0`, the Pi-hole
   asks its fallback resolvers directly). A VPS that is only a VPN server.
-- **`master`**: the VPN client holds a WireGuard config that *another
-  network's master* issued, in a client group of that master that may reach
-  the internet and nothing else (`reach: []`, `peers: false`). A client of
-  the first master leaves the internet at the second: **multi-hop**, and the
-  second master sees only the first. This is a `custom` provider today;
-  what is missing is the enrolment across networks, which is federation.
+- **`master`**: a client of the first master leaves the internet at *another
+  network's master*: **multi-hop**, and the second master sees only the
+  first. Since 2.91.0 this rides the federation link (`exit: true` for the
+  partner, `internet: true` on its side; design/federation.md, The exit): no
+  VPN client, no second tunnel, no enrolment across networks. The first plan,
+  the VPN client holding a config that the other master issued, stays as the
+  `custom` provider for an exit that is not a Kiwi network.
 
 `master.exit: provider | direct | master` is the setting to add: it drops
 or configures the VPN client, ties `mullvad_socks` to the provider being

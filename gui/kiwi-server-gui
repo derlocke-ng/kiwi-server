@@ -875,6 +875,90 @@ class SnapshotsDialog(Adw.Dialog):
         dlg.present(self)
 
 
+class LoginsDialog(Adw.Dialog):
+    """What a person types to get into a machine's services (`kiwi-server logins`): the address,
+    the user name and the password of each. A password shows as dots until it is asked for."""
+    DOTS = "\u2022" * 8
+
+    def __init__(self, win, host):
+        super().__init__(title="Logins of %s" % host, content_width=620, content_height=640)
+        self.win, self.host = win, host
+        self.page = Adw.PreferencesPage()
+        self.status = Adw.StatusPage(title="Looking them up…", child=Adw.Spinner())
+        self.stack = Gtk.Stack()
+        self.stack.add_named(self.status, "wait")
+        self.stack.add_named(self.page, "list")
+        self.toasts = Adw.ToastOverlay(child=self.stack)
+        tb = Adw.ToolbarView(content=self.toasts)
+        tb.add_top_bar(Adw.HeaderBar())
+        self.set_child(tb)
+        threading.Thread(target=self.load, daemon=True).start()
+
+    def load(self):
+        rc, out, err = run_cli(self.win.cli, ["logins", self.win.doc.path, self.host, "--porcelain"])
+        try:
+            found = next(h["logins"] for h in json.loads(out)["hosts"] if h["name"] == self.host) if rc == 0 else None
+        except (ValueError, KeyError, TypeError, StopIteration):
+            found = None
+        GLib.idle_add(self.show_list, found, err.strip())
+
+    def copy_button(self, text, what):
+        b = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copy the %s" % what,
+                       css_classes=["flat"])
+        b.update_property([Gtk.AccessibleProperty.LABEL], ["Copy the %s" % what])
+        b.connect("clicked", lambda *_: (Gdk.Display.get_default().get_clipboard().set(text),
+                                         self.toasts.add_toast(Adw.Toast(title="Copied the %s" % what, timeout=2))))
+        return b
+
+    def value_row(self, title, value, what):
+        row = Adw.ActionRow(use_markup=False, title=title, subtitle=value, subtitle_selectable=True,
+                            css_classes=["property"])
+        row.add_suffix(self.copy_button(value, what))
+        return row
+
+    def password_row(self, password):
+        row = Adw.ActionRow(use_markup=False, title="Password", subtitle=self.DOTS, css_classes=["property"])
+        eye = Gtk.ToggleButton(icon_name="view-reveal-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Show the password",
+                               css_classes=["flat"])
+        eye.update_property([Gtk.AccessibleProperty.LABEL], ["Show the password"])
+
+        def toggled(b):
+            on = b.get_active()
+            row.set_subtitle(password if on else self.DOTS)
+            row.set_subtitle_selectable(on)
+            b.set_icon_name("view-conceal-symbolic" if on else "view-reveal-symbolic")
+            b.set_tooltip_text("Hide the password" if on else "Show the password")
+        eye.connect("toggled", toggled)
+        row.add_suffix(eye)
+        row.add_suffix(self.copy_button(password, "password"))
+        return row
+
+    def show_list(self, found, err):
+        if not found:
+            self.status.set_title("No answer" if found is None else "Nothing to sign in to")
+            self.status.set_description((err.replace("error: ", "").splitlines() or [""])[-1] if found is None
+                                        else "No service on %s has a login." % self.host)
+            self.status.set_child(None)
+            return False
+        for x in found:
+            g = Adw.PreferencesGroup(title=esc(x["label"]), description=esc(x["note"]))
+            address = x["address"]
+            if address:
+                row = self.value_row("Address", address, "address")
+                if address.startswith(("https://", "http://")):
+                    row.set_activatable(True)
+                    row.add_suffix(Gtk.Image(icon_name="adw-external-link-symbolic"))
+                    row.connect("activated", lambda _r, a=address: Gtk.UriLauncher.new(a).launch(self.win, None, None))
+                g.add(row)
+            if x["user"]:
+                g.add(self.value_row("User name", x["user"], "user name"))
+            if x["password"]:
+                g.add(self.password_row(x["password"]))
+            self.page.add(g)
+        self.stack.set_visible_child_name("list")
+        return False
+
+
 class FederationDialog(Adw.Dialog):
     """The partner networks in federation.yaml and what each may reach here."""
 
@@ -3243,6 +3327,9 @@ class Window(Adw.ApplicationWindow):
         web = self.web_group(st)
         if web:
             parts.append(web)
+        logins = self.logins_group(name, st)
+        if logins:
+            parts.append(logins)
         parts.append(self.deploy_group(name, st, f))
         self.host_column.show(parts)
 
@@ -3369,6 +3456,19 @@ class Window(Adw.ApplicationWindow):
             row.add_suffix(Gtk.Image(icon_name="adw-external-link-symbolic"))
             row.connect("activated", lambda _r, s=site: Gtk.UriLauncher.new("https://" + s).launch(self, None, None))
             g.add(row)
+        return g
+
+    def logins_group(self, name, st):
+        """The way to the user names and passwords of the machine's services (LoginsDialog)."""
+        found = st.get("logins") or []
+        if not found:
+            return None
+        g = Adw.PreferencesGroup(title="Logins")
+        row = plain_row("User names and passwords", ", ".join(x["label"] for x in found))
+        b = Gtk.Button(label="Logins…", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        b.connect("clicked", lambda *_: LoginsDialog(self, name).present(self))
+        row.add_suffix(b)
+        g.add(row)
         return g
 
     def deploy_group(self, name, st, f):

@@ -45,6 +45,9 @@ it; it says so and keeps its changes in memory until you take the other copy.
 - **Service passwords you leave out are generated** from `secrets/seed`, the
   same at every render, so the fleet file need not hold them.
   `kiwi-server secrets show fleet.yaml <host> [setting]` prints one.
+  `kiwi-server logins fleet.yaml [host]` lists the ones a person types, with
+  the address and the user name: see
+  [Sign in to a service](machines.md#sign-in-to-a-service).
   `validate` warns about those still written in the file.
 - Taking one out on a running machine changes that password; Nextcloud's and
   Portainer's are only read at their first start.

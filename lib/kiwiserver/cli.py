@@ -15,7 +15,7 @@ import sys
 import time
 
 from . import VERSION, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
-from . import facts, form as formmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
+from . import facts, form as formmod, logins as loginsmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -699,6 +699,7 @@ def cmd_list(args):
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
                      "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname],
+                     "logins": [] if errs else loginsmod.listed(h, roles, ms),     # without the passwords
                      "status": o.status(), "dir": o.dir, "iso": o.iso,
                      "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
@@ -977,6 +978,33 @@ def cmd_show(args):
     else:
         import yaml
         print(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
+
+
+def cmd_logins(args):
+    """What a person types to get into each service: the address, the user name and the
+    password, from the fleet on this computer. The passwords are this command's output."""
+    fleet, roles, ms = load(args)
+    rows = []
+    for h in fleet.select(args.hosts):
+        errs = h.validate(roles) or settings_errors(roles, ms, h)
+        if errs and args.hosts:
+            raise KiwiError(errs[0])
+        row = {"name": h.name, "hostname": h.hostname, "logins": []}
+        if errs:                # one of many: the others are still listed
+            row["error"] = errs[0]
+            util.warn("left out: %s" % errs[0])
+        else:
+            row["logins"] = loginsmod.for_host(h, roles[h.role], ms)
+        rows.append(row)
+    if args.porcelain:
+        print(json.dumps({"hosts": rows}, indent=2))
+        return
+    said = loginsmod.text(rows)
+    if said:
+        print(said)
+    else:
+        util.say("nothing to sign in to: %s" % ("these machines run" if len(rows) != 1 else "%s runs" % rows[0]["name"])
+                 + " no service with a login")
 
 
 def cmd_roles(args):
@@ -2581,6 +2609,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
+  kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
   kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
   kiwi-server secrets init|unlock|lock|status <fleet>  secrets/ as one encrypted file, opened into memory
   kiwi-server mtu <fleet> <node|device|address> [--write]   measure a tunnel's real MTU; say what to set
@@ -2656,6 +2685,7 @@ def build_parser():
     s.add_argument("host", nargs="?", help="this machine, also when it was set up before: it was installed anew")
     s.add_argument("--yes", action="store_true", help="do the step without asking first")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
+    s = sub("logins", cmd_logins); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     for name, fn in (("render", cmd_render), ("build", cmd_build)):
         s = sub(name, fn); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
         s.add_argument("--bare", action="store_true",

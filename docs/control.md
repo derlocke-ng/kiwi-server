@@ -96,6 +96,18 @@ machine's disk: they are gone after a restart and after the machine is set up, a
 "Make the install media again" brings them back. Two fit at a time with the control
 module's default (`ram_mb: 2048`).
 
+### Logins
+
+The page of a machine has a card *Logins* with one row for each service: its
+name as a link to it, and its user name. *Show password* fetches the password
+and *Copy* copies it. The password is not part of the page before you ask for
+it. *Activity* then records that the logins of that machine were shown. It
+does not record the passwords.
+
+On Home, under *Open a service*, the link *login* below a service leads to
+that card. What the list holds and where the passwords come from:
+[Sign in to a service](machines.md#sign-in-to-a-service).
+
 ### The password is forgotten
 
 "I forgot the password" on the login page takes the recovery key and a new password.

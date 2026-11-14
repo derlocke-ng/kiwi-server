@@ -42,6 +42,7 @@ kiwi-server list fleet.yaml                  # every host and what comes next
 kiwi-server build fleet.yaml                 # the ISOs, in ./output/<host>/
 kiwi-server apply fleet.yaml sh3             # set up or change a running machine
 kiwi-server status fleet.yaml                # how every machine is doing
+kiwi-server logins fleet.yaml                # the address, user name and password of every service
 kiwi-server-gui                              # the desktop app
 ```
 

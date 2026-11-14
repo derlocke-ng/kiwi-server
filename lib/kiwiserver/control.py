@@ -1041,6 +1041,27 @@ class Control:
             util.write_text(path, r.stdout, 0o600)
         return json.loads(util.read_text(path))
 
+    # ---- logins: what a person types to get into a service ------------------------------
+    def logins(self, host):
+        """The logins of one machine's services with their passwords (`logins --porcelain`):
+        [{module, label, address, user, has_password, password, note}]. Asked anew every time
+        and handed on: nothing of it is kept here, in memory or on a disk. KiwiError says why not;
+        only what the command wrote as its error is in it, never what it printed."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not HOST.match(host or ""):
+            raise KiwiError("not a host name: %r" % host)
+        try:
+            r = subprocess.run(list(self.kiwi) + ["logins", self.fleet_path, host, "--porcelain"], capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
+        except subprocess.TimeoutExpired:
+            raise KiwiError("the logins of %s took too long to work out" % host)
+        try:
+            return next(h["logins"] for h in json.loads(r.stdout)["hosts"] if h["name"] == host)
+        except (ValueError, KeyError, TypeError, StopIteration):
+            lines = [x for x in (r.stderr or "").strip().splitlines() if x.strip()]
+            raise KiwiError((lines[-1] if lines else "no answer").replace("error: ", "")[:300])
+
     # ---- devices: phones and laptops on the VPN ---------------------------------------
     def devices(self):
         d = os.path.join(self.fleet_dir, "secrets", "devices")

@@ -102,3 +102,34 @@ two actions on the host page.
 **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the step
 and the command, and `kiwi-server status` shows it. The marker that means
 "applied" is only written once every container of the stack runs.
+
+## Sign in to a service
+
+A service such as Nextcloud, Pi-hole or Portainer asks for a user name and a
+password. `kiwi-server logins` lists them, machine by machine:
+
+```bash
+kiwi-server logins fleet.yaml               # every machine
+kiwi-server logins fleet.yaml sh3           # one machine
+kiwi-server logins fleet.yaml --porcelain   # the same as JSON
+```
+
+For each service the list has the address, the user name, the password and,
+where one is needed, a note. A machine is listed with the modules it has in
+the fleet file. A node that is not enrolled yet is left out, and the command
+says so.
+
+The passwords come from the fleet on this computer: the ones written in the
+fleet file and the ones generated from the seed. The machine is not asked. A
+password that somebody changed inside a service is therefore not known here.
+Nextcloud, OpenCloud, Paperless and Portainer take their admin password only
+when they start for the first time, and their note says so.
+
+For some services the network keeps no password. In Vaultwarden everyone
+makes their own account, and in Immich the first person to open it makes the
+admin account. The note says how a person gets in.
+
+The command prints the passwords on the screen. The control page and the
+desktop app show the same list and keep a password hidden until you ask for
+it: see [The control node](control.md#logins) and
+[The desktop app](gui.md#a-host).

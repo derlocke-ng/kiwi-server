@@ -117,6 +117,9 @@ urls:                            # printed when the role finished
 nginx:                           # server blocks for the reverse proxy (see below)
   ...
 
+logins:                          # what a person signs in to (see below)
+  ...
+
 settings:                        # the user-facing settings (see below)
   ...
 ```
@@ -216,12 +219,45 @@ nginx:
       proxy_read_timeout: 86400s
       proxy_ssl: true                          # upstream speaks https (no verification)
       when: has_reverse_proxy                  # only when that context value is truthy
+      site: cloud                              # a name for this site, for a login to point at
       extra_directives: ["proxy_redirect off;"]
       extra_locations: [{ path: /api/, config: "proxy_pass http://x/api/;" }]
 ```
 
 Every announced name goes into the fleet's DNS records at the host's mesh
 address, so a Pi-hole anywhere in the fleet resolves it.
+
+### logins
+
+A module that has something a person signs in to lists it here.
+`kiwi-server logins`, the control page and the desktop app show the list with
+each machine's own values
+([Sign in to a service](machines.md#sign-in-to-a-service)):
+
+```yaml
+logins:
+  - label: Downloads (JDownloader)   # what it is, in plain words (required)
+    site: jd                         # which of the module's sites: the site: name of an nginx server.
+                                     # Without it: the module's first site
+    path: /admin                     # appended to the site
+    address: "sftp://{{ hostname }}:{{ sftp_port }}"    # in place of site and path, for a service
+                                     # the reverse proxy does not serve
+    user: "{{ jd_web_user or transmission_user }}"      # the user name; left out when there is none
+    password: [jd_web_password, transmission_password]  # the secret setting that holds it, or a list:
+                                     # the first that is set. Left out when the network keeps no password
+    note: "One plain sentence."      # for example how a person gets in when there is no password here
+    when: jdownloader                # a setting, a derived value or has_<module>: listed only while it is set
+```
+
+`user`, `address` and `note` are Jinja over the module's settings. The address
+of a site is `https://<site><path>`. A machine without the reverse proxy
+serves no sites, so such a login has no address there.
+
+The entries are checked when the modules are read. An unknown key, a
+`password` that is not a secret setting of the module, a `site` that no nginx
+server of the module has and a `when` that names nothing are errors.
+`kiwi-server roles --porcelain` publishes the entries with each module, as
+they are written.
 
 ## Rendering
 

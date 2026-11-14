@@ -34,7 +34,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import adopt as adoptmod, control as controlmod, controlsync, facts, form as formmod, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
+from kiwiserver import address as addressmod, adopt as adoptmod, control as controlmod, controlsync, facts, form as formmod, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
 from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -1144,7 +1144,9 @@ class TestModules(Base):
         self.assertNotIn("AddHost=", b.quadlets["kn-pihole.container"])
         # gw.sh: -I inserts on top, so the DROP must be inserted last to be checked first
         inserts = [ln for ln in gw.splitlines() if ln.startswith("iptables -I FORWARD")]
-        self.assertTrue(inserts[-1].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP'), inserts)
+        self.assertTrue(inserts[-2].endswith('-d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP'), inserts)
+        # the kill switch above it all: what a LAN client sends never leaves by the card it came in on
+        self.assertEqual(inserts[-1], 'iptables -I FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP')
         # … and, standing on top, it must spare the replies to what the containers started
         # (the VPN client's handshake) and the LAN's connections to published ports
         self.assertRegex(b.files["kn-portainer/admin-password"][0], r"^[A-Za-z0-9]{32}\s*$")   # left out: generated, no open first-run page
@@ -4906,6 +4908,143 @@ class TestReach(Base):
 
     def test_an_address_given_wins(self):
         self.assertEqual(remote.reach(self.host(), "root@1.2.3.4"), "root@1.2.3.4")
+
+
+class TestConnect(Base):
+    """This computer on the network (connect.py): the config becomes a NetworkManager
+    connection that carries only the network, and the browsers trust its certificates."""
+    def test_the_connection_carries_only_the_network(self):
+        from kiwiserver import connect as connectmod
+        conf = os.path.join(self.tmp, "desk.conf")
+        write(conf, "[Interface]\nPrivateKey = x\nAddress = 10.9.3.2/24\nDNS = 10.9.0.1\nMTU = 1280\n\n[Peer]\nPublicKey = y\n"
+                    "AllowedIPs = 10.9.0.0/16\nEndpoint = 203.0.113.7:51820\n")
+        calls, seen = [], {}
+
+        def runner(argv, **kw):
+            calls.append(argv[1:])
+            if argv[1:3] == ["connection", "import"]:
+                seen["file"] = os.path.basename(argv[-1])
+                with open(argv[-1]) as fh:
+                    seen["text"] = fh.read()
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp}):
+            name = connectmod.up(conf, "home", runner=runner)
+        self.assertEqual((name, seen["file"]), ("kiwi-home", "kiwi-home.conf"))        # the file's name names the connection
+        self.assertIn("AllowedIPs = 10.9.0.0/16", seen["text"])
+        self.assertEqual(calls[0], ["connection", "delete", "kiwi-home"])               # an older one of this network goes
+        self.assertEqual(calls[2], ["connection", "modify", "kiwi-home", "ipv4.dns-search", "~home", "ipv4.never-default", "yes",
+                                    "ipv6.method", "disabled", "connection.autoconnect", "yes"])
+        self.assertEqual(calls[3], ["connection", "up", "kiwi-home"])
+        self.assertEqual([n for n in os.listdir(self.tmp) if n.startswith("kiwi-connect-")], [])   # no copy of the key is left
+        self.assertEqual(connectmod.connection_name("my-long-network-name.example"), "kiwi-mylongnetw")   # 15 at most
+
+    def test_a_refusal_of_networkmanager_is_said(self):
+        from kiwiserver import connect as connectmod
+        conf = os.path.join(self.tmp, "desk.conf")
+        write(conf, "[Interface]\n")
+
+        def runner(argv, **kw):
+            bad = argv[1:3] == ["connection", "import"]
+            return types.SimpleNamespace(returncode=1 if bad else 0, stdout="", stderr="Error: failed to import: no key\n" if bad else "")
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp}), self.assertRaises(KiwiError) as e:
+            connectmod.up(conf, "home", runner=runner)
+        self.assertIn("failed to import", str(e.exception))
+
+    def test_the_browsers_of_this_user_are_found_and_told(self):
+        from kiwiserver import connect as connectmod
+        home = os.path.join(self.tmp, "home")
+        for d in (".pki/nssdb", ".mozilla/firefox/abc.default", ".var/app/org.mozilla.firefox/.mozilla/firefox/xyz.default-release"):
+            write(os.path.join(home, d, "cert9.db"), "")
+        write(os.path.join(home, ".mozilla/firefox/profiles.ini"), "")                  # not a profile: no store in it
+        stores = connectmod.browser_stores(home)
+        self.assertEqual(len(stores), 3)
+        ran = []
+
+        class Tc:
+            def how(self, tool):
+                return "container", ""
+
+            def run(self, argv, mounts=(), **kw):
+                ran.append((argv, list(mounts), kw))
+                return types.SimpleNamespace(returncode=0)
+        ca = os.path.join(self.tmp, "ca", "kiwiCA.pem")
+        write(ca, "-----BEGIN CERTIFICATE-----\n")
+        write(os.path.join(self.tmp, "ca", "kiwiCA.key"), "the key")
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp}):
+            took, why = connectmod.trust(ca, "home", Tc(), home)
+        self.assertEqual((sorted(took), why), (sorted(stores), ""))
+        argv, mounts, kw = ran[0]
+        self.assertEqual(argv[:7], ["certutil", "-d", "sql:" + stores[0], "-A", "-t", "C,,", "-n"])
+        self.assertEqual(kw.get("relabel"), False)                       # a browser's folder is not ours to relabel
+        self.assertNotIn(os.path.join(self.tmp, "ca"), mounts)           # the certificate goes in alone, never its key's folder
+
+        class NoTc:
+            def how(self, tool):
+                return None, "certutil is not installed and the toolchain image is missing — run: kiwi-server toolchain build"
+        self.assertEqual(connectmod.trust(ca, "home", NoTc(), home), ([], NoTc().how("certutil")[1]))
+        self.assertEqual(connectmod.trust(ca, "home", Tc(), os.path.join(self.tmp, "nobody")), ([], ""))   # no browser yet
+
+
+class TestAddress(Base):
+    """A machine's fixed address after it was installed (address.py): asked, changed by the
+    machine itself, found at the new place."""
+    def host(self, network):
+        return types.SimpleNamespace(name="lime", cfg={"network": network}, admin={"user": "core"})
+
+    def test_what_the_fleet_file_wants(self):
+        self.assertIsNone(addressmod.wanted(self.host({"dhcp": True})))
+        self.assertIsNone(addressmod.wanted(self.host({"dhcp": False})))
+        self.assertEqual(addressmod.wanted(self.host({"dhcp": False, "address": "192.168.1.30", "gateway": "192.168.1.1",
+                                                      "dns": ["9.9.9.9"]})), ("192.168.1.30/24", "192.168.1.1", ["9.9.9.9"]))
+
+    def settle(self, has, answers_new=True, can=True):
+        ran, said = [], []
+
+        def run(tgt, script, **kw):
+            ran.append((tgt, script))
+            if script.startswith("ip -o"):
+                return has.encode()
+            if script == "/usr/local/bin/kiwi-stack address" and not can:
+                raise KiwiError("core@192.168.1.112: kiwi-stack: the network here is not run by systemd-networkd: "
+                                "this machine's address is set where it was installed")
+            if script.startswith("journalctl"):
+                return b"kiwi-stack: 192.168.1.30 is in use by another device: nothing changed\n"
+            return b""
+        h = self.host({"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1", "dns": ["9.9.9.9"]})
+        known = os.path.join(self.tmp, "known_hosts")
+        write(known, "192.168.1.112 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJtmZ2FrZWZha2VmYWtlZmFrZWZha2VmYWtlZmFrZWZha2Vm\n")
+        remote.configure(known)
+        self.addCleanup(remote.configure, "")
+        with mock.patch.object(remote, "run", run), mock.patch.object(remote, "_answers", lambda a, p=22: answers_new), \
+                mock.patch.object(remote, "run_ok", lambda t: True):
+            got = addressmod.settle(h, "core@192.168.1.112", say=said.append, warn=said.append, wait=0.2, sleep=lambda s: time.sleep(0.05))
+        return got, ran, " ".join(said), known
+
+    def test_it_already_has_the_address(self):
+        got, ran, said, _k = self.settle("192.168.1.30/24\n")
+        self.assertEqual((got, len(ran), said), ("core@192.168.1.112", 1, ""))
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen")
+    def test_a_board_on_the_routers_address_takes_the_fixed_one(self):
+        got, ran, said, known = self.settle("192.168.1.112/24\n")
+        self.assertEqual(got, "core@192.168.1.30")
+        self.assertIn("systemd-run --collect --quiet --unit=kiwi-address /usr/local/bin/kiwi-stack address "
+                      "192.168.1.30/24 192.168.1.1 9.9.9.9", ran[-1][1])
+        self.assertIn("it answers at 192.168.1.30 now", said)
+        with open(known) as fh:          # the same machine, the same key: on record for the new address
+            self.assertIn("192.168.1.30 ssh-ed25519 AAAAC3", fh.read())
+
+    def test_a_machine_that_cannot_change_it_says_so(self):
+        got, ran, said, _k = self.settle("192.168.1.112/24\n", can=False)
+        self.assertEqual(got, "core@192.168.1.112")
+        self.assertIn("lime has 192.168.1.112/24 and the fleet file says 192.168.1.30/24", said)
+        self.assertIn("set where it was installed", said)
+        self.assertFalse(any("systemd-run" in s for _t, s in ran))
+
+    def test_an_address_that_does_not_work_is_reported_with_the_machines_reason(self):
+        got, ran, said, _k = self.settle("192.168.1.112/24\n", answers_new=False)
+        self.assertEqual(got, "core@192.168.1.112")
+        self.assertIn("lime did not take 192.168.1.30/24: 192.168.1.30 is in use by another device", said)
 
 
 class TestCli(Base):

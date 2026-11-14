@@ -13,7 +13,7 @@ import subprocess
 from . import util
 from .util import KiwiError
 
-TOOLS = ("butane", "coreos-installer", "xorriso", "cpio", "gzip", "curl", "xz", "sfdisk", "debugfs", "e2fsck")
+TOOLS = ("butane", "coreos-installer", "xorriso", "cpio", "gzip", "curl", "xz", "sfdisk", "debugfs", "e2fsck", "certutil")
 IMAGE = "localhost/kiwi-server-toolchain"
 
 
@@ -67,7 +67,7 @@ class Toolchain:
         return {t: self.how(t) for t in TOOLS}
 
     # ---- execution -----------------------------------------------------------------
-    def argv_for(self, argv, mounts=(), cwd=None):
+    def argv_for(self, argv, mounts=(), cwd=None, relabel=True):
         how, why = self.how(argv[0])
         if how is None:
             raise KiwiError(why)
@@ -75,6 +75,8 @@ class Toolchain:
             return list(argv)
         rt = self.runtime()
         cmd = [rt, "run", "--rm", "--pull=never"]
+        if not relabel:         # a folder that is not ours to relabel (a browser's certificate store)
+            cmd += ["--security-opt", "label=disable"]
         if rt == "docker":
             cmd += ["--user", "%d:%d" % (os.getuid(), os.getgid())]
         seen = set()
@@ -84,14 +86,14 @@ class Toolchain:
                 continue
             seen.add(m)
             os.makedirs(m, exist_ok=True)
-            cmd += ["-v", "%s:%s:z" % (m, m)]
+            cmd += ["-v", "%s:%s%s" % (m, m, ":z" if relabel else "")]
         if cwd:
             cmd += ["-w", os.path.abspath(cwd)]
         cmd.append(self.image)
         return cmd + list(argv)
 
-    def run(self, argv, mounts=(), cwd=None, capture=False, check=True, stdin=None):
-        cmd = self.argv_for(argv, mounts, cwd)
+    def run(self, argv, mounts=(), cwd=None, capture=False, check=True, stdin=None, relabel=True):
+        cmd = self.argv_for(argv, mounts, cwd, relabel)
         if self.verbose:
             util.log("$ " + " ".join(util.quote(c) for c in cmd))
         r = subprocess.run(cmd, cwd=cwd, input=stdin,

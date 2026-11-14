@@ -2247,7 +2247,7 @@ class Window(Adw.ApplicationWindow):
                          ("remove-host", self.remove_host_dialog),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
-                         ("rotate", self.rotate_dialog)):
+                         ("rotate", self.rotate_dialog), ("connect", self.connect_dialog)):
             act = Gio.SimpleAction(name=name)
             act.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(act)
@@ -2266,6 +2266,7 @@ class Window(Adw.ApplicationWindow):
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
+        section.append("Connect this computer…", "win.connect")
         section.append("Add a phone or laptop…", "win.device")
         section.append("Back up the network now", "win.backup-now")
         section.append("Save a copy of the network…", "win.copy")
@@ -2508,6 +2509,28 @@ class Window(Adw.ApplicationWindow):
             dlg.connect("response", lambda _d, r: CopyDialog(self).present(self) if r == "copy"
                         else FolderDialog(self).present(self) if r == "folder" else None)
         dlg.add_response("close", "Close")
+        dlg.present(self)
+
+    def connect_dialog(self):
+        """This computer on the network (`kiwi-server connect`): the same as a phone gets with
+        its QR code, set up by itself where NetworkManager runs."""
+        if not self.doc.path:
+            return
+        dlg = Adw.AlertDialog(
+            heading="Connect this computer",
+            body="This computer gets its own place on your network's VPN. The connection carries only your "
+                 "network: its machines and services open by name, and everything else on this computer stays "
+                 "as it is. Your browsers learn to trust the network's certificates.\n\n"
+                 "To undo it later: kiwi-server connect <fleet> --remove.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("go", "Connect")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_close_response("cancel")
+
+        def resp(_d, r):
+            if r == "go":
+                self.spawn(["connect", self.doc.path], "Connecting this computer…")
+        dlg.connect("response", resp)
         dlg.present(self)
 
     def rotate_dialog(self):

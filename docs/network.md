@@ -58,6 +58,39 @@ reliably in the mesh. A host timer refreshes them every 6 hours from the
 [mullvad-socks5](https://github.com/derlocke-ng/mullvad-socks5) list, which
 also has FoxyProxy imports that use these names.
 
+## This computer on the network
+
+```bash
+kiwi-server connect ~/kiwi/fleet.yaml
+```
+
+puts the computer you sit at on your network's VPN. It gets a place of its own (a
+device named after the computer), and where NetworkManager runs, a connection called
+`kiwi-<name ending>` that:
+
+- carries only your network: its machines and services, nothing else;
+- asks your network's DNS only for names with your ending (`.home`), so the computer's
+  other names and its Internet stay as they are;
+- comes up by itself after a restart.
+
+Your browsers learn to trust the network's certificates (Chromium and its kin, each
+Firefox profile, Flatpak browsers), without an administrator. For every other program
+the command prints one line to run with `sudo`. The app has the same under
+"Connect this computer…". `kiwi-server connect <fleet> --remove` undoes it.
+
+Run it on the computer itself, in its own desktop session: over SSH NetworkManager
+refuses to add a connection.
+
+## A machine's address at home
+
+A machine installed from install media gets its fixed address from the installer. A
+board (Armbian) starts from an image and asks the router. `network.address` in the
+fleet file, or "Its address at home" in the settings, reaches such a machine with the
+next apply: the machine changes its own address, checks that the router is there and
+that nobody else has the address, and takes back what it had when that fails. Where
+the address cannot be changed after the install (CoreOS, uCore, Debian), the apply
+says what the machine has and what the fleet file wants.
+
 ## Phones and laptops: 1280
 
 A phone or laptop is in a different network every day: mobile data, a hotel, another

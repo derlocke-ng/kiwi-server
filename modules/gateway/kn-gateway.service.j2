@@ -11,10 +11,14 @@ After=kiwi-stack.service network-online.target
 Wants=kiwi-stack.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh start
-ExecStop=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh stop
+# sets the routing up, then watches it: a network manager may drop the rule and the routes
+ExecStartPre=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh start
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh watch
+ExecStopPost=/usr/bin/bash {{ docker_dir }}/kiwi/gw.sh stop
+Restart=on-failure
+RestartSec=10
+# the start waits for the VPN client, which may take minutes after a boot
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target

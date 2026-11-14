@@ -42,6 +42,36 @@ kiwi-server control push ~/kiwi/fleet.yaml            # the fleet, encrypted, to
 Then, from a device on the VPN: `https://control.papaya.<domain>`. The first
 login opens the fleet.
 
+## Start a network from the page
+
+A machine with nothing on it yet can ask the questions itself, the same ones as
+`kiwi-server init` and the app. On any Linux machine at home with podman:
+
+```bash
+mkdir -p ~/kiwi-control
+```
+
+```bash
+podman run -d --name kn-control --network host -v ~/kiwi-control:/fleet:Z --tmpfs /run/kiwi:size=2g,mode=0700 -e XDG_RUNTIME_DIR=/run/kiwi ghcr.io/derlocke-ng/kiwi-server-control:2 serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait
+```
+
+```bash
+podman logs kn-control
+```
+
+The last command shows a setup code. Open `http://<the machine's address>:8740` from a
+computer in the same home network, answer the questions, type the code and choose a
+password for the page. The page then shows the recovery key once: write it down.
+
+- The code proves that the person at the page is the one who started it. Five wrong
+  tries from one address and the page waits ten minutes.
+- The new network is made in memory. On the disk are only the encrypted files
+  (`fleet.yaml.age`, `secrets.age`); after a restart the password opens them.
+- Until the machine has its role, the page is plain HTTP in your home network: do the
+  first run at home, not over a network you do not own.
+- A control node that waits for `kiwi-server control push` shows the same page; a push
+  from the computer the network was made on takes its place.
+
 ## Secrets
 
 Nothing rests on the node in the clear. Its disk holds `secrets.age` and

@@ -38,7 +38,10 @@ path restarts the control container last and must survive its own restart
 (the role script runs outside the container).
 
 The first machine is bootstrapped without a controller: by the desktop CLI
-or GTK app, or later by the generic ISO's first-run page.
+or GTK app, or by the first-run page. Since 2.81.0 `serve --wait` on a machine
+with no store and no fleet file shows the questionnaire of `init` (docs/control.md,
+Start a network from the page), guarded by a setup code that `serve` prints; the
+generic ISO will show the same page at its first boot.
 
 The node that runs the controller is *the control node* below. The rented
 master is replaceable relay infrastructure: it holds what it needs to run

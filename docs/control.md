@@ -12,7 +12,7 @@ that booted. The page:
 | **Home** | how the network is, in one line; what wants a look and what that means; every machine; a tile per service |
 | **A machine** | what it is, what runs on it; Check now, Preview, Apply, each with what it does |
 | **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
-| **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; save the network itself |
+| **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 
@@ -99,6 +99,38 @@ module's default (`ram_mb: 2048`).
 ### The password is forgotten
 
 "I forgot the password" on the login page takes the recovery key and a new password.
+
+### Bring a network back from a copy
+
+The same first page has a second way in, for a network that exists already and whose
+computer or control node is gone: **I already have a network: bring it back from a
+copy**, above the questions. It asks for five things:
+
+| Field | What to give |
+|---|---|
+| The copy | a file named `fleet-….tar`: from "Fetch a copy" on the Backups page, from `kiwi-server backup --local`, or from one of your machines (`/var/lib/kiwi-server/backups`) |
+| Recovery key | the one shown when the network was made; it starts with `AGE-SECRET-KEY-` |
+| Setup code | from `podman logs kn-control`, as for a new network |
+| A new password, twice | 12 characters at least |
+
+The page then opens on Home, logged in, with the machines of the network.
+
+- The copy is opened in memory. On the disk are only the encrypted files, as after a
+  first run.
+- The password of the page you had before stops working. So does the key of a
+  computer's keyring that the store listed as `desktop`: a node has no keyring.
+- A recovery key that does not open the copy, or a wrong setup code, brings nothing
+  back. Five wrong tries from one address and the page waits ten minutes.
+- A copy larger than 64 MB is refused.
+- A copy of the older kind, `fleet-….tar.enc` with a passphrase, is not taken here.
+  `kiwi-server restore` on a computer opens it.
+- Files that `backup.extra` added to the copy are left out, because a control node
+  keeps the store and the fleet file only. Activity says how many.
+
+**A copy is not signed.** Someone who can replace the file where it is kept can put
+another network in its place, and your recovery key would still open it. Look at the
+machines' names on Home after a restore: they should be yours. [Backups](backups.md#what-a-copy-holds)
+says what a copy holds.
 
 ## Secrets
 

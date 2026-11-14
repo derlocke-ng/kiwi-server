@@ -5469,6 +5469,84 @@ class TestControl(StoreBase):
         self.assertEqual(c.reload_if_pushed(), "locked")
         self.assertTrue(c.locked())
 
+    def test_a_copy_comes_back_on_a_node_with_a_new_password_and_no_keyring_way(self):
+        recovery = self.init()                      # a network made on a computer: desktop, recovery
+        write(os.path.join(self.tmp, "federation.yaml"), "# no partners yet\n{}\n")
+        write(os.path.join(self.tmp, "notes", "router.txt"), "192.168.1.1\n")
+        f = self.fleet({"defaults": self.base_defaults(backup={"extra": ["notes"]}), "hosts": {"a": {}}})
+        self.control().set_password(self.PW)        # and the page of a node that is gone: control
+        copy = backup.create_copy(f)
+        with open(f.path, "rb") as fh:
+            fleet_file = fh.read()
+        store.Store.for_fleet(f.path).lock()
+        folder = os.path.join(self.tmp, "node")
+        fake = [sys.executable, "-c", "print('ran')"]
+        c = controlmod.Control(os.path.join(folder, "fleet.yaml"), kiwi_cmd=fake, run_dir=os.path.join(self.tmp, "ram2"))
+        new = "the new node's password"
+
+        def nothing_there():
+            self.assertTrue(c.fresh())
+            self.assertEqual([n for n in os.listdir(folder) if n != "control"], [])
+            self.assertFalse(os.path.exists(c.salt_file))
+            self.assertFalse(os.path.exists(os.path.join(c.run, "restore-run")))
+            self.assertEqual([d for d in os.listdir(self.run_dir) if d.startswith("kiwi-")], [])    # nothing open in memory
+        for why, args in (("not the setup code", ("0000-0000", new, copy, recovery)),
+                          ("12 characters", (c.setup_code(), "short", copy, recovery)),
+                          ("starts with AGE-SECRET-KEY-", (c.setup_code(), new, copy, "hello")),
+                          ("does not open this copy", (c.setup_code(), new, copy, store.keygen()[0])),
+                          ("not a copy of a network", (c.setup_code(), new, b"hello", recovery)),
+                          ("not a copy of a network", (c.setup_code(), new, b"", recovery)),
+                          ("kiwi-server restore", (c.setup_code(), new, backup.encrypt(b"x", "pw"), recovery))):
+            with self.assertRaisesRegex(KiwiError, why):
+                c.restore_run(*args, address=why)
+            nothing_there()
+        self.assertTrue(c.restore_run(c.setup_code(), new, copy, recovery, address="192.168.1.9"))
+        self.assertFalse(c.fresh())
+        self.assertEqual(sorted(n for n in os.listdir(folder) if not os.path.islink(os.path.join(folder, n))),
+                         ["control", "federation.yaml.age", "fleet.yaml.age", "secrets.age", "secrets.recipients"])
+        self.assertEqual(sorted(os.listdir(c.dir)), ["audit.jsonl", "salt"])
+        # the keyring's way and the old page's password are gone from the store; the recovery key stays
+        self.assertEqual([n for n, _k in c.store.ways()], ["recovery", "control"])
+        with open(os.path.join(folder, "fleet.yaml"), "rb") as fh:
+            self.assertEqual(fh.read(), fleet_file)
+        with open(os.path.join(folder, "secrets", "deep", "key")) as fh:
+            self.assertEqual(fh.read(), "private")
+        said = json.dumps(c.audit_tail(20))
+        self.assertIn("brought back from a copy", said)
+        self.assertIn("1 of its files have no place on a control node", said)       # notes/router.txt
+        self.assertIn("the recovery key does not open it", said)
+        for secret in (recovery, new, "short", "hello"):
+            self.assertNotIn(secret, said)
+        with self.assertRaisesRegex(KiwiError, "has a network already"):
+            c.restore_run(c.setup_code(), new, copy, recovery)
+        c.lock_store()
+        self.assertIsNone(c.login(self.PW, "1.1.1.1"))
+        self.assertTrue(c.login(new, "1.1.1.2"))
+        # the copy this node gives is the same network again
+        name, again = c.network_copy()
+        self.assertRegex(name, r"^fleet-fleet-\d{8}T\d{6}Z\.tar$")
+        fleet_name, plain, _kept = backup.open_copy(again, recovery)
+        self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["federation.yaml", "fleet.yaml"]))
+        self.assertEqual(plain["fleet.yaml"], fleet_file)
+        c.lock_store()
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            c.network_copy()
+
+    def test_the_networks_copy_goes_where_the_fleet_says_or_to_every_machine_set_up(self):
+        self.init()
+        c = self.control()
+        c.set_password(self.PW)
+        self.assertTrue(c.login(self.PW))
+        fleet = self.f.path
+        util.write_text(os.path.join(c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": "sorbet", "phase": "applied"}, {"name": "papaya", "phase": "install"}, {"name": "lychee", "phase": "applied"}]}))
+        self.assertEqual(c.argv("backup")[-4:], ["backup", fleet, "sorbet", "lychee"])
+        util.write_text(os.path.join(c.run, "fleet.json"), json.dumps({"hosts": [{"name": "papaya", "phase": "install"}]}))
+        with self.assertRaisesRegex(KiwiError, "no machine is set up yet"):
+            c.argv("backup")
+        self.fleet({"defaults": self.base_defaults(backup={"hosts": ["a"]}), "hosts": {"a": {}}})
+        self.assertEqual(c.argv("backup")[-2:], ["backup", fleet])      # backup.hosts: the command knows where
+
 
 @unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
 class TestControlSync(StoreBase):
@@ -6422,6 +6500,276 @@ class TestMerge(unittest.TestCase):
         self.assertEqual((merged, both), ({"fleet.yaml": "same"}, []))             # the same change on both sides
 
 
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestNetworkCopy(StoreBase):
+    """The copy of a fleet with a store: the store plus the fleet file, opened by the recovery key."""
+    def setUp(self):
+        super().setUp()
+        write(os.path.join(self.tmp, "notes", "router.txt"), "the router's page: 192.168.1.1\n")
+        write(os.path.join(self.tmp, "federation.yaml"), "# no partners yet\n{}\n")
+        self.f = self.fleet({"defaults": self.base_defaults(backup={"extra": ["notes"]}), "hosts": {"a": {}}})
+        self.out = os.path.join(self.tmp, "stick")
+        os.makedirs(self.out)
+
+    def copy(self):
+        """A copy made through the CLI: (its path, its bytes)."""
+        before = set(os.listdir(self.out))
+        rc, out, err = self.run_cli("backup", self.f.path, "--local", self.out)
+        self.assertEqual(rc, 0, err)
+        name = (set(os.listdir(self.out)) - before).pop()
+        with open(os.path.join(self.out, name), "rb") as fh:
+            return os.path.join(self.out, name), fh.read()
+
+    def another_computer(self):
+        """The first one is gone: nothing of the store in memory, an empty keyring."""
+        self.assertEqual(self.run_cli("secrets", "lock", self.f.path)[0], 0)
+        kr = os.path.join(self.tmp, "keyring-new")
+        os.makedirs(kr, exist_ok=True)
+        os.environ["FAKE_KEYRING"] = kr
+        return kr
+
+    def keyfile(self, key):
+        path = os.path.join(self.tmp, "recovery.key")
+        write(path, "# the recovery key\n%s\n" % key)
+        return path
+
+    def test_the_copy_is_the_store_and_the_fleet_file_for_the_stores_keys(self):
+        self.init()
+        write(os.path.join(self.secrets, "later"), "made after the store was opened")     # in memory only so far
+        path, data = self.copy()
+        self.assertRegex(os.path.basename(path), r"^fleet-fleet-\d{8}T\d{6}Z\.tar$")
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+        self.assertEqual(backup.kind(data), "store")
+        with tarfile.open(path) as tar:
+            names = tar.getnames()
+            manifest = json.load(tar.extractfile("MANIFEST.json"))
+            members = {n: tar.extractfile(n).read() for n in names}
+        self.assertEqual(names, ["MANIFEST.json", "secrets.age", "secrets.recipients", "fleet.yaml.age",
+                                 "federation.yaml.age", "notes/router.txt.age"])
+        self.assertEqual((manifest["format"], manifest["kiwi-server"], manifest["fleet"]), (2, VERSION, "fleet.yaml"))
+        self.assertRegex(manifest["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual([f["name"] for f in manifest["files"]], names[1:])
+        for f in manifest["files"]:
+            self.assertEqual(f["sha256"], __import__("hashlib").sha256(members[f["name"]]).hexdigest())
+            self.assertEqual(f["size"], len(members[f["name"]]))
+        for plain in (b"Europe/Berlin", b"192.168.1.1", b"private", b"made after", b"AGE-SECRET-KEY"):
+            self.assertNotIn(plain, data)                               # nothing in it is readable
+        with open(os.path.join(self.tmp, "secrets.age"), "rb") as fh:
+            self.assertEqual(members["secrets.age"], fh.read())         # the store as it rests, saved first
+        # no passphrase is asked for, and one that is given is not needed
+        pf = os.path.join(self.tmp, "pass")
+        write(pf, "correct horse\n")
+        rc, out, err = self.run_cli("backup", self.f.path, "--local", self.out, "--passphrase-file", pf)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("the passphrase is not used", out)
+        self.assertEqual([n for n in os.listdir(self.out) if n.endswith(".enc")], [])
+
+    def test_the_recovery_key_brings_it_back_on_another_computer(self):
+        recovery = self.init()
+        write(os.path.join(self.secrets, "later"), "made after the store was opened")
+        path, _data = self.copy()
+        with open(self.f.path, "rb") as fh:
+            fleet_file = fh.read()
+        kr = self.another_computer()
+        into = os.path.join(self.tmp, "back")
+        # another network's key: said in plain words, nothing written
+        rc, out, err = self.run_cli("restore", path, "--into", into, "--recovery-file", self.keyfile(store.keygen()[0]))
+        self.assertEqual(rc, 1)
+        self.assertIn("that key does not open this copy", err)
+        self.assertFalse(os.path.exists(into))
+        self.assertEqual(os.listdir(kr), [])
+        rc, out, err = self.run_cli("restore", path, "--into", into, "--recovery-file", self.keyfile("not a key at all"))
+        self.assertEqual(rc, 1)
+        self.assertIn("holds no recovery key", err)
+        self.assertFalse(os.path.exists(into))
+        # the right one, as a person types it
+        with mock.patch.dict(os.environ, {"KIWI_RECOVERY_KEY": " %s \n" % recovery.lower()}):
+            rc, out, err = self.run_cli("restore", path, "--into", into)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(recovery, out + err)
+        self.assertEqual(len([ln for ln in out.splitlines() if ln.startswith((":: next: ", ":: then: "))]), 2)
+        with open(os.path.join(into, "fleet.yaml"), "rb") as fh:
+            self.assertEqual(fh.read(), fleet_file)
+        with open(os.path.join(into, "notes", "router.txt")) as fh:
+            self.assertEqual(fh.read(), "the router's page: 192.168.1.1\n")
+        for name in ("fleet.yaml", "federation.yaml", "notes/router.txt", "secrets.age"):
+            self.assertEqual(oct(os.stat(os.path.join(into, name)).st_mode & 0o777), "0o600", name)
+        self.assertEqual(oct(os.stat(into).st_mode & 0o777), "0o700")
+        st = store.Store(into)
+        self.assertTrue(st.is_open())                                   # left open, in memory
+        self.assertTrue(os.path.islink(os.path.join(into, "secrets")))
+        for name, text in (("deep/key", "private"), ("later", "made after the store was opened"), ("seed", "S" * 32)):
+            with open(os.path.join(into, "secrets", name)) as fh:
+                self.assertEqual(fh.read(), text)
+        # this computer has a key of its own now, in its keyring: no recovery key the next time
+        self.assertEqual(len(st.ways()), 3)
+        self.assertEqual([n for n, _k in st.ways()][:2], ["desktop", "recovery"])
+        self.assertEqual(self.run_cli("secrets", "lock", os.path.join(into, "fleet.yaml"))[0], 0)
+        rc, out, err = self.run_cli("secrets", "unlock", os.path.join(into, "fleet.yaml"))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.run_cli("validate", os.path.join(into, "fleet.yaml"))[0], 0)
+        # a folder that holds a network is not written over
+        self.assertEqual(self.run_cli("secrets", "lock", os.path.join(into, "fleet.yaml"))[0], 0)
+        rc, out, err = self.run_cli("restore", path, "--into", into, "--recovery-file", self.keyfile(recovery))
+        self.assertEqual(rc, 1)
+        self.assertIn("holds a network already", err)
+
+    def test_without_a_keyring_the_recovery_key_stays_the_way_in(self):
+        recovery = self.init()
+        path, _data = self.copy()
+        kr = self.another_computer()
+        write(os.path.join(kr, "broken"), "")
+        into = os.path.join(self.tmp, "back")
+        rc, out, err = self.run_cli("restore", path, "--into", into, "--recovery-file", self.keyfile(recovery))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("unlocking will ask for the recovery key", err)
+        self.assertTrue(store.Store(into).is_open())
+        self.assertEqual([n for n, _k in store.Store(into).ways()], ["desktop", "recovery"])
+        # the app's dialog has one box, which reaches the command as a passphrase file: the key in it is taken
+        store.Store(into).lock()
+        again = os.path.join(self.tmp, "again")
+        rc, out, err = self.run_cli("restore", path, "--into", again, "--passphrase-file", self.keyfile(recovery))
+        self.assertEqual(rc, 0, err)
+        pf = os.path.join(self.tmp, "pass")
+        write(pf, "correct horse\n")
+        rc, out, err = self.run_cli("restore", path, "--into", os.path.join(self.tmp, "third"), "--passphrase-file", pf)
+        self.assertEqual(rc, 1)
+        self.assertIn("recovery key (AGE-SECRET-KEY-…), not with a passphrase", err)
+
+    def test_a_copy_that_was_changed_or_made_up_is_refused(self):
+        recovery = self.init()
+        _path, data = self.copy()
+        manifest, files = backup.read_copy(data)
+        into = os.path.join(self.tmp, "back")
+
+        def refused(why, changed, fleet_name="fleet.yaml"):
+            with self.assertRaisesRegex(KiwiError, why):
+                backup.restore_copy(backup.pack(fleet_name, changed), recovery, into)
+            self.assertFalse(os.path.exists(into))
+        # a damaged file: the list knows its sha256
+        cut = bytearray(data)
+        at = data.index(files["fleet.yaml.age"][:40]) + 60
+        cut[at] ^= 1
+        with self.assertRaisesRegex(KiwiError, "damaged: fleet.yaml.age"):
+            backup.restore_copy(bytes(cut), recovery, into)
+        with self.assertRaisesRegex(KiwiError, "not a copy of a network"):
+            backup.restore_copy(data[:3000], recovery, into)
+        self.assertFalse(os.path.exists(into))
+        # names that would leave the folder, or land on the store
+        refused("not allowed", dict(files, **{"../x.age": files["fleet.yaml.age"]}))
+        refused("not allowed", dict(files, **{"/etc/x.age": files["fleet.yaml.age"]}))
+        refused("not allowed", dict(files, **{"secrets/seed.age": files["fleet.yaml.age"]}))
+        refused("not allowed", dict(files, **{"secrets.age.age": files["fleet.yaml.age"]}))
+        refused("not allowed", dict(files, **{"plain.txt": b"not encrypted"}))
+        refused("missing", files, fleet_name="other.yaml")
+        refused("missing", {k: v for k, v in files.items() if k != "secrets.age"})
+        # the store's id names a directory in memory: only what a store writes
+        for bad in (b"# store: ../../x\n" + files["secrets.recipients"], b"rm -rf /\n" + files["secrets.recipients"],
+                    b"# nobody\n"):
+            refused("list of keys", dict(files, **{"secrets.recipients": bad}))
+        # a file the store's key does not open (encrypted for somebody else)
+        other = os.path.join(self.tmp, "other.recipients")
+        write(other, store.keygen()[1] + "\n")
+        refused("opens its store but not notes/router.txt.age",
+                dict(files, **{"notes/router.txt.age": store.encrypt_bytes(other, b"x")}))
+        with tarfile.open(os.path.join(self.tmp, "x.tar"), "w") as tar:
+            tar.add(self.f.path, arcname="fleet.yaml")
+        with open(os.path.join(self.tmp, "x.tar"), "rb") as fh:
+            self.assertIsNone(backup.kind(fh.read()))                   # a tar, but not a copy
+        self.assertIsNone(backup.kind(b"hello"))
+        rc, out, err = self.run_cli("restore", os.path.join(self.tmp, "x.tar"), "--into", into)
+        self.assertEqual(rc, 1)
+        self.assertIn("not a copy of a network", err)
+
+    def test_a_store_cannot_write_outside_itself_through_a_link(self):
+        # whoever can replace a copy can encrypt a store of their own making for the same public keys
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            link = tarfile.TarInfo("ca")
+            link.type, link.linkname = tarfile.SYMTYPE, os.path.join(self.tmp, "elsewhere")
+            tar.addfile(link)
+            inside = tarfile.TarInfo("ca/planted")
+            inside.size = 1
+            tar.addfile(inside, io.BytesIO(b"x"))
+        os.makedirs(os.path.join(self.tmp, "elsewhere"))
+        with self.assertRaisesRegex(KiwiError, "through a link"):
+            store.extract(buf.getvalue(), os.path.join(self.tmp, "tree"))
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "elsewhere")), [])
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            link = tarfile.TarInfo("seed")
+            link.type, link.linkname = tarfile.SYMTYPE, os.path.join(self.tmp, "elsewhere", "file")
+            tar.addfile(link)
+            over = tarfile.TarInfo("seed")
+            over.size = 1
+            tar.addfile(over, io.BytesIO(b"x"))
+        with self.assertRaisesRegex(KiwiError, "through a link"):
+            store.extract(buf.getvalue(), os.path.join(self.tmp, "tree2"))
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "elsewhere")), [])
+
+    def test_a_fleet_without_a_store_keeps_the_passphrase(self):
+        pf = os.path.join(self.tmp, "pass")
+        write(pf, "correct horse\n")
+        rc, out, err = self.run_cli("backup", self.f.path, "--local", self.out, "--passphrase-file", pf)
+        self.assertEqual(rc, 0, err)
+        name = os.listdir(self.out)[0]
+        self.assertRegex(name, r"^fleet-fleet-\d{8}T\d{6}Z\.tar\.enc$")
+        with open(os.path.join(self.out, name), "rb") as fh:
+            self.assertEqual(backup.kind(fh.read()), "passphrase")
+        into = os.path.join(self.tmp, "back")
+        # the older kind opens with its passphrase as before; a recovery key is not asked for
+        rc, out, err = self.run_cli("restore", os.path.join(self.out, name), "--into", into, "--passphrase-file", pf,
+                                    "--recovery-file", self.keyfile(store.keygen()[0]))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("a passphrase opens it", out)
+        with open(os.path.join(into, "secrets", "deep", "key")) as fh:
+            self.assertEqual(fh.read(), "private")
+        self.assertFalse(os.path.exists(os.path.join(into, "secrets.age")))
+        write(pf, "another horse\n")
+        rc, out, err = self.run_cli("restore", os.path.join(self.out, name), "--into", os.path.join(self.tmp, "b2"),
+                                    "--passphrase-file", pf)
+        self.assertEqual(rc, 1)
+        self.assertIn("passphrase does not open", err)
+
+    def test_the_machines_keep_list_and_prune_both_kinds(self):
+        d = os.path.join(self.tmp, "on-the-node")
+        for i, name in enumerate(("fleet-x-1.tar.enc", "fleet-x-2.tar", "fleet-x-3.tar.enc", "notes.txt")):
+            write(os.path.join(d, name), "old %d" % i)
+            os.utime(os.path.join(d, name), (1000 + i, 1000 + i))
+
+        def node(argv, input=None, capture_output=True):       # the script as the node runs it, without ssh and sudo
+            self.assertTrue(argv[-1].startswith("sudo sh -c "))
+            return subprocess.run(shlex.split(argv[-1])[1:], input=input, capture_output=True)
+        with mock.patch.object(backup, "REMOTE_DIR", d):
+            kept = backup.store_remote(b"NEW", "core@x", "fleet-x-4.tar", keep=3, runner=node)
+            self.assertEqual(sorted(kept), ["fleet-x-2.tar", "fleet-x-3.tar.enc", "fleet-x-4.tar", "notes.txt"])
+            self.assertEqual(backup.list_remote("core@x", runner=node), ["fleet-x-4.tar", "fleet-x-3.tar.enc", "fleet-x-2.tar"])
+            self.assertEqual(backup.fetch_remote("core@x", runner=node), ("fleet-x-4.tar", b"NEW"))
+            self.assertEqual(backup.fetch_remote("core@x", "fleet-x-3.tar.enc", runner=node), ("fleet-x-3.tar.enc", b"old 2"))
+            for bad in ("../fleet-x-4.tar", "fleet-x-4.tar.gz", "notes.txt", "x/fleet-1.tar"):
+                with self.assertRaises(KiwiError):
+                    backup.fetch_remote("core@x", bad, runner=node)
+            # a node that keeps one kind only
+            os.remove(os.path.join(d, "fleet-x-3.tar.enc"))
+            self.assertEqual(backup.list_remote("core@x", runner=node), ["fleet-x-4.tar", "fleet-x-2.tar"])
+            kept = backup.store_remote(b"NEWER", "core@x", "fleet-x-5.tar", keep=1, runner=node)
+            self.assertEqual(sorted(kept), ["fleet-x-5.tar", "notes.txt"])
+            os.remove(os.path.join(d, "fleet-x-5.tar"))
+            self.assertEqual(backup.list_remote("core@x", runner=node), [])
+        self.init()
+        self.assertTrue(backup.archive_name(self.f, 0).endswith("Z.tar"))
+
+    def test_a_render_sends_the_copy_without_a_passphrase(self):
+        self.init()
+        f = self.fleet({"defaults": self.base_defaults(backup={"hosts": ["a"]}), "hosts": {"a": {}}})
+        sent = []
+        with mock.patch.object(backup, "store_remote", lambda data, tgt, name, keep=10, **kw: sent.append((name, data)) or []):
+            cli.auto_backup(f)
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0][0].endswith(".tar"))
+        self.assertEqual(backup.kind(sent[0][1]), "store")
+
+
 @unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
 class TestFirstRunPage(StoreBase):
     """A machine with nothing on it: its page asks the questions of `init`, behind a setup code."""
@@ -6843,6 +7191,221 @@ class TestFirstRunPage(StoreBase):
             self.assertFalse(self.c.setup_code_ok("0000-0000", "10.0.0.9"))
         self.assertFalse(self.c.setup_code_ok(self.c.setup_code(), "10.0.0.9"))
         self.assertTrue(self.c.setup_code_ok(self.c.setup_code(), "10.0.0.8"))
+
+    # ---- the network's own copy: fetched from the page, brought back on a new machine ----
+    def fetch(self, path, cookie=""):
+        """A GET that may be a download: (status, headers, bytes)."""
+        import urllib.error
+        import urllib.request
+
+        class Stay(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **kw):
+                return None
+        req = urllib.request.Request(self.url + path, headers={"Cookie": cookie} if cookie else {})
+        try:
+            with urllib.request.build_opener(Stay).open(req) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.headers, e.read()
+
+    def send(self, path, fields, files, cookie=""):
+        """A form with a file in it, as a browser sends one (multipart/form-data):
+        (status, body or Location, the session cookie it set)."""
+        import urllib.error
+        import urllib.request
+
+        class Stay(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **kw):
+                return None
+        mark = "----kiwi" + os.urandom(8).hex()
+        body = b""
+        for name, value in fields.items():
+            body += ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (mark, name, value)).encode()
+        for name, (filename, data) in files.items():
+            body += ('--%s\r\nContent-Disposition: form-data; name="%s"; filename="%s"\r\n'
+                     'Content-Type: application/octet-stream\r\n\r\n' % (mark, name, filename)).encode() + data + b"\r\n"
+        body += ("--%s--\r\n" % mark).encode()
+        headers = {"Content-Type": "multipart/form-data; boundary=" + mark}
+        if cookie:
+            headers["Cookie"] = cookie
+        req = urllib.request.Request(self.url + path, data=body, headers=headers)
+        try:
+            with urllib.request.build_opener(Stay).open(req) as r:
+                return r.status, r.read().decode(), (r.headers.get("set-cookie") or "").split(";")[0]
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.headers.get("location") or e.read().decode(), (e.headers.get("set-cookie") or "").split(";")[0]
+
+    def another_machine(self):
+        """A second machine with nothing on it, and its page: (its Control, its folder, its address)."""
+        import uvicorn
+        from kiwiserver import web
+        folder = os.path.join(self.tmp, "node2")
+        os.makedirs(folder)
+        c = controlmod.Control(os.path.join(folder, "fleet.yaml"), run_dir=os.path.join(self.tmp, "ram2"),
+                               kiwi_cmd=[sys.executable, "-c", "print('ran')"])
+        port = remote.free_port()
+        server = uvicorn.Server(uvicorn.Config(web.make_app(c), host="127.0.0.1", port=port, log_level="error"))
+        t = threading.Thread(target=server.run, daemon=True)
+        t.start()
+        self.addCleanup(lambda: (setattr(server, "should_exit", True), t.join(5)))
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        return c, folder, "http://127.0.0.1:%d" % port
+
+    def disk_of(self, folder):
+        """What a machine's disk holds: every file that is not a link into memory, with its bytes."""
+        found = {}
+        for root, _dirs, files in os.walk(folder):
+            for f in files:
+                path = os.path.join(root, f)
+                if not os.path.islink(path):
+                    with open(path, "rb") as fh:
+                        found[os.path.relpath(path, folder)] = fh.read()
+        return found
+
+    def test_a_copy_is_fetched_and_brings_the_network_back_on_a_new_machine(self):
+        from kiwiserver import web
+        _s, body, cookie = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        recovery = re.search(r"AGE-SECRET-KEY-[A-Z0-9]+", body).group(0)
+        machines = sorted(config.Fleet.load(os.path.join(self.dir, "fleet.yaml")).hosts)
+        self.assertEqual(len(machines), 2)
+        # the copy: only for someone who is logged in, made in memory, nothing of it kept here
+        self.assertEqual(self.ask("/backups/network.tar")[:2], (303, "/login"))
+        self.assertIn("Fetch a copy", self.ask("/backups", cookie=cookie)[1])
+        self.assertIn("A copy and your recovery key are the whole network", self.ask("/backups", cookie=cookie)[1])
+        status, headers, data = self.fetch("/backups/network.tar", cookie)
+        self.assertEqual(status, 200)
+        self.assertRegex(headers["content-disposition"], r'^attachment; filename="fleet-fleet-\d{8}T\d{6}Z\.tar"$')
+        self.assertEqual(backup.kind(data), "store")
+        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+            self.assertEqual(tar.getnames(), ["MANIFEST.json", "secrets.age", "secrets.recipients", "fleet.yaml.age"])
+        self.assertNotIn(b"203.0.113.7", data)
+        self.assertEqual([f for _r, _d, files in os.walk(self.tmp) for f in files if f.endswith(".tar")], [])
+        self.assertIn("fetched a copy of the network", str(self.c.audit_tail(5)))
+        self.c.lock_store()                                 # that machine is lost; from here on, a new one's page
+        c2, folder, self.url = self.another_machine()
+        new = "the new machine's password"
+        form = {"recovery": recovery, "code": c2.setup_code(), "password": new, "again": new}
+        copy = {"copy": ("fleet-fleet.tar", data)}
+        self.assertIn("I already have a network: bring it back from a copy", self.ask("/setup")[1])
+        # what is wrong is said on the page, and nothing is brought back
+        for wrong, files, says in ((dict(form, code="0000-0000"), copy, "That is not the setup code"),
+                                   (dict(form, recovery=store.keygen()[0]), copy, "That recovery key does not open this copy."),
+                                   (dict(form, again="another one, long too"), copy, "The two passwords are not the same."),
+                                   (dict(form, password="short", again="short"), copy, "12 characters at least"),
+                                   (form, {}, "Choose the copy")):
+            status, body, got = self.send("/setup/restore", wrong, files)
+            self.assertEqual(status, 200)
+            self.assertIn(says, body)
+            self.assertIn("<details class=\"card\" open>", body)       # the card is open, with what went wrong
+            self.assertEqual(got, "")
+            self.assertNotIn(recovery, body)
+            self.assertTrue(c2.fresh())
+            self.assertEqual(sorted(n for n in self.disk_of(folder) if n != "control/audit.jsonl"), [])
+        with mock.patch.object(web, "COPY_MAX", 1000):      # a file that cannot be a copy: refused, whatever it holds
+            for files in (copy, {"copy": ("big.iso", b"\0" * 200000)}):
+                status, body, _c = self.send("/setup/restore", form, files)
+                self.assertEqual(status, 413)
+                self.assertIn("too large to be a copy of a network", body)
+        status, body, _c = self.ask("/setup/restore", form)             # a form without a file part
+        self.assertEqual(status, 200)
+        self.assertIn("did not arrive whole", body)
+        self.assertTrue(c2.fresh())
+        self.assertEqual(sorted(n for n in self.disk_of(folder) if n != "control/audit.jsonl"), [])
+        # the copy, the recovery key (as a person types it) and a new password
+        status, where, cookie = self.send("/setup/restore", dict(form, recovery=" %s " % recovery.lower()), copy)
+        self.assertEqual((status, where), (303, "/"))
+        self.assertTrue(cookie.startswith("kiwi_session="))
+        self.assertFalse(c2.fresh())
+        self.assertFalse(c2.locked())
+        # at rest: the encrypted files only, as after a first run
+        rest = self.disk_of(folder)
+        self.assertEqual(sorted(rest), ["control/audit.jsonl", "control/salt", "fleet.yaml.age", "secrets.age", "secrets.recipients"])
+        for name, blob in rest.items():
+            for plain in (b"203.0.113.7", b"AGE-SECRET-KEY", recovery.lower().encode(), new.encode(), self.PW.encode()):
+                self.assertNotIn(plain, blob, name)
+        self.assertTrue(os.path.islink(os.path.join(folder, "fleet.yaml")))
+        self.assertFalse(os.path.exists(os.path.join(c2.run, "restore-run")))
+        self.assertEqual(sorted(config.Fleet.load(os.path.join(folder, "fleet.yaml")).hosts), machines)
+        self.assertEqual([n for n, _k in c2.store.ways()], ["recovery", "control"])
+        self.assertIn("brought back from a copy", str(c2.audit_tail(5)))
+        self.assertEqual(self.ask("/setup")[:2], (303, "/login"))
+        self.assertEqual(self.send("/setup/restore", form, copy)[:2], (303, "/login"))
+        # the password of the page that was lost opens nothing here; the new one does
+        c2.lock_store()
+        self.assertIsNone(c2.login(self.PW, "10.0.0.1"))
+        self.assertTrue(c2.locked())
+        self.assertEqual(self.ask("/login", {"password": new})[:2], (303, "/"))
+        self.assertFalse(c2.locked())
+        # its page is the network's now, and shows the machines to compare
+        c2.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
+                   "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
+        c2.fleet_info(fresh=True)
+        body = self.ask("/", cookie=cookie)[1]
+        for name in machines:
+            self.assertIn(name, body)
+
+    def test_the_setup_code_reaches_a_log_at_once(self):
+        # a container's log is a pipe, not a terminal: what is printed must not wait in a buffer,
+        # or `podman logs` shows no code for the page to ask for
+        import select
+        folder = os.path.join(self.tmp, "node3")
+        os.makedirs(folder)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+        env["PYTHONPATH"] = os.path.join(ROOT, "lib")
+        p = subprocess.Popen([sys.executable, "-m", "kiwiserver", "serve", os.path.join(folder, "fleet.yaml"), "--wait",
+                              "--listen", "127.0.0.1:%d" % remote.free_port()], stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, env=env)
+        try:
+            said = b""
+            while b"serving" not in said and select.select([p.stdout], [], [], 30)[0]:
+                more = os.read(p.stdout.fileno(), 4096)
+                if not more:
+                    break
+                said += more
+            self.assertIsNone(p.poll())                                 # it serves; nothing was flushed by an exit
+            self.assertRegex(said.decode(), r"setup code: [0-9a-f]{4}-[0-9a-f]{4}\n")
+        finally:
+            p.terminate()
+            p.wait(10)
+            p.stdout.close()
+
+    def test_save_it_now_needs_no_passphrase_on_a_network_made_here(self):
+        _s, body, cookie = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        recovery = re.search(r"AGE-SECRET-KEY-[A-Z0-9]+", body).group(0)
+        self.c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
+                       "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
+        self.c.fleet_info(fresh=True)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', self.ask("/", cookie=cookie)[1]).group(1)
+        fleet = os.path.join(self.dir, "fleet.yaml")
+        # no machine is set up yet: said on the Backups page, with the other way to a copy
+        status, body, _c = self.ask("/run", {"action": "backup", "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("Nothing was saved: no machine is set up yet", body)
+        self.assertIn("Fetch a copy", body)
+        # once machines are set up, the copy goes to them, by name
+        info = self.c.fleet_info()
+        names = [h["name"] for h in info["hosts"]]
+        info["hosts"][0]["phase"] = "applied"
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps(info))
+        self.assertEqual(self.c.argv("backup")[-3:], ["backup", fleet, names[0]])
+        # the command itself, on a network whose fleet file is a link into memory: a copy, no passphrase
+        out = os.path.join(self.tmp, "stick")
+        os.makedirs(out)
+        r = subprocess.run(self.c.kiwi + ["backup", fleet, "--local", out], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.dir)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("passphrase", r.stdout + r.stderr)
+        name = os.listdir(out)[0]
+        self.assertTrue(name.endswith(".tar"))
+        with open(os.path.join(out, name), "rb") as fh:
+            fleet_name, plain, _kept = backup.open_copy(fh.read(), recovery)
+        self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
+        self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
 
 
 if __name__ == "__main__":

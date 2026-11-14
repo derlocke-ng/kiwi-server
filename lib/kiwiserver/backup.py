@@ -9,25 +9,35 @@ built, into /var/lib/kiwi-server/backups: after every render or build when
 with `kiwi-server restore` on a fresh machine over plain SSH to a node's LAN
 address, before there is any mesh.
 
-The archive is a gzipped tar encrypted by openssl (AES-256-CBC, PBKDF2 key
-from a passphrase), so nothing but openssl and tar is needed to open one by
-hand:  openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 600000 -in X | tar xz
+Two kinds of archive. A fleet with a secret store (secrets.age) gets a copy
+that its recovery key opens: a plain tar of the store as it is and of the fleet
+file, encrypted with age for the store's keys (see "the copy" below). Nothing
+but tar and age is needed to open one by hand:
+  tar xf X && age -d -i KEYFILE fleet.yaml.age
+
+A fleet without a store keeps the older kind: a gzipped tar encrypted by
+openssl (AES-256-CBC, PBKDF2 key from a passphrase):
+  openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 600000 -in X | tar xz
 """
 import io
 import json
 import os
+import re
 import shutil
 import hashlib
 import shlex
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 
-from . import remote, util
+from . import VERSION, remote, store as storemod, util
 from .util import KiwiError
 
 REMOTE_DIR = "/var/lib/kiwi-server/backups"
+SUFFIX = ".tar"             # a fleet with a store: opened by its recovery key
+OLD_SUFFIX = ".tar.enc"     # a fleet without one: opened by a passphrase
 ENC_ARGS = ["-aes-256-cbc", "-md", "sha256", "-pbkdf2", "-iter", "600000"]
 EXCLUDE_DIRS = {"output", ".work", "__pycache__", ".git"}
 EXCLUDE_SUFFIXES = (".iso", ".tmp", ".part")
@@ -95,7 +105,13 @@ def fleet_files(fleet):
 
 def archive_name(fleet, when=None):
     stem = os.path.splitext(os.path.basename(fleet.path))[0]
-    return "fleet-%s-%s.tar.enc" % (stem, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(when)))
+    return "fleet-%s-%s%s" % (stem, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(when)),
+                              SUFFIX if has_store(fleet) else OLD_SUFFIX)
+
+
+def is_name(name):
+    """Is this what an archive on a node is called (either kind)?"""
+    return "/" not in name and name.startswith("fleet-") and name.endswith((SUFFIX, OLD_SUFFIX))
 
 
 def create(fleet, passphrase):
@@ -129,6 +145,228 @@ def restore(data, passphrase, into):
         for f in files:
             os.chmod(os.path.join(root, f), 0o600)
     return names
+
+
+# ---- the copy of a fleet that has a secret store ---------------------------------------
+#
+# The store is encrypted already (secrets.age, for the keys in secrets.recipients), so the
+# copy is the store as it is, plus the fleet file and what else is a plain file, each
+# encrypted with age for the same keys. What opens the store opens the copy: the recovery
+# key above all, so there is no passphrase to set or to lose.
+#
+#   MANIFEST.json          what kind of copy, when, by which version, every file's sha256
+#   secrets.age            the store, as it rests in the fleet directory
+#   secrets.recipients     the public keys it is encrypted for
+#   <fleet file>.age       the fleet file
+#   federation.yaml.age    when there is one
+#   <path>.age             backup.extra, and a CA directory outside secrets/
+#
+# It is not signed. The list finds a damaged copy, not a forged one: whoever can replace
+# the file where it is kept can hand back another network, encrypted for the same public
+# keys (ROADMAP, problem 21).
+
+MANIFEST = "MANIFEST.json"
+FORMAT = 2                  # (1: the passphrase kind, which has no list)
+_KEY = re.compile(r"age1[0-9a-z]{20,200}")
+_STORE_ID = re.compile(r"# store: [0-9a-f]{16}")
+
+
+def has_store(fleet):
+    return storemod.Store.for_fleet(fleet.path).exists()
+
+
+def copy_files(fleet):
+    """(path, name in the copy) of the plain files a copy takes, each encrypted on the way:
+    the fleet file, federation.yaml, backup.extra, and a CA kept outside secrets/. What is in
+    secrets/ travels in the store."""
+    from . import federation
+    st = storemod.Store.for_fleet(fleet.path)
+    inside = os.path.realpath(st.link) + os.sep
+    cfg = fleet.defaults.get("backup") or {}
+    tls = fleet.defaults.get("tls") or {}
+    roots = [fleet.path, os.path.join(fleet.dir, federation.FILE), fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")]
+    roots += [fleet.resolve_path(str(x)) for x in (cfg.get("extra") or [])]
+    out, seen = [], {os.path.realpath(st.file), os.path.realpath(st.recipients)}
+    for root in roots:
+        if not os.path.exists(root):
+            continue
+        for f in _walk(root):
+            real = os.path.realpath(f)
+            if real in seen or real.startswith(inside):
+                continue
+            seen.add(real)
+            rel = os.path.relpath(f, fleet.dir)
+            if rel.startswith(".."):   # outside the fleet directory: kept under outside/<path>
+                rel = os.path.join("outside", os.path.abspath(f).lstrip("/"))
+            if rel.split("/")[0] == "secrets":
+                continue                # (the store's place: nothing plain belongs there)
+            out.append((f, rel))
+    return out
+
+
+def pack(fleet_name, files, when=None):
+    """The copy from {name: bytes}, its list in front."""
+    now = time.time() if when is None else when
+    manifest = {"format": FORMAT, "what": "a kiwi-server network: its secret store and its fleet file, for the store's keys",
+                "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), "kiwi-server": VERSION, "fleet": fleet_name,
+                "files": [{"name": n, "size": len(b), "sha256": hashlib.sha256(b).hexdigest()} for n, b in files.items()]}
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tar:
+        for name, blob in [(MANIFEST, json.dumps(manifest, indent=1).encode() + b"\n")] + list(files.items()):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.mtime = len(blob), 0o600, int(now)
+            tar.addfile(info, io.BytesIO(blob))
+    return buf.getvalue()
+
+
+def create_copy(fleet, when=None):
+    """The copy of a fleet that has a store, as it is now. Needs the public keys only."""
+    st = storemod.Store.for_fleet(fleet.path)
+    if not st.exists():
+        raise KiwiError("this fleet has no secret store: its backup is locked with a passphrase")
+    st.sync()                   # what changed in the open store, into secrets.age first
+    files = {storemod.FILE: util.read_bytes(st.file), storemod.RECIPIENTS: util.read_bytes(st.recipients)}
+    for path, name in copy_files(fleet):
+        files[name + ".age"] = storemod.encrypt_bytes(st.recipients, util.read_bytes(path))
+    return pack(os.path.basename(fleet.path), files, when)
+
+
+def kind(data):
+    """"store" (the recovery key opens it), "passphrase" (the older kind), or None."""
+    if data[:8] == b"Salted__":         # how openssl enc -salt begins
+        return "passphrase"
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+            return "store" if MANIFEST in tar.getnames() else None
+    except (tarfile.TarError, EOFError):
+        return None
+
+
+def _safe(name):
+    return (isinstance(name, str) and 0 < len(name) < 1000 and "\\" not in name and "\0" not in name
+            and all(p and p not in (".", "..") for p in name.split("/")))
+
+
+def _check_recipients(blob):
+    """secrets.recipients as the store writes it: comments and public keys. The store's id in
+    it names a directory, so it is hex and nothing else."""
+    try:
+        lines = blob.decode().splitlines()
+    except UnicodeDecodeError:
+        lines = ["?"]
+    keys = 0
+    for line in lines:
+        if _KEY.fullmatch(line.strip()):
+            keys += 1
+        elif (line.startswith("# store: ") and not _STORE_ID.fullmatch(line)) or (line.strip() and not line.startswith("#")):
+            keys = 0
+            break
+    if not keys:
+        raise KiwiError("the copy's list of keys (%s) is not one a store writes" % storemod.RECIPIENTS)
+
+
+def read_copy(data):
+    """(its list, {name: bytes}) of a copy, checked: only plain files with names that stay
+    in one directory, exactly the ones the list names, each with the list's sha256."""
+    files = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+            for m in tar.getmembers():
+                if not m.isreg() or not _safe(m.name) or m.name in files or m.size > len(data):
+                    raise KiwiError("the copy holds something that is not allowed: %r" % m.name[:80])
+                files[m.name] = tar.extractfile(m).read()
+    except (tarfile.TarError, EOFError):
+        raise KiwiError("this is not a copy of a network, or it is cut short")
+    try:
+        manifest = json.loads(files.pop(MANIFEST))
+        fmt, fleet_name = manifest["format"], manifest["fleet"]
+        listed = {f["name"]: f["sha256"] for f in manifest["files"]}
+    except (KeyError, ValueError, TypeError):
+        raise KiwiError("this is not a copy of a network: it has no list of its files")
+    if fmt != FORMAT:
+        raise KiwiError("this copy is of a kind this version does not know (%r): a newer kiwi-server opens it" % (fmt,))
+    if set(listed) != set(files):
+        raise KiwiError("the copy is damaged: its files are not the ones its list names")
+    for name, blob in files.items():
+        if hashlib.sha256(blob).hexdigest() != listed[name]:
+            raise KiwiError("the copy is damaged: %s is not what its list says" % name)
+    needed = (storemod.FILE, storemod.RECIPIENTS)
+    if not _safe(fleet_name) or "/" in fleet_name or not all(n in files for n in needed + (fleet_name + ".age",)):
+        raise KiwiError("this is not a copy of a network: the store or the fleet file is missing")
+    for name in files:
+        plain = name[:-4]
+        if name not in needed and (not name.endswith(".age") or not plain or plain in needed
+                                   or plain.split("/")[0] == "secrets"):
+            raise KiwiError("the copy holds something that is not allowed: %r" % name[:80])
+    _check_recipients(files[storemod.RECIPIENTS])
+    return manifest, files
+
+
+def open_copy(data, identity):
+    """(the fleet file's name, {name: plain bytes}, the store's two files) of a copy, opened
+    with a key of its store. Nothing reaches a disk: what age reads is staged in memory."""
+    manifest, files = read_copy(data)
+    plain = {}
+    tmp = tempfile.mkdtemp(prefix="kiwi-copy-", dir=os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm")
+    try:
+        staged = os.path.join(tmp, "one.age")
+        for name in [storemod.FILE] + sorted(n for n in files if n not in (storemod.FILE, storemod.RECIPIENTS)):
+            util.write_bytes(staged, files[name], 0o600)
+            try:
+                opened = storemod.decrypt_file(identity, staged)
+            except KiwiError:
+                raise KiwiError("that key does not open this copy" if name == storemod.FILE else
+                                "the copy is damaged: the key opens its store but not %s" % name)
+            if name != storemod.FILE:
+                plain[name[:-4]] = opened
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return manifest["fleet"], plain, {n: files[n] for n in (storemod.FILE, storemod.RECIPIENTS)}
+
+
+def restore_copy(data, identity, into):
+    """A copy into a directory (created 0700), as a desktop keeps a fleet: the store as it is,
+    the fleet file and the others as plain files 0600. A key that does not open it, or a
+    directory that holds a network already: nothing is written. Returns (the fleet file's
+    name, the files written)."""
+    fleet_name, plain, kept = open_copy(data, identity)
+    there = [n for n in (storemod.FILE, storemod.RECIPIENTS, "secrets", fleet_name) if os.path.lexists(os.path.join(into, n))]
+    if there:
+        raise KiwiError("%s holds a network already (%s): give an empty directory with --into" % (into, ", ".join(there)))
+    os.makedirs(into, mode=0o700, exist_ok=True)
+    util.write_bytes(os.path.join(into, storemod.FILE), kept[storemod.FILE], 0o600)
+    util.write_bytes(os.path.join(into, storemod.RECIPIENTS), kept[storemod.RECIPIENTS], 0o644)
+    for name, blob in plain.items():
+        path = os.path.join(into, name)
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        util.write_bytes(path, blob, 0o600)
+    return fleet_name, sorted(list(kept) + list(plain))
+
+
+def recovery_key(path=None, passphrase_path=None):
+    """The key that opens a copy: from --recovery-file, the KIWI_RECOVERY_KEY variable, or a
+    prompt (only on a terminal). A --passphrase-file that holds the key is taken too: the
+    app's dialog has one box for either kind of copy."""
+    if path or passphrase_path:
+        p = os.path.expanduser(path or passphrase_path)
+        if not os.path.isfile(p):
+            raise KiwiError("recovery key file not found: %s" % p)
+        key = next((ln for ln in util.read_text(p).splitlines() if ln.strip().upper().startswith("AGE-SECRET-KEY-")), "")
+        if not key:
+            raise KiwiError("this copy opens with the network's recovery key (AGE-SECRET-KEY-…), not with a passphrase"
+                            if not path else "%s holds no recovery key (a line that starts with AGE-SECRET-KEY-)" % p)
+    elif os.environ.get("KIWI_RECOVERY_KEY"):
+        key = os.environ["KIWI_RECOVERY_KEY"]
+    elif not sys.stdin.isatty():
+        raise KiwiError("this copy opens with the network's recovery key: give --recovery-file FILE, "
+                        "or export KIWI_RECOVERY_KEY")
+    else:
+        import getpass
+        key = getpass.getpass("recovery key: ")
+    key = "".join(key.split()).upper()
+    if not key.startswith("AGE-SECRET-KEY-"):
+        raise KiwiError("a recovery key starts with AGE-SECRET-KEY-")
+    return key
 
 
 # ---- the passphrase --------------------------------------------------------------
@@ -176,18 +414,22 @@ def store_local(data, directory, name):
     return p
 
 
+# both kinds, newest first; a kind the node keeps none of is not an error
+_LIST = "ls -1t %s/fleet-*" + SUFFIX + " %s/fleet-*" + OLD_SUFFIX + " 2>/dev/null"
+
+
 def store_remote(data, target, name, keep=10, runner=subprocess.run):
     """Into REMOTE_DIR on the node (root, 0700); the newest `keep` stay.
     Returns what the node keeps afterwards."""
     d, n = REMOTE_DIR, shlex.quote(name)
     script = ("set -e; d=%s; install -d -m 0700 \"$d\"; cat > \"$d\"/%s.tmp; chmod 0600 \"$d\"/%s.tmp; "
-              "mv -f \"$d\"/%s.tmp \"$d\"/%s; ls -1t \"$d\"/fleet-*.tar.enc | tail -n +%d | xargs -r rm -f; "
-              "ls -1t \"$d\"" % (d, n, n, n, n, int(keep) + 1))
+              "mv -f \"$d\"/%s.tmp \"$d\"/%s; %s | tail -n +%d | xargs -r rm -f; "
+              "ls -1t \"$d\"" % (d, n, n, n, n, _LIST % ('"$d"', '"$d"'), int(keep) + 1))
     return _ssh(target, script, data, runner).decode(errors="replace").split()
 
 
 def list_remote(target, runner=subprocess.run):
-    out = _ssh(target, "ls -1t %s/fleet-*.tar.enc 2>/dev/null || true" % REMOTE_DIR, None, runner)
+    out = _ssh(target, "%s || true" % (_LIST % (REMOTE_DIR, REMOTE_DIR)), None, runner)
     return [os.path.basename(x) for x in out.decode(errors="replace").split()]
 
 
@@ -198,7 +440,7 @@ def fetch_remote(target, name=None, runner=subprocess.run):
         if not names:
             raise KiwiError("%s keeps no fleet backups in %s" % (target, REMOTE_DIR))
         name = names[0]
-    if "/" in name or not name.startswith("fleet-") or not name.endswith(".tar.enc"):
+    if not is_name(name):
         raise KiwiError("not a fleet backup name: %r" % name)
     return name, _ssh(target, "cat %s/%s" % (REMOTE_DIR, shlex.quote(name)), None, runner)
 

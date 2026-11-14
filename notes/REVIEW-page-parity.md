@@ -12,7 +12,7 @@ run included. Compared command by command and setting by setting.
 | 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | **built** in 2.82.0: "Still to set up" with one button per step, media made in memory and fetched from the page, "Add a machine at home" |
 | 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | **built** in 2.85.0: "Bring something back" per machine (a part to a snapshot, or everything to the newest). "Start new" for a rebuilt machine is left |
 | 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | **built** in 2.85.0: "Unlock it" on the machine's page (forwards its ring; handing over the key by hand stays in the terminal) |
-| 6 | A copy of the network (`backup --local`), restore a network from a copy, a synced folder | "Save it now" only | open |
+| 6 | A copy of the network (`backup --local`), restore a network from a copy, a synced folder | "Save it now" only | **built** (not released yet): "Fetch a copy" on Backups downloads the network's copy, which the recovery key opens; a machine with nothing on it takes a copy on its first page ("I already have a network"); "Save it now" needs no passphrase and goes to every machine that is set up. Left: a copy is not signed (ROADMAP 21), the passphrase kind (`.tar.enc`) is restored with `kiwi-server restore` only, a synced folder |
 | 7 | Federation; SSH certificates | nothing | open |
 | 8 | Prune now, full status, role script, doctor | nothing | open |
 | 9 | Sign in at the hoster and pick the server (wizard) | the address is typed | open |

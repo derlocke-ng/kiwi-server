@@ -155,6 +155,85 @@ class Control:
         self.audit("admin", "first run: the network was made on this machine's page", address=address)
         return recovery, self.login(password, address)
 
+    # ---- a network that was lost, back from its copy ---------------------------------
+    # The other thing a machine with nothing on it can do: take a copy of a network (backup.py,
+    # the kind a store's keys encrypt) and the recovery key that opens it. The same guard as
+    # the first run, and the same rule: it is opened in RAM and reaches the disk encrypted only.
+    def restore_run(self, code, password, archive, recovery, address="?"):
+        """A network from its copy, with a new password for this page. Returns a session token."""
+        from . import backup as backupmod
+        with self.lock:
+            if not self.fresh():
+                raise KiwiError("this machine has a network already")
+            if not self.setup_code_ok(code, address):
+                raise KiwiError("that is not the setup code")
+            password = (password or "").strip()
+            if len(password) < MIN_PASSWORD:
+                raise KiwiError("the password needs %d characters at least: it guards every secret of the network" % MIN_PASSWORD)
+            recovery = "".join((recovery or "").split()).upper()
+            if not recovery.startswith("AGE-SECRET-KEY-"):
+                raise KiwiError("a recovery key starts with AGE-SECRET-KEY-")
+            kind = backupmod.kind(archive or b"")
+            if kind == "passphrase":
+                raise KiwiError("this copy is of the older kind, locked with a passphrase: it comes back with "
+                                "`kiwi-server restore` on a computer")
+            if kind != "store":
+                raise KiwiError("that file is not a copy of a network")
+            try:
+                fleet_name, plain, kept = backupmod.open_copy(archive, recovery)
+            except KiwiError as e:
+                if "does not open" in str(e):       # guessed keys wait as guessed passwords do
+                    self.failures.setdefault(address, []).append(self.clock())
+                    self.audit("admin", "a copy was not brought back: the recovery key does not open it", address=address)
+                    raise KiwiError("that recovery key does not open this copy")
+                raise
+            names = {fleet_name: "fleet.yaml", "federation.yaml": "federation.yaml"}     # what a node keeps
+            left = sorted(n for n in plain if n not in names)
+            tmp = os.path.join(self.run, "restore-run")     # in RAM
+            shutil.rmtree(tmp, ignore_errors=True)
+            os.makedirs(tmp, mode=0o700)
+            st, opened = storemod.Store(tmp), False
+            try:
+                util.write_bytes(st.file, kept[storemod.FILE], 0o600)
+                util.write_bytes(st.recipients, kept[storemod.RECIPIENTS], 0o644)
+                util.write_bytes(os.path.join(tmp, "fleet.yaml"), plain[fleet_name], 0o600)
+                opened = True
+                st.unlock(recovery)
+                made = Control(os.path.join(tmp, "fleet.yaml"), run_dir=os.path.join(tmp, "run"))
+                made.set_password(password)     # in place of an older page's password
+                if any(name == "desktop" for name, _key in st.ways()):
+                    st.remove("desktop")        # a keyring's way: there is no keyring on a node
+                st.lock()
+                blobs = {names[n] + ".age": storemod.encrypt_bytes(st.recipients, plain[n]) for n in names if n in plain}
+                for name in (storemod.RECIPIENTS, storemod.FILE):
+                    shutil.copyfile(os.path.join(tmp, name), os.path.join(self.fleet_dir, name))
+                os.chmod(os.path.join(self.fleet_dir, storemod.FILE), 0o600)
+                for name, blob in blobs.items():
+                    util.write_bytes(self._fleet_file(name[:-4]) + ".age", blob, 0o600)
+                shutil.copyfile(made.salt_file, self.salt_file)
+                os.chmod(self.salt_file, 0o600)
+            finally:
+                if opened:                      # whatever went wrong: nothing of it stays open in RAM
+                    shutil.rmtree(st.runtime(), ignore_errors=True)
+                shutil.rmtree(tmp, ignore_errors=True)
+            self.store = storemod.Store(self.fleet_dir)
+            self._setup_code = None
+        self.audit("admin", "the network was brought back from a copy on this machine's page%s" % (
+            "; %d of its files have no place on a control node and were left out" % len(left) if left else ""), address=address)
+        return self.login(password, address)
+
+    def network_copy(self, user="admin"):
+        """(file name, bytes) of a copy of the network as it is now: the store and the fleet
+        file, for the store's keys (backup.create_copy). Made in memory; nothing is kept here."""
+        from . import backup as backupmod, config
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        with self.lock:                       # after the running job: it may be changing the store
+            fleet = config.Fleet.load(self.fleet_path)
+            data, name = backupmod.create_copy(fleet), backupmod.archive_name(fleet)
+        self.audit(user, "fetched a copy of the network")
+        return name, data
+
     def _open(self, identity):
         """The store into RAM, then the fleet files beside it; fleet.yaml becomes a link there."""
         self.store.unlock(identity)
@@ -600,6 +679,14 @@ class Control:
             me = os.environ.get("KIWI_CONTROL_HOST")    # this node last: its own apply may restart this page
             names = [n for n in names if n != me] + [n for n in names if n == me]
             return list(self.kiwi) + ["apply", self.fleet_path, "--update"] + names
+        if action == "backup":              # the network's own copy: where the fleet file says, else every machine that is set up
+            argv = list(self.kiwi) + ["backup", self.fleet_path]
+            if self._backup_hosts():
+                return argv
+            names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or [] if h.get("phase") == "applied"]
+            if not names:
+                raise KiwiError("no machine is set up yet, so there is nowhere to copy it to. \"Fetch a copy\" gives you the file")
+            return argv + names
         if action == "save":                # one machine's data, to its backup machines, now
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
@@ -1036,6 +1123,16 @@ class Control:
             except Exception as e:              # a look that fails must not end the timers
                 util.warn("control: %s" % e)
             stop.wait(self.watch_seconds or 60)
+
+    def _backup_hosts(self):
+        """Does the fleet file say where its own copy goes (backup.hosts)?"""
+        import yaml
+        try:
+            with open(self.fleet_path) as fh:
+                data = yaml.safe_load(fh) or {}
+            return bool(((data.get("defaults") or {}).get("backup") or {}).get("hosts"))
+        except (OSError, ValueError, AttributeError, yaml.YAMLError):
+            return False
 
     def has_ram_masters(self):
         try:

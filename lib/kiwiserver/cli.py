@@ -1704,6 +1704,7 @@ def cmd_serve(args):
             raise KiwiError("nothing to serve yet: the fleet needs its secret store (kiwi-server secrets init) and "
                             "a control password (kiwi-server serve %s --set-password)" % args.fleet)
         util.say("waiting for the fleet: kiwi-server control push <fleet>, from the operator's computer")
+        sys.stdout.flush()
         while not c.ready():
             time.sleep(10)
     if not c.fresh() and c.locked():
@@ -1713,6 +1714,7 @@ def cmd_serve(args):
     except ImportError as e:
         raise KiwiError("serve needs fastapi and uvicorn (%s): the control image has them" % e)
     util.say("serving %s on http://%s" % (args.fleet, args.listen))
+    sys.stdout.flush()      # into a container's log now: without a terminal the setup code above would wait in a buffer
     web.serve(c, args.listen)
 
 
@@ -2013,13 +2015,13 @@ def auto_backup(fleet):
     targets = [str(h) for h in (cfg.get("hosts") or [])]
     if not targets:
         return
-    if not (cfg.get("passphrase_file") or os.environ.get("KIWI_BACKUP_PASS")):
+    stored = backupmod.has_store(fleet)         # then its recovery key opens the copy: no passphrase
+    if not stored and not (cfg.get("passphrase_file") or os.environ.get("KIWI_BACKUP_PASS")):
         util.warn("backup.hosts is set but backup.passphrase_file is not — the fleet was not backed up "
                   "(kiwi-server backup asks for a passphrase)")
         return
     try:
-        pw = backupmod.passphrase(fleet)
-        data = backupmod.create(fleet, pw)
+        data = backupmod.create_copy(fleet) if stored else backupmod.create(fleet, backupmod.passphrase(fleet))
     except KiwiError as e:
         util.warn("fleet backup skipped: %s" % e)
         return
@@ -2044,15 +2046,30 @@ def cmd_backup(args):
         raise KiwiError("nowhere to back up to: name hosts, set backup.hosts in the fleet, or give --local DIR")
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
-    pw = backupmod.passphrase(fleet, args.passphrase_file, confirm=not args.passphrase_file)
-    data = backupmod.create(fleet, pw)
+    if backupmod.has_store(fleet):          # the store's keys encrypt it: the recovery key opens it
+        if args.passphrase_file:
+            util.say("this fleet has a secret store: its recovery key opens the copy, the passphrase is not used")
+        data = backupmod.create_copy(fleet)
+        n = 2 + len(backupmod.copy_files(fleet))
+    else:
+        pw = backupmod.passphrase(fleet, args.passphrase_file, confirm=not args.passphrase_file)
+        data = backupmod.create(fleet, pw)
+        n = len(backupmod.fleet_files(fleet))
     name = backupmod.archive_name(fleet)
-    n = len(backupmod.fleet_files(fleet))
     if args.local:
         util.say("%s (%d files, %d KB)" % (backupmod.store_local(data, args.local, name), n, len(data) >> 10))
-    for h in hosts:
-        kept = backupmod.store_remote(data, backupmod.ssh_target(h, args.ssh), name, int(cfg.get("keep") or 10))
-        util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
+    failed = []
+    for h in hosts:                         # a machine that is off does not keep the others from their copy
+        try:
+            kept = backupmod.store_remote(data, backupmod.ssh_target(h, args.ssh), name, int(cfg.get("keep") or 10))
+            util.say("%s: %s stored in %s (%d kept)" % (h.name, name, backupmod.REMOTE_DIR, len(kept)))
+        except KiwiError as e:
+            if len(hosts) == 1:
+                raise
+            failed.append(h.name)
+            util.warn("%s: not stored: %s" % (h.name, e))
+    if failed:
+        raise KiwiError("the copy did not reach %s" % ", ".join(failed))
 
 
 def parse_snapshots(text):
@@ -2309,6 +2326,53 @@ def cmd_prune(args):
         raise KiwiError("not pruned: %s" % ", ".join(failed))
 
 
+def keyring_way(st, name):
+    """A key of its own for this computer, kept in its keyring, as one more way to open the
+    open store. The way's name; None when no keyring took a key."""
+    ways, sid = st.ways(), st.store_id()
+    held = store.keyring_get(sid)
+    if held:
+        try:
+            mine = next((n for n, k in ways if k == store.public_of(held)), None)
+        except KiwiError:
+            mine = None
+        if mine:
+            return mine                     # it could open this store before
+    secret, public = store.keygen()
+    if not store.keyring_put(sid, secret):
+        return None
+    name = re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")[:24] or "computer"
+    base, n = name, 2
+    while any(w == name for w, _k in ways):
+        name, n = "%s-%d" % (base, n), n + 1
+    st.add(name, public)
+    return name
+
+
+def restore_copy(args, name, data, into):
+    """A fleet with a store, from its copy: the recovery key opens it, and this computer gets
+    a key of its own for the store."""
+    identity = backupmod.recovery_key(args.recovery_file, args.passphrase_file)
+    fleet_name, files = backupmod.restore_copy(data, identity, into)
+    fleet_path = os.path.join(into, fleet_name)
+    util.say("restored %d files from %s into %s" % (len(files), name, into))
+    st = store.Store(into)
+    if os.path.isdir(st.runtime()):         # one place in memory per store: opening this one would take the other's
+        util.say("this network's store is open on this computer already, from another folder, so this one stays locked: "
+                 "kiwi-server secrets lock there, then kiwi-server secrets unlock %s" % fleet_path)
+        return
+    st.unlock(identity)
+    way = keyring_way(st, socket.gethostname().split(".")[0])
+    if way:
+        util.say("the secret store is open, and this computer's keyring holds a key for it now (%s)" % way)
+    else:
+        util.warn("no keyring took a key: unlocking will ask for the recovery key")
+    if any(f.startswith("outside/") for f in files):
+        util.say("files that lived outside the fleet directory are under %s/outside — point the settings at them" % into)
+    util.say("next: kiwi-server list %s — are these your machines? A copy is not signed" % fleet_path)
+    util.say("then: kiwi-server status %s" % fleet_path)
+
+
 def cmd_restore(args):
     if not args.archive and not args.ssh:
         raise KiwiError("give an archive file, or --from user@node to fetch one from a node")
@@ -2321,8 +2385,15 @@ def cmd_restore(args):
             return
         name, data = backupmod.fetch_remote(args.ssh, args.name)
         util.say("fetched %s from %s" % (name, args.ssh))
-    pw = backupmod.passphrase(None, args.passphrase_file)
     into = os.path.abspath(args.into or ".")
+    kind = backupmod.kind(data)
+    if kind == "store":
+        return restore_copy(args, name, data, into)
+    if kind is None:
+        raise KiwiError("%s is not a copy of a network" % name)
+    if args.recovery_file:
+        util.say("this copy is of the older kind: a passphrase opens it, the recovery key is not used")
+    pw = backupmod.passphrase(None, args.passphrase_file)
     files = backupmod.restore(data, pw, into)
     util.say("restored %d files from %s into %s" % (len(files), name, into))
     if any(f.startswith("outside/") for f in files):
@@ -2611,7 +2682,7 @@ def build_parser():
     s = sub("backup", cmd_backup); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--local", metavar="DIR", help="also (or only) write the archive here")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
-    s.add_argument("--passphrase-file", metavar="FILE")
+    s.add_argument("--passphrase-file", metavar="FILE", help="not needed for a fleet with a secret store: its recovery key opens the copy")
     s = sub("backups", cmd_backups); s.add_argument("fleet"); s.add_argument("host"); s.add_argument("modules", nargs="*")
     s.add_argument("--now", action="store_true", help="back up now")
     s.add_argument("--new", action="store_true", help="a rebuilt machine that waits: start a new history instead of restoring")
@@ -2650,7 +2721,9 @@ def build_parser():
     s.add_argument("--name", help="which archive; default the newest")
     s.add_argument("--list", action="store_true", help="only list what the node keeps")
     s.add_argument("--into", metavar="DIR", help="where the fleet directory is recreated (default .)")
-    s.add_argument("--passphrase-file", metavar="FILE")
+    s.add_argument("--recovery-file", metavar="FILE",
+                   help="the recovery key of a fleet with a secret store (or KIWI_RECOVERY_KEY, or typed)")
+    s.add_argument("--passphrase-file", metavar="FILE", help="the passphrase of a copy of the older kind")
     sub("roles", cmd_roles)
     sub("modules", cmd_modules)
     sub("targets", cmd_targets)

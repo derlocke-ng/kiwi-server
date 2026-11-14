@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.80.2 — system updates work behind the LAN's image cache
+
+- kiwi-stack 0.8.3: a uCore machine that fetches its images through the LAN's cache (the
+  cache module on a node at home) never got a system update. The update checks the system
+  image's signature where it fetches it, and the cache counted as a place without
+  signatures; `status` showed `failed units: rpm-ostreed-automatic.service`. Apply the
+  machines once: the cache is then named as a place that carries signatures.
+  Found by a two-hour soak after the drills (quince, papaya).
+
 ## 2.80.1 — a master whose SSH port moved is found from a computer off the VPN
 
 - After `admin.ssh_port` moved a machine's sshd, a computer that does not resolve the

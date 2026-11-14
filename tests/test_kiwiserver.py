@@ -6794,6 +6794,35 @@ class TestFirstRunPage(StoreBase):
                          (303, "/hosts/fig"))                                               # a machine can still be added
         self.at_rest()
 
+    def test_a_part_is_brought_back_from_a_snapshot(self):
+        cookie, csrf = self.made()
+        fleet = os.path.join(self.dir, "fleet.yaml")
+        said = {"servers": [
+            {"server": "backup.lychee.home", "ok": True, "snapshots": [
+                {"module": "vault", "time": "2026-11-13T02:10:05Z"}, {"module": "vault", "time": "2026-11-12T02:10:01Z"},
+                {"module": "cloud", "time": "2026-11-13T02:11:40Z"}]},
+            {"server": "backup.fig.home", "ok": False, "snapshots": []}]}
+        self.c.kiwi = [sys.executable, "-c", "print(%r)" % json.dumps(said)]
+        snaps = self.c.snapshots("papaya")
+        self.assertEqual(list(snaps["parts"]), ["cloud", "vault"])
+        self.assertEqual(snaps["parts"]["vault"][0], ("2026-11-13T02:10:05Z", ["lychee"]))        # newest first
+        self.assertEqual(snaps["missed"], ["backup.fig.home"])
+        body = self.ask("/backups/papaya", cookie=cookie)[1]
+        self.assertIn("2026-11-13 02:10", body)
+        self.assertIn("Nothing found on backup.fig.home", body)
+        self.assertIn("What it has now is replaced", body)
+        self.assertEqual(self.c.argv("restore", ["papaya"], "2026-11-12T02:10:01Z", "vault")[-6:],
+                         ["backups", fleet, "papaya", "vault", "--restore", "--at", "2026-11-12T02:10:01Z"][-6:])
+        self.assertEqual(self.c.argv("restore", ["papaya"])[-3:], [fleet, "papaya", "--restore"])
+        for at, module in (("yesterday; rm -rf /", "vault"), ("2026-11-12T02:10:01Z", "--ssh")):
+            with self.assertRaises(KiwiError):
+                self.c.argv("restore", ["papaya"], at, module)
+        self.assertEqual(self.c.argv("unlock", ["papaya"])[-3:], ["unlock", fleet, "papaya"])
+        # a machine that keeps no answer: the page says so and still opens
+        self.c.kiwi = [sys.executable, "-c", "import sys; print('error: papaya does not back up', file=sys.stderr); sys.exit(1)"]
+        self.assertIn("papaya does not back up", self.ask("/backups/papaya", cookie=cookie)[1])
+        self.assertEqual(self.ask("/backups/papaya")[:2], (303, "/login"))
+
     def test_the_recovery_key_sets_a_new_password(self):
         _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
         recovery = re.search(r"AGE-SECRET-KEY-[A-Z0-9]+", body).group(0)

@@ -10,8 +10,8 @@ run included. Compared command by command and setting by setting.
 | 1 | The first run: the questionnaire, the recovery key | nothing; a node waits for `control push` | **built** in 2.81.0: a machine with nothing on it shows the questionnaire, guarded by a setup code; 2.82.0: a new password by recovery key |
 | 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | **built** in 2.83.0 from one shared list of fields (`form.py`). Left: the VPN groups are a text box and not the app's list editor, a file setting is a typed path, `unlock.control`, removing a machine |
 | 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | **built** in 2.82.0: "Still to set up" with one button per step, media made in memory and fetched from the page, "Add a machine at home" |
-| 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | open |
-| 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | open |
+| 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | **built** in 2.85.0: "Bring something back" per machine (a part to a snapshot, or everything to the newest). "Start new" for a rebuilt machine is left |
+| 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | **built** in 2.85.0: "Unlock it" on the machine's page (forwards its ring; handing over the key by hand stays in the terminal) |
 | 6 | A copy of the network (`backup --local`), restore a network from a copy, a synced folder | "Save it now" only | open |
 | 7 | Federation; SSH certificates | nothing | open |
 | 8 | Prune now, full status, role script, doctor | nothing | open |

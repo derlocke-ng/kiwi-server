@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.85.0 — the page brings data back and unlocks a waiting disk
+
+- **"Bring something back"** on the Backups page, per machine: every part's snapshots
+  (when, and which backup machine keeps them), one button to put a part back as it was
+  then, one for everything to the newest. It says that what is there now is replaced.
+- **"Unlock it"** on the page of a machine whose encrypted disk waits after a restart.
+- The page's help on getting things back no longer sends people to the app.
+
 ## 2.84.0 — phones and laptops get a tunnel that fits every network
 
 - **A device's config says `MTU = 1280`.** It used to carry the master's `wg_mtu`,

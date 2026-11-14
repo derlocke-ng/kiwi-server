@@ -7,7 +7,7 @@ FROM registry.fedoraproject.org/fedora:latest
 
 RUN dnf -y install --setopt=install_weak_deps=False \
         butane coreos-installer xorriso cpio gzip curl gnupg2 util-linux \
-        xz e2fsprogs \
+        xz e2fsprogs nss-tools \
     && dnf clean all
 
 WORKDIR /work

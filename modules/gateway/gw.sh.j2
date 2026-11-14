@@ -28,6 +28,7 @@ fi
 rules_del() {
     iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP 2>/dev/null || true   # the rule of earlier versions
+    iptables -D FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
@@ -49,7 +50,25 @@ case "${1:-start}" in
         echo "[kiwi-gw] routing removed"
         exit 0 ;;
     start) ;;
-    *) echo "usage: gw.sh start|stop" >&2; exit 1 ;;
+    watch)
+        # The rule and the routes below are not this script's alone: a network manager that
+        # sets the card up anew (systemd-networkd after a new address, a link that came back)
+        # may drop them, and the gateway then routed nothing, or around the VPN, until
+        # someone restarted it. Looked at twice a minute and put back.
+        while sleep 30; do
+            if ! ip rule show | grep -q "iif $PUB_IFACE lookup 128"; then
+                ip rule add iif "$PUB_IFACE" table 128 && echo "[kiwi-gw] the rule for the LAN was gone: put back"
+            fi
+            if ! ip route show table 128 2>/dev/null | grep -q "^default via $CONTAINER_IP "; then
+                ip route replace table 128 default via "$CONTAINER_IP" && echo "[kiwi-gw] the route through the VPN client was gone: put back"
+            fi
+            ip route show table 128 2>/dev/null | grep -q "^throw $DOCKER_SUBNET" || ip route add table 128 throw "$DOCKER_SUBNET" 2>/dev/null || true
+            if ! iptables -C FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP 2>/dev/null; then
+                iptables -I FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP && echo "[kiwi-gw] the rule that keeps LAN clients inside the VPN was gone: put back"
+            fi
+        done
+        exit 0 ;;
+    *) echo "usage: gw.sh start|stop|watch" >&2; exit 1 ;;
 esac
 
 # the VPN client must be up: wait for it rather than fail the boot
@@ -94,6 +113,11 @@ iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
 # started (the VPN client's WireGuard handshake came in on the LAN side and died here)
 # and the connections netavark DNATs to published ports (Pi-hole, nginx from the LAN)
 iptables -I FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -j DROP
+# The kill switch. What a LAN client sends leaves through the VPN client or not at all:
+# never back out of the card it came in on, which is the way around the VPN. Without
+# this, a lost rule above (table 128) turned the gateway into a plain router and every
+# client's traffic left by the home's own connection, with nothing to see.
+iptables -I FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP
 # This node's own names resolve to its mesh address, which lives inside the VPN client
 # and only takes connections from the tunnel: a LAN client goes straight to the proxy.
 if [[ -n $OWN_MESH_IP && -n $PROXY_IP ]]; then

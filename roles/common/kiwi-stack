@@ -3,6 +3,7 @@
 #   kiwi-stack start|stop|restart|update|status|verify|logs [service]|vpn-restart
 #   kiwi-stack backup|snapshots|restore MODULE...   this machine's data (the backup module)
 #   kiwi-stack apply DIR          a rendered stack bundle, without a role script
+#   kiwi-stack address [ADDRESS/PREFIX GATEWAY [DNS...]]   this machine's fixed address at home
 # runtime podman: the containers are systemd units (quadlets in /etc/containers/systemd)
 # runtime docker: docker compose with the rendered docker-compose.yml
 set -euo pipefail
@@ -20,6 +21,64 @@ if [[ ${1:-} == apply ]]; then
     KS_STACK_LIB_SELF=$(readlink -f "$lib")
     ks_stack_standalone "$2"
     exit 0
+fi
+if [[ ${1:-} == address ]]; then
+    # A machine installed from media gets its address from the installer. A board starts
+    # from an image and asks the router (DHCP), and an address changed in the fleet file has
+    # to arrive somehow: this sets it where systemd-networkd runs the network (Armbian), and
+    # puts back what was there when the new address does not work, so a wrong one never
+    # leaves a machine nobody can reach. kiwi-server runs it detached, after the role.
+    shift
+    file=/etc/systemd/network/05-kiwi-lan.network      # sorts before netplan's files in /run: it wins for its card
+    ifc=$(ip -o -4 route show default | awk '{print $5; exit}')
+    [[ -n $ifc ]] || { echo "kiwi-stack: this machine has no default route, so no card to give the address to" >&2; exit 3; }
+    state=$(networkctl status "$ifc" 2>/dev/null || true)      # not piped into grep -q: pipefail would count its early exit
+    if ! systemctl is-active --quiet systemd-networkd || [[ $state != *"(configured)"* ]]; then
+        echo "kiwi-stack: the network here is not run by systemd-networkd: this machine's address is set where it was installed" >&2
+        exit 3
+    fi
+    if [[ $# -eq 0 ]]; then
+        echo "$ifc $(ip -o -4 addr show dev "$ifc" scope global | awk '{print $4}' | tr '\n' ' ')$([[ -f $file ]] && echo fixed || echo dhcp)"
+        exit 0
+    fi
+    want=$1 gw=${2:-}
+    shift; [[ $# -gt 0 ]] && shift
+    if [[ ! $want =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ || ! $gw =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "usage: kiwi-stack address ADDRESS/PREFIX GATEWAY [DNS...]   e.g. kiwi-stack address 192.168.1.30/24 192.168.1.1 9.9.9.9" >&2
+        exit 1
+    fi
+    ip=${want%%/*}
+    mine() { ip -o -4 addr show dev "$ifc" | grep -q " $ip/"; }
+    if ! mine && ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
+        echo "kiwi-stack: $ip is in use by another device: nothing changed" >&2
+        exit 4
+    fi
+    old=$(cat "$file" 2>/dev/null || true)
+    {
+        echo "# kiwi-server: this machine's fixed address at home (network.address in the fleet file)"
+        printf '[Match]\nName=%s\n\n[Network]\nDHCP=no\nIPv6AcceptRA=yes\nAddress=%s\nGateway=%s\n' "$ifc" "$want" "$gw"
+        for d in "$@"; do printf 'DNS=%s\n' "$d"; done
+    } > "$file.new"
+    chmod 0644 "$file.new"
+    mv -f "$file.new" "$file"
+    networkctl reload
+    networkctl reconfigure "$ifc"
+    # it works when the card has the address and the router is there (seen on the wire: some do not answer pings)
+    for _ in $(seq 1 20); do
+        if mine; then
+            ping -c 1 -W 1 "$gw" >/dev/null 2>&1 || true
+            if ip neigh show "$gw" dev "$ifc" 2>/dev/null | grep -q lladdr; then
+                echo "kiwi-stack: $ifc has $want now"
+                exit 0
+            fi
+        fi
+        sleep 2
+    done
+    if [[ -n $old ]]; then printf '%s\n' "$old" > "$file"; else rm -f "$file"; fi
+    networkctl reload
+    networkctl reconfigure "$ifc"
+    echo "kiwi-stack: $want did not work on $ifc (the router $gw was not there): what it had before is back" >&2
+    exit 4
 fi
 [[ -f /etc/kiwi-server/stack.env ]] || { echo "kiwi-stack: no stack on this machine yet (/etc/kiwi-server/stack.env) — kiwi-stack apply DIR" >&2; exit 1; }
 # shellcheck disable=SC1091
@@ -43,6 +102,22 @@ host_units() { local verb=$1 u; shift; for u in $STACK_UNITS; do systemctl "$ver
 mesh_route() {
     [[ -n ${STACK_MESH_VIA:-} && -n ${STACK_MESH_SUBNET:-} ]] || return 0
     ip route replace "$STACK_MESH_SUBNET" via "$STACK_MESH_VIA" 2>/dev/null || true
+}
+misrouted() {
+    # A container the machine cannot reach on its own stack network: a route for its address
+    # points elsewhere. Seen with a router whose DHCP hands out a route for one address
+    # (172.128.0.4 via another gateway) to a machine that has a container at that address:
+    # the container runs and has no network. Said, not failed: the stack itself is up.
+    [[ $STACK_RUNTIME == podman ]] || return 0
+    local s ip dev
+    for s in $STACK_SERVICES; do
+        ip=$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$s" 2>/dev/null | awk '{print $1}')
+        [[ -n $ip ]] || continue
+        dev=$(ip -o route get "$ip" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+        if [[ -n $dev && $dev != podman* && $dev != knet* && $dev != br-* && $dev != lo ]]; then
+            echo "warning: $s ($ip) is not reached on the stack's network: this machine routes $ip through $dev, so the container has no network. A route from the router's DHCP does that; a fixed address for this machine ends it" >&2
+        fi
+    done
 }
 verify() {
     # every service of the stack is running, or the names of those that are not;
@@ -70,6 +145,7 @@ verify() {
         return 1
     fi
     echo "all ${STACK_SERVICES// /, } running"
+    misrouted
 }
 vpn_restart() {
     [[ -n ${STACK_VPN_CONTAINER:-} ]] || return 0

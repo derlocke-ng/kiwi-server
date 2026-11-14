@@ -190,6 +190,11 @@ ks_ensure_podman() {
     if [[ $KS_OS == debian ]] && ! command -v nft >/dev/null 2>&1; then
         ks_apt nftables
     fi
+    # the modules' host scripts (the gateway's routing, the VPN client's rules) speak iptables;
+    # Armbian's image has nft only, and the gateway then routed nothing ("iptables: command not found")
+    if [[ $KS_OS == debian ]] && ! command -v iptables >/dev/null 2>&1; then
+        ks_apt iptables
+    fi
     local pv
     pv=$(podman --version 2>/dev/null | awk '{print $NF}')
     if [[ -n $pv ]] && [[ $(printf '%s\n4.4\n' "$pv" | sort -V | head -1) != 4.4 ]]; then
@@ -343,8 +348,30 @@ ks_stack_host_prep() {
         # with "address already in use". containers.conf moves aardvark to another port;
         # podman redirects the containers' lookups there itself. Read at network start.
         install -d -m 0755 /etc/containers/containers.conf.d
+        # New on a machine whose stack runs (the dns module was added later): podman's
+        # resolver holds port 53 until its network has no container left, so the whole
+        # stack stops once and starts again; restarting only what changed left Pi-hole
+        # with "address already in use" (an Odroid that became the home's ad blocker).
+        if [[ ! -f /etc/containers/containers.conf.d/50-kiwi-dns.conf ]] || ss -Hlunp 2>/dev/null | grep ':53 ' | grep -q aardvark-dns; then
+            KS_STACK_FROM_THE_START=1
+        fi
         printf '%s\n' '# kiwi-server stack: podman'"'"'s own DNS off port 53, so the dns module may publish it' \
             '[network]' 'dns_bind_port = 5533' > /etc/containers/containers.conf.d/50-kiwi-dns.conf
+    fi
+    # systemd-networkd (Armbian, some Debian) removes routes and routing rules it did not
+    # make whenever it sets a card up anew: the stack's route to the mesh and the gateway's
+    # rule for LAN clients went with a new address or a link that came back, and stayed
+    # away until the stack was restarted. They are the stack's: networkd leaves them be.
+    if systemctl is-active -q systemd-networkd 2>/dev/null; then
+        install -d -m 0755 /etc/systemd/networkd.conf.d
+        if ! grep -qs 'ManageForeignRoutes=no' /etc/systemd/networkd.conf.d/50-kiwi-stack.conf; then
+            printf '%s\n' '# kiwi-server stack: the routes and rules of the stack are not networkd'"'"'s to remove' \
+                '[Network]' 'ManageForeignRoutingPolicyRules=no' 'ManageForeignRoutes=no' > /etc/systemd/networkd.conf.d/50-kiwi-stack.conf
+            # read at its start only (a reload reads the cards' files, not this one). A restart
+            # keeps the addresses of running cards, so an apply from elsewhere survives it
+            systemctl restart systemd-networkd 2>/dev/null || true
+            ks_say "systemd-networkd leaves the stack's routes and rules alone from now on"
+        fi
     fi
     # Pi-hole wants port 53 on the host; systemd-resolved's stub listener (Fedora
     # CoreOS, uCore) sits on 127.0.0.53:53 and would block it. Debian's default
@@ -426,17 +453,27 @@ ks_local_cache() {
     else
         rm -f "$conf" "$sigs"
     fi
+    ks_apt_proxy
+}
+
+ks_apt_proxy() {
+    # Also before the first apt of a run (ks_base): a script from an older release sent every
+    # source to the cache, and the run that would have replaced it stopped at its own apt.
     local aptconf=/etc/apt/apt.conf.d/30kiwi-proxy detect=/usr/local/bin/kiwi-apt-proxy at
     if ks_is_debian && [[ ${KS_ROLE_APT_PROXY:-} == http://*:* ]]; then
         at=${KS_ROLE_APT_PROXY#http://}; at=${at%%/*}
         {
             echo '#!/bin/sh'
-            echo "# kiwi-server: apt asks this for every http source. The LAN's package cache while it answers, else direct."
+            echo "# kiwi-server: apt asks this for every http source, with its address. Debian's own sources go"
+            echo "# through the LAN's package cache while it answers. Any other (Armbian's, a vendor's) goes direct:"
+            echo "# the cache keeps Debian only and refuses the rest, which stopped every install on an Armbian board."
+            # shellcheck disable=SC2016
+            printf '%s\n' 'case "$1" in' '    http://deb.debian.org/*|http://security.debian.org/*) ;;' '    *) echo DIRECT; exit 0 ;;' 'esac'
             printf 'if timeout 2 bash -c "</dev/tcp/%s/%s" 2>/dev/null; then echo "%s"; else echo DIRECT; fi\n' \
                 "${at%:*}" "${at##*:}" "$KS_ROLE_APT_PROXY"
         } | ks_write "$detect" 0755
         printf 'Acquire::http::Proxy-Auto-Detect "%s";\n' "$detect" | ks_write "$aptconf" 0644
-        ks_say "packages come through the LAN's cache first ($KS_ROLE_APT_PROXY)"
+        [[ ${1:-} == quiet ]] || ks_say "packages come through the LAN's cache first ($KS_ROLE_APT_PROXY)"
     else
         rm -f "$aptconf" "$detect"
     fi
@@ -836,7 +873,7 @@ ks_stack_apply() {
     ks_say "starting the stack (${KS_STACK_MODULES[*]})"
     ks_stack_units
     systemctl enable -q kiwi-stack.service
-    if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service; then
+    if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service && (( ! ${KS_STACK_FROM_THE_START:-0} )); then
         # a running stack: what is new starts, what changed restarts (a bind mount keeps the old
         # inode, so a changed file needs it), and the rest goes on serving (problem 55). What
         # lives in another's network follows it by BindsTo.
@@ -906,6 +943,7 @@ ks_base() {
         hostnamectl set-hostname "$KS_HOSTNAME" 2>/dev/null || echo "$KS_HOSTNAME" > /etc/hostname
     fi
     timedatectl set-timezone "$KS_TIMEZONE" 2>/dev/null || true
+    ks_apt_proxy quiet
     ks_apt_update
     ks_trust_ca
 }

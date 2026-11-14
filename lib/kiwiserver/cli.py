@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from . import VERSION, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
+from . import VERSION, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, form as formmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
@@ -1545,6 +1545,7 @@ def cmd_apply(args):
             if sshca.exists(fleet):
                 sshca.install(fleet, h, tgt)
                 util.say("%s: its host certificate is signed, its sshd takes the fleet's user certificates" % h.name)
+            tgt = addressmod.settle(h, tgt)     # last: the connection goes away with the old address
             record_applied(fleet, h.name)
             record_backup_clients(fleet, h)
             util.say("%s: applied" % h.name)
@@ -1947,6 +1948,64 @@ def cmd_qr(args):
         print(qrmod.svg(data))
     else:
         print(qrmod.text_blocks(data))
+
+
+def cmd_connect(args):
+    """This computer becomes a device of the network: its own place on the VPN, a connection
+    that carries only the network, and the network's certificates trusted in its browsers."""
+    from . import connect as connectmod
+    fleet, roles, ms = load(args)
+    path = args.fleet
+    domain = fleet.defaults.get("domain") or "home"
+    name = args.name or re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-") or "computer"
+    if name in fleet.hosts:
+        raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % name)
+    if args.remove:
+        if connectmod.have_networkmanager() and connectmod.down(domain):
+            util.say("the connection %s is gone from this computer" % connectmod.connection_name(domain))
+        rc = main(["enroll", path, name, "--remove"] + (["--ssh", args.ssh] if args.ssh else []))
+        if rc:
+            raise SystemExit(rc)
+        return
+    conf = fleet.resolve_path("secrets/devices/%s.conf" % name)
+    if not os.path.isfile(conf):
+        util.say("%s gets its place on the VPN" % name)
+        rc = main(["enroll", path, name, "--split"] + (["--group", args.group] if args.group else [])
+                  + (["--ssh", args.ssh] if args.ssh else []))
+        if rc:
+            raise SystemExit(rc)
+    tls = fleet.defaults.get("tls") or {}
+    ca = os.path.join(fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
+    if not connectmod.have_networkmanager():
+        util.say("this computer has no NetworkManager: import %s into its WireGuard program yourself" % shown_path(conf))
+    else:
+        con = connectmod.up(conf, domain)
+        util.say("connected: %s in this computer's network settings. It carries your network only, comes up by "
+                 "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
+        master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"), None)
+        if master:
+            for _ in range(10):
+                try:
+                    socket.getaddrinfo(master.hostname, 443)
+                    util.say("%s answers: this computer reaches the network" % master.hostname)
+                    break
+                except OSError:
+                    time.sleep(1)
+            else:
+                util.warn("%s does not resolve yet. Is the master running? nmcli connection up %s tries again"
+                          % (master.hostname, con))
+    if os.path.isfile(ca) and not args.no_trust:
+        took, why = connectmod.trust(ca, domain, make_tc(args))
+        if took:
+            util.say("your browsers trust the network's certificates now (%d certificate store%s). Restart a browser that is open"
+                     % (len(took), "" if len(took) == 1 else "s"))
+        elif why:
+            util.say("your browsers were not told about the network's certificates: %s. Then run this again" % why)
+        else:
+            util.say("no browser of yours keeps a certificate store here yet: start it once, then run this again")
+        util.say("for every program on this computer, once, as administrator:")
+        print("    %s" % connectmod.system_trust_command(shown_path(ca), domain))
+    util.say("what is where, and the logins: kiwi-server status %s" % path)
 
 
 def cmd_ca(args):
@@ -2519,6 +2578,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
+  kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
@@ -2667,6 +2727,12 @@ def build_parser():
     s.add_argument("--timer", choices=("on", "off"), help="a user timer on this computer that looks every minute")
     s = sub("status", cmd_status); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("connect", cmd_connect); s.add_argument("fleet")
+    s.add_argument("--name", help="what this computer is called on the VPN (default: its own name)")
+    s.add_argument("--group", help="a client group of the master")
+    s.add_argument("--remove", action="store_true", help="take this computer off the network again")
+    s.add_argument("--no-trust", action="store_true", help="leave the browsers' certificate stores alone")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
     s = sub("enroll", cmd_enroll); s.add_argument("fleet"); s.add_argument("name", help="a fleet host, or a device name")
     s.add_argument("--group", help="a client group of the master (its subnet decides the address)")
     s.add_argument("--address", help="the mesh address to give the client")

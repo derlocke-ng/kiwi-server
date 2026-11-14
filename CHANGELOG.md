@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.87.0 — this computer on the network; a board that does real work
+
+An Odroid N2+ became the home's ad blocker and VPN gateway, and the computer the
+network is run from got a way in. What that took:
+
+- **`kiwi-server connect <fleet>`** (the app: "Connect this computer…"): this computer
+  as a device of the network, with a NetworkManager connection that carries only the
+  network and asks its DNS only for the network's names, and the network's
+  certificates trusted in the user's browsers. docs/network.md, This computer on the
+  network.
+- **A machine's address reaches a board.** After an apply the machine is asked what
+  address it has; a board on the router's address takes the fixed one from the fleet
+  file by itself and falls back when it does not work (kiwi-stack 0.9.x,
+  `kiwi-stack address`).
+- **The gateway cannot leak any more** (kiwi-modules 0.32.3): a kill switch drops what
+  a LAN client sends unless it leaves through the VPN client, and the gateway's unit
+  now watches its rule and routes and puts them back. On the Odroid, systemd-networkd
+  had dropped the rule and every client went out around the VPN; a v1 gateway needed
+  restarts by hand for the same thing. kiwi-stack 0.9.4 also tells systemd-networkd to
+  leave the stack's routes and rules alone.
+- kiwi-stack 0.9.0 to 0.9.4, found on the same board: the dns module added to a running
+  stack starts (podman's resolver let go of port 53 only after a full restart);
+  `iptables` is installed where Armbian has nft only; Armbian's own package source no
+  longer goes through the LAN's cache, which refused it; `verify` names a container
+  whose address the router's DHCP routes elsewhere.
+- The toolchain image carries `certutil` (for the browsers' certificate stores):
+  `kiwi-server toolchain build` once.
+
 ## 2.86.0 — the recovery key brings the network back
 
 Until now nothing a wizard-made network could do saved the network itself: the copy was

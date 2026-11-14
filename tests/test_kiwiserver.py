@@ -5470,6 +5470,15 @@ class TestLogins(Base):
         self.assertEqual(rc, 0, err)
         return {h["name"]: h for h in json.loads(out)["hosts"]}, err
 
+    def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
+        f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),
+                             "network": {"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1"}})
+        hosts, _err = self.logins(f.path)
+        last = hosts["m1"]["logins"][-1]
+        self.assertEqual((last["label"], last["address"], last["password"]), ("Your home through this machine", "", ""))
+        self.assertIn("uses 192.168.1.30 as its DNS server and as its gateway", last["note"])
+        self.assertNotIn("Your home through this machine", [x["label"] for x in hosts["gate"]["logins"]])   # not a master
+
     def test_every_machine_lists_its_services_with_user_name_and_password(self):
         f = self.network()
         hosts, _err = self.logins(f.path)

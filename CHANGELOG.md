@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.90.1 — a gateway says how the home uses it
+
+- The logins of a machine with the gateway (or only the ad blocker) and a fixed address
+  end with how devices at home use it: which address to set as DNS server and gateway.
+  In `kiwi-server logins`, the app's "Logins…" and the page's "Logins" card.
+
 ## 2.90.0 — a machine leaves for good; using your network
 
 - **`kiwi-server remove <fleet> <machine>`**: off the VPN (its key stops working), its

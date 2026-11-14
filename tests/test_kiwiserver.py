@@ -1533,7 +1533,8 @@ class TestModules(Base):
         self.assertIn("url='https://raw.githubusercontent.com/derlocke-ng/mullvad-socks5/list/mullvad-socks.hosts'", script)
         self.assertIn("short='mullvad.kiwi'", script)
         self.assertIn("dir='/home/user/docker/km-pihole/mullvad-socks'", script)
-        self.assertEqual(sorted(b.units), ["km-mullvad-socks.service", "km-mullvad-socks.timer", "kn-sshd-log.service"])
+        self.assertEqual(sorted(b.units), ["km-mullvad-socks.service", "km-mullvad-socks.timer", "km-pihole-blocklist.service",
+                                           "km-pihole-blocklist.timer", "kn-sshd-log.service"])
         self.assertIn("ExecStart=/usr/bin/bash /home/user/docker/kiwi/mullvad-socks.sh", b.units["km-mullvad-socks.service"])
         self.assertIn("TimeoutStartSec=", b.units["km-mullvad-socks.service"])
         self.assertIn("Unit=km-mullvad-socks.service", b.units["km-mullvad-socks.timer"])
@@ -1549,7 +1550,7 @@ class TestModules(Base):
         self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["kn-pihole"]["environment"]))
         self.assertNotIn("mullvad", "\n".join(b.compose["services"]["kn-pihole"]["volumes"]))
         self.assertNotIn("kiwi/mullvad-socks.sh", b.files)
-        self.assertEqual(sorted(b.units), ["kn-gateway.service"])
+        self.assertEqual(sorted(b.units), ["kn-gateway.service", "kn-pihole-blocklist.service", "kn-pihole-blocklist.timer"])
         self.assertFalse([d for d in b.dirs if "mullvad" in d])
         m = self.master()
         m["dns"]["mullvad_socks"] = False
@@ -1588,7 +1589,8 @@ class TestModules(Base):
             modmod.Renderer(self.ms).render(spec)
         m = self.master(); m["dns"]["mullvad_socks_url"] = ""; m["dns"]["mullvad_socks"] = False
         host, role, spec = self.spec("gate", role="master", **{"master": m})
-        self.assertEqual(list(modmod.Renderer(self.ms).render(spec).units), ["kn-sshd-log.service"])
+        self.assertEqual(sorted(modmod.Renderer(self.ms).render(spec).units),
+                         ["km-pihole-blocklist.service", "km-pihole-blocklist.timer", "kn-sshd-log.service"])
 
     def test_a_secret_is_never_echoed_by_a_pattern_error(self):
         from kiwiserver import schema

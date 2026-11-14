@@ -1,0 +1,12 @@
+[Unit]
+Description=Kiwi Network: look at Pi-hole's blocklist after a start and every hour ({{ hostname }})
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Timer]
+OnBootSec=3min
+OnActiveSec=2min
+OnUnitActiveSec=1h
+Unit={{ container_prefix }}-pihole-blocklist.service
+
+[Install]
+WantedBy=timers.target

@@ -6,6 +6,7 @@ set with `kiwi-server serve FLEET --set-password`; it opens the encrypted store 
 import asyncio
 import base64
 import hmac
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -297,7 +298,9 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <h1><span class="dot {{ m.state }}"></span>{{ m.name }} <span class="state {{ m.state }}" style="font-size:1rem">{{ words(m.state) }}</span></h1>
 <p class="muted">{{ kind(m.role) }} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}{% if m.facts.uptime is number %} · on for {{ age(m.facts.uptime) }}{% elif m.facts.uptime %} · {{ m.facts.uptime }}{% endif %}</p>
 {% for p in m.problems %}<div class="card"><p><span class="dot {{ p.level }}"></span>{{ p.text }}</p>
-{% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}</div>{% endfor %}
+{% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}
+{% if "disk is locked" in p.text|lower %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="unlock">
+<input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Unlock it</button></form>{% endif %}</div>{% endfor %}
 {% from "step.html" import step with context %}
 {% if m.phase and m.phase != "applied" %}<h2>Still to set up</h2>{{ step(m, tok) }}
 {% elif not m.known %}<div class="card"><p>This machine has not answered yet.</p></div>{% endif %}
@@ -433,6 +436,7 @@ passwords), every night, and the <strong>network's own settings and keys</strong
 {% else %}<span class="muted">not backed up</span>{% endif %}</div>
 {% if "backup" in m.modules %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="save">
 <input type="hidden" name="host" value="{{ m.name }}"><button>Save now</button></form>{% endif %}
+{% if "backup" in m.modules %}<a class="btn" href="/backups/{{ m.name }}">Bring something back</a>{% endif %}
 {% if b and b.copies %}<p class="muted">Kept on: {% for c in b.copies %}{{ c.server }}{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
 {% if "backup" not in m.modules %}<p class="muted small">Nothing on this machine is set to be saved. Machines with your data should have the <em>backup</em> part.</p>{% endif %}
 {% if m.facts.backup_store %}<p class="muted">It keeps the backups of: {% for r in m.facts.backup_store.repos %}{{ r.client }} ({{ r.snapshots }} versions){{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
@@ -441,8 +445,30 @@ passwords), every night, and the <strong>network's own settings and keys</strong
 With it and your recovery key, the whole network can be rebuilt on a new computer.</p>
 <form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="backup"><button class="primary">Save it now</button></form></div>
 <details><summary>How do I get something back?</summary><p class="muted">A file: open the service (Nextcloud, Immich…) and use its
-own trash or versions first. A whole machine: on the computer the network was set up with, <code>kiwi-server restore</code>
-and the machine's page in the Kiwi Server app.</p></details>
+own trash or versions first. A whole service as it was on another day: "Bring something back" at its machine above.
+A machine that was lost: install it anew (Home lists the steps); it fetches its data by itself. The network itself on a new
+computer: <code>kiwi-server restore</code> there, with the recovery key.</p></details>
+{% endblock %}""",
+
+    "snapshots.html": """{% extends "base.html" %}{% block main %}
+<p><a href="/backups">← Backups</a></p><h1>Bring something back on {{ host }}</h1>
+<p class="muted">Each part of the machine is saved by itself, every night. Bringing one back puts it as it was at that
+time: <strong>what it has now is replaced.</strong> The part stops for a moment.</p>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+{% if snaps %}{% if snaps.missed %}<div class="card"><p><span class="dot warn"></span>Nothing found on {{ snaps.missed|join(", ") }}.
+<span class="muted">It did not answer, or it keeps no backups of this machine.</span></p></div>{% endif %}
+{% for part, times in snaps.parts.items() %}<h2>{{ part }}</h2><div class="card">
+{% for at, servers in times %}<div class="row" style="margin:6px 0"><span>{{ at[:16]|replace("T", " ") }}
+<span class="muted">· kept on {{ servers|join(", ") }}</span></span>
+<form class="inline" method="post" action="/run" onsubmit="return confirm('Bring {{ part }} on {{ host }} back to {{ at[:16]|replace("T", " ") }}? What it has now is replaced.')">{{ tok }}
+<input type="hidden" name="action" value="restore"><input type="hidden" name="host" value="{{ host }}">
+<input type="hidden" name="module" value="{{ part }}"><input type="hidden" name="at" value="{{ at }}">
+<button>Bring back</button></form></div>{% endfor %}</div>
+{% else %}<p class="muted">No snapshots yet. The first backup runs in the night, or with "Save now" on the Backups page.</p>{% endfor %}
+{% if snaps.parts %}<h2>All of it</h2><div class="card"><p>Every part of {{ host }} back to its newest snapshot.</p>
+<form method="post" action="/run" onsubmit="return confirm('Bring everything on {{ host }} back to the newest snapshot? What it has now is replaced.')">{{ tok }}
+<input type="hidden" name="action" value="restore"><input type="hidden" name="host" value="{{ host }}">
+<button>Bring everything back</button></form></div>{% endif %}{% endif %}
 {% endblock %}""",
 
     "controllers.html": """{% extends "base.html" %}{% block main %}
@@ -553,7 +579,7 @@ JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "
 FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's phases before it is set up
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
-        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of",
+        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking",
         "rotate-seed": "Replacing the secrets inside the services"}
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
@@ -562,8 +588,8 @@ SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "p
             "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)"}
 HINTS = (
     ("unreachable", "It did not answer. Is it switched on and online? After a restart, give it a minute, then check again."),
-    ("disk is locked", "Its disk is encrypted and waits to be unlocked after a restart. Unlock it from the computer the "
-                       "network was set up with."),
+    ("disk is locked", "Its disk is encrypted and waits to be unlocked after a restart. \"Unlock it\" on its page "
+                       "does that; so does the Kiwi Server app."),
     ("reboot", "It installed updates and restarts by itself in its update window. Nothing to do."),
     ("backup", "Its last backup is older than it should be. Is the machine that keeps the backups on?"),
     ("not running", "A service on it stopped. Apply usually brings it back."),
@@ -952,14 +978,16 @@ def make_app(control: Control):
         return RedirectResponse("/", status_code=303)
 
     @app.post("/run")
-    def run(request: Request, action: str = Form(...), host: str = Form(""), csrf: str = Form(""), at: str = Form("")):
+    def run(request: Request, action: str = Form(...), host: str = Form(""), csrf: str = Form(""), at: str = Form(""),
+            module: str = Form("")):
         u = posted(request, csrf)
         if not u:
             return login_page()
         if action not in ACTIONS:
             return JSONResponse({"error": "unknown action"}, status_code=400)
         try:
-            jid = control.start(action, [host] if host else [], user=u, at=at if action == "setup" else "")
+            jid = control.start(action, [host] if host else [], user=u, at=at if action in ("setup", "restore") else "",
+                                module=module if action == "restore" else "")
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return RedirectResponse("/jobs/" + jid, status_code=303)
@@ -972,7 +1000,7 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":
@@ -984,7 +1012,7 @@ def make_app(control: Control):
         if j["action"] in ("rotate", "rotate-seed"):      # a machine that is off is no failure: it waits
             say["failed"] = ("Not every machine could be changed. The ones that wait are listed under Computers; "
                              "the lines below say why.")
-        back = ("/backups" if j["action"] in ("save", "backup") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
+        back = ("/backups" if j["action"] in ("save", "backup", "restore") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
                 else "/hosts/" + j["hosts"][0] if j["hosts"] else "/")
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
 
@@ -1039,6 +1067,16 @@ def make_app(control: Control):
             return login_page()
         ms, _st, _info = machines()
         return page("backups.html", request, "/backups", machines=ms)
+
+    @app.get("/backups/{name}")
+    def snapshots(request: Request, name: str):
+        if not user(request):
+            return login_page()
+        try:
+            return page("snapshots.html", request, "/backups", host=name, snaps=control.snapshots(name))
+        except (KiwiError, OSError, subprocess.TimeoutExpired) as e:
+            said = "Its backup machines took too long to answer." if isinstance(e, subprocess.TimeoutExpired) else str(e)
+            return page("snapshots.html", request, "/backups", host=name, snaps=None, error=said)
 
     @app.get("/help")
     def help_page(request: Request):

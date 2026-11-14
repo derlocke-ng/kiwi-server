@@ -12,7 +12,7 @@ that booted. The page:
 | **Home** | how the network is, in one line; what wants a look and what that means; every machine; a tile per service |
 | **A machine** | what it is, what runs on it; Check now, Preview, Apply, each with what it does |
 | **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
-| **Backups** | when each machine was last saved and where; save the network itself |
+| **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; save the network itself |
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 

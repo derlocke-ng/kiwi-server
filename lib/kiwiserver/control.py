@@ -39,8 +39,11 @@ ACTIONS = {
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
+    "restore": ("backups", True), "unlock": ("unlock", True),
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build"}     # these change machines or the fleet: the audit log says who
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock"}
+MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
 
 
 class Control:
@@ -587,7 +590,7 @@ class Control:
             return [json.loads(x) for x in fh.readlines()[-n:]][::-1]
 
     # ---- jobs -----------------------------------------------------------------------
-    def argv(self, action, hosts=(), at=""):
+    def argv(self, action, hosts=(), at="", module=""):
         if action not in ACTIONS:
             raise KiwiError("unknown action %r" % action)
         if action == "update":              # every machine, one after the other: the maintenance button
@@ -622,6 +625,19 @@ class Control:
                 return list(self.kiwi) + ["apply", self.fleet_path, hosts[0], "--ssh",
                                           "%s@%s" % (row.get("admin_user") or "core", at), "--new-host-key"]
             return list(self.kiwi) + ["next", self.fleet_path, hosts[0], "--yes"]
+        if action == "restore":             # a part of a machine back to a snapshot, or all of it to the newest
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            if module and not MODULE.match(module):
+                raise KiwiError("not a part's name: %r" % module)
+            if at and not WHEN.match(at):
+                raise KiwiError("not a snapshot's time: %r" % at)
+            return (list(self.kiwi) + ["backups", self.fleet_path, hosts[0]] + ([module] if module else [])
+                    + ["--restore"] + (["--at", at] if at else []))
+        if action == "unlock":              # a machine whose encrypted disk waits at boot
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            return list(self.kiwi) + ["unlock", self.fleet_path, hosts[0]]
         if action == "build":       # about 1 GB of memory each: one at a time, asked for by name
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
@@ -637,20 +653,21 @@ class Control:
             argv.append("--once")
         return argv
 
-    def start(self, action, hosts=(), user="admin", wait=False, at=""):
+    def start(self, action, hosts=(), user="admin", wait=False, at="", module=""):
         """A job in a thread; its id. The jobs wait for each other."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
         for h in hosts:
             if not HOST.match(h):
                 raise KiwiError("not a host name: %r" % h)
-        argv = self.argv(action, hosts, at.strip())
+        argv = self.argv(action, hosts, at.strip(), module.strip())
         jid = time.strftime("%Y%m%d-%H%M%S-") + pysecrets.token_hex(3)
         meta = {"id": jid, "action": action, "hosts": list(hosts), "user": user,
                 "state": "waiting", "started": None, "ended": None, "rc": None}
         self._write(meta)
         if action in CHANGES:
-            self.audit(user, action, hosts=list(hosts), job=jid)
+            more = {k: v for k, v in (("part", module.strip()), ("from", at.strip())) if v and action == "restore"}
+            self.audit(user, action, hosts=list(hosts), job=jid, **more)
         t = threading.Thread(target=self._run, args=(meta, argv), daemon=True)
         t.start()
         if wait:
@@ -685,8 +702,32 @@ class Control:
             row = next((h for h in (self.fleet_info() or {}).get("hosts") or [] if h["name"] in meta["hosts"]), None)
             if row and row.get("phase") == "applied" and self.media(row["name"]):
                 os.remove(self.media(row["name"])[0])
-        if meta["action"] in ("status", "apply", "save", "update", "setup"):
+        if meta["action"] in ("status", "apply", "save", "update", "setup", "restore", "unlock"):
             self.look()                         # what the pages show is what is true now
+
+    # ---- what a machine's backups hold ------------------------------------------------
+    def snapshots(self, host):
+        """The snapshots of a machine, by part: {part: [(time, [servers])]}, newest first, and the
+        backup machines that did not answer. Asks the backup machines, so it takes a moment."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not HOST.match(host or ""):
+            raise KiwiError("not a host name: %r" % host)
+        r = subprocess.run(list(self.kiwi) + ["backups", self.fleet_path, host, "--porcelain"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=180)
+        try:
+            data = json.loads(r.stdout)
+        except ValueError:
+            lines = [x for x in (r.stderr or r.stdout).strip().splitlines() if x.strip()]
+            raise KiwiError((lines[-1] if lines else "no answer").replace("error: ", "")[:300])
+        times = {}
+        for sv in data.get("servers") or []:
+            for sn in sv.get("snapshots") or []:
+                at, servers = times.setdefault(sn["module"], {}).get(sn["time"][:16], ("", set()))
+                servers.add(sv["server"].removeprefix("backup.").split(".")[0])
+                times[sn["module"]][sn["time"][:16]] = (max(at, sn["time"]), servers)
+        parts = {m: [(at, sorted(servers)) for _k, (at, servers) in sorted(t.items(), reverse=True)[:30]] for m, t in sorted(times.items())}
+        return {"parts": parts, "missed": [sv["server"] for sv in data.get("servers") or [] if not sv.get("ok")]}
 
     # ---- machines: a new one, its install media ---------------------------------------
     def media_dir(self):

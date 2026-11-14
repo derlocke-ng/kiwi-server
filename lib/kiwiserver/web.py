@@ -82,6 +82,105 @@ answered yet. Is that machine on?</p>{% endif %}{% endif %}
 <code>kiwi-server serve &lt;fleet&gt; --set-password</code>, then <code>kiwi-server control push &lt;fleet&gt;</code>.
 The old password cannot be read anywhere.</p></details>{% endblock %}""",
 
+    "setup.html": """{% extends "base.html" %}{% block main %}
+{% macro field(q, name, value, err) %}{% if q.type == "choice" and q.options | length == 1 %}
+<input type="hidden" name="{{ name }}" value="{{ q.options[0].value }}">{% else %}<div class="q"{% if q.when %} data-when="{{ q.when }}"{% endif %}>
+<label for="f-{{ name }}">{{ q.label }}</label>
+{% if q.help %}<p class="muted" style="margin:0 0 4px">{{ q.help }}</p>{% endif %}
+{% if q.type == "choice" %}<select id="f-{{ name }}" name="{{ name }}">{% for o in q.options %}
+<option value="{{ o.value }}"{% if o.value == value %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</select>
+{% else %}<input id="f-{{ name }}" name="{{ name }}" value="{{ value }}"{% if q.secret %} type="password" autocomplete="off"{% endif %}>{% endif %}
+{% if err %}<p class="bad">{{ err }}</p>{% endif %}</div>{% endif %}{% endmacro %}
+<h1>A new network</h1>
+<p class="muted">Nothing is set up on this machine yet. Answer the questions; the suggestions are fine for most homes.</p>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+<form method="post" action="/setup" autocomplete="off">
+{% for step in steps %}<div class="card"><h2 style="margin-top:0">{{ step.step }}</h2>
+<p>{{ step.intro }}</p>{% if step.notes %}<ul>{% for n in step.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+{% for q in step.questions if not q.advanced and q.type not in ("machines", "lookup") %}
+{{ field(q, q.id, values.get(q.id, q.default or ""), errors.get(q.id)) }}{% endfor %}
+{% for q in step.questions if q.type == "machines" %}
+<div id="machines">{% for m in machines %}{% set i = loop.index0 %}<div class="card machine"><div class="row"><strong>A machine at home</strong>
+<button type="button" class="drop">Leave it out</button></div>
+{% for f in q.fields if not f.advanced %}{{ field(f, "nodes.%d.%s" % (i, f.id), m.get(f.id, ""), errors.get("nodes.%d.%s" % (i, f.id))) }}{% endfor %}
+<details><summary>More settings</summary>
+{% for f in q.fields if f.advanced %}{{ field(f, "nodes.%d.%s" % (i, f.id), m.get(f.id, ""), errors.get("nodes.%d.%s" % (i, f.id))) }}{% endfor %}
+</details></div>{% endfor %}</div>
+<p class="muted" id="none">{{ q.none }}</p>
+<div class="actions"><button type="button" id="add">{{ q.add }}</button></div>
+<template id="machine"><div class="card machine"><div class="row"><strong>A machine at home</strong>
+<button type="button" class="drop">Leave it out</button></div>
+{% for f in q.fields if not f.advanced %}{{ field(f, "nodes.N." + f.id, blank.get(f.id, ""), None) }}{% endfor %}
+<details><summary>More settings</summary>
+{% for f in q.fields if f.advanced %}{{ field(f, "nodes.N." + f.id, blank.get(f.id, ""), None) }}{% endfor %}
+</details></div></template>{% endfor %}
+{% set more = step.questions | selectattr("advanced") | list %}{% if more %}<details{% if step.id in open %} open{% endif %}>
+<summary>More settings</summary>{% for q in more %}
+{{ field(q, q.id, values.get(q.id, q.default or ""), errors.get(q.id)) }}{% endfor %}</details>{% endif %}
+{% if step.id == "keys" %}
+<label for="code">Setup code</label><p class="muted" style="margin:0 0 4px">Shown where this page was started: in the
+terminal, or with <code>podman logs kn-control</code>. It proves that this is your machine.</p>
+<input id="code" name="code" value="{{ values.get('code', '') }}">{% if errors.get("code") %}<p class="bad">{{ errors.code }}</p>{% endif %}
+<label for="pw">A password for this page</label><p class="muted" style="margin:0 0 4px">12 characters at least. It opens
+your network's keys after every restart of this machine.</p>
+<input id="pw" type="password" name="password" autocomplete="new-password">
+{% if errors.get("password") %}<p class="bad">{{ errors.password }}</p>{% endif %}
+<label for="pw2">The password again</label><input id="pw2" type="password" name="again" autocomplete="new-password">
+<div class="actions"><button class="primary">Make my network</button></div>{% endif %}
+</div>{% endfor %}</form>
+<script>
+(function () {
+  var box = document.getElementById("machines"), tpl = document.getElementById("machine"), free = {{ free | tojson }};
+  function shown() {
+    var v = {};
+    document.querySelectorAll("form [name]").forEach(function (e) { v[e.name] = e.value; });
+    document.querySelectorAll("[data-when]").forEach(function (q) {
+      var w = q.dataset.when, m, key, on = true, card = q.closest(".machine"), pre = "";
+      if (card) { var f = card.querySelector("[name]"); pre = f.name.split(".").slice(0, 2).join(".") + "."; }
+      if ((m = w.match(/^(\\w+) == '(.*)'$/))) { on = (v[pre + m[1]] !== undefined ? v[pre + m[1]] : v[m[1]]) === m[2]; }
+      else if ((m = w.match(/^(\\w+) in (.*)$/))) { key = v[pre + m[1]] !== undefined ? v[pre + m[1]] : v[m[1]]; on = m[2].split(",").indexOf(key) >= 0; }
+      q.style.display = on ? "" : "none";
+    });
+    document.getElementById("none").style.display = box.children.length ? "none" : "";
+  }
+  function number() {
+    Array.prototype.forEach.call(box.children, function (card, i) {
+      card.querySelectorAll("[name]").forEach(function (e) {
+        e.name = e.name.replace(/^nodes\\.[^.]+\\./, "nodes." + i + ".");
+        e.id = "f-" + e.name; });
+      card.querySelectorAll("label").forEach(function (l) { l.htmlFor = "f-" + l.htmlFor.replace(/^f-/, "").replace(/^nodes\\.[^.]+\\./, "nodes." + i + "."); });
+    });
+  }
+  document.getElementById("add").addEventListener("click", function () {
+    var card = tpl.content.firstElementChild.cloneNode(true), i = box.children.length;
+    box.appendChild(card); number();
+    var a = card.querySelector('[name$=".address"]'), n = card.querySelector('[name$=".name"]');
+    if (a && free.addresses[i]) a.value = free.addresses[i];
+    if (n && free.names[i]) n.value = free.names[i];
+    shown();
+  });
+  document.addEventListener("click", function (e) {
+    if (e.target.classList.contains("drop")) { e.target.closest(".machine").remove(); number(); shown(); }
+  });
+  document.addEventListener("change", shown);
+  if ({{ guess | tojson }}) {       // the machine could not tell (a container): what this browser says
+    var f = function (n) { return document.querySelector('[name="' + n + '"]'); }, lang = (navigator.language || "en-US").split("-");
+    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone, cc = (lang[1] || "").toUpperCase();
+    if (tz && f("timezone")) f("timezone").value = tz;
+    if (cc && f("locale")) f("locale").value = lang[0] + "_" + cc + ".UTF-8";
+    if (f("keyboard")) f("keyboard").value = lang[0] === "en" ? (cc === "GB" ? "gb" : "us") : (cc === "AT" || cc === "CH") ? cc.toLowerCase() : lang[0];
+  }
+  shown();
+})();
+</script>{% endblock %}""",
+    "recovery.html": """{% extends "base.html" %}{% block main %}
+<h1>Your network is made</h1>
+<div class="card"><p><strong>Your recovery key. Write it down now</strong>, on paper or in a password manager.
+It is shown once. If you forget the password of this page, it is the only way back to your network's keys.</p>
+<pre style="font-size:1.05rem">{{ recovery }}</pre>
+<div class="actions"><a class="btn primary" href="/">I have written it down</a></div></div>
+<p class="muted">Next, on the page that follows: the machines, one after the other. The master first, then the
+machines at home, then your phone.</p>{% endblock %}""",
     "index.html": """{% extends "base.html" %}{% block main %}
 {% set bad = machines|selectattr("state", "in", ["bad", "down"])|list %}{% set warn = machines|selectattr("state", "equalto", "warn")|list %}
 {% if looking or not looked %}<div class="banner warn">Checking your machines… this takes a minute.</div>
@@ -424,8 +523,100 @@ def make_app(control: Control):
     def healthz():
         return {"ok": True, "version": VERSION, "locked": control.locked()}
 
+    def setup_page(values=None, errors=None, error=None, host=""):
+        """The questionnaire of `kiwi-server init`, as the terminal and the app ask it."""
+        from . import setup as setupmod
+        found = setupmod.detect()
+        at = host.rsplit(":", 1)[0].strip("[]")
+        if not found["subnet"] and any(at.startswith(p) for p in ("192.168.", "10.", "172.")) and at.count(".") == 3:
+            # a container sees no home network: the address this page was opened at is in it
+            found["subnet"], found["gateway"] = at.rsplit(".", 1)[0] + ".0/24", at.rsplit(".", 1)[0] + ".1"
+        steps = setupmod.questions(found)
+        for st in steps:            # found by a machine that may sit in a container: shown, to be checked
+            st["notes"] = [n for n in st.get("notes") or [] if not n.startswith("Found on this computer")]
+            for q in st["questions"]:
+                if q["id"] in ("lan_subnet", "lan_gateway"):
+                    q["advanced"] = False
+                    q["help"] = "Check that it is your home's. " + q.get("help", "")
+        values = dict(values or {})
+        fields = next(q["fields"] for st in steps for q in st["questions"] if q.get("type") == "machines")
+        blank = {f["id"]: f.get("default", "") for f in fields}
+        machines = [dict(blank, **m) for m in values.get("nodes") or []]
+        free = {"addresses": found.get("addresses") or [], "names": list(setupmod.NODES)}
+        errors = errors or {}
+        opened = [st["id"] for st in steps if any(q.get("advanced") and q["id"] in errors for q in st["questions"])]
+        return page("setup.html", steps=steps, values=values, errors=errors, error=error, machines=machines,
+                    blank=blank, free=free, open=opened, guess=not values and found["timezone"] in ("UTC", "Etc/UTC"))
+
+    def setup_answers(form):
+        """The posted form as the answers `setup.make` takes; a question that does not apply is left out."""
+        from . import setup as setupmod
+        steps = setupmod.questions(setupmod.detect(probe=False))
+        a, nodes = {}, {}
+        for key, value in form.items():
+            if key.startswith("nodes."):
+                _n, i, field = key.split(".", 2)
+                if i.isdigit():
+                    nodes.setdefault(int(i), {})[field] = str(value).strip()
+        for st in steps:
+            for q in st["questions"]:
+                if q.get("type") in ("machines", "lookup"):
+                    continue
+                a[q["id"]] = str(form.get(q["id"], q.get("default") or "")).strip()
+        for st in steps:
+            for q in st["questions"]:
+                if q.get("when") and q["id"] in a and not setupmod._when(q, a):
+                    del a[q["id"]]
+        taken = set()
+        a["nodes"] = []
+        for i in sorted(nodes)[:8]:
+            m = nodes[i]
+            if not m.get("name"):
+                m["name"] = setupmod.free_name("node", taken | {a.get("master_name")})
+            taken.add(m["name"])
+            if m.get("preset") != "gateway":
+                m.pop("download_dir", None)
+            a["nodes"].append(m)
+        return a
+
+    @app.get("/setup")
+    def setup_form(request: Request):
+        if not control.fresh():
+            return login_page()
+        return setup_page(host=request.headers.get("host", ""))
+
+    @app.post("/setup")
+    async def setup_do(request: Request):
+        if not control.fresh():
+            return login_page()
+        from . import setup as setupmod
+        form = dict(await request.form())
+        answers = await run_in_threadpool(setup_answers, form)
+        shown = dict(answers, code=form.get("code", ""))
+        errors = setupmod.check(answers)
+        pw = str(form.get("password", "")).strip()
+        if len(pw) < 12:
+            errors["password"] = "The password needs 12 characters at least."
+        elif pw != str(form.get("again", "")).strip():
+            errors["password"] = "The two passwords are not the same."
+        if not errors and not control.setup_code_ok(str(form.get("code", "")), address(request)):
+            time.sleep(1)
+            errors["code"] = "That is not the setup code. After five wrong tries, wait ten minutes."
+        if errors:
+            return await run_in_threadpool(setup_page, shown, errors, "Something is missing below.", request.headers.get("host", ""))
+        try:
+            recovery, token = await run_in_threadpool(control.first_run, str(form.get("code", "")), pw, answers, address(request))
+        except KiwiError as e:
+            return await run_in_threadpool(setup_page, shown, {}, str(e), request.headers.get("host", ""))
+        r = page("recovery.html", recovery=recovery)
+        secure = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
+        r.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
+        return r
+
     @app.get("/login")
     def login_form():
+        if control.fresh():
+            return RedirectResponse("/setup", status_code=303)
         return page("login.html", locked=control.locked(), auto=control.auto_state())
 
     @app.post("/login")
@@ -459,6 +650,8 @@ def make_app(control: Control):
 
     @app.get("/")
     def index(request: Request):
+        if control.fresh():
+            return RedirectResponse("/setup", status_code=303)
         if not user(request):
             return login_page()
         ms, st, _info = machines()

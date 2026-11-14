@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets as pysecrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -64,6 +65,7 @@ class Control:
         self._age = {}                        # name -> sha256 of its encrypted file on disk, as this process left it
         self._arming = threading.Lock()       # see arm_auto
         self._join = None                     # the join code that is out, if one is
+        self._setup_code = None               # the first run's code, while there is no network here yet
         self._tokens = {}                     # token -> (controller, expires): who may sync
 
     # ---- the password and the store ----------------------------------------------------
@@ -80,6 +82,74 @@ class Control:
         fleet = self._fleet_file("fleet.yaml")
         plain = os.path.isfile(fleet) and not os.path.islink(fleet)
         return self.store.exists() and os.path.isfile(self.salt_file) and (plain or os.path.isfile(fleet + ".age"))
+
+    # ---- the first run, from this machine's page -------------------------------------
+    # A machine with nothing on it yet (no store, no fleet file) offers the questionnaire of
+    # `kiwi-server init` on its page. Whoever opens the page first would own the new network,
+    # so the page asks for a code that only the person who started it can read: `serve`
+    # prints it (the container's log, the machine's console). The new fleet is made in RAM
+    # and reaches the disk encrypted only, as everything on a control node.
+    def fresh(self):
+        fleet = self._fleet_file("fleet.yaml")
+        return not (self.store.exists() or os.path.lexists(fleet) or os.path.isfile(fleet + ".age"))
+
+    def setup_code(self):
+        if not self._setup_code:
+            raw = pysecrets.token_hex(4)
+            self._setup_code = "%s-%s" % (raw[:4], raw[4:])
+        return self._setup_code
+
+    def setup_code_ok(self, code, address="?"):
+        """Five wrong tries from an address: ten minutes of nothing, as at the login."""
+        now = self.clock()
+        recent = [t for t in self.failures.get(address, []) if now - t < 600]
+        self.failures[address] = recent
+        if len(recent) >= 5:
+            return False
+        if hmac.compare_digest((code or "").strip().lower().encode(), self.setup_code().encode()):
+            return True
+        recent.append(now)
+        return False
+
+    def first_run(self, code, password, answers, address="?"):
+        """The new network from the questionnaire's answers. Returns (recovery key, session token)."""
+        from . import setup as setupmod
+        with self.lock:
+            if not self.fresh():
+                raise KiwiError("this machine has a network already")
+            if not self.setup_code_ok(code, address):
+                raise KiwiError("that is not the setup code")
+            password = (password or "").strip()
+            if len(password) < MIN_PASSWORD:
+                raise KiwiError("the password needs %d characters at least: it guards every secret of the network" % MIN_PASSWORD)
+            bad = setupmod.check(answers)
+            if bad:
+                raise KiwiError("; ".join(bad.values()))
+            tmp = os.path.join(self.run, "first-run")       # in RAM
+            shutil.rmtree(tmp, ignore_errors=True)
+            os.makedirs(tmp, mode=0o700)
+            try:
+                data, _made = setupmod.make(answers, tmp)
+                setupmod.write(os.path.join(tmp, "fleet.yaml"), data)
+                st = storemod.Store(tmp)
+                recovery, _saved = st.init()
+                made = Control(os.path.join(tmp, "fleet.yaml"), run_dir=os.path.join(tmp, "run"))
+                made.set_password(password)
+                st.remove("desktop")            # a keyring's way: there is no keyring on a node
+                st.lock()
+                blob = storemod.encrypt_bytes(st.recipients, util.read_bytes(os.path.join(tmp, "fleet.yaml")))
+                for name in (storemod.RECIPIENTS, storemod.FILE):
+                    shutil.copyfile(os.path.join(tmp, name), os.path.join(self.fleet_dir, name))
+                os.chmod(os.path.join(self.fleet_dir, storemod.FILE), 0o600)
+                util.write_bytes(self._fleet_file("fleet.yaml") + ".age", blob, 0o600)
+                shutil.copyfile(made.salt_file, self.salt_file)
+                os.chmod(self.salt_file, 0o600)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            self.store = storemod.Store(self.fleet_dir)
+            self._setup_code = None
+        self.audit("admin", "first run: the network was made on this machine's page", address=address)
+        return recovery, self.login(password, address)
 
     def _open(self, identity):
         """The store into RAM, then the fleet files beside it; fleet.yaml becomes a link there."""

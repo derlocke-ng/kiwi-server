@@ -6194,5 +6194,90 @@ class TestMerge(unittest.TestCase):
         self.assertEqual((merged, both), ({"fleet.yaml": "same"}, []))             # the same change on both sides
 
 
+@unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
+class TestFirstRunPage(StoreBase):
+    """A machine with nothing on it: its page asks the questions of `init`, behind a setup code."""
+    PW = "a long enough password"
+    FORM = {"master_where": "vps", "master_address": "203.0.113.7", "exit": "direct", "lan_subnet": "192.168.1.0/24",
+            "lan_gateway": "192.168.1.1", "nodes.0.preset": "cloud", "nodes.0.address": "192.168.1.30"}
+
+    def setUp(self):
+        super().setUp()
+        import uvicorn
+        from kiwiserver import web
+        self.dir = os.path.join(self.tmp, "node")
+        os.makedirs(self.dir)
+        self.c = controlmod.Control(os.path.join(self.dir, "fleet.yaml"), run_dir=os.path.join(self.tmp, "ram"),
+                                    kiwi_cmd=[sys.executable, "-c", "print('ran')"])
+        port = remote.free_port()
+        self.server = uvicorn.Server(uvicorn.Config(web.make_app(self.c), host="127.0.0.1", port=port, log_level="error"))
+        t = threading.Thread(target=self.server.run, daemon=True)
+        t.start()
+        self.addCleanup(lambda: (setattr(self.server, "should_exit", True), t.join(5)))
+        self.url = "http://127.0.0.1:%d" % port
+        for _ in range(100):
+            if self.server.started:
+                break
+            time.sleep(0.05)
+
+    def ask(self, path, form=None, cookie=""):
+        """(status, body or Location, the session cookie it set)."""
+        import urllib.error
+        import urllib.request
+
+        class Stay(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **kw):
+                return None
+        req = urllib.request.Request(self.url + path, data=urllib.parse.urlencode(form).encode() if form is not None else None,
+                                     headers={"Cookie": cookie} if cookie else {})
+        try:
+            with urllib.request.build_opener(Stay).open(req) as r:
+                return r.status, r.read().decode(), (r.headers.get("set-cookie") or "").split(";")[0]
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.headers.get("location") or e.read().decode(), ""
+
+    def test_the_questions_make_a_network_that_rests_encrypted(self):
+        self.assertTrue(self.c.fresh())
+        self.assertEqual(self.ask("/")[:2], (303, "/setup"))
+        self.assertEqual(self.ask("/login")[:2], (303, "/setup"))
+        status, body, _ = self.ask("/setup")
+        self.assertEqual(status, 200)
+        self.assertIn("Its address on the Internet", body)
+        self.assertNotIn("Key to your machines", body)          # one answer: not asked
+        # what is missing is said where it is asked; nothing is made
+        status, body, _ = self.ask("/setup", dict(self.FORM, master_address="", password=self.PW, again=self.PW))
+        self.assertIn("The master&#39;s address is needed", body)
+        # without the code only the person who started the page can read: nothing
+        status, body, _ = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code="0000-0000"))
+        self.assertIn("That is not the setup code", body)
+        self.assertTrue(self.c.fresh())
+        status, body, _ = self.ask("/setup", dict(self.FORM, password=self.PW, again="another one, long too", code=self.c.setup_code()))
+        self.assertIn("The two passwords are not the same", body)
+        status, body, cookie = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        self.assertEqual(status, 200)
+        self.assertIn("AGE-SECRET-KEY-", body)                  # the recovery key, once
+        self.assertTrue(cookie.startswith("kiwi_session="))
+        self.assertFalse(self.c.fresh())
+        # at rest: the encrypted files only; the fleet file is a link into RAM
+        on_disk = sorted(n for n in os.listdir(self.dir) if not os.path.islink(os.path.join(self.dir, n)))
+        self.assertEqual(on_disk, ["control", "fleet.yaml.age", "secrets.age", "secrets.recipients"])
+        self.assertTrue(os.path.islink(os.path.join(self.dir, "fleet.yaml")))
+        fleet = config.Fleet.load(os.path.join(self.dir, "fleet.yaml"))
+        self.assertEqual(sorted(h.role for h in fleet.hosts.values()), ["master", "node"])
+        self.assertEqual([n for n, _k in self.c.store.ways()], ["recovery", "control"])
+        # the page is the network's now: the questions are gone, the password logs in
+        self.assertEqual(self.ask("/setup")[:2], (303, "/login"))
+        self.assertEqual(self.ask("/", cookie=cookie)[0], 200)
+        self.c.lock_store()
+        self.assertTrue(self.c.login(self.PW))
+
+    def test_five_wrong_codes_and_the_page_waits(self):
+        for _ in range(5):
+            self.assertFalse(self.c.setup_code_ok("0000-0000", "10.0.0.9"))
+        self.assertFalse(self.c.setup_code_ok(self.c.setup_code(), "10.0.0.9"))
+        self.assertTrue(self.c.setup_code_ok(self.c.setup_code(), "10.0.0.8"))
+
+
 if __name__ == "__main__":
     unittest.main()

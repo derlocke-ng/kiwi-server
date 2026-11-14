@@ -1683,14 +1683,18 @@ def cmd_serve(args):
         c.set_password(pw)
         util.say("the control password opens the store now; kiwi-server control push %s takes it to the node" % args.fleet)
         return
-    if not c.ready():
+    if c.fresh() and args.wait:
+        # nothing here yet: the page asks the questions of `init`. The code proves that the
+        # person at the page is the one who started this
+        util.say("no network here yet: the page sets one up. Its setup code: %s" % c.setup_code())
+    elif not c.ready():
         if not args.wait:
             raise KiwiError("nothing to serve yet: the fleet needs its secret store (kiwi-server secrets init) and "
                             "a control password (kiwi-server serve %s --set-password)" % args.fleet)
         util.say("waiting for the fleet: kiwi-server control push <fleet>, from the operator's computer")
         while not c.ready():
             time.sleep(10)
-    if c.locked():
+    if not c.fresh() and c.locked():
         util.say("the fleet is locked: the first login on the page opens it")
     try:
         from . import web

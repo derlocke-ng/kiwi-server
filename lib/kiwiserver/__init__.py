@@ -5,7 +5,7 @@ Targets: Fedora CoreOS, uCore (CoreOS rebased onto a ublue image), Debian stable
 Roles:   bare, node-cloud (the kiwi-cloud stack), master — plus any directory
          dropped into roles/ that follows the same two-file convention.
 """
-VERSION = "2.80.2"
+VERSION = "2.81.0"
 
 # the renderer, the quadlet converter and the settings schema live in kiwimodules
 # (the kiwi-modules package, vendored under lib/); the old names keep working

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.81.0 — a network can be started from a machine's page
+
+- **The first run on the control page.** A machine with nothing on it (`serve --wait`,
+  no store, no fleet file) shows the questionnaire of `kiwi-server init`: the same
+  questions as the terminal and the app, checked where they are asked, machines at home
+  added with a button. It asks for a setup code that `serve` prints (the container's
+  log), so the first person to open the page is not the owner by accident, and for a
+  password. The network is made in memory and reaches the disk encrypted only; the
+  recovery key is shown once. docs/control.md, Start a network from the page.
+- The page takes time zone and language from the browser and the home network from the
+  address it was opened at, when the machine (a container) cannot tell.
+- `notes/REVIEW-page-parity.md`: what the app can do and the page cannot yet, and the
+  other way round. Next: adding and installing machines from the page, then settings.
+
 ## 2.80.2 — system updates work behind the LAN's image cache
 
 - kiwi-stack 0.8.3: a uCore machine that fetches its images through the LAN's cache (the

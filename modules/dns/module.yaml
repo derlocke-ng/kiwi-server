@@ -66,6 +66,12 @@ host_integration:
 urls:
   - "Pi-hole admin: https://{{ pihole_hostname or 'pihole.' ~ hostname }}/admin (through the reverse proxy){% if expose_web_ui %}, http://{{ web_ui_bind or '<this host>' }}:{{ web_ui_port }}/admin{% endif %}"
 
+logins:
+  - label: Ad blocker (Pi-hole)
+    path: /admin
+    password: pihole_password
+    note: "Pi-hole asks for the password only."
+
 nginx:
   servers:
     - server_name: "{{ pihole_hostname or 'pihole.' ~ hostname }}"

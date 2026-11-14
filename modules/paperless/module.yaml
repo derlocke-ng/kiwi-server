@@ -39,6 +39,12 @@ storage:
 urls:
   - "Paperless-ngx: https://{{ paperless_host }} — user admin, the paperless.admin_password setting"
 
+logins:
+  - label: Documents (Paperless)
+    user: admin
+    password: admin_password
+    note: "This password was set when Paperless first started. If someone changed it inside Paperless, the new one is not known here."
+
 nginx:
   upstream:
     name: paperless

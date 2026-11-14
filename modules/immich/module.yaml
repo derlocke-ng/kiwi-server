@@ -36,6 +36,10 @@ storage:
 urls:
   - "Immich: https://{{ immich_host }} — the first person to sign up becomes the admin"
 
+logins:
+  - label: Photos (Immich)
+    note: "The first person to open it makes the admin account. The network keeps no password for it."
+
 nginx:
   upstream:
     name: immich

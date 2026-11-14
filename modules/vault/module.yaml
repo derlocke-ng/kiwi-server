@@ -23,12 +23,30 @@ firewall:
 templates:
   compose: docker-compose.yml.j2
 
+derived:
+  # Vaultwarden takes ADMIN_TOKEN as the token itself or as an Argon2 hash of it ($argon2…)
+  admin_token_plain: "{{ 'yes' if admin_token and not admin_token.startswith('$argon2') else '' }}"
+  admin_token_hashed: "{{ 'yes' if admin_token.startswith('$argon2') else '' }}"
+
 storage:
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-vault", type: dir, required: true }
 
 urls:
   - "Vaultwarden: {{ vault_domain or 'https://vault.' ~ hostname }}"
+
+logins:
+  - label: Passwords (Vaultwarden)
+    note: "Everyone makes their own account here. The network keeps no password for it."
+  - label: Vaultwarden admin page
+    path: /admin
+    password: admin_token
+    when: admin_token_plain
+    note: "The admin page asks for this token only."
+  - label: Vaultwarden admin page
+    path: /admin
+    when: admin_token_hashed
+    note: "The network keeps only a hash of this page's token. Type the password the hash was made from."
 
 nginx:
   upstream:

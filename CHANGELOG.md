@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.88.0 — the logins of your services, where you look for them
+
+Opening a service led to a login page and nothing said what to type: the passwords are
+made from the network's seed, and only a YAML dump showed them.
+
+- **`kiwi-server logins <fleet> [machine…]`**: every service of a machine with its
+  address, user name and password, and a note where there is something to know (Immich:
+  the first person to open it makes the admin account).
+- **On the page**: a machine's page has a "Logins" card. A password is fetched when
+  "Show password" is pressed, never part of the page itself, and Activity notes that
+  logins were shown, not which.
+- **In the app**: "Logins…" on a machine, with reveal and copy.
+- Modules say how to log in to them (kiwi-modules 0.33.0, `logins:` in `module.yaml`).
+
 ## 2.87.0 — this computer on the network; a board that does real work
 
 An Odroid N2+ became the home's ad blocker and VPN gateway, and the computer the

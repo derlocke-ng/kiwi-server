@@ -35,6 +35,13 @@ storage:
 urls:
   - "SFTP: sftp -P {{ sftp_port }} {{ sftp_user }}@{{ hostname }}"
 
+logins:
+  - label: File transfer (SFTP)
+    address: "sftp://{{ hostname }}:{{ sftp_port }}"
+    user: "{{ sftp_user }}"
+    password: sftp_password
+    note: "Not a web page. Open the address in a file manager, or in an SFTP program such as FileZilla."
+
 backup:
   # only a folder of its own: without sftp_dir it serves the downloads
   paths: ["{{ sftp_dir }}"]

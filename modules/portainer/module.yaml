@@ -35,6 +35,12 @@ storage:
 urls:
   - "Portainer: https://{{ portainer_hostname or 'portainer.' ~ hostname }} or https://127.0.0.1:9443 on the machine"
 
+logins:
+  - label: Containers (Portainer)
+    user: admin
+    password: admin_password
+    note: "This password was set when Portainer first started. If someone changed it inside Portainer, the new one is not known here."
+
 nginx:
   upstream:
     name: portainer

@@ -23,7 +23,7 @@ import re
 import yaml
 
 from . import quadlet, util
-from .schema import load_settings
+from .schema import load_logins, load_settings
 from .util import KiwiError
 
 try:
@@ -120,6 +120,11 @@ class Module:
         self.volumes = [str(v) for v in (st.get("volumes") or [])]
         self.backup = meta.get("backup") or None     # what restic keeps of this module
         self.nginx = meta.get("nginx") or None
+        # what a person signs in to (schema.Login); a login points at one of the sites by
+        # the name its nginx server gives itself with `site:`
+        nx = self.nginx if isinstance(self.nginx, dict) else {}
+        sites = [str(e["site"]) for e in [nx] + list(nx.get("servers") or []) if isinstance(e, dict) and e.get("site")]
+        self.logins = load_logins("modules/%s" % self.name, meta.get("logins"), self.settings, sites, self.derived)
         self.host = meta.get("host_integration") or {}
         self.dns = meta.get("dns") or {}
         self.checks = []   # [{"when": <jinja expression>, "error": text}]
@@ -140,7 +145,8 @@ class Module:
     def as_dict(self):
         return {"name": self.name, "title": self.title, "description": self.description,
                 "category": self.category, "node_types": self.node_types, "requires": self.requires,
-                "optional": self.optional, "settings": [s.as_dict() for s in self.settings]}
+                "optional": self.optional, "settings": [s.as_dict() for s in self.settings],
+                "logins": [x.as_dict() for x in self.logins]}
 
 
 class ModuleSet:
@@ -666,7 +672,8 @@ class Renderer:
                     proxy_pass = proxy_pass.replace("://" + uname, "://" + userver)
                 hsts = e.get("hsts")
                 try:
-                    s = {"server_name": self.expand(e["server_name"], ctx, what),
+                    s = {"module": name, "site": str(e.get("site") or ""),     # (for logins)
+                         "server_name": self.expand(e["server_name"], ctx, what),
                          "proxy_pass": proxy_pass,
                          "websocket": bool(e.get("websocket", False)),
                          "hsts": None if hsts is None else bool(hsts),   # None: the module setting decides
@@ -704,6 +711,38 @@ class Renderer:
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
         return [s["server_name"] for s in servers]
+
+    # ---- logins ----------------------------------------------------------------------
+    def logins(self, spec):
+        """What a person signs in to on this machine: every login its modules declare
+        (`logins:`), with the address, the user name and the password as this machine has
+        them. Cheap: no compose rendering. The passwords are in it: for the eyes of the
+        person who asked, never for a log."""
+        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        base = self.base_context(spec, ordered)
+        # a site is served by the reverse proxy: without one, nothing answers at its name
+        servers = self.nginx_blocks(spec, ordered, base)[1] if "reverse-proxy" in ordered else []
+        out = []
+        for name in ordered:
+            mod = self.ms.get(name)
+            if not mod.logins:
+                continue
+            ctx = self.module_context(spec, ordered, base, name)
+            what = "modules/%s/module.yaml logins" % name
+            for login in mod.logins:
+                if login.when and not ctx.get(login.when):
+                    continue
+                if login.address:
+                    address = self.expand(login.address, ctx, what).strip()
+                else:
+                    site = next((s["server_name"] for s in servers
+                                 if s["module"] == name and login.site in ("", s["site"])), "")
+                    address = "https://%s%s" % (site, login.path) if site else ""
+                out.append({"module": name, "label": login.label, "address": address,
+                            "user": self.render_text(login.user, ctx, what).strip(),
+                            "password": next((str(ctx[k]) for k in login.password if ctx.get(k)), ""),
+                            "note": self.render_text(login.note, ctx, what).strip()})
+        return out
 
     # ---- firewall rules for the VPN client ----------------------------------------
     def vpn_rules(self, spec, ordered, base):

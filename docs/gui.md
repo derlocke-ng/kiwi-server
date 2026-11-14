@@ -32,7 +32,10 @@ A host has two tabs:
 
 - *Overview* is what the machine says about itself: system, load, memory,
   disks, every service with its state, the tunnel, and the web interfaces to
-  open from the mesh.
+  open from the mesh. *Logins…* opens the address, the user name and the
+  password of each service. A password shows as dots until you reveal it, and
+  a button copies it. See
+  [Sign in to a service](machines.md#sign-in-to-a-service).
 - *Settings* has a page per section (machine, role, each module, admin,
   network, updates, the target). Every field shows what it inherits; its "?"
   says what it is for. Changing the `modules` list or the target changes the

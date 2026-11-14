@@ -296,8 +296,8 @@ named after a fruit.</p><input id="mname" name="name">
 <div class="actions"><button class="primary">Add it</button></div></form></details>
 
 {% if tiles and running %}<h2>Open a service</h2><p class="muted">These open from a device that is on your VPN.</p>
-<div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
-<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% endif %}
+<div class="tiles">{% for t in tiles %}<div style="display:flex;flex-direction:column"><a class="tile" style="flex:1" href="https://{{ t.site }}" target="_blank" rel="noopener">
+<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% if t.login %}<a class="small" style="padding:2px 12px" href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}</div>{% endfor %}</div>{% endif %}
 
 {% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
@@ -339,6 +339,8 @@ moment. Do it now and then, and after changing the settings for every machine.</
 
 {% if tiles %}<h2>Its services</h2><div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
 <b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% endif %}
+
+{% include "logins.html" %}
 
 {% if m.notes or m.facts %}<h2>Details</h2><div class="card"><dl>
 {% if m.facts.running is defined and m.facts.expected is defined %}<dt>Services</dt><dd>{{ m.facts.running|length if m.facts.running is iterable and m.facts.running is not string else m.facts.running }} running</dd>{% endif %}
@@ -576,6 +578,8 @@ it. Version {{ version }}.</p>
 <h2>How do I…</h2><div class="card"><dl>
 <dt>…use my services on the go?</dt><dd><a href="/devices">Add your phone</a>, scan the code with the WireGuard app, switch the VPN on.</dd>
 <dt>…fix a machine with a problem?</dt><dd>Open it from <a href="/">Home</a>, read what it says, then <em>Apply</em>. If it does not answer at all, check that it is on.</dd>
+<dt>…find the password of a service?</dt><dd>Open its machine from <a href="/">Home</a>. Its <em>Logins</em> list the
+user name of each service and show the password when you ask.</dd>
 <dt>…change a setting?</dt><dd>Open the machine from <a href="/">Home</a> and choose <em>Settings</em>. What all machines
 share is under <a href="/settings">Settings for every machine</a>. Then <em>Apply</em> brings it to the machine.</dd>
 <dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine at home</em>.</dd>
@@ -595,6 +599,65 @@ a restart closes them again. A thief with this machine's disk gets nothing reada
 <dt>Computer</dt><dd>A computer with the Kiwi Server app that may manage the network.</dd></dl></div>
 {% endblock %}""",
 }
+
+
+# a machine's page: what a person types to get into each of its services. The rows come from
+# `list --porcelain`, which has no passwords; one is fetched from /api/hosts/<name>/logins
+# when it is asked for, and is in the page only from then on
+TEMPLATES["logins.html"] = """{% if logins %}<h2 id="logins" style="scroll-margin-top:64px">Logins</h2>
+<div class="card"><p class="muted">What you type to get into this machine's services. A password is fetched
+when you ask for it; Activity notes that it was shown.</p>
+{% for l in logins %}{% set web = l.address.startswith("https://") or l.address.startswith("http://") %}
+<div class="login" data-key="{{ l.module }}|{{ l.label }}|{{ l.address }}"
+{%- if not loop.first %} style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px"{% endif %}>
+<div class="row"><strong>{% if web %}<a href="{{ l.address }}" target="_blank" rel="noopener">{{ l.label }}</a>{% else %}{{ l.label }}{% endif %}</strong>
+{% if l.has_password %}<span><button type="button" class="showpw">Show password</button>
+<button type="button" class="copypw" style="display:none">Copy</button></span>{% endif %}</div>
+{% if l.user or l.has_password or (l.address and not web) %}<dl>
+{% if l.address and not web %}<dt>Address</dt><dd>{{ l.address }}</dd>{% endif %}
+{% if l.user %}<dt>User name</dt><dd>{{ l.user }}</dd>{% endif %}
+{% if l.has_password %}<dt>Password</dt><dd><code class="pw" style="word-break:break-all">••••••••</code></dd>{% endif %}</dl>{% endif %}
+{% if l.note %}<p class="muted small">{{ l.note }}</p>{% endif %}</div>{% endfor %}
+<p class="bad" id="pwerr" style="display:none"></p></div>
+<script>
+(function () {
+  var got = null, err = document.getElementById("pwerr"), dots = "••••••••";
+  function all() {
+    if (got) return Promise.resolve(got);
+    return fetch("/api/hosts/" + encodeURIComponent({{ m.name | tojson }}) + "/logins", {cache: "no-store"})
+      .then(function (r) {
+        if (r.status == 401) throw new Error("You are logged out. Load the page again and log in.");
+        return r.json().then(function (d) {
+          if (!r.ok) throw new Error(d.error || "The password could not be fetched.");
+          got = {};
+          d.logins.forEach(function (l) { got[l.module + "|" + l.label + "|" + l.address] = l.password; });
+          return got; });
+      }, function () { throw new Error("This page did not answer. Try again in a moment."); });
+  }
+  document.querySelectorAll(".login").forEach(function (row) {
+    var show = row.querySelector(".showpw"), copy = row.querySelector(".copypw"), pw = row.querySelector(".pw");
+    if (!show) return;
+    show.addEventListener("click", function () {
+      err.style.display = "none";
+      if (show.dataset.on) { pw.textContent = dots; show.textContent = "Show password"; delete show.dataset.on; copy.style.display = "none"; return; }
+      all().then(function (found) {
+        if (!found[row.dataset.key]) throw new Error("This login has changed. Load the page again.");
+        pw.textContent = found[row.dataset.key]; show.textContent = "Hide password"; show.dataset.on = "1"; copy.style.display = "";
+      }).catch(function (e) { err.textContent = e.message; err.style.display = ""; });
+    });
+    copy.addEventListener("click", function () {
+      function said(text) { copy.textContent = text; setTimeout(function () { copy.textContent = "Copy"; }, 2000); }
+      (navigator.clipboard ? navigator.clipboard.writeText(pw.textContent) : Promise.reject()).then(function () {
+        said("Copied");
+      }).catch(function () {             // the browser does not let the page copy: mark it, to copy by hand
+        var range = document.createRange(); range.selectNodeContents(pw);
+        window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+        said("Marked: copy it");
+      });
+    });
+  });
+})();
+</script>{% endif %}"""
 
 
 # what the pages call things
@@ -646,6 +709,19 @@ def tiles(machines):
             first = site.split(".", 1)[0]
             out.append({"site": site, "label": SERVICES.get(first, first.capitalize()), "machine": m["name"]})
     return out
+
+
+def logins_of(info, name):
+    """A machine's logins as `list --porcelain` has them: every row, and no password."""
+    return next((h.get("logins") or [] for h in (info or {}).get("hosts") or [] if h.get("name") == name), [])
+
+
+def with_logins(tiles, info):
+    """The tiles, each with `login`: does its machine's Logins card have a row for that site?"""
+    for t in tiles:
+        t["login"] = any(urllib.parse.urlsplit(x.get("address") or "").hostname == t["site"]
+                         for x in logins_of(info, t["machine"]))
+    return tiles
 
 
 def make_app(control: Control):
@@ -960,7 +1036,7 @@ def make_app(control: Control):
             return login_page()
         ms, st, _info = machines()
         from . import setup as setupmod
-        return page("index.html", request, "/", machines=ms, tiles=tiles(ms), looked=st.get("time"),
+        return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS,
                     add_error=request.query_params.get("add_error"))
 
@@ -1008,7 +1084,22 @@ def make_app(control: Control):
         m = next((x for x in ms if x["name"] == name), None)
         if not m:
             return RedirectResponse("/", status_code=303)
-        return page("host.html", request, "/", m=m, tiles=tiles([m]))
+        return page("host.html", request, "/", m=m, tiles=tiles([m]), logins=logins_of(_info, name))
+
+    @app.get("/api/hosts/{name}/logins")
+    def api_logins(request: Request, name: str):
+        """A machine's logins with their passwords, for "Show password" on its page: the one
+        place a page hands a password out. The audit says that it did, with the machine's
+        name and nothing of what was shown."""
+        u = user(request)
+        if not u:
+            return JSONResponse({"error": "log in"}, status_code=401)
+        try:
+            found = control.logins(name)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        control.audit(u, "logins shown", hosts=[name])
+        return JSONResponse({"host": name, "logins": found}, headers={"Cache-Control": "no-store"})
 
     # ---- settings: a machine's, and the defaults every machine inherits (form.py) -----------
     def settings_page(request, host, typed=None, wrong=None, error=None, touched=()):

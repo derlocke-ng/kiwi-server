@@ -33,12 +33,26 @@ urls:
   - "Transmission: https://{{ transmission_hostname or 'dl.' ~ hostname }}"
   - "JDownloader: https://{{ jd_hostname or 'jd.' ~ hostname }}"
 
+logins:
+  - label: Downloads (Transmission)
+    site: dl
+    user: "{{ transmission_user }}"
+    password: transmission_password
+  - label: Downloads (JDownloader)
+    site: jd
+    user: "{{ jd_web_user or transmission_user }}"
+    # its own password when it has one, Transmission's otherwise: as the compose file does
+    password: [jd_web_password, transmission_password]
+    when: jdownloader
+
 nginx:
   servers:
     - server_name: "{{ transmission_hostname or 'dl.' ~ hostname }}"
+      site: dl
       proxy_pass: "http://{{ container_prefix }}-vpn-client:9091"
       comment: Transmission (reached through the VPN client's namespace)
     - server_name: "{{ jd_hostname or 'jd.' ~ hostname }}"
+      site: jd
       proxy_pass: "https://{{ container_prefix }}-vpn-client:5800"
       websocket: true
       when: jdownloader

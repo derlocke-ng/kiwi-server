@@ -5395,6 +5395,152 @@ class TestCli(Base):
 
 
 @unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestLogins(Base):
+    """`kiwi-server logins`: what a person types to get into each service of each machine."""
+    run_cli = TestCli.run_cli
+
+    def network(self, **hosts):
+        d = {"gate": {"role": "master", "target": "debian", "master": self.master()},
+             "m1": {"role": "node", "node": self.node_gw(preset="gateway")},
+             # nobody wrote Nextcloud's password down: it comes from the seed
+             "sh3": {"role": "node", "node": self.node_cloud(preset="cloud", cloud={})},
+             "lab": {}}
+        d.update(hosts)
+        return self.fleet({"defaults": self.base_defaults(), "hosts": d})
+
+    def settings(self, path, name):
+        """What the machine's modules are set to, generated secrets among them."""
+        h = config.Fleet.load(path).hosts[name]
+        rolesmod.resolve_settings(self.roles[h.role], h, self.ms)
+        return h.module_settings
+
+    def logins(self, *args):
+        rc, out, err = self.run_cli("logins", *args, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        return {h["name"]: h for h in json.loads(out)["hosts"]}, err
+
+    def test_every_machine_lists_its_services_with_user_name_and_password(self):
+        f = self.network()
+        hosts, _err = self.logins(f.path)
+        self.assertEqual(list(hosts), ["gate", "m1", "sh3", "lab"])
+        self.assertEqual(hosts["sh3"]["hostname"], "sh3.kiwi")
+        self.assertEqual(hosts["lab"]["logins"], [])                     # a bare machine: nothing to sign in to
+        rows = {n: [(x["module"], x["label"], x["address"], x["user"]) for x in h["logins"]] for n, h in hosts.items()}
+        self.assertEqual(rows["gate"], [("vpn-server", "VPN devices (wg-easy)", "https://wg.gate.kiwi", ""),
+                                        ("dns", "Ad blocker (Pi-hole)", "https://pihole.gate.kiwi/admin", "")])
+        self.assertEqual(rows["m1"], [("dns", "Ad blocker (Pi-hole)", "https://pihole.m1.kiwi/admin", ""),
+                                      ("downloader", "Downloads (Transmission)", "https://dl.m1.kiwi", "user"),
+                                      ("downloader", "Downloads (JDownloader)", "https://jd.m1.kiwi", "user"),
+                                      ("portainer", "Containers (Portainer)", "https://portainer.m1.kiwi", "admin"),
+                                      ("sftp", "File transfer (SFTP)", "sftp://m1.kiwi:2224", "user")])
+        self.assertEqual(rows["sh3"], [("cloud", "Files (Nextcloud)", "https://cloud.sh3.kiwi", "admin"),
+                                       ("vault", "Passwords (Vaultwarden)", "https://vault.sh3.kiwi", ""),
+                                       ("portainer", "Containers (Portainer)", "https://portainer.sh3.kiwi", "admin")])
+        # the passwords are the ones the machines' settings resolve to, written down or from the seed
+        want = {n: self.settings(f.path, n) for n in ("gate", "m1", "sh3")}
+        got = {n: {x["label"]: x["password"] for x in h["logins"]} for n, h in hosts.items()}
+        self.assertEqual(got["gate"], {"VPN devices (wg-easy)": want["gate"]["vpn-server"]["wg_password"],
+                                       "Ad blocker (Pi-hole)": want["gate"]["dns"]["pihole_password"]})
+        self.assertEqual(got["m1"], {"Ad blocker (Pi-hole)": want["m1"]["dns"]["pihole_password"],
+                                     "Downloads (Transmission)": want["m1"]["downloader"]["transmission_password"],
+                                     "Downloads (JDownloader)": want["m1"]["downloader"]["transmission_password"],
+                                     "Containers (Portainer)": want["m1"]["portainer"]["admin_password"],
+                                     "File transfer (SFTP)": want["m1"]["sftp"]["sftp_password"]})
+        self.assertEqual(got["sh3"], {"Files (Nextcloud)": want["sh3"]["cloud"]["admin_password"], "Passwords (Vaultwarden)": "",
+                                      "Containers (Portainer)": want["sh3"]["portainer"]["admin_password"]})
+        self.assertEqual(len(got["sh3"]["Files (Nextcloud)"]), 32)       # generated
+        self.assertNotEqual(got["sh3"]["Containers (Portainer)"], got["m1"]["Containers (Portainer)"])
+        for h in hosts.values():
+            for x in h["logins"]:
+                self.assertEqual(sorted(x), ["address", "has_password", "label", "module", "note", "password", "user"])
+                self.assertEqual(x["has_password"], bool(x["password"]))
+                self.assertTrue(x["password"] or x["note"], x["label"])   # no password: a word on how to get in
+        # one machine only
+        hosts, _err = self.logins(f.path, "sh3")
+        self.assertEqual(list(hosts), ["sh3"])
+        rc, _out, err = self.run_cli("logins", f.path, "nobody")
+        self.assertEqual(rc, 1)
+        self.assertIn("no such host", err)
+
+    def test_what_is_off_is_not_listed(self):
+        f = self.network(
+            m1={"role": "node", "node": self.node_gw(preset="gateway", downloader={
+                "download_dir": "/mnt/dl", "jdownloader": False, "transmission_user": "anna"})},
+            sh3={"role": "node", "node": self.node_cloud(preset="cloud", modules=["vpn-client", "reverse-proxy", "cloud"])})
+        hosts, _err = self.logins(f.path)
+        labels = {n: [x["label"] for x in h["logins"]] for n, h in hosts.items()}
+        self.assertEqual(labels["sh3"], ["Files (Nextcloud)"])           # no vault, no portainer on it
+        self.assertNotIn("Downloads (JDownloader)", labels["m1"])
+        self.assertEqual([x["user"] for x in hosts["m1"]["logins"] if x["label"] == "Downloads (Transmission)"], ["anna"])
+        # JDownloader with a login of its own
+        f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway", downloader={
+            "download_dir": "/mnt/dl", "jd_web_user": "ben", "jd_web_password": "jd-own"})})
+        jd = next(x for x in self.logins(f.path, "m1")[0]["m1"]["logins"] if x["label"] == "Downloads (JDownloader)")
+        self.assertEqual((jd["user"], jd["password"]), ("ben", "jd-own"))
+
+    def test_the_list_a_person_reads(self):
+        f = self.network()
+        rc, out, err = self.run_cli("logins", f.path)
+        self.assertEqual(rc, 0, err)
+        lines = out.splitlines()
+        self.assertEqual([x for x in lines if x and not x.startswith(" ")], ["gate", "m1", "sh3"])     # lab has nothing
+        at = lines.index("m1")
+        head, row = lines[at + 1], next(x for x in lines[at:] if "Downloads (Transmission)" in x)
+        self.assertEqual(head.split(), ["SERVICE", "ADDRESS", "USER", "NAME", "PASSWORD"])
+        self.assertEqual(row.split(), ["Downloads", "(Transmission)", "https://dl.m1.kiwi", "user", "t"])
+        self.assertEqual((row.index("https://"), row.index(" user ") + 1, row.rindex("t")),
+                         (head.index("ADDRESS"), head.index("USER NAME"), head.index("PASSWORD")))          # in columns
+        pihole = next(i for i, x in enumerate(lines[at:]) if "Ad blocker (Pi-hole)" in x) + at
+        self.assertEqual(lines[pihole].split()[-2:], ["-", "p"])                                          # no user name
+        self.assertEqual(lines[pihole + 1].strip(), "Pi-hole asks for the password only.")
+        vault = next(x for x in lines if "Passwords (Vaultwarden)" in x)
+        self.assertEqual(vault.split()[-2:], ["-", "-"])
+        self.assertIn(self.settings(f.path, "sh3")["cloud"]["admin_password"], out)
+        rc, out, _err = self.run_cli("logins", f.path, "lab")
+        self.assertEqual((rc, out.strip()), (0, ":: nothing to sign in to: lab runs no service with a login"))
+
+    def test_a_machine_that_is_not_on_the_vpn_yet_is_left_out(self):
+        f = self.network(new={"role": "node", "node": {"preset": "cloud", "vpn-client": {"wireguard_config": "secrets/new.kiwi.conf"}}})
+        hosts, err = self.logins(f.path)
+        self.assertEqual(hosts["new"]["logins"], [])
+        self.assertIn("not enrolled yet", hosts["new"]["error"])
+        self.assertIn("warning: left out: new: not enrolled yet", err)
+        self.assertEqual(len(hosts["sh3"]["logins"]), 3)                 # the others are still listed
+        rc, out, err = self.run_cli("logins", f.path, "new")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("not enrolled yet", err)
+
+    def test_list_and_the_schema_carry_them_without_a_password(self):
+        f = self.network()
+        secrets = self.settings(f.path, "sh3")
+        rc, out, err = self.run_cli("list", f.path, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual([(x["label"], x["address"], x["user"], x["has_password"]) for x in hosts["sh3"]["logins"]], [
+            ("Files (Nextcloud)", "https://cloud.sh3.kiwi", "admin", True),
+            ("Passwords (Vaultwarden)", "https://vault.sh3.kiwi", "", False),
+            ("Containers (Portainer)", "https://portainer.sh3.kiwi", "admin", True)])
+        self.assertEqual(hosts["lab"]["logins"], [])
+        for h in hosts.values():
+            for x in h["logins"]:
+                self.assertNotIn("password", x)
+            # a login's site is one of the machine's sites
+            for x in h["logins"]:
+                if x["address"].startswith("https://"):
+                    self.assertIn(urllib.parse.urlsplit(x["address"]).hostname, h["sites"])
+        for generated in (secrets["cloud"]["admin_password"], secrets["portainer"]["admin_password"]):
+            self.assertNotIn(generated, out)
+        rc, out, _err = self.run_cli("roles", "--porcelain")
+        modules = {m["name"]: m["logins"] for m in json.loads(out)["modules"]}
+        self.assertEqual(modules["cloud"], [{"label": "Files (Nextcloud)", "site": "", "path": "", "address": "", "user": "admin",
+                                             "password": ["admin_password"], "note": modules["cloud"][0]["note"], "when": ""}])
+        self.assertEqual(modules["dns"][0]["path"], "/admin")
+        self.assertEqual([x["site"] for x in modules["downloader"]], ["dl", "jd"])
+        self.assertEqual(modules["tor"], [])
+        self.assertEqual(sorted(n for n, x in modules.items() if x), [
+            "cloud", "control", "dns", "downloader", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server"])
+
+
 class TestControl(StoreBase):
     """The control node's login is the store's key: no password hash, no key file on disk."""
     PW = "a long enough password"
@@ -7280,6 +7426,79 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.ask("/machines/add", {"csrf": _csrf, "preset": "cloud", "name": "fig"}, cookie=cookie)[:2],
                          (303, "/hosts/fig"))                                               # a machine can still be added
         self.at_rest()
+
+    def test_a_machines_logins_are_listed_and_a_password_is_fetched_when_asked(self):
+        cookie, _csrf = self.made()
+        master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
+        host = config.Fleet.load(os.path.join(self.dir, "fleet.yaml")).hosts[master]
+        rolesmod.resolve_settings(self.roles[host.role], host, self.ms)
+        wg, pihole = host.module_settings["vpn-server"]["wg_password"], host.module_settings["dns"]["pihole_password"]
+        self.assertEqual((len(wg), len(pihole)), (32, 32))                      # from the seed: nobody typed them
+        # the machine's page: a row per service, the label a link, and no password in it
+        status, body, _ = self.ask("/hosts/" + master, cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn('<h2 id="logins" style="scroll-margin-top:64px">Logins</h2>', body)
+        self.assertIn('<a href="https://wg.%s" target="_blank" rel="noopener">VPN devices (wg-easy)</a>' % host.hostname, body)
+        self.assertIn('<a href="https://pihole.%s/admin" target="_blank" rel="noopener">Ad blocker (Pi-hole)</a>' % host.hostname, body)
+        self.assertEqual(body.count(">Show password</button>"), 2)
+        self.assertIn("/logins", body)                                          # where the button asks
+        for secret in (wg, pihole):
+            self.assertNotIn(secret, body)
+        self.assertNotIn(wg, util.read_text(os.path.join(self.c.run, "fleet.json")))    # nor in what the page keeps
+        # a machine that is not on the VPN yet has no card
+        self.assertNotIn('id="logins"', self.ask("/hosts/" + self.node(), cookie=cookie)[1])
+        # asked for: only with a login
+        api = "/api/hosts/%s/logins" % master
+        status, said, _ = self.ask(api)
+        self.assertEqual((status, json.loads(said)), (401, {"error": "log in"}))
+        self.assertEqual(self.ask(api, cookie="kiwi_session=not-a-session")[0], 401)
+        self.assertNotIn("logins shown", str(self.c.audit_tail(20)))
+        status, said, _ = self.ask(api, cookie=cookie)
+        self.assertEqual(status, 200)
+        answer = json.loads(said)
+        self.assertEqual(answer["host"], master)
+        self.assertEqual([(x["label"], x["address"], x["user"], x["password"]) for x in answer["logins"]], [
+            ("VPN devices (wg-easy)", "https://wg." + host.hostname, "", wg),
+            ("Ad blocker (Pi-hole)", "https://pihole.%s/admin" % host.hostname, "", pihole)])
+        # the audit says that they were shown, and of which machine: nothing else
+        last = self.c.audit_tail(1)[0]
+        self.assertEqual(sorted(last), ["hosts", "time", "user", "what"])
+        self.assertEqual((last["what"], last["hosts"], last["user"]), ("logins shown", [master], "admin"))
+        log = util.read_text(os.path.join(self.c.dir, "audit.jsonl"))
+        for secret in (wg, pihole):
+            self.assertNotIn(secret, log)
+        # nothing of it was kept: no file here holds a password
+        for top in (self.dir, self.c.run):
+            for dp, _dn, names in os.walk(top):
+                for n in names:
+                    p = os.path.join(dp, n)
+                    if os.path.isfile(p):
+                        self.assertNotIn(wg.encode(), util.read_bytes(p), p)
+        # a machine there is not, and one whose settings are not complete yet: an answer, no audit line
+        before = len(self.c.audit_tail(50))
+        status, said, _ = self.ask("/api/hosts/nobody/logins", cookie=cookie)
+        self.assertEqual(status, 400)
+        self.assertIn("no such host", json.loads(said)["error"])
+        status, said, _ = self.ask("/api/hosts/%s/logins" % self.node(), cookie=cookie)
+        self.assertEqual(status, 400)
+        self.assertIn("not enrolled yet", json.loads(said)["error"])
+        with self.assertRaises(KiwiError):
+            self.c.logins("no; such")
+        self.assertEqual(len(self.c.audit_tail(50)), before)
+        # Home: a service's tile leads to its machine's logins
+        info = self.c.fleet_info()
+        for h in info["hosts"]:
+            h["phase"] = "applied"
+        with mock.patch.object(self.c, "fleet_info", lambda **_k: info):
+            body = self.ask("/", cookie=cookie)[1]
+        self.assertIn("Open a service", body)
+        self.assertEqual(body.count('href="/hosts/%s#logins">login</a>' % master), 2)
+        self.assertNotIn(wg, body)
+        # the keys locked: nothing is handed out
+        self.c.lock_store()
+        self.assertEqual(self.ask(api, cookie=cookie)[0], 401)
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            self.c.logins(master)
 
     def test_a_part_is_brought_back_from_a_snapshot(self):
         cookie, csrf = self.made()

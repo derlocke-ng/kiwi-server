@@ -39,6 +39,12 @@ storage:
 urls:
   - "OpenCloud: https://{{ opencloud_host }} — user admin, the opencloud.admin_password setting"
 
+logins:
+  - label: Files (OpenCloud)
+    user: admin
+    password: admin_password
+    note: "This password was set when OpenCloud first started. If someone changed it inside OpenCloud, the new one is not known here."
+
 nginx:
   upstream:
     name: opencloud

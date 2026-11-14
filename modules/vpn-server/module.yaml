@@ -39,6 +39,11 @@ host_integration:
 urls:
   - "wg-easy admin: {% if has_reverse_proxy %}https://{{ wg_hostname or 'wg.' ~ hostname }} from the mesh (admin groups), or {% endif %}http://127.0.0.1:51821 on the master (ssh -L 51821:127.0.0.1:51821 {{ hostname }})"
 
+logins:
+  - label: VPN devices (wg-easy)
+    password: wg_password
+    note: "wg-easy asks for the password only."
+
 nginx:
   servers:
     - server_name: "{{ wg_hostname or 'wg.' ~ hostname }}"

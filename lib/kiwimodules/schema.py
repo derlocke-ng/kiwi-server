@@ -159,3 +159,71 @@ def load_settings(owner, raw_list):
     if len(keys) != len(set(keys)):
         raise KiwiError("%s: duplicate setting keys" % owner)
     return settings
+
+
+LOGIN_KEYS = ("label", "site", "path", "address", "user", "password", "note", "when")
+
+
+class Login:
+    """One thing a person signs in to in a module (`logins:` in module.yaml): what it is,
+    where it opens, the user name, and which setting holds the password.
+
+        logins:
+          - label: Files (Nextcloud)      # what it is, in plain words
+            site: cloud                   # which of the module's sites (an nginx server's `site:`
+                                          # name); without it the module's first site
+            path: /admin                  # appended to the site
+            address: "sftp://{{ hostname }}:{{ sftp_port }}"   # in place of site and path, for
+                                          # what the reverse proxy does not serve
+            user: admin                   # the user name; empty when there is none
+            password: admin_password      # the secret setting that holds it; a list: the first
+                                          # one that is set. Left out when there is no password
+            note: "…"                     # one plain sentence
+            when: jdownloader             # a setting or derived: value (or has_<module>): listed
+                                          # only while it is set
+
+    user, address and note are Jinja over the module's settings, like the templates."""
+
+    def __init__(self, owner, d, settings=(), sites=(), derived=()):
+        if not isinstance(d, dict):
+            raise KiwiError("%s: every logins: entry is a mapping" % owner)
+        unknown = sorted(str(k) for k in set(d) - set(LOGIN_KEYS))
+        if unknown:
+            raise KiwiError("%s: logins: unknown key(s): %s (known: %s)" % (owner, ", ".join(unknown), ", ".join(LOGIN_KEYS)))
+        self.label = str(d.get("label") or "").strip()
+        if not self.label:
+            raise KiwiError("%s: every logins: entry needs a label" % owner)
+        where = "%s: login %r" % (owner, self.label)
+        self.site = str(d.get("site") or "")
+        self.path = str(d.get("path") or "")
+        self.address = str(d.get("address") or "")
+        self.user = str(d.get("user") or "")
+        self.note = str(d.get("note") or "")
+        self.when = str(d.get("when") or "")
+        pw = d.get("password") or []
+        if not isinstance(pw, (str, list)):
+            raise KiwiError("%s: password is the key of a setting, or a list of keys" % where)
+        self.password = [str(k) for k in ([pw] if isinstance(pw, str) else pw)]
+        secret = {s.key for s in settings if s.type == "secret"}
+        for key in self.password:
+            if key not in secret:
+                raise KiwiError("%s: password names %r, which is not a secret setting of the module" % (where, key))
+        if self.address and (self.site or self.path):
+            raise KiwiError("%s: address stands in place of site and path" % where)
+        if self.site and self.site not in sites:
+            raise KiwiError("%s: site %r is not a site: of the module's nginx servers (have: %s)"
+                            % (where, self.site, ", ".join(sites) or "none"))
+        if self.path and not self.path.startswith("/"):
+            raise KiwiError("%s: path starts with a /" % where)
+        if self.when and self.when not in {s.key for s in settings} | set(derived) and not self.when.startswith("has_"):
+            raise KiwiError("%s: when names %r, which is not a setting or a derived: value of the module" % (where, self.when))
+
+    def as_dict(self):
+        return {"label": self.label, "site": self.site, "path": self.path, "address": self.address,
+                "user": self.user, "password": list(self.password), "note": self.note, "when": self.when}
+
+
+def load_logins(owner, raw_list, settings=(), sites=(), derived=()):
+    if raw_list is not None and not isinstance(raw_list, list):
+        raise KiwiError("%s: logins: is a list" % owner)
+    return [Login(owner, d, settings, sites, derived) for d in (raw_list or [])]

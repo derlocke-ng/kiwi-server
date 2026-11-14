@@ -56,6 +56,12 @@ validate:
 urls:
   - "Nextcloud: https://{{ nc_hostname or 'cloud.' ~ hostname }} — user admin, the cloud.admin_password setting"
 
+logins:
+  - label: Files (Nextcloud)
+    user: admin
+    password: admin_password
+    note: "This password was set when Nextcloud first started. If someone changed it inside Nextcloud, the new one is not known here."
+
 nginx:
   servers:
     - server_name: "{{ nc_hostname or 'cloud.' ~ hostname }}"

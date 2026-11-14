@@ -31,6 +31,10 @@ storage:
 urls:
   - "Control: https://{{ control_hostname or 'control.' ~ hostname }} (from the mesh)"
 
+logins:
+  - label: Control page
+    note: "It opens with the password chosen when the page was set up. The network keeps no copy of it."
+
 nginx:
   upstream:
     name: control

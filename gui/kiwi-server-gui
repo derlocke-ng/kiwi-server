@@ -4219,6 +4219,30 @@ class Window(Adw.ApplicationWindow):
             g.add(info_row("Tunnels here", "%d of %d connected" % (p["recent"], p["total"])))
         return g
 
+    def hidden_services(self):
+        """The network's hidden services, "service.machine" -> address and who may open it
+        (`kiwi-server onion --porcelain`). Asked once per network, beside the window: the page
+        that wanted them is drawn again when they are there."""
+        path = self.doc.path
+        if path and getattr(self, "hidden_for", None) != path:
+            self.hidden_for, self.hidden = path, {}
+
+            def work():
+                rc, out, _err = run_cli(self.cli, ["onion", path, "--porcelain"])
+                try:
+                    found = {"%s.%s" % (x["service"], x["host"]): x for x in json.loads(out)["services"]} if rc == 0 else {}
+                except (ValueError, KeyError, TypeError):
+                    found = {}
+                GLib.idle_add(got, found)
+
+            def got(found):
+                if self.doc.path == path and found:
+                    self.hidden = found
+                    self.render_current()
+                return False
+            threading.Thread(target=work, daemon=True).start()
+        return getattr(self, "hidden", {})
+
     def web_group(self, name, st):
         """What runs on the machine for people: each service by what it is, opened with a click,
         and the way to its user names and passwords (LoginsDialog)."""
@@ -4230,11 +4254,25 @@ class Window(Adw.ApplicationWindow):
         for x in found:             # a login knows what its address is for
             host = (x.get("address") or "").split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
             named.setdefault(host, x["label"])
+        labels = st.get("site_labels") or {}
+        hidden = self.hidden_services()
         for site in sites:
-            row = plain_row(named.get(site, site), site if site in named else "", activatable=True)
+            what = labels.get(site) or named.get(site)
+            row = plain_row(what or site, site if what else "", activatable=True)
             row.add_suffix(Gtk.Image(icon_name="adw-external-link-symbolic"))
             row.connect("activated", lambda _r, s=site: Gtk.UriLauncher.new("https://" + s).launch(self, None, None))
             g.add(row)
+            tor = hidden.get("%s.%s" % (site.split(".", 1)[0], name))
+            if tor:             # its address as a hidden service: to read, to select, to copy
+                address = "http://" + tor["address"]
+                who = "only " + ", ".join(tor["clients"]) if tor.get("clients") else "anyone with the address"
+                trow = Adw.ActionRow(use_markup=False, title="%s as a hidden service (Tor Browser, %s)" % (what or site, who),
+                                     subtitle=address, subtitle_selectable=True, css_classes=["property"])
+                copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                  tooltip_text="Copy the address")
+                copy.connect("clicked", lambda _b, a=address: (self.get_clipboard().set(a), self.toast("Address copied")))
+                trow.add_suffix(copy)
+                g.add(trow)
         if found:
             row = plain_row("User names and passwords", "What to type when a service asks you to log in")
             b = Gtk.Button(label="Logins…", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])

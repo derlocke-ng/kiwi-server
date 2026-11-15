@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.121.1 — logins through Tor, tried
+
+- `tests/drills/onion-sites.py --logins` logs in through Tor by a service's own API where
+  the network has a login for it. Tried: Nextcloud (its files open, WebDAV), Forgejo and
+  Paperless (their APIs take the login), Immich (its login answers; nobody has an
+  account there to log in with). [network.md](docs/network.md#which-services) says for
+  each marked site what was tried.
+
 ## 2.121.0 — a computer at home finds the control node; the master's door counts connections
 
 - **A computer at home that is not on the VPN** stays in step with the control node: when

@@ -245,11 +245,13 @@ those:
 
 | Works, tried through Tor | What was tried |
 |---|---|
-| Git (Forgejo), Payments (BTCPay) | the pages, their files, the login form |
+| Git (Forgejo) | the pages, their files, the login form, and a login by its API |
+| Payments (BTCPay) | the pages, their files, the login form, a payment |
 | Jabber | the page for new accounts, logins on port 5222 |
 | Pastebin, the hub page, the relay, the status page | the page and its files |
-| Files (Nextcloud), Photos (Immich) | the page, its files and what its app is told; logging in was not tried |
-| Documents (Paperless) | the page and the login form (it is told its `.onion` address, or it would refuse a login sent from there) |
+| Files (Nextcloud) | the page, its files, what its app is told, and the files opened with a login (WebDAV) |
+| Photos (Immich) | the page, its files, what its app is told; its login answers there (no account was at hand to log in with) |
+| Documents (Paperless) | the page, the login form and a login by its API (it is told its `.onion` address, or it would refuse a login sent from there) |
 
 Not marked: the admin pages (they are not for strangers); OpenCloud (its app is
 sent to the name on the VPN to log in); Passwords (Vaultwarden: the server tells

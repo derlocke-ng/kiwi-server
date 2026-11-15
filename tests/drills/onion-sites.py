@@ -39,6 +39,9 @@ ap.add_argument("fleet")
 ap.add_argument("only", nargs="*", help="service.machine, as `kiwi-server onion` lists them (default: all)")
 ap.add_argument("--master", required=True, help="user@address of the master, for ssh")
 ap.add_argument("--master-port", default="22")
+ap.add_argument("--logins", action="store_true",
+                help="also log in through Tor where the network has a login for the service (kiwi-server logins): "
+                     "Nextcloud, Forgejo and Paperless by their APIs; Immich's login is asked with a user that does not exist")
 args = ap.parse_args()
 ks = os.environ.get("KIWI_SERVER", "kiwi-server")
 fdir = os.path.dirname(os.path.abspath(args.fleet))
@@ -54,6 +57,39 @@ for x in rows:
 rows = [x for x in rows if not x["clients"]]
 if not rows:
     sys.exit("drill: no hidden service to try")
+known = {}          # site -> the login the network has for it: kept here, printed nowhere
+if args.logins:
+    r = subprocess.run([ks, "logins", args.fleet, "--porcelain"], capture_output=True, text=True)
+    try:
+        for h in json.loads(r.stdout)["hosts"]:
+            for lg in h["logins"]:
+                site = urllib.parse.urlsplit(lg.get("address") or "").hostname
+                if site and lg.get("password"):
+                    known.setdefault(site, lg)
+    except (ValueError, KeyError):
+        sys.exit("drill: kiwi-server logins: %s" % (r.stderr or r.stdout).strip()[-200:])
+
+
+def api_login(x, addr):
+    """A real login through Tor by the service's own API, or None when there is none to try."""
+    import base64
+    lg, first = known.get(x["site"]), x["site"].split(".", 1)[0]
+    basic = {"Authorization": "Basic " + base64.b64encode(("%s:%s" % (lg["user"], lg["password"])).encode()).decode()} if lg else {}
+    base = "http://%s" % addr
+    if lg and lg["module"] == "cloud":
+        c, _h, _b = fetch("PROPFIND", base + "/remote.php/dav/files/%s/" % urllib.parse.quote(lg["user"]), dict(basic, Depth="0"))
+        return c == 207, "its files open with the network's login (WebDAV %s)" % c
+    if lg and lg["module"] == "git":
+        c, _h, _b = fetch("GET", base + "/api/v1/user", dict(basic, Accept="application/json"))
+        return c == 200, "the network's login is taken by its API (%s)" % c
+    if lg and lg["module"] == "paperless":
+        c, _h, _b = fetch("GET", base + "/api/documents/?page_size=1", dict(basic, Accept="application/json"))
+        return c == 200, "the network's login is taken by its API (%s)" % c
+    if first == "immich":            # people make their own account there: the login itself is asked, with nobody
+        c, _h, b = fetch("POST", base + "/api/auth/login", {"Content-Type": "application/json", "Origin": base, "Accept": "application/json"},
+                         json.dumps({"email": "kiwi-drill-nobody@example.org", "password": "no-such-password"}).encode())
+        return c == 401, "its login answers a request from this address (a wrong password: %s)" % c
+    return None
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
        "-o", "LogLevel=ERROR", "-o", "UserKnownHostsFile=%s" % os.path.join(fdir, "secrets", "known_hosts"),
        "-i", os.path.join(fdir, "secrets", "admin_ed25519"), "-p", str(args.master_port)]
@@ -232,6 +268,10 @@ try:
                 why.append("its app is told the name on the VPN (%s)" % ", ".join(told))
             else:
                 notes.append("no login form in the page (an app in the browser, or none needed); its app is not sent to the VPN's name")
+        if args.logins and stays:
+            tried = api_login(x, addr)
+            if tried is not None:
+                (notes if tried[0] else why).append(tried[1] if tried[0] else "logging in through Tor did not work: " + tried[1])
         ok = not why
         bad += not ok
         print("%-5s %-18s %s" % ("PASS" if ok else "FAIL", name, "; ".join(why) if why else "page %s, %d files from the address; %s"

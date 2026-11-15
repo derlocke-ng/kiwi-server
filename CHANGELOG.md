@@ -1,5 +1,13 @@
 # Changelog
 
+
+## 2.124.1 — a master never bans its own network
+
+- **fail2ban on a master leaves the network's own addresses alone** (kiwi-modules 0.49.1): every
+  minute it reads where the machines' VPN tunnels come from — a home's public address — and no
+  jail bans those. Before, loading a busy public page a few times from home locked the whole home
+  out of the public names for an hour.
+
 ## 2.124.0 — the app: plain names, less in view, a picture of the network as it is
 
 After the owner's look at the app ("slow, bloated, the settings, the module names, how

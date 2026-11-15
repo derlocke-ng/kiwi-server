@@ -27,6 +27,9 @@ templates:
   log_unit: kn-sshd-log.service.j2
   probe_filter: kiwi-nginx-probe.conf.j2
   refused_filter: kiwi-nginx-refused.conf.j2
+  own_script: own.sh.j2
+  own_service: own.service.j2
+  own_timer: own.timer.j2
 
 outputs:
   jail: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/jail.d/kiwi.local", mode: 0644 }
@@ -34,6 +37,10 @@ outputs:
   log_unit: { kind: host_unit, name: kn-sshd-log.service }
   probe_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-probe.conf", mode: 0644 }
   refused_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-refused.conf", mode: 0644 }
+  # on a master: the addresses the network's own machines come from are never banned
+  own_script: { path: "kiwi/fail2ban-own.sh", mode: 0755, when: has_vpn_server }
+  own_service: { kind: host_unit, name: kn-fail2ban-own.service, when: has_vpn_server }
+  own_timer: { kind: host_unit, name: kn-fail2ban-own.timer, when: has_vpn_server }
 
 storage:
   bind_mounts:

@@ -1,0 +1,7 @@
+[Unit]
+Description=fail2ban on {{ hostname }}: the network's own addresses are never banned
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh {{ docker_dir }}/kiwi/fail2ban-own.sh

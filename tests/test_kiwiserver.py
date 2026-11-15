@@ -7582,11 +7582,16 @@ class TestWeb(StoreBase):
              "facts": {"backup": {"last": 1, "age": 7200, "copies": [{"server": "backup.lychee.home"}]}, "reboot": True}}]}))
         code, body = self.ask("/")
         self.assertIn("1 machine wants a look", body)
-        self.assertIn("Update everything", body)
         self.assertIn("restarts by itself in its update window", body)            # what the problem means
-        self.assertIn("Files (Nextcloud)", body)
-        self.assertIn('href="https://vault.papaya.home"', body)
-        self.assertIn("not checked yet", body)                                    # sorbet said nothing so far
+        self.assertNotIn("Update everything", body)                               # Home is for what needs a look
+        there = self.ask("/machines")[1]                                          # the machines have a page of their own
+        self.assertIn("Update everything", there)
+        self.assertIn("not checked yet", there)                                   # sorbet said nothing so far
+        self.assertIn('<a class="nav on" href="/machines">', there)
+        there = self.ask("/services")[1]                                          # and so have the services
+        self.assertIn("Files (Nextcloud)", there)
+        self.assertIn('href="https://vault.papaya.home"', there)
+        self.assertIn("<h2><a href=\"/hosts/papaya\"", there)
         code, body = self.ask("/hosts/papaya")
         self.assertIn("Home server (node)", body)
         self.assertIn("Changes nothing.", body)                                   # each button says what it does
@@ -7620,9 +7625,13 @@ class TestWeb(StoreBase):
                       '<a class="nav on" href="/">', "not reachable</span><b>1</b>",
                       "Machines on", "<b class=\"bad\">2<small> of 3</small></b>", "lychee is not reachable",              # the numbers
                       "<b class=\"warn\">5<small> of 6</small></b>", "1 not running", "ago at the longest: papaya",
-                      'title="7.0 GB of 8.0 GB in use"', 'class="fill bad" style="width:95%"',                           # its bars
-                      "Home server (node) · control node · gateway · keeps backups",
                       "How they are linked", '<path class="up"', '<path class="off"'):                                # the picture
+            self.assertIn(words, body)
+        there = self.ask("/machines")[1]
+        for words in ('title="7.0 GB of 8.0 GB in use"', 'class="fill bad" style="width:95%"',                           # a machine's bars
+                      "Home server (node) · control node · gateway · keeps backups"):
+            self.assertIn(words, there)
+        for words in ('<span class="grp">Access</span>', '<span class="grp">Safety</span>'):                             # the menu's groups
             self.assertIn(words, body)
         self.assertIn('<a class="nav on" href="/access">', self.ask("/access")[1])
         self.assertIn('<a class="nav on" href="/settings">', self.ask("/settings")[1])
@@ -9025,7 +9034,7 @@ class TestFirstRunPage(StoreBase):
         cookie, _csrf = self.made()
         node, page = self.node(), "/hosts/%s/settings" % self.node()
         self.assertEqual(self.ask("/settings")[:2], (303, "/login"))
-        self.assertIn('<a class="tile" href="/settings"><b>Settings for every machine</b>', self.ask("/", cookie=cookie)[1])
+        self.assertIn('<a href="/settings">Settings for every machine</a>', self.ask("/machines", cookie=cookie)[1])
         body = self.ask("/settings", cookie=cookie)[1]
         self.assertIn("Settings for every machine", body)
         self.assertIn('name="f:domain"', body)                                             # what only the defaults have
@@ -9123,8 +9132,8 @@ class TestFirstRunPage(StoreBase):
         for h in info["hosts"]:
             h["phase"] = "applied"
         with mock.patch.object(self.c, "fleet_info", lambda **_k: info):
-            body = self.ask("/", cookie=cookie)[1]
-        self.assertIn("Open a service", body)
+            body = self.ask("/services", cookie=cookie)[1]             # every service under its machine
+        self.assertIn("<h1>Services</h1>", body)
         self.assertEqual(body.count('href="/hosts/%s#logins">login</a>' % master), 2)
         self.assertNotIn(wg, body)
         # the keys locked: nothing is handed out

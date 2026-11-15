@@ -9,7 +9,9 @@ that booted. The page:
 
 | | |
 |---|---|
-| **Home** | how the network is, in one line and four numbers (machines on, services running, the oldest last backup, devices); what wants a look and what that means; every machine with its load, memory and fullest disk; a picture of how they are linked; a tile per service |
+| **Home** | how the network is, in one line and four numbers (machines on, services running, the oldest last backup, devices); what wants a look and what that means; a picture of the network: who is linked to the master |
+| **Machines** | every machine with its load, memory and disk; add a machine; update everything |
+| **Services** | every service under its machine: open it, its login, whether it answered, whether it is open to the Internet, and its hidden-service address with a button that copies it |
 | **A machine** | what it is, how busy and how full it is, what runs on it; Check now, Preview, Apply, each with what it does |
 | **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
 | **Linked networks** | from Home: what other networks may reach here, and whether this network leaves to the Internet through one of them |
@@ -18,6 +20,8 @@ that booted. The page:
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 | **The status page** | for everyone on the network, without a login, at `https://status.<host>`: which services work, since when one does not, the last week's incidents |
 
+The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
+what, Linked networks); *Safety* (Backups, If something breaks, Computers); *More*.
 On a computer the menu is at the side, with how the machines are below it; on a phone
 it is a bar at the bottom, with the rest under "More". The page follows the device's
 light or dark setting, and the moon button switches it (kept in a cookie of that

@@ -2877,12 +2877,41 @@ class TestNoLockout(Base):
         r = subprocess.run(["sh", "-c", "set -eu\nchanged=\n" + script + "echo done"], capture_output=True, text=True,
                            env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "done"), r.stderr)
-        self.assertEqual(util.read_text(count).strip(), "3")                    # twice busy, then done
+        self.assertGreaterEqual(int(util.read_text(count).strip()), 3)          # twice busy, then it goes on
         write(os.path.join(d, "rpm-ostree"), "#!/bin/sh\necho 'error: no such package' >&2; exit 1\n")
         r = subprocess.run(["sh", "-c", "set -eu\nchanged=\n" + script + "echo done"], capture_output=True, text=True,
                            env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
         self.assertNotEqual(r.returncode, 0)                                    # another error is not waited out
         self.assertIn("no such package", r.stderr)
+
+    def test_a_ring_that_does_not_answer_is_given_seconds_at_boot(self):
+        """Seen in a power cut: a ring machine that is still starting swallows the request,
+        and the unlock, whose request had no time limit, stood still for minutes."""
+        for name, script in (("debian", unlock.PREPARE_DEBIAN), ("coreos", unlock.RING_TIMEOUTS_COREOS),
+                             ("coreos with ssh at boot", unlock.PREPARE_DRACUT_SSHD)):
+            p = os.path.join(self.tmp, name + ".sh")
+            write(p, script)
+            self.assertEqual(subprocess.run(["sh", "-n", p]).returncode, 0, name)
+            self.assertIn("connect-timeout = 5", script)
+            self.assertIn("max-time = 20", script)
+        self.assertIn("/etc/initramfs-tools/hooks/kiwi-ring-timeouts", unlock.PREPARE_DEBIAN)
+        self.assertIn("Environment=CURL_HOME=/etc/kiwi-curl", unlock.RING_TIMEOUTS_COREOS)
+        self.assertIn("--track /etc/systemd/system.conf.d/50-kiwi-watchdog.conf", unlock.RING_TIMEOUTS_COREOS)   # the watchdog at boot too
+        # a machine with SSH at boot regenerates its initramfs: the files go in that way, never both ways
+        self.assertIn("--arg=/etc/kiwi-curl/.curlrc", unlock.PREPARE_DRACUT_SSHD)
+        self.assertIn("initramfs-etc --untrack-all", unlock.PREPARE_DRACUT_SSHD)
+        self.assertNotIn("RING_TIMEOUT_FILES_HERE", unlock.PREPARE_DRACUT_SSHD)
+        # the hook as the Debian script writes it: run by itself it puts the limits where curl looks
+        hook = unlock.PREPARE_DEBIAN.split("hook='", 1)[1].split("\n'\n", 1)[0].replace("%%", "%")
+        h = os.path.join(self.tmp, "hook")
+        write(h, hook + "\n")
+        dest = os.path.join(self.tmp, "initramfs")
+        r = subprocess.run(["sh", h], env=dict(os.environ, DESTDIR=dest), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for where in (".curlrc", "root/.curlrc"):
+            self.assertEqual(util.read_text(os.path.join(dest, where)), "connect-timeout = 5\nmax-time = 20\n")
+        self.assertEqual(subprocess.run(["sh", h, "prereqs"], env=dict(os.environ, DESTDIR=dest + "2")).returncode, 0)
+        self.assertFalse(os.path.exists(dest + "2"))
 
     def test_the_role_script_sets_the_hardware_watchdog(self):
         script = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}}), "x")
@@ -3534,6 +3563,9 @@ class TestUnlock(Base):
             if unlock.RINGS_ANSWER_PATH in script:       # the check before an update restart: looked at by its own test
                 self.guard = (tgt, data)
                 return b""
+            if "kiwi-curl" in script and "initramfs-etc" in script:      # CoreOS: the time limits at boot, its own test
+                self.limits = tgt
+                return b"updated\n"
             calls.append((tgt, script, data))
             if "tang-show-keys" in script:
                 return b"THUMBPRINT\n"

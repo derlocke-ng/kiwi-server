@@ -138,6 +138,10 @@ print()
 for m in machines:
     print("%-8s %s" % (m.name, " -> ".join("%s (%.1f)" % (s, t / 60) for t, s in m.seen)))
 stuck = [m.name for m in machines if m.was != "running"]
+# off again after it had started: someone reset it, or its watchdog did. Not "by itself" without a look
+again = [m.name for m in machines if any(s == "off" for _t, s in m.seen[1:])]
+if again:
+    print("went off a second time on the way (reset by a person, or by its watchdog): %s" % ", ".join(again))
 control = next((m for m in machines if "control" in (m.host.modules or [])), None)
 if control:
     r = subprocess.run(["curl", "-sk", "--max-time", "8", "--resolve", "control.%s:443:%s" % (control.host.hostname, control.addr),

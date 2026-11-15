@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.101.0 — a power cut
+
+- **`tests/drills/power-cut.py`** cuts the power of a whole home: every machine off in
+  the same moment, without a clean shutdown, and on again together. On the test home
+  (five machines, three with encrypted disks whose rings are on each other) four were
+  back by themselves within two minutes, in the right order: the board without disk
+  encryption first, then the machine its ring opens, then the one that machine's ring
+  opens. The control node opened by itself.
+- **The unlock at boot gives a silent ring seconds, not minutes.** Its request to a ring
+  had no time limit: a ring machine that was still starting and swallowed the request
+  held the unlock up for 133 seconds a round. Measured on a real machine: now it asks
+  again every six seconds and was up seven seconds after its rings answered. Debian and
+  uCore; from the next boot after an apply.
+- The hardware watchdog is active before the disk is open too (uCore): a machine that
+  hangs while it waits at boot is reset.
+- [docs/design/starter.md](docs/design/starter.md): a network from a phone. One image
+  for a USB stick with no secret in it, the first-run page in the phone's browser.
+
 ## 2.100.1 — an apply waits for the system's own update check
 
 - On uCore an apply failed with "You can cancel the current transaction with

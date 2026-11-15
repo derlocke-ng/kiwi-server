@@ -35,9 +35,12 @@ and nothing is installed again. When the master runs, "Set it up" on the page
 gives it its services. The page then moves, like every service, onto the VPN:
 `https://control.<name>.<domain>`. Put the phone on the VPN first (Devices).
 
-This last step is built and tested in parts; the whole run on one machine, from
-the stick to the first node, has not been done yet. The sign-in at the hoster
-on the page is the next step ([design](design/starter.md)).
+Tried on 15 November 2026 in a virtual machine with a rented server as the
+master (`tests/drills/starter-vm.sh first-node`): from the stick to a running
+first node in a quarter of an hour, most of it the master's install; a hard
+reset afterwards brought the node back as it was. Not tried yet: real hardware,
+and logging in at the page's new address from a phone on the VPN. The sign-in at
+the hoster on the page is the next step ([design](design/starter.md)).
 
 ## Make a fleet
 

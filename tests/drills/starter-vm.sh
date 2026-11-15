@@ -2,7 +2,7 @@
 # The starter image in a local QEMU VM (UEFI, KVM, 4 GB, user-mode network with loopback port
 # forwards). Touches no fleet and no machine. Prints one PASS or FAIL line per check.
 #
-#   tests/drills/starter-vm.sh [WORKDIR] build|install|again|two-disks|small|stop|all
+#   tests/drills/starter-vm.sh [WORKDIR] build|install|again|two-disks|small|windows|typed|first-node|stop|all
 #
 #   build      the starter image with --debug-shell (a root shell on the VM's second serial
 #              port, for these checks only) into WORKDIR/starter-debug.iso
@@ -16,6 +16,14 @@
 #              90 s, the console names Windows, port 80 shows the page; the page's button
 #              (posted as its form would) installs, and the first-run page comes up
 #   typed      the same disk: "erase" typed on the serial console does nothing, "ERASE" installs
+#   code       the VM of `install`, still running: this checkout's code goes into the VM and over the
+#              control image's (a drop-in for the kn-control unit), for trying code that is not released
+#   first-node the VM of `install`, still running: a new network from its first-run page with "This
+#              machine" as the first one at home; the master's install media are made on the machine,
+#              fetched and installed on a rented server (netcup; THE SERVER IS WIPED); then "Set it up"
+#              for this machine: it becomes the node, the starter's things go, the control page moves
+#              to https://control.<name>.<domain>. Needs KIWI_NEVER (servers never to touch),
+#              FN_SERVER (the server's id), FN_ADDRESS (its address) and FN_TOKEN (a netcup token file)
 #   stop       kill the VM this script started (by its pid)
 #
 # WORKDIR (default ~/kiwi-vm/starter) keeps the ISO, the disks, serial-*.log and qemu.pid.
@@ -192,6 +200,41 @@ asks() {    # LOG: the stick asks before it erases the disk, and does nothing fo
     ! grep -aq 'kiwi: installing on' "$log"; check $? "nothing installed after $(( $(date +%s) - t0 )) s"
 }
 
+# ---- first-node: the page's forms, posted the way its buttons post them ----
+base=http://127.0.0.1:$P8740
+jar=$w/cookies.txt
+csrf() { curl -s -b "$jar" --max-time 20 "$base/" | grep -o 'name="csrf" value="[^"]*"' | head -1 | cut -d'"' -f4; }
+job() {     # job ACTION HOST SECONDS: start it as the page's button does, wait for its end, say how it ended
+    local loc id n=$3 state=running off=0 r
+    loc=$(curl -s -b "$jar" -o /dev/null -w '%{redirect_url}' --max-time 30 --data-urlencode "csrf=$(csrf)" \
+        --data-urlencode "action=$1" --data-urlencode "host=$2" "$base/run")
+    id=${loc##*/jobs/}
+    [ -n "$id" ] && [ "$id" != "$loc" ] || { say "    no task was started for $1 $2 ($loc)"; return 1; }
+    : > "job-$1-$2.log"
+    while [ "$n" -gt 0 ]; do
+        r=$(curl -s -b "$jar" --max-time 20 "$base/api/jobs/$id/log?offset=$off") || r=
+        state=$(python3 -c 'import json,sys
+try:
+    d = json.loads(sys.argv[1]); open(sys.argv[2], "a").write(d["text"]); print(d["state"], d["offset"])
+except Exception:
+    print("lost", sys.argv[3])' "$r" "job-$1-$2.log" "$off")
+        off=${state#* }; state=${state% *}
+        case $state in ok) return 0 ;; failed) tail -5 "job-$1-$2.log" | sed 's/^/    /'; return 1 ;; esac
+        sleep 5; n=$((n - 5))
+    done
+    say "    $1 $2 did not end in $3 s (it is $state)"; tail -3 "job-$1-$2.log" | sed 's/^/    /'
+    return 1
+}
+phase() {   # phase HOST: what the page's list says about it
+    curl -s -b "$jar" --max-time 20 "$base/" > page-home.html
+    python3 - "$1" <<'EOF2'
+import re, sys
+html = open("page-home.html").read()
+m = re.search(r'<div class="card"><div class="row"><strong>%s</strong>.*?</div>(.*?)</div>' % re.escape(sys.argv[1]), html, re.S)
+print("to set up: " + re.sub(r"<[^>]+>", " ", m.group(1)).split(".")[0].strip()[:90] if m else "set up")
+EOF2
+}
+
 blank() {   # blank NAME SIZE
     rm -f "$1"; qemu-img create -q -f qcow2 "$1" "$2"
 }
@@ -283,6 +326,128 @@ typed)
     wait_log serial-typed.log 'kiwi: installed: take the stick out' 600; check $? "it installed ($(( $(date +%s) - t0 )) s)"
     wait_log serial-typed.log 'Setup code: [0-9a-f]{4}-[0-9a-f]{4}' 900; check $? "the installed system shows its setup code"
     stop
+    ;;
+code)
+    port=${PCODE:-18999}
+    tar -C "$here" -czf code.tgz --exclude=__pycache__ bin data kiwi.manifest lib modules roles
+    python3 -m http.server "$port" --bind 127.0.0.1 --directory "$w" >/dev/null 2>&1 &
+    srv=$!
+    sleep 1
+    out=$(sh_vm "rm -rf /var/kiwi-dev && mkdir -p /var/kiwi-dev /etc/containers/systemd/kn-control.container.d &&
+        curl -s --max-time 60 http://10.0.2.2:$port/code.tgz | tar -xz -C /var/kiwi-dev &&
+        printf '[Container]\nVolume=/var/kiwi-dev:/opt/kiwi-server:ro,Z\n' > /etc/containers/systemd/kn-control.container.d/dev.conf &&
+        systemctl daemon-reload && systemctl restart kn-control.service && sleep 8 &&
+        podman exec kn-control python3 -c 'import kiwiserver; print(kiwiserver.VERSION, kiwiserver.__file__)'")
+    kill "$srv" 2>/dev/null; rm -f code.tgz
+    say "$out"
+    [[ $out == "$(sed -n 's/^VERSION=//p' "$here/kiwi.manifest") /opt/kiwi-server/"* ]]; check $? "the VM's control part runs this checkout's code"
+    ;;
+first-node)
+    sid=${FN_SERVER:-}; addr=${FN_ADDRESS:-}; token=${FN_TOKEN:-}
+    [ -n "$sid" ] && [ -n "$addr" ] && [ -s "$token" ] || { say "FAIL FN_SERVER, FN_ADDRESS and FN_TOKEN say which server becomes the master"; exit 1; }
+    [ -n "${KIWI_NEVER:-}" ] || { say "FAIL KIWI_NEVER is not set: say which servers are in use"; exit 1; }
+    for never in $KIWI_NEVER; do
+        if [ "$never" = "$sid" ] || [ "$never" = "$addr" ]; then say "FAIL $never is in use: not touched"; exit 1; fi
+    done
+    log=serial-install.log; master=trifle; node=mango
+    code=$(grep -aoE 'Setup code: [0-9a-f-]+' "$log" | tail -1 | cut -d' ' -f3)
+    [ -n "$code" ] && kill -0 "$(cat qemu.pid 2>/dev/null)" 2>/dev/null || { say "FAIL run install first: its VM must be running"; exit 1; }
+    t0=$(date +%s); rm -f "$jar"
+    # a throwaway network: its page password is kept beside the disks, for a look by hand afterwards
+    (umask 077; head -c 18 /dev/urandom | base64 | tr -d '/+=' > page-password)
+    # 1. the questions
+    curl -s -o page-setup.html --max-time 30 "$base/setup"
+    this=$(grep -o 'name="nodes.0.address" value="[0-9.]*"' page-setup.html | cut -d'"' -f4)
+    grep -q '<strong>This machine</strong>' page-setup.html && [ "$this" = 10.0.2.15 ]; check $? "the questions list this machine as the first at home, at its address ($this)"
+    made=$(curl -s -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
+        --data-urlencode "again@page-password" --data-urlencode "master_where=vps" --data-urlencode "master_address=$addr" \
+        --data-urlencode "master_name=$master" --data-urlencode "exit=direct" --data-urlencode "lan_subnet=10.0.2.0/24" \
+        --data-urlencode "lan_gateway=10.0.2.2" --data-urlencode "nodes.0.preset=minimal" --data-urlencode "nodes.0.address=$this" \
+        --data-urlencode "nodes.0.name=$node" "$base/setup" | grep -c 'AGE-SECRET-KEY-')     # the recovery key is not kept
+    [ "$made" -ge 1 ] && grep -q kiwi_session "$jar"; check $? "the answers made a network (its recovery key was shown)"
+    out=$(sh_vm 'ls /var/home/user/docker/kn-control')
+    grep -q 'fleet.yaml.age' <<< "$out" && grep -q 'secrets.age' <<< "$out"; check $? "it rests encrypted where a node's control part keeps it"
+    say "$master: $(phase $master)"; say "$node: $(phase $node)"
+    # 2. the master: its install media are made on the machine, fetched, and installed at the provider
+    job build $master 1800; check $? "the machine made the master's install media ($(( $(date +%s) - t0 )) s)"
+    curl -s -b "$jar" -o master.iso --max-time 600 "$base/hosts/$master/media"
+    [ "$(stat -c %s master.iso 2>/dev/null || echo 0)" -gt 100000000 ]; check $? "the install media were fetched from the page ($(( $(stat -c %s master.iso) >> 20 )) MB)"
+    python3 - "$here/lib" "$token" "$sid" "$w/master.iso" <<'EOF2'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from kiwiserver import netcup
+client = netcup.Netcup(sys.argv[2])
+netcup.install(client, client.server(int(sys.argv[3])), sys.argv[4], "kiwi-drill-%d.iso" % time.time(),
+               lambda m: print("%s     netcup: %s" % (time.strftime("%H:%M:%S"), m), flush=True))
+EOF2
+    check $? "the master is installed on server $sid"
+    rm -f master.iso
+    n=60; while [ "$n" -gt 0 ] && ! timeout 5 bash -c "exec 3<>/dev/tcp/$addr/22" 2>/dev/null; do sleep 10; n=$((n - 1)); done
+    [ "$n" -gt 0 ]; check $? "the master answers at $addr"
+    job setup $master 2400; check $? "the page set the master up ($(( $(date +%s) - t0 )) s)"
+    # 3. this machine: its place on the VPN, then its role, which takes the starter's things away
+    job setup $node 600; check $? "this machine has its place on the VPN"
+    say "$node: $(phase $node)"
+    grep -q 'It is the machine this page runs on' page-home.html && ! grep -q 'Make its install media' page-home.html
+    check $? "its step is 'Set it up', with no install media"
+    job setup $node 900; check $? "'Set it up' took the machine over and started its role"
+    grep -q 'this page moves' "job-setup-$node.log"; check $? "the task says that the page moves"
+    n=240; state=
+    while [ "$n" -gt 0 ]; do
+        state=$(sh_vm 'systemctl is-active kiwi-self-apply.service; test -e /usr/local/bin/kiwi-starter-done && echo starter || echo node' | tr '\n' ' ')
+        case $state in *inactive*|*failed*) break ;; esac      # ended: with the starter's things gone, or not
+        sleep 15; n=$((n - 1))
+    done
+    say "the role ended: $state ($(( $(date +%s) - t0 )) s)"
+    sh_vm 'journalctl -u kiwi-self-apply --no-pager -o cat | tail -6' | sed 's/^/    /'
+    [[ $state == *inactive*node* ]]; check $? "the role is in and the starter took its things away"
+    out=$(sh_vm 'hostname; cat /home/core/.ssh/authorized_keys /home/core/.ssh/authorized_keys.d/* | grep -c kiwi-starter;
+        grep -c "^# kiwi-server stack" /etc/containers/systemd/kn-control.container; nft list tables | grep -c kiwi_starter;
+        ls /var/lib/kiwi-starter /etc/kiwi-starter 2>&1 | grep -c "No such"; test -e /var/lib/kiwi-server/role.done && echo role-done;
+        podman ps --format "{{.Names}}" | sort | tr "\n" " "')
+    printf '%s\n' "$out" | sed 's/^/    /'
+    grep -q "^$node\." <<< "$out"; check $? "its name is the network's ($node)"
+    [ "$(sed -n 2p <<< "$out")" = 0 ] && [ "$(sed -n 4p <<< "$out")" = 0 ] && [ "$(sed -n 5p <<< "$out")" = 2 ]
+    check $? "the starter key, its port 80 and its folders are gone"
+    [ "$(sed -n 3p <<< "$out")" = 1 ] && grep -q role-done <<< "$out"; check $? "the control part is the stack's, the role is recorded on the machine"
+    for c in kn-control kn-nginx kn-vpn-client; do grep -qw "$c" <<< "$out" || { say "    $c does not run"; false; }; done
+    check $? "its containers run (control, nginx, the VPN client)"
+    node_checks() {     # the link to the master, and the control page at its new place
+        local out n=12
+        while [ "$n" -gt 0 ]; do        # the tunnel needs a moment after its container started
+            out=$(sh_vm 'podman exec kn-vpn-client ping -c 1 -W 3 10.8.0.1 2>&1 | grep -c "1 packets received"')
+            [ "${out:-0}" = 1 ] && break; sleep 5; n=$((n - 1))
+        done
+        [ "${out:-0}" = 1 ]; check $? "it reaches the master over the VPN"
+        # the proxy serves the page's name to the VPN only: the machine's own LAN side is refused
+        out=$(sh_vm "curl -sk -o /dev/null -w '%{http_code}' --max-time 20 --resolve control.$node.home:443:127.0.0.1 https://control.$node.home/login")
+        [ "$out" = 403 ]; check $? "the proxy has control.$node.home and refuses who is not on the VPN ($out)"
+        out=$(sh_vm "podman exec kn-control python3 -c 'import os, urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8740/login\", timeout=10).read().decode().count(\"keys are locked\"), os.environ.get(\"KIWI_CONTROL_HOST\"), os.environ.get(\"KIWI_STARTER\"))'")
+        [ "$out" = "1 $node None" ]; check $? "the control part is the node's own, its keys locked until someone logs in ($out)"
+    }
+    node_checks
+    r=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$base/login"); [ "$r" = 000 ]
+    check $? "the starter's page on 8740 is gone ($r)"
+    # a power cut right after: the machine is reset hard and must come back as the node. Nothing is
+    # typed while it starts (keys on the serial ports would stop its boot menu)
+    before=$(grep -ac 'login:' "$log")
+    python3 - "$w/monitor.sock" <<'EOF2'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.5); s.sendall(b"system_reset\n"); time.sleep(1)
+EOF2
+    n=60; while [ "$n" -gt 0 ] && [ "$(grep -ac 'login:' "$log")" -le "$before" ]; do sleep 5; n=$((n - 1)); done
+    tail -c 400 "$log" | grep -aq "^$node login:"; check $? "after a hard reset its console shows the node's login, not the starter's message"
+    n=30; while [ "$n" -gt 0 ] && [ "$(sh_vm 'podman ps --format "{{.Names}}" | wc -l' | tail -1)" != 3 ]; do sleep 10; n=$((n - 1)); done
+    out=$(sh_vm 'hostname; nmcli -t -f NAME,DEVICE con show --active | head -1; ip -4 -o addr show scope global | awk "{print \$4}" | head -1;
+        systemctl list-unit-files "kiwi-starter*" --no-legend | wc -l; systemctl is-active kiwi-role.service kiwi-stack.service | tr "\n" " "; echo;
+        curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1/')
+    printf '%s\n' "$out" | sed 's/^/    /'
+    [ "$(sed -n 1p <<< "$out")" = "$node.home" ] && [[ $(sed -n 2p <<< "$out") == kiwi-static:* ]] && [ "$(sed -n 3p <<< "$out")" = 10.0.2.15/24 ]
+    check $? "it has its name and its fixed address"
+    [ "$(sed -n 4p <<< "$out")" = 0 ] && [[ $(sed -n 5p <<< "$out") == "inactive active "* ]] && [ "$(sed -n 6p <<< "$out")" = 301 ]
+    check $? "no starter unit is left, the role did not run again, port 80 is the proxy's"
+    node_checks
+    say "done after $(( $(date +%s) - t0 )) s; the VM keeps running (stop ends it); the master on server $sid keeps running"
     ;;
 stop) stop ;;
 all)

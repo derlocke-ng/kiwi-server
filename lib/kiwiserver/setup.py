@@ -7,11 +7,14 @@ which its master issues once it runs) is a next step, not an error. The app asks
 questions: `init --questions` prints them as JSON with what this computer already knows
 filled in, and `init --answers FILE` takes them back.
 """
+import fcntl
 import ipaddress
 import json
 import os
 import random
 import re
+import socket
+import struct
 import subprocess
 
 import yaml
@@ -137,6 +140,23 @@ def free_addresses(subnet, gateway="", want=6, run=_run):
     return [a for a in cands if a not in taken][:want]
 
 
+def _from_proc(table="/proc/net/route"):
+    """((address, prefix length) or None, gateway) of the interface the default route leaves by,
+    from the kernel's own table: for where the `ip` command is not installed."""
+    try:
+        with open(table) as fh:
+            rows = [x.split() for x in fh.read().splitlines()[1:]]
+        dev, gw = next((r[0], r[2]) for r in rows if len(r) > 7 and r[1] == "00000000" and int(r[3], 16) & 2)
+        gateway = socket.inet_ntoa(struct.pack("<L", int(gw, 16)))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            name = struct.pack("256s", dev[:15].encode())
+            address = socket.inet_ntoa(fcntl.ioctl(sock.fileno(), 0x8915, name)[20:24])        # SIOCGIFADDR
+            mask = socket.inet_ntoa(fcntl.ioctl(sock.fileno(), 0x891b, name)[20:24])           # SIOCGIFNETMASK
+        return (address, ipaddress.ip_network("0.0.0.0/%s" % mask).prefixlen), gateway
+    except (OSError, StopIteration, ValueError, struct.error):
+        return None, ""
+
+
 def detect(probe=True):
     """What this computer knows that a new fleet needs: its LAN with addresses that look free,
     time zone, keyboard, language, SSH key."""
@@ -146,6 +166,7 @@ def detect(probe=True):
         routes = json.loads(_run(["ip", "-j", "route", "show", "default"]) or "[]")
     except ValueError:
         routes = []
+    own = None
     if routes:
         found["gateway"] = routes[0].get("gateway", "")
         dev = routes[0].get("dev", "")
@@ -155,11 +176,17 @@ def detect(probe=True):
             addrs = []
         for a in (addrs[0].get("addr_info", []) if addrs else []):
             if a.get("family") == "inet":
-                found["subnet"] = str(ipaddress.ip_interface("%s/%s" % (a["local"], a["prefixlen"])).network)
-                if os.environ.get("KIWI_STARTER") == "1":
-                    # on a machine the starter stick installed, the network's first node is this machine
-                    found["this"] = a["local"]
+                own = (a["local"], a["prefixlen"])
                 break
+    elif os.environ.get("KIWI_STARTER") == "1":
+        # the control image has no `ip`, and on a starter its container has the machine's own network
+        # (in any other container this would find the container's, not the home's)
+        own, found["gateway"] = _from_proc()
+    if own:
+        found["subnet"] = str(ipaddress.ip_interface("%s/%s" % own).network)
+        if os.environ.get("KIWI_STARTER") == "1":
+            # on a machine the starter stick installed, the network's first node is this machine
+            found["this"] = own[0]
     link = os.path.realpath("/etc/localtime")
     if "zoneinfo/" in link:
         found["timezone"] = link.split("zoneinfo/", 1)[1]

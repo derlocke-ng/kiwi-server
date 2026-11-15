@@ -3123,9 +3123,10 @@ class TestOnion(Base):
         ports = m.compose["services"]["km-vpn-server"]["ports"]
         for want in ("443:443/tcp", "5222:5222/tcp", "5223:5223/tcp", "5269:5269/tcp"):
             self.assertTrue(any(p.endswith(want) for p in ports), (want, ports))
-        # on the VPN the public name is the master's, like for everyone else
-        self.assertIn((here, "chat.example.org"), r.dns_records())
-        self.assertNotIn((there, "chat.example.org"), r.dns_records())
+        # on the VPN the public name is the node's own: a device comes straight to it
+        self.assertIn((there, "chat.example.org"), r.dns_records())
+        self.assertNotIn((here, "chat.example.org"), r.dns_records())
+        self.assertIn("listen 443 ssl;\n        # open to the internet through the master", b.files["kn-nginx/nginx.conf"][0])
         self.assertIn((there, "jabber.papaya.home"), r.dns_records())
 
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):

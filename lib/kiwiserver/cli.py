@@ -317,14 +317,12 @@ class Renderer:
                 if not re.search(r"vpn-client\.wireguard_config: file not found", str(e)):   # not enrolled yet: no mesh name yet
                     util.warn("dns records: skipping %s: %s" % (h.name, e))
         # a node open to the internet: the master hands its public names and ports on. On the
-        # VPN those names lead to the master too, so everyone comes in by the same door
+        # VPN those names stay the node's own (the records above): a device reaches the service
+        # there directly, when its group may reach that machine
         exposed = {"names": {}, "ports": []}
         for name, ip, public, ports in open_nodes if master_ip else []:
             for n in public:
                 exposed["names"][n] = ip
-                recs[:] = [r for r in recs if r != (ip, n)]
-                if (master_ip, n) not in recs:
-                    recs.append((master_ip, n))
             for p in ports:
                 taken = next((x for x in exposed["ports"] if x["port"] == p["port"]), None)
                 if taken:
@@ -2363,7 +2361,13 @@ def cmd_connect(args):
     domain = fleet.defaults.get("domain") or "home"
     name = args.name or re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-") or "computer"
     if name in fleet.hosts:
-        raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % name)
+        if args.name:
+            raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % name)
+        # a computer that happens to be called like one of the machines: it gets a name of its own
+        # here, the same one each time, so that the app needs no question for it
+        machine = name
+        name = next(n for n in ["%s-pc" % machine] + ["%s-pc-%d" % (machine, i) for i in range(2, 50)] if n not in fleet.hosts)
+        util.say("%s is a machine of this network already: this computer is called %s on the VPN" % (machine, name))
     if args.remove:
         if connectmod.have_networkmanager() and connectmod.down(domain):
             util.say("the connection %s is gone from this computer" % connectmod.connection_name(domain))

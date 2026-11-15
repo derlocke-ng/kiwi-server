@@ -126,6 +126,37 @@ def try_one(x):
     if m == "git":
         code, _t, _h = ask(b + "/api/v1/user", auth=(user, pw), headers={"Accept": "application/json"})
         return verdict(code, (200,), (401, 403))
+    if m == "xmpp":
+        # a Jabber login as an app does it: STARTTLS, then the name and the password (SASL PLAIN)
+        import base64, socket
+        name, _at, domain = user.partition("@")
+        s = socket.create_connection((domain, 5222), 15)
+
+        def until(mark):
+            buf = b""
+            while mark not in buf:
+                d = s.recv(4096)
+                if not d:
+                    break
+                buf += d
+            return buf.decode("utf-8", "replace")
+        head = ("<?xml version='1.0'?><stream:stream to='%s' xmlns='jabber:client' "
+                "xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>" % domain).encode()
+        s.sendall(head)
+        until(b"</stream:features>")
+        s.sendall(b"<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+        until(b"proceed")
+        try:
+            s = ctx.wrap_socket(s, server_hostname=domain)
+        except ssl.SSLCertVerificationError as e:
+            return "FAIL", "cert: %s" % e.verify_message
+        s.sendall(head)
+        until(b"</stream:features>")
+        s.sendall(("<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>%s</auth>"
+                   % base64.b64encode(("\0%s\0%s" % (name, pw)).encode()).decode()).encode())
+        said = until(b">")
+        s.close()
+        return ("PASS", "logged in") if "<success" in said else ("FAIL", "not authorized")
     if m == "opencloud":
         # its sign-in page's own call: 204 for a wrong password, 200 with who signed in for a right one
         code, t, _h = jpost(b + "/signin/v1/identifier/_/logon", {"params": [user, pw, "1"]},

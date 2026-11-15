@@ -681,7 +681,9 @@ class Renderer:
                          "websocket": bool(e.get("websocket", False)),
                          "hsts": None if hsts is None else bool(hsts),   # None: the module setting decides
                          "comment": self.expand(e.get("comment") or ("%s (%s)" % (name, e["server_name"])), ctx, what),
-                         "client_max_body_size": e.get("client_max_body_size"),
+                         # a size may come from a setting ("{{ upload_mb }}m")
+                         "client_max_body_size": (self.expand(str(e["client_max_body_size"]), ctx, what)
+                                                  if e.get("client_max_body_size") else None),
                          "referrer_policy": e.get("referrer_policy"),
                          "proxy_read_timeout": e.get("proxy_read_timeout"),
                          "proxy_ssl": bool(e.get("proxy_ssl", proxy_pass.startswith("https://"))),

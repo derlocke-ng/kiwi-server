@@ -1,0 +1,62 @@
+#!/bin/sh
+# Before Prosody starts: the certificate of its name, copied from the reverse proxy's so that
+# Prosody's own user may read the key, and the admin's account with the password of the
+# settings. The password comes in KIWI_ADMIN_PASSWORD; Prosody does not get it, nothing here
+# prints it, and it is on no command line: prosodyctl reads it from its input.
+admin=$KIWI_ADMIN
+pw=$KIWI_ADMIN_PASSWORD
+unset KIWI_ADMIN_PASSWORD
+say() { echo "kiwi: $*"; }
+
+n=0
+until [ -s /kiwi-certs/fullchain.pem ] && [ -s /kiwi-certs/privkey.pem ]; do
+    # a public name: the proxy fetches its certificate at its first start
+    [ "$n" = 0 ] && say "waiting for the certificate of {{ xmpp_host }} from the reverse proxy"
+    n=$((n + 1)); sleep 10
+done
+certs() {
+    install -d -o prosody -g prosody -m 0750 /etc/prosody/certs
+    install -o prosody -g prosody -m 0640 /kiwi-certs/fullchain.pem /etc/prosody/certs/fullchain.pem
+    install -o prosody -g prosody -m 0640 /kiwi-certs/privkey.pem /etc/prosody/certs/privkey.pem
+}
+certs
+chown -R prosody:prosody /var/lib/prosody
+
+account() {
+    # Prosody makes accounts through its own socket: it must run first
+    tries=0
+    until [ -S /var/lib/prosody/prosody.sock ] && prosodyctl shell "server:version()" >/dev/null 2>&1; do
+        tries=$((tries + 1))
+        if [ "$tries" -ge 120 ]; then
+            say "Prosody did not answer in two minutes; the account $admin was not checked"
+            return 0
+        fi
+        sleep 1
+    done
+    if [ -z "$pw" ]; then
+        say "no admin password in the settings; the account $admin was not checked"
+        return 0
+    fi
+    # made when it is not there; its password is the settings' at every start
+    if printf '%s\n%s\n' "$pw" "$pw" | prosodyctl adduser "$admin" >/dev/null 2>&1; then
+        say "made the account $admin"
+    elif printf '%s\n%s\n' "$pw" "$pw" | prosodyctl passwd "$admin" >/dev/null 2>&1; then
+        :
+    else
+        say "could not make or set the account $admin"
+    fi
+}
+account &
+
+# a renewed certificate: taken over and loaded within the hour, without a restart
+(
+    was=$(cat /kiwi-certs/fullchain.pem | sha256sum)
+    while sleep 3600; do
+        now=$(cat /kiwi-certs/fullchain.pem 2>/dev/null | sha256sum)
+        if [ -s /kiwi-certs/fullchain.pem ] && [ "$now" != "$was" ]; then
+            certs && prosodyctl reload >/dev/null 2>&1 && say "the renewed certificate is in use"
+            was=$now
+        fi
+    done
+) &
+exec /entrypoint.sh prosody -F

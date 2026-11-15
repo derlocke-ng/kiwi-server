@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.102.0 — who starts whom after a power cut
+
+- **"If something breaks" says what a power cut would do.** After a power cut every
+  machine starts at once, and a machine whose disk opens through a ring waits for the
+  machine with the ring. The report now follows that chain: it names machines that wait
+  for each other and would stay locked, and the one machine everything hangs on ("every
+  machine comes back by itself, as long as lime starts too. If it is off or broken then,
+  lychee, papaya and quince stay locked").
+- Tried on the test home, both ways: with every machine, all five were back by
+  themselves in three minutes; with the one machine's ring away that needs no ring
+  itself, the three encrypted machines stayed locked, and were up 11, 32 and 52 seconds
+  after it was back.
+- **Save its data first.** A machine that still answers and is installed anew on purpose
+  gets back what its last nightly backup holds. "This machine is lost or was replaced"
+  now starts with "Save its data now" (page and app) when the machine has backups and
+  still answers.
+
 ## 2.101.0 — a power cut
 
 - **`tests/drills/power-cut.py`** cuts the power of a whole home: every machine off in

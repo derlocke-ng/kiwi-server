@@ -275,6 +275,80 @@ def unlock_checks(fleet, hosts, fleet_arg):
     return out
 
 
+def start_alone(fleet, hosts, servers, off=()):
+    """Which machines come up by themselves when every machine of the fleet starts at once,
+    as after a power cut: (the ones that do, the ones that stay locked). A machine starts
+    alone when its disk needs no ring, or when enough of its rings are on machines that
+    start alone. A ring that has to be forwarded needs the control node up and open. `off`:
+    machines that stay off."""
+    control = next((h for h in hosts.values() if "control" in (h.modules or [])), None)
+    opens_control = None        # the machine whose ring opens the control node's keys after a restart
+    if control is not None:
+        ring = (control.cfg.get("unlock") or {}).get("control")
+        if ring and ring in servers and not isinstance(servers[ring][0], unlockmod.OperatorRing):
+            opens_control = servers[ring][0].name
+    needs = {}
+    for h in fleet.hosts.values():
+        cfg = h.cfg.get("unlock") or {}
+        rings = [str(r) for r in cfg.get("rings") or []]
+        if not rings:
+            continue
+        via, givers = cfg.get("via") or {}, []
+        for r in rings:
+            if r not in servers or isinstance(servers[r][0], unlockmod.OperatorRing):
+                continue                        # nobody serves it, or a person's computer does
+            who = {servers[r][0].name}
+            if str(via.get(r) or "").startswith("http://127.0.0.1:"):
+                if control is None or opens_control is None:
+                    continue                    # forwarded by hand: not by itself
+                who |= {control.name, opens_control}
+            givers.append(who)
+        needs[h.name] = (int(cfg.get("threshold") or 1), givers)
+    up = {h.name for h in fleet.hosts.values() if h.name not in needs and h.name not in off}
+    grew = True
+    while grew:
+        grew = False
+        for name, (need, givers) in needs.items():
+            if name not in up and name not in off and sum(1 for g in givers if g <= up) >= need:
+                up.add(name)
+                grew = True
+    return up, sorted(n for n in needs if n not in up and n not in off)
+
+
+def power_cut_checks(fleet, hosts, fleet_arg):
+    """After a power cut every machine of a home starts at once. Do they all come back?"""
+    if not any((h.cfg.get("unlock") or {}).get("rings") for h in fleet.hosts.values()):
+        return []
+
+    def resolve(x):
+        if x.name not in hosts:
+            raise KiwiError("not resolved")
+    try:
+        servers = unlockmod.ring_servers(fleet, resolve)
+    except KiwiError:
+        return []                   # the unlock checks say what is unclear
+    up, stuck = start_alone(fleet, hosts, servers)
+    fix = ("Give one of them a ring on a machine whose own disk needs no ring: a small board without disk encryption "
+           "that is always on does. Its settings: unlock, rings.")
+    if stuck:
+        return [_check("power-cut", False, "After a power cut %s wait%s locked: each needs a ring on a machine that is "
+                       "locked too. Someone has to type a key." % (names(stuck), "s" if len(stuck) == 1 else ""), fix)]
+    # the machines that hold it together: with one of them off, others stay locked
+    ringed = {s[0].name for s in servers.values() if not isinstance(s[0], unlockmod.OperatorRing)}
+    weak = {}
+    for m in sorted(ringed):
+        lost = start_alone(fleet, hosts, servers, off=(m,))[1]
+        if lost:
+            weak[m] = lost
+    if weak:
+        m, lost = sorted(weak.items(), key=lambda x: -len(x[1]))[0]
+        return [_check("power-cut", False, "After a power cut every machine comes back by itself, as long as %s starts too. "
+                       "If it is off or broken then, %s stay%s locked." % (m, names(lost), "s" if len(lost) == 1 else ""),
+                       "Give %s a ring on one more machine that starts without a ring itself." % names(lost))]
+    return [_check("power-cut", True, "After a power cut every machine comes back by itself, also with one of the "
+                   "machines that serve a ring off.")]
+
+
 def master_checks(fleet, roles, hosts, applied, fleet_arg):
     out, f = [], shlex.quote(fleet_arg)
     control = any("control" in h.modules for h in hosts.values())
@@ -512,6 +586,7 @@ def report(fleet, roles, ms, status=None, fleet_arg=None, now=None):
     checks = ([copy_check(fleet, state, applied, fleet_arg, now)]
               + data_checks(fleet, ms, hosts, applied, said, looked, fleet_arg, now)
               + unlock_checks(fleet, hosts, fleet_arg)
+              + power_cut_checks(fleet, hosts, fleet_arg)
               + master_checks(fleet, roles, hosts, applied, fleet_arg)
               + [ways_check(fleet, fleet_arg), key_check()])
     checks.sort(key=lambda c: ORDER[c["ok"]])

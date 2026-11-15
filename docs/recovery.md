@@ -68,6 +68,18 @@ backs up as before. A machine without backups starts empty.
 media, start the machine from them (its disk is erased), then set it up. The
 new installation's SSH key is taken as the machine's.
 
+A machine that still answers, and is installed anew on purpose, should save its
+data first: it gets back what its last backup holds, and backups are made once
+a night. "Save its data now" is the first thing its page offers; in a terminal:
+
+```bash
+kiwi-server backups ~/kiwi/fleet.yaml papaya --now
+```
+
+Do not take a machine down on the day and hour of the update window
+(`updates`, Sunday 03:30 unless you changed it): the others may restart then,
+and one whose unlock ring is on the machine you took down would wait locked.
+
 - In the app: the machine's menu, **This machine was lost or replaced…**:
   **Make…**, start the machine, **Set it up**.
 - On the control page: the machine's page, **This machine is lost or was

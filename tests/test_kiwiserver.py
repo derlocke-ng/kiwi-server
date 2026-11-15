@@ -8719,6 +8719,7 @@ class TestFirstRunPage(StoreBase):
         self.assertIn('name="action" value="build"', found)
         self.assertIn('name="host" value="%s"' % node, found)
         self.assertIn("It has no backups: after the set-up it starts empty", found)
+        self.assertNotIn("First: save its data", found)                         # nothing of it is saved anywhere
         self.assertNotIn(" open>", found[:80])
         write(os.path.join(self.c.media_dir(), node, node + ".iso"), "an image")  # its media are made: the next steps
         found = section()
@@ -8891,6 +8892,50 @@ class TestRecovery(Base):
                                  "node": dict(node, preset="minimal")})
         _r, checks = self.report(f)
         self.assertIn("No machine serves the ring nowhere", checks["unlock:papaya"]["text"])
+
+    def test_after_a_power_cut_machines_that_wait_for_each_other_are_named(self):
+        """Seen for real: with the one machine off whose disk needs no ring, three machines whose
+        rings are on each other stayed locked until it was back."""
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+
+        def home(**unlock):
+            def box(name, ip, rings=None, tang=None, extra=()):
+                b = {"network": {"address": "192.168.2.%d/24" % ip}, "role": "node",
+                     "node": dict(node, modules=["vpn-client", "reverse-proxy"] + (["tang"] if tang else []) + list(extra))}
+                if tang:
+                    b["node"]["tang"] = {"rings": {tang: 7500}}
+                if rings:
+                    b["unlock"] = rings
+                return b
+            return self.network(
+                papaya=box("papaya", 30, unlock.get("papaya"), "infra"),
+                lychee=box("lychee", 61, unlock.get("lychee"), "house"),
+                quince=box("quince", 62, unlock.get("quince")),
+                lime=box("lime", 64, None, "home"))
+        # two machines whose only rings are on each other: neither starts
+        f = home(papaya={"rings": ["house"]}, lychee={"rings": ["infra"]})
+        _r, checks = self.report(f)
+        self.assertIs(checks["power-cut"]["ok"], False)
+        self.assertIn("lychee and papaya wait locked", checks["power-cut"]["text"])
+        # an anchor: lime needs no ring and opens papaya, papaya opens lychee, either opens quince
+        f = home(papaya={"rings": ["house", "home"], "threshold": 1}, lychee={"rings": ["infra"]},
+                 quince={"rings": ["infra", "house"], "threshold": 1})
+        _r, checks = self.report(f)
+        self.assertIs(checks["power-cut"]["ok"], False)             # it works, but hangs on one machine
+        self.assertIn("as long as lime starts too", checks["power-cut"]["text"])
+        self.assertIn("lychee, papaya and quince stay locked", checks["power-cut"]["text"])
+        # nobody's disk needs a ring on a machine that needs one: fine whatever is off
+        f = home(quince={"rings": ["home", "infra"], "threshold": 1})
+        _r, checks = self.report(f)
+        self.assertIs(checks["power-cut"]["ok"], True)
+        # both rings are needed: one of them off is enough to stay locked
+        f = home(quince={"rings": ["home", "infra"], "threshold": 2})
+        _r, checks = self.report(f)
+        self.assertIs(checks["power-cut"]["ok"], False)
+        self.assertIn("quince stays locked", checks["power-cut"]["text"])
+        # no encrypted disk at all: nothing to say
+        _r, checks = self.report(home())
+        self.assertNotIn("power-cut", checks)
 
     def test_the_master_its_vpn_state_its_reinstall_and_a_master_in_memory(self):
         f = self.network()

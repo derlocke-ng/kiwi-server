@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.109.0 — game servers, and the messages tried
+
+- **Game servers** (kiwi-modules 0.40.0): add `games` to a node and list the servers:
+  Minecraft (Java and Bedrock), Enshrouded, Abiotic Factor, Zandronum, Valheim,
+  Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One
+  container and one folder per server; players connect at home or from the VPN, where
+  a group can be given one server's port and nothing else. Worlds are in the backup.
+  [roles.md](docs/roles.md#game-servers) has the settings.
+- **The messages were tried for real** (`tests/drills/notify.py`): a service stopped on
+  a machine that stayed fine. The status page said so, a push message and a webhook
+  post came after the second look, and "answers again" came when it was started.
+- A service that does not answer is asked once more before it counts, and while one is
+  down the control node looks again after three minutes, not ten: the drill showed one
+  lost question keeping a service "down" for a look longer than it was.
+
 ## 2.108.0 — a status page for everyone, and messages
 
 - **Every service is asked for a page.** After each look at the machines the control

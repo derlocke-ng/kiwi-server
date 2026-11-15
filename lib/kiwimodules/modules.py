@@ -68,6 +68,8 @@ def _jinja():
                         "pip install --user jinja2  (or rpm-ostree install python3-jinja2)")
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
     env.filters["wg_key"] = wg_key
+    # `x is match(pattern)`: for a module's validate: rules on names
+    env.tests["match"] = lambda value, pattern: re.match(pattern, str(value)) is not None
     return env
 
 
@@ -763,10 +765,12 @@ class Renderer:
                 continue
             ctx = self.module_context(spec, ordered, base, name)
             for r in mod.firewall_rules:
-                # a rule may come out empty: the port it is for is switched off
-                rule = self.expand(r.strip(), ctx, "modules/%s firewall" % name).strip()
-                if rule.startswith("-") and rule not in rules:
-                    rules.append(rule)
+                # a rule may come out empty (the port it is for is switched off), or as several lines
+                # (one per server of a list)
+                for rule in self.expand(r.strip(), ctx, "modules/%s firewall" % name).splitlines():
+                    rule = rule.strip()
+                    if rule.startswith("-") and rule not in rules:
+                        rules.append(rule)
         return rules
 
     # ---- the bundle --------------------------------------------------------------------
@@ -861,8 +865,10 @@ class Renderer:
                 if bm.get("each"):      # one directory per value of a list or map setting
                     values = ctx.get(str(bm["each"])) or []
                     if bm.get("host"):  # or per key of a map, as {{ item }} in a path around it
-                        for k in values:
-                            bundle.add_dir(self.expand(str(bm["host"]), dict(ctx, item=k), "modules/%s/module.yaml storage.bind_mounts" % name))
+                        for k in values:      # the path may come out as several (with spaces between), or none
+                            for path in self.expand(str(bm["host"]), dict(ctx, item=k),
+                                                    "modules/%s/module.yaml storage.bind_mounts" % name).split():
+                                bundle.add_dir(path)
                         continue
                     for v in values.values() if isinstance(values, dict) else values:
                         bundle.add_dir(str(v))

@@ -48,13 +48,19 @@ def probe_one(site, timeout=6):
         return False, str(getattr(e, "reason", e))[:80]
 
 
-def probe(sites, timeout=6, workers=8, one=probe_one):
-    """{site: (answers, what it said)} for every site, asked side by side."""
+def probe(sites, timeout=6, workers=8, one=probe_one, again=2, sleep=time.sleep):
+    """{site: (answers, what it said)} for every site, asked side by side. One that does not
+    answer is asked once more a moment later: a single lost question is not a service that is down."""
     sites = list(sites)
     if not sites:
         return {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        return dict(zip(sites, pool.map(lambda s: one(s, timeout), sites)))
+        out = dict(zip(sites, pool.map(lambda s: one(s, timeout), sites)))
+        silent = [s for s in sites if not out[s][0]]
+        if silent and again:
+            sleep(again)
+            out.update(zip(silent, pool.map(lambda s: one(s, timeout), silent)))
+    return out
 
 
 def _key(text):

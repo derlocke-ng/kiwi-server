@@ -1,0 +1,44 @@
+# games — one container per server of the settings; its worlds under {{ container_prefix }}-games/<server>
+services:
+{% for sname, s in servers.items() if s.game in catalog %}
+{% set g = catalog[s.game] %}
+{% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}
+{% macro fill(v) %}{{ v | string | replace('{name}', s.name or sname) | replace('{server}', sname) | replace('{password}', s.password or '') | replace('{memory}', s.memory or '2G') }}{% endmacro %}
+  {{ container_prefix }}-game-{{ sname }}:
+    image: {{ s.image or g.image }}
+    container_name: {{ container_prefix }}-game-{{ sname }}
+{% if s.args or g.command %}
+    command: {{ fill(s.args or g.command) | tojson }}
+{% endif %}
+    environment:
+      - TZ={{ timezone }}
+{% for k, v in (g.env or {}).items() if k not in (s.env or {}) %}
+      - {{ (k ~ '=' ~ fill(v)) | tojson }}
+{% endfor %}
+{% for k, v in (s.env or {}).items() %}
+      - {{ (k ~ '=' ~ v) | tojson }}
+{% endfor %}
+    networks:
+      {{ network_name }}: {}
+    ports:
+{% for p in g.ports %}
+      - "{{ (p.split('/')[0] | int) + shift }}:{{ p.split('/')[0] }}/{{ p.split('/')[1] }}"
+{% endfor %}
+    restart: unless-stopped
+    # a world is written when the server stops: it gets the time
+    stop_grace_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+{% for k, path in (g.files or {}).items() %}
+      - {{ docker_dir }}/{{ container_prefix }}-games-files/{{ sname }}/{{ k }}:{{ path }}:z
+{% endfor %}
+{% for k, path in (g.data or {}).items() %}
+      - {{ docker_dir }}/{{ container_prefix }}-games/{{ sname }}/{{ k }}:{{ path }}:z
+{% endfor %}
+{% endfor %}
+{% if not servers %}
+  {}
+{% endif %}

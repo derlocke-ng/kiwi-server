@@ -26,7 +26,7 @@ firewall:
   scope: vpn-client
   rules:
     # a node's public sites: what the master hands on arrives at the mesh address on 8443, from the master only
-    - "{% if via and public_names %}-t nat -A PREROUTING -s {{ via }} -d ${VPN_IP} -p tcp --dport 8443 -j DNAT --to-destination {{ proxy_ip }}:8443{% endif %}"
+    - "{% if via and public_names %}-t nat -A PREROUTING -s {{ via }} -d {{ vpn_ip }} -p tcp --dport 8443 -j DNAT --to-destination {{ proxy_ip }}:8443{% endif %}"
 
 validate:
   - { when: "public and not network_mode and not via", error: "reverse-proxy.public on a node needs a master that hands its public names on: kiwi-server sets that up in a fleet with a master (via)" }

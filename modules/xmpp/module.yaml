@@ -35,7 +35,7 @@ firewall:
     # two instances: the public one has an address of its own
     - |
       {% if forwarded and two %}{% for port in (15222, 15223, 15269) %}
-      -t nat -A PREROUTING -s {{ via }} -d ${VPN_IP} -p tcp --dport {{ port }} -j DNAT --to-destination {{ container_ip }}:{{ port }}
+      -t nat -A PREROUTING -s {{ via }} -d {{ vpn_ip }} -p tcp --dport {{ port }} -j DNAT --to-destination {{ container_ip }}:{{ port }}
       {% endfor %}{% endif %}
 
 templates:

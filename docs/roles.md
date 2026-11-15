@@ -69,6 +69,32 @@ first. Every other site on the master, the admin pages among them, keeps
 answering the mesh only. Anyone may read the relay; the mesh may post, and
 from the internet only the keys in `write_pubkeys`.
 
+## A node's service, open to the Internet
+
+A service need not live on the master to be reached from outside. Give it a
+public name on a node, point the name's DNS record at the master, and open the
+node's proxy:
+
+```yaml
+hosts:
+  medlar:
+    node:
+      modules: [vpn-client, reverse-proxy, xmpp]
+      reverse-proxy: { public: true }
+      xmpp: { xmpp_domain: chat.example.org }
+```
+
+Nothing is opened at home. The master hands the name on to the node through the
+VPN, still encrypted: the node fetches and holds the Let's Encrypt certificate,
+and the master cannot read what passes. The node learns each visitor's address
+from the master, so its limits count the visitor, not the master. Apply the
+node and the master. On the VPN the name leads straight to the node, for the
+devices that may reach that machine ([who may reach what](network.md#who-may-reach-what)).
+
+A site is public when its name is outside the fleet's domain; every other site
+of the node stays on the VPN. Ports that are not web traffic are handed on when
+the module says so (Jabber's 5222, 5223 and 5269).
+
 ## A cache for the LAN
 
 Add `cache` to one node's modules and the machines on its LAN fetch container
@@ -122,22 +148,27 @@ document it and are not tried.
 
 ## Jabber
 
-Add `xmpp` to a master's modules and your people have a Jabber (XMPP) server:
+Add `xmpp` to a machine's modules and your people have a Jabber (XMPP) server:
 chats, group rooms, files, and message history that a new device shows. Any
 XMPP app works: Conversations (Android), Monal (iPhone, Mac), Dino, Gajim.
 
 ```yaml
 hosts:
-  sorbet:
-    master:
-      modules: [vpn-client, vpn-server, dns, reverse-proxy, xmpp, onion]
+  medlar:
+    node:
+      modules: [vpn-client, reverse-proxy, xmpp, onion]
+      reverse-proxy: { public: true }              # for the Internet's door
       xmpp: { xmpp_domain: chat.example.org }      # the Internet's door
       onion: { services: { jabber: {} } }          # Tor's door
 ```
 
+It runs on a node or on the master. On a node the public name comes in through
+the master ([above](#a-nodes-service-open-to-the-internet)); the service, its
+accounts and its certificate stay on the node.
+
 It is one service with up to three doors:
 
-- **The VPN** (always): `jabber.<master>`, like `jabber.sorbet.home`. Without a
+- **The VPN** (always): `jabber.<machine>`, like `jabber.medlar.home`. Without a
   public name that is also what comes after the @ (`anna@jabber.sorbet.home`),
   and the certificate is the fleet's.
 - **The Internet**: `xmpp_domain`, a name that points at the master in DNS as a
@@ -145,14 +176,14 @@ It is one service with up to three doors:
   `reverse-proxy: { public: true }`. That name then comes after the @
   (`anna@chat.example.org`), the certificate is Let's Encrypt's, people log in
   from anywhere on 5222 and write with people on other servers. An app on the
-  VPN can keep `jabber.<master>` as the server it connects to.
+  VPN can keep `jabber.<machine>` as the server it connects to.
 - **Tor**: `onion: { services: { jabber: {} } }`; `kiwi-server onion` shows the
   address. An app connects to `<address>.onion`, port 5222, and the page is
   there too. Someone who cannot check a certificate can have an account
   `@<address>.onion`.
 
 **Two apart.** `xmpp: { xmpp_domain: …, separate: true }` keeps the VPN's
-service to itself (accounts `@jabber.<master>`, nobody outside reaches it) and
+service to itself (accounts `@jabber.<machine>`, nobody outside reaches it) and
 runs a second one for the public name. Their accounts are apart and the two
 exchange no messages. The public one's hidden service is `xmpp`, not `jabber`.
 
@@ -165,10 +196,11 @@ commands, or `/admin` on the page).
 
 Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB.
 
-Tried on the test master (15 November 2026): the admin logs in over the VPN,
-the page shows a captcha and refuses a wrong answer, the app's registration
-form carries one, and through Tor the page opens and a Jabber server answers
-on 5222. Not tried: a public name, two apart, an app.
+Tried on a test node behind the master (15 November 2026, `tests/drills/jabber-doors.py`):
+with one service, logins from the Internet (5222 and 5223), from the VPN and
+through Tor; the page for new accounts with its captcha through all three; a
+wrong password refused; the service sees the visitor's own address. Not tried:
+two apart, an app, rooms, files, another server writing in.
 
 ## Pastebin
 

@@ -2352,6 +2352,20 @@ def cmd_qr(args):
         print(qrmod.text_blocks(data))
 
 
+def connect_name(machines, wanted, hostname):
+    """What this computer is called on the VPN: the name given, else its own. A computer that
+    happens to be called like one of the machines gets a name of its own, the same one each
+    time, so that the app needs no question for it."""
+    if wanted:
+        if wanted in machines:
+            raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % wanted)
+        return wanted
+    name = re.sub(r"[^a-z0-9-]+", "-", hostname.split(".")[0].lower()).strip("-") or "computer"
+    if name not in machines:
+        return name
+    return next(n for n in ["%s-pc" % name] + ["%s-pc-%d" % (name, i) for i in range(2, 50)] if n not in machines)
+
+
 def cmd_connect(args):
     """This computer becomes a device of the network: its own place on the VPN, a connection
     that carries only the network, and the network's certificates trusted in its browsers."""
@@ -2359,15 +2373,9 @@ def cmd_connect(args):
     fleet, roles, ms = load(args)
     path = args.fleet
     domain = fleet.defaults.get("domain") or "home"
-    name = args.name or re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-") or "computer"
-    if name in fleet.hosts:
-        if args.name:
-            raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % name)
-        # a computer that happens to be called like one of the machines: it gets a name of its own
-        # here, the same one each time, so that the app needs no question for it
-        machine = name
-        name = next(n for n in ["%s-pc" % machine] + ["%s-pc-%d" % (machine, i) for i in range(2, 50)] if n not in fleet.hosts)
-        util.say("%s is a machine of this network already: this computer is called %s on the VPN" % (machine, name))
+    name = connect_name(fleet.hosts, args.name, socket.gethostname())
+    if not args.name and name != connect_name({}, None, socket.gethostname()):
+        util.say("a machine of this network has this computer's name: on the VPN this computer is called %s" % name)
     if args.remove:
         if connectmod.have_networkmanager() and connectmod.down(domain):
             util.say("the connection %s is gone from this computer" % connectmod.connection_name(domain))

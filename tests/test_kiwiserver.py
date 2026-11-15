@@ -3093,6 +3093,15 @@ class TestOnion(Base):
         write(os.path.join(self.tmp, "secrets", "seed"), "T" * 32)
         return f
 
+    def test_a_computer_called_like_a_machine_gets_its_own_name_on_the_vpn(self):
+        machines = {"lime": None, "papaya": None}
+        self.assertEqual(cli.connect_name(machines, None, "Desk.fritz.box"), "desk")
+        self.assertEqual(cli.connect_name(machines, None, "lime"), "lime-pc")          # no question, no dead end
+        self.assertEqual(cli.connect_name(dict(machines, **{"lime-pc": None}), None, "lime"), "lime-pc-2")
+        self.assertEqual(cli.connect_name(machines, "laptop", "lime"), "laptop")
+        with self.assertRaises(KiwiError):
+            cli.connect_name(machines, "papaya", "lime")                               # a name asked for is not bent
+
     def test_a_nodes_public_name_comes_in_through_the_master(self):
         """Jabber on a node with a public name: the node's proxy is open to the internet, the
         master hands the name and Jabber's ports on, and on the VPN the name leads to the master."""

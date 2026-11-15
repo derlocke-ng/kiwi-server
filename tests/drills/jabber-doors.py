@@ -125,6 +125,8 @@ if q.get("page"):
             return self.do_open(C, req)
     op = urllib.request.build_opener(At(context=c))
     try:
+        with op.open(q["page"] + "/", timeout=30) as r:        # the front door leads to the page for new accounts
+            out["front"] = r.geturl()
         with op.open(q["page"] + "/register/new", timeout=30) as r:
             body = r.read(300000).decode("utf-8", "replace")
         out["page"] = 200
@@ -177,6 +179,9 @@ try:
         say(a["login"], "internet", "5222 at %s: %s" % (args.public, a["why"]))
         say("PASS" if a.get("page") == 200 and a.get("captcha") else "FAIL", "internet",
             "the page for new accounts: %s, captcha picture: %s" % (a.get("page"), a.get("captcha")))
+        front = a.get("front") or ""
+        say("PASS" if front == "https://%s/register/" % args.domain else "FAIL", "internet",
+            "the front door leads to %s" % (front or "nowhere"))
         a = check(dict(me, connect=[args.public, 5223], direct_tls=True))
         say(a["login"], "internet", "5223 (TLS at once): %s" % a["why"])
         # who does the service see? held open while it is asked

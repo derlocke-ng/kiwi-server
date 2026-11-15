@@ -623,6 +623,9 @@ ks_stack_unpack() {
             ks_say "stopping $svc — no module runs it any more"
             systemctl stop "$svc.service" 2>/dev/null || true
             podman rm -f "$svc" >/dev/null 2>&1 || true
+            # a service that ended with an error on its way out would stay listed as failed,
+            # though its unit is gone: nothing is wrong with the machine
+            systemctl reset-failed "$svc.service" 2>/dev/null || true
         done
     fi
     u=$KS_STACK_USER

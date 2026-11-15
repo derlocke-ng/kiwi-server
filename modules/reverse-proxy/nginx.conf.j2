@@ -20,6 +20,10 @@
             proxy_set_header X-Forwarded-Proto https;
             proxy_set_header X-Forwarded-Host {{ s.server_name }};
             proxy_redirect https://{{ s.server_name }}/ /;
+            # and what a page links to under that name leads back here: asked for unpacked, so that it can be read
+            proxy_set_header Accept-Encoding "";
+            sub_filter 'https://{{ s.server_name }}/' '/';
+            sub_filter_once off;
 {% else %}
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

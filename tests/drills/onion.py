@@ -56,9 +56,14 @@ check(bool(tor_exit) and tor_exit != own, "what Tor sends leaves somewhere else 
 url = "http://%s/" % svc["address"]
 
 
-def through_tor(key_line="", header=""):
+def through_tor(key_line="", header="", jabber=False):
     """The HTTP status the address gives through a Tor client started on the master for the
-    moment, with a person's key or with none. 000: not found, or nothing answered."""
+    moment, with a person's key or with none. 000: not found, or nothing answered. With
+    `jabber`: (status, whether a Jabber server answers at the address's port 5222 as well)."""
+    hello = ("<?xml version=\"1.0\"?><stream:stream to=\"%s\" xmlns=\"jabber:client\" "
+             "xmlns:stream=\"http://etherx.jabber.org/streams\" version=\"1.0\">" % svc["address"])
+    also = ("j=no; (printf '%%s' '%s'; sleep 20) | curl -s --max-time 60 --socks5-hostname 127.0.0.1:9150 telnet://%s:5222 2>/dev/null "
+            "| grep -q 'stream:features' && j=yes; echo jabber=$j; " % (hello, svc["address"])) if jabber else ""
     script = ("set -e; D=$(mktemp -d); mkdir -p $D/auth $D/data; cat > $D/in; [ -s $D/in ] && mv $D/in $D/auth/p.auth_private; "
               "printf 'SocksPort 127.0.0.1:9150\\nClientOnionAuthDir /auth\\nDataDirectory /data\\n' > $D/torrc; chown -R 101:102 $D/auth $D/data; "
               "podman rm -f kiwi-drill-tor >/dev/null 2>&1 || true; "
@@ -66,15 +71,21 @@ def through_tor(key_line="", header=""):
               "-v $D/data:/data:z docker.io/dockurr/tor tor tor -f /torrc >/dev/null; "
               "for i in $(seq 24); do podman logs kiwi-drill-tor 2>&1 | grep -q 'Bootstrapped 100' && break; sleep 5; done; c=000; "
               "for i in 1 2 3 4; do c=$(curl -s --max-time 90 --socks5-hostname 127.0.0.1:9150 -o /dev/null -w '%{http_code}' "
-              + header + " " + url + ") || true; [ \"$c\" != 000 ] && break; " + ("sleep 20; " if not key_line and not header else "break; ") + "done; echo $c; "
+              + header + " " + url + ") || true; [ \"$c\" != 000 ] && break; " + ("sleep 20; " if not key_line and not header else "break; ") + "done; "
+              + also + "echo $c; "
               "podman rm -f kiwi-drill-tor >/dev/null 2>&1; rm -rf $D")
     r = subprocess.run(["ssh"] + cli.remote.ssh_opts() + ["-o", "ConnectTimeout=10", master.target, "sudo sh -c " + cli.shlex.quote(script)],
                        input=key_line, capture_output=True, text=True, timeout=900)
-    return r.stdout.strip()[-3:]
+    code = r.stdout.strip()[-3:]
+    return (code, "jabber=yes" in r.stdout) if jabber else code
 
 
 if not svc["clients"]:
-    code = through_tor()
+    speaks = what.split(".", 1)[0] in ("jabber", "xmpp")              # Jabber's own port beside its page
+    code = through_tor(jabber=speaks)
+    if speaks:
+        code, answers = code
+        check(answers, "a Jabber server answers at the address's port 5222 through Tor")
     check(code[:1] in "23", "it opens through Tor (HTTP %s)" % code)
     other = through_tor(header="-H 'Host: nothing.%s'" % host.hostname)
     check(other == "000", "another site's name on that address gets nothing (HTTP %s)" % other)

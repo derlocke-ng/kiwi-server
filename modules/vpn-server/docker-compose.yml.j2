@@ -33,9 +33,11 @@ services:
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ port }}:{{ port }}/tcp"
 {% endfor %}
 {# Jabber lives in this namespace too: a public name's clients (5222) and other servers (5269) #}
+{# (a separate public instance has a container of its own and publishes them itself) #}
 {% set xmpp_name = module_config.get('xmpp', {}).get('xmpp_domain') %}
-{% if xmpp_name and not (xmpp_name ~ '.').endswith('.' ~ domain ~ '.') %}
+{% if xmpp_name and not module_config.get('xmpp', {}).get('separate') %}
       - "{{ public_ip ~ ':' if public_ip else '' }}5222:5222/tcp"
+      - "{{ public_ip ~ ':' if public_ip else '' }}5223:5223/tcp"
       - "{{ public_ip ~ ':' if public_ip else '' }}5269:5269/tcp"
 {% endif %}
 {# nginx lives in this namespace, so a public reverse proxy's ports are published here #}

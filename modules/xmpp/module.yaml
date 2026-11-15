@@ -2,9 +2,9 @@ schema_version: "1.0"
 
 module:
   name: xmpp
-  title: Jabber (Prosody)
-  version: 1.0.0
-  description: "A Jabber (XMPP) server for your people: chats, group rooms, files, message history across devices. At chat.<hostname> for the mesh; public, with other servers reachable, when its name is a public one"
+  title: Jabber (ejabberd)
+  version: 2.0.0
+  description: "A Jabber (XMPP) server for your people: chats, group rooms, files, message history across devices. One service with up to three doors: the VPN (jabber.<hostname>), the Internet (a public name) and Tor (a hidden service). Or two separate ones, an internal and a public, that do not talk to each other. People make their own account in the app or on a page, after a captcha"
   category: productivity
   node_types: [master]
 
@@ -12,12 +12,12 @@ dependencies:
   # it shares the WireGuard server's network, as the master's proxy does: clients on the VPN
   # reach it at the master's mesh address
   required: [vpn-server, reverse-proxy]
-  optional: [vpn-client]
+  optional: [vpn-client, onion]
 
 network:
   needs_vpn_dnat: true
-  # clients (5222) and other servers (5269) from the Internet: only for a public name
-  open_ports: ["{% if xmpp_public %}5222/tcp{% endif %}", "{% if xmpp_public %}5269/tcp{% endif %}"]
+  # clients (5222, 5223) and other servers (5269) from the Internet: only with a public name
+  open_ports: ["{% if xmpp_domain %}5222/tcp 5223/tcp 5269/tcp{% endif %}"]
 
 firewall:
   scope: vpn-client
@@ -25,64 +25,124 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
-  config: prosody.cfg.lua.j2
+  config: ejabberd.yml.j2
+  config_public: ejabberd.yml.j2
   start: start.sh.j2
 
 outputs:
-  config: { path: "{{ container_prefix }}-xmpp/prosody.cfg.lua", mode: 0644 }
+  config: { path: "{{ container_prefix }}-xmpp/ejabberd.yml", mode: 0644 }
+  config_public: { path: "{{ container_prefix }}-xmpp/ejabberd-public.yml", mode: 0644, when: two }
   start: { path: "{{ container_prefix }}-xmpp/start.sh", mode: 0755 }
 
 derived:
-  xmpp_host: "{{ xmpp_domain or 'chat.' ~ hostname }}"
-  # a name outside the fleet's own domain is a public one: the proxy fetches its certificate (Let's Encrypt)
-  xmpp_public: "{{ 'yes' if xmpp_domain and not (xmpp_domain ~ '.').endswith('.' ~ domain ~ '.') else '' }}"
+  internal_host: "{{ xmpp_hostname or 'jabber.' ~ hostname }}"
+  # two instances: an internal one at the mesh name, a public one at the public name
+  two: "{{ 'yes' if xmpp_domain and separate else '' }}"
+  one_public: "{{ 'yes' if xmpp_domain and not separate else '' }}"
+  # what comes after the @ at the service in the WireGuard server's network
+  main_host: "{{ xmpp_domain if xmpp_domain and not separate else xmpp_hostname or 'jabber.' ~ hostname }}"
+  # the proxy reaches that service at 127.0.0.1 when it shares the network too (a master's does)
+  local_http: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ '-vpn-server' }}:5280"
 
 validate:
-  - when: "admin_user | lower != admin_user or not admin_user is match('^[a-z0-9][a-z0-9._-]{0,30}$')"
+  - when: "not admin_user is match('^[a-z0-9][a-z0-9._-]{0,30}$')"
     error: "xmpp.admin_user: lowercase letters, digits, dots and dashes"
+  - when: "xmpp_domain and (xmpp_domain ~ '.').endswith('.' ~ domain ~ '.')"
+    error: "xmpp.xmpp_domain is for a public name (chat.example.org). Inside the fleet's own domain the name is xmpp_hostname"
+  - when: "separate and not xmpp_domain"
+    error: "xmpp.separate: two instances need a public name for the second one (xmpp_domain)"
 
 storage:
   bind_mounts:
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data/database", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data/upload", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data/certs", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/public/database", type: dir, required: true, when: two }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/public/upload", type: dir, required: true, when: two }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/public/certs", type: dir, required: true, when: two }
 
 urls:
-  - "Jabber: {{ admin_user }}@{{ xmpp_host }} in any XMPP app (Conversations, Monal, Dino, Gajim); rooms at rooms.{{ xmpp_host }}{% if xmpp_public %}; open to the Internet on 5222 and 5269{% else %}; from the VPN only{% endif %}"
+  - "Jabber: {{ admin_user }}@{{ main_host }} in any XMPP app (Conversations, Monal, Dino, Gajim); from the VPN the server is {{ internal_host }}{% if xmpp_domain and not separate %}, from the Internet {{ xmpp_domain }}{% endif %}{% if registration %}; new accounts: https://{{ internal_host }}/register{% endif %}"
+  - "{% if two %}Jabber, the public one: {{ admin_user }}@{{ xmpp_domain }}{% if registration %}; new accounts: https://{{ xmpp_domain }}/register{% endif %}{% endif %}"
 
 logins:
   - label: Jabber
-    user: "{{ admin_user }}@{{ xmpp_host }}"
+    site: jabber
+    user: "{{ admin_user }}@{{ main_host }}"
     password: admin_password
-    note: "The admin's account, typed into a Jabber app (not a web page). Every start sets this password again. More people: the admin invites them from the app (Conversations: Invite to server; Gajim: the server's commands), and each makes an account with a password of their own."
+    note: "The admin's account, typed into a Jabber app (not a web page). Every start sets this password again. Other people make their own account: in the app, or at /register on the server's page, each after a captcha."
 
 nginx:
-  upstream:
-    name: prosody
-    server: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ '-vpn-server' }}:5280"
-  server_name: "{{ xmpp_host }}"
-  proxy_pass: "http://prosody"
-  websocket: true
-  client_max_body_size: "{{ upload_mb }}m"
-  proxy_read_timeout: 3600s
-  comment: Jabber (files, and chat for web apps)
+  servers:
+    # the page of the service on the VPN: new accounts (/register), files, chat for web apps
+    - server_name: "{{ internal_host }}"
+      site: jabber
+      proxy_pass: "http://{{ local_http }}"
+      websocket: true
+      client_max_body_size: "{{ upload_mb }}m"
+      proxy_read_timeout: 3600s
+      extra_locations:
+        # the page's front door: where a new account is made, a password changed
+        - { path: "= /", config: "return 302 /register/;" }
+      comment: Jabber (new accounts, files, chat for web apps)
+    # the same service under its public name
+    - server_name: "{{ xmpp_domain }}"
+      site: xmpp
+      proxy_pass: "http://{{ local_http }}"
+      websocket: true
+      client_max_body_size: "{{ upload_mb }}m"
+      proxy_read_timeout: 3600s
+      extra_locations:
+        # the page's front door: where a new account is made, a password changed
+        - { path: "= /", config: "return 302 /register/;" }
+      when: one_public
+      comment: Jabber under its public name
+    # two instances: the public one has a container of its own
+    - server_name: "{{ xmpp_domain }}"
+      site: xmpp
+      proxy_pass: "http://{{ container_prefix }}-xmpp-public:5280"
+      websocket: true
+      client_max_body_size: "{{ upload_mb }}m"
+      proxy_read_timeout: 3600s
+      extra_locations:
+        # the page's front door: where a new account is made, a password changed
+        - { path: "= /", config: "return 302 /register/;" }
+      when: two
+      comment: Jabber, the public instance
 
 backup:
   frozen:
     containers: ["{{ container_prefix }}-xmpp"]
-    paths: ["${DOCKERDIR}/{{ container_prefix }}-xmpp/data"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-xmpp/data", "{% if two %}${DOCKERDIR}/{{ container_prefix }}-xmpp/public{% endif %}"]
 
 settings:
   - key: image
     label: Image
-    help: "Prosody's own image, pinned to its 13.0 line."
-    default: docker.io/prosodyim/prosody:13.0
-  - key: xmpp_domain
-    label: Name
-    help: "What comes after the @ in an address. Empty: chat.<hostname>, a mesh name, for people on the VPN. A public name (chat.example.org, pointing at this master in DNS) opens it to the Internet: people log in from anywhere, and write with people on other servers."
+    help: "ejabberd with what its captcha needs (ImageMagick, fonts), built by this project from ejabberd's own image."
+    default: ghcr.io/derlocke-ng/ejabberd:26.09-kiwi1
+  - key: xmpp_hostname
+    label: Name on the VPN
+    help: "Empty: jabber.<hostname>. What apps on the VPN connect to, and, without a public name, what comes after the @."
     default: ""
     pattern: '[a-z0-9.-]*'
+  - key: xmpp_domain
+    label: Public name
+    help: "A name that points at this master in DNS, like chat.example.org (a plain record: no proxy in front, Jabber is not web traffic). It opens the service to the Internet: this name comes after the @, people log in from anywhere and write with people on other servers. Apps on the VPN can still use the name above as the server to connect to."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: separate
+    type: bool
+    label: Two separate services
+    help: "With a public name: keep the service on the VPN as it is (accounts @jabber.<hostname>, nobody outside reaches it) and run a second one for the public name. Their accounts are apart, and the two do not exchange messages."
+    default: false
+  - key: registration
+    type: bool
+    label: People make their own account
+    help: "In a Jabber app, or on the page https://<name>/register, each after a captcha; one new account per address in ten minutes. Off: only the admin makes accounts (the app's server commands)."
+    default: true
   - key: admin_user
     label: Admin
-    help: "The first account, and the server's admin: <name>@<the name above>."
+    help: "The first account, and the server's admin: <name>@<the server's name>."
     default: admin
   - key: admin_password
     type: secret
@@ -99,3 +159,9 @@ settings:
     label: History (days)
     help: "How long messages are kept on the server, so that a new device shows them."
     default: 365
+  - key: onion
+    type: object
+    advanced: true
+    label: Hidden-service addresses
+    help: "Filled in by kiwi-server when the onion module publishes this service (onion.services: jabber, or xmpp for the separate public one): site -> its .onion address. Apps then reach it at that address, and people without a way to check a certificate can have accounts @<address>.onion."
+    default: {}

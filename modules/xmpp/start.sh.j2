@@ -1,49 +1,63 @@
 #!/bin/sh
-# Before Prosody starts: the certificate of its name, copied from the reverse proxy's so that
-# Prosody's own user may read the key, and the admin's account with the password of the
-# settings. The password comes in KIWI_ADMIN_PASSWORD; Prosody does not get it, nothing here
-# prints it, and it is on no command line: prosodyctl reads it from its input.
+# Before ejabberd starts (as root, for the copying only): the certificate of its name, from
+# the reverse proxy's, in a file ejabberd's own user may read; a certificate of its own for a
+# hidden service's name; then ejabberd, as its user. Once it runs: the admin's account with
+# the password of the settings. The password comes in KIWI_ADMIN_PASSWORD; ejabberd does not
+# get it in its environment, and nothing here prints it.
+host=$KIWI_HOST
+onion=$KIWI_ONION
 admin=$KIWI_ADMIN
 pw=$KIWI_ADMIN_PASSWORD
 unset KIWI_ADMIN_PASSWORD
+C=/opt/ejabberd/conf/certs
 say() { echo "kiwi: $*"; }
+as_ejabberd() { su ejabberd -s /bin/sh -c "$1"; }
 
 n=0
 until [ -s /kiwi-certs/fullchain.pem ] && [ -s /kiwi-certs/privkey.pem ]; do
     # a public name: the proxy fetches its certificate at its first start
-    [ "$n" = 0 ] && say "waiting for the certificate of {{ xmpp_host }} from the reverse proxy"
+    [ "$n" = 0 ] && say "waiting for the certificate of $host from the reverse proxy"
     n=$((n + 1)); sleep 10
 done
 certs() {
-    install -d -o prosody -g prosody -m 0750 /etc/prosody/certs
-    install -o prosody -g prosody -m 0640 /kiwi-certs/fullchain.pem /etc/prosody/certs/fullchain.pem
-    install -o prosody -g prosody -m 0640 /kiwi-certs/privkey.pem /etc/prosody/certs/privkey.pem
+    cat /kiwi-certs/fullchain.pem /kiwi-certs/privkey.pem > "$C/.new" && chmod 0600 "$C/.new" \
+        && chown ejabberd:ejabberd "$C/.new" && mv "$C/.new" "$C/$host.pem"
 }
 certs
-chown -R prosody:prosody /var/lib/prosody
+if [ -n "$onion" ] && [ ! -s "$C/$onion.pem" ]; then
+    # nobody signs a .onion name: its certificate is this server's own, made once
+    if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$onion" \
+            -addext "subjectAltName=DNS:$onion,DNS:rooms.$onion" -keyout "$C/.k" -out "$C/.c" 2>/dev/null; then
+        cat "$C/.c" "$C/.k" > "$C/$onion.pem"
+        say "made a certificate for $onion"
+    fi
+    rm -f "$C/.k" "$C/.c"
+fi
+chown -R ejabberd:ejabberd "$C" /opt/ejabberd/database /opt/ejabberd/upload
+chmod 0600 "$C"/*.pem 2>/dev/null
 
 account() {
-    # Prosody makes accounts through its own socket: it must run first
     tries=0
-    until [ -S /var/lib/prosody/prosody.sock ] && prosodyctl shell "server:version()" >/dev/null 2>&1; do
+    until as_ejabberd "ejabberdctl status" >/dev/null 2>&1; do
         tries=$((tries + 1))
-        if [ "$tries" -ge 120 ]; then
-            say "Prosody did not answer in two minutes; the account $admin was not checked"
+        if [ "$tries" -ge 180 ]; then
+            say "ejabberd did not answer in three minutes; the account $admin@$host was not checked"
             return 0
         fi
         sleep 1
     done
     if [ -z "$pw" ]; then
-        say "no admin password in the settings; the account $admin was not checked"
+        say "no admin password in the settings; the account $admin@$host was not checked"
         return 0
     fi
-    # made when it is not there; its password is the settings' at every start
-    if printf '%s\n%s\n' "$pw" "$pw" | prosodyctl adduser "$admin" >/dev/null 2>&1; then
-        say "made the account $admin"
-    elif printf '%s\n%s\n' "$pw" "$pw" | prosodyctl passwd "$admin" >/dev/null 2>&1; then
+    # made when it is not there; its password is the settings' at every start. The words go to
+    # ejabberdctl as arguments of a shell that gets them by position, not pasted into a command
+    if su ejabberd -s /bin/sh -c 'ejabberdctl register "$0" "$1" "$2"' "$admin" "$host" "$pw" >/dev/null 2>&1; then
+        say "made the account $admin@$host"
+    elif su ejabberd -s /bin/sh -c 'ejabberdctl change_password "$0" "$1" "$2"' "$admin" "$host" "$pw" >/dev/null 2>&1; then
         :
     else
-        say "could not make or set the account $admin"
+        say "could not make or set the account $admin@$host"
     fi
 }
 account &
@@ -54,9 +68,9 @@ account &
     while sleep 3600; do
         now=$(cat /kiwi-certs/fullchain.pem 2>/dev/null | sha256sum)
         if [ -s /kiwi-certs/fullchain.pem ] && [ "$now" != "$was" ]; then
-            certs && prosodyctl reload >/dev/null 2>&1 && say "the renewed certificate is in use"
+            certs && as_ejabberd "ejabberdctl reload_config" >/dev/null 2>&1 && say "the renewed certificate is in use"
             was=$now
         fi
     done
 ) &
-exec /entrypoint.sh prosody -F
+exec su ejabberd -s /bin/sh -c "exec ejabberdctl foreground"

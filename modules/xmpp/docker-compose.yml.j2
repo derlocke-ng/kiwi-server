@@ -1,25 +1,55 @@
-# xmpp (Prosody): start.sh brings the certificate and the admin's account, then runs the image's own start
-services:
-  {{ container_prefix }}-xmpp:
+# xmpp (ejabberd): start.sh brings the certificates and the admin's account, then runs ejabberd as its own user
+{% macro service(name, config, data, host, onion_host, certs) %}
+  {{ name }}:
     image: {{ image }}
-    container_name: {{ container_prefix }}-xmpp
+    container_name: {{ name }}
+    init: true
+    # root only for start.sh, which copies the certificate's key for ejabberd's user and then becomes that user
+    user: "0:0"
     entrypoint: ["/bin/sh"]
     command: ["/kiwi-start.sh"]
     environment:
       - TZ={{ timezone }}
-      - KIWI_ADMIN={{ admin_user }}@{{ xmpp_host }}
+      # the database belongs to this name: it must not change with the container
+      - ERLANG_NODE_ARG=ejabberd@localhost
+      - ERL_EPMD_ADDRESS=127.0.0.1
+      - KIWI_HOST={{ host }}
+      - KIWI_ONION={{ onion_host }}
+      - KIWI_ADMIN={{ admin_user }}
       - KIWI_ADMIN_PASSWORD={{ admin_password }}
-    # in the WireGuard server's network: 5222 answers at the master's mesh address, and the
-    # WireGuard server publishes 5222 and 5269 for a public name
-    network_mode: "service:{{ container_prefix }}-vpn-server"
+{{ caller() }}
     restart: unless-stopped
+    stop_grace_period: 60s
     logging:
       driver: json-file
       options:
         max-size: 10m
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-xmpp/start.sh:/kiwi-start.sh:ro,z
-      - {{ docker_dir }}/{{ container_prefix }}-xmpp/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro,z
-      - {{ docker_dir }}/{{ container_prefix }}-xmpp/data:/var/lib/prosody:z
+      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ config }}:/opt/ejabberd/conf/ejabberd.yml:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ data }}/database:/opt/ejabberd/database:z
+      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ data }}/upload:/opt/ejabberd/upload:z
+      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ data }}/certs:/opt/ejabberd/conf/certs:z
       # the proxy's certificate for the name: the fleet CA's, or Let's Encrypt's for a public name
-      - {{ docker_dir }}/{{ container_prefix }}-nginx{{ '/acme/' ~ xmpp_host if xmpp_public else '' }}:/kiwi-certs:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx{{ certs }}:/kiwi-certs:ro,z
+{% endmacro %}
+services:
+{# the service in the WireGuard server's network: 5222 answers at the master's mesh address, and
+   with a public name (and no second instance) the WireGuard server publishes its ports #}
+{% call service(container_prefix ~ '-xmpp', 'ejabberd.yml', 'data', main_host, (onion or {}).get('jabber', ''),
+                '/acme/' ~ xmpp_domain if one_public else '') %}
+    network_mode: "service:{{ container_prefix }}-vpn-server"
+{% endcall %}
+{% if two %}
+{# the public instance: a container of its own, its ports on the machine's own address #}
+{% call service(container_prefix ~ '-xmpp-public', 'ejabberd-public.yml', 'public', xmpp_domain, (onion or {}).get('xmpp', ''),
+                '/acme/' ~ xmpp_domain) %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    ports:
+      - "5222:5222"
+      - "5223:5223"
+      - "5269:5269"
+{% endcall %}
+{% endif %}

@@ -429,6 +429,23 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other):
     return theirs
 
 
+def _numbers(version):
+    return tuple(int(x) for x in re.findall(r"\d+", str(version))[:3])
+
+
+def older_node(fleet_dir, version, key=None, api=None):
+    """The control node's version when it is older than `version`, else None. An older one
+    does not know a part or a setting that came since: its page then calls the fleet file
+    wrong ("unknown module"), though nothing is wrong with it."""
+    try:
+        api = api or api_for(fleet_dir, key)[0]
+        status, out = api.call("GET", "/healthz")
+    except (KiwiError, OSError):
+        return None
+    theirs = out.get("version") if status == 200 else None
+    return theirs if theirs and _numbers(theirs) < _numbers(version) else None
+
+
 def push_api(fleet_dir, fleet_name, force=False, key=None):
     st = _store(fleet_dir)
     api, _key = api_for(fleet_dir, key)

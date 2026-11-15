@@ -2658,7 +2658,24 @@ class TestOnion(Base):
         self.assertIn("anyone with the address gets in", out + err)
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--remove")
         self.assertEqual(rc, 0, err)
-        self.assertEqual(config.Fleet.load(f.path).hosts["papaya"].cfg["node"]["onion"], {"services": {}})
+        node = config.Fleet.load(f.path).hosts["papaya"].cfg["node"]
+        self.assertEqual(node["onion"], {"services": {}})
+        self.assertNotIn("onion", node["modules"])                   # the last one gone: the part goes too
+
+
+class TestOlderControlNode(unittest.TestCase):
+    def test_a_push_says_when_the_control_node_is_older(self):
+        """Seen for real: a fleet with a new part pushed to a control node two releases
+        behind, whose page then said "unknown module" about a fleet that was right."""
+        api = mock.Mock()
+        api.call.return_value = (200, {"ok": True, "version": "2.95.0", "locked": False})
+        self.assertEqual(controlsync.older_node("/nowhere", "2.97.0", api=api), "2.95.0")
+        self.assertIsNone(controlsync.older_node("/nowhere", "2.95.0", api=api))
+        self.assertIsNone(controlsync.older_node("/nowhere", "2.9.0", api=api))          # 2.95 is newer than 2.9
+        api.call.return_value = (502, {})
+        self.assertIsNone(controlsync.older_node("/nowhere", "2.97.0", api=api))          # not known: nothing said
+        api.call.side_effect = OSError("no route")
+        self.assertIsNone(controlsync.older_node("/nowhere", "2.97.0", api=api))
 
 
 class TestConnectWait(unittest.TestCase):

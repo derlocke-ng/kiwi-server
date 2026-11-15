@@ -1,0 +1,29 @@
+# authenticator (2FAuth): one container, its accounts in one database file under data/
+services:
+  {{ container_prefix }}-auth:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-auth
+    # the image's own user: the data directory belongs to it
+    user: "1000:1000"
+    environment:
+      - APP_NAME={{ title }}
+      - APP_KEY={{ app_key }}
+      - APP_URL=https://{{ auth_host }}
+      - APP_TIMEZONE={{ timezone }}
+      # behind the machine's reverse proxy: its word for https and the visitor's address is taken
+      - TRUSTED_PROXIES=*
+      - AUTHENTICATION_GUARD=web-guard
+      # a security key (WebAuthn) is bound to this name
+      - WEBAUTHN_ID={{ auth_host }}
+      # no mail server is asked for: what it would send is written to its log instead
+      - MAIL_MAILER=log
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-auth/data:/2fauth:z

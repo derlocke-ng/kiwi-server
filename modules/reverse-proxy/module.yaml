@@ -30,6 +30,7 @@ firewall:
 
 validate:
   - { when: "public and not network_mode and not via", error: "reverse-proxy.public on a node needs a master that hands its public names on: kiwi-server sets that up in a fleet with a master (via)" }
+  - { when: "module_config.get('onion', {}).get('tls') and not onion_fullchain_present", error: "onion.tls needs a certificate for the .onion addresses: kiwi-server issues one from the fleet's CA (reverse-proxy.onion_fullchain, onion_privkey)" }
   - { when: "public and not public_names", error: "reverse-proxy.public: no site has a name outside the fleet's domain (hub_domain, relay_domain)" }
 
 templates:
@@ -46,6 +47,8 @@ outputs:
   nginx: { path: "{{ container_prefix }}-nginx/nginx.conf", mode: 0644 }
   tls_fullchain: { path: "{{ container_prefix }}-nginx/fullchain.pem", mode: 0644 }
   tls_privkey: { path: "{{ container_prefix }}-nginx/privkey.pem", mode: 0600 }
+  onion_fullchain: { path: "{{ container_prefix }}-nginx/onion-fullchain.pem", mode: 0644 }
+  onion_privkey: { path: "{{ container_prefix }}-nginx/onion-privkey.pem", mode: 0600 }
   nginx_start: { path: "{{ container_prefix }}-nginx/start.sh", mode: 0755, when: public_names }
   acme_script: { path: "kiwi/acme.sh", mode: 0755, when: public_names }
   acme_service: { kind: host_unit, name: "{{ container_prefix }}-acme.service", when: public_names }
@@ -110,6 +113,16 @@ settings:
     type: file
     label: TLS private key (privkey.pem)
     help: "The key of that certificate chain: give both or neither. Empty: issued with the chain by the fleet CA at render time."
+  - key: onion_fullchain
+    type: file
+    group: Generated
+    label: Certificate chain for the hidden services
+    help: "Filled in by kiwi-server when the onion module's tls is on: one certificate of the fleet's CA for this machine's .onion addresses. Each hidden service then answers https too."
+  - key: onion_privkey
+    type: file
+    group: Generated
+    label: Its private key
+    help: "The key of that certificate chain: both or neither."
   - key: hsts
     type: bool
     label: Send HSTS headers

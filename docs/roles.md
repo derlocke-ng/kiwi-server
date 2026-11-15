@@ -225,6 +225,32 @@ keeps what it cannot read, and the link carries the key.
 `title`, `default_expire` (a week), `size_mb` (10) and `file_upload` are its
 settings. The pastes are in the machine's backup.
 
+## Authenticator
+
+Add `authenticator` to a machine's modules: the six-digit codes of your
+two-factor logins, in a page of your own at `https://auth.<machine>` instead of
+an app on one phone. It is [2FAuth](https://docs.2fauth.app): scan a QR code or
+type a secret, see the codes, sort them into groups, bring them in from Google
+Authenticator, Aegis, 2FAS and others.
+
+- **For the VPN only.** A public name is refused: the secrets of your logins do
+  not belong on a page the Internet reaches.
+- **The first account made on the page is the admin's.** Make it at once, then
+  close registration (Admin, Auth) unless more people of your network should
+  have their own.
+- In its settings, switch on **Protect sensitive data**: the secrets are then
+  encrypted in its database with the module's key, which comes from the fleet's
+  seed. The database is in the machine's backup.
+- It may ask the Internet for an account's logo and for new versions; both are
+  switches in its settings.
+
+Do not keep the second factor of the password manager that holds your first
+factors in the same place, and keep the recovery codes of your accounts on
+paper: a machine can be off when you need a code.
+
+Tried on a test node (15 November 2026): the page, its login and its sign-up
+form open over the VPN's name. Not tried: an account, a code, an import.
+
 ## Firefox Sync
 
 Add `firefox-sync` to a machine's modules and your Firefox browsers keep their

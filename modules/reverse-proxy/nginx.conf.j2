@@ -57,7 +57,9 @@
 {% endfor %}
 {% endif %}
 {% for d in s.extra_directives %}
-{% if not (hidden and (d.startswith('allow ') or d.startswith('deny '))) %}
+{# at a hidden service: no allow or deny (they are about the VPN's addresses), and no proxy_redirect of the
+   site's own: the one above is there already, and nginx does not start with two #}
+{% if not (hidden and (d.startswith('allow ') or d.startswith('deny ') or d.startswith('proxy_redirect '))) %}
             {{ d }}
 {% endif %}
 {% endfor %}
@@ -161,8 +163,8 @@ http {
     set_real_ip_from 127.0.0.1;
     real_ip_header proxy_protocol;
 {% endif %}
-{% if ex.names or (via and public_names) %}
-    # sites answer on a port of their own behind the door people use (443): a redirect must not name it
+{% if ex.names or (via and public_names) or onion %}
+    # sites answer on a port of their own behind the door people use (443, or Tor's 80): a redirect must not name it
     port_in_redirect off;
 {% endif %}
     ssl_certificate     /etc/nginx/fullchain.pem;
@@ -343,6 +345,12 @@ http {
     # {{ s.comment }}, as a hidden service: Tor hands it over on this port, which only the stack reaches
     server {
         listen 8043;
+{% if onion_fullchain_present %}
+        # and with TLS, for a visitor who asks https://<address>: a certificate of the fleet's CA for the address
+        listen 8044 ssl;
+        ssl_certificate     /etc/nginx/onion-fullchain.pem;
+        ssl_certificate_key /etc/nginx/onion-privkey.pem;
+{% endif %}
         server_name {{ onion[s.server_name] }};
 {% if rate_limit %}
         limit_req zone=kiwi_onion burst={{ rate_limit * 12 }} nodelay;
@@ -373,6 +381,9 @@ http {
     # an address that is no hidden service of this machine: nothing
     server {
         listen 8043 default_server;
+{% if onion_fullchain_present %}
+        listen 8044 ssl default_server;
+{% endif %}
         server_name _;
         return 444;
     }

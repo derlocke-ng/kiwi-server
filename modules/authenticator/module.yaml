@@ -1,0 +1,73 @@
+schema_version: "1.0"
+
+module:
+  name: authenticator
+  title: Authenticator (2FAuth)
+  version: 1.0.0
+  description: "The six-digit codes of your two-factor logins, in a page of your own instead of an app on one phone: 2FAuth keeps the accounts (scan a QR code or type the secret), shows the codes, groups them, and takes them in from Google Authenticator, Aegis, 2FAS and others. At auth.<hostname>, for people on the VPN"
+  category: security
+  node_types: [master, node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client]
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  auth_host: "{{ auth_hostname or 'auth.' ~ hostname }}"
+
+validate:
+  - when: "auth_hostname and not (auth_hostname ~ '.').endswith('.' ~ domain ~ '.')"
+    error: "authenticator.auth_hostname: a name inside the fleet's domain. The secrets of your logins do not belong on a page the Internet reaches"
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-auth/data", type: dir, required: true }
+
+urls:
+  - "Authenticator: https://{{ auth_host }} (the first account made there is the admin's: make it at once, then close registration under Admin, Auth)"
+
+nginx:
+  upstream:
+    name: twofauth
+    server: "{{ container_prefix }}-auth:8000"
+  server_name: "{{ auth_host }}"
+  site: auth
+  proxy_pass: "http://twofauth"
+  comment: Authenticator (2FAuth)
+
+backup:
+  # its database is one file: saved while the service stands still
+  frozen:
+    containers: ["{{ container_prefix }}-auth"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-auth/data"]
+
+settings:
+  - key: auth_hostname
+    label: Name
+    help: "Empty: auth.<hostname>. A name on the VPN only: this page holds the secrets of your logins."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: app_key
+    type: secret
+    generate: true
+    label: Key
+    help: "What the service encrypts its sessions and, when you switch that on in its settings, the secrets with. Empty: generated from the fleet's seed. A change signs everyone out, and encrypted secrets can no longer be read: keep it."
+  - key: title
+    label: Title
+    help: "What the page calls itself."
+    default: 2FAuth
+  - key: image
+    label: Image
+    help: "2FAuth's own image, pinned by version."
+    default: docker.io/2fauth/2fauth:9.0.1

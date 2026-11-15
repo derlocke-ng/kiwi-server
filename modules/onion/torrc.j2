@@ -8,6 +8,9 @@ DataDirectory /var/lib/tor
 # {{ name }}.{{ hostname }}{{ ': only ' ~ (k.clients | join(', ')) if k.clients else ': anyone with the address' }}
 HiddenServiceDir /var/lib/tor/onion/{{ name }}
 HiddenServicePort 80 {{ proxy }}:8043
+{% if tls %}
+HiddenServicePort 443 {{ proxy }}:8044
+{% endif %}
 {# Jabber's own port beside its page: apps connect to <address>.onion, port 5222. The service in
    the network of the machine's door to the VPN is the site jabber; a separate public instance is the site xmpp #}
 {% set jabber = module_config.get('xmpp') %}

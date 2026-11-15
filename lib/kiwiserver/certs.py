@@ -97,3 +97,35 @@ def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constr
         if os.path.exists(f):
             os.unlink(f)
     return key, full
+
+
+def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=()):
+    """(privkey.pem, fullchain.pem) for exactly these names, kept under hosts/<label>: reused
+    while they exist, cover the names and have more than 30 days left. For names that are
+    not a machine's own, like the addresses of its hidden services."""
+    names = sorted(set(names))
+    if not names:
+        raise KiwiError("a certificate needs a name")
+    ca_key, ca_pem = ensure_ca(ca_dir, ca_days, name_constraints)
+    d = os.path.join(ca_dir, "hosts", label)
+    key, full, crt = os.path.join(d, "privkey.pem"), os.path.join(d, "fullchain.pem"), os.path.join(d, "cert.pem")
+    if os.path.isfile(key) and os.path.isfile(full) and os.path.isfile(crt) \
+            and cert_valid(crt) and set(cert_names(crt)) == set(names):
+        return key, full
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    util.say("issuing a certificate for %s" % ", ".join(names))
+    csr, ext = os.path.join(d, "request.csr"), os.path.join(d, "ext.cnf")
+    util.write_text(ext, "authorityKeyIdentifier=keyid,issuer\nbasicConstraints=CA:FALSE\n"
+                         "keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
+                         "subjectAltName=%s\n" % ",".join("DNS:" + n for n in names))
+    _openssl(["genrsa", "-out", key + ".tmp", "4096"])
+    os.chmod(key + ".tmp", 0o600)
+    os.replace(key + ".tmp", key)
+    _openssl(["req", "-new", "-key", key, "-subj", "/C=NZ/ST=kiwi/L=kiwi/O=kiwi/OU=kiwi/CN=%s" % label, "-out", csr])
+    _openssl(["x509", "-req", "-in", csr, "-CA", ca_pem, "-CAkey", ca_key, "-CAcreateserial",
+              "-days", str(days), "-sha256", "-extfile", ext, "-out", crt])
+    util.write_text(full, util.read_text(crt) + util.read_text(ca_pem), 0o644)
+    for f in (csr, ext):
+        if os.path.exists(f):
+            os.unlink(f)
+    return key, full

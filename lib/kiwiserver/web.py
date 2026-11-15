@@ -812,7 +812,7 @@ onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done 
 
     "status.html": """{% extends "base.html" %}{% block title %}Status{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120">
-<h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>How the network is</h1>
+<h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>{{ "How the services are" if h.strangers else "How the network is" }}</h1>
 {% set down = h.services|rejectattr("ok")|list %}{% set off = (h.machines.of or 0) - (h.machines.on or 0) %}
 {% if not h.checked %}<div class="banner warn">Nothing has been checked yet.</div>
 {% elif stale %}<div class="banner warn">Not checked for {{ age(now - h.checked) }}. The machine that checks is off, or waits for
@@ -831,8 +831,9 @@ the people who run this network to unlock it.</div>
 {% for i in h.incidents %}<p><span class="dot {{ "ok" if i.to else "bad" }}"></span>{{ age(now - i.from) }} ago: {{ i.text }}{% if i.to %},
 for {{ age(i.to - i.from) }}{% else %}, and still{% endif %}</p>
 {% else %}<p class="muted">Nothing was wrong.</p>{% endfor %}{% endif %}
-<p class="muted small" style="margin-top:28px">This page needs no login. It shows which services work, and no addresses or
-settings. The people who run this network see more on their control page.</p>
+<p class="muted small" style="margin-top:28px">{% if h.strangers %}This page shows the services that are open to the Internet,
+asked the way you reach them, and nothing else.{% else %}This page needs no login. It shows which services work, and no addresses or
+settings. The people who run this network see more on their control page.{% endif %}</p>
 {% endblock %}""",
 
     "help.html": """{% extends "base.html" %}{% block main %}
@@ -1284,6 +1285,14 @@ def make_app(control: Control):
         """How the network is, for everyone on it: no login, nothing but names people use and whether they work."""
         now = time.time()
         h = healthmod.public(control.health(), now)
+        return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+
+    @app.get("/status/public")
+    def status_public():
+        """The same for the Internet (the control module's public_status_hostname): the services
+        that are open to it, whether they work, and what was wrong with them. Nothing else."""
+        now = time.time()
+        h = healthmod.public(control.health(), now, strangers=True)
         return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
     @app.get("/healthz")

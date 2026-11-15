@@ -7731,7 +7731,8 @@ class TestWeb(StoreBase):
         self.assertIn("2 devices on its VPN", narrow)
         self.assertEqual((narrow.count('class="up"'), narrow.count('class="off"')), (1, 1))
         wide = web.picture([m("a", "master", "ok")] + [m("n%d" % i, "node", "ok") for i in range(6)], 0, per_row=4)
-        self.assertEqual(wide.count("<rect"), 7)
+        self.assertEqual(wide.count("<rect"), 8)                       # seven machines and the home they stand in
+        self.assertIn("At home", wide)
         self.assertEqual(web.bars({}), [])
         self.assertEqual(web.stats([], []), [])
 
@@ -9058,7 +9059,7 @@ class TestFirstRunPage(StoreBase):
         self.assertNotIn("timezone", before["hosts"][node])
         status, body, _ = self.ask(page, cookie=cookie)
         self.assertEqual(status, 200)
-        for said in ("Settings of " + node, "<h2 style=\"margin-top:0\">Machine</h2>", "<summary>Nextcloud</summary>", ">Save</button>"):
+        for said in ("Settings of " + node, "<h2 style=\"margin-top:0\">Machine</h2>", "<summary>Files (Nextcloud)</summary>", ">Save</button>"):
             self.assertIn(said, body)
         status, where, _ = self.change(page, cookie, {"f:timezone": "Europe/Vienna", "f:updates.time": "04:15"})
         self.assertEqual((status, where), (303, page + "?saved=1"))
@@ -9129,7 +9130,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.data()["hosts"][node]["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "immich"])
         body = self.ask(page, cookie=cookie)[1]
         self.assertIn('name="f:node.modules" value="immich" checked>', body)
-        self.assertIn("<summary>Immich</summary>", body)
+        self.assertIn("<summary>Photos (Immich)</summary>", body)
         self.assertIn('name="f:node.immich.library_dir"', body)
         self.assertEqual(self.change(page, cookie, {"f:node.immich.library_dir": "/mnt/photos", "f:node.immich.machine_learning": "no"})[0], 303)
         own = self.data()["hosts"][node]["node"]

@@ -65,10 +65,12 @@ settings:
     label: Database password
     help: "Empty: generated from the fleet's seed."
   - key: image
+    group: Advanced
     label: Image
     help: "Mozilla's own build with PostgreSQL. It exists for x86-64 only: not for the small boards."
     default: ghcr.io/mozilla-services/syncstorage-rs/syncserver-postgres:latest
   - key: postgres_image
+    group: Advanced
     label: Image of the database
     help: "PostgreSQL, as Mozilla's set-up uses it."
     default: docker.io/library/postgres:18

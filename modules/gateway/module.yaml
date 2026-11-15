@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: gateway
-  title: LAN gateway
+  title: Home gateway
   version: 1.1.0
   description: "Policy routing on the host: LAN clients that use this machine as their default gateway leave through the VPN client; they can reach the mesh but not the docker network"
   category: network

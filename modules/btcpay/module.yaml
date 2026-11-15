@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: btcpay
-  title: BTCPay Server
+  title: Payments (BTCPay)
   version: 1.0.0
   description: "BTCPay Server: take Bitcoin payments yourself, with its own Bitcoin node, invoices, a point-of-sale page as a shop. At pay.<hostname> for the mesh; with the onion module, a hidden service for strangers. The Bitcoin node talks to the world through the VPN, not through the machine's own line"
   category: productivity
@@ -102,18 +102,22 @@ settings:
     generate: true
     help: "The admin's first password. Empty: generated from the fleet's seed."
   - key: image
+    group: Advanced
     label: Image
     help: "BTCPay Server's own image, pinned by version: its four images belong together, as the project's own set-up pins them."
     default: docker.io/btcpayserver/btcpayserver:2.4.7
   - key: nbxplorer_image
+    group: Advanced
     label: Image of NBXplorer
     help: "Watches the chain for BTCPay Server's addresses."
     default: docker.io/nicolasdorier/nbxplorer:2.6.23
   - key: bitcoin_image
+    group: Advanced
     label: Image of Bitcoin Core
     help: "The Bitcoin node."
     default: docker.io/btcpayserver/bitcoin:32.1
   - key: postgres_image
+    group: Advanced
     label: Image of the database
     help: "PostgreSQL, as BTCPay Server's set-up ships it (it moves the data to a new major version by itself)."
     default: docker.io/btcpayserver/postgres:18.7

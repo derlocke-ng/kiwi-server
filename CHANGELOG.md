@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.124.0 — the app: plain names, less in view, a picture of the network as it is
+
+After the owner's look at the app ("slow, bloated, the settings, the module names, how
+they are linked"):
+
+- **Plain names** (kiwi-modules 0.49.0): the modules are called what they do (*Files
+  (Nextcloud)*, *Ad blocker (Pi-hole)*, *VPN connection*, *Web addresses (nginx)*…), the
+  roles *Master*, *Home server*, *Bare machine* instead of kiwi-master, kiwi-node.
+- **Settings, less in view**:
+  - what kiwi-server fills in itself (27 settings) is no longer shown as something to type;
+  - what is seldom changed (images, ports, certificate files) is folded under *More*;
+  - a machine's install-only settings (target, disks, keyboard, language) are folded under
+    *For its next install*;
+  - Admin, uCore, CoreOS, Debian and the post script are one page, *Advanced*: the list
+    beside the settings has 3 system entries instead of 7.
+- **"How they are linked"**, in the app and on the control page: the master out on the
+  Internet, the machines *At home*, a tunnel from the master to each (green while it
+  answers, dashed when not); with many machines and little room, a list.
+- **Quicker**: "Who may reach what" opens at once and reads its rules beside the window
+  (it waited about a second before); the app asks for its roles and targets at the same
+  time when it starts.
+
 ## 2.123.1 — Jabber's accounts stay with their name
 
 - kiwi-modules 0.48.1: switching Jabber between one service and two keeps every account

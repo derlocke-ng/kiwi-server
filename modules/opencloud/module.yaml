@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: opencloud
-  title: OpenCloud
+  title: Files (OpenCloud)
   version: 1.0.0
   description: "OpenCloud, files and sharing in one Go binary, behind the reverse proxy at opencloud.<hostname>"
   category: productivity

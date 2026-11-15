@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: git
-  title: Forgejo
+  title: Git (Forgejo)
   version: 1.0.0
   description: "Forgejo, git hosting with a web page, behind the reverse proxy at git.<hostname>; git over SSH on a port of its own"
   category: productivity

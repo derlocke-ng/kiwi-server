@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: vault
-  title: Vaultwarden
+  title: Passwords (Vaultwarden)
   version: 1.1.0
   description: "Vaultwarden — the Bitwarden-compatible password manager, behind the reverse proxy"
   category: security

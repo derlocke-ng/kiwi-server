@@ -217,6 +217,10 @@ BASE_GROUPS = [
 SECTION_TARGETS = {"uCore": ("ucore",), "RAM": ("coreos-ram",), "Debian": ("debian",),
                    "CoreOS (advanced)": ("coreos", "ucore", "coreos-ram")}
 SECTION_LABELS = {"Admin user": "Admin", "CoreOS (advanced)": "CoreOS", "After the role": "Post script"}
+# rarely changed: one page "Advanced" in the settings' list, a group each, instead of a page each
+ADVANCED_SECTIONS = ("Admin user", "uCore", "RAM", "Debian", "CoreOS (advanced)", "After the role")
+# a machine's settings that matter for its next install only: folded under "For its next install"
+INSTALL_FIELDS = {("target",), ("disk",), ("mounts",), ("install", "on_done"), ("locale",), ("keyboard",)}
 
 
 def find_cli():
@@ -717,23 +721,41 @@ class Form:
     def build(self):
         self.loading = True
         target = self.effective_target()
-        system = False
+        system, advanced = False, []
         for title, fields in BASE_GROUPS:
             if self.scope != "defaults" and target not in SECTION_TARGETS.get(title, (target,)):
                 continue
-            rows = [self.row_for(f) for f in fields if self.visible(f)]
-            if not rows:
+            shown = [f for f in fields if self.visible(f)]
+            if not shown:
+                continue
+            g = Adw.PreferencesGroup(title=SECTION_LABELS.get(title, title) if title in ADVANCED_SECTIONS else title)
+            later = [f for f in shown if title == "Machine" and tuple(f["path"]) in INSTALL_FIELDS]
+            for f in shown:
+                if f not in later:
+                    g.add(self.row_for(f))
+            if later:
+                g.add(self.folded("For its next install", "Target, disks, keyboard and language", later))
+            if title in ADVANCED_SECTIONS:
+                advanced.append(g)
                 continue
             if title != "Machine" and not system:
                 self.heading("System")
                 system = True
-            g = Adw.PreferencesGroup(title=title)
-            for r in rows:
-                g.add(r)
             self.section("base:" + title, SECTION_LABELS.get(title, title), [g])
+        if advanced:
+            if not system:
+                self.heading("System")
+            self.section("base:Advanced", "Advanced", advanced)
         self.rebuild_role_group()
         self.loading = False
         self.select(getattr(self.win, "settings_section", None))
+
+    def folded(self, title, subtitle, fields, settings=False):
+        """Rows that are rarely changed, folded away under one row that opens them."""
+        exp = Adw.ExpanderRow(title=title, subtitle=subtitle)
+        for f in fields:
+            exp.add_row(f if settings else self.row_for(f))
+        return exp
 
     def rebuild(self):
         """Everything again, e.g. after the target changed which sections there are."""
@@ -817,6 +839,8 @@ class Form:
             groups.append(g)
         by_group = {}
         for st in role["settings"]:
+            if st.get("group") == "Generated":         # kiwi-server fills these in: nothing to type
+                continue
             by_group.setdefault(st.get("group") or "Settings", []).append(st)
         for gname, items in by_group.items():
             g = Adw.PreferencesGroup(title=gname if groups else role["title"])
@@ -842,10 +866,19 @@ class Form:
                 g = Adw.PreferencesGroup(title=schema["title"])
                 if schema.get("description"):
                     g.set_header_suffix(info_button(schema["description"], DOCS + "modules/%s/module.yaml" % m))
-                for st in schema["settings"]:
+                # what kiwi-server fills in is not shown; what is seldom changed is folded away under "More"
+                shown = [st for st in schema["settings"] if st.get("group") != "Generated"]
+                more = []
+                for st in shown:
                     default = (mdefaults.get(m) or {}).get(st["key"], st.get("default"))
-                    g.add(self.row_for(self._field((name, m, st["key"]), st, default)))
-                if not schema["settings"]:
+                    row = self.row_for(self._field((name, m, st["key"]), st, default))
+                    if st.get("group") == "Advanced":
+                        more.append(row)
+                    else:
+                        g.add(row)
+                if more:
+                    g.add(self.folded("More", "Images, versions and what is seldom changed", more, settings=True))
+                if not shown:
                     g.add(Adw.ActionRow(title="No settings", subtitle="On or off, nothing else."))
                 add("mod:" + m, schema["title"], [g])
         self.loading = was
@@ -1302,7 +1335,18 @@ class AccessDialog(Adw.Dialog):
     def __init__(self, win):
         super().__init__(title="Who may reach what", content_width=660, content_height=700)
         self.win = win
-        rc, out, err = run_cli(win.cli, ["access", win.doc.path, "--porcelain"])
+        # the rules are read beside the window, which stays usable meanwhile
+        self.set_child(Adw.StatusPage(title="Reading the rules…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
+        path = win.doc.path
+
+        def work():
+            rc, out, err = run_cli(win.cli, ["access", path, "--porcelain"])
+            orc, oout, _oerr = run_cli(win.cli, ["onion", path, "--porcelain"])
+            GLib.idle_add(lambda: self.build(rc, out, err, (orc, oout)) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def build(self, rc, out, err, onion):
+        win = self.win
         try:
             data = json.loads(out) if rc == 0 else {}
         except ValueError:
@@ -1357,7 +1401,7 @@ class AccessDialog(Adw.Dialog):
             self.rows[w["name"]] = r
             page.add(g)
         # hidden services: a site for anyone with Tor Browser, or for named people (kiwi-server onion)
-        rc, out, _err = run_cli(win.cli, ["onion", win.doc.path, "--porcelain"])
+        rc, out = onion
         try:
             self.hidden = {"%s.%s" % (x["service"], x["host"]): x for x in json.loads(out)["services"]} if rc == 0 else {}
         except (ValueError, KeyError):
@@ -1703,17 +1747,17 @@ def tags(modules):
 
 
 class NetworkPicture(Gtk.DrawingArea):
-    """The network as a picture: the master, and a line to every other machine, green when the
-    machine answers and grey and broken when it does not. Wide, the machines stand in rows under
-    the master; narrow, as a list. A click on a machine opens it. `master` and each of `rest` are
-    (name, state, answers, caption)."""
-    BW, BH, GAP, PAD, MW, MH = 158, 48, 20, 24, 250, 52
-    COLOURS = {"ok": (.18, .76, .49), "warn": (.90, .65, .04), "bad": (.88, .11, .14), "down": (.88, .11, .14)}   # the dots' colours
+    """The network as it is: the master out on the Internet, the machines at home, and the tunnel
+    each one holds to the master: green while the machine answers, grey and broken when it does
+    not. A click on a machine opens it. `master` and each of `rest` are (name, state, answers,
+    caption)."""
+    BW, BH, GAP, PAD, MW, MH, ZONE = 172, 54, 18, 28, 260, 58, 34
+    COLOURS = {"ok": (.18, .76, .49), "warn": (.90, .65, .04), "bad": (.88, .11, .14), "down": (.88, .11, .14)}
 
     def __init__(self, win, master, rest):
         super().__init__(hexpand=True)
         self.win, self.master, self.rest = win, master, rest
-        self.boxes, self.lines, self.laid = [], [], None
+        self.boxes, self.links, self.zone, self.laid = [], [], None, None
         self.set_draw_func(self.draw)
         self.connect("resize", lambda _a, width, _h: self.lay_out(width))
         self.lay_out(720)
@@ -1727,52 +1771,70 @@ class NetworkPicture(Gtk.DrawingArea):
                              ["Your network: the master %s and %d machines linked to it" % (master[0], len(rest))])
 
     def lay_out(self, width):
-        """Where every box and line goes for this width."""
-        per_row = max(1, min(4, (width - 2 * self.PAD + self.GAP) // (self.BW + self.GAP)))
-        per_row = per_row if per_row > 1 else 1
-        if self.laid == (width, per_row):
+        """Where the master, the home with its machines, and every tunnel go for this width."""
+        bw, bh, gap, pad, mw, mh, zp = self.BW, self.BH, self.GAP, self.PAD, self.MW, self.MH, self.ZONE
+        fits = lambda w: max(1, min(6, (width - 2 * pad - 2 * zp + gap) // (w + gap)))       # noqa: E731
+        per_row = fits(bw)
+        if len(self.rest) > 2 * per_row - 1 and fits(140) > per_row:      # two rows hold them when narrower
+            bw, per_row = 140, fits(140)
+        if self.laid == (width, per_row, bw):
             return
-        self.laid, self.boxes, self.lines = (width, per_row), [], []
-        bw, bh, gap, pad, mw, mh = self.BW, self.BH, self.GAP, self.PAD, self.MW, self.MH
+        self.laid, self.boxes, self.links, self.trunk = (width, per_row, bw), [], [], None
+        if len(self.rest) > 2 * per_row - 1 and per_row < 6:
+            return self.lay_out_list(width)
+        mx = (width - mw) // 2
+        self.boxes.append({"name": self.master[0], "state": self.master[1], "cap": self.master[3],
+                           "x": mx, "y": 8, "w": mw, "h": mh, "master": True})
+        # the rows after the first hold one machine less and stand between the ones above, so that a
+        # tunnel to them passes through a gap and not across a machine
+        rows, left = [], list(self.rest)
+        while left:
+            take = per_row if not rows or per_row == 1 else per_row - 1
+            rows.append(left[:take])
+            left = left[take:]
+        rows = rows or [[]]
+        zw = min(width - 2 * pad, per_row * bw + (per_row - 1) * gap + 2 * zp)
+        zx, zy = (width - zw) // 2, 8 + mh + 58
+        y = zy + 30
+        for row in rows:
+            rw = len(row) * bw + (len(row) - 1) * gap
+            x = (width - rw) // 2
+            for m in row:
+                self.boxes.append({"name": m[0], "state": m[1], "cap": m[3], "x": x, "y": y, "w": bw, "h": bh,
+                                   "master": False, "up": m[2]})
+                x += bw + gap
+            y += bh + gap
+        zh = y - gap + 22 - zy
+        self.zone = (zx, zy, zw, zh)
+        # every tunnel leaves the master at its own place along its lower edge, left to right as the machines
+        # stand, so that no two cross; it comes down into the home and then straight down to its machine
+        machines = sorted(self.boxes[1:], key=lambda b: (b["x"], b["y"]))
+        n = len(machines)
+        for i, b in enumerate(machines):
+            sx = mx + 24 + (mw - 48) * (i + 0.5) / max(n, 1)
+            self.links.append((sx, 8 + mh, b["x"] + bw / 2, zy + 12, b["y"], b.get("up")))
+        self.set_content_height(zy + zh + 8)
+        self.queue_draw()
 
-        def box(m, x, y, w, h, top=False):
-            self.boxes.append({"name": m[0], "state": m[1], "cap": m[3], "x": x, "y": y, "w": w, "h": h, "master": top})
-
-        def line(x1, y1, x2, y2, m=None):
-            self.lines.append((x1, y1, x2, y2, None if m is None else "up" if m[2] else "off"))
-        if per_row == 1:                        # a list under the master
-            w = min(width, 460)
-            off, tx, x = (width - w) // 2, 28, 52
-            box(self.master, off + 10, 6, w - 20, mh, True)
-            y = 6 + mh + 14
-            for m in self.rest:
-                line(off + tx, y + bh // 2, off + x, y + bh // 2, m)
-                box(m, off + x, y, w - 10 - x, bh)
-                y += bh + 12
-            line(off + tx, 6 + mh, off + tx, y - 12 - bh // 2)
-            height = y - 12 + 6
-        else:
-            w = 2 * pad + per_row * bw + (per_row - 1) * gap
-            off, tx = (width - w) // 2, 10
-            rows = [self.rest[i:i + per_row] for i in range(0, len(self.rest), per_row)]
-            cx, top, step = off + w // 2, 6 + mh + 44, bh + 40
-            box(self.master, cx - mw // 2, 6, mw, mh, True)
-            for r, row in enumerate(rows):
-                by = top + r * step - 20
-                start = off + ((w - len(row) * bw - (len(row) - 1) * gap) // 2 if len(rows) == 1 else pad)
-                mids = [start + i * (bw + gap) + bw // 2 for i in range(len(row))]
-                if r == 0:
-                    line(cx, 6 + mh, cx, by)
-                    line(min([cx, mids[0]] + ([off + tx] if len(rows) > 1 else [])), by, max(cx, mids[-1]), by)
-                else:
-                    line(off + tx, by, mids[-1], by)
-                for i, m in enumerate(row):
-                    line(mids[i], by, mids[i], top + r * step, m)
-                    box(m, mids[i] - bw // 2, top + r * step, bw, bh)
-            if len(rows) > 1:
-                line(off + tx, top - 20, off + tx, top + (len(rows) - 1) * step - 20)
-            height = top + (len(rows) - 1) * step + bh + 6
-        self.set_content_height(height)
+    def lay_out_list(self, width):
+        """Too many for two rows at this width: the machines one under the other, each tunnel a
+        branch off one line that comes down from the master."""
+        mw, mh, bh, pad = self.MW, self.MH, self.BH, self.PAD
+        w = min(width - 2 * pad, 520)
+        x0 = (width - w) // 2
+        mw = min(mw, w)
+        self.boxes.append({"name": self.master[0], "state": self.master[1], "cap": self.master[3],
+                           "x": x0, "y": 8, "w": mw, "h": mh, "master": True})
+        zx, zy, zw = x0 - 14, 8 + mh + 30, w + 28
+        tx, y = x0 + 22, zy + 30
+        for m in self.rest:
+            self.boxes.append({"name": m[0], "state": m[1], "cap": m[3], "x": x0 + 48, "y": y, "w": w - 48, "h": bh,
+                               "master": False, "up": m[2]})
+            self.links.append(("branch", tx, y + bh / 2, x0 + 48, m[2]))
+            y += bh + 10
+        self.trunk = (tx, 8 + mh, y - 10 - bh / 2)
+        self.zone = (zx, zy, zw, y - 10 + 18 - zy)
+        self.set_content_height(y - 10 + 18 + 8)
         self.queue_draw()
 
     def at(self, x, y):
@@ -1783,56 +1845,104 @@ class NetworkPicture(Gtk.DrawingArea):
         self.set_cursor(Gdk.Cursor.new_from_name("pointer") if b else None)
         self.set_tooltip_text("%s: %s" % (b["name"], WORDS.get(b["state"], b["state"])) if b else None)
 
+    @staticmethod
+    def _rounded(cr, x, y, w, h, r):
+        cr.new_sub_path()
+        for cx, cy, a in ((x + w - r, y + r, -.5), (x + w - r, y + h - r, 0), (x + r, y + h - r, .5), (x + r, y + r, 1)):
+            cr.arc(cx, cy, r, a * 3.14159265, (a + .5) * 3.14159265)
+        cr.close_path()
+
     def draw(self, _area, cr, _width, _height):
         fg = self.get_color()
         ink = lambda a: cr.set_source_rgba(fg.red, fg.green, fg.blue, a)                       # noqa: E731
-        paint = lambda state: cr.set_source_rgb(*self.COLOURS[state])                             # noqa: E731
         try:
             accent = Adw.StyleManager.get_default().get_accent_color_rgba()
             accent = (accent.red, accent.green, accent.blue)
         except AttributeError:                  # an older libadwaita: its blue
             accent = (.21, .52, .89)
-        cr.set_line_width(2)
-        cr.set_line_cap(1)                      # round
-        for x1, y1, x2, y2, kind in self.lines:
-            cr.set_dash([5, 5] if kind == "off" else [])
-            if kind == "up":
-                paint("ok")
+        # the home: where every machine but the master stands
+        if self.zone and len(self.boxes) > 1:
+            zx, zy, zw, zh = self.zone
+            self._rounded(cr, zx + .5, zy + .5, zw, zh, 14)
+            ink(.035)
+            cr.fill_preserve()
+            cr.set_dash([2, 4])
+            cr.set_line_width(1)
+            ink(.25)
+            cr.stroke()
+            cr.set_dash([])
+            text = self.create_pango_layout("")
+            text.set_markup("<small>%s</small>" % esc("At home"))
+            ink(.55)
+            cr.move_to(zx + 14, zy + 7)
+            PangoCairo.show_layout(cr, text)
+        # the tunnels: a curve from the master down to each machine
+        cr.set_line_cap(1)
+        if self.trunk:              # the list: one line down from the master, a branch to each machine
+            tx, ty1, ty2 = self.trunk
+            ink(.22)
+            cr.set_line_width(1.6)
+            cr.move_to(tx, ty1)
+            cr.line_to(tx, ty2)
+            cr.stroke()
+        for link in self.links:
+            if link[0] == "branch":
+                _k, sx, sy, ex, up = link
+                cr.move_to(sx, sy - 10)
+                cr.curve_to(sx, sy, sx, sy, sx + 10, sy)
+                cr.line_to(ex, sy)
             else:
-                ink(.4 if kind == "off" else .3)
-            cr.move_to(x1, y1)
-            cr.line_to(x2, y2)
+                sx, sy, ex, ez, ey, up = link
+                mid = (sy + ez) / 2
+                cr.move_to(sx, sy)
+                cr.curve_to(sx, mid, ex, mid, ex, ez)
+                cr.line_to(ex, ey)
+            if up:
+                cr.set_source_rgba(*self.COLOURS["ok"], .75)
+                cr.set_dash([])
+                cr.set_line_width(1.8)
+            else:
+                ink(.35)
+                cr.set_dash([4, 5])
+                cr.set_line_width(1.6)
             cr.stroke()
         cr.set_dash([])
+        # the machines: on a ground of their own, so that a tunnel behind one does not show through
+        dark = Adw.StyleManager.get_default().get_dark()
+        ground = (.19, .19, .21) if dark else (1, 1, 1)
         for b in self.boxes:
-            x, y, w, h, r = b["x"] + .5, b["y"] + .5, b["w"], b["h"], 8
-            cr.new_sub_path()
-            for cx, cy, a in ((x + w - r, y + r, -.5), (x + w - r, y + h - r, 0), (x + r, y + h - r, .5), (x + r, y + r, 1)):
-                cr.arc(cx, cy, r, a * 3.14159265, (a + .5) * 3.14159265)
-            cr.close_path()
-            ink(.05)
+            x, y, w, h = b["x"] + .5, b["y"] + .5, b["w"], b["h"]
+            self._rounded(cr, x, y, w, h, 12)
+            cr.set_source_rgb(*ground)
+            cr.fill_preserve()
+            cr.set_source_rgba(*(accent if b["master"] else (fg.red, fg.green, fg.blue)), .10 if b["master"] else .045)
             cr.fill_preserve()
             cr.set_line_width(1.5 if b["master"] else 1)
             if b["master"]:
-                cr.set_source_rgb(*accent)
+                cr.set_source_rgba(*accent, .9)
             else:
-                ink(.3)
+                ink(.18)
             cr.stroke()
-            cr.arc(x + 17, y + h // 2 - 5, 5, 0, 6.2831853)
-            if b["state"] in self.COLOURS:
-                paint(b["state"])
+            # the state: a dot with a soft ring
+            colour = self.COLOURS.get(b["state"])
+            cx, cy = x + 20, y + h / 2
+            if colour:
+                cr.set_source_rgba(*colour, .22)
+                cr.arc(cx, cy, 9, 0, 6.2831853)
+                cr.fill()
+                cr.set_source_rgb(*colour)
             else:
                 ink(.3)
+            cr.arc(cx, cy, 5, 0, 6.2831853)
             cr.fill()
-            for markup, dy, alpha in (("<b>%s</b>" % esc(b["name"]), 5, 1), ("<small>%s</small>" % esc(b["cap"]), 25, .65)):
+            for markup, dy, alpha in (("<b>%s</b>" % esc(b["name"]), -18, 1), ("<small>%s</small>" % esc(b["cap"]), 1, .6)):
                 text = self.create_pango_layout("")
                 text.set_markup(markup)
-                text.set_width(int((w - 38) * Pango.SCALE))
+                text.set_width(int((w - 46) * Pango.SCALE))
                 text.set_ellipsize(Pango.EllipsizeMode.END)
                 ink(alpha)
-                cr.move_to(x + 30, y + (h - self.BH) // 2 + dy)
+                cr.move_to(x + 36, y + h / 2 + dy)
                 PangoCairo.show_layout(cr, text)
-
 
 class Column:
     """A scrolling page of limited width. Its content is built anew from the data
@@ -3223,14 +3333,22 @@ class Window(Adw.ApplicationWindow):
 
     # ---- schema from the CLI ----
     def load_schema(self):
-        rc, out, err = run_cli(self.cli, ["roles", "--porcelain"])
+        # both questions at once: each starts kiwi-server, and the window waits for them
+        got = {}
+        ask = [threading.Thread(target=lambda w=w: got.__setitem__(w, run_cli(self.cli, [w, "--porcelain"])), daemon=True)
+               for w in ("roles", "targets")]
+        for a in ask:
+            a.start()
+        for a in ask:
+            a.join()
+        rc, out, err = got["roles"]
         if rc == 0:
             data = json.loads(out)
             self.roles = data["roles"]
             self.module_schemas = {m["name"]: m for m in data.get("modules", [])}
         else:
             self.append_log("roles: %s\n" % err)
-        rc, out, err = run_cli(self.cli, ["targets", "--porcelain"])
+        rc, out, err = got["targets"]
         if rc == 0:
             self.targets = json.loads(out)["targets"]
 
@@ -3805,7 +3923,8 @@ class Window(Adw.ApplicationWindow):
         if self.host_stack.get_visible_child_name() == "settings":
             if self.form_scope != self.current_scope:     # built once per visit: a refresh must not eat what is being typed
                 self.form_scope = self.current_scope
-                self.settings_bin.set_child(Form(self, self.doc, self.current_scope, self.roles, self.targets).page)
+                self.form = Form(self, self.doc, self.current_scope, self.roles, self.targets)
+                self.settings_bin.set_child(self.form.page)
             self.update_banner()
         else:
             self.render_host(self.current_scope)

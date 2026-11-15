@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: backup-server
-  title: Backup server
+  title: Backup store
   version: 1.0.0
   description: "Where the backup module of other machines stores its data: restic's REST server behind the reverse proxy at backup.<hostname>. Each machine reaches only its own repository, and can add to it but not delete."
   category: storage

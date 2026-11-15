@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: onion
-  title: Hidden services
+  title: Hidden services (Tor)
   version: 1.0.0
   description: "Sites of this machine as Tor hidden services, for people who are not on the VPN. Tor leaves through the VPN client, never through the machine's own connection"
   category: security

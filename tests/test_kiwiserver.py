@@ -1246,7 +1246,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 27)
+        self.assertEqual(len(ms.names()), 28)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -6336,7 +6336,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 27)
+        self.assertEqual(len(json.loads(out)["modules"]), 28)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -6785,7 +6785,7 @@ class TestLogins(Base):
         self.assertEqual([x["site"] for x in modules["downloader"]], ["dl", "jd"])
         self.assertEqual(modules["tor"], [])
         self.assertEqual(sorted(n for n, x in modules.items() if x), [
-            "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
+            "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
 
 
 class TestControl(StoreBase):

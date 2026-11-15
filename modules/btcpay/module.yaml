@@ -1,0 +1,117 @@
+schema_version: "1.0"
+
+module:
+  name: btcpay
+  title: BTCPay Server
+  version: 1.0.0
+  description: "BTCPay Server: take Bitcoin payments yourself, with its own Bitcoin node, invoices, a point-of-sale page as a shop. At pay.<hostname> for the mesh; with the onion module, a hidden service for strangers. The Bitcoin node talks to the world through the VPN, not through the machine's own line"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: [onion]
+
+network:
+  # the four containers share the VPN client's network: what they listen on there
+  listen_ports: ["49392/tcp", "32838/tcp", "43782/tcp", "39388/tcp", "5432/tcp"]
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  start: start.sh.j2
+
+outputs:
+  start: { path: "{{ container_prefix }}-btcpay/start.sh", mode: 0755 }
+
+derived:
+  pay_host: "{{ pay_hostname or 'pay.' ~ hostname }}"
+  admin_address: "{{ admin_email or 'admin@' ~ hostname }}"
+  btcpay_data: "{{ data_dir or docker_dir ~ '/' ~ container_prefix ~ '-btcpay' }}"
+
+validate:
+  - when: "prune_mb and prune_mb < 550"
+    error: "btcpay.prune_mb: 550 at least (Bitcoin Core's own limit), or 0 to keep the whole chain"
+
+storage:
+  bind_mounts:
+    - { host: "{{ btcpay_data }}/bitcoin", type: dir, required: true }
+    - { host: "{{ btcpay_data }}/bitcoin-wallet", type: dir, required: true }
+    - { host: "{{ btcpay_data }}/nbxplorer", type: dir, required: true }
+    - { host: "{{ btcpay_data }}/btcpay", type: dir, required: true }
+    - { host: "{{ btcpay_data }}/plugins", type: dir, required: true }
+    - { host: "{{ btcpay_data }}/postgres", type: dir, required: true }
+
+urls:
+  - "BTCPay Server: https://{{ pay_host }} — {{ admin_address }}, the btcpay.admin_password setting ({{ network }})"
+
+logins:
+  - label: Payments (BTCPay Server)
+    site: pay
+    user: "{{ admin_address }}"
+    password: admin_password
+    note: "The admin of BTCPay Server, made at its first start. A password changed inside BTCPay stays changed. Nobody else can register."
+
+nginx:
+  server_name: "{{ pay_host }}"
+  site: pay
+  proxy_pass: "http://{{ container_prefix }}-vpn-client:49392"
+  websocket: true
+  client_max_body_size: "20m"
+  comment: BTCPay Server (reached through the VPN client's namespace)
+
+backup:
+  # the stores, invoices and wallets' keys (they are in the database). Not the chain: it is fetched again
+  frozen:
+    containers: ["{{ container_prefix }}-btcpay", "{{ container_prefix }}-btcpay-nbxplorer", "{{ container_prefix }}-btcpay-db"]
+    paths: ["{{ btcpay_data }}/postgres", "{{ btcpay_data }}/btcpay", "{{ btcpay_data }}/plugins", "{{ btcpay_data }}/nbxplorer"]
+
+settings:
+  - key: network
+    type: enum
+    options: [mainnet, testnet, signet, regtest]
+    label: Bitcoin network
+    help: "mainnet is real money. signet and testnet are for trying it with coins that are worth nothing; regtest is a chain of one's own, for tests."
+    default: mainnet
+  - key: prune_mb
+    type: int
+    label: Keep this much of the chain (MB)
+    help: "The Bitcoin node checks the whole chain once (days on a small machine, and about 700 GB pass through) and keeps the newest part: 5000 MB is about two weeks. 0: keep all of it."
+    default: 5000
+  - key: data_dir
+    label: Data directory
+    help: "Where the chain and the database go. Empty: <docker dir>/kn-btcpay. The chain wants a disk with room: about 20 GB with the default above."
+    default: ""
+  - key: pay_hostname
+    label: Hostname
+    help: "Empty: pay.<hostname>."
+    default: ""
+  - key: admin_email
+    label: Admin's address
+    help: "BTCPay Server logs in by mail address; no mail is sent to it. Empty: admin@<hostname>."
+    default: ""
+  - key: admin_password
+    type: secret
+    generate: true
+    help: "The admin's first password. Empty: generated from the fleet's seed."
+  - key: image
+    label: Image
+    help: "BTCPay Server's own image, pinned by version: its four images belong together, as the project's own set-up pins them."
+    default: docker.io/btcpayserver/btcpayserver:2.4.7
+  - key: nbxplorer_image
+    label: Image of NBXplorer
+    help: "Watches the chain for BTCPay Server's addresses."
+    default: docker.io/nicolasdorier/nbxplorer:2.6.23
+  - key: bitcoin_image
+    label: Image of Bitcoin Core
+    help: "The Bitcoin node."
+    default: docker.io/btcpayserver/bitcoin:32.1
+  - key: postgres_image
+    label: Image of the database
+    help: "PostgreSQL, as BTCPay Server's set-up ships it (it moves the data to a new major version by itself)."
+    default: docker.io/btcpayserver/postgres:18.7

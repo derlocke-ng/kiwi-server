@@ -22,7 +22,7 @@ SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "p
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",
             "wg": "VPN devices (wg-easy)", "control": "This page", "backup": "Backup store", "cache": "Local cache",
-            "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "chat": "Jabber",
+            "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "chat": "Jabber", "pay": "Payments (BTCPay Server)",
             "status": "Status page"}
 KEEP_DAYS = 30
 KEEP_INCIDENTS = 200

@@ -148,6 +148,41 @@ hosts:
 - Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB;
   history is kept `history_days` (365).
 
+## Payments (BTCPay Server)
+
+Add `btcpay` to a node's modules and you take Bitcoin payments yourself: BTCPay
+Server with its own Bitcoin node, invoices, and a point-of-sale page that works
+as a small shop.
+
+```yaml
+hosts:
+  papaya:
+    node:
+      modules: [vpn-client, reverse-proxy, btcpay, onion]
+      btcpay: { data_dir: /mnt/data/btcpay }
+      onion: { services: { pay: {} } }       # a hidden service, for strangers
+```
+
+- **The page** is `https://pay.<machine>` on the VPN; `kiwi-server logins` has the
+  admin's login (a mail address and a password, made at the first start; nobody
+  else can register). With `onion`, `kiwi-server onion` gives the address
+  strangers open in Tor Browser ([network.md](network.md#hidden-services)).
+- **The Bitcoin node** talks to the Bitcoin network through the VPN, not through
+  your home's line, and accepts no connections. It checks the whole chain once,
+  which takes days on a small machine, and keeps the newest `prune_mb` (5000 MB)
+  of it; give it a disk with about 20 GB (`data_dir`). Until it is done BTCPay
+  says that it is synchronizing.
+- **Trying it first**: `btcpay: { network: regtest }` is a chain of one's own,
+  ready in a minute, with coins worth nothing; `signet` and `testnet` are public
+  test networks. Change `network` back and it starts on real Bitcoin, with a
+  fresh database for that network.
+- **The backup** holds the stores, invoices and wallet keys, not the chain.
+- Tried on the test network in regtest (15 November 2026): the admin was made
+  and logs in over the VPN, an invoice was paid and settled, a shop page opened
+  without a login, and the hidden service opened through Tor. A new hidden
+  service needs a few minutes before it is found. Not tried: mainnet's first
+  sync. Lightning is not part of it.
+
 ## Writing a role
 
 A role is `roles/<name>/` with `role.yaml` and `apply.sh`. A module role

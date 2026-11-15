@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.111.0 — payments with BTCPay Server
+
+- **BTCPay Server** (kiwi-modules 0.42.0): add `btcpay` to a node and take Bitcoin
+  payments yourself, with its own Bitcoin node, invoices and a point-of-sale page as a
+  shop. `https://pay.<machine>` on the VPN; with `onion: { services: { pay: {} } }` a
+  hidden service for strangers. The node reaches the Bitcoin network through the VPN.
+  The admin's login is in `kiwi-server logins`. `network: regtest` tries it on a chain
+  of one's own. [roles.md](docs/roles.md#payments-btcpay-server).
+- Tried on the test network in regtest: the admin logs in over the VPN (the logins
+  drill tries BTCPay's login now), an invoice was paid and settled, and the hidden
+  service opened through Tor from the master (`tests/drills/onion.py`). Not tried:
+  mainnet's first sync.
+- The status page and Home call the site by its name.
+
 ## 2.110.0 — Jabber, and game servers tried through a fleet
 
 - **Jabber** (kiwi-modules 0.41.1): add `xmpp` to a master and your people have a

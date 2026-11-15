@@ -126,6 +126,9 @@ def try_one(x):
     if m == "git":
         code, _t, _h = ask(b + "/api/v1/user", auth=(user, pw), headers={"Accept": "application/json"})
         return verdict(code, (200,), (401, 403))
+    if m == "btcpay":
+        code, _t, _h = ask(b + "/api/v1/users/me", auth=(user, pw), headers={"Accept": "application/json"})
+        return verdict(code, (200,), (401, 403))
     if m == "xmpp":
         # a Jabber login as an app does it: STARTTLS, then the name and the password (SASL PLAIN)
         import base64, socket

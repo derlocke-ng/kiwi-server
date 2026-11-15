@@ -1,0 +1,44 @@
+#!/bin/bash
+# Starts BTCPay Server and makes its first account, the admin's, with the password from the
+# settings: before anyone else can. BTCPay lets the first account be made without a login,
+# and that account is the admin; left to the first visitor, a stranger at a hidden service
+# could take it. The password comes in KIWI_ADMIN_PASSWORD; BTCPay does not get it and
+# nothing here prints it.
+email=$KIWI_ADMIN
+pw=$KIWI_ADMIN_PASSWORD
+unset KIWI_ADMIN_PASSWORD
+say() { echo "kiwi: $*"; }
+
+admin() {
+    if [ -z "$pw" ]; then
+        say "no admin password in the settings: the first account made on the page becomes the admin"
+        return 0
+    fi
+    quoted=$(printf '%s' "$pw" | sed 's/[\\"]/\\&/g')
+    body=$(printf '{"email":"%s","password":"%s","isAdministrator":true}' "$email" "$quoted")
+    size=$(printf '%s' "$body" | wc -c)
+    tries=0
+    while :; do
+        # asked with bash itself: the image has no curl
+        if exec 3<>/dev/tcp/127.0.0.1/49392; then
+            printf 'POST /api/v1/users HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
+                "$size" "$body" >&3
+            read -r _http status _rest <&3
+            exec 3<&- 3>&-
+            case $status in
+                201|200) say "made the admin $email"; return 0 ;;
+                401|403) return 0 ;;                   # there is an admin already
+                5*|"") ;;                              # still starting
+                *) say "could not make the admin $email (BTCPay said $status)"; return 0 ;;
+            esac
+        fi
+        tries=$((tries + 1))
+        if [ "$tries" -ge 180 ]; then
+            say "BTCPay did not answer in 15 minutes; the admin $email was not made"
+            return 0
+        fi
+        sleep 5
+    done
+}
+admin &
+exec /app/docker-entrypoint.sh

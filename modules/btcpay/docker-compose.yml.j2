@@ -1,0 +1,95 @@
+# btcpay — BTCPay Server with its own Bitcoin node, as the project's own set-up wires them.
+# All four share the VPN client's network: the node reaches the Bitcoin network through the
+# VPN, and they find each other at 127.0.0.1. Only BTCPay's page listens beyond it.
+{% set net = "service:" ~ container_prefix ~ "-vpn-client" %}
+{% set db = "User ID=postgres;Host=127.0.0.1;Port=5432" %}
+services:
+  {{ container_prefix }}-btcpay-db:
+    image: {{ postgres_image }}
+    container_name: {{ container_prefix }}-btcpay-db
+    network_mode: "{{ net }}"
+    depends_on:
+      - {{ container_prefix }}-vpn-client
+    # trust is as the project ships it; it listens on 127.0.0.1 only, which its three clients share
+    command: ["-c", "listen_addresses=127.0.0.1", "-c", "random_page_cost=1.0", "-c", "shared_preload_libraries=pg_stat_statements"]
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    restart: unless-stopped
+    stop_grace_period: 60s
+    volumes:
+      - {{ btcpay_data }}/postgres:/var/lib/postgresql:z
+
+  {{ container_prefix }}-btcpay-bitcoind:
+    image: {{ bitcoin_image }}
+    container_name: {{ container_prefix }}-btcpay-bitcoind
+    network_mode: "{{ net }}"
+    depends_on:
+      - {{ container_prefix }}-vpn-client
+    # on the command line, not in BITCOIN_EXTRA_ARGS: that wants several lines, which a unit file's
+    # environment cannot hold. It listens on 127.0.0.1 only: for NBXplorer, which watches it
+    command: ["bitcoind", "-rpcport=43782", "-rpcbind=127.0.0.1:43782", "-rpcallowip=127.0.0.1", "-port=39388", "-bind=127.0.0.1",
+              "-whitelist=127.0.0.1", "-maxmempool=300"{% if prune_mb %}, "-prune={{ prune_mb }}"{% endif %}]
+    environment:
+      - BITCOIN_NETWORK={{ network }}
+      # a chain of one's own has no blocks yet: NBXplorer makes the first ones, and the node needs a wallet for that
+      - CREATE_WALLET={{ 'true' if network == 'regtest' else 'false' }}
+      - BITCOIN_WALLETDIR=/walletdata
+    restart: unless-stopped
+    # the chain's database is written out when it stops
+    stop_grace_period: 300s
+    volumes:
+      - {{ btcpay_data }}/bitcoin:/data:z
+      - {{ btcpay_data }}/bitcoin-wallet:/walletdata:z
+
+  {{ container_prefix }}-btcpay-nbxplorer:
+    image: {{ nbxplorer_image }}
+    container_name: {{ container_prefix }}-btcpay-nbxplorer
+    network_mode: "{{ net }}"
+    depends_on:
+      - {{ container_prefix }}-btcpay-db
+      - {{ container_prefix }}-btcpay-bitcoind
+    environment:
+      - NBXPLORER_NETWORK={{ network }}
+      - NBXPLORER_BIND=127.0.0.1:32838
+      - NBXPLORER_TRIMEVENTS=10000
+      - NBXPLORER_SIGNALFILESDIR=/datadir
+      - NBXPLORER_POSTGRES={{ db }};Application Name=nbxplorer;MaxPoolSize=20;Database=nbxplorer{{ network }}
+      - NBXPLORER_CHAINS=btc
+      - NBXPLORER_BTCRPCURL=http://127.0.0.1:43782/
+      - NBXPLORER_BTCNODEENDPOINT=127.0.0.1:39388
+    restart: unless-stopped
+    volumes:
+      - {{ btcpay_data }}/nbxplorer:/datadir:z
+      - {{ btcpay_data }}/bitcoin:/root/.bitcoin:z
+
+  {{ container_prefix }}-btcpay:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-btcpay
+    network_mode: "{{ net }}"
+    depends_on:
+      - {{ container_prefix }}-btcpay-nbxplorer
+    entrypoint: ["/bin/bash"]
+    command: ["/kiwi-start.sh"]
+    environment:
+      - KIWI_ADMIN={{ admin_address }}
+      - KIWI_ADMIN_PASSWORD={{ admin_password }}
+      - BTCPAY_POSTGRES={{ db }};Application Name=btcpayserver;Database=btcpayserver{{ network }}
+      - BTCPAY_EXPLORERPOSTGRES={{ db }};Application Name=btcpayserver;MaxPoolSize=80;Database=nbxplorer{{ network }}
+      - BTCPAY_NETWORK={{ network }}
+      - BTCPAY_BIND=0.0.0.0:49392
+      - BTCPAY_ROOTPATH=/
+      - BTCPAY_CHAINS=btc
+      - BTCPAY_BTCEXPLORERURL=http://127.0.0.1:32838/
+      - BTCPAY_DOCKERDEPLOYMENT=true
+      - BTCPAY_NODEFAULTCHAIN=true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-btcpay/start.sh:/kiwi-start.sh:ro,z
+      - {{ btcpay_data }}/btcpay:/datadir:z
+      - {{ btcpay_data }}/plugins:/root/.btcpayserver/Plugins:z
+      - {{ btcpay_data }}/nbxplorer:/root/.nbxplorer:z

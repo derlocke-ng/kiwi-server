@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.123.1 — Jabber's accounts stay with their name
+
+- kiwi-modules 0.48.1: switching Jabber between one service and two keeps every account
+  (before, the public service started without the accounts of its name). Found by the
+  owner: his account on the public name could not log in, and his client's tries got a
+  Tor exit banned for an hour ("Policy Violation").
+- New drill: `tests/drills/onion-browser.py` opens hidden services in a real Firefox, told
+  what Tor Browser is told about `.onion` addresses, through Tor on the master; with
+  `--login`, logs in with the network's logins.
+
 ## 2.123.0 — a second starter machine, taken in from the control page
 
 - **More machines from the starter stick**: start a machine from the stick on the home

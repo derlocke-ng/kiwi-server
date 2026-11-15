@@ -138,14 +138,21 @@ from here.
 A device on the VPN belongs to a group: you choose it when you add the device
 (`enroll --group`, or "Who is it for?" on the page). A group is a range of
 addresses on the master. Each group reaches what it is given, and nothing else.
-A new network has four:
+A new network has five:
 
-| Group | Reaches | Other devices | Admin pages |
-|---|---|---|---|
-| `devices` | everything | yes | yes |
-| `routers` | everything | yes | no |
-| `guests` | every node | no | no |
-| `pentest` | nothing | no | no |
+| Group | For | Reaches | Other devices | Admin pages |
+|---|---|---|---|---|
+| `devices` | your own devices | everything | yes | yes |
+| `family` | the people of the house | every app | yes | no |
+| `routers` | a router that brings a whole LAN | everything | yes | no |
+| `guests` | visitors | every node | no | no |
+| `pentest` | someone testing the network | nothing | no | no |
+
+**Admin pages** are the network's controls, not apps: the control page, Portainer,
+Pi-hole, the VPN's device page, the backup server, the cache. A group opens them
+only with its admin switch on, or when one is named for it. "Everything" without
+the switch is everything but those. A linked network opens an admin page only
+when it is named. `kiwi-server access` lists the admin pages of your network.
 
 A device outside every group reaches everything. The master is always
 reachable: it answers the names.
@@ -165,6 +172,8 @@ What a group or a linked network can be given:
 
 - `all`: everything on the VPN (a group only).
 - `nodes`: every node.
+- `apps`: every app: the web pages of every node, and nothing else of them. No
+  SSH, no other port, no admin pages (a group only).
 - `papaya`: one machine, all of it.
 - `cloud.papaya`: one service, its web address only.
 - `papaya:22`: one port of a machine.
@@ -173,7 +182,7 @@ What a group or a linked network can be given:
 `--add` and `--remove` change the list by single entries. `--new` makes a group
 with the next free range. `--internet no` keeps a group off the Internet through
 the VPN, `--peers no` away from other devices, `--admin yes` lets it open the
-master's admin pages.
+admin pages.
 
 ```bash
 kiwi-server access ~/kiwi/fleet.yaml family --new papaya lychee:22
@@ -184,9 +193,9 @@ their comments stay. It reaches the machines with the next apply: the master
 always, and a node when single services of it are named. The command says which.
 
 Two places enforce it. The master's firewall lets through what is given and
-drops the rest. All services of a node share one address and port, so a node
-that a group reaches for some services only refuses that group its other names
-in its own web server.
+drops the rest. All services of a node share one address and port, so the node's
+own web server does the rest: it refuses a group the services it was not given,
+and the admin pages when it has not the switch.
 
 On the control page this is "Who may reach what", in the app the same entry in
 the menu: a tick per machine and service.

@@ -125,12 +125,16 @@ def expect(row, other):
         for p in mm["ports"]:
             if p != str(port):
                 out.append(("%s:%s" % (n["name"], p), ("tcp", n["ip"], p), yes))
+        apps = opened.get("apps", False)
+        admin = row["admin"] if is_group else row is None       # a linked network: only by name
         for s in n["services"]:
             name = "%s.%s" % (s, n["hostname"])
-            if whole or s in mm["services"]:
+            page = s in (n.get("admin") or [])
+            if s in mm["services"] or ((whole or apps) and (admin or not page)):
                 out.append((name, ("web", name, n["ip"]), None))                        # any answer of the service
             else:
-                out.append((name + " (not given)", ("web", name, n["ip"]), ("000", "refused")))
+                out.append((name + (" (an admin page)" if page and (whole or apps) else " (not given)"),
+                            ("web", name, n["ip"]), ("000", "refused")))
     if row is None or is_group:
         admin = row["admin"] if row else True
         out.append(("the master's names (DNS)", ("dns", nodes[0]["hostname"] if nodes else "example.com", server_ip), yes))

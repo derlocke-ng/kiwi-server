@@ -68,6 +68,7 @@ iptables -A FORWARD -s {{ subnet }} -d {{ mesh_subnet }} -j DROP
 {% set full = rhost if rhost.endswith('.' ~ domain) else rhost ~ '.' ~ domain %}
 {% set ip = host_ips.get(full) or host_ips.get(rhost) %}
 {% if rs == 'nodes' %}{% for ip in mesh_ips %}{% set _ = allowed.append(ip) %}{% endfor %}
+{% elif rs == 'apps' %}{% for ip in mesh_ips %}{% set _ = parts.append((ip, '80')) %}{% set _ = parts.append((ip, '443')) %}{% endfor %}
 {% elif ip and rport %}{% set _ = parts.append((ip, rport)) %}
 {% elif ip and '.' in full[:-(domain | length + 1)] %}{% set _ = parts.append((ip, '80')) %}{% set _ = parts.append((ip, '443')) %}
 {% elif ip %}{% set _ = allowed.append(ip) %}

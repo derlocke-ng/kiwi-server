@@ -252,6 +252,8 @@ class Renderer:
         self._needs_ca = False
         self._master_ip = ""
         self._groups = {}
+        self._partners = {}
+        self._admin = {}        # hostname -> the full names of its admin pages
 
     def prepare(self, host):
         role = self.roles[host.role]
@@ -286,6 +288,7 @@ class Renderer:
                 if role.node_type == "master" and not master_ip:
                     master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
                     self._groups = (h.module_settings.get("vpn-server") or {}).get("groups") or {}
+                    self._partners = (h.module_settings.get("vpn-server") or {}).get("federation") or {}
                 lan = static_lan(h)
                 if lan and role.node_type != "master":      # a master's stack lives on the mesh, not its LAN
                     node_lan.append((spec.vpn_ip, lan.ip))
@@ -293,6 +296,7 @@ class Renderer:
                         c = h.module_settings["cache"]
                         self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt"))))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
+                self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
@@ -387,9 +391,14 @@ class Renderer:
             host.module_settings["reverse-proxy"]["onion"] = sites
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
-            rules = accessmod.node_rules(self._groups, host.name, host.hostname)
+            pages = self._admin.get(host.hostname) or []
+            rules = accessmod.node_rules(self._groups, host.name, host.hostname, pages)
             if rules:
                 host.module_settings["reverse-proxy"]["access"] = rules
+            if pages and self._partners:        # a linked network opens an admin page only when it is named for it
+                rp = host.module_settings["reverse-proxy"]
+                rp["federation"] = fedmod.admin_rules(rp.get("federation"), self._partners, host.name, pages,
+                                                     str(self.fleet.defaults.get("domain") or "home"))
         spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
                                    lan_addresses=self.lan_addresses(host, role))
         b = modmod.Renderer(self.ms).render(spec)
@@ -2530,7 +2539,7 @@ def _access_facts(args):
         raise KiwiError("access is about the VPN of one master: this fleet has %d with a VPN server" % len(masters))
     master = masters[0]
     groups = (master.module_settings.get("vpn-server") or {}).get("groups") or {}
-    found = accessmod.machines(fleet, roles, r.dns_records())
+    found = accessmod.machines(fleet, roles, r.dns_records(), r._admin)
     devices = {}
     ddir = fleet.resolve_path("secrets/devices")
     for f in sorted(os.listdir(ddir)) if os.path.isdir(ddir) else []:
@@ -2572,9 +2581,12 @@ def cmd_access(args):
         loose = sorted(d for d in devices if d not in grouped)
         if loose and not args.who:
             print("%-10s %-15s everything\n%-10s %-15s devices: %s" % ("(no group)", "", "", "", ", ".join(loose)))
+        pages = ["%s.%s" % (s, m["name"]) for m in found for s in m["admin"]]
+        if pages and not args.who:
+            print("\nadmin pages (only with \"admin pages: yes\", or named): %s" % ", ".join(pages))
         print("\nmachines: %s" % "; ".join("%s%s" % (m["name"], (" (%s)" % ", ".join(m["services"])) if m["services"] else "")
                                            for m in found if not m["master"]))
-        print("change:   kiwi-server access %s <who> <what…>    what: all, nodes, nothing, a machine, service.machine, machine:port"
+        print("change:   kiwi-server access %s <who> <what…>    what: all, nodes, apps, nothing, a machine, service.machine, machine:port"
               % os.path.basename(fleet.path))
         return
     what = [w for w in args.what if w != "nothing"]
@@ -2600,8 +2612,10 @@ def cmd_access(args):
     else:
         new = accessmod.change(groups, args.who, found, domain, mesh, reach=None if (args.add or args.remove) else what,
                                add=what if args.add else (), remove=what if args.remove else (), new=args.new, flags=flags)
+        pages = lambda m: ["%s.%s" % (s, m["hostname"]) for s in m["admin"]]      # noqa: E731
         touched = {m["name"] for m in found if not m["master"] and
-                   accessmod.node_rules(groups, m["name"], m["hostname"]) != accessmod.node_rules(new, m["name"], m["hostname"])}
+                   accessmod.node_rules(groups, m["name"], m["hostname"], pages(m))
+                   != accessmod.node_rules(new, m["name"], m["hostname"], pages(m))}
         path = os.path.realpath(fleet.path)
         before = util.read_text(path)
         text, kept = accessmod.rewrite(before, master.name, master.role, new)
@@ -3241,13 +3255,13 @@ def build_parser():
     s.add_argument("--show", metavar="NAME", help="what this person types into Tor Browser")
     s.add_argument("--remove", action="store_true", help="take the hidden service away, or with --client that name")
     s = sub("access", cmd_access); s.add_argument("fleet"); s.add_argument("who", nargs="?", help="a group of the VPN or a linked network")
-    s.add_argument("what", nargs="*", help="all, nodes, nothing, a machine, service.machine or machine:port")
+    s.add_argument("what", nargs="*", help="all, nodes, apps (every app, no admin pages), nothing, a machine, service.machine or machine:port")
     s.add_argument("--add", action="store_true", help="give these too, and keep what it has")
     s.add_argument("--remove", action="store_true", help="take these away, and keep the rest")
     s.add_argument("--new", action="store_true", help="make the group, with the next free range of addresses")
     s.add_argument("--peers", choices=["yes", "no"], help="may the group reach other devices on the VPN")
     s.add_argument("--internet", choices=["yes", "no"], help="may the group leave to the internet through the VPN")
-    s.add_argument("--admin", choices=["yes", "no"], help="may the group open the master's admin pages")
+    s.add_argument("--admin", choices=["yes", "no"], help="may the group open the admin pages: the control page, Portainer, Pi-hole and the like")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")

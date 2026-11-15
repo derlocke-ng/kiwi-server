@@ -74,7 +74,7 @@ settings:
     type: object
     group: Generated
     label: VPN group access
-    help: "Filled in by kiwi-server from the VPN server's groups: the client ranges that reach this machine for some of its services only. names: name -> the ranges refused there; others: the ranges refused at every other name."
+    help: "Filled in by kiwi-server from the VPN server's groups: the client ranges that reach this machine for some of its services only, and the ones without the admin pages. names: name -> the ranges refused there; others: the ranges refused at every other name."
     default: {}
   - key: onion
     type: object

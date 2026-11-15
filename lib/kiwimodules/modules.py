@@ -673,6 +673,7 @@ class Renderer:
                 hsts = e.get("hsts")
                 try:
                     s = {"module": name, "site": str(e.get("site") or ""),     # (for logins)
+                         "admin": bool(e.get("admin", False)),                # an admin page: see admin_names
                          "server_name": self.expand(e["server_name"], ctx, what),
                          "proxy_pass": proxy_pass,
                          "websocket": bool(e.get("websocket", False)),
@@ -711,6 +712,15 @@ class Renderer:
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
         return [s["server_name"] for s in servers]
+
+    def admin_names(self, spec):
+        """The names among service_names that are admin pages (`admin: true` in a module's
+        nginx block): the control page, Portainer, Pi-hole, the WireGuard page, the backup
+        server, the cache. Who on the VPN may open them is decided apart from the apps."""
+        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        base = self.base_context(spec, ordered)
+        _upstreams, servers = self.nginx_blocks(spec, ordered, base)
+        return [s["server_name"] for s in servers if s.get("admin")]
 
     # ---- logins ----------------------------------------------------------------------
     def logins(self, spec):

@@ -868,7 +868,7 @@ class Control:
         except ValueError:
             raise KiwiError((r.stderr.strip().splitlines() or ["the rules could not be read"])[-1].replace("error: ", ""))
 
-    def save_access(self, changes, new="", user="admin"):
+    def save_access(self, changes, new="", new_as="nothing", user="admin"):
         """{who: {reach: [...], peers, internet, admin}} into the fleet file (a group) or
         federation.yaml (a linked network), through `kiwi-server access`, which says no to
         a name that is none. Only what differs from now is written. `new`: a group to make.
@@ -879,7 +879,9 @@ class Control:
         if new:
             if not accessmod.NAME.match(new) or new in now:
                 raise KiwiError("a new group needs a name of its own: small letters, digits and -")
-            todo.append((new, [new, "--new"]))
+            # what a new group starts with: nothing, every app, or everything with the admin pages
+            todo.append((new, [new, "--new"] + {"apps": ["apps", "--peers", "yes"],
+                                                 "all": ["all", "--peers", "yes", "--admin", "yes"]}.get(new_as, [])))
         for name, c in changes.items():
             x = now.get(name)
             if x is None:

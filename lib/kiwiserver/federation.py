@@ -133,6 +133,21 @@ def node_rules(found, host, domain):
     return {"names": names, "deny": deny} if (names or deny) else {}
 
 
+def admin_rules(rules, found, host, admin, domain):
+    """`node_rules` with the node's admin pages (`admin`: their full names) closed to every
+    partner, also one that is given the whole node: an admin page opens for a partner only
+    when it is named in its share."""
+    if not found or not admin:
+        return rules
+    everyone = [p["as"] for p in found.values() if p.get("as")]
+    rules = {"names": dict((rules or {}).get("names") or {}), "deny": list((rules or {}).get("deny") or [])}
+    for site in admin:
+        short = site[:-len(domain) - 1] if site.endswith("." + domain) else site        # control.papaya
+        allow = [p["as"] for p in found.values() if p.get("as") and short in p["share"]]
+        rules["names"][site] = {"allow": allow, "deny": everyone}
+    return rules
+
+
 def inject(fleet_dir, data):
     """Fill the settings in from federation.yaml before the fleet's hosts are made."""
     found = partners(fleet_dir)

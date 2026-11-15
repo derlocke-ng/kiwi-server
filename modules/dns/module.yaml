@@ -82,6 +82,7 @@ logins:
 nginx:
   servers:
     - server_name: "{{ pihole_hostname or 'pihole.' ~ hostname }}"
+      admin: true
       # inside the WireGuard server's namespace Pi-hole has no name of its own: nginx
       # in the same namespace reaches it at localhost, from outside through the server
       proxy_pass: "http://{% if network_mode %}{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else container_prefix ~ '-' ~ network_mode }}{% else %}{{ container_prefix }}-pihole{% endif %}:{{ web_port_effective }}"

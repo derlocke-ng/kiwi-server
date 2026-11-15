@@ -7,6 +7,7 @@ things, in the same words:
 
     all             everything on the VPN (a group only)
     nodes           every node
+    apps            the web pages of every node and nothing else of them (a group only)
     papaya          one machine, all of it
     cloud.papaya    one service of a machine: its web address
     papaya:22       one port of a machine
@@ -16,6 +17,12 @@ vpn-server). All services of a machine share one address and port, so a machine 
 reaches for some services only refuses that group its other names in its own web server:
 `node_rules` makes that list for the reverse proxy. For a linked network the same is done
 in federation.py.
+
+Some pages are not apps but the network's controls: the control page, Portainer, Pi-hole,
+the WireGuard page, the backup server, the cache (`admin: true` in their module). They are
+the admin pages. A group opens them only with its `admin` switch on, or when one is named
+for it; a linked network only when one is named. "Everything" without the switch is
+everything but those.
 """
 import ipaddress
 import re
@@ -28,9 +35,10 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 WORD = re.compile(r"^[a-z0-9][a-z0-9.-]{0,120}(:[0-9]{1,5})?$")
 
 
-def machines(fleet, roles, records):
-    """The machines a rule can name, with their services: [{name, hostname, ip, master, services}].
-    `records` are the fleet's DNS records, (address, name)."""
+def machines(fleet, roles, records, admin=None):
+    """The machines a rule can name, with their services: [{name, hostname, ip, master, services,
+    admin}]. `records` are the fleet's DNS records, (address, name); `admin`: {hostname: the
+    full names of its admin pages}. `admin` in the result: the services that are admin pages."""
     out = []
     for h in fleet.hosts.values():
         if h.role not in roles or not roles[h.role].stack:
@@ -40,7 +48,8 @@ def machines(fleet, roles, records):
             continue            # not on the VPN yet: nothing to reach
         tail = "." + h.hostname
         out.append({"name": h.name, "hostname": h.hostname, "ip": ip, "master": roles[h.role].node_type == "master",
-                    "services": sorted({n[:-len(tail)] for a, n in records if a == ip and n.endswith(tail)})})
+                    "services": sorted({n[:-len(tail)] for a, n in records if a == ip and n.endswith(tail)}),
+                    "admin": sorted(n[:-len(tail)] for n in (admin or {}).get(h.hostname, []) if n.endswith(tail))})
     return out
 
 
@@ -55,9 +64,9 @@ def _address(text):
 def canon(entry, found, domain, group=True):
     """One thing a rule gives, in its short form; KiwiError says what it could be instead."""
     e = str(entry).strip().lower()
-    if e in ("all", "nodes"):
-        if e == "all" and not group:
-            raise KiwiError("a linked network is given machines and services, not all: name them")
+    if e in ("all", "nodes", "apps"):
+        if e in ("all", "apps") and not group:
+            raise KiwiError("a linked network is given machines and services, not %s: name them" % e)
         return e
     if group and _address(e):
         return e
@@ -86,12 +95,12 @@ def canon(entry, found, domain, group=True):
 
 def shape(reach, found):
     """A reach list as a page shows it: {all, machines: {name: {whole, services, ports}}, other}."""
-    out = {"all": "all" in reach, "machines": {m["name"]: {"whole": False, "services": [], "ports": []}
-                                               for m in found if not m["master"]}, "other": []}
+    out = {"all": "all" in reach, "apps": "apps" in reach,
+           "machines": {m["name"]: {"whole": False, "services": [], "ports": []} for m in found if not m["master"]}, "other": []}
     for e in reach:
         host, _, port = e.partition(":")
         service, _, machine = host.partition(".")
-        if e == "all":
+        if e in ("all", "apps"):
             continue
         if e == "nodes":
             for m in out["machines"].values():
@@ -111,7 +120,7 @@ def words(reach):
         return "everything"
     if not reach:
         return "nothing"
-    return ", ".join("every node" if e == "nodes" else e for e in reach)
+    return ", ".join({"nodes": "every node", "apps": "every app"}.get(e, e) for e in reach)
 
 
 def _loose(reach, found, domain, group):
@@ -150,25 +159,40 @@ def view(groups, partners, found, domain, device_addresses=None):
     return rows
 
 
-def node_rules(groups, name, hostname):
-    """reverse-proxy's `access` for one node: the groups that reach it for some of its
-    services only. names: service name -> the ranges refused there; others: the ranges
-    refused at every name not listed. Empty when no group is limited here."""
-    limited = {}            # range -> the services of this node the group has
+def node_rules(groups, name, hostname, admin=()):
+    """reverse-proxy's `access` for one node: which client ranges it refuses where. names:
+    site -> the ranges refused there; others: the ranges refused at every site not listed.
+    Two reasons to refuse. A group that reaches the node for some services only is refused
+    the others. And an admin page (`admin`: their full names) is refused to every group
+    that has not the admin switch, whatever else it reaches here, unless the page is named
+    for it. Empty when nothing is refused."""
+    limited, plain = {}, []     # range -> the services of this node it has; ranges without the admin pages
+    named = {}                  # range -> the sites of this node named for it
     for g in (groups or {}).values():
         g = g or {}
         reach = [str(e).lower() for e in (g.get("reach", ["all"]) or [])]
-        if not g.get("subnet") or "all" in reach or "nodes" in reach or name in reach or hostname in reach:
+        if not g.get("subnet"):
             continue
-        mine = [e.rsplit(".", 1)[0] for e in reach if ":" not in e and e.endswith("." + name)]
-        mine += [e[:-len(hostname) - 1] for e in reach if ":" not in e and e.endswith("." + hostname)]
-        if mine:
-            limited[str(g["subnet"])] = set(mine)
-    if not limited:
+        mine = {e.rsplit(".", 1)[0] for e in reach if ":" not in e and e.endswith("." + name)}
+        mine |= {e[:-len(hostname) - 1] for e in reach if ":" not in e and e.endswith("." + hostname)}
+        named[str(g["subnet"])] = mine
+        whole = "all" in reach or "nodes" in reach or name in reach or hostname in reach
+        if whole or "apps" in reach:
+            if not g.get("admin", FLAG_DEFAULT["admin"]):
+                plain.append(str(g["subnet"]))
+        elif mine:
+            limited[str(g["subnet"])] = mine
+    tail = "." + hostname
+    pages = sorted(n[:-len(tail)] for n in admin if n.endswith(tail))
+    names = {}
+    for s in sorted(set().union(*limited.values()) if limited else set()):
+        names["%s.%s" % (s, hostname)] = sorted(r for r, has in limited.items() if s not in has)
+    for s in pages if (plain or limited) else []:
+        refused = set(r for r in plain if s not in named.get(r, ())) | set(r for r, has in limited.items() if s not in has)
+        names["%s.%s" % (s, hostname)] = sorted(refused)
+    if not limited and not any(names.values()):
         return {}
-    services = sorted(set().union(*limited.values()))
-    return {"names": {"%s.%s" % (s, hostname): sorted(r for r, has in limited.items() if s not in has) for s in services},
-            "others": sorted(limited)}
+    return {"names": names, "others": sorted(limited)}
 
 
 def next_range(groups, mesh):

@@ -61,6 +61,23 @@ iptables -A INPUT -i wg0 -s 10.8.4.0/24 -p tcp --dport 80 -j DROP
 iptables -A INPUT -i wg0 -s 10.8.4.0/24 -p tcp --dport 443 -j DROP
 iptables -t nat -A POSTROUTING -s 10.8.4.0/24 -o eth0 -j MASQUERADE
 
+# group family (10.8.5.0/24): reach apps; other clients yes; internet yes; admin pages no
+# (before the wg0 accept-all below — iptables stops at the first match)
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.1 -j ACCEPT
+iptables -A INPUT -i wg0 -s 10.8.5.0/24 -p tcp --dport 51821 -j DROP
+iptables -A INPUT -i wg0 -s 10.8.5.0/24 -p tcp --dport 80 -j DROP
+iptables -A INPUT -i wg0 -s 10.8.5.0/24 -p tcp --dport 443 -j DROP
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.25 -p tcp --dport 80 -j ACCEPT
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.25 -p tcp --dport 443 -j ACCEPT
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.6 -p tcp --dport 80 -j ACCEPT
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.6 -p tcp --dport 443 -j ACCEPT
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.9 -p tcp --dport 80 -j ACCEPT
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.9 -p tcp --dport 443 -j ACCEPT
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.25 -j DROP
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.6 -j DROP
+iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.9 -j DROP
+iptables -t nat -A POSTROUTING -s 10.8.5.0/24 -o eth0 -j MASQUERADE
+
 # the admin pages for clients outside every group (the plain mesh, 10.8.0.0/24)
 
 # stock wg-easy post-up

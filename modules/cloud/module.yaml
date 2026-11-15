@@ -67,6 +67,8 @@ logins:
 nginx:
   servers:
     - server_name: "{{ nc_hostname or 'cloud.' ~ hostname }}"
+      # usable as a hidden service: its page and its files were tried through Tor; logging in was not
+      onion: true
       proxy_pass: "http://nextcloud-aio-apache:{{ apache_port }}"
       comment: Nextcloud
       hsts: true

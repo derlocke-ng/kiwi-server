@@ -45,6 +45,8 @@ nginx:
     name: immich
     server: "{{ container_prefix }}-immich:2283"
   server_name: "{{ immich_host }}"
+  # usable as a hidden service: its page, its files and what its app is told were tried through Tor; logging in was not
+  onion: true
   proxy_pass: "http://immich"
   websocket: true
   client_max_body_size: "0"

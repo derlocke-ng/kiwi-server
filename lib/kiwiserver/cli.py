@@ -233,6 +233,12 @@ def stack_errors(ms, host, role):
                 and any(h.role == "master" for h in host.fleet.hosts.values()))
     if stand_in:
         rp["via"] = "192.0.2.1"
+    # https at its hidden services: the certificate is issued at the render; here something stands in for it
+    files, cert = host.module_files, []
+    if rp is not None and "onion" in host.modules and (host.module_settings.get("onion") or {}).get("tls"):
+        cert = [k for k in ("reverse-proxy/onion_fullchain", "reverse-proxy/onion_privkey") if k not in files]
+        for k in cert:
+            files[k] = b"stand-in\n"
     try:
         modmod.Renderer(ms).render(rolesmod.stack_spec(host, role))
     except KiwiError as e:
@@ -240,6 +246,8 @@ def stack_errors(ms, host, role):
     finally:
         if stand_in:
             rp.pop("via", None)
+        for k in cert:
+            files.pop(k, None)
     return []
 
 
@@ -411,7 +419,7 @@ class Renderer:
         if "onion" in host.modules:
             # its hidden services: their keys and addresses from the seed, and the proxy's site for each
             keys, sites = {}, {}
-            mine, usable = site_names(self.ms, host, role, with_usable=True)
+            mine, usable, owner = site_names(self.ms, host, role, with_usable=True)
             for k in onionmod.for_host(self.fleet.seed(), host):
                 if k["service"] not in mine:
                     raise KiwiError("%s: onion.services: it has no site called %s (it has: %s)"
@@ -426,23 +434,25 @@ class Renderer:
             host.module_settings["onion"]["keys"] = keys
             host.module_settings["reverse-proxy"]["onion"] = sites
             if host.module_settings["onion"].get("tls") and keys:
-                # https at the hidden services: one certificate of the fleet's CA for this machine's addresses
+                # https at the hidden services: one certificate for this machine's addresses. From the
+                # fleet's CA when it may vouch for them; a CA limited to the fleet's names may not, and
+                # then the certificate is its own (a stranger's browser warns in both cases)
                 tls = host.cfg.get("tls") or {}
                 limits = tls.get("name_constraints") or []
-                if limits and not any(str(x).lstrip(".") == "onion" for x in limits):
-                    raise KiwiError("%s: onion.tls: the fleet's CA is limited to %s, and a certificate for a .onion "
-                                    "address would not be believed. Add onion to tls.name_constraints (a new CA), or "
-                                    "leave tls off" % (host.name, ", ".join(str(x) for x in limits)))
+                own = bool(limits) and not any(str(x).lstrip(".") == "onion" for x in limits)
                 key, full = certs.ensure_names_cert(self.ca_dir(host), "%s.onion-services" % host.hostname,
                                                     [k["address"] for k in keys.values()],
                                                     days=int(tls.get("cert_days") or certs.CERT_DAYS),
-                                                    ca_days=int(tls.get("days") or certs.DAYS), name_constraints=limits)
+                                                    ca_days=int(tls.get("days") or certs.DAYS), name_constraints=limits, own=own)
                 host.module_files["reverse-proxy/onion_fullchain"] = util.read_bytes(full)
                 host.module_files["reverse-proxy/onion_privkey"] = util.read_bytes(key)
                 host.module_settings["reverse-proxy"]["onion_fullchain"] = "onion-fullchain.pem"
                 host.module_settings["reverse-proxy"]["onion_privkey"] = "onion-privkey.pem"
-            if "xmpp" in host.modules:      # Jabber answers at its hidden service's name too, and on its own port
-                host.module_settings["xmpp"]["onion"] = {n: k["address"] for n, k in keys.items() if n in ("jabber", "xmpp")}
+            # a module that wants to know the addresses of its own sites (a setting `onion`) is told:
+            # Jabber answers at its hidden service's name too, Paperless takes a login sent from there
+            for module in {owner.get(n) for n in keys} - {"", "onion", "reverse-proxy"}:
+                if any(s.key == "onion" for s in self.ms.get(module).settings):
+                    host.module_settings[module]["onion"] = {n: k["address"] for n, k in keys.items() if owner.get(n) == module}
         if "reverse-proxy" in host.modules:
             # a node open to the internet: its public names and ports come in through the master
             rp = host.module_settings["reverse-proxy"]
@@ -1536,7 +1546,7 @@ def cmd_notify(args):
     master = next((h for h in fleet.hosts.values() if h.role == "master"), None)
     door = str(((master.cfg.get("master") or {}).get("vpn-server") or {}).get("wg_host") or "") if master else ""
     outside = {s for s, _n, _a in sites if not s.endswith(ending)}
-    answers = health.probe([s for s, _n, _a in sites], at={s: door for s in outside} if door else None)
+    answers = health.probe([s for s, _n, _a in sites], **({"at": {s: door for s in outside}} if door and outside else {}))
     services = [{"site": s, "host": n, "admin": a, "ok": answers[s][0], "public": s in outside} for s, n, a in sites]
     if services and not any(x["ok"] for x in services):
         # not one answers: this computer is not on the network (its names do not open from here),
@@ -2765,6 +2775,11 @@ def _access_facts(args):
     master = masters[0]
     groups = (master.module_settings.get("vpn-server") or {}).get("groups") or {}
     found = accessmod.machines(fleet, roles, r.dns_records(), r._admin)
+    for m in found:                 # which of its sites can be hidden services: the ones their modules mark
+        try:
+            m["tor"] = sorted(site_names(ms, fleet.hosts[m["name"]], roles[fleet.hosts[m["name"]].role], with_usable=True)[1])
+        except KiwiError:
+            m["tor"] = []
     devices = {}
     ddir = fleet.resolve_path("secrets/devices")
     for f in sorted(os.listdir(ddir)) if os.path.isdir(ddir) else []:
@@ -2867,7 +2882,7 @@ def site_names(ms, host, role, with_usable=False):
     rr = modmod.Renderer(ms)
     ordered = ms.resolve(spec.modules, spec.node_type)
     _up, servers = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
-    out, usable = {}, set()
+    out, usable, owner = {}, set(), {}
     for s in servers:
         name = s["server_name"]
         if "*" in name:
@@ -2876,9 +2891,10 @@ def site_names(ms, host, role, with_usable=False):
         short = name[:-len(host.hostname) - 1] if name.endswith("." + host.hostname) else s.get("site") or name.split(".", 1)[0]
         if short and short not in out:
             out[short] = name
+            owner[short] = s.get("module") or ""
             if s.get("onion"):
                 usable.add(short)
-    return (out, usable) if with_usable else out
+    return (out, usable, owner) if with_usable else out
 
 
 def _hidden(fleet, roles, ms):
@@ -2930,12 +2946,13 @@ def cmd_onion(args):
     rolesmod.resolve_settings(role, host, ms)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms)
     r.dns_records()
-    sites, usable = site_names(ms, host, role, with_usable=True)
+    sites, usable, _owner = site_names(ms, host, role, with_usable=True)
     sites = sorted(sites)
-    if service in sites and service not in usable and not args.remove and service not in (
+    if service in sites and service not in usable and not args.remove and not args.anyway and service not in (
             onionmod.services(host) if "onion" in host.modules else {}):
         raise KiwiError("%s.%s is not marked as usable over Tor: its pages were not seen to work at a .onion address "
-                        "(they send a visitor to the name on the VPN, or need that name). Usable on %s: %s"
+                        "(they may send a visitor to the name on the VPN, or need that name). Usable on %s: %s. "
+                        "To try it all the same: --anyway"
                         % (service, host.name, host.name, ", ".join(sorted(usable)) or "none"))
     if service not in sites:
         raise KiwiError("%s has no site called %s (it has: %s)" % (host.name, service, ", ".join(sites) or "none on the VPN yet"))
@@ -3586,6 +3603,8 @@ def build_parser():
     s.add_argument("--client", metavar="NAME", help="only named people get in: add this name (with --remove: take it away)")
     s.add_argument("--show", metavar="NAME", help="what this person types into Tor Browser")
     s.add_argument("--remove", action="store_true", help="take the hidden service away, or with --client that name")
+    s.add_argument("--anyway", action="store_true",
+                   help="make it of a site that is not marked as usable over Tor (it may send visitors to its name on the VPN)")
     s = sub("access", cmd_access); s.add_argument("fleet"); s.add_argument("who", nargs="?", help="a group of the VPN or a linked network")
     s.add_argument("what", nargs="*", help="all, nodes, apps (every app, no admin pages), nothing, a machine, service.machine or machine:port")
     s.add_argument("--add", action="store_true", help="give these too, and keep what it has")

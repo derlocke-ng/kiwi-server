@@ -50,6 +50,8 @@ nginx:
     name: paperless
     server: "{{ container_prefix }}-paperless:8000"
   server_name: "{{ paperless_host }}"
+  # usable as a hidden service: its page and its login form were tried through Tor (it is told its address)
+  onion: true
   proxy_pass: "http://paperless"
   websocket: true
   client_max_body_size: "0"
@@ -144,3 +146,9 @@ settings:
     group: Advanced
     help: "The container image of Tika, which reads the text of office documents and email, pinned by tag. Change it to try another version or to pin a newer one. Only with office_documents."
     default: docker.io/apache/tika:3.3.1.0
+  - key: onion
+    type: object
+    group: Generated
+    label: Hidden-service addresses
+    help: "Filled in by kiwi-server when the onion module publishes this service: site -> its .onion address. A login sent from that address is then taken."
+    default: {}

@@ -24,6 +24,8 @@ import subprocess
 import sys
 import time
 
+import signal
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))      # stopped from outside: the Tor on the master is still removed
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("fleet"); ap.add_argument("machine")
 ap.add_argument("--domain", required=True, help="what comes after the @ at this instance")

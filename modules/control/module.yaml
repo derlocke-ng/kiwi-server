@@ -55,14 +55,29 @@ nginx:
     # for at this name, the control part is asked for /status and nothing else. It is no admin
     # page: who may reach this machine's web pages may open it.
     - server_name: "{{ status_hostname or 'status.' ~ hostname }}"
+      # usable as a hidden service: the status page reads only; tried through Tor
+      onion: true
       site: status
       proxy_pass: "http://control/status"
       when: status_page
       comment: Kiwi status (no login; the control part's /status only)
+    # the same for strangers, under a public name: only what is open to the Internet, and whether it
+    # works. Whatever is asked for at this name, the control part is asked for /status/public.
+    - server_name: "{{ public_status_hostname }}"
+      # usable as a hidden service: the status page reads only; tried through Tor
+      onion: true
+      site: status-public
+      proxy_pass: "http://control/status/public"
+      when: public_status_hostname
+      comment: Kiwi status for the Internet (the services with a public name only)
 
 backup:
   # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
   paths: ["${DOCKERDIR}/{{ container_prefix }}-control"]
+
+validate:
+  - when: "public_status_hostname and (public_status_hostname ~ '.').endswith('.' ~ domain ~ '.')"
+    error: "control.public_status_hostname is for a public name (status.example.org). On the VPN the status page is status.<hostname>"
 
 settings:
   - key: image
@@ -82,6 +97,11 @@ settings:
     label: Status page's hostname
     help: "Empty: status.<hostname>."
     default: ""
+  - key: public_status_hostname
+    label: Public status page's name
+    help: "A name that points at the master in DNS, like status.example.org, with reverse-proxy: public: true on this machine. Strangers then see whether the services that are open to the Internet work, and what was wrong with them in the last week: nothing about the machines, and nothing about what is on the VPN only. Empty: no such page."
+    default: ""
+    pattern: '[a-z0-9.-]*'
   - key: status_minutes
     type: int
     label: Look every (minutes)

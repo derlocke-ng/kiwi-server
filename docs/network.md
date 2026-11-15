@@ -235,6 +235,41 @@ it asks. Without a key the service cannot even be found.
 - `--remove --client anna` takes anna's key away; `--remove` alone takes the
   hidden service away.
 
+### Which services
+
+Not every service works at a `.onion` address: some send a visitor on to their
+name on the VPN, which a stranger cannot reach, or refuse a login that comes
+from another address than their own. So a module marks the sites that were
+tried through Tor, and `kiwi-server onion`, the control page and the app offer
+those:
+
+| Works, tried through Tor | What was tried |
+|---|---|
+| Git (Forgejo), Payments (BTCPay) | the pages, their files, the login form |
+| Jabber | the page for new accounts, logins on port 5222 |
+| Pastebin, the hub page, the relay, the status page | the page and its files |
+| Files (Nextcloud), Photos (Immich) | the page, its files and what its app is told; logging in was not tried |
+| Documents (Paperless) | the page and the login form (it is told its `.onion` address, or it would refuse a login sent from there) |
+
+Not marked: the admin pages (they are not for strangers); OpenCloud (its app is
+sent to the name on the VPN to log in); Passwords (Vaultwarden: the server tells
+its app the name on the VPN, and it was not seen to work without it); Firefox
+Sync (no page for people); the downloaders; and what was not tried yet. `kiwi-server onion
+<service>.<machine> --anyway` makes a hidden service of one of those all the
+same; a hidden service that existed before stays, with a warning at each
+render. `tests/drills/onion-sites.py` is the check: every hidden service of a
+network opened through Tor.
+
+### https at the address
+
+Tor encrypts the way to your machine by itself, so `http://….onion` is not
+plain text on the way. With `onion: { tls: true }` each hidden service answers
+`https://….onion` as well. The certificate is your network's CA's when the CA
+may vouch for such a name; a CA limited to your network's names
+(`tls.name_constraints`) may not, and then the certificate is the machine's
+own. A stranger's browser warns in both cases: it knows neither. This is for
+programs that insist on https.
+
 Tor never leaves through your connection at home. The Tor process of a node
 shares its VPN client's network: what it sends goes to the master and leaves
 there, through the master's VPN exit or, when it has none, from the master's own

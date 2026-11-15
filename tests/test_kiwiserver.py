@@ -1248,7 +1248,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 30)
+        self.assertEqual(len(ms.names()), 31)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -3113,7 +3113,7 @@ class TestOnion(Base):
         cli.Renderer(fleet, roles, os.path.join(self.tmp, "out0"), None, ms).prepare(had)
         node["modules"] = list(had.modules) + ["xmpp", "onion"]        # the preset's parts, Jabber, and Tor
         node["xmpp"] = {"xmpp_domain": "chat.example.org"}
-        node["onion"] = {"services": {"xmpp": {}, "jabber": {}}}       # the public site by what its module calls it
+        node["onion"] = {"services": {"xmpp": {}, "jabber": {}}, "tls": True}     # the public site by what its module calls it
         node["reverse-proxy"] = {"public": True}
         write(f.path, yaml.safe_dump(d, sort_keys=False))
         fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
@@ -3133,6 +3133,15 @@ class TestOnion(Base):
         tor = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "xmpp")[1])
         at = nginx.index("server_name %s;" % tor)
         self.assertIn("proxy_set_header Host chat.example.org;", nginx[at:at + 900])
+        # https at the addresses: Tor hands 443 over, the proxy has one certificate of the fleet's CA for them
+        self.assertRegex(torrc, r"HiddenServicePort 443 [0-9.]+:8044")
+        self.assertIn("listen 8044 ssl;", nginx)
+        pem = os.path.join(self.tmp, "onion.pem")
+        write(pem, b.files["kn-nginx/onion-fullchain.pem"][0] if isinstance(b.files["kn-nginx/onion-fullchain.pem"][0], str)
+              else b.files["kn-nginx/onion-fullchain.pem"][0].decode())
+        self.assertEqual(sorted(certs.cert_names(pem)),
+                         sorted(onionmod.address(onionmod.service_key(b"T" * 32, "papaya", s)[1]) for s in ("xmpp", "jabber")))
+        self.assertEqual(b.files["kn-nginx/onion-privkey.pem"][1], 0o600)
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "--porcelain")
         rows = {x["service"]: x["site"] for x in json.loads(out)["services"]}
         self.assertEqual(rows, {"xmpp": "chat.example.org", "jabber": "jabber.papaya.home"})
@@ -3155,7 +3164,13 @@ class TestOnion(Base):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)
         self.assertIn("no hidden services yet", out + err)
+        # a site its module does not mark as usable over Tor is made a hidden service only on purpose
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not marked as usable over Tor", out + err)
+        self.assertIn("Usable on papaya: cloud", out + err)
+        self.assertIn("--anyway", out + err)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--anyway")
         self.assertEqual(rc, 0, err)
         address = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "vault")[1])
         self.assertIn("vault.papaya is a hidden service: http://%s" % address, out + err)
@@ -6396,7 +6411,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 30)
+        self.assertEqual(len(json.loads(out)["modules"]), 31)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -9288,23 +9303,26 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.data()["hosts"][master]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
         self.assertEqual(self.ask("/access")[:2], (303, "/login"))
         self.assertIn('href="/access"', self.ask("/", cookie=cookie)[1])
-        # hidden services: one for anyone, one for a named person; the person's key on asking
+        # hidden services: only sites marked as usable over Tor are offered; one for a named person, the key on asking
         body = self.ask("/access", cookie=cookie)[1]
-        self.assertIn('name="on.%s.vault"' % node, body)
-        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.vault" % node: "on", "on.%s.cloud" % node: "on",
-                                               "who.%s.cloud" % node: "anna"}, cookie=cookie)
+        self.assertIn('name="on.%s.cloud"' % node, body)
+        self.assertNotIn('name="on.%s.vault"' % node, body)                 # not marked: not offered
+        self.assertIn("--anyway", body)
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.cloud" % node: "on", "who.%s.cloud" % node: "anna"}, cookie=cookie)
         self.assertEqual(status, 303)
         self.assertIn("/access?tor=cloud.%s" % node, where)
         got = self.data()["hosts"][node]["node"]
-        self.assertEqual(got["onion"], {"services": {"cloud": {"clients": ["anna"]}, "vault": {}}})
+        self.assertEqual(got["onion"], {"services": {"cloud": {"clients": ["anna"]}}})
         self.assertIn("onion", got["modules"])
         body = self.ask("/access", cookie=cookie)[1]
         self.assertRegex(body, r"http://[a-z2-7]{56}\.onion")
         body = self.ask("/onion", {"csrf": csrf, "show": "cloud.%s:anna" % node}, cookie=cookie)[1]
         self.assertRegex(body, r"types this key when it asks:<br><code>[A-Z2-7]{52}</code>")
         self.assertIn("showed the Tor key of anna", str(self.c.audit_tail(3)))
-        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.vault" % node: "on"}, cookie=cookie)     # cloud: unticked
-        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"vault": {}}})
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.cloud" % node: "on"}, cookie=cookie)     # anna's name taken out: anyone
+        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"cloud": {}}})
+        status, where, _ = self.ask("/onion", {"csrf": csrf}, cookie=cookie)                                 # unticked
+        self.assertNotIn("cloud", (self.data()["hosts"][node]["node"].get("onion") or {}).get("services") or {})
         self.assertEqual(self.ask("/onion", {"csrf": "x"})[:2], (303, "/login"))
 
     def test_the_recovery_key_sets_a_new_password(self):

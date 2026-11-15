@@ -728,14 +728,18 @@ types this key when it asks:<br><code>{{ key.line }}</code></div>{% endif %}
 <form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="update">
 <button>Update everything</button></form></div>{% endif %}
 <form method="post" action="/onion">{{ tok }}
-{% for m in machines if m.services %}<div class="card"><strong>{{ m.name }}</strong>
-{% for s in m.services %}{% set h = hidden.get(s ~ "." ~ m.name) %}<div style="margin:6px 0">
+{% for m in machines %}{% set names = (m.tor or [])|list %}
+{% for k in hidden if k.endswith("." ~ m.name) and k[:-(m.name|length + 1)] not in names %}{% set _ = names.append(k[:-(m.name|length + 1)]) %}{% endfor %}
+{% if names %}<div class="card"><strong>{{ m.name }}</strong>
+{% for s in names %}{% set h = hidden.get(s ~ "." ~ m.name) %}<div style="margin:6px 0">
 <label style="display:inline"><input type="checkbox" name="on.{{ m.name }}.{{ s }}" style="width:auto"{% if h %} checked{% endif %}> {{ s }}</label>
 {% if h %}<code class="small">http://{{ h.address }}</code>{% endif %}
 <input name="who.{{ m.name }}.{{ s }}" value="{{ h.clients | join(' ') if h else '' }}" placeholder="anyone; or names, like anna ben"
 style="margin-top:2px">
 {% if h %}{% for c in h.clients %}<button class="small" name="show" value="{{ s }}.{{ m.name }}:{{ c }}">Show {{ c }}'s key</button>
-{% endfor %}{% endif %}</div>{% endfor %}</div>{% endfor %}
+{% endfor %}{% endif %}</div>{% endfor %}</div>{% endif %}{% endfor %}
+<p class="muted small">Listed are the sites that were seen to work through Tor. Others send a visitor to their name on the VPN,
+or need it; <code>kiwi-server onion SERVICE.MACHINE --anyway</code> makes one all the same.</p>
 <div class="actions"><button class="primary">Save hidden services</button></div></form>
 {% endblock %}""",
     "controllers.html": """{% extends "base.html" %}{% block main %}

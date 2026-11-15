@@ -58,6 +58,8 @@ nginx:
     name: forgejo
     server: "{{ container_prefix }}-git:3000"
   server_name: "{{ git_host }}"
+  # usable as a hidden service: its pages and its login were tried through Tor
+  onion: true
   proxy_pass: "http://forgejo"
   client_max_body_size: "0"
   proxy_read_timeout: 600s

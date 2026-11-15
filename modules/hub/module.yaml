@@ -42,6 +42,8 @@ nginx:
     name: kiwihub
     server: "{{ container_prefix }}-hub:80"
   server_name: "{{ hub_host }}"
+  # usable as a hidden service: its page and its files were tried through Tor
+  onion: true
   proxy_pass: "http://kiwihub"
   websocket: false
   client_max_body_size: "1m"

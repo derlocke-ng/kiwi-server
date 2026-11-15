@@ -88,7 +88,8 @@ Nothing is opened at home. The master hands the name on to the node through the
 VPN, still encrypted: the node fetches and holds the Let's Encrypt certificate,
 and the master cannot read what passes. The node learns each visitor's address
 from the master, so its limits count the visitor, not the master. Apply the
-node and the master. On the VPN the name leads straight to the node, for the
+master first, then the node: the node asks for its certificate when it is
+applied, and the question has to find its way through the master. On the VPN the name leads straight to the node, for the
 devices that may reach that machine ([who may reach what](network.md#who-may-reach-what)).
 
 A site is public when its name is outside the fleet's domain; every other site

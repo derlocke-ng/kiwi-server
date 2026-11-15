@@ -99,15 +99,29 @@ def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constr
     return key, full
 
 
-def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=()):
+def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), own=False):
     """(privkey.pem, fullchain.pem) for exactly these names, kept under hosts/<label>: reused
     while they exist, cover the names and have more than 30 days left. For names that are
-    not a machine's own, like the addresses of its hidden services."""
+    not a machine's own, like the addresses of its hidden services. `own`: signed by itself,
+    not by the fleet's CA (a CA limited to the fleet's names cannot vouch for others)."""
     names = sorted(set(names))
     if not names:
         raise KiwiError("a certificate needs a name")
-    ca_key, ca_pem = ensure_ca(ca_dir, ca_days, name_constraints)
     d = os.path.join(ca_dir, "hosts", label)
+    if own:
+        key, full = os.path.join(d, "privkey.pem"), os.path.join(d, "fullchain.pem")
+        if os.path.isfile(key) and os.path.isfile(full) and cert_valid(full) and set(cert_names(full)) == set(names):
+            return key, full
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        util.say("making a certificate of its own for %s" % ", ".join(names))
+        _openssl(["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-days", str(max(days, 3650)), "-sha256",
+                  "-subj", "/C=NZ/ST=kiwi/L=kiwi/O=kiwi/OU=kiwi/CN=%s" % label,
+                  "-addext", "subjectAltName=%s" % ",".join("DNS:" + n for n in names),
+                  "-keyout", key + ".tmp", "-out", full])
+        os.chmod(key + ".tmp", 0o600)
+        os.replace(key + ".tmp", key)
+        return key, full
+    ca_key, ca_pem = ensure_ca(ca_dir, ca_days, name_constraints)
     key, full, crt = os.path.join(d, "privkey.pem"), os.path.join(d, "fullchain.pem"), os.path.join(d, "cert.pem")
     if os.path.isfile(key) and os.path.isfile(full) and os.path.isfile(crt) \
             and cert_valid(crt) and set(cert_names(crt)) == set(names):

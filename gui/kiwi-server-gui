@@ -1370,7 +1370,10 @@ class AccessDialog(Adw.Dialog):
         for m in [x for x in (data.get("machines") or []) if x["services"]]:
             exp = Adw.ExpanderRow(title=m["name"], subtitle=", ".join(
                 sv for sv in m["services"] if "%s.%s" % (sv, m["name"]) in self.hidden) or "none")
-            for sv in m["services"]:
+            # the sites their modules mark as usable over Tor, and what is a hidden service already
+            usable = set(m.get("tor") if m.get("tor") is not None else m["services"])
+            usable |= {k[:-len(m["name"]) - 1] for k in self.hidden if k.endswith("." + m["name"])}
+            for sv in sorted(usable):
                 what = "%s.%s" % (sv, m["name"])
                 has = self.hidden.get(what)
                 on = Adw.SwitchRow(title=sv, subtitle=("http://" + has["address"]) if has else "not a hidden service",

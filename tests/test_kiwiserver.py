@@ -2661,6 +2661,25 @@ class TestOnion(Base):
         self.assertEqual(config.Fleet.load(f.path).hosts["papaya"].cfg["node"]["onion"], {"services": {}})
 
 
+class TestConnectWait(unittest.TestCase):
+    def test_a_resolver_that_waits_for_a_master_that_is_off_is_left_behind(self):
+        """`connect` hung for minutes in the app while the master was off: the system's
+        resolver waits for a DNS server that is not there, and nothing ends that wait."""
+        from kiwiserver import connect as connectmod
+        t0 = time.time()
+        self.assertFalse(connectmod.resolves("gate.home", 0.5, lookup=lambda: time.sleep(30)))
+        self.assertLess(time.time() - t0, 3)
+        self.assertTrue(connectmod.resolves("gate.home", 5, lookup=lambda: None))
+        tries = []
+
+        def later():
+            tries.append(1)
+            if len(tries) < 2:
+                raise OSError("not yet")
+        self.assertTrue(connectmod.resolves("gate.home", 5, lookup=later))      # a name that comes a moment later
+        self.assertEqual(len(tries), 2)
+
+
 class TestFederation(Base):
     def test_the_link_key_is_wireguards(self):
         priv = bytes.fromhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")   # RFC 7748

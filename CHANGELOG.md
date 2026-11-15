@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.96.1 — connect does not hang, the app can stop a task
+
+- `kiwi-server connect` (and "Connect this computer…" in the app) waited for minutes
+  when the master was off, and could not be ended: the system's resolver waits for a DNS
+  server that is not there. It now gives the master 15 seconds, then says that the
+  computer is connected as soon as the master answers.
+- The app has a Stop button beside the output button while a task runs. One press ends
+  the command and what it started; a second press ends it hard.
+
 ## 2.96.0 — hidden services
 
 - **`kiwi-server onion <fleet> git.papaya`** makes one service of a machine a Tor hidden

@@ -51,6 +51,8 @@ nginx:
     name: strfry
     server: "{{ container_prefix }}-nostr-relay:7777"
   server_name: "{{ relay_host }}"
+  # usable as a hidden service: its page was tried through Tor
+  onion: true
   proxy_pass: "http://strfry"
   websocket: true
   proxy_read_timeout: 86400s

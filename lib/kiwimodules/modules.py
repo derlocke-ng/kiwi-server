@@ -682,6 +682,8 @@ class Renderer:
                 try:
                     s = {"module": name, "site": str(e.get("site") or ""),     # (for logins)
                          "admin": bool(e.get("admin", False)),                # an admin page: see admin_names
+                         # usable as a hidden service (tried through Tor): kiwi-server makes no other one
+                         "onion": bool(e.get("onion", False)),
                          # answers at the machine's mesh address only: see mesh_only_names
                          "mesh_only": bool(self.expand(str(e.get("mesh_only") or ""), ctx, what).strip()),
                          "server_name": self.expand(e["server_name"], ctx, what),

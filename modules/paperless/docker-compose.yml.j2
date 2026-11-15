@@ -12,6 +12,12 @@ services:
 {% endif %}
     environment:
       - PAPERLESS_URL=https://{{ paperless_host }}
+{% set tor = (onion or {}).values() | list %}
+{% if tor %}
+      # as a hidden service: a login sent from that address is taken too (it would be refused as a forged one)
+      - PAPERLESS_CSRF_TRUSTED_ORIGINS={% for a in tor %}http://{{ a }}{{ ',' if not loop.last }}{% endfor %}
+
+{% endif %}
       - PAPERLESS_SECRET_KEY={{ secret_key }}
       - PAPERLESS_ADMIN_USER=admin
       - PAPERLESS_ADMIN_PASSWORD={{ admin_password }}

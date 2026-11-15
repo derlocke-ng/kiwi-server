@@ -728,14 +728,18 @@ types this key when it asks:<br><code>{{ key.line }}</code></div>{% endif %}
 <form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="update">
 <button>Update everything</button></form></div>{% endif %}
 <form method="post" action="/onion">{{ tok }}
-{% for m in machines if m.services %}<div class="card"><strong>{{ m.name }}</strong>
-{% for s in m.services %}{% set h = hidden.get(s ~ "." ~ m.name) %}<div style="margin:6px 0">
+{% for m in machines %}{% set names = (m.tor or [])|list %}
+{% for k in hidden if k.endswith("." ~ m.name) and k[:-(m.name|length + 1)] not in names %}{% set _ = names.append(k[:-(m.name|length + 1)]) %}{% endfor %}
+{% if names %}<div class="card"><strong>{{ m.name }}</strong>
+{% for s in names %}{% set h = hidden.get(s ~ "." ~ m.name) %}<div style="margin:6px 0">
 <label style="display:inline"><input type="checkbox" name="on.{{ m.name }}.{{ s }}" style="width:auto"{% if h %} checked{% endif %}> {{ s }}</label>
 {% if h %}<code class="small">http://{{ h.address }}</code>{% endif %}
 <input name="who.{{ m.name }}.{{ s }}" value="{{ h.clients | join(' ') if h else '' }}" placeholder="anyone; or names, like anna ben"
 style="margin-top:2px">
 {% if h %}{% for c in h.clients %}<button class="small" name="show" value="{{ s }}.{{ m.name }}:{{ c }}">Show {{ c }}'s key</button>
-{% endfor %}{% endif %}</div>{% endfor %}</div>{% endfor %}
+{% endfor %}{% endif %}</div>{% endfor %}</div>{% endif %}{% endfor %}
+<p class="muted small">Listed are the sites that were seen to work through Tor. Others send a visitor to their name on the VPN,
+or need it; <code>kiwi-server onion SERVICE.MACHINE --anyway</code> makes one all the same.</p>
 <div class="actions"><button class="primary">Save hidden services</button></div></form>
 {% endblock %}""",
     "controllers.html": """{% extends "base.html" %}{% block main %}
@@ -812,7 +816,7 @@ onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done 
 
     "status.html": """{% extends "base.html" %}{% block title %}Status{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120">
-<h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>How the network is</h1>
+<h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>{{ "How the services are" if h.strangers else "How the network is" }}</h1>
 {% set down = h.services|rejectattr("ok")|list %}{% set off = (h.machines.of or 0) - (h.machines.on or 0) %}
 {% if not h.checked %}<div class="banner warn">Nothing has been checked yet.</div>
 {% elif stale %}<div class="banner warn">Not checked for {{ age(now - h.checked) }}. The machine that checks is off, or waits for
@@ -831,8 +835,9 @@ the people who run this network to unlock it.</div>
 {% for i in h.incidents %}<p><span class="dot {{ "ok" if i.to else "bad" }}"></span>{{ age(now - i.from) }} ago: {{ i.text }}{% if i.to %},
 for {{ age(i.to - i.from) }}{% else %}, and still{% endif %}</p>
 {% else %}<p class="muted">Nothing was wrong.</p>{% endfor %}{% endif %}
-<p class="muted small" style="margin-top:28px">This page needs no login. It shows which services work, and no addresses or
-settings. The people who run this network see more on their control page.</p>
+<p class="muted small" style="margin-top:28px">{% if h.strangers %}This page shows the services that are open to the Internet,
+asked the way you reach them, and nothing else.{% else %}This page needs no login. It shows which services work, and no addresses or
+settings. The people who run this network see more on their control page.{% endif %}</p>
 {% endblock %}""",
 
     "help.html": """{% extends "base.html" %}{% block main %}
@@ -1284,6 +1289,14 @@ def make_app(control: Control):
         """How the network is, for everyone on it: no login, nothing but names people use and whether they work."""
         now = time.time()
         h = healthmod.public(control.health(), now)
+        return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+
+    @app.get("/status/public")
+    def status_public():
+        """The same for the Internet (the control module's public_status_hostname): the services
+        that are open to it, whether they work, and what was wrong with them. Nothing else."""
+        now = time.time()
+        h = healthmod.public(control.health(), now, strangers=True)
         return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
     @app.get("/healthz")

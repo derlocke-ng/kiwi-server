@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.120.0 — hidden services reworked, an authenticator, a public status page
+
+- **Hidden services** (kiwi-modules 0.47.0), after seventeen of them were opened
+  through Tor on the test network:
+  - **Only sites that work there are offered.** A module marks the sites that were tried
+    through Tor; `kiwi-server onion`, the control page and the app offer those. Marked:
+    Git, BTCPay, Jabber, the pastebin, the hub, the relay, Nextcloud, Immich, Paperless,
+    the status page. `--anyway` makes one of another site; one that existed stays, with
+    a warning. [network.md](docs/network.md#which-services) has the table.
+  - Fixed: a redirect at a hidden service named a port Tor does not carry (BTCPay's
+    login); Nextcloud as a hidden service made nginx refuse the machine's whole config;
+    Paperless refused a login sent from its `.onion` address.
+  - **https at the address**: `onion: { tls: true }`. The certificate is the fleet CA's,
+    or the machine's own when the CA is limited to the fleet's names.
+- **Authenticator** (new module `authenticator`): 2FAuth at `auth.<machine>`, the codes
+  of your two-factor logins in a page of your own, for the VPN only.
+  [roles.md](docs/roles.md#authenticator).
+- **A public status page**: `control: { public_status_hostname: status.example.org }`
+  shows strangers the services that are open to the Internet, and only those. A public
+  name is asked at the master's address, the way a stranger reaches it.
+- New drills: `nginx-check.py` (does a machine's proxy config load? Before every apply
+  that changes a proxy) and `onion-sites.py` (every hidden service through Tor).
+- Not tried: an account and a code in the authenticator; logging in to Nextcloud and
+  Immich through Tor (their pages and what their apps are told were).
+
 ## 2.119.0 — two Jabber services on a node, tried; two gaps closed
 
 - **A hidden service for a public site**: `onion: { services: { xmpp: {} } }` was refused

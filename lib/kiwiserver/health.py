@@ -11,7 +11,9 @@ and the messages (`notify.py`): one when something has been wrong for a while, o
 is fine again.
 """
 import concurrent.futures
+import http.client
 import re
+import socket
 import ssl
 import time
 import urllib.error
@@ -22,7 +24,7 @@ SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "p
             "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",
             "wg": "VPN devices (wg-easy)", "control": "This page", "backup": "Backup store", "cache": "Local cache",
-            "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "jabber": "Jabber", "paste": "Pastebin", "ffsync": "Firefox Sync", "xmpp": "Jabber (public)", "pay": "Payments (BTCPay Server)",
+            "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "jabber": "Jabber", "auth": "Authenticator (2FAuth)", "paste": "Pastebin", "ffsync": "Firefox Sync", "xmpp": "Jabber (public)", "pay": "Payments (BTCPay Server)",
             "status": "Status page"}
 KEEP_DAYS = 30
 KEEP_INCIDENTS = 200
@@ -33,10 +35,24 @@ def label(site):
     return SERVICES.get(first, first.capitalize())
 
 
-def probe_one(site, timeout=6):
+def probe_one(site, timeout=6, at=None):
     """(answers, what it said): a page over HTTPS. Its certificate is not judged here, and a
     page that wants a login (401, 403) answers. A proxy that cannot reach its service (502,
-    503, 504) does not."""
+    503, 504) does not. With `at`, the name is asked at that address: a public name the way
+    a stranger reaches it (at the master), whatever the network's own DNS says."""
+    if at:
+        try:
+            ctx = ssl._create_unverified_context()
+            conn = http.client.HTTPSConnection(site, 443, timeout=timeout, context=ctx)
+            conn.sock = ctx.wrap_socket(socket.create_connection((at, 443), timeout=timeout), server_hostname=site)
+            try:
+                conn.request("GET", "/", headers={"Host": site})
+                code = conn.getresponse().status
+            finally:
+                conn.close()
+            return code < 500, code
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            return False, str(e)[:80]
     try:
         with urllib.request.urlopen(urllib.request.Request("https://%s/" % site, method="GET"), timeout=timeout,
                                     context=ssl._create_unverified_context()) as r:
@@ -48,18 +64,22 @@ def probe_one(site, timeout=6):
         return False, str(getattr(e, "reason", e))[:80]
 
 
-def probe(sites, timeout=6, workers=8, one=probe_one, again=2, sleep=time.sleep):
+def probe(sites, timeout=6, workers=8, one=probe_one, again=2, sleep=time.sleep, at=None):
     """{site: (answers, what it said)} for every site, asked side by side. One that does not
-    answer is asked once more a moment later: a single lost question is not a service that is down."""
-    sites = list(sites)
+    answer is asked once more a moment later: a single lost question is not a service that is down.
+    `at`: {site: address} for the names to ask at an address of their own (see probe_one)."""
+    sites, at = list(sites), at or {}
     if not sites:
         return {}
+
+    def ask(s):
+        return one(s, timeout, at[s]) if s in at else one(s, timeout)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        out = dict(zip(sites, pool.map(lambda s: one(s, timeout), sites)))
+        out = dict(zip(sites, pool.map(ask, sites)))
         silent = [s for s in sites if not out[s][0]]
         if silent and again:
             sleep(again)
-            out.update(zip(silent, pool.map(lambda s: one(s, timeout), silent)))
+            out.update(zip(silent, pool.map(ask, silent)))
     return out
 
 
@@ -133,6 +153,7 @@ def update(state, machines, services, happened, now, after=600):
             ok = s["ok"] and s["host"] not in down
             old = was.get(s["site"]) or {}
             rows.append({"site": s["site"], "label": label(s["site"]), "host": s["host"], "admin": bool(s.get("admin")), "ok": ok,
+                         "public": bool(s.get("public")),      # open to the Internet: the public status page shows these
                          "since": old.get("since", now) if old.get("ok") == ok else now})
         state["services"] = rows
     return events
@@ -154,15 +175,19 @@ def message(events, network=""):
     return title[:200], "\n".join(lines), level
 
 
-def public(state, now=None):
-    """What the status page shows: nothing but names people use and whether they work."""
+def public(state, now=None, strangers=False):
+    """What the status page shows: nothing but names people use and whether they work.
+    `strangers`: the page for the Internet. Only what is open to it, nothing about the
+    machines, and of what was wrong only what was wrong with those services."""
     now = now or time.time()
-    rows = [s for s in state.get("services") or [] if not s.get("admin")]
+    rows = [s for s in state.get("services") or [] if not s.get("admin") and (s.get("public") or not strangers)]
+    names = ["(%s)" % s["site"] for s in rows]
     return {
         "checked": state.get("checked") or 0,
         "services": sorted(rows, key=lambda s: (s["ok"], s["label"], s["site"])),
-        "machines": state.get("machines") or {},
+        "machines": {} if strangers else state.get("machines") or {},
         "incidents": [dict(i, text=re.sub(r" \([^)]*\)$", "", i["text"])) for i in reversed(state.get("incidents") or [])
-                      if (i["to"] or now) > now - 7 * 86400][:20],
-        "window": state.get("window") or "",
+                      if (i["to"] or now) > now - 7 * 86400 and (not strangers or any(n in i["text"] for n in names))][:20],
+        "window": "" if strangers else state.get("window") or "",
+        "strangers": strangers,
     }

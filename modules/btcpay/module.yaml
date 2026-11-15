@@ -59,6 +59,8 @@ logins:
 
 nginx:
   server_name: "{{ pay_host }}"
+  # usable as a hidden service: its pages, its login and a payment were tried through Tor
+  onion: true
   site: pay
   proxy_pass: "http://{{ container_prefix }}-vpn-client:49392"
   websocket: true

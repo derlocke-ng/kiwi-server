@@ -1248,7 +1248,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 30)
+        self.assertEqual(len(ms.names()), 31)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -3113,7 +3113,7 @@ class TestOnion(Base):
         cli.Renderer(fleet, roles, os.path.join(self.tmp, "out0"), None, ms).prepare(had)
         node["modules"] = list(had.modules) + ["xmpp", "onion"]        # the preset's parts, Jabber, and Tor
         node["xmpp"] = {"xmpp_domain": "chat.example.org"}
-        node["onion"] = {"services": {"xmpp": {}, "jabber": {}}}       # the public site by what its module calls it
+        node["onion"] = {"services": {"xmpp": {}, "jabber": {}}, "tls": True}     # the public site by what its module calls it
         node["reverse-proxy"] = {"public": True}
         write(f.path, yaml.safe_dump(d, sort_keys=False))
         fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
@@ -3133,6 +3133,15 @@ class TestOnion(Base):
         tor = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "xmpp")[1])
         at = nginx.index("server_name %s;" % tor)
         self.assertIn("proxy_set_header Host chat.example.org;", nginx[at:at + 900])
+        # https at the addresses: Tor hands 443 over, the proxy has one certificate of the fleet's CA for them
+        self.assertRegex(torrc, r"HiddenServicePort 443 [0-9.]+:8044")
+        self.assertIn("listen 8044 ssl;", nginx)
+        pem = os.path.join(self.tmp, "onion.pem")
+        write(pem, b.files["kn-nginx/onion-fullchain.pem"][0] if isinstance(b.files["kn-nginx/onion-fullchain.pem"][0], str)
+              else b.files["kn-nginx/onion-fullchain.pem"][0].decode())
+        self.assertEqual(sorted(certs.cert_names(pem)),
+                         sorted(onionmod.address(onionmod.service_key(b"T" * 32, "papaya", s)[1]) for s in ("xmpp", "jabber")))
+        self.assertEqual(b.files["kn-nginx/onion-privkey.pem"][1], 0o600)
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "--porcelain")
         rows = {x["service"]: x["site"] for x in json.loads(out)["services"]}
         self.assertEqual(rows, {"xmpp": "chat.example.org", "jabber": "jabber.papaya.home"})
@@ -3155,7 +3164,13 @@ class TestOnion(Base):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)
         self.assertIn("no hidden services yet", out + err)
+        # a site its module does not mark as usable over Tor is made a hidden service only on purpose
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not marked as usable over Tor", out + err)
+        self.assertIn("Usable on papaya: cloud", out + err)
+        self.assertIn("--anyway", out + err)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--anyway")
         self.assertEqual(rc, 0, err)
         address = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "vault")[1])
         self.assertIn("vault.papaya is a hidden service: http://%s" % address, out + err)
@@ -6396,7 +6411,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 30)
+        self.assertEqual(len(json.loads(out)["modules"]), 31)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -7283,21 +7298,30 @@ class TestHealth(Base):
         ms = [{"name": "papaya", "ok": True, "problems": [{"level": "warn", "text": "disk /var is 91% full"}]},
               {"name": "lychee", "ok": False, "problems": [{"level": "bad", "text": "not said: it is gone"}]}]
         sv = [{"site": "cloud.papaya.home", "host": "papaya", "admin": False, "ok": False},
+              {"site": "chat.example.org", "host": "papaya", "admin": False, "ok": False, "public": True},
               {"site": "control.papaya.home", "host": "papaya", "admin": True, "ok": True},
               {"site": "portainer.lychee.home", "host": "lychee", "admin": True, "ok": False}]
         self.assertEqual(health.update(st, ms, sv, [], 1000), [])                    # a moment is not told: a restart is shorter
         ms[0]["problems"][0]["text"] = "disk /var is 92% full"                       # the same problem, another number
         events = health.update(st, ms, sv, [], 1000 + 600)
         self.assertEqual(sorted(e["text"] for e in events), [
-            "Files (Nextcloud) does not answer (cloud.papaya.home)", "lychee does not answer", "papaya: disk /var is 92% full"])
+            "Chat does not answer (chat.example.org)", "Files (Nextcloud) does not answer (cloud.papaya.home)",
+            "lychee does not answer", "papaya: disk /var is 92% full"])
         self.assertEqual(health.update(st, ms, sv, [], 2200), [])                    # told once
         title, text, level = health.message(events, "home")
-        self.assertEqual((title, level), ("Kiwi home: 3 things need a look", "bad"))
+        self.assertEqual((title, level), ("Kiwi home: 4 things need a look", "bad"))
         self.assertIn("Wrong: lychee does not answer", text)
         pub = health.public(st, 2200)
-        self.assertEqual([(x["site"], x["ok"]) for x in pub["services"]], [("cloud.papaya.home", False)])   # no admin page
+        self.assertEqual([(x["site"], x["ok"]) for x in pub["services"]],
+                         [("chat.example.org", False), ("cloud.papaya.home", False)])                         # no admin page
         self.assertEqual(pub["machines"], {"on": 1, "of": 2})
-        self.assertEqual([i["text"] for i in pub["incidents"]], ["Files (Nextcloud) does not answer", "lychee does not answer"])
+        self.assertEqual(sorted(i["text"] for i in pub["incidents"]),
+                         ["Chat does not answer", "Files (Nextcloud) does not answer", "lychee does not answer"])
+        # for the Internet: only what is open to it, nothing about the machines or the VPN's services
+        out = health.public(st, 2200, strangers=True)
+        self.assertEqual([x["site"] for x in out["services"]], ["chat.example.org"])
+        self.assertEqual((out["machines"], out["window"]), ({}, ""))
+        self.assertEqual([i["text"] for i in out["incidents"]], ["Chat does not answer"])
         # not asked this time (this computer is not on the network): nothing is said about services
         self.assertEqual(health.update(st, ms, None, [], 2300), [])
         ms[0]["problems"], ms[1]["ok"], ms[1]["problems"] = [], True, []
@@ -7305,6 +7329,7 @@ class TestHealth(Base):
             x["ok"] = True
         events = health.update(st, ms, sv, [], 4000)
         self.assertEqual(sorted(e["text"] for e in events), [
+            "Chat answers again (chat.example.org), after 50 minutes",
             "Files (Nextcloud) answers again (cloud.papaya.home), after 50 minutes", "lychee answers again, after 50 minutes",
             "papaya: no longer so: disk /var is 92% full, after 50 minutes"])
         self.assertEqual(health.message(events, "home")[::2], ("Kiwi home: fine again", "info"))
@@ -7325,6 +7350,14 @@ class TestHealth(Base):
         lost = iter([(False, "timed out"), (True, 200)])
         self.assertEqual(health.probe(["c.home"], one=lambda site, timeout: next(lost), sleep=lambda s: None), {"c.home": (True, 200)})
         self.assertEqual(health.probe([]), {})
+        # a public name is asked at the address strangers come to; the others as before
+        how = []
+
+        def where(site, timeout, at=None):
+            how.append((site, at))
+            return True, 200
+        health.probe(["cloud.papaya.home", "chat.example.org"], one=where, at={"chat.example.org": "203.0.113.7"})
+        self.assertEqual(sorted(how), [("chat.example.org", "203.0.113.7"), ("cloud.papaya.home", None)])
 
     def test_messages_go_out_by_mail_push_and_webhook(self):
         import http.server
@@ -7674,9 +7707,13 @@ class TestWeb(StoreBase):
                           "since": now - 2400},
                          {"site": "vault.papaya.home", "label": "Passwords (Vaultwarden)", "host": "papaya", "admin": False, "ok": True,
                           "since": now - 90000},
+                         {"site": "chat.example.org", "label": "Chat", "host": "papaya", "admin": False, "ok": True,
+                          "public": True, "since": now - 500},
                          {"site": "control.papaya.home", "label": "This page", "host": "papaya", "admin": True, "ok": True, "since": 1}],
             "incidents": [{"key": "service:cloud.papaya.home", "text": "Files (Nextcloud) does not answer (cloud.papaya.home)",
-                           "from": now - 2400, "to": None}]}))
+                           "from": now - 2400, "to": None},
+                          {"key": "service:chat.example.org", "text": "Chat does not answer (chat.example.org)",
+                           "from": now - 9000, "to": now - 8400}]}))
         code, body = self.ask("/status")                                           # the store is locked, nobody is logged in
         self.assertEqual(code, 200)
         for words in ("1 service does not answer", "Files (Nextcloud)", "does not answer", "for 40 minutes", "Passwords (Vaultwarden)",
@@ -7684,6 +7721,13 @@ class TestWeb(StoreBase):
             self.assertIn(words, body)
         for words in ("control.papaya.home", "csrf", '<aside class="side">', "Log out"):
             self.assertNotIn(words, body)                                          # no admin page, no menu, nothing to post
+        # the page for the Internet: the services open to it, and nothing of the rest
+        code, body = self.ask("/status/public")
+        self.assertEqual(code, 200)
+        for words in ("Everything works", "How the services are", "chat.example.org", "Chat does not answer", "for 10 minutes"):
+            self.assertIn(words, body)
+        for words in ("papaya", "Nextcloud", "Vaultwarden", "machines answer", "Sun 03:30", "csrf", "Log out"):
+            self.assertNotIn(words, body)
         stale = json.loads(util.read_text(self.c.health_file))
         stale["checked"] = now - 7200
         util.write_text(self.c.health_file, json.dumps(stale))
@@ -9259,23 +9303,26 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.data()["hosts"][master]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
         self.assertEqual(self.ask("/access")[:2], (303, "/login"))
         self.assertIn('href="/access"', self.ask("/", cookie=cookie)[1])
-        # hidden services: one for anyone, one for a named person; the person's key on asking
+        # hidden services: only sites marked as usable over Tor are offered; one for a named person, the key on asking
         body = self.ask("/access", cookie=cookie)[1]
-        self.assertIn('name="on.%s.vault"' % node, body)
-        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.vault" % node: "on", "on.%s.cloud" % node: "on",
-                                               "who.%s.cloud" % node: "anna"}, cookie=cookie)
+        self.assertIn('name="on.%s.cloud"' % node, body)
+        self.assertNotIn('name="on.%s.vault"' % node, body)                 # not marked: not offered
+        self.assertIn("--anyway", body)
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.cloud" % node: "on", "who.%s.cloud" % node: "anna"}, cookie=cookie)
         self.assertEqual(status, 303)
         self.assertIn("/access?tor=cloud.%s" % node, where)
         got = self.data()["hosts"][node]["node"]
-        self.assertEqual(got["onion"], {"services": {"cloud": {"clients": ["anna"]}, "vault": {}}})
+        self.assertEqual(got["onion"], {"services": {"cloud": {"clients": ["anna"]}}})
         self.assertIn("onion", got["modules"])
         body = self.ask("/access", cookie=cookie)[1]
         self.assertRegex(body, r"http://[a-z2-7]{56}\.onion")
         body = self.ask("/onion", {"csrf": csrf, "show": "cloud.%s:anna" % node}, cookie=cookie)[1]
         self.assertRegex(body, r"types this key when it asks:<br><code>[A-Z2-7]{52}</code>")
         self.assertIn("showed the Tor key of anna", str(self.c.audit_tail(3)))
-        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.vault" % node: "on"}, cookie=cookie)     # cloud: unticked
-        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"vault": {}}})
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.cloud" % node: "on"}, cookie=cookie)     # anna's name taken out: anyone
+        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"cloud": {}}})
+        status, where, _ = self.ask("/onion", {"csrf": csrf}, cookie=cookie)                                 # unticked
+        self.assertNotIn("cloud", (self.data()["hosts"][node]["node"].get("onion") or {}).get("services") or {})
         self.assertEqual(self.ask("/onion", {"csrf": "x"})[:2], (303, "/login"))
 
     def test_the_recovery_key_sets_a_new_password(self):

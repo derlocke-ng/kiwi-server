@@ -19,6 +19,7 @@ that booted. The page:
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 | **The status page** | for everyone on the network, without a login, at `https://status.<host>`: which services work, since when one does not, the last week's incidents |
+| **The public status page** | the same for strangers, under a public name (`control: { public_status_hostname: status.example.org }`, with `reverse-proxy: { public: true }` on the control node): only the services that are open to the Internet, asked at the master's address the way a stranger reaches them; nothing about the machines or the VPN's services |
 
 The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
 what, Linked networks); *Safety* (Backups, If something breaks, Computers); *More*.

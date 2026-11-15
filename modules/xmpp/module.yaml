@@ -1,0 +1,101 @@
+schema_version: "1.0"
+
+module:
+  name: xmpp
+  title: Jabber (Prosody)
+  version: 1.0.0
+  description: "A Jabber (XMPP) server for your people: chats, group rooms, files, message history across devices. At chat.<hostname> for the mesh; public, with other servers reachable, when its name is a public one"
+  category: productivity
+  node_types: [master]
+
+dependencies:
+  # it shares the WireGuard server's network, as the master's proxy does: clients on the VPN
+  # reach it at the master's mesh address
+  required: [vpn-server, reverse-proxy]
+  optional: [vpn-client]
+
+network:
+  needs_vpn_dnat: true
+  # clients (5222) and other servers (5269) from the Internet: only for a public name
+  open_ports: ["{% if xmpp_public %}5222/tcp{% endif %}", "{% if xmpp_public %}5269/tcp{% endif %}"]
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  config: prosody.cfg.lua.j2
+  start: start.sh.j2
+
+outputs:
+  config: { path: "{{ container_prefix }}-xmpp/prosody.cfg.lua", mode: 0644 }
+  start: { path: "{{ container_prefix }}-xmpp/start.sh", mode: 0755 }
+
+derived:
+  xmpp_host: "{{ xmpp_domain or 'chat.' ~ hostname }}"
+  # a name outside the fleet's own domain is a public one: the proxy fetches its certificate (Let's Encrypt)
+  xmpp_public: "{{ 'yes' if xmpp_domain and not (xmpp_domain ~ '.').endswith('.' ~ domain ~ '.') else '' }}"
+
+validate:
+  - when: "admin_user | lower != admin_user or not admin_user is match('^[a-z0-9][a-z0-9._-]{0,30}$')"
+    error: "xmpp.admin_user: lowercase letters, digits, dots and dashes"
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data", type: dir, required: true }
+
+urls:
+  - "Jabber: {{ admin_user }}@{{ xmpp_host }} in any XMPP app (Conversations, Monal, Dino, Gajim); rooms at rooms.{{ xmpp_host }}{% if xmpp_public %}; open to the Internet on 5222 and 5269{% else %}; from the VPN only{% endif %}"
+
+logins:
+  - label: Jabber
+    user: "{{ admin_user }}@{{ xmpp_host }}"
+    password: admin_password
+    note: "The admin's account, typed into a Jabber app (not a web page). Every start sets this password again. More people: the admin invites them from the app (Conversations: Invite to server; Gajim: the server's commands), and each makes an account with a password of their own."
+
+nginx:
+  upstream:
+    name: prosody
+    server: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ '-vpn-server' }}:5280"
+  server_name: "{{ xmpp_host }}"
+  proxy_pass: "http://prosody"
+  websocket: true
+  client_max_body_size: "{{ upload_mb }}m"
+  proxy_read_timeout: 3600s
+  comment: Jabber (files, and chat for web apps)
+
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-xmpp"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-xmpp/data"]
+
+settings:
+  - key: image
+    label: Image
+    help: "Prosody's own image, pinned to its 13.0 line."
+    default: docker.io/prosodyim/prosody:13.0
+  - key: xmpp_domain
+    label: Name
+    help: "What comes after the @ in an address. Empty: chat.<hostname>, a mesh name, for people on the VPN. A public name (chat.example.org, pointing at this master in DNS) opens it to the Internet: people log in from anywhere, and write with people on other servers."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: admin_user
+    label: Admin
+    help: "The first account, and the server's admin: <name>@<the name above>."
+    default: admin
+  - key: admin_password
+    type: secret
+    generate: true
+    rotate: restart
+    help: "Empty: generated from the fleet's seed."
+  - key: upload_mb
+    type: int
+    label: Largest file (MB)
+    help: "The biggest file someone may send."
+    default: 100
+  - key: history_days
+    type: int
+    label: History (days)
+    help: "How long messages are kept on the server, so that a new device shows them."
+    default: 365

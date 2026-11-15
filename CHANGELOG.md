@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.110.0 — Jabber, and game servers tried through a fleet
+
+- **Jabber** (kiwi-modules 0.41.1): add `xmpp` to a master and your people have a
+  Jabber (XMPP) server: chats, rooms, files, history across devices. For the VPN by
+  default (`<name>@chat.<master>`); with a public name it is open to the Internet and
+  reaches other servers. The admin's account is in `kiwi-server logins`; everyone else
+  comes by invitation from the admin's app. [roles.md](docs/roles.md#jabber).
+  Tried on the test master: the admin logs in from a device on the VPN (the logins
+  drill now tries a Jabber login). Not tried: a public name, an app, rooms, files.
+- **Game servers were run through a fleet**: a Minecraft and a Zandronum server on a
+  test machine. Minecraft answered at the machine's address at home and at its VPN
+  address.
+- The status page and Home call the Jabber site by its name.
+
 ## 2.109.0 — game servers, and the messages tried
 
 - **Game servers** (kiwi-modules 0.40.0): add `games` to a node and list the servers:

@@ -32,6 +32,12 @@ services:
 {% for port in unlock_relay %}
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ port }}:{{ port }}/tcp"
 {% endfor %}
+{# Jabber lives in this namespace too: a public name's clients (5222) and other servers (5269) #}
+{% set xmpp_name = module_config.get('xmpp', {}).get('xmpp_domain') %}
+{% if xmpp_name and not (xmpp_name ~ '.').endswith('.' ~ domain ~ '.') %}
+      - "{{ public_ip ~ ':' if public_ip else '' }}5222:5222/tcp"
+      - "{{ public_ip ~ ':' if public_ip else '' }}5269:5269/tcp"
+{% endif %}
 {# nginx lives in this namespace, so a public reverse proxy's ports are published here #}
 {% if public_names %}
       - "{{ public_ip ~ ':' if public_ip else '' }}80:80/tcp"

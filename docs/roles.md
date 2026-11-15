@@ -98,7 +98,9 @@ The games it knows: `minecraft`, `minecraft-bedrock`, `enshrouded`,
 `abiotic-factor`, `zandronum`, `valheim`, `factorio`, `satisfactory`,
 `palworld`, `terraria`. `catalog:` in the same block takes more: an image, its
 ports and where it keeps its worlds. Minecraft and Zandronum were run on a test
-machine; the others are set up as their images document it and are not tried.
+machine through the fleet (15 November 2026): Minecraft answered at the machine's
+address at home and at its VPN address. The others are set up as their images
+document it and are not tried.
 
 - **Where players connect.** At home: the machine's address and the game's port
   (`medlar.home:25565`). From the VPN: the same name; give the group the port in
@@ -117,6 +119,34 @@ machine; the others are set up as their images document it and are not tried.
   `args:` is the server's command line.
 - The big games need a machine for it: Enshrouded wants about 16 GB of memory,
   Abiotic Factor and Palworld about 8.
+
+## Jabber
+
+Add `xmpp` to a master's modules and your people have a Jabber (XMPP) server:
+chats, group rooms, files, and message history that a new device shows. Any
+XMPP app works: Conversations (Android), Monal (iPhone, Mac), Dino, Gajim.
+
+```yaml
+hosts:
+  sorbet:
+    master:
+      modules: [vpn-client, vpn-server, dns, reverse-proxy, xmpp]
+```
+
+- **For the VPN** (the default): addresses are `<name>@chat.<master>`, like
+  `anna@chat.sorbet.home`. Only devices on the VPN reach it; the certificate is
+  the fleet's, so a device needs the fleet's CA (as for every service).
+- **For the Internet**: `xmpp: { xmpp_domain: chat.example.org }`, a name that
+  points at the master in DNS, with `reverse-proxy: { public: true }`. People
+  log in from anywhere, and can write with people on other Jabber servers. The
+  certificate comes from Let's Encrypt. The master then answers on 5222 and
+  5269.
+- **Accounts.** `kiwi-server logins` shows the admin's (`admin@…`). Nobody can
+  register by themselves: the admin invites people from the app (Conversations:
+  the account's menu, "Invite to server"; Gajim: the server's commands), and
+  each makes an account with a password of their own.
+- Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB;
+  history is kept `history_days` (365).
 
 ## Writing a role
 

@@ -124,7 +124,7 @@ settings:
     label: Client groups
     help: |
       Who may reach what, by the client address range wg-easy gives them. YAML: name -> {subnet, reach, peers, internet, admin}.
-      reach: what in the mesh the group may reach — all (default), nodes (every node), host names from the fleet, addresses or subnets. The server itself is always reachable (DNS).
+      reach: what in the mesh the group may reach — all (default), nodes (every node), a node by its name, one service of a node (cloud.papaya: its web address only), one port of a node (papaya:22), addresses or subnets. The server itself is always reachable (DNS).
       peers: may members reach other VPN clients (default true). internet: may they leave through the exit (default true). admin: may they open the admin pages wg.<hostname>, pihole.<hostname> and the wg-easy port (default false).
       Clients outside every group are the plain mesh: everything, admin pages as admin_from_mesh says.
     default:

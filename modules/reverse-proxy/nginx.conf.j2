@@ -24,6 +24,24 @@
 {% if s.proxy_ssl %}
             proxy_ssl_verify off;
 {% endif %}
+{# a site with its own allow and deny lines here: nginx then leaves out the ones of the server
+   block above, so who is shut out of this name (federation, VPN groups) is said here again, first #}
+{% set own = namespace(rules=false) %}
+{% for d in s.extra_directives %}{% if d.startswith('allow ') or d.startswith('deny ') %}{% set own.rules = true %}{% endif %}{% endfor %}
+{% if own.rules %}
+{% set fed = federation or {} %}
+{% set fn = (fed.names or {}).get(s.server_name) %}
+{% for c in (fn.allow or []) if fn %}
+            allow {{ c }};
+{% endfor %}
+{% for c in ((fn.deny or []) if fn else (fed.deny or [])) %}
+            deny {{ c }};
+{% endfor %}
+{% set acc = access or {} %}
+{% for c in (acc.names or {}).get(s.server_name, acc.others or []) %}
+            deny {{ c }};
+{% endfor %}
+{% endif %}
 {% for d in s.extra_directives %}
             {{ d }}
 {% endfor %}
@@ -149,6 +167,10 @@ http {
         deny {{ c }};
 {% endfor %}
 {% endif %}
+{% set acc = access or {} %}
+{% for c in (acc.names or {}).get(s.server_name, acc.others or []) %}
+        deny {{ c }};      # a VPN group that reaches this machine for other services only
+{% endfor %}
 {% if s.public %}
         ssl_certificate     /etc/nginx/acme/{{ s.server_name }}/fullchain.pem;
         ssl_certificate_key /etc/nginx/acme/{{ s.server_name }}/privkey.pem;

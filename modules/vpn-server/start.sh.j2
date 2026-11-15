@@ -56,14 +56,34 @@ iptables -A FORWARD -s {{ subnet }} -d {{ ip }} -j ACCEPT
 iptables -A FORWARD -s {{ subnet }} -d {{ mesh_subnet }} -j DROP
 {% endif %}
 {% else %}
+{# allowed: whole machines and addresses. parts: (address, tcp port) of a machine the group
+   reaches for one service (its web address: 80 and 443; the machine's nginx refuses the
+   group its other names) or one port #}
 {% set allowed = [] %}
+{% set parts = [] %}
+{% set unknown = [] %}
 {% for r in reach %}
-{% if r == 'nodes' %}{% for ip in mesh_ips %}{% set _ = allowed.append(ip) %}{% endfor %}
-{% elif r in host_ips %}{% set _ = allowed.append(host_ips[r]) %}
-{% else %}{% set _ = allowed.append(r) %}{% endif %}
+{% set rs = r | string %}
+{% set rhost, _, rport = rs.partition(':') %}
+{% set full = rhost if rhost.endswith('.' ~ domain) else rhost ~ '.' ~ domain %}
+{% set ip = host_ips.get(full) or host_ips.get(rhost) %}
+{% if rs == 'nodes' %}{% for ip in mesh_ips %}{% set _ = allowed.append(ip) %}{% endfor %}
+{% elif ip and rport %}{% set _ = parts.append((ip, rport)) %}
+{% elif ip and '.' in full[:-(domain | length + 1)] %}{% set _ = parts.append((ip, '80')) %}{% set _ = parts.append((ip, '443')) %}
+{% elif ip %}{% set _ = allowed.append(ip) %}
+{% elif (rs | replace('.', '') | replace('/', '')).isdigit() %}{% set _ = allowed.append(rs) %}
+{% else %}{% set _ = unknown.append(rs) %}{% endif %}
+{% endfor %}
+{% for u in unknown %}
+# reach {{ u }}: no such name in this fleet, left out
 {% endfor %}
 {% for dest in allowed | reject('equalto', server_ip) | unique %}
 iptables -A FORWARD -s {{ subnet }} -d {{ dest }} -j ACCEPT
+{% endfor %}
+{% for ip, port in parts | unique %}
+{% if ip not in allowed and ip != server_ip %}
+iptables -A FORWARD -s {{ subnet }} -d {{ ip }} -p tcp --dport {{ port }} -j ACCEPT
+{% endif %}
 {% endfor %}
 {% if peers %}
 {% for ip in mesh_ips | reject('equalto', server_ip) | reject('in', allowed) | unique %}

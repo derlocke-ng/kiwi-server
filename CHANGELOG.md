@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.94.0 — who may reach what
+
+- **`kiwi-server access <fleet>`** lists every group of the VPN and every linked network
+  with what it may reach, and changes it: `access <fleet> guests cloud.papaya
+  paperless.papaya`. A group or a linked network is given `all`, `nodes`, a machine
+  (`papaya`), one service (`cloud.papaya`: its web address only), one port (`papaya:22`)
+  or `nothing`. `--add` and `--remove` change single entries, `--new` makes a group,
+  `--internet`, `--peers` and `--admin` set the rest. The same words for both, so a
+  partner network's `share` is set here too.
+- **"Who may reach what"** on the control page (from Home) and in the app's menu: a
+  tick per machine and service for every group and linked network, and a new group by
+  its name.
+- kiwi-modules 0.35.1 enforces it in two places. The master's firewall lets through what
+  is given and drops the rest. A node that a group reaches for single services refuses
+  that group its other names in its own web server: all services of a node share one
+  address and port.
+- The change goes into the fleet file's `vpn-server.groups`; the other lines and their
+  comments stay. It reaches the machines with the next apply, and the command says
+  which machines.
+- `tests/drills/access.py` tries the rules with a real VPN client per group, one outside
+  every group and one in a linked network: every machine's SSH port, every service's
+  page, the admin page, another device and the Internet.
+- **Found by that drill and closed:** a group or a linked network that was given one
+  service of a node could also open the login of the control page on that node. The
+  control page has an allow list of its own, and nginx then ignored the lines that shut
+  others out. Apply the node that runs your control page.
+
 ## 2.93.0 — the control node restarts a master that is gone
 
 - **A machine that does not answer** is named on the control page's Home, with how long

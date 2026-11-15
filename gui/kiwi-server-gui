@@ -1004,7 +1004,7 @@ class FederationDialog(Adw.Dialog):
             g = Adw.PreferencesGroup(title=name)
             g.set_header_suffix(info_button("%s at %s, %s, its names .%s" % (
                 name, p.get("endpoint", "?"), p.get("mesh", "?"), p.get("domain", "?"))))
-            share = Adw.EntryRow(title="Shared here", text=" ".join(p.get("share") or []))
+            share = Adw.EntryRow(title="Shared here (ticked under “Who may reach what…”)", text=" ".join(p.get("share") or []))
             frm = Adw.EntryRow(title="From", text=" ".join(p.get("from") or []))
             g.add(share)
             g.add(frm)
@@ -1058,6 +1058,120 @@ class FederationDialog(Adw.Dialog):
             self.close()
             self.win.spawn(["federate", self.win.doc.path, other], "Linking the networks…")
         dlg.open(self.win, None, done)
+
+
+class AccessDialog(Adw.Dialog):
+    """Who may reach what: the VPN's groups and the linked networks, ticked per machine and
+    service. Reads and writes through `kiwi-server access`, as the control page does."""
+
+    def __init__(self, win):
+        super().__init__(title="Who may reach what", content_width=660, content_height=700)
+        self.win = win
+        rc, out, err = run_cli(win.cli, ["access", win.doc.path, "--porcelain"])
+        try:
+            data = json.loads(out) if rc == 0 else {}
+        except ValueError:
+            data = {}
+        self.who, self.machines = data.get("who") or [], [m for m in data.get("machines") or [] if not m["master"]]
+        page = Adw.PreferencesPage()
+        intro = Adw.PreferencesGroup(description=(
+            "A device on the VPN belongs to a group: you choose it when you add the device. A linked network is another "
+            "Kiwi network. Switch on what each may open. A machine: all of it. A service: only that page.")
+            if data else "The rules could not be read: %s" % ((err.strip().splitlines() or ["no answer"])[-1]))
+        intro.set_header_suffix(help_button("The master lets through what is given here and drops the rest; a machine that "
+                                            "is reached for single services refuses the others itself. The master is always "
+                                            "reachable: it answers the names. Apply the machines after a change.",
+                                            DOCS + "docs/network.md"))
+        page.add(intro)
+        self.rows = {}
+        for w in self.who:
+            group = w["kind"] == "group"
+            g = Adw.PreferencesGroup(title=w["name"], description="%s · %s%s. Now: %s." % (
+                "group" if group else "linked network", w["range"],
+                (" · " + ", ".join(w["devices"])) if w["devices"] else "", w["says"]))
+            r = {"all": None, "machines": {}, "flags": {}}
+            if group:
+                r["all"] = Adw.SwitchRow(title="Everything on the VPN", active=w["open"]["all"])
+                g.add(r["all"])
+            for m in self.machines:
+                o = w["open"]["machines"].get(m["name"]) or {"whole": False, "services": [], "ports": []}
+                exp = Adw.ExpanderRow(title=m["name"], subtitle="all of it" if o["whole"] else
+                                      (", ".join(o["services"] + [":" + x for x in o["ports"]]) or "nothing"))
+                whole = Adw.SwitchRow(title="All of it", active=o["whole"])
+                exp.add_row(whole)
+                svc = {}
+                for name in m["services"]:
+                    svc[name] = Adw.SwitchRow(title=name, subtitle="only this page", active=name in o["services"])
+                    exp.add_row(svc[name])
+                r["machines"][m["name"]] = (whole, svc)
+                g.add(exp)
+            extra = ["%s:%s" % (n, x) for n, o in w["open"]["machines"].items() for x in o["ports"]] + w["open"]["other"]
+            r["extra"] = Adw.EntryRow(title="Single ports, like lychee:22", text=" ".join(extra))
+            g.add(r["extra"])
+            if group:
+                for key, title in (("peers", "Other devices on the VPN"), ("internet", "The Internet through the VPN"),
+                                   ("admin", "The master's admin pages")):
+                    r["flags"][key] = Adw.SwitchRow(title=title, active=bool(w[key]))
+                    g.add(r["flags"][key])
+            self.rows[w["name"]] = r
+            page.add(g)
+        more = Adw.PreferencesGroup(title="A new group", description="It starts with nothing. A device joins it under "
+                                                                      "“Add a phone or laptop…”.")
+        self.new = Adw.EntryRow(title="Its name, like family")
+        more.add(self.new)
+        if data:
+            page.add(more)
+        save = Gtk.Button(label="Save", css_classes=["suggested-action"], sensitive=bool(data))
+        save.connect("clicked", lambda *_: self.save())
+        head = Adw.HeaderBar()
+        head.pack_end(save)
+        tb = Adw.ToolbarView(content=page)
+        tb.add_top_bar(head)
+        self.set_child(tb)
+
+    def wanted(self, w):
+        """(reach, {flag: bool}) as the switches of one group or linked network stand."""
+        r = self.rows[w["name"]]
+        if r["all"] is not None and r["all"].get_active():
+            reach = ["all"]
+        else:
+            reach = []
+            for m in self.machines:
+                whole, svc = r["machines"][m["name"]]
+                if whole.get_active():
+                    reach.append(m["name"])
+                else:
+                    reach += ["%s.%s" % (s, m["name"]) for s, row in svc.items() if row.get_active()]
+            reach += [e for e in r["extra"].get_text().split() if e not in reach]
+        return reach, {k: row.get_active() for k, row in r["flags"].items()}
+
+    def save(self):
+        calls = []
+        new = self.new.get_text().strip().lower()
+        if new:
+            calls.append([new, "--new"])
+        for w in self.who:
+            reach, flags = self.wanted(w)
+            args = []
+            if sorted(reach) != sorted(w["reach"]):
+                args = [w["name"]] + (reach or ["nothing"])
+            diff = [x for k, v in flags.items() if v != bool(w[k]) for x in ("--" + k, "yes" if v else "no")]
+            if diff:
+                args = (args or [w["name"], "--add"]) + diff
+            if args:
+                calls.append(args)
+        if not calls:
+            self.close()
+            return
+        for args in calls:
+            rc, out, err = run_cli(self.win.cli, ["access", self.win.doc.path] + args)
+            if rc != 0:
+                self.win.toast("%s: %s" % (args[0], (err.strip().splitlines() or ["not saved"])[-1].replace("error: ", "")))
+                return
+        path = self.win.doc.path
+        self.close()
+        self.win.open_path(path, sync=False)        # the fleet file changed under the app
+        self.win.toast("Saved — apply the master, and the machines whose services are named")
 
 
 class SshCaDialog(Adw.Dialog):
@@ -2435,6 +2549,7 @@ class Window(Adw.ApplicationWindow):
                          ("plan-host", self.preview_host), ("update-all", self.update_all),
                          ("stack-host", self.show_stack), ("folder-host", self.open_folder),
                          ("remove-host", self.remove_host_dialog),
+                         ("access", self.access_dialog),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
                          ("rotate", self.rotate_dialog), ("connect", self.connect_dialog)):
@@ -2470,6 +2585,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Build every ISO…", "win.build-all")
         menu.append_section(None, section)
         section = Gio.Menu()
+        section.append("Who may reach what…", "win.access")
         section.append("Federation…", "win.federation")
         section.append("SSH certificates…", "win.sshca")
         menu.append_section(None, section)
@@ -3822,6 +3938,14 @@ class Window(Adw.ApplicationWindow):
             self.host_stack.set_visible_child_name("settings")
         dlg.connect("response", resp)
         dlg.present(self)
+
+    def access_dialog(self):
+        if not self.doc.path:
+            return
+        if self.doc.dirty:
+            self.toast("Save your changes first: this changes the fleet file too")
+            return
+        AccessDialog(self).present(self)
 
     def remove_host_dialog(self):
         name = self.current_scope

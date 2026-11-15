@@ -315,6 +315,7 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
 <a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
 <a class="tile" href="/backups"><b>Backups</b><span>See when everything was last saved</span></a>
+<a class="tile" href="/access"><b>Who may reach what</b><span>Which devices and linked networks open which machine or service</span></a>
 <a class="tile" href="/federation"><b>Linked networks</b><span>What other networks may reach here, and the way out</span></a>
 <a class="tile" href="/help"><b>Help</b><span>What the words on this page mean</span></a></div>
 {% endblock %}""",
@@ -523,9 +524,7 @@ network needs both networks' settings, so it is done on the computer that has th
 {% if partners %}<form method="post" action="/federation">{{ tok }}
 {% for name, p in partners.items() %}<div class="card"><div class="row"><strong>{{ name }}</strong>
 <span class="muted">its names end in .{{ p.domain or "?" }} · {{ p.mesh }}</span></div>
-<label for="s-{{ name }}">Shared with it</label><p class="muted" style="margin:0 0 4px">A machine (lychee), one of its
-ports (lychee:22) or one service (cloud.papaya), separated by spaces. Empty: nothing.</p>
-<input id="s-{{ name }}" name="share.{{ name }}" value="{{ p.share | join(' ') }}">
+<p>Shared with it: {{ p.share | join(", ") or "nothing" }}. <a href="/access">Change who may reach what</a></p>
 <label for="f-{{ name }}">Who of it may come</label><p class="muted" style="margin:0 0 4px">Addresses or networks of
 {{ name }}, like 10.10.3.0/24. Empty: all of {{ name }}.</p>
 <input id="f-{{ name }}" name="from.{{ name }}" value="{{ p['from'] | join(' ') }}">
@@ -538,6 +537,43 @@ out at your master. To the Internet only, never to your machines.</p>
 </div>{% endfor %}
 <div class="actions"><button class="primary">Save</button></div></form>
 {% else %}<p class="muted">This network is linked to no other.</p>{% endif %}
+{% endblock %}""",
+    "access.html": """{% extends "base.html" %}{% block main %}
+<p><a href="/">← Home</a></p><h1>Who may reach what</h1>
+<p class="muted">A device on your VPN belongs to a group: you choose it when you add the device. A linked network is
+another Kiwi network. Tick what each may open. A machine: all of it. A service: only that page.
+The master is always reachable: it answers the names.</p>
+{% if saved %}<div class="banner ok">Saved: {{ saved }}. The machines get it with the next Apply.
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="update">
+<button>Update everything</button></form></div>{% endif %}
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+<form method="post" action="/access">{{ tok }}
+{% for w in who %}<div class="card"><div class="row"><strong>{{ w.name }}</strong>
+<span class="muted">{{ "group" if w.kind == "group" else "linked network" }} · {{ w.range }}{% if w.devices %} ·
+{{ w.devices | join(", ") }}{% endif %}</span></div>
+<p class="muted" style="margin:4px 0">Now: {{ w.says }}.</p>
+{% if w.kind == "group" %}<label><input type="checkbox" name="all.{{ w.name }}" style="width:auto"{% if w.open.all %} checked{% endif %}>
+Everything on the VPN</label>{% endif %}
+{% for m in machines if not m.master %}{% set o = w.open.machines[m.name] %}<div style="margin:6px 0">
+<label style="display:inline"><input type="checkbox" name="m.{{ w.name }}.{{ m.name }}" style="width:auto"{% if o.whole %} checked{% endif %}>
+<strong>{{ m.name }}</strong>, all of it</label>{% if m.services %}<span class="muted"> · or only:</span>
+{% for s in m.services %}<label style="display:inline;white-space:nowrap;margin-left:8px"><input type="checkbox"
+name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.services %} checked{% endif %}> {{ s }}</label>{% endfor %}{% endif %}
+</div>{% endfor %}
+<label for="p-{{ w.name }}">Single ports{{ " and addresses" if w.kind == "group" else "" }}</label>
+<input id="p-{{ w.name }}" name="p.{{ w.name }}" placeholder="lychee:22" value="{{ w.extra | join(' ') }}">
+{% if w.kind == "group" %}<div style="margin-top:8px">
+<label style="display:inline"><input type="checkbox" name="peers.{{ w.name }}" style="width:auto"{% if w.peers %} checked{% endif %}> Other devices on the VPN</label>
+<label style="display:inline;margin-left:12px"><input type="checkbox" name="internet.{{ w.name }}" style="width:auto"{% if w.internet %} checked{% endif %}> The Internet through the VPN</label>
+<label style="display:inline;margin-left:12px"><input type="checkbox" name="admin.{{ w.name }}" style="width:auto"{% if w.admin %} checked{% endif %}> The master's admin pages</label>
+</div>{% else %}<p class="muted" style="margin:6px 0 0">Who of {{ w.name }} may come, and the way out:
+<a href="/federation">Linked networks</a>.</p>{% endif %}
+</div>{% endfor %}
+<div class="card"><label for="new">A new group</label><p class="muted" style="margin:0 0 4px">A name like family or
+work. It starts with nothing; tick what it may open after saving. A device joins it under
+<a href="/devices">Add a phone or laptop</a>.</p><input id="new" name="new" placeholder="family" pattern="[a-z0-9][a-z0-9-]*"></div>
+<div class="actions"><button class="primary">Save</button></div></form>
+<p class="muted">Devices outside every group reach everything{% if loose %}: {{ loose | join(", ") }}{% endif %}.</p>
 {% endblock %}""",
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
@@ -1353,6 +1389,52 @@ def make_app(control: Control):
             partners, kw = {}, dict(kw, error=kw.get("error") or str(e))
         return page("federation.html", request, "/", partners=partners, **kw)
 
+    def access_page(request, **kw):
+        try:
+            a = control.access()
+        except KiwiError as e:
+            return page("access.html", request, "/", who=[], machines=[], loose=[], error=str(e))
+        for w in a["who"]:          # what the ticks do not show: single ports, addresses, names of no machine
+            w["extra"] = ["%s:%s" % (n, p) for n, o in w["open"]["machines"].items() for p in o["ports"]] + w["open"]["other"]
+        grouped = {d for w in a["who"] for d in w["devices"]}
+        loose = sorted(d for d in control.devices() if d not in grouped)
+        return page("access.html", request, "/", who=a["who"], machines=a["machines"], loose=loose, **kw)
+
+    @app.get("/access")
+    def access(request: Request):
+        if not user(request):
+            return login_page()
+        return access_page(request, saved=request.query_params.get("saved", "")[:200])
+
+    @app.post("/access")
+    async def access_do(request: Request):
+        form = dict(await request.form())
+        u = posted(request, str(form.get("csrf", "")))
+        if not u:
+            return login_page()
+        try:
+            a = control.access()
+            changes = {}
+            for w in a["who"]:
+                n = w["name"]
+                if "all." + n in form and w["kind"] == "group":
+                    reach = ["all"]
+                else:
+                    reach = []
+                    for m in a["machines"]:
+                        if m["master"]:
+                            continue
+                        if "m.%s.%s" % (n, m["name"]) in form:
+                            reach.append(m["name"])
+                        else:
+                            reach += ["%s.%s" % (s, m["name"]) for s in m["services"] if "s.%s.%s.%s" % (n, m["name"], s) in form]
+                    reach += [e for e in str(form.get("p." + n, "")).split() if e not in reach]
+                changes[n] = dict({"reach": reach}, **{k: "%s.%s" % (k, n) in form for k in ("peers", "internet", "admin")})
+            done = control.save_access(changes, new=str(form.get("new", "")).strip().lower(), user=u)
+        except KiwiError as e:
+            return access_page(request, error=str(e))
+        return RedirectResponse("/access?saved=" + urllib.parse.quote(", ".join(done)) if done else "/access", status_code=303)
+
     @app.get("/federation")
     def federation(request: Request):
         if not user(request):
@@ -1367,7 +1449,9 @@ def make_app(control: Control):
             return login_page()
         try:
             names = list(control.federation())
-            changes = {n: {"share": str(form.get("share." + n, "")).split(), "from": str(form.get("from." + n, "")).split(),
+            had = control.federation()
+            changes = {n: {"share": str(form["share." + n]).split() if "share." + n in form else had[n]["share"],
+                           "from": str(form.get("from." + n, "")).split(),
                            "exit": "exit." + n in form, "internet": "internet." + n in form} for n in names}
             await run_in_threadpool(control.save_federation, changes, u)
         except KiwiError as e:

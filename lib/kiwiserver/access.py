@@ -1,0 +1,297 @@
+"""Who may reach what (kiwi-server access).
+
+There are two kinds of "who". A group is a range of VPN client addresses on the master
+(`vpn-server.groups` in the fleet file); a device belongs to the group whose range its
+address is in. A linked network is a partner in federation.yaml. Both are given the same
+things, in the same words:
+
+    all             everything on the VPN (a group only)
+    nodes           every node
+    papaya          one machine, all of it
+    cloud.papaya    one service of a machine: its web address
+    papaya:22       one port of a machine
+
+The master's firewall lets through what is given and drops the rest (kiwi-modules,
+vpn-server). All services of a machine share one address and port, so a machine that a group
+reaches for some services only refuses that group its other names in its own web server:
+`node_rules` makes that list for the reverse proxy. For a linked network the same is done
+in federation.py.
+"""
+import ipaddress
+import re
+
+from .util import KiwiError
+
+FLAGS = ("peers", "internet", "admin")
+FLAG_DEFAULT = {"peers": True, "internet": True, "admin": False}
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+WORD = re.compile(r"^[a-z0-9][a-z0-9.-]{0,120}(:[0-9]{1,5})?$")
+
+
+def machines(fleet, roles, records):
+    """The machines a rule can name, with their services: [{name, hostname, ip, master, services}].
+    `records` are the fleet's DNS records, (address, name)."""
+    out = []
+    for h in fleet.hosts.values():
+        if h.role not in roles or not roles[h.role].stack:
+            continue
+        ip = next((a for a, n in records if n == h.hostname), None)
+        if not ip:
+            continue            # not on the VPN yet: nothing to reach
+        tail = "." + h.hostname
+        out.append({"name": h.name, "hostname": h.hostname, "ip": ip, "master": roles[h.role].node_type == "master",
+                    "services": sorted({n[:-len(tail)] for a, n in records if a == ip and n.endswith(tail)})})
+    return out
+
+
+def _address(text):
+    try:
+        ipaddress.ip_network(text, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
+def canon(entry, found, domain, group=True):
+    """One thing a rule gives, in its short form; KiwiError says what it could be instead."""
+    e = str(entry).strip().lower()
+    if e in ("all", "nodes"):
+        if e == "all" and not group:
+            raise KiwiError("a linked network is given machines and services, not all: name them")
+        return e
+    if group and _address(e):
+        return e
+    if not WORD.match(e):
+        raise KiwiError("%r is not a machine, a service like cloud.papaya or a port like papaya:22" % entry)
+    host, _, port = e.partition(":")
+    if host.endswith("." + domain):
+        host = host[:-len(domain) - 1]
+    by_name = {m["name"]: m for m in found}
+    by_name.update({m["hostname"][:-len(domain) - 1]: m for m in found if m["hostname"].endswith("." + domain)})
+    if host in by_name:
+        if port and not 0 < int(port) < 65536:
+            raise KiwiError("%s: a port is 1 to 65535" % entry)
+        return by_name[host]["name"] + (":" + port if port else "")
+    service, _, machine = host.partition(".")
+    m = by_name.get(machine)
+    if m and not port:
+        if m["master"]:
+            raise KiwiError("%s: the master's own pages are its admin pages; a group gets them with admin" % entry)
+        if service in m["services"]:
+            return "%s.%s" % (service, m["name"])
+        raise KiwiError("%s has no service called %s (it has: %s)" % (m["name"], service, ", ".join(m["services"]) or "none"))
+    have = ", ".join(x["name"] for x in found if not x["master"]) or "none on the VPN yet"
+    raise KiwiError("no machine called %s (there is: %s)" % (machine or host, have))
+
+
+def shape(reach, found):
+    """A reach list as a page shows it: {all, machines: {name: {whole, services, ports}}, other}."""
+    out = {"all": "all" in reach, "machines": {m["name"]: {"whole": False, "services": [], "ports": []}
+                                               for m in found if not m["master"]}, "other": []}
+    for e in reach:
+        host, _, port = e.partition(":")
+        service, _, machine = host.partition(".")
+        if e == "all":
+            continue
+        if e == "nodes":
+            for m in out["machines"].values():
+                m["whole"] = True
+        elif host in out["machines"]:
+            (out["machines"][host]["ports"].append(port) if port else out["machines"][host].__setitem__("whole", True))
+        elif machine in out["machines"] and not port and not _address(e):
+            out["machines"][machine]["services"].append(service)
+        else:
+            out["other"].append(e)
+    return out
+
+
+def words(reach):
+    """A reach list in a sentence."""
+    if "all" in reach:
+        return "everything"
+    if not reach:
+        return "nothing"
+    return ", ".join("every node" if e == "nodes" else e for e in reach)
+
+
+def _loose(reach, found, domain, group):
+    """What the file says, in short form where it can be read; the rest as written."""
+    out = []
+    for e in reach or []:
+        try:
+            e = canon(e, found, domain, group)
+        except KiwiError:
+            e = str(e)
+        if e not in out:
+            out.append(e)
+    return out
+
+
+def view(groups, partners, found, domain, device_addresses=None):
+    """Everyone a rule can be about: [{kind: group|network, name, range, reach, open, devices, …}]."""
+    rows = []
+    for name, g in (groups or {}).items():
+        g = g or {}
+        reach = _loose(g.get("reach", ["all"]), found, domain, True)
+        row = {"kind": "group", "name": name, "range": g.get("subnet") or "", "reach": reach, "open": shape(reach, found),
+               "says": words(reach), "devices": []}
+        for k in FLAGS:
+            row[k] = bool(g.get(k, FLAG_DEFAULT[k]))
+        try:
+            net = ipaddress.ip_network(row["range"], strict=False)
+            row["devices"] = sorted(n for n, a in (device_addresses or {}).items() if ipaddress.ip_address(a) in net)
+        except ValueError:
+            pass
+        rows.append(row)
+    for name, p in (partners or {}).items():
+        reach = _loose(p.get("share"), found, domain, False)
+        rows.append({"kind": "network", "name": name, "range": p.get("mesh") or "", "reach": reach,
+                     "open": shape(reach, found), "says": words(reach), "devices": [], "from": list(p.get("from") or [])})
+    return rows
+
+
+def node_rules(groups, name, hostname):
+    """reverse-proxy's `access` for one node: the groups that reach it for some of its
+    services only. names: service name -> the ranges refused there; others: the ranges
+    refused at every name not listed. Empty when no group is limited here."""
+    limited = {}            # range -> the services of this node the group has
+    for g in (groups or {}).values():
+        g = g or {}
+        reach = [str(e).lower() for e in (g.get("reach", ["all"]) or [])]
+        if not g.get("subnet") or "all" in reach or "nodes" in reach or name in reach or hostname in reach:
+            continue
+        mine = [e.rsplit(".", 1)[0] for e in reach if ":" not in e and e.endswith("." + name)]
+        mine += [e[:-len(hostname) - 1] for e in reach if ":" not in e and e.endswith("." + hostname)]
+        if mine:
+            limited[str(g["subnet"])] = set(mine)
+    if not limited:
+        return {}
+    services = sorted(set().union(*limited.values()))
+    return {"names": {"%s.%s" % (s, hostname): sorted(r for r, has in limited.items() if s not in has) for s in services},
+            "others": sorted(limited)}
+
+
+def next_range(groups, mesh):
+    """A free /24 of the mesh for a new group: after the highest one in use."""
+    net = ipaddress.ip_network(mesh, strict=False)
+    used = []
+    for g in (groups or {}).values():
+        try:
+            used.append(ipaddress.ip_network((g or {}).get("subnet"), strict=False))
+        except (ValueError, TypeError):
+            pass
+    for sub in list(net.subnets(new_prefix=24))[1:255]:      # the first is the plain mesh, the last the partners' addresses
+        if not any(sub.overlaps(u) for u in used):
+            return str(sub)
+    raise KiwiError("no free range left in %s" % mesh)
+
+
+def change(groups, name, found, domain, mesh, reach=None, add=(), remove=(), new=False, flags=None):
+    """The groups with one of them changed (a copy). `reach` replaces what it has; `add`
+    and `remove` change it by entries; `new` makes the group with the next free range."""
+    groups = {k: dict(v or {}) for k, v in (groups or {}).items()}
+    if name not in groups:
+        if not new:
+            raise KiwiError("no group called %s (there is: %s). --new makes it" % (name, ", ".join(groups) or "none"))
+        if not NAME.match(name) or name in ("all", "nodes", "nothing"):
+            raise KiwiError("a group's name: small letters, digits and -")
+        groups[name] = {"subnet": next_range(groups, mesh), "reach": [], "peers": False}
+    g = groups[name]
+    have = _loose(g.get("reach", ["all"]), found, domain, True)
+    if reach is not None:
+        have = []
+        add = reach
+    for e in add:
+        e = canon(e, found, domain, True)
+        if e not in have:
+            have.append(e)
+    gone = [canon(e, found, domain, True) for e in remove]
+    if gone and "all" in have:
+        raise KiwiError("%s reaches everything: say what it may reach instead, e.g. access <fleet> %s nodes" % (name, name))
+    have = [e for e in have if e not in gone]
+    if "all" in have:
+        have = ["all"]
+    g["reach"] = have
+    for k, v in (flags or {}).items():
+        if v is not None:
+            g[k] = bool(v)
+    return groups
+
+
+def put(data, master, role, groups):
+    """The groups into the fleet file's data, where it has them: the master's own settings,
+    or the defaults when they are set there and not on the master."""
+    host = (data.get("hosts") or {}).get(master)
+    own = isinstance(host, dict) and isinstance(host.get(role), dict) and isinstance(host[role].get("vpn-server"), dict) \
+        and "groups" in host[role]["vpn-server"]
+    d = data.get("defaults") if isinstance(data.get("defaults"), dict) else {}
+    shared = isinstance(d.get(role), dict) and isinstance(d[role].get("vpn-server"), dict) and "groups" in d[role]["vpn-server"]
+    if shared and not own:
+        d[role]["vpn-server"]["groups"] = groups
+        return
+    if not isinstance(host, dict):
+        host = data.setdefault("hosts", {})[master] = {}
+    block = host.setdefault(role, {})
+    if not isinstance(block.get("vpn-server"), dict):
+        block["vpn-server"] = {}
+    block["vpn-server"]["groups"] = groups
+
+
+def _block(lines, path):
+    """Where a mapping key lives in a YAML text, by indentation: (first line, line after its
+    block, indent) for the key at `path`, or None when the text is not laid out so plainly."""
+    top, start, end, indent = 0, 0, len(lines), -1
+    for key in path:
+        hit = None
+        child = None
+        for i in range(start, end):
+            line = lines[i]
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            ind = len(line) - len(line.lstrip())
+            if child is None:
+                if ind <= indent:
+                    return None
+                child = ind
+            if ind == child and re.match(r"%s\s*:(\s|$)" % re.escape(key), line.lstrip()):
+                hit = i
+                break
+        if hit is None:
+            return None
+        stop = end
+        for j in range(hit + 1, end):
+            line = lines[j]
+            if line.strip() and not line.lstrip().startswith("#") and len(line) - len(line.lstrip()) <= child:
+                stop = j
+                break
+        while stop > hit + 1 and (not lines[stop - 1].strip() or lines[stop - 1].lstrip().startswith("#")):
+            stop -= 1               # comments and blank lines before the next key belong to that key
+        top, start, end, indent = hit, hit + 1, stop, child
+    return top, end, indent
+
+
+def rewrite(text, master, role, groups):
+    """The fleet file's text with the groups changed. Only their lines are replaced where the
+    file has them as a block of their own, so its comments stay; otherwise the whole file is
+    written anew. Returns (text, comments kept)."""
+    import yaml
+
+    from . import form
+    doc = form.Doc.parse(text)
+    put(doc.data, master, role, groups)
+    lines = text.split("\n")
+    for path in (["hosts", master, role, "vpn-server", "groups"], ["defaults", role, "vpn-server", "groups"]):
+        at = _block(lines, path)
+        if not at or lines[at[0]].split("#")[0].rstrip().split(":", 1)[1].strip():
+            continue                # not there, or written on one line with its key
+        pad = " " * at[2]
+        new = [pad + "groups:"] + ["%s  %s: %s" % (pad, name, yaml.safe_dump(g, default_flow_style=True, width=1000, sort_keys=False).strip())
+                                   for name, g in groups.items()]
+        out = "\n".join(lines[:at[0]] + new + lines[at[1]:])
+        try:
+            same = yaml.safe_load(out) == yaml.safe_load(doc.dump())
+        except yaml.YAMLError:
+            same = False
+        if same:
+            return out, True
+    return doc.dump(), False

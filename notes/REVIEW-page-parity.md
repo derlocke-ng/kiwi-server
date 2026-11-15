@@ -51,3 +51,6 @@ Still open on the page: SSH certificates, prune, the role script, doctor, the
 hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in the app:
 "leave NAME out", activity. (Preview, "update everything" and removing a phone: built in 2.92.0.)
 
+Since 2.93.0 and 2.94.0, in all three: what is done about a machine that does not answer (Settings, "When a
+machine is gone"; `recover`), and who may reach what (`access`; "Who may reach what" on the page and in the app's
+menu): the VPN's groups and the linked networks, a tick per machine and service.

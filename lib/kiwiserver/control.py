@@ -853,6 +853,62 @@ class Control:
         self.audit(user, "federation changed", partners=sorted(changes))
         self.fleet_info(fresh=True)
 
+    # ---- who may reach what ------------------------------------------------------------
+    def access(self):
+        """The VPN's groups and the linked networks with what each may reach, and the
+        machines a rule can name (`access --porcelain`): {master, who, machines}."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        r = subprocess.run(list(self.kiwi) + ["access", self.fleet_path, "--porcelain"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        try:
+            return json.loads(r.stdout)
+        except ValueError:
+            raise KiwiError((r.stderr.strip().splitlines() or ["the rules could not be read"])[-1].replace("error: ", ""))
+
+    def save_access(self, changes, new="", user="admin"):
+        """{who: {reach: [...], peers, internet, admin}} into the fleet file (a group) or
+        federation.yaml (a linked network), through `kiwi-server access`, which says no to
+        a name that is none. Only what differs from now is written. `new`: a group to make.
+        Returns the names that changed."""
+        from . import access as accessmod
+        now = {x["name"]: x for x in self.access()["who"]}
+        todo = []
+        if new:
+            if not accessmod.NAME.match(new) or new in now:
+                raise KiwiError("a new group needs a name of its own: small letters, digits and -")
+            todo.append((new, [new, "--new"]))
+        for name, c in changes.items():
+            x = now.get(name)
+            if x is None:
+                raise KiwiError("no group or linked network called %s" % name)
+            reach = [str(e) for e in c.get("reach") or []]
+            for e in reach:
+                if not (accessmod.WORD.match(e) or accessmod._address(e)) or e.startswith("-"):
+                    raise KiwiError("%r is not a machine, a service like cloud.papaya or a port like papaya:22" % e)
+            argv = []
+            if sorted(reach) != sorted(x["reach"]):
+                argv = [name] + (reach or ["nothing"])
+            if x["kind"] == "group":
+                flags = [("--%s" % k, "yes" if c.get(k) else "no") for k in accessmod.FLAGS if bool(c.get(k)) != bool(x[k])]
+                if flags:
+                    argv = (argv or [name, "--add"]) + [w for f in flags for w in f]
+            if argv:
+                todo.append((name, argv))
+        with self.lock:
+            for name, argv in todo:
+                r = subprocess.run(list(self.kiwi) + ["access", self.fleet_path] + argv, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+                if r.returncode:
+                    self.save_fleet()           # what was written before this one stays
+                    raise KiwiError("%s: %s" % (name, (r.stderr.strip().splitlines() or ["not saved"])[-1].replace("error: ", "")))
+            if todo:
+                self.save_fleet()
+        if todo:
+            self.audit(user, "who may reach what changed", who=[n for n, _a in todo])
+            self.fleet_info(fresh=True)
+        return [n for n, _a in todo]
+
     # ---- what a machine's backups hold ------------------------------------------------
     def snapshots(self, host):
         """The snapshots of a machine, by part: {part: [(time, [servers])]}, newest first, and the

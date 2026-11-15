@@ -1,0 +1,74 @@
+schema_version: "1.0"
+
+module:
+  name: firefox-sync
+  title: Firefox Sync
+  version: 1.0.0
+  description: "Your own Firefox Sync server: bookmarks, tabs, passwords and history of your Firefox browsers are kept on this machine, not at Mozilla. Mozilla's own server (syncstorage-rs) with a PostgreSQL database. The login still goes through a Mozilla account; what is synced is stored here, encrypted by the browser"
+  category: productivity
+  node_types: [master, node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client]
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  sync_host: "{{ sync_hostname or 'ffsync.' ~ hostname }}"
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-ffsync/db", type: dir, required: true }
+
+urls:
+  - "Firefox Sync: in Firefox, about:config, identity.sync.tokenserver.uri = https://{{ sync_host }}/1.0/sync/1.5 (before signing in to sync)"
+
+nginx:
+  upstream:
+    name: ffsync
+    server: "{{ container_prefix }}-ffsync:8000"
+  server_name: "{{ sync_host }}"
+  site: ffsync
+  proxy_pass: "http://ffsync"
+  client_max_body_size: "10m"
+  comment: Firefox Sync
+
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-ffsync", "{{ container_prefix }}-ffsync-db"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-ffsync/db"]
+
+settings:
+  - key: sync_hostname
+    label: Hostname
+    help: "Empty: ffsync.<hostname>. What Firefox is pointed at: identity.sync.tokenserver.uri = https://<this>/1.0/sync/1.5 in about:config. Firefox must trust the certificate: the fleet's CA goes into Firefox's own list (Settings, Certificates), or onto the device with security.enterprise_roots.enabled."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: master_secret
+    type: secret
+    generate: true
+    label: Server secret
+    help: "What the server signs its tokens with. Empty: generated from the fleet's seed. A change signs every browser out of sync once."
+  - key: db_password
+    type: secret
+    generate: true
+    label: Database password
+    help: "Empty: generated from the fleet's seed."
+  - key: image
+    label: Image
+    help: "Mozilla's own build with PostgreSQL. It exists for x86-64 only: not for the small boards."
+    default: ghcr.io/mozilla-services/syncstorage-rs/syncserver-postgres:latest
+  - key: postgres_image
+    label: Image of the database
+    help: "PostgreSQL, as Mozilla's set-up uses it."
+    default: docker.io/library/postgres:18

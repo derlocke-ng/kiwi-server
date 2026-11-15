@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.114.0 — Firefox Sync
+
+- **Firefox Sync** (kiwi-modules 0.45.0): add `firefox-sync` to a machine and your
+  Firefox browsers keep what they sync on it: Mozilla's own sync server with a database,
+  at `https://ffsync.<machine>`. The login still goes through a Mozilla account.
+  [roles.md](docs/roles.md#firefox-sync) says what to set in Firefox.
+- The pastebin was tried through a fleet: a paste stored and read back over the VPN.
+
 ## 2.113.0 — a pastebin, rate limits, and fail2ban that acts on them
 
 - **Pastebin** (kiwi-modules 0.44.0): add `paste` to a machine: PrivateBin at

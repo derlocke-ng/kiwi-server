@@ -1,0 +1,46 @@
+# firefox-sync: Mozilla's sync server and its database, as Mozilla's own stand-alone set-up wires them
+{% set db = "postgres://sync:" ~ db_password ~ "@" ~ container_prefix ~ "-ffsync-db:5432/syncserver" %}
+services:
+  {{ container_prefix }}-ffsync:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-ffsync
+    depends_on:
+      - {{ container_prefix }}-ffsync-db
+    environment:
+      - SYNC_HOST=0.0.0.0
+      - SYNC_PORT=8000
+      - SYNC_MASTER_SECRET={{ master_secret }}
+      - SYNC_SYNCSTORAGE__DATABASE_URL={{ db }}
+      - SYNC_TOKENSERVER__DATABASE_URL={{ db }}
+      - SYNC_TOKENSERVER__ENABLED=true
+      - SYNC_TOKENSERVER__NODE_TYPE=postgres
+      - SYNC_TOKENSERVER__RUN_MIGRATIONS=true
+      # who someone is, is still asked of Mozilla's accounts; what they sync stays here
+      - SYNC_TOKENSERVER__FXA_EMAIL_DOMAIN=api.accounts.firefox.com
+      - SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL=https://oauth.accounts.firefox.com
+      # the address the browsers are sent to for their data: this server, under its name
+      - SYNC_TOKENSERVER__INIT_NODE_URL=https://{{ sync_host }}
+      - SYNC_HUMAN_LOGS=true
+      - RUST_LOG=warn
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  {{ container_prefix }}-ffsync-db:
+    image: {{ postgres_image }}
+    container_name: {{ container_prefix }}-ffsync-db
+    environment:
+      - POSTGRES_USER=sync
+      - POSTGRES_PASSWORD={{ db_password }}
+      - POSTGRES_DB=syncserver
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    stop_grace_period: 60s
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-ffsync/db:/var/lib/postgresql:z

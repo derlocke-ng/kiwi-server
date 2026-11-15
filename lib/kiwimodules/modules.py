@@ -753,11 +753,10 @@ class Renderer:
                 continue
             ctx = self.module_context(spec, ordered, base, name)
             for r in mod.firewall_rules:
-                r = r.strip()
-                if r.startswith("-"):
-                    rule = self.expand(r, ctx, "modules/%s firewall" % name)
-                    if rule not in rules:
-                        rules.append(rule)
+                # a rule may come out empty: the port it is for is switched off
+                rule = self.expand(r.strip(), ctx, "modules/%s firewall" % name).strip()
+                if rule.startswith("-") and rule not in rules:
+                    rules.append(rule)
         return rules
 
     # ---- the bundle --------------------------------------------------------------------

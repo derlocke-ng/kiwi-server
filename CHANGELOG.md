@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.97.0 — git hosting, and pictures of what a network can be
+
+- kiwi-modules 0.37.0: a new part `git` for a node: Forgejo at `git.<machine>`, its
+  admin made at the first start (the login is in `kiwi-server logins`), sign-up off, git
+  over SSH on port 2223. Add `git` to a node's parts. As a hidden service
+  (`kiwi-server onion <fleet> git.papaya`) strangers can read and clone what you make
+  public, without your VPN.
+- **[Example setups](docs/examples.md)**: seven diagrams with their tables: the smallest
+  network, a home with a gateway, two homes, who may reach what, two linked networks, a
+  service for strangers, and what happens when something breaks. Then the parts, what
+  runs by itself, and who can reach what, each with the technical name behind it. The
+  diagrams are SVG in `docs/images/`, for the docs, the website and print.
+- The logins drill tries Forgejo's login; the hidden-service drill waits for a service
+  that was just made or changed to be found.
+
 ## 2.96.2 — a hidden service on a real machine
 
 - kiwi-modules 0.36.1: with a hidden service the machine's web server did not start. A

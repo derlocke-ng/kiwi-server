@@ -1,0 +1,60 @@
+# git (Forgejo) — the rootless image; start.sh makes the admin user and starts Forgejo
+services:
+  {{ container_prefix }}-git:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-git
+    # the image's user; the stack user, who owns the data directory, is uid 1000 too
+    user: "1000:1000"
+    entrypoint: ["/bin/sh"]
+    command: ["/kiwi-start.sh"]
+    environment:
+      - FORGEJO__database__DB_TYPE=sqlite3
+      - FORGEJO__server__DOMAIN={{ git_host }}
+      - FORGEJO__server__ROOT_URL=https://{{ git_host }}/
+      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__OFFLINE_MODE=true
+      - FORGEJO__server__LFS_START_SERVER=true
+      # a stop waits this long for open connections, not a minute: podman kills after 10s
+      - FORGEJO__server__GRACEFUL_HAMMER_TIME=5s
+{% if ssh_port %}
+      - FORGEJO__server__DISABLE_SSH=false
+      - FORGEJO__server__START_SSH_SERVER=true
+      - FORGEJO__server__SSH_DOMAIN={{ git_host }}
+      - FORGEJO__server__SSH_PORT={{ ssh_port }}
+      - FORGEJO__server__SSH_LISTEN_PORT=2222
+{% else %}
+      - FORGEJO__server__DISABLE_SSH=true
+      - FORGEJO__server__START_SSH_SERVER=false
+{% endif %}
+      - FORGEJO__security__INSTALL_LOCK=true
+      - FORGEJO__security__SECRET_KEY={{ secret_key }}
+      - FORGEJO__service__DISABLE_REGISTRATION={{ 'false' if registration else 'true' }}
+      - FORGEJO__service__REQUIRE_SIGNIN_VIEW={{ 'true' if private else 'false' }}
+      - FORGEJO__openid__ENABLE_OPENID_SIGNIN=false
+      - FORGEJO__openid__ENABLE_OPENID_SIGNUP=false
+      - FORGEJO__mailer__ENABLED=false
+      - FORGEJO__picture__DISABLE_GRAVATAR=true
+      - FORGEJO__picture__ENABLE_FEDERATED_AVATAR=false
+      - FORGEJO__cron_0X2E_update_checker__ENABLED=false
+      - KIWI_ADMIN_USER={{ admin_user }}
+      - KIWI_ADMIN_EMAIL={{ admin_address }}
+      - KIWI_ADMIN_PASSWORD={{ admin_password }}
+      - TZ={{ timezone }}
+{% for k, v in extra_env.items() %}
+      - {{ k }}={{ v }}
+{% endfor %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+{% if ssh_port %}
+    ports:
+      - "{{ ssh_port }}:2222"
+{% endif %}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-git/start.sh:/kiwi-start.sh:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-git/data:/var/lib/gitea:z

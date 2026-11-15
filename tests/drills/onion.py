@@ -19,6 +19,7 @@ traffic leaves from the computer this runs on.
 import json
 import subprocess
 import sys
+import time
 
 from drill import Machine, kiwi, say, setup
 from kiwiserver import cli, modules as modmod, roles as rolesmod
@@ -56,7 +57,12 @@ check(bool(tor_exit) and tor_exit != own, "what Tor sends leaves somewhere else 
 curl = "curl -s --max-time 90 --socks5-hostname %s -o /dev/null -w '%%{http_code}' " % socks
 url = "http://%s/" % svc["address"]
 if not svc["clients"]:
-    code = master.out(curl + url)
+    code = "000"
+    for _ in range(8):          # a service that was just made, or just opened to anyone, takes minutes to be found
+        code = master.out(curl + url)
+        if code != "000":
+            break
+        time.sleep(30)
     check(code[:1] in "23", "it opens through Tor (HTTP %s)" % code)
     other = master.out(curl + "-H 'Host: nothing.%s' %s" % (host.hostname, url))
     check(other == "000", "another site's name on that address gets nothing (HTTP %s)" % other)

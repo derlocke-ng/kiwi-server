@@ -1,0 +1,53 @@
+#!/bin/sh
+# Starts Forgejo and makes sure its admin user exists with the password from the settings.
+# The password comes in KIWI_ADMIN_PASSWORD. Forgejo itself does not get it, and nothing
+# here prints it. It is on a command line only while one forgejo command runs: when the
+# user is made, and when the password in Forgejo is not the one in the settings.
+pw=$KIWI_ADMIN_PASSWORD
+user=$KIWI_ADMIN_USER
+email=$KIWI_ADMIN_EMAIL
+unset KIWI_ADMIN_PASSWORD
+
+say() { echo "kiwi: $*"; }
+
+admin() {
+    # wait until Forgejo answers: the first start sets up its database first
+    tries=0
+    until curl -fs -o /dev/null http://127.0.0.1:3000/api/healthz; do
+        tries=$((tries + 1))
+        if [ "$tries" -ge 600 ]; then
+            say "Forgejo did not answer in 10 minutes; the admin user $user was not checked"
+            return 0
+        fi
+        sleep 1
+    done
+    if [ -z "$pw" ]; then
+        say "no admin password in the settings; the admin user $user was not checked"
+        return 0
+    fi
+    if ! forgejo admin user list | awk -v u="$user" 'NR > 1 && tolower($2) == tolower(u) { found = 1 } END { exit !found }'; then
+        if forgejo admin user create --admin --username "$user" --email "$email" \
+                --password "$pw" --must-change-password=false >/dev/null; then
+            say "made the admin user $user"
+        else
+            say "could not make the admin user $user (see above)"
+        fi
+        return 0
+    fi
+    # the password reaches curl on its standard input, as a line of its configuration
+    quoted=$(printf '%s' "$pw" | sed 's/[\\"]/\\&/g')
+    if printf 'user = "%s:%s"\n' "$user" "$quoted" |
+            curl -fs -o /dev/null -K - http://127.0.0.1:3000/api/v1/user; then
+        return 0
+    fi
+    if forgejo admin user change-password --username "$user" --password "$pw" \
+            --must-change-password=false >/dev/null; then
+        say "set the password of $user from the settings"
+    else
+        say "could not set the password of $user (see above)"
+    fi
+}
+
+# in the background, so that Forgejo runs whatever happens there
+admin &
+exec /usr/bin/dumb-init -- /usr/local/bin/docker-entrypoint.sh

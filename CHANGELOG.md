@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.107.1 — the starter finds itself, and the whole run is tried
+
+- **The starter did not list "This machine".** The control image has no `ip` command,
+  so the first-run page on a starter could not tell its own address and offered an
+  ordinary machine to install. It reads the kernel's own table now. Found by the first
+  whole run.
+- **Tried for real** (`tests/drills/starter-vm.sh first-node`): the starter in a virtual
+  machine, a new network from its page, the master's install media made on the machine
+  and installed on a rented server, the master set up from the page, then "Set it up"
+  for this machine. It became the node in under a minute, the starter's key, port 80
+  and screen message were gone, it reached the master over the VPN, and after a hard
+  reset it came back as the node at its fixed address. A quarter of an hour in all.
+- `starter-vm.sh code` puts a checkout's code into the VM's control part, for trying
+  what is not released.
+
 ## 2.107.0 — the starter's machine becomes the first node
 
 - **"This machine" in the questions.** On a machine the starter stick installed, the

@@ -140,7 +140,7 @@ back from a copy" on its first-run page with the recovery key ([recovery.md](rec
 | `adopt`: a machine someone else installed | exists, from a terminal |
 | The starter image: build, disk choice, console message, mDNS, the starter key | built: `kiwi-server build --starter`, tried in a VM |
 | A yes before a disk that holds something is erased (keyboard, or a page) | built (2.104.0), tried in a VM |
-| "This machine" as the first node in the page's questionnaire, and its "Set it up" | built (2.107.0), tested in parts; the whole run in a VM with a master is the next drill |
+| "This machine" as the first node in the page's questionnaire, and its "Set it up" | built (2.107.0), tried in a VM with a rented master and a hard reset after (2.107.1, `starter-vm.sh first-node`) |
 | The hoster's sign-in on the page | to build |
 | A network without a master | to design: what a node does with no VPN |
 | A waiting machine that asks to join | to build (the join token) |

@@ -593,6 +593,18 @@ class TestStarter(Base):
                                             "dns": ["192.168.2.1"]})
         self.assertEqual((quince["target"], "modules" in quince["node"]), ("ucore", False))
         self.assertIn("cannot be left out", setupmod.check(dict(answers, nodes=answers["nodes"][1:]))["nodes"])
+        # the machine's own address is found without the `ip` command, which the control image lacks
+        table = os.path.join(self.tmp, "route")
+        write(table, "Iface\tDestination\tGateway\tFlags\n")
+        self.assertEqual(setupmod._from_proc(table), (None, ""))
+        self.assertEqual(setupmod._from_proc(os.path.join(self.tmp, "none")), (None, ""))
+        with mock.patch.object(setupmod, "_run", lambda *a, **kw: ""), \
+                mock.patch.object(setupmod, "_from_proc", lambda: (("192.168.2.57", 24), "192.168.2.1")):
+            self.assertNotIn("this", setupmod.detect(probe=False))            # not in any container: only on a starter
+            self.assertEqual(setupmod.detect(probe=False)["subnet"], "")
+            with mock.patch.dict(os.environ, {"KIWI_STARTER": "1"}):
+                found = setupmod.detect(probe=False)
+        self.assertEqual((found["this"], found["subnet"], found["gateway"]), ("192.168.2.57", "192.168.2.0/24", "192.168.2.1"))
         # which machine it is: only on a starter, and the one with the control part. Its step is not
         # install media: it runs already
         path = os.path.join(self.tmp, "fleet.yaml")

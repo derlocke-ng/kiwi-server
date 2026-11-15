@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.113.0 — a pastebin, rate limits, and fail2ban that acts on them
+
+- **Pastebin** (kiwi-modules 0.44.0): add `paste` to a machine: PrivateBin at
+  `https://paste.<machine>`; public with `paste_domain` on a master, a hidden service
+  with `onion: { services: { paste: {} } }`. [roles.md](docs/roles.md#pastebin).
+- **Rate limits** on sites that strangers reach (public names, hidden services):
+  20 requests a second from one address, 80 at once, then "429"; `rate_limit` in the
+  reverse proxy's settings. Sites of the VPN are not limited.
+- **fail2ban** on a master with public sites also bans who keeps hitting the rate
+  limit and who is refused twenty times; who is banned three times in a day is out for
+  a week (every machine). A machine's page and `kiwi-server status` say how many
+  addresses are kept out right now. [security.md](docs/security.md).
+- Tried on the test master: a flood from another server got answers, then 429, then a
+  ban, which was lifted afterwards.
+
 ## 2.112.0 — Jabber: a registration page, a captcha, three doors
 
 - **Jabber moved to ejabberd** (kiwi-modules 0.43.0), for what was asked: people make

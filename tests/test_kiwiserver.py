@@ -1246,7 +1246,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 28)
+        self.assertEqual(len(ms.names()), 29)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -6336,7 +6336,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 28)
+        self.assertEqual(len(json.loads(out)["modules"]), 29)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -7359,6 +7359,15 @@ class TestHealth(Base):
         self.assertEqual(kept["window"], "Sun 03:30")
         with self.assertRaisesRegex(KiwiError, "nowhere to send it yet"):
             cli.cmd_notify(argparse.Namespace(fleet=f.path, test=True, output=None, media=None))
+
+
+class TestBanned(unittest.TestCase):
+    def test_a_machine_says_how_many_addresses_fail2ban_keeps_out(self):
+        from kiwiserver import facts
+        f = facts.parse("now=1\nbanned=2\n", local_now=1)
+        self.assertEqual(f["banned"], 2)
+        self.assertNotIn("banned", facts.parse("now=1\n", local_now=1))          # no fail2ban on the machine: nothing said
+        self.assertTrue(set(facts.parse("")) <= set(f))                          # an optional fact: not one every machine has
 
 
 class TestMadeUpNetwork(unittest.TestCase):

@@ -1,0 +1,18 @@
+# paste (PrivateBin): one container, its pastes in a volume it owns
+services:
+  {{ container_prefix }}-paste:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-paste
+    environment:
+      - TZ={{ timezone }}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - privatebin_data:/srv/data
+      - {{ docker_dir }}/{{ container_prefix }}-paste/conf.php:/srv/cfg/conf.php:ro,z

@@ -170,6 +170,21 @@ the page shows a captcha and refuses a wrong answer, the app's registration
 form carries one, and through Tor the page opens and a Jabber server answers
 on 5222. Not tried: a public name, two apart, an app.
 
+## Pastebin
+
+Add `paste` to a machine's modules: a page to put a text or a file on and pass
+its link along (PrivateBin). A paste is encrypted in the browser; the server
+keeps what it cannot read, and the link carries the key.
+
+- **On the VPN**: `https://paste.<machine>`.
+- **For the Internet**, on a master: `paste: { paste_domain: paste.example.org }`
+  with `reverse-proxy: { public: true }`.
+- **For strangers without a public name**: `onion: { services: { paste: {} } }`,
+  a hidden service ([network.md](network.md#hidden-services)).
+
+`title`, `default_expire` (a week), `size_mb` (10) and `file_upload` are its
+settings. The pastes are in the machine's backup.
+
 ## Payments (BTCPay Server)
 
 Add `btcpay` to a node's modules and you take Bitcoin payments yourself: BTCPay

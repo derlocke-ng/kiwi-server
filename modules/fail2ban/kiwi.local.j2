@@ -41,4 +41,38 @@ filter   = kiwi-nginx-probe
 logpath  = /var/log/nginx/access.log
 backend  = polling
 maxretry = 3
+
+# who keeps asking faster than the proxy allows (its rate limit says so in its error log)
+[nginx-limit-req]
+enabled  = true
+port     = http,https
+chain    = FORWARD
+logpath  = /var/log/nginx/error.log
+backend  = polling
+maxretry = 10
+
+# who is refused again and again: wrong passwords at a login, a page they may not see
+[kiwi-nginx-refused]
+enabled  = true
+port     = http,https
+chain    = FORWARD
+filter   = kiwi-nginx-refused
+logpath  = /var/log/nginx/access.log
+backend  = polling
+maxretry = 20
+
 {% endif %}
+
+# who was banned three times in a day is out for a week, on every port
+[recidive]
+enabled  = true
+logpath  = /config/log/fail2ban/fail2ban.log
+backend  = polling
+banaction = iptables-allports
+{% if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') %}
+action   = %(banaction)s[name=recidive, chain=INPUT]
+           %(banaction)s[name=recidive-forward, chain=FORWARD]
+{% endif %}
+bantime  = 1w
+findtime = 1d
+maxretry = 3

@@ -96,5 +96,7 @@ data) is what the recovery page lists.
 5. Nodes ask the control node over Tor for their master and switch by themselves.
 6. A standby master; a site rebuilt in one go from a generic image and a join token.
 
-Open: notifications (mail, a push service, a Nostr message) for `tell`; who may answer an
-`ask` from a phone.
+Notifications are built (2.108.0): mail, ntfy and a webhook, for a machine or service
+that is gone, a problem a machine reports, and what the control node did by itself
+(`notify.py`, `health.py`; [control.md](../control.md#the-status-page-and-messages)).
+Open: a Nostr message as one more place; who may answer an `ask` from a phone.

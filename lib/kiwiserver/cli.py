@@ -823,6 +823,7 @@ def cmd_list(args):
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
                      "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname],
+                     "admin_sites": sorted(r._admin.get(h.hostname) or []),
                      "logins": [] if errs else loginsmod.listed(h, roles, ms),     # without the passwords
                      "status": o.status(), "dir": o.dir, "iso": o.iso,
                      "updates": h.cfg.get("updates") or {},
@@ -1425,6 +1426,89 @@ def cmd_recover(args):
         (util.warn if e["kind"] in ("tell", "held", "locked") else util.say)(e["text"])
     if not events:
         util.say("every machine that is set up answers")
+
+
+def cmd_notify(args):
+    """After a look at the machines: every service asked for a page, what is wrong kept with
+    its time (health.py), and a message sent about what has been wrong for a while or is fine
+    again (notify.py). The control node runs this after every look. --test sends one message."""
+    import contextlib
+    import io
+    from . import health, notify
+    fleet, _roles, _ms = load(args)
+    cfg = fleet.defaults.get("notify") or {}
+    network = str(fleet.defaults.get("domain") or "")
+    if args.test:
+        ways = notify.channels(cfg)
+        if not ways:
+            raise KiwiError("nowhere to send it yet: notify: in the settings for every machine (mail, ntfy or a webhook)")
+        failed = 0
+        for name, ok, why in notify.send(cfg, "Kiwi %s: a test" % network, "This is a test message from your network. "
+                                         "Messages like it come when something is wrong, and when it is fine again.", "info", network):
+            (util.say if ok else util.warn)("%s: %s" % (name, "sent" if ok else "not sent: " + why))
+            failed += not ok
+        if failed:
+            raise KiwiError("%d of %d did not go out" % (failed, len(ways)))
+        return
+
+    def asked(*argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(list(argv))
+        return json.loads(buf.getvalue() or "{}")
+    if args.status:
+        with open(args.status) as fh:
+            seen = json.load(fh)
+    else:
+        seen = asked("status", args.fleet, "--porcelain")
+    rows = {h["name"]: h for h in asked("list", args.fleet, "--porcelain").get("hosts") or []}
+    said = {h["host"]: h for h in seen.get("hosts") or []}
+    machines = [{"name": n, "ok": bool((said.get(n) or {}).get("ok")), "problems": (said.get(n) or {}).get("problems") or []}
+                for n, h in rows.items() if h.get("phase") == "applied" and n in said]
+    up = {m["name"] for m in machines if m["ok"]}
+    sites = [(s, n, s in (h.get("admin_sites") or [])) for n, h in rows.items() if n in up for s in h.get("sites") or []]
+    answers = health.probe([s for s, _n, _a in sites])
+    services = [{"site": s, "host": n, "admin": a, "ok": answers[s][0]} for s, n, a in sites]
+    if services and not any(x["ok"] for x in services):
+        # not one answers: this computer is not on the network (its names do not open from here),
+        # so nothing is known about the services, and nothing is said about them
+        services = None
+    happened = []
+    if args.events and os.path.isfile(args.events):
+        with open(args.events) as fh:
+            happened = json.load(fh)
+    path = args.state or fleet.resolve_path(".kiwi-health.json")
+    try:
+        state = json.loads(util.read_text(path))
+    except (OSError, ValueError):
+        state = {}
+    u = fleet.defaults.get("updates") or {}
+    state["window"] = "%s %s" % (", ".join(str(d) for d in u.get("days") or []), u.get("time") or "") if u.get("enabled") else ""
+    after = cfg.get("after")
+    events = health.update(state, machines, services, happened, time.time(), after=60 * (10 if after is None else int(after)))
+    sent = []
+    if events and not args.no_send:
+        title, text, level = health.message(events, network)
+        sent = notify.send(cfg, title, text, level, network)
+    if cfg.get("heartbeat") and machines and not args.no_send:
+        notify.heartbeat(cfg["heartbeat"])
+    util.write_text(path, json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    if args.porcelain:
+        print(json.dumps({"events": events, "sent": [{"channel": c, "ok": ok, "why": why} for c, ok, why in sent],
+                          "services": None if services is None else len(services),
+                          "down": [x["site"] for x in services or [] if not x["ok"]]}))
+        return
+    if services is None:
+        util.warn("no service answers from this computer: it is not on the network, so the services were not judged")
+    for x in services or []:
+        if not x["ok"]:
+            util.warn("%s does not answer (%s): %s" % (health.label(x["site"]), x["site"], answers[x["site"]][1]))
+    for e in events:
+        (util.say if e["kind"] == "fine" else util.warn)(e["text"])
+    for c, ok, why in sent:
+        (util.say if ok else util.warn)("%s: %s" % (c, "told" if ok else "not told: " + why))
+    if not events:
+        util.say("nothing new to tell (%d machines, %s services asked)" % (len(machines), "no" if services is None else len(services)))
 
 
 def cmd_mtu(args):
@@ -3259,6 +3343,12 @@ def build_parser():
     s.add_argument("--status", metavar="FILE", help="what `status --porcelain` said, instead of asking the machines again")
     s.add_argument("--dry-run", action="store_true", help="say what would be done, do nothing, remember nothing")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake provider (tests)
+    s = sub("notify", cmd_notify); s.add_argument("fleet")
+    s.add_argument("--test", action="store_true", help="send one test message on every channel that is set")
+    s.add_argument("--status", metavar="FILE", help="what `status --porcelain` said, instead of asking the machines again")
+    s.add_argument("--events", metavar="FILE", help="what the control node did by itself in this look (its recover.json)")
+    s.add_argument("--state", metavar="FILE", help="where what is wrong is kept (default: .kiwi-health.json beside the fleet file)")
+    s.add_argument("--no-send", action="store_true", help="keep the state, send nothing")
     s = sub("openwrt", cmd_openwrt); s.add_argument("fleet")
     s.add_argument("--wireguard", metavar="FILE", help="the client config the master issued for the router")
     s.add_argument("--full", action="store_true", help="route everything through the mesh, not only the mesh subnet")

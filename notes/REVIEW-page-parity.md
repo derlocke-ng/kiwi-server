@@ -23,6 +23,7 @@ run included. Compared command by command and setting by setting.
 
 | The page has | State |
 |---|---|
+| "Send a test message" for the notifications (2.108.0); the status page's link | open: the app has the settings, no button (`kiwi-server notify <fleet> --test` does it) |
 | The picture of the network, the processor's load and the oldest last backup on Home (2.105.0) | **built** in 2.106.0: "How they are linked" on the overview, a CPU line on every card, a tile for the oldest backup |
 | Preview (`plan`) | open |
 | Update everything (`apply --update`) | open |

@@ -158,6 +158,14 @@ DEFAULTS = {
         "node": {"after": 60, "do": "tell"},
         "unlock": True,
     },
+    # where messages go when something is wrong, and when it is fine again (notify.py, health.py)
+    "notify": {
+        "mail": {"to": [], "host": "", "port": 0, "tls": "starttls", "user": "", "password": "", "from": ""},
+        "ntfy": {"url": "", "token": ""},
+        "webhook": {"url": ""},
+        "heartbeat": "",
+        "after": 10,
+    },
     "backup": {
         # the fleet directory itself (fleet file, secrets/, the CA), encrypted,
         # to these hosts after every render or build — kiwi-server restore

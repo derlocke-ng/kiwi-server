@@ -7211,6 +7211,149 @@ def _have_web():
             return False
 
 
+class TestHealth(Base):
+    """What is wrong, kept over time (health.py), and the messages about it (notify.py)."""
+
+    def test_a_thing_is_told_once_when_it_lasts_and_once_when_it_is_fine_again(self):
+        from kiwiserver import health
+        st = {}
+        ms = [{"name": "papaya", "ok": True, "problems": [{"level": "warn", "text": "disk /var is 91% full"}]},
+              {"name": "lychee", "ok": False, "problems": [{"level": "bad", "text": "not said: it is gone"}]}]
+        sv = [{"site": "cloud.papaya.home", "host": "papaya", "admin": False, "ok": False},
+              {"site": "control.papaya.home", "host": "papaya", "admin": True, "ok": True},
+              {"site": "portainer.lychee.home", "host": "lychee", "admin": True, "ok": False}]
+        self.assertEqual(health.update(st, ms, sv, [], 1000), [])                    # a moment is not told: a restart is shorter
+        ms[0]["problems"][0]["text"] = "disk /var is 92% full"                       # the same problem, another number
+        events = health.update(st, ms, sv, [], 1000 + 600)
+        self.assertEqual(sorted(e["text"] for e in events), [
+            "Files (Nextcloud) does not answer (cloud.papaya.home)", "lychee does not answer", "papaya: disk /var is 92% full"])
+        self.assertEqual(health.update(st, ms, sv, [], 2200), [])                    # told once
+        title, text, level = health.message(events, "home")
+        self.assertEqual((title, level), ("Kiwi home: 3 things need a look", "bad"))
+        self.assertIn("Wrong: lychee does not answer", text)
+        pub = health.public(st, 2200)
+        self.assertEqual([(x["site"], x["ok"]) for x in pub["services"]], [("cloud.papaya.home", False)])   # no admin page
+        self.assertEqual(pub["machines"], {"on": 1, "of": 2})
+        self.assertEqual([i["text"] for i in pub["incidents"]], ["Files (Nextcloud) does not answer", "lychee does not answer"])
+        # not asked this time (this computer is not on the network): nothing is said about services
+        self.assertEqual(health.update(st, ms, None, [], 2300), [])
+        ms[0]["problems"], ms[1]["ok"], ms[1]["problems"] = [], True, []
+        for x in sv:
+            x["ok"] = True
+        events = health.update(st, ms, sv, [], 4000)
+        self.assertEqual(sorted(e["text"] for e in events), [
+            "Files (Nextcloud) answers again (cloud.papaya.home), after 50 minutes", "lychee answers again, after 50 minutes",
+            "papaya: no longer so: disk /var is 92% full, after 50 minutes"])
+        self.assertEqual(health.message(events, "home")[::2], ("Kiwi home: fine again", "info"))
+        self.assertTrue(all(i["to"] == 4000 for i in st["incidents"]))
+        self.assertEqual(st["items"], {})
+        # what the control node did by itself is told at once, and not again and again
+        did = [{"host": "sorbet", "kind": "restarted", "text": "sorbet did not answer: restarted at its provider"}]
+        self.assertEqual([e["kind"] for e in health.update(st, ms, sv, did, 5000)], ["did"])
+        self.assertEqual(health.update(st, ms, sv, did, 5100), [])
+        # a page that wants a login answers; a proxy without its service does not
+        seen = {"a.home": (True, 200), "b.home": (False, 502)}
+        self.assertEqual(health.probe(["a.home", "b.home"], one=lambda site, timeout: seen[site]), seen)
+        self.assertEqual(health.probe([]), {})
+
+    def test_messages_go_out_by_mail_push_and_webhook(self):
+        import http.server
+        from kiwiserver import notify
+        got = []
+
+        class Hook(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                got.append((self.path, dict(self.headers), self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self):
+                got.append((self.path, {}, b""))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Hook)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close(), t.join(5)))
+        url = "http://127.0.0.1:%d" % srv.server_port
+        mails = []
+
+        class Smtp:
+            def __init__(self, host, port, timeout=None):
+                mails.append(["to %s:%d" % (host, port)])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def starttls(self, context=None):
+                mails[-1].append("starttls")
+
+            def login(self, user, password):
+                mails[-1].append("login %s" % user)
+
+            def send_message(self, msg):
+                mails[-1].append((msg["To"], msg["Subject"], msg.get_content()))
+        cfg = {"mail": {"to": ["a@example.org", "b@example.org"], "host": "smtp.example.org", "user": "kiwi", "password": "pw"},
+               "ntfy": {"url": url + "/topic", "token": "tk"}, "webhook": {"url": url + "/hook"}}
+        self.assertEqual(notify.channels(cfg), ["mail", "ntfy", "webhook"])
+        self.assertEqual(notify.channels({"mail": {"to": ["a@example.org"]}}), [])        # no server: not set
+        with mock.patch.object(notify.smtplib, "SMTP", Smtp):
+            sent = notify.send(cfg, "Kiwi home: Käse", "Wrong: lychee does not answer", "bad", "home")
+        self.assertEqual(sent, [("mail", True, ""), ("ntfy", True, ""), ("webhook", True, "")])
+        self.assertEqual(mails, [["to smtp.example.org:587", "starttls", "login kiwi",
+                                  ("a@example.org, b@example.org", "Kiwi home: Käse", "Wrong: lychee does not answer\n")]])
+        push, hook = got
+        self.assertEqual((push[0], push[1]["Priority"], push[1]["Authorization"], push[2]),
+                         ("/topic", "high", "Bearer tk", b"Wrong: lychee does not answer"))
+        self.assertTrue(push[1]["Title"].startswith("=?UTF-8?B?"))                       # a header takes plain letters only
+        self.assertEqual(json.loads(hook[2]), {"title": "Kiwi home: Käse", "text": "Wrong: lychee does not answer",
+                                               "level": "bad", "network": "home"})
+        # a channel that fails says why and does not stop the others
+        bad = dict(cfg, ntfy={"url": "http://127.0.0.1:1/x"})
+        with mock.patch.object(notify.smtplib, "SMTP", Smtp):
+            sent = notify.send(bad, "t", "x")
+        self.assertEqual([(c, ok) for c, ok, _w in sent], [("mail", True), ("ntfy", False), ("webhook", True)])
+        self.assertTrue(notify.heartbeat(url + "/beat"))
+        self.assertFalse(notify.heartbeat("http://127.0.0.1:1/x"))
+
+    def test_the_command_keeps_what_is_wrong_and_says_what_changed(self):
+        from kiwiserver import health
+        f = self.fleet({"defaults": self.base_defaults(notify={"after": 0}), "hosts": {"a": {}}})
+        status = os.path.join(self.tmp, "status.json")
+        write(status, json.dumps({"hosts": [{"host": "a", "ok": True, "problems": [{"level": "bad", "text": "the disk is full"}]}]}))
+        state = os.path.join(self.tmp, "health.json")
+        rows = {"hosts": [{"name": "a", "phase": "applied", "sites": ["cloud.a.home", "control.a.home"],
+                           "admin_sites": ["control.a.home"]}]}
+        real = cli.main
+
+        def fake_main(argv):
+            if argv[:1] == ["list"]:
+                print(json.dumps(rows))
+                return 0
+            return real(argv)
+        answers = {"cloud.a.home": (False, 502), "control.a.home": (True, 403)}
+        out = io.StringIO()
+        with mock.patch.object(cli, "main", fake_main), mock.patch.object(health, "probe", lambda sites: {s: answers[s] for s in sites}), \
+                contextlib.redirect_stdout(out):
+            cli.cmd_notify(argparse.Namespace(fleet=f.path, test=False, status=status, events=None, state=state, no_send=False,
+                                              porcelain=True, output=None, media=None))
+        said = json.loads(out.getvalue().strip().splitlines()[-1])
+        self.assertEqual(sorted(e["text"] for e in said["events"]),
+                         ["Files (Nextcloud) does not answer (cloud.a.home)", "a: the disk is full"])
+        self.assertEqual((said["sent"], said["down"]), ([], ["cloud.a.home"]))            # nowhere to send it: kept only
+        kept = json.loads(util.read_text(state))
+        self.assertEqual(sorted(kept["items"]), ["problem:a:the disk is full", "service:cloud.a.home"])
+        self.assertEqual(kept["window"], "Sun 03:30")
+        with self.assertRaisesRegex(KiwiError, "nowhere to send it yet"):
+            cli.cmd_notify(argparse.Namespace(fleet=f.path, test=True, output=None, media=None))
+
+
 class TestMadeUpNetwork(unittest.TestCase):
     """The made-up network of the page and app previews (tests/drills/madeup.py) says what real
     machines say: a field the app or the page reads must not be missing from it."""
@@ -7432,6 +7575,46 @@ class TestWeb(StoreBase):
         self.assertEqual(wide.count("<rect"), 7)
         self.assertEqual(web.bars({}), [])
         self.assertEqual(web.stats([], []), [])
+
+    def test_the_status_page_needs_no_login_and_shows_no_admin_page(self):
+        now = time.time()
+        os.makedirs(self.c.dir, exist_ok=True)
+        self.assertIn("Nothing has been checked yet", self.ask("/status")[1])          # before the first look
+        util.write_text(self.c.health_file, json.dumps({
+            "checked": now - 120, "machines": {"on": 2, "of": 2}, "window": "Sun 03:30",
+            "services": [{"site": "cloud.papaya.home", "label": "Files (Nextcloud)", "host": "papaya", "admin": False, "ok": False,
+                          "since": now - 2400},
+                         {"site": "vault.papaya.home", "label": "Passwords (Vaultwarden)", "host": "papaya", "admin": False, "ok": True,
+                          "since": now - 90000},
+                         {"site": "control.papaya.home", "label": "This page", "host": "papaya", "admin": True, "ok": True, "since": 1}],
+            "incidents": [{"key": "service:cloud.papaya.home", "text": "Files (Nextcloud) does not answer (cloud.papaya.home)",
+                           "from": now - 2400, "to": None}]}))
+        code, body = self.ask("/status")                                           # the store is locked, nobody is logged in
+        self.assertEqual(code, 200)
+        for words in ("1 service does not answer", "Files (Nextcloud)", "does not answer", "for 40 minutes", "Passwords (Vaultwarden)",
+                      "2 of 2 machines answer", "Sun 03:30", "and still", "This page needs no login"):
+            self.assertIn(words, body)
+        for words in ("control.papaya.home", "csrf", '<aside class="side">', "Log out"):
+            self.assertNotIn(words, body)                                          # no admin page, no menu, nothing to post
+        stale = json.loads(util.read_text(self.c.health_file))
+        stale["checked"] = now - 7200
+        util.write_text(self.c.health_file, json.dumps(stale))
+        self.assertIn("Not checked for 2 hours", self.ask("/status")[1])
+        # the people who run it see the same on Home, with the machine to open
+        self.ask("/login", {"password": self.PW})
+        for _ in range(200):
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": [], "sites": ["cloud.papaya.home"], "phase": "applied"}]}))
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": now, "hosts": [
+            {"host": "papaya", "state": "ok", "facts": {}}]}))
+        body = self.ask("/")[1]
+        self.assertIn("1 service does not answer", body)
+        self.assertIn("It does not answer at cloud.papaya.home", body)
+        self.assertIn('href="/status">What everyone sees: the status page</a>', body)
+        self.assertIn("Send a test message", self.ask("/settings")[1])
 
     def test_a_device_gets_a_qr_code(self):
         self.ask("/login", {"password": self.PW})

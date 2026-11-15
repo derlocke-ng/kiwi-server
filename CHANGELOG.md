@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.108.0 — a status page for everyone, and messages
+
+- **Every service is asked for a page.** After each look at the machines the control
+  node asks every service over HTTPS, as a device on the network does. A machine that
+  says all its containers run while a service answers nobody is found that way. Home
+  lists such a service under what needs a look.
+- **The status page**: `https://status.<host>`, without a login, for everyone who may
+  reach the node's web pages. Which services work, since when one does not, how many
+  machines answer, the update window, the last seven days. No admin page, no address,
+  no setting. It also answers while the node's keys are locked.
+- **Messages**: by mail, as a push message (ntfy) and to a webhook (an SMS gateway, a
+  chat room), when something has been wrong for ten minutes and when it is fine again:
+  machines, services, problems a machine reports, and what the control node did by
+  itself. `notify:` in the settings for every machine; "Send a test message" on the
+  settings page, `kiwi-server notify <fleet> --test` in a terminal. `heartbeat` asks an
+  address after every look, so a service outside can say when the network falls silent.
+- **Nextcloud survives a power cut** (kiwi-modules 0.39.0): its database lost its
+  settings file in a power-cut drill, listened on 127.0.0.1 only, and Nextcloud waited
+  for ever with every container "healthy". The settings are put back at the next start.
+  Apply the machine to get the fix.
+
 ## 2.107.1 — the starter finds itself, and the whole run is tried
 
 - **The starter did not list "This machine".** The control image has no `ip` command,

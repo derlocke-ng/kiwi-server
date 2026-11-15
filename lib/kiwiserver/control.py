@@ -40,6 +40,7 @@ ACTIONS = {
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
+    "tell-test": ("notify", False),
 }
 CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock", "remove"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
@@ -696,6 +697,8 @@ class Control:
             if not names:
                 raise KiwiError("no machine is set up yet, so there is nowhere to copy it to. \"Fetch a copy\" gives you the file")
             return argv + names
+        if action == "tell-test":           # one test message on every channel that is set
+            return list(self.kiwi) + ["notify", self.fleet_path, "--test"]
         if action == "save":                # one machine's data, to its backup machines, now
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
@@ -1273,6 +1276,38 @@ class Control:
                 self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
         return events
 
+    def tell(self):
+        """After a look: every service asked for a page, what is wrong kept with its time, and a
+        message about what changed (`kiwi-server notify`). The file it keeps is on the disk, with
+        no secret in it: the status page reads it, also while the keys are locked."""
+        seen = os.path.join(self.run, "status.json")
+        if self.locked() or not os.path.isfile(seen):
+            return None
+        argv = list(self.kiwi) + ["notify", self.fleet_path, "--porcelain", "--status", seen, "--state", self.health_file]
+        if os.path.isfile(os.path.join(self.run, "recover.json")):
+            argv += ["--events", os.path.join(self.run, "recover.json")]
+        with self.lock:
+            r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        try:
+            said = json.loads((r.stdout.strip().splitlines() or [""])[-1])
+        except ValueError:
+            return None
+        for way in said.get("sent") or []:
+            self.audit("control", ("told by %s: %s" % (way["channel"], "; ".join(e["text"] for e in said.get("events") or [])[:300]))
+                       if way["ok"] else "could not tell by %s: %s" % (way["channel"], way["why"]))
+        return said
+
+    @property
+    def health_file(self):
+        return os.path.join(self.dir, "health.json")
+
+    def health(self):
+        """What the looks have kept (health.py): {} before the first one."""
+        try:
+            return json.loads(util.read_text(self.health_file)) if os.path.isfile(self.health_file) else {}
+        except (OSError, ValueError):
+            return {}
+
     def gone(self):
         """What the last look said about machines that do not answer: [{host, kind, text}]."""
         path = os.path.join(self.run, "recover.json")
@@ -1399,6 +1434,7 @@ class Control:
                     last_status = now
                     self.refresh_status()
                     events = self.recover()
+                    self.tell()
                     if any(e.get("kind") in ("restarted", "unlocked") for e in events):
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                     elif any(e.get("kind") == "waiting" for e in events):

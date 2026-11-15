@@ -30,6 +30,7 @@ storage:
 
 urls:
   - "Control: https://{{ control_hostname or 'control.' ~ hostname }} (from the mesh)"
+  - "{% if status_page %}Status: https://{{ status_hostname or 'status.' ~ hostname }} (no login){% endif %}"
 
 logins:
   - label: Control page
@@ -49,6 +50,15 @@ nginx:
     - "{% if allow_from %}allow {{ allow_from }};{% endif %}"
     - "allow 127.0.0.1;"
     - "deny all;"
+  servers:
+    # the status page: how the network is, for everyone on it, without a login. Whatever is asked
+    # for at this name, the control part is asked for /status and nothing else. It is no admin
+    # page: who may reach this machine's web pages may open it.
+    - server_name: "{{ status_hostname or 'status.' ~ hostname }}"
+      site: status
+      proxy_pass: "http://control/status"
+      when: status_page
+      comment: Kiwi status (no login; the control part's /status only)
 
 backup:
   # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
@@ -62,6 +72,15 @@ settings:
   - key: control_hostname
     label: Hostname
     help: "Empty: control.<hostname>."
+    default: ""
+  - key: status_page
+    type: bool
+    label: Status page
+    help: "A page without a login at status.<hostname>: which services work, for everyone who may reach this machine's web pages. It shows no addresses and no settings."
+    default: true
+  - key: status_hostname
+    label: Status page's hostname
+    help: "Empty: status.<hostname>."
     default: ""
   - key: status_minutes
     type: int

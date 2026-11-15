@@ -50,6 +50,31 @@ def answers():
     return {"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts}, {"hosts": said}
 
 
+LABELS = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "photos": "Photos", "paperless": "Documents (Paperless)",
+          "git": "Git (Forgejo)"}
+
+
+def health(now):
+    """What the looks would have kept about this network (health.py): one service that does not
+    answer on a machine that says it is fine, and an incident that is over."""
+    listed, status = answers()
+    down = {h["host"] for h in status["hosts"] if not h["ok"]}
+    rows = []
+    for h in listed["hosts"]:
+        for site in h["sites"]:
+            first = site.split(".", 1)[0]
+            ok = h["name"] not in down and site != "paperless.papaya.home"
+            rows.append({"site": site, "label": LABELS.get(first, first.capitalize()), "host": h["name"], "ok": ok,
+                         "admin": first in ("control", "portainer", "pihole", "wg"), "since": now - (2400 if not ok else 400000)})
+    return {"checked": now - 180, "machines": {"on": len(status["hosts"]) - len(down), "of": len(status["hosts"])},
+            "window": "Sun 03:30", "services": rows, "items": {}, "did": {},
+            "incidents": [{"key": "service:cloud.papaya.home", "text": "Files (Nextcloud) does not answer (cloud.papaya.home)",
+                           "from": now - 190000, "to": now - 187700},
+                          {"key": "machine:medlar", "text": "medlar does not answer", "from": now - 5000, "to": None},
+                          {"key": "service:paperless.papaya.home", "text": "Documents (Paperless) does not answer (paperless.papaya.home)",
+                           "from": now - 2400, "to": None}]}
+
+
 def fleet_yaml():
     lines = ["defaults:", "  domain: home", "hosts:"]
     for name, role, modules, _sites, _state, _problems, _f in MACHINES:

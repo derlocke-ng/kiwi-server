@@ -889,7 +889,9 @@ class Renderer:
                 if km not in bundle.kernel_modules:
                     bundle.kernel_modules.append(str(km))
             for url in mod.meta.get("urls") or []:
-                bundle.urls.append(self.expand(url, ctx, "modules/%s/module.yaml urls" % name))
+                url = self.expand(url, ctx, "modules/%s/module.yaml urls" % name)
+                if url.strip():         # a page that is switched off has none
+                    bundle.urls.append(url)
         if base["enable_vpn_dnat"] and "vpn-client" in ordered:
             bundle.ports += [p for p in ("80/tcp", "443/tcp") if p not in bundle.ports]
         # every file's parent exists before compose mounts it

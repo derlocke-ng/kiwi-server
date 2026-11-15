@@ -7257,6 +7257,49 @@ class TestWeb(StoreBase):
         self.assertIn("saved 2 hours ago", self.ask("/backups")[1])
         self.assertIn('<option value="devices" selected>', self.ask("/devices")[1])
 
+    def test_the_frame_the_numbers_and_the_picture(self):
+        from kiwiserver import web
+        self.ask("/login", {"password": self.PW})
+        for _ in range(200):
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        gb = 1048576
+        facts = {"load": [1.0, 1, 1], "cpus": 4, "memory": {"total": 8 * gb, "available": gb}, "running": 5, "expected": 6,
+                 "disks": [{"mount": "/var", "size": 100 * gb, "used": 10 * gb}, {"mount": "/mnt/data", "size": 100 * gb, "used": 95 * gb}],
+                 "backup": {"last": 1, "age": 2 * 86400, "copies": []}}
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"domain": "home", "hosts": [
+            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "modules": ["vpn-server"], "sites": [], "phase": "applied"},
+            {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "control", "gateway", "backup-server"],
+             "sites": ["cloud.papaya.home"], "phase": "applied"},
+            {"name": "lychee", "hostname": "lychee.home", "role": "node", "modules": [], "sites": [], "phase": "applied"}]}))
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "sorbet", "state": "ok", "facts": {}}, {"host": "papaya", "state": "ok", "facts": facts},
+            {"host": "lychee", "state": "down", "facts": {}}]}))
+        body = self.ask("/")[1]
+        for words in ('<aside class="side">', '<nav class="bar">', "kiwi_theme", "Kiwi <small>.home</small>",       # the frame
+                      '<a class="nav on" href="/">', "not reachable</span><b>1</b>",
+                      "Machines on", "<b class=\"bad\">2<small> of 3</small></b>", "lychee is not reachable",              # the numbers
+                      "<b class=\"warn\">5<small> of 6</small></b>", "1 not running", "ago at the longest: papaya",
+                      'title="7.0 GB of 8.0 GB in use"', 'class="fill bad" style="width:95%"',                           # its bars
+                      "Home server (node) · control node · gateway · keeps backups",
+                      "How they are linked", '<path class="up"', '<path class="off"'):                                # the picture
+            self.assertIn(words, body)
+        self.assertIn('<a class="nav on" href="/access">', self.ask("/access")[1])
+        self.assertIn('<a class="nav on" href="/settings">', self.ask("/settings")[1])
+        self.assertIn("95<small> %</small>", self.ask("/hosts/papaya")[1])
+        self.assertNotIn('<aside class="side">', self.ask("/login")[1])            # no menu before the login
+        # the picture by itself: nothing without a master, a list for a phone, names made safe
+        m = lambda name, role, state: {"name": name, "role": role, "state": state, "modules": []}     # noqa: E731
+        self.assertEqual(web.picture([m("a", "node", "ok")]), "")
+        narrow = web.picture([m("a", "master", "ok"), m("b", "node", "down"), m("c", "node", "warn")], 2, per_row=1)
+        self.assertIn("2 devices on its VPN", narrow)
+        self.assertEqual((narrow.count('class="up"'), narrow.count('class="off"')), (1, 1))
+        wide = web.picture([m("a", "master", "ok")] + [m("n%d" % i, "node", "ok") for i in range(6)], 0, per_row=4)
+        self.assertEqual(wide.count("<rect"), 7)
+        self.assertEqual(web.bars({}), [])
+        self.assertEqual(web.stats([], []), [])
+
     def test_a_device_gets_a_qr_code(self):
         self.ask("/login", {"password": self.PW})
         tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', self.ask("/")[1]).group(1)

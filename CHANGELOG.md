@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.105.0 — the control page's new look
+
+- **A menu at the side, numbers on top.** On a computer the control page has its menu
+  at the side, with how the machines are below it; on a phone a bar at the bottom, the
+  rest under "More". Home starts with four numbers: machines on, services running, the
+  oldest last backup, devices on the VPN.
+- **Every machine as a card**: what it is (control node, gateway, keeps backups), how
+  busy its processor is, how full its memory and its fullest disk are, and its first
+  services. A machine's own page shows the same as numbers.
+- **A picture of the network**: the master, and a line to every other machine, green
+  when the machine answers and grey and broken when it does not. Drawn by the node
+  itself, as a list on a phone.
+- **Light and dark**: the page follows the device, and the moon button switches it.
+  Nothing is fetched from elsewhere (no fonts, no scripts), so the page looks the same
+  with the Internet down.
+- `tests/drills/page-preview.py` shows the page on this computer with made-up
+  machines: for looking at a change without a real network.
+- The starter stick's test checks its scripts with bash, which they are written in.
+
 ## 2.104.0 — the starter stick
 
 - **`kiwi-server build --starter`** makes one install image with no secret and no fleet

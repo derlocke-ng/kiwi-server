@@ -146,6 +146,9 @@ DEFAULTS = {
         "name_constraints": [],  # e.g. [kiwi]: the CA may only sign names under these domains
     },
     "post_script": "",
+    # data disks beside the system disk: "LABEL=data /mnt/data" or {device, at, format}. Mounted
+    # before the role and its services start; never erased (mounts_of, roles.render_script)
+    "mounts": [],
     # what the control node may do by itself when a machine is gone (watchdog.py, design/recovery.md)
     "recovery": {
         "master": {"after": 15, "do": "tell"},
@@ -242,6 +245,37 @@ def unknown_keys(block, roles, where):
             hint = difflib.get_close_matches(str(kk), sorted(DEFAULTS[k]), n=1, cutoff=0.6)
             errs.append("%s.%s: unknown key %r%s" % (where, k, kk, (" (did you mean %s?)" % hint[0]) if hint else ""))
     return errs
+
+
+_MOUNT_DEVICE = re.compile(r"^(LABEL|UUID|PARTUUID|PARTLABEL)=[A-Za-z0-9._:-]+$|^/dev/[A-Za-z0-9._:/-]+$")
+_MOUNT_AT = re.compile(r"^/[A-Za-z0-9._/-]+$")
+_NOT_A_MOUNT = ("/", "/boot", "/etc", "/usr", "/var", "/home", "/root", "/sysroot", "/dev", "/proc", "/sys", "/run", "/tmp")
+
+
+def mounts_of(cfg):
+    """A machine's data disks: [(device, where, format or "")]. An entry is "DEVICE WHERE"
+    (as a line of fstab begins) or {device, at, format}. The device by its label, its UUID or
+    a /dev path that does not change (by-id); `format` (xfs, ext4) makes a filesystem on a
+    disk that has none, and is never used on one that has."""
+    out = []
+    for e in cfg.get("mounts") or []:
+        if isinstance(e, dict):
+            dev, at, fmt = str(e.get("device") or ""), str(e.get("at") or ""), str(e.get("format") or "")
+        else:
+            parts = str(e).split()
+            dev, at, fmt = (parts + ["", "", ""])[:3] if 2 <= len(parts) <= 3 else ("", "", "")
+        at = at.rstrip("/") if len(at) > 1 else at
+        if not _MOUNT_DEVICE.match(dev) or not _MOUNT_AT.match(at):
+            raise KiwiError("mounts: %r is not a disk and a place, like LABEL=data /mnt/data "
+                            "(the disk as LABEL=…, UUID=… or /dev/disk/by-id/…)" % (e,))
+        if at in _NOT_A_MOUNT or ".." in at.split("/"):
+            raise KiwiError("mounts: %s is the system's own; a data disk goes under /mnt or /srv, e.g. /mnt/data" % at)
+        if fmt not in ("", "xfs", "ext4"):
+            raise KiwiError("mounts: format is xfs or ext4 (got %r)" % fmt)
+        if at in [x[1] for x in out]:
+            raise KiwiError("mounts: two disks at %s" % at)
+        out.append((dev, at, fmt))
+    return out
 
 
 def deep_merge(base, over, path=()):
@@ -432,6 +466,10 @@ class Host:
                 raise ValueError
         except (TypeError, ValueError):
             errs.append("updates.length_minutes must be a positive integer")
+        try:
+            mounts_of(self.cfg)
+        except KiwiError as e:
+            errs.append(str(e))
         if self.cfg.get("disk") and str(self.cfg["disk"]) != "auto" and not str(self.cfg["disk"]).startswith("/dev/"):
             errs.append("disk must be auto (the machine's one disk) or a device path like /dev/sda or /dev/nvme0n1")
         if self.target == "armbian":

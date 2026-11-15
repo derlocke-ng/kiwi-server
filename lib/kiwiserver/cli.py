@@ -2739,6 +2739,36 @@ def cmd_onion(args):
     util.say("bring it to the machine: kiwi-server apply %s %s" % (base, host.name))
 
 
+def cmd_disks(args):
+    """The disks a machine has, as it sees them, and which of them hold data that is not
+    mounted: with the line for `mounts` in the fleet file that puts it there."""
+    fleet, roles, ms = load(args)
+    host = fleet.select([args.host])[0]
+    tgt = remote.reach(host, args.ssh)
+    out = remote.run(tgt, "lsblk -P -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINT -e 7,11").decode()
+    rows = [dict(re.findall(r'(\w+)="([^"]*)"', line)) for line in out.splitlines() if line.strip()]
+    set_up = {dev: at for dev, at, _f in config.mounts_of(host.cfg)}
+    free = []
+    for r in rows:
+        if r.get("FSTYPE") in ("xfs", "ext4", "btrfs") and not r.get("MOUNTPOINT") and r.get("LABEL") not in ("boot", "root"):
+            dev = ("LABEL=" + r["LABEL"]) if re.fullmatch(r"[A-Za-z0-9._:-]+", r.get("LABEL") or "") else "UUID=" + r["UUID"]
+            r["mounts"] = "%s /mnt/%s" % (dev, (r.get("LABEL") or "data").lower() if dev.startswith("LABEL=") else "data")
+            if dev not in set_up:
+                free.append(r)
+    if args.porcelain:
+        print(json.dumps({"host": host.name, "disks": rows, "mounts": [list(m) for m in config.mounts_of(host.cfg)]}, indent=2))
+        return
+    print("%-12s %8s  %-5s %-12s %-12s %s" % ("NAME", "SIZE", "TYPE", "FILESYSTEM", "LABEL", "MOUNTED AT"))
+    for r in rows:
+        print("%-12s %8s  %-5s %-12s %-12s %s" % (r.get("NAME", ""), r.get("SIZE", ""), r.get("TYPE", ""), r.get("FSTYPE", "") or "-",
+                                                 r.get("LABEL", "") or "-", r.get("MOUNTPOINT", "") or "-"))
+    for dev, at in set_up.items():
+        util.say("in the fleet file: %s at %s" % (dev, at))
+    for r in free:
+        util.say("%s (%s, %s) holds a filesystem and is not mounted. To use it as a data disk, in %s's settings (Data disks), "
+                 "or in the fleet file:\n    mounts: [\"%s\"]" % (r["NAME"], r.get("SIZE", "?"), r["FSTYPE"], host.name, r["mounts"]))
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
     mesh and DNS into the other's federation.yaml. What each shares stays empty until written."""
@@ -3061,6 +3091,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
   kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
   kiwi-server onion <fleet> [service.machine]        hidden services: a site for anyone with Tor, or for named people
+  kiwi-server disks <fleet> <host>                    the machine's disks, and the line that mounts a data disk
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -3250,6 +3281,8 @@ def build_parser():
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
     s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
+    s = sub("disks", cmd_disks); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("onion", cmd_onion); s.add_argument("fleet"); s.add_argument("what", nargs="?", help="<service>.<machine>, e.g. git.papaya")
     s.add_argument("--client", metavar="NAME", help="only named people get in: add this name (with --remove: take it away)")
     s.add_argument("--show", metavar="NAME", help="what this person types into Tor Browser")

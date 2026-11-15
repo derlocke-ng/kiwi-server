@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.99.0 — a second disk for the data
+
+- **`mounts:`** in a machine's settings ("Data disks" in the app and on the page): a
+  second disk and where it goes, like `LABEL=data /mnt/data`. It is mounted at every
+  apply, before the services start, and at every boot, and never erased. Until now such
+  a disk was mounted by hand after an install, which a machine installed anew did not
+  survive without a person.
+- `kiwi-server disks <fleet> <machine>` lists a machine's disks and gives the line for
+  one that holds data and is not mounted.
+- An apply stops when a data disk is not there, instead of letting the services write
+  into an empty folder on the system disk.
+- A new, empty disk gets a filesystem when its entry asks for one (`xfs`, `ext4`), and
+  only when the disk has nothing on it.
+- Proven on the test network: papaya installed anew from its media with an encrypted
+  system disk (opened by the rings on two other machines, twice, with nobody there),
+  its data disk mounted by this setting.
+
 ## 2.98.0 — admin pages, and every app
 
 - **Admin pages are a class of their own.** The control page, Portainer, Pi-hole, the

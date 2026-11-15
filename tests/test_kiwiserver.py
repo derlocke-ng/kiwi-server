@@ -2764,6 +2764,61 @@ class TestConnectWait(unittest.TestCase):
         self.assertEqual(len(tries), 2)
 
 
+class TestMounts(Base):
+    """A second disk for the data: set in the fleet file, mounted before the role's steps."""
+
+    def host(self, mounts):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare", "mounts": mounts}}})
+        return f.hosts["x"]
+
+    def test_an_entry_is_a_disk_and_a_place(self):
+        self.assertEqual(config.mounts_of({"mounts": ["LABEL=data /mnt/data", "UUID=0a1b-2c /srv/media/ xfs",
+                                                      {"device": "/dev/disk/by-id/ata-X_1", "at": "/mnt/big", "format": "ext4"}]}),
+                         [("LABEL=data", "/mnt/data", ""), ("UUID=0a1b-2c", "/srv/media", "xfs"), ("/dev/disk/by-id/ata-X_1", "/mnt/big", "ext4")])
+        self.assertEqual(config.mounts_of({}), [])
+        for bad, why in ((["data /mnt/data"], "not a disk and a place"), (["LABEL=data"], "not a disk and a place"),
+                         (["LABEL=data /var"], "the system's own"), (["LABEL=data /mnt/../etc"], "the system's own"),
+                         (["LABEL=data /mnt/data btrfs"], "xfs or ext4"), (["LABEL=a /mnt/d", "LABEL=b /mnt/d"], "two disks"),
+                         (["LABEL=data;rm /mnt/data"], "not a disk and a place"), ([{"device": "LABEL=data"}], "not a disk and a place")):
+            with self.assertRaisesRegex(KiwiError, why):
+                config.mounts_of({"mounts": bad})
+        self.assertIn("mounts: 'nope' is not a disk and a place", " ".join(self.host(["nope"]).validate(self.roles)))
+
+    def test_the_role_script_mounts_it_before_the_role(self):
+        h = self.host(["LABEL=data /mnt/data", "UUID=0a1b-2c /srv/media xfs"])
+        script = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "mounts": ["LABEL=data /mnt/data", "UUID=0a1b-2c /srv/media xfs"]}}}), "x")
+        self.assertIn("ks_role_apply_role() {", script)                  # the role's own steps, under another name
+        tail = script.split("# ---- data disks (fleet.yaml mounts)", 1)[1]
+        self.assertIn("LABEL=data /mnt/data \nUUID=0a1b-2c /srv/media xfs\nKS_MOUNTS", tail)
+        self.assertLess(tail.index("    ks_mounts\n"), tail.index("    ks_role_apply_role \"$@\""))
+        self.assertIn("nofail", tail)                                    # a disk that is gone does not keep the machine from booting
+        self.assertLess(tail.index("install -m 0644 /dev/null /etc/fstab"), tail.index("sed -i"))     # uCore has no fstab
+        self.assertIn("[[ -n $fmt ]] || ks_die", tail)                   # no filesystem and none asked for: stop, never format
+        self.assertIn("wipefs -n", tail)                                 # asked for: only on a disk that is empty
+        p = os.path.join(self.tmp, "x.role.sh")
+        write(p, script)
+        self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
+        plain = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}}), "x")
+        self.assertNotIn("ks_mounts", plain)                             # a machine with one disk: as before
+        self.assertNotIn("ks_role_apply_role", plain)
+        del h
+
+    def test_disks_lists_them_and_says_the_line_for_one_that_is_not_mounted(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        said = (b'NAME="sda" SIZE="953.9G" TYPE="disk" FSTYPE="xfs" LABEL="data" UUID="1-2" MOUNTPOINT=""\n'
+                b'NAME="nvme0n1p3" SIZE="384M" TYPE="part" FSTYPE="ext4" LABEL="boot" UUID="3-4" MOUNTPOINT="/boot"\n'
+                b'NAME="sdb1" SIZE="1.8T" TYPE="part" FSTYPE="ext4" LABEL="" UUID="5-6" MOUNTPOINT=""\n')
+        with mock.patch.object(remote, "run", lambda *a, **kw: said), mock.patch.object(remote, "reach", lambda h, o=None: "core@x"):
+            rc, out, err = TestManage.run_cli(self, "disks", f.path, "x")
+            self.assertEqual(rc, 0, err)
+            self.assertIn('mounts: ["LABEL=data /mnt/data"]', out + err)
+            self.assertIn('mounts: ["UUID=5-6 /mnt/data"]', out + err)               # no label: by its UUID
+            self.assertNotIn("LABEL=boot", out + err)
+            rc, out, err = TestManage.run_cli(self, "disks", f.path, "x", "--porcelain")
+            self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1"])
+
+
 class TestFederation(Base):
     def test_the_link_key_is_wireguards(self):
         priv = bytes.fromhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")   # RFC 7748

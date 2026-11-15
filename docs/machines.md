@@ -51,6 +51,41 @@ root after the network is up, and never again once
   role always runs on the final image.
 - `sudo bash /var/lib/kiwi-server/role.sh --force` runs it again by hand.
 
+## A second disk for the data
+
+The install media take one disk, the system disk (`disk`), and erase it. A
+machine with a second disk for the data says so in its settings ("Data disks"
+in the app and on the page), or in the fleet file:
+
+```yaml
+hosts:
+  papaya:
+    disk: /dev/nvme0n1                  # the system: erased by the install media
+    mounts: ["LABEL=data /mnt/data"]    # the data: mounted, never erased
+```
+
+An entry is the disk and where it goes. Name the disk by its label
+(`LABEL=data`), its `UUID=…` or a `/dev/disk/by-id/…` path: `/dev/sda` can be
+another disk after the next start. This lists what a machine has, with the line
+for a disk that holds data and is not mounted:
+
+```bash
+kiwi-server disks ~/kiwi/fleet.yaml papaya
+```
+
+The disk is mounted at every apply, before the services start, and at every
+boot. A machine installed anew finds its data disk again this way, with nobody
+mounting it by hand. When the disk is not there, the apply stops and says so:
+services writing into an empty folder on the system disk would look like lost
+data later.
+
+A new, empty disk needs a filesystem once: `"LABEL=…"` cannot name it yet, so
+give its by-id path and a third word, `xfs` or `ext4`. That is only ever done on
+a disk with nothing on it.
+
+The data disk is not encrypted by this. The system disk is, when the machine has
+unlock rings ([security.md](security.md)).
+
 ## Updates
 
 Updates are fetched continuously on every target; the *reboot* happens in

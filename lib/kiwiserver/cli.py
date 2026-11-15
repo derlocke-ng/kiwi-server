@@ -318,9 +318,10 @@ class Renderer:
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
                 mesh_only += modmod.Renderer(self.ms).mesh_only_names(spec)
-                if role.node_type != "master" and (h.module_settings.get("reverse-proxy") or {}).get("public"):
+                if role.node_type != "master":      # its public names (with a public proxy) and the ports its modules ask for
                     public, ports = modmod.Renderer(self.ms).exposure(spec)
-                    open_nodes.append((h.name, spec.vpn_ip, public, ports))
+                    if public or ports:
+                        open_nodes.append((h.name, spec.vpn_ip, public, ports))
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
@@ -335,12 +336,13 @@ class Renderer:
             for n in public:
                 exposed["names"][n] = ip
             for p in ports:
-                taken = next((x for x in exposed["ports"] if x["port"] == p["port"]), None)
+                proto = p.get("proto") or "tcp"
+                taken = next((x for x in exposed["ports"] if (x["port"], x["proto"]) == (p["port"], proto)), None)
                 if taken:
-                    raise KiwiError("%s: the master's port %d is handed on to %s already: one machine per public port"
-                                    % (name, p["port"], taken["to"].split(":")[0]))
+                    raise KiwiError("%s: the master's port %d/%s is handed on to %s already: one machine per public port"
+                                    % (name, p["port"], proto, taken["to"].split(":")[0]))
                 exposed["ports"].append({"port": p["port"], "to": "%s:%d" % (ip, p["to"]),
-                                         "proxy_protocol": p["proxy_protocol"]})
+                                         "proxy_protocol": p["proxy_protocol"], "proto": proto})
         self._exposed = exposed
         self._mesh_only = mesh_only
         self._records, self._needs_ca, self._master_ip, self._node_lan = recs, needs_ca, master_ip, node_lan

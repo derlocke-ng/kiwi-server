@@ -110,7 +110,7 @@ stream {
 {% endif %}
 {% for p in ex.ports or [] %}
     server {
-        listen {{ p.port }};
+        listen {{ p.port }}{{ ' udp' if p.proto == 'udp' }};
         proxy_pass {{ p.to }};
 {% if p.proxy_protocol %}
         proxy_protocol on;
@@ -119,7 +119,7 @@ stream {
 {% if rate_limit %}
         limit_conn kiwi_door {{ rate_limit * 4 }};
 {% endif %}
-        proxy_timeout 1h;
+        proxy_timeout {{ '10m' if p.proto == 'udp' else '1h' }};
     }
 {% endfor %}
 }

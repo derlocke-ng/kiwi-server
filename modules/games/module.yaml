@@ -18,6 +18,11 @@ network:
   open_ports:
     - "{% for n, s in servers.items() if s.game in catalog %}{% set g = catalog[s.game] %}{% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}{% for p in g.ports %}{{ (p.split('/')[0] | int) + shift }}/{{ p.split('/')[1] }} {% endfor %}{% endfor %}"
 
+# a server with public: true: the master hands its ports on to this machine, as they are
+expose:
+  ports:
+    - "{% for n, s in servers.items() if s.game in catalog and s.public %}{% set g = catalog[s.game] %}{% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}{% for p in g.ports %}{{ (p.split('/')[0] | int) + shift }}/{{ p.split('/')[1] }} {% endfor %}{% endfor %}"
+
 firewall:
   scope: vpn-client
   rules:
@@ -58,6 +63,7 @@ settings:
       One entry per server, YAML: name -> {game, port, name, password, memory, env, args, image}.
       game: one of the catalog (minecraft, minecraft-bedrock, enshrouded, abiotic-factor, zandronum, valheim, factorio, satisfactory, palworld, terraria).
       port: the server's first port on this machine, when the game's usual one is taken by another server; its other ports move with it.
+      public: true opens the server to the Internet: players outside your VPN join at the master's address, which hands the game's ports on to this machine. Nothing is opened at home.
       name: what players see. password: to join, where the game has one. memory: for Minecraft, like 4G.
       env: more settings of the image, as NAME: value. args: the server's command line, where the game takes one. image: another image than the catalog's.
       Example: survival: {game: minecraft, memory: 4G}

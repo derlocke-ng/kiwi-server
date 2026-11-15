@@ -9,15 +9,21 @@ that booted. The page:
 
 | | |
 |---|---|
-| **Home** | how the network is, in one line; what wants a look and what that means; every machine; a tile per service |
-| **A machine** | what it is, what runs on it; Check now, Preview, Apply, each with what it does |
+| **Home** | how the network is, in one line and four numbers (machines on, services running, the oldest last backup, devices); what wants a look and what that means; every machine with its load, memory and fullest disk; a picture of how they are linked; a tile per service |
+| **A machine** | what it is, how busy and how full it is, what runs on it; Check now, Preview, Apply, each with what it does |
 | **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
 | **Linked networks** | from Home: what other networks may reach here, and whether this network leaves to the Internet through one of them |
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 
-Settings are changed on the page too: "Settings" on a machine's page, and "Settings
+On a computer the menu is at the side, with how the machines are below it; on a phone
+it is a bar at the bottom, with the rest under "More". The page follows the device's
+light or dark setting, and the moon button switches it (kept in a cookie of that
+browser). Styles, drawings and the picture come from the node itself: nothing is
+fetched from anywhere else, so the page works when the Internet is down.
+
+Settings are changed on the page too: "Settings" in the menu or on a machine's page, and "Settings
 for every machine" on Home for what all of them inherit. They are the fields the app
 shows, from one shared list. A change is checked before it is kept; "Apply" then
 brings it to the machine. The app does the same from a computer and sends its changes

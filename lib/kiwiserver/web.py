@@ -6,6 +6,7 @@ set with `kiwi-server serve FLEET --set-password`; it opens the encrypted store 
 import asyncio
 import base64
 import hmac
+import math
 import subprocess
 import threading
 import time
@@ -27,49 +28,117 @@ COPY_MAX = 64 * 1024 * 1024         # a copy of a network is a few hundred KB; a
 BASE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Kiwi{% endblock %}</title>
+<script>(function(){var t=document.cookie.match(/(?:^|; )kiwi_theme=(light|dark)/);if(t)document.documentElement.dataset.theme=t[1]})()</script>
 <style>
-:root{--bg:#f6f7f5;--fg:#1d2321;--card:#fff;--line:#d9ddd8;--muted:#5d6763;--accent:#2f7d4a;
+:root{--bg:#f3f5f2;--fg:#17201b;--card:#fff;--line:#dde3dc;--line2:#b9c3bb;--muted:#5b6761;--accent:#2f7d4a;--onaccent:#fff;
+--tint:#e4f1e7;--hover:#edf1ec;--off:#8a9590;
 --ok:#2f7d4a;--warn:#a86b00;--bad:#b3261e;--okbg:#e6f3ea;--warnbg:#fbf1dc;--badbg:#fbe6e4}
-@media (prefers-color-scheme:dark){:root{--bg:#141716;--fg:#e6ebe8;--card:#1d2120;--line:#2e3432;
---muted:#9aa5a0;--accent:#6cc28b;--ok:#6cc28b;--warn:#e0a63a;--bad:#ff7a70;--okbg:#17281d;--warnbg:#2c2414;--badbg:#301a18}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0e1311;--fg:#e6ece8;--card:#161c19;--line:#27302b;--line2:#3d4a43;
+--muted:#93a09a;--accent:#74cc8b;--onaccent:#0e1311;--tint:#1a2b20;--hover:#1c2420;--off:#66716c;
+--ok:#74cc8b;--warn:#e5ad45;--bad:#ff7b72;--okbg:#15261b;--warnbg:#2b2413;--badbg:#301a18}}
+:root[data-theme=dark]{--bg:#0e1311;--fg:#e6ece8;--card:#161c19;--line:#27302b;--line2:#3d4a43;
+--muted:#93a09a;--accent:#74cc8b;--onaccent:#0e1311;--tint:#1a2b20;--hover:#1c2420;--off:#66716c;
+--ok:#74cc8b;--warn:#e5ad45;--bad:#ff7b72;--okbg:#15261b;--warnbg:#2b2413;--badbg:#301a18}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
-main{max-width:820px;margin:0 auto;padding:12px 16px 48px}
-nav{display:flex;gap:4px;align-items:center;overflow-x:auto;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card);
-position:sticky;top:0;z-index:2}nav a{padding:6px 12px;border-radius:999px;text-decoration:none;color:var(--fg);white-space:nowrap}
-nav a.on{background:var(--accent);color:#fff}nav .sp{flex:1}
-h1{font-size:1.4rem;margin:16px 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}p{margin:8px 0}
+main{max-width:860px;margin:0 auto;padding:12px 16px 48px}
+.shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
+.shell main{max-width:960px;width:100%;padding:20px 28px 64px}
+.side{position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding:14px 10px;
+border-right:1px solid var(--line);background:var(--card)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 10px 14px;font-weight:700;font-size:1.05rem;color:var(--fg);text-decoration:none}
+.brand svg{width:26px;height:26px;flex:none}.brand small{font-weight:400;color:var(--muted);font-size:.8rem}
+.nav{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--fg);text-decoration:none;font-size:.95rem}
+.nav:hover{background:var(--hover)}.nav.on{background:var(--tint);color:var(--accent);font-weight:600}
+.ico{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav .ico{color:var(--muted)}.nav.on .ico{color:var(--accent)}.nav .count{margin-left:auto;font-size:.78rem;color:var(--muted);font-weight:400}
+.side .foot{margin-top:auto;padding-top:14px;display:flex;flex-direction:column;gap:8px}
+.health{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:.85rem;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.health b{text-align:right}.health .t{grid-column:1/3;color:var(--muted);font-size:.78rem}
+.side .foot .row2{display:flex;gap:6px}.side .foot button{padding:6px 10px;font-size:.88rem;flex:1}
+button.icon{display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.top,.bar{display:none}
+@media (max-width:860px){.shell{display:block}.side{display:none}.shell main{padding:12px 16px 96px}
+.top{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:3}
+.top .brand{padding:0;flex:1}.top button{padding:6px 9px}
+.bar{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;z-index:3;background:var(--card);
+border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom))}
+.bar>a,.bar summary{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;border-radius:8px;color:var(--muted);
+text-decoration:none;font-size:.74rem;list-style:none;cursor:pointer}.bar summary::-webkit-details-marker{display:none}
+.bar .ico{width:22px;height:22px}.bar>a.on,.bar details[open] summary{color:var(--accent);font-weight:600}.bar details{margin:0}
+.sheet{position:fixed;left:8px;right:8px;bottom:calc(66px + env(safe-area-inset-bottom));background:var(--card);border:1px solid var(--line);
+border-radius:12px;padding:8px;box-shadow:0 8px 30px rgba(0,0,0,.25);max-height:70vh;overflow:auto}.sheet form{padding:6px 2px 2px}.sheet button{width:100%}}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:.82rem;font-weight:600;border:1px solid var(--line)}
+.pill.ok{color:var(--ok);background:var(--okbg);border-color:transparent}.pill.warn{color:var(--warn);background:var(--warnbg);border-color:transparent}
+.pill.bad{color:var(--bad);background:var(--badbg);border-color:transparent}
+h1{font-size:1.45rem;margin:14px 0 4px;letter-spacing:-.01em}h2{font-size:1.05rem;margin:30px 0 8px}p{margin:8px 0}
 a{color:var(--accent)}.muted{color:var(--muted);font-size:.92rem}.small{font-size:.85rem}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:10px 0}
 .row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.banner{border-radius:12px;padding:16px;margin:12px 0;font-size:1.1rem;font-weight:600}
+.banner{border-radius:10px;padding:14px 16px;margin:12px 0;font-size:1.05rem;font-weight:600}
 .banner.ok{background:var(--okbg);color:var(--ok)}.banner.warn{background:var(--warnbg);color:var(--warn)}
 .banner.bad{background:var(--badbg);color:var(--bad)}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--muted)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--off)}
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad,.dot.down,.dot.failed{background:var(--bad)}
+.dot.busy{animation:pulse 1.4s ease-in-out infinite}@keyframes pulse{50%{opacity:.35}}
 .state{font-weight:600}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad,.down,.failed{color:var(--bad)}
-button,.btn{font:inherit;padding:9px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);
-color:var(--fg);cursor:pointer;text-decoration:none;display:inline-block}
-button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button,.btn{font:inherit;padding:9px 16px;border-radius:8px;border:1px solid var(--line);background:var(--card);
+color:var(--fg);cursor:pointer;text-decoration:none;display:inline-block}button:hover,.btn:hover{border-color:var(--line2)}
+button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--onaccent);font-weight:600}
 form.inline{display:inline}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-.tile{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;text-decoration:none;color:var(--fg)}
-.tile b{display:block}.tile span{color:var(--muted);font-size:.82rem;word-break:break-all}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.tile{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;text-decoration:none;color:var(--fg)}
+.tile:hover,.mach:hover,a.stat:hover{border-color:var(--line2)}
+.tile b{display:block}.tile span{color:var(--muted);font-size:.82rem;overflow-wrap:anywhere}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0}
+.stat{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+text-decoration:none;color:var(--fg);min-width:0}.stat .lbl{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.82rem}
+.stat .lbl .ico{width:15px;height:15px}.stat b{font-size:1.75rem;line-height:1.2;font-weight:600;letter-spacing:-.02em}
+.stat b small{font-size:1rem;font-weight:500;color:var(--muted)}.stat .cap{color:var(--muted);font-size:.82rem;overflow-wrap:anywhere}
+.stat .track{margin-top:6px}
+.machines{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.mach{display:flex;flex-direction:column;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82rem}.mach .state{font-size:.88rem}
+.meter{display:grid;grid-template-columns:62px 1fr auto;align-items:center;gap:8px;font-size:.8rem;color:var(--muted)}.meter:first-of-type{margin-top:6px}
+.track{display:block;height:6px;border-radius:3px;background:var(--hover);overflow:hidden}
+.fill{display:block;height:100%;border-radius:3px;background:var(--accent)}.fill.warn{background:var(--warn)}.fill.bad{background:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}.chip{font-size:.76rem;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pic svg{display:block;width:100%;height:auto;margin:0 auto}.pic .narrow{display:none}
+@media (max-width:640px){.pic .wide{display:none}.pic .narrow{display:block}}
+.pic rect{fill:var(--card);stroke:var(--line2)}.pic rect.m{stroke:var(--accent);stroke-width:1.5}
+.pic text{fill:var(--fg);font:600 14px system-ui,sans-serif}.pic text.c{fill:var(--muted);font-weight:400;font-size:11px}
+.pic path{fill:none;stroke:var(--line2);stroke-width:2;stroke-linecap:round}.pic path.up{stroke:var(--ok)}
+.pic path.off{stroke:var(--off);stroke-dasharray:5 5}
+.pic circle{fill:var(--off)}.pic circle.ok{fill:var(--ok)}.pic circle.warn{fill:var(--warn)}.pic circle.bad,.pic circle.down{fill:var(--bad)}
 .what{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:start;margin-top:8px}
 .what p{margin:0}ul{margin:6px 0;padding-left:20px}li{margin:3px 0}
-pre{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:12px;
+pre{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:10px;
 padding:12px;font-size:.85rem;max-height:60vh;overflow:auto}
-input,select,textarea{font:inherit;padding:9px;border-radius:10px;border:1px solid var(--line);width:100%;background:var(--card);color:var(--fg)}
+input,select,textarea{font:inherit;padding:9px;border-radius:8px;border:1px solid var(--line);width:100%;background:var(--card);color:var(--fg)}
+input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 input[type=checkbox]{width:auto;margin:0}.check{display:flex;gap:8px;align-items:baseline;font-weight:400;margin:8px 0}
 details.card>summary{font-weight:600}
 label{display:block;margin:10px 0 4px;font-weight:600}details{margin:8px 0}summary{cursor:pointer;color:var(--accent)}
-.qr{background:#fff;padding:10px;border-radius:12px;display:inline-block}.qr svg{display:block;width:260px;height:260px}
+.qr{background:#fff;padding:10px;border-radius:10px;display:inline-block}.qr svg{display:block;width:260px;height:260px}
 dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{color:var(--muted)}dd{margin:0}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
-{% if nav %}<nav>{% for href, label in [("/", "Home"), ("/devices", "Devices"), ("/backups", "Backups"),
-("/controllers", "Computers"), ("/activity", "Activity"), ("/help", "Help")] %}
-<a href="{{ href }}" {% if nav == href %}class="on"{% endif %}>{{ label }}</a>{% endfor %}<span class="sp"></span>
-<form class="inline" method="post" action="/logout">{{ tok }}<button style="padding:6px 12px">Log out</button></form></nav>{% endif %}
-<main>{% block main %}{% endblock %}</main></body></html>"""
+{% if nav %}{% set h = shell %}{% macro links(items, cls) %}{% for href, label, pic in items %}
+<a class="{{ cls }}{% if nav == href %} on{% endif %}" href="{{ href }}">{{ icon(pic) }}<span>{{ label }}</span>{% if cls == "nav" and h.counts.get(href) %}<span class="count">{{ h.counts[href] }}</span>{% endif %}</a>{% endfor %}{% endmacro %}
+{% macro theme() %}<button type="button" class="icon" title="Light or dark" aria-label="Light or dark" onclick="var d=document.documentElement,t=(d.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark';d.dataset.theme=t;document.cookie='kiwi_theme='+t+';path=/;max-age=31536000;samesite=strict'">{{ icon("moon") }}</button>{% endmacro %}
+<div class="shell"><aside class="side"><a class="brand" href="/">{{ icon("kiwi") }}<span>Kiwi <small>{{ h.domain }}</small></span></a>
+{{ links(navitems, "nav") }}
+<div class="foot">{% if h.total %}<div class="health"><span class="t">Your machines</span>
+<span><span class="dot ok"></span>fine</span><b>{{ h.ok }}</b>
+{% if h.warn %}<span><span class="dot warn"></span>want a look</span><b>{{ h.warn }}</b>{% endif %}
+{% if h.bad %}<span><span class="dot bad"></span>with a problem</span><b>{{ h.bad }}</b>{% endif %}
+{% if h.down %}<span><span class="dot down"></span>not reachable</span><b>{{ h.down }}</b>{% endif %}</div>{% endif %}
+<div class="row2">{{ theme() }}<form class="inline" method="post" action="/logout" style="flex:3;display:flex">{{ tok }}<button>Log out</button></form></div></div></aside>
+<div><header class="top"><a class="brand" href="/">{{ icon("kiwi") }}<span>Kiwi <small>{{ h.domain }}</small></span></a>
+{% if h.total %}<span class="pill {{ h.level }}">{{ h.word }}</span>{% endif %}{{ theme() }}</header>
+<main>{% block main %}{% endblock %}</main></div>
+<nav class="bar">{{ links(navitems[:3], "") }}<details><summary>{{ icon("more") }}<span>More</span></summary>
+<div class="sheet">{{ links(navitems[3:], "nav") }}<form method="post" action="/logout">{{ tok }}<button>Log out</button></form></div></details></nav></div>
+{% else %}<main>{{ self.main() }}</main>{% endif %}</body></html>"""
 
 STEP = """{% macro step(m, tok) %}<div class="card"><div class="row"><strong>{{ m.name }}</strong>
 <span class="muted">{{ kind(m.role) }}</span></div>
@@ -276,6 +345,8 @@ machines at home, then your phone.</p>{% endblock %}""",
 <div class="row"><span class="muted">{% if looked %}Checked {{ ago(looked) }} ago. It checks every ten minutes by itself.{% endif %}
 {% if error %}<span class="bad">{{ error }}</span>{% endif %}</span>
 <form class="inline" method="post" action="/refresh">{{ tok }}<button>Check now</button></form></div>
+{% if stats %}<div class="stats">{% for x in stats %}<a class="stat" href="{{ x.href }}"><span class="lbl">{{ icon(x.pic) }}{{ x.label }}</span>
+<b class="{{ x.level }}">{{ x.value }}{% if x.of is defined %}<small> of {{ x.of }}</small>{% endif %}</b><span class="cap">{{ x.caption }}</span></a>{% endfor %}</div>{% endif %}
 {% for e in gone %}<div class="card"><div class="row"><strong><span class="dot {{ "warn" if e.kind in ["waiting", "restarted", "unlocked"] else "bad" }}"></span>{{ e.host }}</strong>
 <a class="btn" href="/hosts/{{ e.host }}">Open</a></div><p>{{ e.text }}.</p>
 {% if e.kind == "waiting" %}<p class="muted">Nothing is done yet: a short break is normal.</p>
@@ -294,11 +365,15 @@ machines at home, then your phone.</p>{% endblock %}""",
 {% if fresh %}<h2>Still to set up</h2><p class="muted">One machine after the other: the master first.</p>
 {% for m in fresh %}{{ step(m, tok) }}{% endfor %}{% endif %}
 
-<h2>Your machines</h2>
-{% for m in machines %}<a class="tile" href="/hosts/{{ m.name }}" style="margin:8px 0"><div class="row">
-<b><span class="dot {{ m.state }}"></span>{{ m.name }}</b><span class="state {{ m.state }}">{{ words(m.state) }}</span></div>
-<span>{{ kind(m.role) }}{% if m.sites %} · {{ m.sites|length }} services{% endif %}</span></a>
-{% else %}<p class="muted">No machines yet.</p>{% endfor %}
+<h2 id="machines" style="scroll-margin-top:64px">Your machines</h2>
+<div class="machines">{% for m in machines %}<a class="mach" href="/hosts/{{ m.name }}"><div class="row">
+<b><span class="dot {{ m.state }}{{ " busy" if looking }}"></span>{{ m.name }}</b><span class="state {{ m.state }}">{{ words(m.state) }}</span></div>
+<span class="cap">{{ kind(m.role) }}{% for t in m.tags %} · {{ t }}{% endfor %}</span>
+{% for b in m.bars %}<div class="meter" title="{{ b.more }}"><span>{{ b.label }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span><span>{{ b.pct }} %</span></div>{% endfor %}
+{% if m.chips %}<div class="chips">{% for c in m.chips[:3] %}<span class="chip">{{ c }}</span>{% endfor %}{% if m.chips|length > 3 %}<span class="chip">+{{ m.chips|length - 3 }}</span>{% endif %}</div>{% endif %}</a>
+{% endfor %}</div>{% if not machines %}<p class="muted">No machines yet.</p>{% endif %}
+{% if wide %}<h2>How they are linked</h2><div class="card pic"><div class="wide">{{ wide }}</div><div class="narrow">{{ narrow }}</div>
+<p class="muted small" style="margin:10px 0 0">Every machine holds a link to the master. A green line: the machine answers. A grey, broken one: it does not.</p></div>{% endif %}
 <details><summary>Add a machine at home</summary><form method="post" action="/machines/add" class="card">{{ tok }}
 <label for="preset">What it does</label><select id="preset" name="preset">{% for value, label in presets.items() %}
 <option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
@@ -325,17 +400,18 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
 <a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
 <a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
-<a class="tile" href="/backups"><b>Backups</b><span>See when everything was last saved</span></a>
-<a class="tile" href="/recovery"><b>If something breaks</b><span>Could you bring it back, and what to press</span></a>
-<a class="tile" href="/access"><b>Who may reach what</b><span>Which devices and linked networks open which machine or service, and hidden services for strangers</span></a>
-<a class="tile" href="/federation"><b>Linked networks</b><span>What other networks may reach here, and the way out</span></a>
-<a class="tile" href="/help"><b>Help</b><span>What the words on this page mean</span></a></div>
+<a class="tile" href="/access"><b>Say who may reach what</b><span>Which devices and linked networks open which machine or service</span></a></div>
+<p class="muted">The rest is in the menu: backups, linked networks, what to do if something breaks.</p>
 {% endblock %}""",
 
     "host.html": """{% extends "base.html" %}{% block main %}
 <p><a href="/">← Home</a></p>
 <h1><span class="dot {{ m.state }}"></span>{{ m.name }} <span class="state {{ m.state }}" style="font-size:1rem">{{ words(m.state) }}</span></h1>
-<p class="muted">{{ kind(m.role) }} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}{% if m.facts.uptime is number %} · on for {{ age(m.facts.uptime) }}{% elif m.facts.uptime %} · {{ m.facts.uptime }}{% endif %}</p>
+<p class="muted">{{ kind(m.role) }}{% for t in m.tags %} · {{ t }}{% endfor %} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}</p>
+{% if m.bars %}<div class="stats">{% if m.facts.uptime is number and m.facts.uptime %}<div class="stat"><span class="lbl">On for</span>
+<b>{{ age(m.facts.uptime) }}</b><span class="cap">since it last started</span></div>{% endif %}
+{% for b in m.bars %}<div class="stat"><span class="lbl">{{ b.label }}</span><b class="{{ b.level }}">{{ b.pct }}<small> %</small></b>
+<span class="cap">{{ b.more }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span></div>{% endfor %}</div>{% endif %}
 {% for p in m.problems %}<div class="card"><p><span class="dot {{ p.level }}"></span>{{ p.text }}</p>
 {% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}
 {% if "disk is locked" in p.text|lower %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="unlock">
@@ -874,6 +950,169 @@ def ago(t):
     return age(time.time() - t)
 
 
+# the menu: (address, words, picture); the first three are the phone's bar, the rest its "More"
+NAV = (("/", "Home", "home"), ("/devices", "Devices", "phone"), ("/backups", "Backups", "box"),
+       ("/access", "Who may reach what", "shield"), ("/federation", "Linked networks", "link"),
+       ("/recovery", "If something breaks", "buoy"), ("/controllers", "Computers", "screen"),
+       ("/activity", "Activity", "pulse"), ("/settings", "Settings", "sliders"), ("/help", "Help", "help"))
+# line drawings, 24 by 24, drawn here: nothing is fetched from anywhere
+ICONS = {
+    "home": '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+    "phone": '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 17.5h2"/>',
+    "box": '<path d="M3 5h18v4H3z"/><path d="M5 9v10h14V9"/><path d="M10 13h4"/>',
+    "shield": '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/>',
+    "link": '<path d="M10 14a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 5.3l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/>',
+    "buoy": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>'
+            '<path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6"/>',
+    "screen": '<rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M8 20h8M12 16v4"/>',
+    "pulse": '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+    "sliders": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
+    "help": '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.5-1.2 1-1.2 1.9M12 17h.01"/>',
+    "more": '<path stroke-width="3" d="M5 12h.01M12 12h.01M19 12h.01"/>',
+    "moon": '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
+    "server": '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+    "stack": '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/>',
+}
+KIWI = ('<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#7b5a3c"/>'
+        '<circle cx="12" cy="12" r="9.3" fill="#8dc63f"/><circle cx="12" cy="12" r="3.3" fill="#f4f1d6"/>%s</svg>'
+        % "".join('<circle cx="%.1f" cy="%.1f" r=".75" fill="#1f2a1a"/>' % (12 + 5.7 * math.cos(i * math.pi / 5), 12 + 5.7 * math.sin(i * math.pi / 5))
+                  for i in range(10)))
+
+
+def icon(name):
+    if name == "kiwi":
+        return markupsafe.Markup(KIWI)
+    return markupsafe.Markup('<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">%s</svg>' % ICONS.get(name, ""))
+
+
+def size(kib):
+    g = (kib or 0) / 1048576
+    return "%.0f GB" % g if g >= 10 else "%.1f GB" % g if g >= 1 else "%d MB" % ((kib or 0) / 1024)
+
+
+def bars(facts):
+    """How busy and how full a machine is: its load, its memory and its fullest disk, in percent."""
+    out = []
+
+    def row(label, pct, warn, bad, more):
+        pct = max(0, min(100, int(round(pct))))
+        out.append({"label": label, "pct": pct, "level": "bad" if pct >= bad else "warn" if pct >= warn else "", "more": more})
+    load, cpus = facts.get("load") or [], facts.get("cpus") or 0
+    if load and cpus:
+        row("CPU", 100 * load[0] / cpus, 90, 101, "load %.2f on %d %s" % (load[0], cpus, "core" if cpus == 1 else "cores"))
+    mem = facts.get("memory") or {}
+    if mem.get("total"):
+        used = mem["total"] - (mem.get("available") or 0)
+        row("Memory", 100 * used / mem["total"], 85, 95, "%s of %s in use" % (size(used), size(mem["total"])))
+    disks = [d for d in facts.get("disks") or [] if d.get("size")]
+    if disks:
+        d = max(disks, key=lambda d: d["used"] / d["size"])
+        row("Disk", 100 * d["used"] / d["size"], 80, 92, "%s of %s in use on %s" % (size(d["used"]), size(d["size"]), d["mount"]))
+    return out
+
+
+def tags(modules):
+    """What a machine is for the others, from its parts."""
+    return [word for part, word in (("control", "control node"), ("gateway", "gateway"), ("backup-server", "keeps backups"))
+            if part in (modules or [])]
+
+
+def stats(machines, devices):
+    """Home's row of numbers: the machines that answer, their services, the oldest last backup, the devices."""
+    run = [m for m in machines if m["phase"] not in FRESH]
+    if not run:
+        return []
+    out = []
+    on = [m for m in run if m["state"] in ("ok", "warn", "bad")]
+    down = [m["name"] for m in run if m["state"] == "down"]
+    cap = ("%s is not reachable" % down[0] if len(down) == 1 else "%d are not reachable" % len(down) if down
+           else "all answer" if len(on) == len(run) else "not all checked yet")
+    out.append({"label": "Machines on", "pic": "server", "value": len(on), "of": len(run), "caption": cap,
+                "level": "bad" if down else "ok" if len(on) == len(run) else "", "href": "#machines"})
+    running = sum(m["facts"].get("running") or 0 for m in on)
+    expected = sum(m["facts"].get("expected") or 0 for m in on)
+    if expected:
+        out.append({"label": "Services", "pic": "stack", "value": running, "of": expected,
+                    "caption": "all run" if running >= expected else "%d not running" % (expected - running),
+                    "level": "ok" if running >= expected else "warn", "href": "#machines"})
+    saved = [(m["facts"]["backup"].get("age"), m["name"]) for m in on if m["facts"].get("backup")]
+    if saved:
+        never = [n for a, n in saved if a is None]
+        worst, who = max(((a, n) for a, n in saved if a is not None), default=(None, ""))
+        if never:
+            out.append({"label": "Last backup", "pic": "box", "value": "never", "caption": "%s has not saved its data yet" % never[0],
+                        "level": "bad", "href": "/backups"})
+        else:
+            out.append({"label": "Last backup", "pic": "box", "value": age(worst), "caption": "ago at the longest: %s" % who,
+                        "level": "bad" if worst > 3 * 86400 else "warn" if worst > 36 * 3600 else "ok", "href": "/backups"})
+    else:
+        out.append({"label": "Last backup", "pic": "box", "value": "none", "caption": "no machine saves its data", "level": "warn",
+                    "href": "/backups"})
+    out.append({"label": "Devices", "pic": "phone", "value": len(devices), "caption": "phones and laptops on your VPN", "level": "",
+                "href": "/devices"})
+    return out
+
+
+def picture(machines, devices=0, per_row=4):
+    """The network as a picture (SVG, drawn here): the master, and a line to every other machine,
+    green when the machine answers. `per_row=1` is the narrow one for a phone: a list under the master."""
+    masters = [m for m in machines if m["role"] == "master"]
+    rest = [m for m in machines if m["role"] and m["role"] != "master"]
+    if not masters or not rest:
+        return ""
+    esc = markupsafe.escape
+    lines, boxes = [], []
+
+    def box(m, x, y, w, h, cap, cls=""):
+        boxes.append('<a href="/hosts/%s"><rect %sx="%d" y="%d" width="%d" height="%d" rx="8"/>'
+                     '<circle class="%s" cx="%d" cy="%d" r="5"/><text x="%d" y="%d">%s</text>'
+                     '<text class="c" x="%d" y="%d">%s</text></a>'
+                     % (esc(m["name"]), 'class="%s" ' % cls if cls else "", x, y, w, h, esc(m["state"]), x + 17, y + h // 2 - 5,
+                        x + 30, y + h // 2 - 1, esc(m["name"]), x + 30, y + h // 2 + 14, esc(cap)))
+
+    def line(d, m=None):
+        cls = "" if m is None else ' class="%s"' % ("up" if m["state"] in ("ok", "warn", "bad") else "off")
+        lines.append('<path%s d="%s"/>' % (cls, d))
+    master = masters[0]
+    mcap = "master" + (" · %d %s on its VPN" % (devices, "device" if devices == 1 else "devices") if devices else "")
+    cap = lambda m: ", ".join(tags(m["modules"])[:2]) or ("master" if m["role"] == "master" else "node")   # noqa: E731
+    bh, mh = 48, 52
+    if per_row == 1:
+        w, tx, x = 320, 28, 52
+        box(master, 10, 6, w - 20, mh, mcap, "m")
+        y = 6 + mh + 14
+        for m in masters[1:] + rest:
+            line("M%d %d H%d" % (tx, y + bh // 2, x), m)
+            box(m, x, y, w - 10 - x, bh, cap(m))
+            y += bh + 12
+        line("M%d %d V%d" % (tx, 6 + mh, y - 12 - bh // 2))
+        h = y - 12 + 6
+    else:
+        bw, gap, pad, mw, tx = 158, 20, 24, 240, 10
+        w = 2 * pad + per_row * bw + (per_row - 1) * gap
+        rest = masters[1:] + rest
+        rows = [rest[i:i + per_row] for i in range(0, len(rest), per_row)]
+        cx, top, step = w // 2, 6 + mh + 44, bh + 40
+        box(master, cx - mw // 2, 6, mw, mh, mcap, "m")
+        for r, row in enumerate(rows):
+            by = top + r * step - 20
+            start = (w - len(row) * bw - (len(row) - 1) * gap) // 2 if len(rows) == 1 else pad
+            mids = [start + i * (bw + gap) + bw // 2 for i in range(len(row))]
+            if r == 0:
+                line("M%d %d V%d" % (cx, 6 + mh, by))
+                line("M%d %d H%d" % (min([cx, mids[0]] + ([tx] if len(rows) > 1 else [])), by, max(cx, mids[-1])))
+            else:
+                line("M%d %d H%d" % (tx, by, mids[-1]))
+            for i, m in enumerate(row):
+                line("M%d %d V%d" % (mids[i], by, top + r * step), m)
+                box(m, mids[i] - bw // 2, top + r * step, bw, bh, cap(m))
+        if len(rows) > 1:
+            line("M%d %d V%d" % (tx, top - 20, top + (len(rows) - 1) * step - 20))
+        h = top + (len(rows) - 1) * step + bh + 6
+    return markupsafe.Markup('<svg viewBox="0 0 %d %d" style="max-width:%dpx" role="img" aria-label="Your network: the master and '
+                             'the machines linked to it">%s%s</svg>' % (w, h, w, "".join(lines), "".join(boxes)))
+
+
 def tiles(machines):
     out = []
     for m in machines:
@@ -900,7 +1139,7 @@ def make_app(control: Control):
     env = jinja2.Environment(loader=jinja2.DictLoader(TEMPLATES), autoescape=True)
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
                        kind=lambda r: KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
-                       to_text=formmod.to_text, yesno=lambda v: "" if v is None else "yes" if v else "no")
+                       to_text=formmod.to_text, icon=icon, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
 
     def page(template, request=None, nav=None, **kw):
@@ -909,7 +1148,18 @@ def make_app(control: Control):
         if request is not None:
             tok = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">'
                                     % control.csrf(request.cookies.get(COOKIE)))
-        return HTMLResponse(env.get_template(template).render(tok=tok, nav=nav, **kw))
+        return HTMLResponse(env.get_template(template).render(tok=tok, nav=nav, shell=shell_state() if nav else None, **kw))
+
+    def shell_state():
+        """What every page's frame shows: how the machines are, and how many there are."""
+        info = control.fleet_info() or {}
+        states = [h.get("state") or "unknown" for h in (control.status() or {}).get("hosts") or []]
+        n = {k: states.count(k) for k in ("ok", "warn", "bad", "down")}
+        wrong = n["bad"] + n["down"]
+        return dict(n, total=sum(n.values()), level="bad" if wrong else "warn" if n["warn"] else "ok",
+                    word="%d with a problem" % wrong if wrong else "%d to look at" % n["warn"] if n["warn"] else "all fine",
+                    domain="." + info["domain"] if info.get("domain") else "",
+                    counts={"/": len(info.get("hosts") or []), "/devices": len(control.devices())})
 
     def user(request):
         return control.session(request.cookies.get(COOKIE))
@@ -948,10 +1198,12 @@ def make_app(control: Control):
         ready = all(m["phase"] == "applied" for m in out if m["role"] == "master")
         for m in out:
             m["master_ready"] = ready
+            m["bars"], m["tags"] = bars(m["facts"]), tags(m["modules"])
+            m["chips"] = [SERVICES.get(x.split(".", 1)[0], x.split(".", 1)[0].capitalize()) for x in m["sites"]]
         for name, s in said.items():            # a look at a machine the fleet file no longer names
             if name not in [m["name"] for m in out]:
                 out.append({"name": name, "hostname": name, "role": "", "modules": [], "sites": [], "vpn_ip": "",
-                            "next": "", "phase": "", "provider": "", "address": "", "media": 0, "on_done": "", "master_ready": True, "known": True, "state": s.get("state") or "unknown",
+                            "next": "", "phase": "", "provider": "", "address": "", "media": 0, "on_done": "", "master_ready": True, "known": True, "bars": bars(s.get("facts") or {}), "tags": [], "chips": [], "state": s.get("state") or "unknown",
                             "problems": s.get("problems") or [], "notes": s.get("notes") or [],
                             "facts": s.get("facts") or {}, "output": s.get("output") or ""})
         return out, st, info
@@ -1208,7 +1460,9 @@ def make_app(control: Control):
             return login_page()
         ms, st, _info = machines()
         from . import setup as setupmod
+        devs = control.devices()
         return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
+                    stats=stats(ms, devs), wide=picture(ms, len(devs), 4), narrow=picture(ms, len(devs), 1),
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
                     add_error=request.query_params.get("add_error"))
 
@@ -1284,7 +1538,7 @@ def make_app(control: Control):
             groups, error = [], error or str(e)
         # Apply reaches a machine that is set up; one that is not gets its settings with its first step
         running = [n for n, h in rows.items() if (h.get("phase") or "") not in FRESH and host in (None, n)]
-        return page("settings.html", request, "/", host=host, groups=groups, typed=typed or {}, wrong=wrong or {},
+        return page("settings.html", request, "/" if host else "/settings", host=host, groups=groups, typed=typed or {}, wrong=wrong or {},
                     error=error, touched=list(touched), running=running, saved=request.query_params.get("saved"),
                     open=[g["id"] for g in groups if any(f["name"] in touched for f in g["fields"])],
                     same="as inherited" if host else "the usual")
@@ -1478,13 +1732,13 @@ def make_app(control: Control):
             partners = control.federation()
         except KiwiError as e:
             partners, kw = {}, dict(kw, error=kw.get("error") or str(e))
-        return page("federation.html", request, "/", partners=partners, **kw)
+        return page("federation.html", request, "/federation", partners=partners, **kw)
 
     def access_page(request, **kw):
         try:
             a = control.access()
         except KiwiError as e:
-            return page("access.html", request, "/", who=[], machines=[], loose=[], error=str(e))
+            return page("access.html", request, "/access", who=[], machines=[], loose=[], error=str(e))
         for w in a["who"]:          # what the ticks do not show: single ports, addresses, names of no machine
             w["extra"] = ["%s:%s" % (n, p) for n, o in w["open"]["machines"].items() for p in o["ports"]] + w["open"]["other"]
         grouped = {d for w in a["who"] for d in w["devices"]}
@@ -1493,7 +1747,7 @@ def make_app(control: Control):
             hidden = control.onion()
         except KiwiError:
             hidden = {}
-        return page("access.html", request, "/", who=a["who"], machines=a["machines"], loose=loose, hidden=hidden, **kw)
+        return page("access.html", request, "/access", who=a["who"], machines=a["machines"], loose=loose, hidden=hidden, **kw)
 
     @app.post("/onion")
     async def onion_do(request: Request):
@@ -1595,7 +1849,7 @@ def make_app(control: Control):
             rep, error = control.recovery(), None
         except (KiwiError, OSError) as e:
             rep, error = None, "The report could not be made: %s" % e
-        return page("breaks.html", request, "/", rep=rep, error=error)
+        return page("breaks.html", request, "/recovery", rep=rep, error=error)
 
     @app.get("/activity")
     def activity(request: Request):

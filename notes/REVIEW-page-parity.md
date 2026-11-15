@@ -23,6 +23,7 @@ run included. Compared command by command and setting by setting.
 
 | The page has | State |
 |---|---|
+| Home's four numbers, a card per machine with load, memory and disk, the picture of the network (2.105.0) | open: the app shows a list |
 | Preview (`plan`) | open |
 | Update everything (`apply --update`) | open |
 | Remove a phone or laptop (`enroll --remove`), show its QR code again | open |

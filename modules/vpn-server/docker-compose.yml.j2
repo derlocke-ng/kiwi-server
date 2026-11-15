@@ -41,10 +41,14 @@ services:
       - "{{ public_ip ~ ':' if public_ip else '' }}5269:5269/tcp"
 {% endif %}
 {# nginx lives in this namespace, so a public reverse proxy's ports are published here #}
-{% if public_names %}
+{% if public_names or (exposed or {}).get('names') %}
       - "{{ public_ip ~ ':' if public_ip else '' }}80:80/tcp"
       - "{{ public_ip ~ ':' if public_ip else '' }}443:443/tcp"
 {% endif %}
+{# and what it hands on to a node besides web sites #}
+{% for p in (exposed or {}).get('ports', []) %}
+      - "{{ public_ip ~ ':' if public_ip else '' }}{{ p.port }}:{{ p.port }}/tcp"
+{% endfor %}
 {% if has_dns and module_config.get('dns', {}).get('network_mode') == 'vpn-server' %}
       - "127.0.0.1:8080:{{ module_config.get('dns', {}).get('web_port') or 8081 }}/tcp"
 {% endif %}

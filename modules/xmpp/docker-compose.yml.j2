@@ -34,22 +34,28 @@
       - {{ docker_dir }}/{{ container_prefix }}-nginx{{ certs }}:/kiwi-certs:ro,z
 {% endmacro %}
 services:
-{# the service in the WireGuard server's network: 5222 answers at the master's mesh address, and
-   with a public name (and no second instance) the WireGuard server publishes its ports #}
+{# the service in the network of the machine's door to the VPN: 5222 answers at its mesh address.
+   With a public name (and no second instance) a master's WireGuard server publishes its ports;
+   to a node the master hands them on #}
 {% call service(container_prefix ~ '-xmpp', 'ejabberd.yml', 'data', main_host, (onion or {}).get('jabber', ''),
                 '/acme/' ~ xmpp_domain if one_public else '') %}
-    network_mode: "service:{{ container_prefix }}-vpn-server"
+    network_mode: "service:{{ container_prefix }}-{{ door }}"
+    depends_on:
+      - {{ container_prefix }}-{{ door }}
 {% endcall %}
 {% if two %}
-{# the public instance: a container of its own, its ports on the machine's own address #}
+{# the public instance: a container of its own. A master publishes its ports on the machine's
+   own address; a node's are reached through the master only #}
 {% call service(container_prefix ~ '-xmpp-public', 'ejabberd-public.yml', 'public', xmpp_domain, (onion or {}).get('xmpp', ''),
                 '/acme/' ~ xmpp_domain) %}
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
+{% if node_type == 'master' %}
     ports:
       - "5222:5222"
       - "5223:5223"
       - "5269:5269"
+{% endif %}
 {% endcall %}
 {% endif %}

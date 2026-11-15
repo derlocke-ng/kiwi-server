@@ -4,24 +4,39 @@ module:
   name: xmpp
   title: Jabber (ejabberd)
   version: 2.0.0
-  description: "A Jabber (XMPP) server for your people: chats, group rooms, files, message history across devices. One service with up to three doors: the VPN (jabber.<hostname>), the Internet (a public name) and Tor (a hidden service). Or two separate ones, an internal and a public, that do not talk to each other. People make their own account in the app or on a page, after a captcha"
+  description: "A Jabber (XMPP) server for your people: chats, group rooms, files, message history across devices. One service with up to three doors: the VPN (jabber.<hostname>), the Internet (a public name) and Tor (a hidden service). Or two separate ones, an internal and a public, that do not talk to each other. People make their own account in the app or on a page, after a captcha. It runs on a node or on the master; a node's public name comes in through the master"
   category: productivity
-  node_types: [master]
+  node_types: [master, node]
 
 dependencies:
-  # it shares the WireGuard server's network, as the master's proxy does: clients on the VPN
-  # reach it at the master's mesh address
-  required: [vpn-server, reverse-proxy]
-  optional: [vpn-client, onion]
+  # it shares the network of the machine's door to the VPN (the VPN client on a node, the
+  # WireGuard server on a master): clients on the VPN reach it at the machine's mesh address
+  required: [reverse-proxy]
+  optional: [vpn-server, vpn-client, onion]
 
 network:
   needs_vpn_dnat: true
-  # clients (5222, 5223) and other servers (5269) from the Internet: only with a public name
-  open_ports: ["{% if xmpp_domain %}5222/tcp 5223/tcp 5269/tcp{% endif %}"]
+  # on a master, clients (5222, 5223) and other servers (5269) from the Internet: only with a
+  # public name. A node opens nothing at home: the master hands them on (expose, below)
+  open_ports: ["{% if xmpp_domain and node_type == 'master' %}5222/tcp 5223/tcp 5269/tcp{% endif %}"]
+
+# a node's public name: the master's ports, handed on to ports that expect the visitor's address in front
+expose:
+  ports:
+    - "{% if xmpp_domain and node_type != 'master' %}5222:15222/proxy 5223:15223/proxy 5269:15269/proxy{% endif %}"
 
 firewall:
   scope: vpn-client
-  rules: []
+  rules:
+    # a node: the service is in the VPN client's network. Apps on the VPN reach it at the mesh address
+    - "{% if node_type != 'master' %}-A INPUT -i tun0 -p tcp -m multiport --dports 5222,5223 -j ACCEPT{% endif %}"
+    # and what the master hands on from the Internet, from the master only
+    - "{% if forwarded and not two %}-A INPUT -i tun0 -s {{ via }} -p tcp -m multiport --dports 15222,15223,15269 -j ACCEPT{% endif %}"
+    # two instances: the public one has an address of its own
+    - |
+      {% if forwarded and two %}{% for port in (15222, 15223, 15269) %}
+      -t nat -A PREROUTING -s {{ via }} -d ${VPN_IP} -p tcp --dport {{ port }} -j DNAT --to-destination {{ container_ip }}:{{ port }}
+      {% endfor %}{% endif %}
 
 templates:
   compose: docker-compose.yml.j2
@@ -39,16 +54,26 @@ derived:
   # two instances: an internal one at the mesh name, a public one at the public name
   two: "{{ 'yes' if xmpp_domain and separate else '' }}"
   one_public: "{{ 'yes' if xmpp_domain and not separate else '' }}"
-  # what comes after the @ at the service in the WireGuard server's network
+  # what comes after the @ at the service in the machine's VPN network
   main_host: "{{ xmpp_domain if xmpp_domain and not separate else xmpp_hostname or 'jabber.' ~ hostname }}"
+  # whose network the service shares: the machine's door to the VPN
+  door: "{{ 'vpn-server' if node_type == 'master' else 'vpn-client' }}"
   # the proxy reaches that service at 127.0.0.1 when it shares the network too (a master's does)
-  local_http: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ '-vpn-server' }}:5280"
+  local_http: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ ('-vpn-server' if node_type == 'master' else '-vpn-client') }}:5280"
+  # on a node the public name's connections come from the master, each with its visitor's address in front
+  forwarded: "{{ 'yes' if xmpp_domain and node_type != 'master' and via else '' }}"
 
 validate:
   - when: "not admin_user is match('^[a-z0-9][a-z0-9._-]{0,30}$')"
     error: "xmpp.admin_user: lowercase letters, digits, dots and dashes"
   - when: "xmpp_domain and (xmpp_domain ~ '.').endswith('.' ~ domain ~ '.')"
     error: "xmpp.xmpp_domain is for a public name (chat.example.org). Inside the fleet's own domain the name is xmpp_hostname"
+  - when: "node_type == 'master' and not has_vpn_server"
+    error: "xmpp on a master needs vpn-server: the service lives in its network"
+  - when: "node_type != 'master' and not has_vpn_client"
+    error: "xmpp on a node needs vpn-client: the service lives in its network and answers at the machine's VPN address"
+  - when: "xmpp_domain and node_type != 'master' and not via"
+    error: "xmpp.xmpp_domain on a node: the public name comes in through the master, so the machine's proxy must be open to the internet (reverse-proxy: public: true) in a fleet with a master"
   - when: "separate and not xmpp_domain"
     error: "xmpp.separate: two instances need a public name for the second one (xmpp_domain)"
 
@@ -127,7 +152,7 @@ settings:
     pattern: '[a-z0-9.-]*'
   - key: xmpp_domain
     label: Public name
-    help: "A name that points at this master in DNS, like chat.example.org (a plain record: no proxy in front, Jabber is not web traffic). It opens the service to the Internet: this name comes after the @, people log in from anywhere and write with people on other servers. Apps on the VPN can still use the name above as the server to connect to."
+    help: "A name that points at the master in DNS, like chat.example.org (a plain record: no proxy in front, Jabber is not web traffic). It opens the service to the Internet: this name comes after the @, people log in from anywhere and write with people on other servers. Apps on the VPN can still use the name above as the server to connect to."
     default: ""
     pattern: '[a-z0-9.-]*'
   - key: separate

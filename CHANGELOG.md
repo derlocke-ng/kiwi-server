@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.119.0 — two Jabber services on a node, tried; two gaps closed
+
+- **A hidden service for a public site**: `onion: { services: { xmpp: {} } }` was refused
+  ("it has no site called xmpp") because only names under the machine's own name counted
+  as its sites. A public name counts now, by what its module calls the site; `kiwi-server
+  onion --porcelain` gives its full name.
+- **Jabber at home** (kiwi-modules 0.46.2): the network's DNS at home answered Jabber's
+  names with the machine's home address, where Jabber's ports are closed (they are at its
+  VPN address). Such names keep their VPN address now.
+- Tried on the test node, two services apart (`separate: true`): the public one from the
+  Internet (5222, 5223, the page, its captcha) and through Tor; the internal one through
+  Tor and its page. [roles.md](docs/roles.md#jabber).
+- New drill: `tests/drills/onion-sites.py` opens every hidden service through Tor and says
+  whether the page and its files stay at the address.
+
 ## 2.118.0 — hidden-service addresses in the app
 
 - **The app shows a service's hidden-service address** where the service is: on a

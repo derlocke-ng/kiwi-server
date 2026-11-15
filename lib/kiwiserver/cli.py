@@ -284,6 +284,7 @@ class Renderer:
         recs, needs_ca, master_ip, node_lan = [], False, "", []
         self._caches = []       # (LAN interface, hostname, registries, apt) of the nodes that run the cache module
         open_nodes = []         # (name, mesh address, public names, ports) of the nodes open to the internet
+        mesh_only = []          # names whose service answers at the mesh address only: never a home address for them
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -307,6 +308,7 @@ class Renderer:
                         self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt"))))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
+                mesh_only += modmod.Renderer(self.ms).mesh_only_names(spec)
                 if role.node_type != "master" and (h.module_settings.get("reverse-proxy") or {}).get("public"):
                     public, ports = modmod.Renderer(self.ms).exposure(spec)
                     open_nodes.append((h.name, spec.vpn_ip, public, ports))
@@ -331,6 +333,7 @@ class Renderer:
                 exposed["ports"].append({"port": p["port"], "to": "%s:%d" % (ip, p["to"]),
                                          "proxy_protocol": p["proxy_protocol"]})
         self._exposed = exposed
+        self._mesh_only = mesh_only
         self._records, self._needs_ca, self._master_ip, self._node_lan = recs, needs_ca, master_ip, node_lan
 
     def dns_records(self):
@@ -406,7 +409,7 @@ class Renderer:
         self.tls_for(host)             # so the certificate files are injected afterwards
         if "onion" in host.modules:
             # its hidden services: their keys and addresses from the seed, and the proxy's site for each
-            mine = {n[:-len(host.hostname) - 1]: n for ip, n in records if n.endswith("." + host.hostname)}
+            mine = site_names(self.ms, host, role)
             keys, sites = {}, {}
             for k in onionmod.for_host(self.fleet.seed(), host):
                 if k["service"] not in mine:
@@ -437,7 +440,7 @@ class Renderer:
                 rp["federation"] = fedmod.admin_rules(rp.get("federation"), self._partners, host.name, pages,
                                                      str(self.fleet.defaults.get("domain") or "home"))
         spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
-                                   lan_addresses=self.lan_addresses(host, role))
+                                   lan_addresses=self.lan_addresses(host, role), mesh_only=self._mesh_only)
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b
@@ -2770,7 +2773,7 @@ def cmd_access(args):
             print("%-10s %-15s %s%s" % (x["name"], x["range"] if x["kind"] == "group" else "linked network", x["says"], more))
             if x["devices"]:
                 print("%-10s %-15s devices: %s" % ("", "", ", ".join(x["devices"])))
-        for h, s, a, c in _hidden(fleet, rolesmod.discover(), modmod.discover()) if not args.who else []:
+        for h, s, a, c, _site in _hidden(fleet, rolesmod.discover(), modmod.discover()) if not args.who else []:
             print("%-10s %-15s %s.%s  (%s)" % ("Tor", "hidden service", s, h.name, ("only: " + ", ".join(c)) if c else "anyone with the address"))
         grouped = {d for x in rows for d in x["devices"]}
         loose = sorted(d for d in devices if d not in grouped)
@@ -2829,6 +2832,26 @@ def cmd_access(args):
                                                                     " ".join([master.name] + sorted(touched - {master.name}))))
 
 
+def site_names(ms, host, role):
+    """A machine's sites by their short names -> full names: what comes before the machine's
+    own name (cloud for cloud.papaya.home), and for a public name what its module calls the
+    site (xmpp for chat.example.org). A hidden service is named by the short one."""
+    spec = rolesmod.stack_spec(host, role)
+    rr = modmod.Renderer(ms)
+    ordered = ms.resolve(spec.modules, spec.node_type)
+    _up, servers = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
+    out = {}
+    for s in servers:
+        name = s["server_name"]
+        if "*" in name:
+            continue
+        if name.endswith("." + host.hostname):
+            out.setdefault(name[:-len(host.hostname) - 1], name)
+        elif s.get("site"):
+            out.setdefault(s["site"], name)
+    return out
+
+
 def _hidden(fleet, roles, ms):
     """Every hidden service of the fleet: [(host, service, address, clients)]."""
     out = []
@@ -2841,8 +2864,13 @@ def _hidden(fleet, roles, ms):
             continue
         if "onion" not in (h.modules or []):
             continue
+        try:
+            full = site_names(ms, h, roles[h.role])
+        except KiwiError:
+            full = {}
         for name, clients in onionmod.services(h).items():
-            out.append((h, name, onionmod.address(onionmod.service_key(fleet.seed(), h.name, name)[1]), clients))
+            out.append((h, name, onionmod.address(onionmod.service_key(fleet.seed(), h.name, name)[1]), clients,
+                        full.get(name) or "%s.%s" % (name, h.hostname)))
     return out
 
 
@@ -2853,10 +2881,10 @@ def cmd_onion(args):
     if not args.what:
         rows = _hidden(fleet, roles, ms)
         if args.porcelain:
-            print(json.dumps({"services": [{"host": h.name, "service": s, "site": "%s.%s" % (s, h.hostname),
-                                            "address": a, "clients": c} for h, s, a, c in rows]}, indent=2))
+            print(json.dumps({"services": [{"host": h.name, "service": s, "site": site,
+                                            "address": a, "clients": c} for h, s, a, c, site in rows]}, indent=2))
             return
-        for h, s, a, c in rows:
+        for h, s, a, c, _site in rows:
             print("%-22s http://%s  %s" % ("%s.%s" % (s, h.name), a, ("only: " + ", ".join(c)) if c else "anyone with the address"))
         if not rows:
             util.say("no hidden services yet. Make one: kiwi-server onion %s <service>.<machine>, e.g. git.papaya"
@@ -2872,7 +2900,8 @@ def cmd_onion(args):
     role = roles[host.role]
     rolesmod.resolve_settings(role, host, ms)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms)
-    sites = sorted(n[:-len(host.hostname) - 1] for _ip, n in r.dns_records() if n.endswith("." + host.hostname))
+    r.dns_records()
+    sites = sorted(site_names(ms, host, role))
     if service not in sites:
         raise KiwiError("%s has no site called %s (it has: %s)" % (host.name, service, ", ".join(sites) or "none on the VPN yet"))
     if role.node_type != "master" and "vpn-client" not in host.modules:

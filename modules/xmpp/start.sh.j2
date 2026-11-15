@@ -52,9 +52,11 @@ account() {
     fi
     # made when it is not there; its password is the settings' at every start. The words go to
     # ejabberdctl as arguments of a shell that gets them by position, not pasted into a command
-    if su ejabberd -s /bin/sh -c 'ejabberdctl register "$0" "$1" "$2"' "$admin" "$host" "$pw" >/dev/null 2>&1; then
+    # (the password in the environment of that one command: as an argument of su, one that starts
+    # with a dash would be read as an option of su)
+    if KIWI_PW=$pw su ejabberd -s /bin/sh -c 'ejabberdctl register "$0" "$1" "$KIWI_PW"' "$admin" "$host" >/dev/null 2>&1; then
         say "made the account $admin@$host"
-    elif su ejabberd -s /bin/sh -c 'ejabberdctl change_password "$0" "$1" "$2"' "$admin" "$host" "$pw" >/dev/null 2>&1; then
+    elif KIWI_PW=$pw su ejabberd -s /bin/sh -c 'ejabberdctl change_password "$0" "$1" "$KIWI_PW"' "$admin" "$host" >/dev/null 2>&1; then
         :
     else
         say "could not make or set the account $admin@$host"

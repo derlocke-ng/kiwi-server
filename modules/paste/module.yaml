@@ -57,7 +57,7 @@ backup:
 settings:
   - key: paste_domain
     label: Name
-    help: "Empty: paste.<hostname>, a mesh name, for people on the VPN. On a master a public name here (paste.example.org, pointing at it in DNS) opens it to the Internet, with reverse-proxy.public. For strangers without a public name: the onion module, onion.services: paste."
+    help: "Empty: paste.<hostname>, a mesh name, for people on the VPN. A public name here (paste.example.org, pointing at the master in DNS) opens it to the Internet, with reverse-proxy.public on this machine; on a node the master hands the name on. For strangers without a public name: the onion module, onion.services: paste."
     default: ""
     pattern: '[a-z0-9.-]*'
   - key: title

@@ -7839,6 +7839,18 @@ class TestControllers(StoreBase):
                            input=stdin, capture_output=True, text=True, env=self.env)
         return r.returncode, r.stdout + r.stderr
 
+    def test_a_computer_at_home_finds_the_control_node_by_its_home_address(self):
+        d = os.path.join(self.tmp, "home")
+        os.makedirs(d)
+        write(os.path.join(d, "fleet.yaml"), yaml.safe_dump({
+            "defaults": {"domain": "home", "network": {"dhcp": True}},
+            "hosts": {"papaya": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.30/24"}},
+                      "lychee": {"role": "node"}}}))
+        self.assertEqual(controlsync.home_address(d, "https://control.papaya.home"), "192.168.2.30")
+        self.assertIsNone(controlsync.home_address(d, "https://control.lychee.home"))       # the router gives it one: not known
+        self.assertIsNone(controlsync.home_address(d, "https://control.quince.home"))
+        self.assertIsNone(controlsync.home_address(os.path.join(self.tmp, "nowhere"), "https://control.papaya.home"))
+
     def test_join_sync_remove(self):
         link = self.n.new_invite(self.url)
         url, code = controlsync.parse_invite(link)

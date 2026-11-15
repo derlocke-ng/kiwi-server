@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.117.0 — the control page, grouped; hidden services where the services are
+
+- **The page's menu is grouped**, after a look at how The Foreman lays out its pages:
+  Home, Machines and Services first; then *Access* (Devices, Who may reach what, Linked
+  networks), *Safety* (Backups, If something breaks, Computers) and *More*.
+- **Home** shows what needs a look, the numbers and the picture of the network. The
+  machines moved to **Machines** (their cards, Add a machine, Update everything) and
+  the services to **Services**.
+- **Services**: every service under its machine, with a dot that says whether it
+  answered, its login, a mark when it is open to the Internet, and its **hidden-service
+  address** with a button that copies it. Before, a `.onion` address was only to be found
+  under Who may reach what.
+
 ## 2.116.0 — a node's service open to the Internet, through the master
 
 - **A service on a node can have a public name** (kiwi-modules 0.46.1): give it one,

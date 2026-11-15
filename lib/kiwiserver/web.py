@@ -50,6 +50,7 @@ border-right:1px solid var(--line);background:var(--card)}
 .nav{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--fg);text-decoration:none;font-size:.95rem}
 .nav:hover{background:var(--hover)}.nav.on{background:var(--tint);color:var(--accent);font-weight:600}
 .ico{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.grp{display:block;margin:14px 10px 4px;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .nav .ico{color:var(--muted)}.nav.on .ico{color:var(--accent)}.nav .count{margin-left:auto;font-size:.78rem;color:var(--muted);font-weight:400}
 .side .foot{margin-top:auto;padding-top:14px;display:flex;flex-direction:column;gap:8px}
 .health{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:.85rem;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
@@ -101,6 +102,8 @@ text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82
 .meter{display:grid;grid-template-columns:62px 1fr auto;align-items:center;gap:8px;font-size:.8rem;color:var(--muted)}.meter:first-of-type{margin-top:6px}
 .track{display:block;height:6px;border-radius:3px;background:var(--hover);overflow:hidden}
 .fill{display:block;height:100%;border-radius:3px;background:var(--accent)}.fill.warn{background:var(--warn)}.fill.bad{background:var(--bad)}
+.svc{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}.svc:first-child{border-top:0}
+.svc .what{min-width:230px}.svc .tor{flex-basis:100%;overflow-wrap:anywhere;color:var(--muted)}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}.chip{font-size:.76rem;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
 .pic svg{display:block;width:100%;height:auto;margin:0 auto}.pic .narrow{display:none}
 @media (max-width:640px){.pic .wide{display:none}.pic .narrow{display:block}}
@@ -122,7 +125,8 @@ label{display:block;margin:10px 0 4px;font-weight:600}details{margin:8px 0}summa
 dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{color:var(--muted)}dd{margin:0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
-{% if nav %}{% set h = shell %}{% macro links(items, cls) %}{% for href, label, pic in items %}
+{% if nav %}{% set h = shell %}{% macro links(items, cls) %}{% set seen = namespace(group="") %}{% for href, label, pic, group in items %}
+{% if cls == "nav" and group != seen.group %}{% set seen.group = group %}<span class="grp">{{ group }}</span>{% endif %}
 <a class="{{ cls }}{% if nav == href %} on{% endif %}" href="{{ href }}">{{ icon(pic) }}<span>{{ label }}</span>{% if cls == "nav" and h.counts.get(href) %}<span class="count">{{ h.counts[href] }}</span>{% endif %}</a>{% endfor %}{% endmacro %}
 {% macro theme() %}<button type="button" class="icon" title="Light or dark" aria-label="Light or dark" onclick="var d=document.documentElement,t=(d.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark';d.dataset.theme=t;document.cookie='kiwi_theme='+t+';path=/;max-age=31536000;samesite=strict'">{{ icon("moon") }}</button>{% endmacro %}
 <div class="shell"><aside class="side"><a class="brand" href="/">{{ icon("kiwi") }}<span>Kiwi <small>{{ h.domain }}</small></span></a>
@@ -382,15 +386,24 @@ machines at home, then your phone.</p>{% endblock %}""",
 {% if fresh %}<h2>Still to set up</h2><p class="muted">One machine after the other: the master first.</p>
 {% for m in fresh %}{{ step(m, tok) }}{% endfor %}{% endif %}
 
-<h2 id="machines" style="scroll-margin-top:64px">Your machines</h2>
+{% if wide %}<h2>How they are linked</h2><div class="card pic"><div class="wide">{{ wide }}</div><div class="narrow">{{ narrow }}</div>
+<p class="muted small" style="margin:10px 0 0">Every machine holds a link to the master. A green line: the machine answers. A grey, broken one: it does not.</p></div>{% endif %}
+<h2>Go on</h2><div class="tiles">
+<a class="tile" href="/machines"><b>Machines</b><span>How each one is, add one, update them all</span></a>
+<a class="tile" href="/services"><b>Services</b><span>Open what runs on them, with its login</span></a>
+<a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
+<a class="tile" href="/access"><b>Say who may reach what</b><span>Which devices and linked networks open which machine or service</span></a></div>
+{% endblock %}""",
+    "machines.html": """{% extends "base.html" %}{% block main %}
+{% set running = machines|rejectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
+<h1>Machines</h1><div class="row"><span class="muted">{% if looked %}Checked {{ ago(looked) }} ago.{% endif %}</span>
+<form class="inline" method="post" action="/refresh">{{ tok }}<input type="hidden" name="back" value="/machines"><button>Check now</button></form></div>
 <div class="machines">{% for m in machines %}<a class="mach" href="/hosts/{{ m.name }}"><div class="row">
 <b><span class="dot {{ m.state }}{{ " busy" if looking }}"></span>{{ m.name }}</b><span class="state {{ m.state }}">{{ words(m.state) }}</span></div>
 <span class="cap">{{ kind(m.role) }}{% for t in m.tags %} · {{ t }}{% endfor %}</span>
 {% for b in m.bars %}<div class="meter" title="{{ b.more }}"><span>{{ b.label }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span><span>{{ b.pct }} %</span></div>{% endfor %}
 {% if m.chips %}<div class="chips">{% for c in m.chips[:3] %}<span class="chip">{{ c }}</span>{% endfor %}{% if m.chips|length > 3 %}<span class="chip">+{{ m.chips|length - 3 }}</span>{% endif %}</div>{% endif %}</a>
 {% endfor %}</div>{% if not machines %}<p class="muted">No machines yet.</p>{% endif %}
-{% if wide %}<h2>How they are linked</h2><div class="card pic"><div class="wide">{{ wide }}</div><div class="narrow">{{ narrow }}</div>
-<p class="muted small" style="margin:10px 0 0">Every machine holds a link to the master. A green line: the machine answers. A grey, broken one: it does not.</p></div>{% endif %}
 <details><summary>Add a machine at home</summary><form method="post" action="/machines/add" class="card">{{ tok }}
 <label for="preset">What it does</label><select id="preset" name="preset">{% for value, label in presets.items() %}
 <option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
@@ -403,22 +416,30 @@ named after a fruit.</p><input id="mname" name="name">
 {% if add_error %}<p class="bad">{{ add_error }}</p>{% endif %}
 <div class="actions"><button class="primary">Add it</button></div></form></details>
 
-{% if tiles and running %}<h2>Open a service</h2><p class="muted">These open from a device that is on your VPN.</p>
-<div class="tiles">{% for t in tiles %}<div style="display:flex;flex-direction:column"><a class="tile" style="flex:1" href="https://{{ t.site }}" target="_blank" rel="noopener">
-<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% if t.login %}<a class="small" style="padding:2px 12px" href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}</div>{% endfor %}</div>{% endif %}
-
 {% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
 moment. Do it now and then, and after changing the settings for every machine.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Update every machine now? This takes a while; services that changed restart for a moment.')">{{ tok }}
 <input type="hidden" name="action" value="update"><button class="primary">Update everything</button></form></div>{% endif %}
 
-<h2>Do something</h2><div class="tiles">
-<a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
-<a class="tile" href="/controllers"><b>Add a computer</b><span>Let another computer manage the network</span></a>
-<a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
-<a class="tile" href="/access"><b>Say who may reach what</b><span>Which devices and linked networks open which machine or service</span></a></div>
-<p class="muted">The rest is in the menu: backups, linked networks, what to do if something breaks.</p>
+<p class="muted"><a href="/settings">Settings for every machine</a>: time zone, updates and what else they share.</p>
+{% endblock %}""",
+    "services.html": """{% extends "base.html" %}{% block main %}
+<h1>Services</h1><p class="muted">What runs on your machines. A service opens from a device that is on your VPN; one that is
+open to the Internet says so.</p>
+{% for name, rows in by_machine %}<h2><a href="/hosts/{{ name }}" style="color:inherit;text-decoration:none">{{ name }}</a></h2>
+<div class="card" style="padding:4px 14px">{% for t in rows %}<div class="svc">
+<span class="what"><span class="dot {{ "bad" if t.down else "ok" if t.asked else "down" }}"></span><b>{{ t.label }}</b>
+{% if t.public %}<span class="chip">open to the Internet</span>{% endif %}</span>
+<a href="https://{{ t.site }}" target="_blank" rel="noopener">{{ t.site }}</a>
+{% if t.login %}<a class="small" href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}
+{% if t.onion %}<span class="tor small">Tor{% if t.onion.clients %} (only {{ t.onion.clients|join(", ") }}){% endif %}:
+<code>http://{{ t.onion.address }}</code>
+<button type="button" class="small" onclick="navigator.clipboard.writeText('http://{{ t.onion.address }}');this.textContent='Copied'">Copy</button></span>{% endif %}
+</div>{% endfor %}</div>
+{% endfor %}{% if not by_machine %}<p class="muted">No services yet: they come with the machines.</p>{% endif %}
+<p class="muted">A green dot: the service answered when it was last asked. <a href="/status">What everyone sees: the status page.</a><br>
+An address after <em>Tor</em> opens in Tor Browser, without your VPN. <a href="/access#tor">Make a service a hidden service, or say who may open it.</a></p>
 {% endblock %}""",
 
     "host.html": """{% extends "base.html" %}{% block main %}
@@ -994,10 +1015,14 @@ def ago(t):
 
 
 # the menu: (address, words, picture); the first three are the phone's bar, the rest its "More"
-NAV = (("/", "Home", "home"), ("/devices", "Devices", "phone"), ("/backups", "Backups", "box"),
-       ("/access", "Who may reach what", "shield"), ("/federation", "Linked networks", "link"),
-       ("/recovery", "If something breaks", "buoy"), ("/controllers", "Computers", "screen"),
-       ("/activity", "Activity", "pulse"), ("/settings", "Settings", "sliders"), ("/help", "Help", "help"))
+# (address, label, picture, group): the first three stand alone and are the phone's bar; the
+# rest come under the word of their group
+NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/services", "Services", "grid", ""),
+       ("/devices", "Devices", "phone", "Access"), ("/access", "Who may reach what", "shield", "Access"),
+       ("/federation", "Linked networks", "link", "Access"),
+       ("/backups", "Backups", "box", "Safety"), ("/recovery", "If something breaks", "buoy", "Safety"),
+       ("/controllers", "Computers", "screen", "Safety"),
+       ("/activity", "Activity", "pulse", "More"), ("/settings", "Settings", "sliders", "More"), ("/help", "Help", "help", "More"))
 # line drawings, 24 by 24, drawn here: nothing is fetched from anywhere
 ICONS = {
     "home": '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
@@ -1012,6 +1037,8 @@ ICONS = {
     "sliders": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
     "help": '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.5-1.2 1-1.2 1.9M12 17h.01"/>',
     "more": '<path stroke-width="3" d="M5 12h.01M12 12h.01M19 12h.01"/>',
+    "grid": '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/>'
+            '<rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     "moon": '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
     "server": '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
     "stack": '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/>',
@@ -1071,13 +1098,13 @@ def stats(machines, devices):
     cap = ("%s is not reachable" % down[0] if len(down) == 1 else "%d are not reachable" % len(down) if down
            else "all answer" if len(on) == len(run) else "not all checked yet")
     out.append({"label": "Machines on", "pic": "server", "value": len(on), "of": len(run), "caption": cap,
-                "level": "bad" if down else "ok" if len(on) == len(run) else "", "href": "#machines"})
+                "level": "bad" if down else "ok" if len(on) == len(run) else "", "href": "/machines"})
     running = sum(m["facts"].get("running") or 0 for m in on)
     expected = sum(m["facts"].get("expected") or 0 for m in on)
     if expected:
         out.append({"label": "Services", "pic": "stack", "value": running, "of": expected,
                     "caption": "all run" if running >= expected else "%d not running" % (expected - running),
-                    "level": "ok" if running >= expected else "warn", "href": "#machines"})
+                    "level": "ok" if running >= expected else "warn", "href": "/services"})
     saved = [(m["facts"]["backup"].get("age"), m["name"]) for m in on if m["facts"].get("backup")]
     if saved:
         never = [n for a, n in saved if a is None]
@@ -1202,7 +1229,7 @@ def make_app(control: Control):
         return dict(n, total=sum(n.values()), level="bad" if wrong else "warn" if n["warn"] else "ok",
                     word="%d with a problem" % wrong if wrong else "%d to look at" % n["warn"] if n["warn"] else "all fine",
                     domain="." + info["domain"] if info.get("domain") else "",
-                    counts={"/": len(info.get("hosts") or []), "/devices": len(control.devices())})
+                    counts={"/machines": len(info.get("hosts") or []), "/devices": len(control.devices())})
 
     def user(request):
         return control.session(request.cookies.get(COOKIE))
@@ -1526,6 +1553,35 @@ def make_app(control: Control):
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
                     add_error=request.query_params.get("add_error"))
 
+    @app.get("/machines")
+    def machines_page(request: Request):
+        if not user(request):
+            return login_page()
+        ms, st, _info = machines()
+        from . import setup as setupmod
+        return page("machines.html", request, "/machines", machines=ms, looked=st.get("time"), looking=control.looking,
+                    presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"))
+
+    @app.get("/services")
+    def services_page(request: Request):
+        """Every service, under its machine: to open, with its login and whether it answered."""
+        if not user(request):
+            return login_page()
+        ms, _st, info = machines()
+        domain = "." + str((control.fleet_info() or {}).get("domain") or "home")
+        asked = {s["site"]: s["ok"] for s in control.health().get("services") or []}
+        try:
+            hidden = control.onion()
+        except KiwiError:               # the services are listed all the same
+            hidden = {}
+        by = {}
+        for t in with_logins(tiles([m for m in ms if m["phase"] not in ("enroll", "build", "install", "invalid", "bare")]), info):
+            t["public"] = not t["site"].endswith(domain)
+            t["asked"], t["down"] = t["site"] in asked, asked.get(t["site"]) is False
+            t["onion"] = hidden.get("%s.%s" % (t["site"].split(".", 1)[0], t["machine"]))
+            by.setdefault(t["machine"], []).append(t)
+        return page("services.html", request, "/services", by_machine=list(by.items()))
+
     @app.post("/machines/add")
     def machines_add(request: Request, preset: str = Form("cloud"), address: str = Form(""), name: str = Form(""),
                      target: str = Form("ucore"), csrf: str = Form("")):
@@ -1535,7 +1591,7 @@ def make_app(control: Control):
         try:
             made = control.add_machine(preset, address, name, target, user=u)
         except KiwiError as e:
-            return RedirectResponse("/?" + urllib.parse.urlencode({"add_error": str(e)}), status_code=303)
+            return RedirectResponse("/machines?" + urllib.parse.urlencode({"add_error": str(e)}), status_code=303)
         return RedirectResponse("/hosts/" + made, status_code=303)
 
     @app.get("/hosts/{name}/media")
@@ -1662,11 +1718,11 @@ def make_app(control: Control):
         return await settings_post(request, name)
 
     @app.post("/refresh")
-    def refresh(request: Request, csrf: str = Form("")):
+    def refresh(request: Request, csrf: str = Form(""), back: str = Form("")):
         if not posted(request, csrf):
             return login_page()
         control.look()                          # in the background; Home says it is checking
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/machines" if back == "/machines" else "/", status_code=303)
 
     @app.post("/run")
     def run(request: Request, action: str = Form(...), host: str = Form(""), csrf: str = Form(""), at: str = Form(""),

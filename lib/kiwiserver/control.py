@@ -87,6 +87,14 @@ class Control:
         plain = os.path.isfile(fleet) and not os.path.islink(fleet)
         return self.store.exists() and os.path.isfile(self.salt_file) and (plain or os.path.isfile(fleet + ".age"))
 
+    def damaged(self):
+        """The files of the network here that are there but empty: what a power cut in the
+        middle of a write left behind before 2.103.0. With one of them empty neither the
+        password nor the ring opens anything, and the page has to say why."""
+        names = [n + ".age" for n in FLEET_FILES] + ["secrets.age", "secrets.recipients", os.path.join("control", "salt")]
+        return [n for n in names if os.path.isfile(os.path.join(self.fleet_dir, n))
+                and os.path.getsize(os.path.join(self.fleet_dir, n)) == 0]
+
     # ---- the first run, from this machine's page -------------------------------------
     # A machine with nothing on it yet (no store, no fleet file) offers the questionnaire of
     # `kiwi-server init` on its page. Whoever opens the page first would own the new network,
@@ -276,7 +284,7 @@ class Control:
             blob = storemod.encrypt_bytes(self.store.recipients, data)
             with open(os.open(path + ".age.tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:
                 fh.write(blob)
-            os.replace(path + ".age.tmp", path + ".age")
+            util.settle(path + ".age.tmp", path + ".age")
             self._saved[name] = hashlib.sha256(data).hexdigest()
             self._age[name] = util.sha256_file(path + ".age")
 
@@ -647,8 +655,7 @@ class Control:
                 path = os.path.join(self.fleet_dir, n)
                 if n in files:
                     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-                    util.write_bytes(path + ".tmp", files[n], 0o644 if n == "secrets.recipients" else 0o600)
-                    os.replace(path + ".tmp", path)
+                    util.write_bytes(path, files[n], 0o644 if n == "secrets.recipients" else 0o600)
                 elif os.path.isfile(path):
                     os.remove(path)
             new = controlsync.node_digest(self.fleet_dir)

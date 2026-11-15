@@ -114,6 +114,14 @@ TEMPLATES = {
     "step.html": STEP,
     "login.html": """{% extends "base.html" %}{% block main %}
 <h1>Kiwi</h1><p class="muted">The control page of your network.</p>
+{% if damaged %}<div class="banner bad">This machine's copy of your network is damaged: {{ damaged | join(", ") }}
+{{ "is" if damaged|length == 1 else "are" }} empty. That is what a power cut in the middle of a change left behind on
+older versions. No password opens it as it is.</div>
+<div class="card"><p><strong>Bring it back.</strong> From a computer that manages the network, with the app (Sync now) or:</p>
+<pre>kiwi-server control push &lt;fleet&gt; --force</pre>
+<p>Without such a computer: the newest copy of the network is on your other machines and in this machine's own
+backups. Start this machine's page anew and choose <em>bring it back from a copy</em>, with your recovery key
+(<a href="/help">Help</a>).</p></div>{% endif %}
 <form method="post" action="/login" class="card">
 {% if locked %}<p class="warn"><strong>The network's keys are locked.</strong> That is normal after a restart or a
 power cut. Your password unlocks them; until then this machine looks after nothing by itself.</p>
@@ -949,7 +957,7 @@ def make_app(control: Control):
 
     @app.get("/healthz")
     def healthz():
-        return {"ok": True, "version": VERSION, "locked": control.locked()}
+        return {"ok": True, "version": VERSION, "locked": control.locked(), "damaged": bool(control.damaged())}
 
     def setup_page(values=None, errors=None, error=None, host="", back_error=None, back_code=""):
         """The questionnaire of `kiwi-server init`, as the terminal and the app ask it; above it,
@@ -1133,7 +1141,7 @@ def make_app(control: Control):
     def login_form():
         if control.fresh():
             return RedirectResponse("/setup", status_code=303)
-        return page("login.html", locked=control.locked(), auto=control.auto_state())
+        return page("login.html", locked=control.locked(), auto=control.auto_state(), damaged=control.damaged())
 
     @app.post("/login")
     def login(request: Request, password: str = Form("")):

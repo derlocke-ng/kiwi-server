@@ -125,11 +125,15 @@ def push(fleet, host, tgt, force=False):
     blobs = _blobs(fleet_dir, fleet_name, st)
     d = blobs_digest(blobs)
     script = ("set -e; d=%(d)s; install -d -m 0700 \"$d\" \"$d/control\"; rm -rf \"$d/.incoming\"; "
-              "install -d -m 0700 \"$d/.incoming\"; tar -xz -C \"$d/.incoming\"; cd \"$d\"; "
+              "install -d -m 0700 \"$d/.incoming\"; tar -xz -C \"$d/.incoming\"; "
+              # forced to the disk before a file takes its name, and the folder after: a power cut
+              # a moment after a push left every file here empty
+              "find \"$d/.incoming\" -type f -exec sync {} + 2>/dev/null || sync; cd \"$d\"; "
               "for f in %(files)s; do rm -f \"$f\"; if [ -f \".incoming/$f\" ]; then mv -f \".incoming/$f\" \"$f\"; fi; done; "
               # nothing of an older layout stays in the clear: a plain fleet file, job logs on disk
               "for f in %(plain)s; do if [ -f \"$f\" ] && [ ! -L \"$f\" ]; then rm -f \"$f\"; fi; done; "
-              "rm -rf .incoming control/jobs control/status.json; printf '%%s\\n' %(s)s > %(stamp)s; chmod 600 %(stamp)s"
+              "rm -rf .incoming control/jobs control/status.json; printf '%%s\\n' %(s)s > %(stamp)s; chmod 600 %(stamp)s; "
+              "sync -f \"$d\" 2>/dev/null || sync"
               % {"d": shlex.quote(rdir), "files": " ".join(ON_NODE), "plain": " ".join(PLAIN), "s": d, "stamp": STAMP})
     remote.run(tgt, script, pack(blobs))
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), d)
@@ -365,8 +369,7 @@ def _take(fleet_dir, fleet_name, st, got, key):
     for name, content in list(plain.items()) + [(n, got[n]) for n in AS_IS if n in got]:
         dest = _local(fleet_dir, fleet_name, name)
         os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
-        util.write_bytes(dest + ".tmp", content, 0o644 if name == "secrets.recipients" else 0o600)
-        os.replace(dest + ".tmp", dest)
+        util.write_bytes(dest, content, 0o644 if name == "secrets.recipients" else 0o600)
     if was_open or not os.path.lexists(st.link):
         st.unlock(key)      # the open tree was the old store's (saved before, so nothing is lost)
     return len(plain) + len([n for n in AS_IS if n in got])

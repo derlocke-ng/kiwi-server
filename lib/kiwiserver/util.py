@@ -8,7 +8,54 @@ import sys
 import warnings
 
 
-from kiwimodules.util import KiwiError, b64, deep_merge, read_bytes, read_text, write_bytes, write_text  # noqa: E402,F401
+from kiwimodules.util import KiwiError, b64, deep_merge, read_bytes, read_text  # noqa: E402,F401
+
+
+def settle(tmp, path):
+    """`tmp` becomes `path`, and stays so through a power cut: its bytes are forced to the
+    disk before the name changes, and the folder after. Without this a file written and
+    renamed a moment before the power went out came back empty (seen on a control node: the
+    whole encrypted store, 0 bytes, a minute after a push)."""
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    try:
+        d = os.open(os.path.dirname(os.path.abspath(path)), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(d)
+    except OSError:
+        pass                    # a file system that does not sync folders
+    finally:
+        os.close(d)
+
+
+def _write(path, data, mode, binary):
+    if os.path.islink(path):        # the file the link names: a control node's fleet file is a
+        path = os.path.realpath(path)   # link into RAM, and a copy beside the link would be on disk
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with (os.fdopen(fd, "wb") if binary else os.fdopen(fd, "w", encoding="utf-8")) as f:
+        f.write(data)
+    os.chmod(tmp, mode)
+    settle(tmp, path)
+
+
+def write_text(path, text, mode=0o644):
+    """Write a file whole or not at all, with the requested mode (secrets get 0600), and
+    so that it survives a power cut once this returns."""
+    _write(path, text, mode, False)
+
+
+def write_bytes(path, data, mode=0o644):
+    _write(path, data, mode, True)
 
 
 QUIET = False

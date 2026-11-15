@@ -144,8 +144,12 @@ if again:
     print("went off a second time on the way (reset by a person, or by its watchdog): %s" % ", ".join(again))
 control = next((m for m in machines if "control" in (m.host.modules or [])), None)
 if control:
-    r = subprocess.run(["curl", "-sk", "--max-time", "8", "--resolve", "control.%s:443:%s" % (control.host.hostname, control.addr),
-                        "https://control.%s/healthz" % control.host.hostname], capture_output=True, text=True)
+    for _ in range(18):          # it asks its ring every half minute: three minutes to open by itself
+        r = subprocess.run(["curl", "-sk", "--max-time", "8", "--resolve", "control.%s:443:%s" % (control.host.hostname, control.addr),
+                            "https://control.%s/healthz" % control.host.hostname], capture_output=True, text=True)
+        if '"locked":false' in r.stdout:
+            break
+        time.sleep(10)
     print("control node on %s: %s" % (control.name, r.stdout.strip() or "no answer"))
     if '"locked":false' not in r.stdout:
         stuck.append("the control node (locked)")

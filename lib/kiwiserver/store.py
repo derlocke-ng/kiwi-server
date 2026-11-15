@@ -21,6 +21,7 @@ import tarfile
 import tempfile
 import time
 
+from . import util
 from .util import KiwiError
 
 FILE = "secrets.age"
@@ -231,7 +232,7 @@ class Store:
         with open(tmp, "w") as f:
             f.write("\n".join(lines) + "\n")
         os.chmod(tmp, 0o644)
-        os.replace(tmp, self.recipients)
+        util.settle(tmp, self.recipients)
 
     def _reencrypt(self):
         """For the keys now listed: from the open tree, after making sure nobody saved over it."""
@@ -336,7 +337,7 @@ class Store:
         if r.returncode != 0:
             raise KiwiError("age could not encrypt the store: %s" % r.stderr.decode(errors="replace").strip()[:200])
         os.chmod(tmp, 0o600)
-        os.replace(tmp, self.file)
+        util.settle(tmp, self.file)
         if os.path.isdir(self.runtime()):
             self._remember_file()
 

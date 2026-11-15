@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.100.1 — an apply waits for the system's own update check
+
+- On uCore an apply failed with "You can cancel the current transaction with
+  `rpm-ostree cancel`" when the system's automatic update check was at work, as it is
+  on a machine that was just installed. The step that prepares SSH for the unlock at
+  boot now waits for it, ten minutes at most. Nothing on the machine was wrong; the
+  apply only said so.
+
 ## 2.100.0 — a restart does not take a machine away
 
 Found in one night, with a machine being installed anew while the others ran:

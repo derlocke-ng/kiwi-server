@@ -159,13 +159,27 @@ cat > $d/kiwi-sshd.conf <<'UNIT'
 [Service]
 ExecStartPre=/bin/sh -c 'grep -q ^root: /etc/shadow || cat /etc/kiwi-shadow >> /etc/shadow'
 UNIT
-rpm-ostree install --idempotent --allow-inactive dracut-sshd >/dev/null
+# rpm-ostree does one thing at a time, and the automatic update check may be at work (it is,
+# on a machine that was just installed): wait for it, ten minutes at most
+ostree() {
+    n=0
+    until out=$(rpm-ostree "$@" 2>&1); do
+        case $out in
+            *"ransaction in progress"*|*"rpm-ostree cancel"*|*"is busy"*) ;;
+            *) printf '%s\n' "$out" >&2; return 1 ;;
+        esac
+        n=$((n + 1))
+        [ "$n" -lt 60 ] || { printf '%s\n' "$out" >&2; return 1; }
+        sleep 10
+    done
+}
+ostree install --idempotent --allow-inactive dracut-sshd
 if rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled'; then
-    [ -z "$changed" ] || rpm-ostree initramfs --disable >/dev/null
+    [ -z "$changed" ] || ostree initramfs --disable
 fi
 rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled' ||
-    rpm-ostree initramfs --enable --arg=--include --arg=$d/kiwi-shadow --arg=/etc/kiwi-shadow \
-        --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf >/dev/null
+    ostree initramfs --enable --arg=--include --arg=$d/kiwi-shadow --arg=/etc/kiwi-shadow \
+        --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf
 cut -d' ' -f1,2 $k.pub
 '''
 

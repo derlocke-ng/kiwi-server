@@ -2858,6 +2858,32 @@ class TestNoLockout(Base):
         for unit in ("kiwi-staged-reboot", "kiwi-reboot-if-required"):
             self.assertIn(unit, unlock.INSTALL_RINGS_ANSWER)
 
+    def test_the_initramfs_ssh_step_waits_for_an_update_check_that_is_at_work(self):
+        """Seen on a machine that was just installed: rpm-ostree was busy staging an update,
+        and the apply failed on "You can cancel the current transaction"."""
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d)
+        count = os.path.join(self.tmp, "count")
+        write(os.path.join(d, "rpm-ostree"), "#!/bin/sh\n"
+              "[ \"$1\" = initramfs ] && [ $# -eq 1 ] && { echo 'Initramfs regeneration: enabled'; exit 0; }\n"
+              "n=$(cat %s 2>/dev/null || echo 0); n=$((n + 1)); echo $n > %s\n"
+              "[ $n -lt 3 ] && { echo 'error: Transaction in progress: upgrade' >&2; echo ' You can cancel the current transaction with `rpm-ostree cancel`' >&2; exit 1; }\n"
+              "exit 0\n" % (count, count))
+        write(os.path.join(d, "sleep"), "#!/bin/sh\nexit 0\n")
+        for f in ("rpm-ostree", "sleep"):
+            os.chmod(os.path.join(d, f), 0o755)
+        body = unlock.PREPARE_DRACUT_SSHD
+        script = body[body.index("ostree() {"):body.index("cut -d' ' -f1,2 $k.pub")].replace("$d/", "/x/")
+        r = subprocess.run(["sh", "-c", "set -eu\nchanged=\n" + script + "echo done"], capture_output=True, text=True,
+                           env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "done"), r.stderr)
+        self.assertEqual(util.read_text(count).strip(), "3")                    # twice busy, then done
+        write(os.path.join(d, "rpm-ostree"), "#!/bin/sh\necho 'error: no such package' >&2; exit 1\n")
+        r = subprocess.run(["sh", "-c", "set -eu\nchanged=\n" + script + "echo done"], capture_output=True, text=True,
+                           env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
+        self.assertNotEqual(r.returncode, 0)                                    # another error is not waited out
+        self.assertIn("no such package", r.stderr)
+
     def test_the_role_script_sets_the_hardware_watchdog(self):
         script = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}}), "x")
         self.assertIn("RuntimeWatchdogSec=60s", script)

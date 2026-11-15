@@ -36,8 +36,26 @@ dev=$(ip -4 route show default | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
 [ -n "$dev" ] || { echo "no default route to take the interface from" >&2; exit 1; }
 want="IP=$(printf %%s "$ip" | sed "s/IFACE/$dev/")"
 f=/etc/initramfs-tools/conf.d/kiwi-unlock
+changed=
 if [ "$(cat "$f" 2>/dev/null)" != "$want" ]; then
     printf '%%s\n' "$want" > "$f"
+    changed=1
+fi
+# a ring that does not answer is given up on after seconds: without a limit one request
+# that is swallowed holds the unlock up for minutes, one that is never answered for ever
+h=/etc/initramfs-tools/hooks/kiwi-ring-timeouts
+hook='#!/bin/sh
+[ "$1" = prereqs ] && exit 0
+mkdir -p "$DESTDIR/root"
+printf "connect-timeout = 5\\nmax-time = 20\\n" > "$DESTDIR/.curlrc"
+cp "$DESTDIR/.curlrc" "$DESTDIR/root/.curlrc"
+'
+if [ "$(cat "$h" 2>/dev/null)" != "$hook" ]; then
+    printf '%%s\n' "$hook" > "$h"
+    chmod 0755 "$h"
+    changed=1
+fi
+if [ -n "$changed" ]; then
     update-initramfs -u >/dev/null 2>&1
     echo updated
 fi
@@ -123,6 +141,7 @@ dropbearkey -y -f $d/dropbear_ed25519_host_key | grep '^ssh-ed25519' | cut -d' '
 PREPARE_DRACUT_SSHD = r'''
 set -eu
 keys=$(cat)
+RING_TIMEOUT_FILES_HERE
 d=/etc/dracut-sshd
 mkdir -p $d; chmod 0700 $d
 k=/etc/ssh/dracut_ssh_host_ed25519_key
@@ -174,12 +193,23 @@ ostree() {
     done
 }
 ostree install --idempotent --allow-inactive dracut-sshd
-if rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled'; then
+# the time limits for the rings, and the watchdog, go into the same initramfs. Files that
+# rpm-ostree carried in the other way (initramfs-etc) come out first: it does not do both
+rpm-ostree status --json 2>/dev/null | grep -q '"initramfs-etc"' && ostree initramfs-etc --untrack-all || true
+more="--arg=--include --arg=/etc/kiwi-curl/.curlrc --arg=/etc/kiwi-curl/.curlrc"
+more="$more --arg=--include --arg=/etc/systemd/system/clevis-luks-askpass.service.d/kiwi.conf --arg=/etc/systemd/system/clevis-luks-askpass.service.d/kiwi.conf"
+w=/etc/systemd/system.conf.d/50-kiwi-watchdog.conf
+[ ! -f $w ] || more="$more --arg=--include --arg=$w --arg=$w"
+now=$(rpm-ostree initramfs)
+case $now in *kiwi-curl*) ;; *) changed=1 ;; esac
+case $now in *50-kiwi-watchdog*) ;; *) [ ! -f $w ] || changed=1 ;; esac
+if printf '%s' "$now" | grep -q 'Initramfs regeneration: enabled'; then
     [ -z "$changed" ] || ostree initramfs --disable
 fi
+# shellcheck disable=SC2086
 rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled' ||
     ostree initramfs --enable --arg=--include --arg=$d/kiwi-shadow --arg=/etc/kiwi-shadow \
-        --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf
+        --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf $more
 cut -d' ' -f1,2 $k.pub
 '''
 
@@ -223,6 +253,36 @@ for unit in kiwi-staged-reboot kiwi-reboot-if-required; do
 done
 systemctl daemon-reload
 ''' % {"path": RINGS_ANSWER_PATH}
+
+# CoreOS: the same time limits for the unlock in its initramfs, and the hardware watchdog
+# there too (a machine that hangs before its disk is open is reset as well). Files under
+# /etc that rpm-ostree carries into the initramfs; they take effect at the next boot.
+RING_TIMEOUT_FILES = r'''
+mkdir -p /etc/kiwi-curl /etc/systemd/system/clevis-luks-askpass.service.d
+printf 'connect-timeout = 5\nmax-time = 20\n' > /etc/kiwi-curl/.curlrc
+printf '[Service]\n# a ring that does not answer is given up on after seconds, not minutes\nEnvironment=CURL_HOME=/etc/kiwi-curl\n' \
+    > /etc/systemd/system/clevis-luks-askpass.service.d/kiwi.conf
+'''
+# A machine without SSH in its initramfs: rpm-ostree carries the files in as they are
+# (initramfs-etc). One with it regenerates its initramfs anyway and takes them in there
+# (PREPARE_DRACUT_SSHD): rpm-ostree does not do both on one machine.
+PREPARE_DRACUT_SSHD = PREPARE_DRACUT_SSHD.replace("RING_TIMEOUT_FILES_HERE", RING_TIMEOUT_FILES.strip())
+RING_TIMEOUTS_COREOS = "set -eu" + RING_TIMEOUT_FILES + r'''
+set -- --track /etc/kiwi-curl/.curlrc --track /etc/systemd/system/clevis-luks-askpass.service.d/kiwi.conf
+[ -f /etc/systemd/system.conf.d/50-kiwi-watchdog.conf ] && set -- "$@" --track /etc/systemd/system.conf.d/50-kiwi-watchdog.conf
+if ! rpm-ostree status --json 2>/dev/null | grep -q 'kiwi-curl'; then
+    n=0
+    until out=$(rpm-ostree initramfs-etc "$@" 2>&1); do
+        case $out in
+            *"ransaction in progress"*|*"rpm-ostree cancel"*|*"is busy"*) ;;
+            *) printf '%s\n' "$out" >&2; exit 1 ;;
+        esac
+        n=$((n + 1)); [ "$n" -lt 60 ] || { printf '%s\n' "$out" >&2; exit 1; }
+        sleep 10
+    done
+    echo updated
+fi
+'''
 
 _CONNECTED = "kiwi-unlock-connected"
 SSH_PORT = {"debian": 2222}      # else 22: CoreOS's initramfs sshd takes the normal port
@@ -506,6 +566,8 @@ def bind(host, tgt, servers):
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
     # and no machine restarts for updates while the rings that open it do not answer
     remote.run(tgt, INSTALL_RINGS_ANSWER, RINGS_ANSWER.encode())
+    if coreos and not host.cfg["unlock"].get("ssh") and b"updated" in remote.run(tgt, RING_TIMEOUTS_COREOS):
+        util.say("%s: the unlock at boot gives a silent ring seconds, not minutes, from the next boot on" % host.name)
     if host.cfg["unlock"].get("ssh"):
         _initramfs_ssh(host, tgt)
         if coreos:

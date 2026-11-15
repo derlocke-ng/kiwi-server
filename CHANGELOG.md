@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.103.0 — a power cut right after a change
+
+- **The network's files survive a power cut in the moment they are written.** Found by
+  the power-cut drill: a minute after a push to the control node the power went out, and
+  when the node was back its whole copy of the network was there as empty files (the
+  encrypted store, the fleet file, the federation file, the recipients, the salt). The
+  node could not be opened, by its password or by its ring. Nothing forced the new files
+  to the disk before they took their names. Every file kiwi-server writes is now forced
+  to the disk first, and its folder after: the store, the fleet file, what a push or a
+  sync brings, the state files. Update the control node (`apply <its machine> --update`).
+- A control node whose copy is damaged says so on its login page, with what to do,
+  instead of a lock that no password opens. `/healthz` carries `damaged`.
+- The power-cut drill waits for the control node to open by itself (it asks its ring
+  every half minute).
+- Tried on the test home with a second machine that starts without a ring (a ring on
+  medlar besides lime) and a second ring for every encrypted machine: with lime's ring
+  away, all four machines were back by themselves in under three minutes.
+
 ## 2.102.0 — who starts whom after a power cut
 
 - **"If something breaks" says what a power cut would do.** After a power cut every

@@ -2745,6 +2745,50 @@ class TestOlderControlNode(unittest.TestCase):
         self.assertIsNone(controlsync.older_node("/nowhere", "2.97.0", api=api))
 
 
+class TestPowerCutSafeWrites(Base):
+    """Seen for real: a power cut a minute after a push, and the control node's whole copy of
+    the network (store, fleet file, salt) was there again as empty files."""
+
+    def test_a_file_is_forced_to_the_disk_before_it_takes_its_name(self):
+        seen = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def fsync(fd):
+            seen.append("sync %s" % ("folder" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"))
+            return real_fsync(fd)
+
+        def replace(a, b):
+            seen.append("rename")
+            return real_replace(a, b)
+        p = os.path.join(self.tmp, "x", "secrets.age")
+        with mock.patch.object(os, "fsync", fsync), mock.patch.object(os, "replace", replace):
+            util.write_bytes(p, b"the store", 0o600)
+            self.assertEqual(seen, ["sync file", "rename", "sync folder"])
+            del seen[:]
+            util.write_text(p, "again")
+            self.assertEqual(seen, ["sync file", "rename", "sync folder"])
+        self.assertEqual(util.read_text(p), "again")
+        self.assertFalse(os.path.exists(p + ".tmp"))
+        self.assertEqual(oct(os.stat(p).st_mode & 0o777), "0o644")
+        # a link is written through, as before: a control node's fleet file is a link into memory
+        real = os.path.join(self.tmp, "ram.yaml")
+        write(real, "old")
+        os.symlink(real, os.path.join(self.tmp, "link.yaml"))
+        util.write_text(os.path.join(self.tmp, "link.yaml"), "new")
+        self.assertTrue(os.path.islink(os.path.join(self.tmp, "link.yaml")))
+        self.assertEqual(util.read_text(real), "new")
+
+    def test_the_node_says_when_its_copy_is_damaged(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
+        c = controlmod.Control(f.path, run_dir=os.path.join(self.tmp, "ram"))
+        self.assertEqual(c.damaged(), [])                       # nothing there is not damaged
+        for name in ("fleet.yaml.age", "secrets.age", os.path.join("control", "salt")):
+            write(os.path.join(self.tmp, name), "")
+        write(os.path.join(self.tmp, "secrets.recipients"), "age1…\n")
+        self.assertEqual(c.damaged(), ["fleet.yaml.age", "secrets.age", os.path.join("control", "salt")])
+        self.assertIn("sync -f", controlsync.push.__code__.co_consts.__repr__())      # the push over SSH forces it too
+
+
 class TestConnectWait(unittest.TestCase):
     def test_a_resolver_that_waits_for_a_master_that_is_off_is_left_behind(self):
         """`connect` hung for minutes in the app while the master was off: the system's

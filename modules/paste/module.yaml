@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: paste
-  title: Pastebin (PrivateBin)
+  title: Pastebin
   version: 1.0.0
   description: "A pastebin: a page to put a text (or a file) on and pass its link along. PrivateBin encrypts in the browser, the server keeps what it cannot read. At paste.<hostname> for the mesh; public with a public name on a master, or as a hidden service with the onion module"
   category: productivity
@@ -81,6 +81,7 @@ settings:
     help: "A file can be attached to a paste."
     default: true
   - key: image
+    group: Advanced
     label: Image
     help: "PrivateBin's own image, pinned by version."
     default: docker.io/privatebin/nginx-fpm-alpine:2.1.1

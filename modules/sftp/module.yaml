@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: sftp
-  title: SFTP access
+  title: File transfer (SFTP)
   version: 1.0.0
   description: "An SFTP server on its own port for fetching downloads from the LAN or the mesh"
   category: storage
@@ -56,6 +56,7 @@ settings:
     rotate: restart
     help: "Empty: generated from the fleet's seed."
   - key: sftp_uid
+    group: Advanced
     type: int
     help: Must own the shared directory (the downloader's puid when sharing its downloads).
     default: 1000

@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: control
-  title: Control
+  title: Control page
   version: 1.0.0
   description: "The control node (design/control-plane.md in kiwi-server): kiwi-server with web pages at control.<hostname>, for the mesh only. It keeps the fleet file and the secrets as the encrypted store, which its password opens into RAM; then it looks at every machine by itself, sends the role to RAM masters, and applies from a phone."
   category: system
@@ -81,6 +81,7 @@ validate:
 
 settings:
   - key: image
+    group: Advanced
     label: Image
     help: "kiwi-server with its web pages; the major tag follows kiwi-server's releases."
     default: ghcr.io/derlocke-ng/kiwi-server-control:2

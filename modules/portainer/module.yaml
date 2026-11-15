@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: portainer
-  title: Portainer
+  title: Containers (Portainer)
   version: 1.0.0
   description: "Portainer CE — a web UI for the containers on this machine; local port 9443, and portainer.<hostname> behind the reverse proxy"
   category: system

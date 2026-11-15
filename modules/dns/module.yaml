@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: dns
-  title: DNS (Pi-hole)
+  title: Ad blocker (Pi-hole)
   version: 1.2.0
   description: "Pi-hole v6 — ad-blocking resolver for the mesh or the LAN, forwarding to the VPN client's DNS-over-TLS; serves the fleet's own names and, optionally, the Mullvad SOCKS5 proxies'"
   category: core
@@ -105,6 +105,7 @@ settings:
     help: "Semicolon separated, tried in strict order after the first upstream. Reached directly, not through the tunnel (which is down whenever the master is), so only ever used while the master is unreachable. Empty: none."
     default: 9.9.9.9;149.112.112.112
   - key: network_mode
+    group: Advanced
     label: Share a container's network
     help: "Empty: own address with ports 53 published on the host (a node). vpn-server: run inside the WireGuard server's network stack, reachable for clients at the server's mesh address (the master)."
     default: ""
@@ -118,6 +119,7 @@ settings:
     help: "127.0.0.1 (reach it with ssh -L), or 0.0.0.0 for the whole LAN."
     default: 127.0.0.1
   - key: web_ui_port
+    group: Advanced
     type: int
     help: "The host port of the web UI while expose_web_ui is on: http://<web_ui_bind>:<this port>/admin."
     default: 8080
@@ -166,6 +168,7 @@ settings:
     help: "Local DNS records for every host and service in the fleet (split-horizon DNS): their mesh addresses, except that a node on this node's own LAN answers with its LAN address."
     default: true
   - key: extra_records
+    group: Advanced
     type: map
     label: Extra local records
     help: name=address, added to the fleet's records.

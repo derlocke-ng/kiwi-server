@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: dhcp-relay
-  title: DHCP relay for Pi-hole
+  title: DHCP relay
   version: 1.0.0
   description: "Relays the LAN's DHCP broadcasts to the Pi-hole container, so Pi-hole can be the LAN's DHCP server although it sits in a bridge network"
   category: network

@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: downloader
-  title: Download station
+  title: Downloads
   version: 1.1.0
   description: "Transmission and JDownloader inside the VPN client's network namespace — no tunnel, no traffic — with their web UIs behind the reverse proxy"
   category: storage
@@ -106,10 +106,12 @@ settings:
     help: "The name this JDownloader appears under at my.jdownloader.org. Empty: the hostname."
     default: ""
   - key: puid
+    group: Advanced
     type: int
     help: "The user ID Transmission and JDownloader run as and write the downloads with, e.g. 1000, the first user on most systems. The download directory must belong to it."
     default: 1000
   - key: pgid
+    group: Advanced
     type: int
     help: "The group ID that goes with puid."
     default: 1000

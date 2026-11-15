@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: cache
-  title: Cache
+  title: Local cache
   version: 1.0.0
   description: "Keeps what the machines on this LAN would each fetch from the internet: container images (a pull-through mirror per registry, at cache.<hostname> behind the reverse proxy) and Debian packages (a proxy on port 3142). The other nodes on the same LAN use it by themselves and go direct when it is off."
   category: storage

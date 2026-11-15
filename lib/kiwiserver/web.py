@@ -108,8 +108,10 @@ text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82
 .pic svg{display:block;width:100%;height:auto;margin:0 auto}.pic .narrow{display:none}
 @media (max-width:640px){.pic .wide{display:none}.pic .narrow{display:block}}
 .pic rect{fill:var(--card);stroke:var(--line2)}.pic rect.m{stroke:var(--accent);stroke-width:1.5}
+.pic rect.zone{fill:var(--fg);fill-opacity:.035;stroke:var(--line2);stroke-dasharray:2 4}.pic text.zl{fill:var(--muted);font:400 11px system-ui,sans-serif}
+.pic circle.ring{opacity:.22}
 .pic text{fill:var(--fg);font:600 14px system-ui,sans-serif}.pic text.c{fill:var(--muted);font-weight:400;font-size:11px}
-.pic path{fill:none;stroke:var(--line2);stroke-width:2;stroke-linecap:round}.pic path.up{stroke:var(--ok)}
+.pic path{fill:none;stroke:var(--line2);stroke-width:1.8;stroke-linecap:round}.pic path.up{stroke:var(--ok);stroke-opacity:.75}
 .pic path.off{stroke:var(--off);stroke-dasharray:5 5}
 .pic circle{fill:var(--off)}.pic circle.ok{fill:var(--ok)}.pic circle.warn{fill:var(--warn)}.pic circle.bad,.pic circle.down{fill:var(--bad)}
 .what{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:start;margin-top:8px}
@@ -1146,8 +1148,9 @@ def stats(machines, devices):
 
 
 def picture(machines, devices=0, per_row=4):
-    """The network as a picture (SVG, drawn here): the master, and a line to every other machine,
-    green when the machine answers. `per_row=1` is the narrow one for a phone: a list under the master."""
+    """The network as it is (SVG, drawn here; the app draws the same): the master out on the
+    Internet, the machines at home, and the tunnel each holds to the master, green while it
+    answers. `per_row=1` is the narrow one for a phone: a list with a branch to each machine."""
     masters = [m for m in machines if m["role"] == "master"]
     rest = [m for m in machines if m["role"] and m["role"] != "master"]
     if not masters or not rest:
@@ -1156,11 +1159,11 @@ def picture(machines, devices=0, per_row=4):
     lines, boxes = [], []
 
     def box(m, x, y, w, h, cap, cls=""):
-        boxes.append('<a href="/hosts/%s"><rect %sx="%d" y="%d" width="%d" height="%d" rx="8"/>'
-                     '<circle class="%s" cx="%d" cy="%d" r="5"/><text x="%d" y="%d">%s</text>'
-                     '<text class="c" x="%d" y="%d">%s</text></a>'
-                     % (esc(m["name"]), 'class="%s" ' % cls if cls else "", x, y, w, h, esc(m["state"]), x + 17, y + h // 2 - 5,
-                        x + 30, y + h // 2 - 1, esc(m["name"]), x + 30, y + h // 2 + 14, esc(cap)))
+        boxes.append('<a href="/hosts/%s"><rect %sx="%d" y="%d" width="%d" height="%d" rx="12"/>'
+                     '<circle class="ring %s" cx="%d" cy="%d" r="9"/><circle class="%s" cx="%d" cy="%d" r="5"/>'
+                     '<text x="%d" y="%d">%s</text><text class="c" x="%d" y="%d">%s</text></a>'
+                     % (esc(m["name"]), 'class="%s" ' % cls if cls else "", x, y, w, h, esc(m["state"]), x + 20, y + h // 2,
+                        esc(m["state"]), x + 20, y + h // 2, x + 36, y + h // 2 - 4, esc(m["name"]), x + 36, y + h // 2 + 13, esc(cap)))
 
     def line(d, m=None):
         cls = "" if m is None else ' class="%s"' % ("up" if m["state"] in ("ok", "warn", "bad") else "off")
@@ -1168,42 +1171,50 @@ def picture(machines, devices=0, per_row=4):
     master = masters[0]
     mcap = "master" + (" · %d %s on its VPN" % (devices, "device" if devices == 1 else "devices") if devices else "")
     cap = lambda m: ", ".join(tags(m["modules"])[:2]) or ("master" if m["role"] == "master" else "node")   # noqa: E731
-    bh, mh = 48, 52
+    bh, mh, gap, zp = 54, 58, 18, 34
+    rest = masters[1:] + rest
     if per_row == 1:
-        w, tx, x = 320, 28, 52
-        box(master, 10, 6, w - 20, mh, mcap, "m")
-        y = 6 + mh + 14
-        for m in masters[1:] + rest:
-            line("M%d %d H%d" % (tx, y + bh // 2, x), m)
-            box(m, x, y, w - 10 - x, bh, cap(m))
-            y += bh + 12
-        line("M%d %d V%d" % (tx, 6 + mh, y - 12 - bh // 2))
-        h = y - 12 + 6
+        w = 340
+        box(master, 10, 8, 260, mh, mcap, "m")
+        zy, tx, y = 8 + mh + 30, 32, 8 + mh + 60
+        for m in rest:
+            line("M%d %d Q%d %d %d %d H%d" % (tx, y + bh // 2 - 10, tx, y + bh // 2, tx + 10, y + bh // 2, 58), m)
+            box(m, 58, y, w - 68, bh, cap(m))
+            y += bh + 10
+        lines.insert(0, '<path d="M%d %d V%d"/>' % (tx, 8 + mh, y - 10 - bh // 2))
+        zone = (4, zy, w - 8, y - 10 + 18 - zy)
     else:
-        bw, gap, pad, mw, tx = 158, 20, 24, 240, 10
-        w = 2 * pad + per_row * bw + (per_row - 1) * gap
-        rest = masters[1:] + rest
-        rows = [rest[i:i + per_row] for i in range(0, len(rest), per_row)]
-        cx, top, step = w // 2, 6 + mh + 44, bh + 40
-        box(master, cx - mw // 2, 6, mw, mh, mcap, "m")
-        for r, row in enumerate(rows):
-            by = top + r * step - 20
-            start = (w - len(row) * bw - (len(row) - 1) * gap) // 2 if len(rows) == 1 else pad
-            mids = [start + i * (bw + gap) + bw // 2 for i in range(len(row))]
-            if r == 0:
-                line("M%d %d V%d" % (cx, 6 + mh, by))
-                line("M%d %d H%d" % (min([cx, mids[0]] + ([tx] if len(rows) > 1 else [])), by, max(cx, mids[-1])))
-            else:
-                line("M%d %d H%d" % (tx, by, mids[-1]))
-            for i, m in enumerate(row):
-                line("M%d %d V%d" % (mids[i], by, top + r * step), m)
-                box(m, mids[i] - bw // 2, top + r * step, bw, bh, cap(m))
-        if len(rows) > 1:
-            line("M%d %d V%d" % (tx, top - 20, top + (len(rows) - 1) * step - 20))
-        h = top + (len(rows) - 1) * step + bh + 6
+        bw = 172
+        if len(rest) > 2 * per_row - 1:         # two rows hold them when narrower
+            bw, per_row = 140, per_row + 1
+        rows, left = [], list(rest)
+        while left:                             # later rows: one less, between the ones above
+            take = per_row if not rows else per_row - 1
+            rows.append(left[:take])
+            left = left[take:]
+        w = per_row * bw + (per_row - 1) * gap + 2 * zp + 20
+        mw, mx = 260, (w - 260) // 2
+        box(master, mx, 8, mw, mh, mcap, "m")
+        zy, y, placed = 8 + mh + 58, 8 + mh + 88, []
+        for row in rows:
+            x = (w - (len(row) * bw + (len(row) - 1) * gap)) // 2
+            for m in row:
+                placed.append((x, y, m))
+                box(m, x, y, bw, bh, cap(m))
+                x += bw + gap
+            y += bh + gap
+        placed.sort(key=lambda p: (p[0], p[1]))
+        for i, (x, by, m) in enumerate(placed):
+            sx = mx + 24 + (mw - 48) * (i + 0.5) / len(placed)
+            ex, ez, sy = x + bw // 2, zy + 12, 8 + mh
+            mid = (sy + ez) / 2
+            line("M%.1f %d C%.1f %.1f %d %.1f %d %d V%d" % (sx, sy, sx, mid, ex, mid, ex, ez, by), m)
+        zone = (10, zy, w - 20, y - gap + 22 - zy)
+    h = zone[1] + zone[3] + 8
+    ground = '<rect class="zone" x="%d" y="%d" width="%d" height="%d" rx="14"/><text class="zl" x="%d" y="%d">At home</text>' % (
+        zone[0], zone[1], zone[2], zone[3], zone[0] + 14, zone[1] + 18)
     return markupsafe.Markup('<svg viewBox="0 0 %d %d" style="max-width:%dpx" role="img" aria-label="Your network: the master and '
-                             'the machines linked to it">%s%s</svg>' % (w, h, w, "".join(lines), "".join(boxes)))
-
+                             'the machines linked to it">%s%s%s</svg>' % (w, h, w, ground, "".join(lines), "".join(boxes)))
 
 def tiles(machines):
     out = []

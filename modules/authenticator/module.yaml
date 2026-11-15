@@ -68,6 +68,7 @@ settings:
     help: "What the page calls itself."
     default: 2FAuth
   - key: image
+    group: Advanced
     label: Image
     help: "2FAuth's own image, pinned by version."
     default: docker.io/2fauth/2fauth:9.0.1

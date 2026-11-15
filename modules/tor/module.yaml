@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: tor
-  title: Tor SOCKS proxy
+  title: Tor for the VPN
   version: 1.1.0
   description: "A Tor SOCKS5 proxy for mesh clients, pinned to a set of countries; shares the WireGuard server's network on a master"
   category: security
@@ -40,6 +40,7 @@ backup:
 
 settings:
   - key: network_mode
+    group: Advanced
     label: Share a container's network
     help: "vpn-server: listen on the WireGuard server's mesh address (the master). Empty: own address."
     default: ""

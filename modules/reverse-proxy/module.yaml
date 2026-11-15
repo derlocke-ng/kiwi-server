@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: reverse-proxy
-  title: Reverse proxy (nginx)
+  title: Web addresses (nginx)
   version: 1.1.0
   description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own. On a master it lives inside the WireGuard server's network namespace: the admin pages get names, reachable from the mesh only"
   category: core
@@ -102,14 +102,17 @@ settings:
     help: "Filled in by kiwi-server for a machine with the onion module: site name -> its .onion address. Each gets one more server on port 8043, which only the stack reaches."
     default: {}
   - key: network_mode
+    group: Advanced
     label: Share a container's network
     help: "Empty: own address, ports 80 and 443 published on the host (a node). vpn-server: inside the WireGuard server's network stack, reachable at the server's mesh address only (a master): wg.<hostname>, pihole.<hostname>."
     default: ""
   - key: tls_fullchain
+    group: Advanced
     type: file
     label: TLS certificate chain (fullchain.pem)
     help: "For <hostname> and *.<hostname>. Empty: issued by the fleet CA at render time (kiwi-server ca)."
   - key: tls_privkey
+    group: Advanced
     type: file
     label: TLS private key (privkey.pem)
     help: "The key of that certificate chain: give both or neither. Empty: issued with the chain by the fleet CA at render time."

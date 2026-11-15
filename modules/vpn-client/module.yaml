@@ -2,7 +2,7 @@ schema_version: "1.0"
 
 module:
   name: vpn-client
-  title: VPN client (gluetun)
+  title: VPN connection
   version: 1.1.0
   description: "gluetun — the tunnel every node hangs off: to the master (custom WireGuard config) or to a commercial VPN (the master's exit)"
   category: core
@@ -82,6 +82,7 @@ settings:
     label: Server cities
     help: "Commercial providers: narrow it to cities, e.g. Frankfurt. Comma separated."
   - key: vpn_endpoint_port
+    group: Advanced
     type: int
     label: Endpoint port
     help: "Commercial providers: the WireGuard endpoint port if the provider needs one (0 = provider default)."
@@ -91,19 +92,23 @@ settings:
     help: "gluetun resolves through DNS-over-TLS to this provider (quad9, cloudflare, google, …). On a master this is where the whole network's lookups end up, through the exit tunnel."
     default: quad9
   - key: vpn_input_ports
+    group: Advanced
     label: Ports allowed in from the tunnel
     help: "Comma separated. Ports 80 and 443 are added automatically when a module is reachable at the mesh address."
     default: ""
   - key: outbound_subnets
+    group: Advanced
     label: LAN subnets reachable from the tunnel namespace
     help: "Comma separated, e.g. 192.168.2.0/24 — lets the containers that share this network namespace (downloads) reach your LAN."
     default: ""
   - key: published_ports
+    group: Advanced
     type: list
     label: Published host ports
     help: "host:container pairs published on the VPN client (so on the services sharing its namespace), e.g. 3129:3129."
     default: []
   - key: extra_dnat_rules
+    group: Advanced
     type: list
     label: Extra DNAT rules
     help: "port/proto:destination[:port] — forwards mesh traffic for the node's mesh address, e.g. 2224/tcp:172.128.0.251:22; a range as 27000-27100/udp:172.128.0.200 (the ports stay as they are). The reverse proxy's 80/443 are automatic."

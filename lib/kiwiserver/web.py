@@ -318,7 +318,7 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <a class="tile" href="/settings"><b>Settings for every machine</b><span>Time zone, updates and what else they share</span></a>
 <a class="tile" href="/backups"><b>Backups</b><span>See when everything was last saved</span></a>
 <a class="tile" href="/recovery"><b>If something breaks</b><span>Could you bring it back, and what to press</span></a>
-<a class="tile" href="/access"><b>Who may reach what</b><span>Which devices and linked networks open which machine or service</span></a>
+<a class="tile" href="/access"><b>Who may reach what</b><span>Which devices and linked networks open which machine or service, and hidden services for strangers</span></a>
 <a class="tile" href="/federation"><b>Linked networks</b><span>What other networks may reach here, and the way out</span></a>
 <a class="tile" href="/help"><b>Help</b><span>What the words on this page mean</span></a></div>
 {% endblock %}""",
@@ -578,6 +578,27 @@ work. It starts with nothing; tick what it may open after saving. A device joins
 <a href="/devices">Add a phone or laptop</a>.</p><input id="new" name="new" placeholder="family" pattern="[a-z0-9][a-z0-9-]*"></div>
 <div class="actions"><button class="primary">Save</button></div></form>
 <p class="muted">Devices outside every group reach everything{% if loose %}: {{ loose | join(", ") }}{% endif %}.</p>
+
+<h2 id="tor" style="scroll-margin-top:64px">Hidden services</h2>
+<p class="muted">A hidden service gives one service an address that anyone opens with Tor Browser, without your VPN:
+for people you do not know. Leave the names empty and anyone with the address gets in, and meets the service's own
+login. With names, only who holds a key finds it. Tor never leaves through this home's connection: it goes to the
+master and leaves there.</p>
+{% if key %}<div class="banner ok">{{ key.client }} opens <code>http://{{ key.address }}</code> in Tor Browser and
+types this key when it asks:<br><code>{{ key.line }}</code></div>{% endif %}
+{% if tor_saved %}<div class="banner ok">Saved: {{ tor_saved }}. The machine gets it with the next Apply.
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="update">
+<button>Update everything</button></form></div>{% endif %}
+<form method="post" action="/onion">{{ tok }}
+{% for m in machines if m.services %}<div class="card"><strong>{{ m.name }}</strong>
+{% for s in m.services %}{% set h = hidden.get(s ~ "." ~ m.name) %}<div style="margin:6px 0">
+<label style="display:inline"><input type="checkbox" name="on.{{ m.name }}.{{ s }}" style="width:auto"{% if h %} checked{% endif %}> {{ s }}</label>
+{% if h %}<code class="small">http://{{ h.address }}</code>{% endif %}
+<input name="who.{{ m.name }}.{{ s }}" value="{{ h.clients | join(' ') if h else '' }}" placeholder="anyone; or names, like anna ben"
+style="margin-top:2px">
+{% if h %}{% for c in h.clients %}<button class="small" name="show" value="{{ s }}.{{ m.name }}:{{ c }}">Show {{ c }}'s key</button>
+{% endfor %}{% endif %}</div>{% endfor %}</div>{% endfor %}
+<div class="actions"><button class="primary">Save hidden services</button></div></form>
 {% endblock %}""",
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
@@ -1443,13 +1464,43 @@ def make_app(control: Control):
             w["extra"] = ["%s:%s" % (n, p) for n, o in w["open"]["machines"].items() for p in o["ports"]] + w["open"]["other"]
         grouped = {d for w in a["who"] for d in w["devices"]}
         loose = sorted(d for d in control.devices() if d not in grouped)
-        return page("access.html", request, "/", who=a["who"], machines=a["machines"], loose=loose, **kw)
+        try:
+            hidden = control.onion()
+        except KiwiError:
+            hidden = {}
+        return page("access.html", request, "/", who=a["who"], machines=a["machines"], loose=loose, hidden=hidden, **kw)
+
+    @app.post("/onion")
+    async def onion_do(request: Request):
+        form = dict(await request.form())
+        u = posted(request, str(form.get("csrf", "")))
+        if not u:
+            return login_page()
+        try:
+            if form.get("show"):                        # one person's key, shown once on the page
+                what, _, client = str(form["show"]).partition(":")
+                found = control.onion().get(what)
+                if not found:
+                    raise KiwiError("%s is no hidden service" % what)
+                return access_page(request, key={"client": client, "address": found["address"],
+                                                 "line": control.onion_key(what, client, user=u)})
+            wanted = {}
+            for m in control.access()["machines"]:
+                for s in m["services"]:
+                    what = "%s.%s" % (s, m["name"])
+                    wanted[what] = str(form.get("who.%s.%s" % (m["name"], s), "")).lower().split() \
+                        if "on.%s.%s" % (m["name"], s) in form else None
+            done = control.save_onion(wanted, user=u)
+        except KiwiError as e:
+            return access_page(request, error=str(e))
+        return RedirectResponse("/access?tor=" + urllib.parse.quote(", ".join(done)) + "#tor" if done else "/access#tor", status_code=303)
 
     @app.get("/access")
     def access(request: Request):
         if not user(request):
             return login_page()
-        return access_page(request, saved=request.query_params.get("saved", "")[:200])
+        return access_page(request, saved=request.query_params.get("saved", "")[:200],
+                           tor_saved=request.query_params.get("tor", "")[:200])
 
     @app.post("/access")
     async def access_do(request: Request):

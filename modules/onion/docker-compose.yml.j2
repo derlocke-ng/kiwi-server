@@ -1,0 +1,29 @@
+# onion — this machine's hidden services. Tor shares the VPN client's network: what it sends
+# leaves at the master, never through this machine's own connection.
+services:
+  {{ container_prefix }}-onion:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-onion
+{% if has_vpn_client %}
+    network_mode: "service:{{ container_prefix }}-vpn-client"
+    depends_on:
+      - {{ container_prefix }}-vpn-client
+{% elif node_type == 'master' %}
+    # a master without a VPN exit: from its own address at the hoster
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+{% else %}
+    # no VPN client on this machine: Tor gets no network at all rather than the home connection
+    network_mode: none
+{% endif %}
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command: ["/etc/tor/start.sh"]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-onion/etc:/etc/tor:z
+      - {{ docker_dir }}/{{ container_prefix }}-onion/var:/var/lib/tor:z

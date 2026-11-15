@@ -76,6 +76,12 @@ settings:
     label: VPN group access
     help: "Filled in by kiwi-server from the VPN server's groups: the client ranges that reach this machine for some of its services only. names: name -> the ranges refused there; others: the ranges refused at every other name."
     default: {}
+  - key: onion
+    type: object
+    group: Generated
+    label: Hidden service addresses
+    help: "Filled in by kiwi-server for a machine with the onion module: site name -> its .onion address. Each gets one more server on port 8043, which only the stack reaches."
+    default: {}
   - key: network_mode
     label: Share a container's network
     help: "Empty: own address, ports 80 and 443 published on the host (a node). vpn-server: inside the WireGuard server's network stack, reachable at the server's mesh address only (a master): wg.<hostname>, pihole.<hostname>."

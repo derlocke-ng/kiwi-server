@@ -40,6 +40,7 @@ from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
 from kiwiserver import watchdog as watchdogmod  # noqa: E402
 from kiwiserver import access as accessmod  # noqa: E402
+from kiwiserver import fleettext, onion as onionmod  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEh+test+kiwi+server+key+0000000000000000000 test@kiwi"
@@ -830,7 +831,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 23)
+        self.assertEqual(len(ms.names()), 24)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -2559,6 +2560,105 @@ class TestAccess(Base):
             self.assertNotEqual(rc, 0, bad)
         rc, out, err = TestManage.run_cli(self, "access", f.path)
         self.assertRegex(out, r"other +linked network +cloud\.papaya")
+
+
+class TestOnion(Base):
+    """Hidden services: keys and addresses from the seed, the command, the machine's files."""
+
+    def test_the_service_key_is_ed25519_and_the_address_follows_from_it(self):
+        import hashlib
+        seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")      # RFC 8032, test 1
+        h = bytearray(hashlib.sha512(seed).digest())
+        h[0] &= 248
+        h[31] &= 127
+        h[31] |= 64
+        x, y = onionmod._mul(int.from_bytes(bytes(h[:32]), "little"), (onionmod._BX, onionmod._BY))
+        public = (y | ((x & 1) << 255)).to_bytes(32, "little")
+        self.assertEqual(public.hex(), "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+        # Tor itself made this address from this key (tests/drills: the image's tor, with no network)
+        secret, public = onionmod.service_key(b"T" * 32, "papaya", "git")
+        self.assertEqual(onionmod.address(public), "uxruen5i33qijpevq7smwx6i4d42zw4ls2fydv2avjp5nwnk33rrklqd.onion")
+        self.assertEqual((len(secret), len(public)), (64, 32))
+        self.assertEqual(onionmod.service_key(b"T" * 32, "papaya", "git"), (secret, public))        # every render the same
+        self.assertNotEqual(onionmod.service_key(b"T" * 32, "lychee", "git")[1], public)             # per machine
+        self.assertNotEqual(onionmod.service_key(b"U" * 32, "papaya", "git")[1], public)             # per fleet
+        private, pub = onionmod.client_key(b"T" * 32, "papaya", "git", "anna")
+        self.assertRegex(private, r"^[A-Z2-7]{52}$")
+        self.assertRegex(pub, r"^[A-Z2-7]{52}$")
+        self.assertNotEqual(onionmod.client_key(b"T" * 32, "papaya", "git", "ben")[0], private)
+
+    def test_one_value_changes_in_the_fleet_file_and_the_comments_stay(self):
+        text = ("# mine\nhosts:\n  papaya:\n    role: node   # at home\n    node:\n"
+                "      modules: [vpn-client, cloud]   # what it runs\n      cloud:\n        admin_password: x\n      # after\n")
+        out = fleettext.put(text, ["hosts", "papaya", "node", "modules"], ["vpn-client", "cloud", "onion"])
+        out = fleettext.put(out, ["hosts", "papaya", "node", "onion"], {"services": {"cloud": {"clients": ["anna"]}}})
+        lines = out.split("\n")
+        for keep in ("# mine", "    role: node   # at home", "      # after", "        admin_password: x"):
+            self.assertIn(keep, lines)
+        self.assertIn("      modules: [vpn-client, cloud, onion]   # what it runs", lines)
+        self.assertEqual(yaml.safe_load(out)["hosts"]["papaya"]["node"]["onion"], {"services": {"cloud": {"clients": ["anna"]}}})
+        self.assertEqual(out.count("onion:"), 1)
+        again = fleettext.put(out, ["hosts", "papaya", "node", "onion"], {"services": {}})
+        self.assertEqual(yaml.safe_load(again)["hosts"]["papaya"]["node"]["onion"], {"services": {}})
+        self.assertIsNone(fleettext.put("hosts: {papaya: {node: {}}}\n", ["hosts", "papaya", "node", "onion"], {}))   # not laid out as a block
+
+    def net(self):
+        f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "papaya": {"role": "node", "node": self.node_cloud(preset="cloud")}}})
+        write(os.path.join(self.tmp, "secrets", "seed"), "T" * 32)
+        return f
+
+    def test_the_command_makes_limits_and_removes_a_hidden_service(self):
+        f = self.net()
+        rc, out, err = TestManage.run_cli(self, "onion", f.path)
+        self.assertIn("no hidden services yet", out + err)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya")
+        self.assertEqual(rc, 0, err)
+        address = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "vault")[1])
+        self.assertIn("vault.papaya is a hidden service: http://%s" % address, out + err)
+        self.assertIn("anyone with the address", out + err)
+        node = config.Fleet.load(f.path).hosts["papaya"].cfg["node"]
+        self.assertEqual(node["onion"], {"services": {"vault": {}}})
+        self.assertEqual(node["modules"][-1], "onion")
+        self.assertIn("cloud", node["modules"])                      # the preset's parts stay
+        # the machine's files: Tor in the VPN client's network, its key, the proxy's site
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        h = fleet.hosts["papaya"]
+        b = r.bundle(h, r.prepare(h))
+        self.assertEqual(b.compose["services"]["kn-onion"]["network_mode"], "service:kn-vpn-client")
+        self.assertIn("HiddenServiceDir /var/lib/tor/onion/vault", b.files["kn-onion/etc/torrc"][0])
+        self.assertIn("printf '%%s\\n' '%s'" % address, b.files["kn-onion/etc/start.sh"][0])
+        self.assertIn("server_name %s;" % address, b.files["kn-nginx/nginx.conf"][0])
+        # only named people
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--client", "anna")
+        self.assertEqual(rc, 0, err)
+        line = onionmod.browser_line(b"T" * 32, "papaya", "vault", "anna")
+        self.assertIn(line, out + err)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--show", "anna")
+        self.assertIn(line, out)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path)
+        self.assertRegex(out, r"vault\.papaya +http://%s +only: anna" % address)
+        rc, out, err = TestManage.run_cli(self, "access", f.path)
+        self.assertRegex(out, r"Tor +hidden service +vault\.papaya +\(only: anna\)")
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        h = fleet.hosts["papaya"]
+        start = r.bundle(h, r.prepare(h)).files["kn-onion/etc/start.sh"][0]
+        self.assertIn("descriptor:x25519:%s" % onionmod.client_key(b"T" * 32, "papaya", "vault", "anna")[1], start)
+        self.assertNotIn(line, start)                                # the person's private key never goes to the machine
+        # what is none is said; taking away
+        for bad, why in ((["mail.papaya"], "no site called mail"), (["vault.grape"], "which service of which machine"),
+                         (["vault.papaya", "--show", "ben"], "not a name"), (["vault.papaya", "--client", "Not A Name"], "small letters")):
+            rc, out, err = TestManage.run_cli(self, "onion", f.path, *bad)
+            self.assertNotEqual(rc, 0, bad)
+            self.assertIn(why, err)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--remove", "--client", "anna")
+        self.assertIn("anyone with the address gets in", out + err)
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--remove")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(config.Fleet.load(f.path).hosts["papaya"].cfg["node"]["onion"], {"services": {}})
 
 
 class TestFederation(Base):
@@ -5501,7 +5601,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 23)
+        self.assertEqual(len(json.loads(out)["modules"]), 24)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -8036,6 +8136,24 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.data()["hosts"][master]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
         self.assertEqual(self.ask("/access")[:2], (303, "/login"))
         self.assertIn('href="/access"', self.ask("/", cookie=cookie)[1])
+        # hidden services: one for anyone, one for a named person; the person's key on asking
+        body = self.ask("/access", cookie=cookie)[1]
+        self.assertIn('name="on.%s.vault"' % node, body)
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.vault" % node: "on", "on.%s.cloud" % node: "on",
+                                               "who.%s.cloud" % node: "anna"}, cookie=cookie)
+        self.assertEqual(status, 303)
+        self.assertIn("/access?tor=cloud.%s" % node, where)
+        got = self.data()["hosts"][node]["node"]
+        self.assertEqual(got["onion"], {"services": {"cloud": {"clients": ["anna"]}, "vault": {}}})
+        self.assertIn("onion", got["modules"])
+        body = self.ask("/access", cookie=cookie)[1]
+        self.assertRegex(body, r"http://[a-z2-7]{56}\.onion")
+        body = self.ask("/onion", {"csrf": csrf, "show": "cloud.%s:anna" % node}, cookie=cookie)[1]
+        self.assertRegex(body, r"types this key when it asks:<br><code>[A-Z2-7]{52}</code>")
+        self.assertIn("showed the Tor key of anna", str(self.c.audit_tail(3)))
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.vault" % node: "on"}, cookie=cookie)     # cloud: unticked
+        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"vault": {}}})
+        self.assertEqual(self.ask("/onion", {"csrf": "x"})[:2], (303, "/login"))
 
     def test_the_recovery_key_sets_a_new_password(self):
         _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))

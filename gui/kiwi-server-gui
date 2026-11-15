@@ -1308,6 +1308,32 @@ class AccessDialog(Adw.Dialog):
                     g.add(r["flags"][key])
             self.rows[w["name"]] = r
             page.add(g)
+        # hidden services: a site for anyone with Tor Browser, or for named people (kiwi-server onion)
+        rc, out, _err = run_cli(win.cli, ["onion", win.doc.path, "--porcelain"])
+        try:
+            self.hidden = {"%s.%s" % (x["service"], x["host"]): x for x in json.loads(out)["services"]} if rc == 0 else {}
+        except (ValueError, KeyError):
+            self.hidden = {}
+        self.onion = {}
+        tor = Adw.PreferencesGroup(title="Hidden services", description=(
+            "An address that anyone opens with Tor Browser, without your VPN: for people you do not know. No names: "
+            "anyone with the address gets in. With names, only who holds a key finds it (kiwi-server onion … --show NAME "
+            "prints a person's key). Tor never leaves through a home connection: it leaves at the master."))
+        for m in [x for x in (data.get("machines") or []) if x["services"]]:
+            exp = Adw.ExpanderRow(title=m["name"], subtitle=", ".join(
+                sv for sv in m["services"] if "%s.%s" % (sv, m["name"]) in self.hidden) or "none")
+            for sv in m["services"]:
+                what = "%s.%s" % (sv, m["name"])
+                has = self.hidden.get(what)
+                on = Adw.SwitchRow(title=sv, subtitle=("http://" + has["address"]) if has else "not a hidden service",
+                                   active=bool(has))
+                who = Adw.EntryRow(title="%s: only these people (empty: anyone)" % sv, text=" ".join(has["clients"]) if has else "")
+                exp.add_row(on)
+                exp.add_row(who)
+                self.onion[what] = (on, who)
+            tor.add(exp)
+        if data and self.onion:
+            page.add(tor)
         more = Adw.PreferencesGroup(title="A new group", description="It starts with nothing. A device joins it under "
                                                                       "“Add a phone or laptop…”.")
         self.new = Adw.EntryRow(title="Its name, like family")
@@ -1353,11 +1379,22 @@ class AccessDialog(Adw.Dialog):
                 args = (args or [w["name"], "--add"]) + diff
             if args:
                 calls.append(args)
-        if not calls:
+        tor = []                    # the same for the hidden services: `kiwi-server onion`
+        for what, (on, who) in self.onion.items():
+            has, names = self.hidden.get(what), who.get_text().lower().split()
+            if not on.get_active():
+                if has:
+                    tor.append([what, "--remove"])
+                continue
+            if not has:
+                tor.append([what])
+            tor += [[what, "--client", n] for n in names if not has or n not in has["clients"]]
+            tor += [[what, "--remove", "--client", n] for n in (has["clients"] if has else []) if n not in names]
+        if not calls and not tor:
             self.close()
             return
-        for args in calls:
-            rc, out, err = run_cli(self.win.cli, ["access", self.win.doc.path] + args)
+        for cmd, args in [("access", a) for a in calls] + [("onion", a) for a in tor]:
+            rc, out, err = run_cli(self.win.cli, [cmd, self.win.doc.path] + args)
             if rc != 0:
                 self.win.toast("%s: %s" % (args[0], (err.strip().splitlines() or ["not saved"])[-1].replace("error: ", "")))
                 return

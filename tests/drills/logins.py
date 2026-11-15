@@ -127,8 +127,27 @@ def try_one(x):
         code, _t, _h = ask(b + "/api/v1/user", auth=(user, pw), headers={"Accept": "application/json"})
         return verdict(code, (200,), (401, 403))
     if m == "btcpay":
-        code, _t, _h = ask(b + "/api/v1/users/me", auth=(user, pw), headers={"Accept": "application/json"})
-        return verdict(code, (200,), (401, 403))
+        # through its login page, as a person does. Not by Basic authentication: since 2.4.2 BTCPay
+        # switches that off five minutes after an account is made, and a login that works was called wrong
+        import re
+        jar.clear()
+        code, t, _h = ask(b + "/login")
+        token = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', t)
+        if code != 200 or not token:
+            return "?", "its login page: %s" % code
+        code, t, h = ask(b + "/login", "POST", urllib.parse.urlencode(
+            {"Email": user, "Password": pw, "RememberMe": "false", "__RequestVerificationToken": token.group(1)}).encode(),
+            {"Content-Type": "application/x-www-form-urlencoded"})
+        where = {k.lower(): v for k, v in h.items()}.get("location", "")
+        if code in (302, 303) and "login" not in where.lower():
+            return "PASS", "%s to %s" % (code, where or "/")
+        if code in (302, 303) and "2fa" in where.lower():
+            return "PASS", "the password is right; it asks for a second factor next"
+        if code == 200 and "invalid login attempt" in t.lower():
+            # BTCPay says the same for a wrong password and for an account that was changed inside
+            # it (its password, a passkey, two-factor login): from outside the two cannot be told apart
+            return "?", "invalid login attempt: a wrong password, or the account was changed inside BTCPay"
+        return "?", "%s to %s" % (code, where or "?")
     if m == "xmpp":
         # a Jabber login as an app does it: STARTTLS, then the name and the password (SASL PLAIN)
         import base64, socket

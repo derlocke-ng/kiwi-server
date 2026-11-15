@@ -82,6 +82,10 @@ BASE_GROUPS = [
              help="What the machine becomes on first boot"),
         dict(path=("disk",), type="string", label="Install disk", default="",
              help="WIPED by the ISO without asking — /dev/sda, /dev/nvme0n1, /dev/vda"),
+        dict(path=("mounts",), type="lines", label="Data disks", scope="host", default=[],
+             help="A second disk for the data, one per line: the disk, then where it goes, like LABEL=data /mnt/data. "
+                  "The disk by its label (LABEL=…), its UUID=… or /dev/disk/by-id/…; kiwi-server disks <fleet> <machine> "
+                  "lists what the machine has. It is mounted before the services start and never erased"),
         dict(path=("install", "on_done"), type="enum", label="When the install is done", options=["poweroff", "reboot"],
              default="poweroff",
              help="poweroff: the machine turns off, you pull the stick and switch it on again. reboot: it starts the "

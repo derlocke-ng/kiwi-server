@@ -91,6 +91,48 @@ def stack_cli(path=None):
     return util.read_text(p)
 
 
+def mount_lines(mounts):
+    """The role script's part for the data disks (fleet.yaml `mounts`): each in /etc/fstab
+    between two marks, so a disk taken out of the fleet file leaves the file again, and
+    mounted before the role's own steps. A disk that is not there, or has no filesystem
+    where none may be made, ends the script with what to do: services writing into an empty
+    folder on the system disk would look like lost data later."""
+    out = ["# ---- data disks (fleet.yaml mounts) --------------------------------------",
+           "ks_mounts() {",
+           "    local dev at fmt real fs",
+           "    [[ -f /etc/fstab ]] || install -m 0644 /dev/null /etc/fstab      # CoreOS comes without one",
+           "    sed -i '/^# kiwi-server mounts: begin/,/^# kiwi-server mounts: end/d' /etc/fstab",
+           "    echo '# kiwi-server mounts: begin (from the fleet file: change them there)' >> /etc/fstab",
+           "    while read -r dev at fmt; do",
+           "        [[ -n $dev ]] || continue",
+           "        at=$(realpath -m \"$at\")          # /mnt is /var/mnt on CoreOS: the path as the system has it",
+           "        real=$(findfs \"$dev\" 2>/dev/null || true)",
+           "        [[ $dev == /dev/* && -b $dev ]] && real=$dev",
+           "        [[ -n $real ]] || ks_die \"the data disk $dev is not there: plug it in, or take it out of mounts in the fleet file\"",
+           "        fs=$(blkid -o value -s TYPE \"$real\" 2>/dev/null || true)",
+           "        if [[ -z $fs ]]; then",
+           "            [[ -n $fmt ]] || ks_die \"the data disk $dev has no filesystem: format: xfs in its mounts entry makes one\"",
+           "            [[ -z $(wipefs -n \"$real\" 2>/dev/null) ]] || ks_die \"the data disk $dev is not empty and has no filesystem kiwi-server knows: look at it first\"",
+           "            ks_say \"making a filesystem ($fmt) on the empty disk $dev\"",
+           "            \"mkfs.$fmt\" -q \"$real\"",
+           "        fi",
+           "        echo \"$dev $at auto nofail,x-systemd.device-timeout=30s 0 2\" >> /etc/fstab",
+           "        install -d \"$at\"",
+           "        systemctl daemon-reload",
+           "        findmnt -rn \"$at\" >/dev/null || mount \"$at\" || ks_die \"the data disk $dev does not mount at $at\"",
+           "        ks_say \"data disk $dev is at $at\"",
+           "    done <<'KS_MOUNTS'"]
+    out += ["%s %s %s" % m for m in mounts]
+    out += ["KS_MOUNTS",
+            "    echo '# kiwi-server mounts: end' >> /etc/fstab",
+            "}", "",
+            "ks_role_apply() {",
+            "    ks_mounts",
+            "    ks_role_apply_role \"$@\"",
+            "}", ""]
+    return out
+
+
 def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None):
     lib_text = lib_text if lib_text is not None else common_lib()
     body = util.read_text(role.apply_path)
@@ -148,10 +190,17 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             lines.append("KS_FILES[unit/%s]=%s" % (name, _q(util.b64(text))))
         for name, text in sorted(getattr(bundle, "quadlets", {}).items()):
             lines.append("KS_FILES[quadlet/%s]=%s" % (name, _q(util.b64(text))))
+    from . import config
+    mounts = config.mounts_of(host.cfg)
+    if mounts:      # the role's own steps come after the data disks: its services find their folders
+        body = body.replace("ks_role_apply ()", "ks_role_apply()", 1).replace("ks_role_apply()", "ks_role_apply_role()", 1)
     lines += ["", "# ---- common library (roles/common/lib.sh) ------------------------------",
               lib_text.rstrip("\n"), "",
               "# ---- role: %s (roles/%s/apply.sh) --------------------------------" % (role.name, role.name),
-              body.rstrip("\n"), "",
+              body.rstrip("\n"), ""]
+    if mounts:
+        lines += mount_lines(mounts)
+    lines += [
               "# ---- post script (fleet.yaml post_script) -----------------------------",
               "ks_post_script() {"]
     post = (host.cfg.get("post_script") or "").rstrip("\n")

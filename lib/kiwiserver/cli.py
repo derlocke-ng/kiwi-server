@@ -1965,6 +1965,25 @@ def cmd_control(args):
             n = controlsync.pull_dir(fleet_dir, fleet_name, folder, args.force, key)
             util.say("%d files from %s: this copy is the folder's" % (n, folder) if n else "in step with %s" % folder)
         return
+    if args.action == "invite":
+        from . import qr
+        link = controlsync.invite_api(fleet_dir, key)
+        if args.porcelain:
+            try:
+                picture = qr.svg(link)
+            except KiwiError:
+                picture = ""
+            print(json.dumps({"link": link, "qr": picture}))
+            return
+        util.say("for one more computer: there, in Kiwi Server, Join, and paste this link "
+                 "(or: kiwi-server control join <new folder>/fleet.yaml). It works once, for fifteen minutes")
+        print(link)
+        if sys.stdout.isatty():
+            try:
+                print(qr.text_blocks(link))
+            except KiwiError:
+                pass
+        return
     if args.action == "join":
         link = args.link or (getpass.getpass("invite link (the control page: Computers, Add a computer): ")
                              if sys.stdin.isatty() else sys.stdin.readline().strip())
@@ -3216,6 +3235,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
   kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
+  kiwi-server control invite <fleet>            makes that link here, for one more computer
   kiwi-server control push|pull|join <fleet> --dir FOLDER     the same through a synced folder (Nextcloud, …);
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
@@ -3370,7 +3390,7 @@ def build_parser():
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
-    s.add_argument("action", choices=["push", "pull", "join", "requests", "accept", "deny", "ring"]); s.add_argument("fleet")
+    s.add_argument("action", choices=["push", "pull", "join", "invite", "requests", "accept", "deny", "ring"]); s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")

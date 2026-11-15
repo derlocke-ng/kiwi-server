@@ -731,6 +731,7 @@ onsubmit="return confirm('Remove {{ name }}? It can no longer open the network.'
 {% if invite %}<div class="card"><ol><li>On the new computer, open <strong>Kiwi Server</strong>.</li>
 <li>Choose <strong>Join a fleet</strong> and paste this link.</li></ol>
 <pre id="inv">{{ invite }}</pre>
+{% if invite_qr %}<div class="qr">{{ invite_qr }}</div><p class="muted small">The same link as a picture, for a camera.</p>{% endif %}
 <button class="primary" onclick="navigator.clipboard.writeText(document.getElementById('inv').textContent);this.textContent='Copied'">Copy the link</button>
 <p class="muted small">It works once, for fifteen minutes. The computer must be on your VPN.</p></div>
 {% else %}<form method="post" action="/controllers/invite" class="card">{{ tok }}
@@ -1942,7 +1943,8 @@ def make_app(control: Control):
             return login_page()
         try:
             if what == "invite":
-                return controllers_page(request, invite=control.new_invite(base_url(request), u))
+                link = control.new_invite(base_url(request), u)
+                return controllers_page(request, invite=link, invite_qr=markupsafe.Markup(control.qr_svg(link)))
             if what == "remove":
                 control.remove(name, u)
             if what == "password":
@@ -1989,6 +1991,18 @@ def make_app(control: Control):
     def bearer(request):
         auth = request.headers.get("authorization") or ""
         return control.controller(auth[7:]) if auth.startswith("Bearer ") else None
+
+    @app.post("/api/invite")
+    def api_invite(request: Request):
+        """A computer that manages the network already makes the link for one more: the same
+        invite as the page's button, asked for with that computer's key instead of a login."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            return {"link": control.new_invite(base_url(request), who)}
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
 
     @app.get("/api/fleet/revision")
     def api_revision(request: Request):

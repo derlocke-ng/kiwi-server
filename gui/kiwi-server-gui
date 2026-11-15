@@ -2816,6 +2816,43 @@ class FolderDialog(Adw.Dialog):
         threading.Thread(target=work, daemon=True).start()
 
 
+class InviteDialog(Adw.Dialog):
+    """The invite link for one more computer: to copy, and as a QR code."""
+
+    def __init__(self, win, link, svg):
+        super().__init__(title="Add a computer", content_width=460)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        box.append(Gtk.Label(label="On the other computer, in Kiwi Server: Join a network, and paste this link. "
+                                   "It works once, for fifteen minutes. The computer must be on your VPN.",
+                             wrap=True, xalign=0))
+        if svg:
+            try:                     # drawn by the image loader for SVG; without one the link alone is shown
+                # drawn large: a picture of 37 points stretched is too soft for a camera
+                big = svg.replace("<svg ", '<svg width="444" height="444" ', 1)
+                texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(big.encode()))
+                pic = Gtk.Picture.new_for_paintable(texture)
+                pic.set_size_request(220, 220)
+                pic.set_halign(Gtk.Align.CENTER)
+                pic.set_can_shrink(True)
+                pic.set_tooltip_text("The same link, for a camera")
+                frame = Gtk.Box(halign=Gtk.Align.CENTER, css_classes=["card"])
+                frame.append(pic)
+                box.append(frame)
+            except GLib.Error:
+                pass
+        box.append(Gtk.Label(label=link, selectable=True, wrap=True, wrap_mode=Pango.WrapMode.CHAR, xalign=0,
+                             css_classes=["monospace"]))
+        copy = Gtk.Button(label="Copy the link", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER)
+
+        def copied(*_):
+            win.get_clipboard().set(link)
+            copy.set_label("Copied")
+        copy.connect("clicked", copied)
+        box.append(copy)
+        self.set_child(box)
+
+
 class JoinDialog(Adw.Dialog):
     """Join a fleet that exists: paste the invite link from its control page. One field."""
 
@@ -2835,6 +2872,15 @@ class JoinDialog(Adw.Dialog):
         self.link.connect("entry-activated", lambda *_: self.join())
         self.link.connect("changed", lambda *_: self.ready())
         g.add(self.link)
+
+        def from_clipboard(clip, res):        # a link copied a moment ago is there already
+            try:
+                text = (clip.read_text_finish(res) or "").strip()
+            except GLib.Error:
+                return
+            if "/#join=" in text and "\n" not in text and not self.link.get_text():
+                self.link.set_text(text)
+        win.get_clipboard().read_text_async(None, from_clipboard)
         self.shared = Adw.EntryRow(title="…or the synced folder")
         if os.path.isfile(os.path.join(likely_folder(), "kiwi-fleet.json")):
             self.shared.set_text(tilde(likely_folder()))          # a network is waiting there
@@ -3225,11 +3271,13 @@ class Window(Adw.ApplicationWindow):
         dlg = Adw.AlertDialog(heading="Use another computer")
         if control:
             name = (self.status.get(control) or {}).get("hostname") or control
-            dlg.set_body("Your network has a control page. On it: Computers, Add a computer. Paste the link it shows "
-                         "into Kiwi Server on the other computer (Join a network). Both computers then "
-                         "stay in step by themselves.")
+            dlg.set_body("Add a computer makes a link. Paste it into Kiwi Server on the other computer (Join a "
+                         "network): it fetches the network and both stay in step by themselves. The control "
+                         "page makes the same link: Computers, Add a computer.")
             dlg.add_response("page", "Open the control page")
-            dlg.connect("response", lambda _d, r: r == "page" and Gtk.UriLauncher.new(
+            dlg.add_response("invite", "Add a computer")
+            dlg.set_response_appearance("invite", Adw.ResponseAppearance.SUGGESTED)
+            dlg.connect("response", lambda _d, r: self.invite() if r == "invite" else r == "page" and Gtk.UriLauncher.new(
                 "https://control.%s/controllers" % name).launch(self, None, None))
         else:
             dlg.set_body("Two ways. If Nextcloud or the like syncs a folder between your computers: keep the network in "
@@ -3242,6 +3290,35 @@ class Window(Adw.ApplicationWindow):
                         else FolderDialog(self).present(self) if r == "folder" else None)
         dlg.add_response("close", "Close")
         dlg.present(self)
+
+    def invite(self):
+        """The link for one more computer, made here (`kiwi-server control invite`), shown with
+        a button that copies it and as a QR code."""
+        self.toast("Asking the control page for a link…")
+
+        def work():
+            try:
+                r = subprocess.run([self.cli, "control", "invite", self.doc.path, "--porcelain"],
+                                   stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+                rc, out, err = r.returncode, r.stdout, r.stderr
+            except (OSError, subprocess.TimeoutExpired) as e:
+                rc, out, err = 1, "", str(e)
+            GLib.idle_add(done, rc, out, err)
+
+        def done(rc, out, err):
+            try:
+                data = json.loads(out) if rc == 0 else {}
+            except ValueError:
+                data = {}
+            if not data.get("link"):
+                why = (err.replace("error: ", "").strip().splitlines() or ["no link came back"])[-1]
+                dlg = Adw.AlertDialog(heading="No link", body=why[:300])
+                dlg.add_response("close", "Close")
+                dlg.present(self)
+                return False
+            InviteDialog(self, data["link"], data.get("qr") or "").present(self)
+            return False
+        threading.Thread(target=work, daemon=True).start()
 
     def connect_dialog(self):
         """This computer on the network (`kiwi-server connect`): the same as a phone gets with

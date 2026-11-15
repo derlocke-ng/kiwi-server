@@ -911,6 +911,70 @@ class Control:
             self.fleet_info(fresh=True)
         return [n for n, _a in todo]
 
+    # ---- hidden services ---------------------------------------------------------------
+    def _onion(self, *argv):
+        r = subprocess.run(list(self.kiwi) + ["onion", self.fleet_path] + list(argv), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        if r.returncode:
+            raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
+        return r.stdout
+
+    def onion(self):
+        """The hidden services (`onion --porcelain`): {"<service>.<machine>": {address, clients, site}}."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        try:
+            rows = json.loads(self._onion("--porcelain"))["services"]
+        except (ValueError, KeyError):
+            raise KiwiError("the hidden services could not be read")
+        return {"%s.%s" % (x["service"], x["host"]): x for x in rows}
+
+    def save_onion(self, wanted, user="admin"):
+        """{"<service>.<machine>": [names] or None (no hidden service)} against what is there:
+        made, limited to names, opened to anyone, taken away. Returns what changed."""
+        from . import onion as onionmod
+        now = self.onion()
+        done = []
+        with self.lock:
+            try:
+                for what, names in sorted(wanted.items()):
+                    service, _, machine = what.partition(".")
+                    if not (onionmod.NAME.match(service) and HOST.match(machine)) or any(
+                            not onionmod.NAME.match(n) for n in names or []):
+                        raise KiwiError("%s: a service, a machine and people are named in small letters, digits and -" % what)
+                    has = now.get(what)
+                    if names is None:
+                        if has:
+                            self._onion(what, "--remove")
+                            done.append(what)
+                        continue
+                    if not has:
+                        self._onion(what)
+                    for n in names:
+                        if not has or n not in has["clients"]:
+                            self._onion(what, "--client", n)
+                    for n in (has["clients"] if has else []):
+                        if n not in names:
+                            self._onion(what, "--remove", "--client", n)
+                    if not has or sorted(names) != sorted(has["clients"]):
+                        done.append(what)
+            finally:
+                self.save_fleet()
+        if done:
+            self.audit(user, "hidden services changed", services=done)
+            self.fleet_info(fresh=True)
+        return done
+
+    def onion_key(self, what, client, user="admin"):
+        """What a named person types into Tor Browser for one hidden service."""
+        from . import onion as onionmod
+        service, _, machine = what.partition(".")
+        if not (onionmod.NAME.match(service) and HOST.match(machine) and onionmod.NAME.match(client or "")):
+            raise KiwiError("no such name")
+        out = self._onion(what, "--show", client)
+        self.audit(user, "showed the Tor key of %s for %s" % (client, what))
+        return out.strip().splitlines()[-1].strip()
+
     # ---- what a machine's backups hold ------------------------------------------------
     def snapshots(self, host):
         """The snapshots of a machine, by part: {part: [(time, [servers])]}, newest first, and the
@@ -1325,8 +1389,11 @@ class Control:
                 if now - last_status >= self.status_minutes * 60:
                     last_status = now
                     self.refresh_status()
-                    if any(e.get("kind") in ("restarted", "unlocked") for e in self.recover()):
+                    events = self.recover()
+                    if any(e.get("kind") in ("restarted", "unlocked") for e in events):
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
+                    elif any(e.get("kind") == "waiting" for e in events):
+                        last_status = now - self.status_minutes * 60 + 120      # something is gone: look again soon
                 if self.watch_seconds and self.has_ram_masters():
                     with self.lock:
                         subprocess.run(self.argv("watch"), capture_output=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)

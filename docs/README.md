@@ -36,6 +36,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [A master in RAM](design/ram-master.md) | `target: coreos-ram` |
 | [Federation](design/federation.md) | two networks sharing services |
 | [Recovery](design/recovery.md) | what runs by itself when something breaks, and what is planned |
+| [Hidden services](design/onion.md) | services for strangers over Tor, never through a home connection |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
 

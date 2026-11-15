@@ -15,7 +15,7 @@ import sys
 import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
-from . import facts, form as formmod, logins as loginsmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
+from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from . import recovery as recoverymod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
@@ -372,6 +372,19 @@ class Renderer:
             return None
         records = self.dns_records()   # the scan re-resolves every host, this one included,
         self.tls_for(host)             # so the certificate files are injected afterwards
+        if "onion" in host.modules:
+            # its hidden services: their keys and addresses from the seed, and the proxy's site for each
+            mine = {n[:-len(host.hostname) - 1]: n for ip, n in records if n.endswith("." + host.hostname)}
+            keys, sites = {}, {}
+            for k in onionmod.for_host(self.fleet.seed(), host):
+                if k["service"] not in mine:
+                    raise KiwiError("%s: onion.services: it has no site called %s (it has: %s)"
+                                    % (host.name, k["service"], ", ".join(sorted(mine)) or "none"))
+                keys[k["service"]] = {"address": k["address"], "secret": k["secret"], "public": k["public"],
+                                      "clients": {c["name"]: c["public"] for c in k["clients"]}}
+                sites[mine[k["service"]]] = k["address"]
+            host.module_settings["onion"]["keys"] = keys
+            host.module_settings["reverse-proxy"]["onion"] = sites
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             rules = accessmod.node_rules(self._groups, host.name, host.hostname)
@@ -2552,6 +2565,8 @@ def cmd_access(args):
             print("%-10s %-15s %s%s" % (x["name"], x["range"] if x["kind"] == "group" else "linked network", x["says"], more))
             if x["devices"]:
                 print("%-10s %-15s devices: %s" % ("", "", ", ".join(x["devices"])))
+        for h, s, a, c in _hidden(fleet, rolesmod.discover(), modmod.discover()) if not args.who else []:
+            print("%-10s %-15s %s.%s  (%s)" % ("Tor", "hidden service", s, h.name, ("only: " + ", ".join(c)) if c else "anyone with the address"))
         grouped = {d for x in rows for d in x["devices"]}
         loose = sorted(d for d in devices if d not in grouped)
         if loose and not args.who:
@@ -2602,6 +2617,109 @@ def cmd_access(args):
             util.say("%s was written anew: the comments in it are not kept" % os.path.basename(fleet.path))
     util.say("bring it to the machines: kiwi-server apply %s %s" % (os.path.basename(fleet.path),
                                                                     " ".join([master.name] + sorted(touched - {master.name}))))
+
+
+def _hidden(fleet, roles, ms):
+    """Every hidden service of the fleet: [(host, service, address, clients)]."""
+    out = []
+    for h in fleet.hosts.values():
+        if h.role not in roles or h.validate(roles):
+            continue
+        try:
+            rolesmod.resolve_settings(roles[h.role], h, ms)
+        except KiwiError:
+            continue
+        if "onion" not in (h.modules or []):
+            continue
+        for name, clients in onionmod.services(h).items():
+            out.append((h, name, onionmod.address(onionmod.service_key(fleet.seed(), h.name, name)[1]), clients))
+    return out
+
+
+def cmd_onion(args):
+    """Hidden services (docs/design/onion.md): sites of a machine that anyone opens with Tor
+    Browser, or only named people. Listed, made, limited to names, taken away."""
+    fleet, roles, ms = load(args)
+    if not args.what:
+        rows = _hidden(fleet, roles, ms)
+        if args.porcelain:
+            print(json.dumps({"services": [{"host": h.name, "service": s, "site": "%s.%s" % (s, h.hostname),
+                                            "address": a, "clients": c} for h, s, a, c in rows]}, indent=2))
+            return
+        for h, s, a, c in rows:
+            print("%-22s http://%s  %s" % ("%s.%s" % (s, h.name), a, ("only: " + ", ".join(c)) if c else "anyone with the address"))
+        if not rows:
+            util.say("no hidden services yet. Make one: kiwi-server onion %s <service>.<machine>, e.g. git.papaya"
+                     % os.path.basename(fleet.path))
+        return
+    service, _, hname = args.what.partition(".")
+    host = fleet.hosts.get(hname)
+    if host is None or host.role not in roles or not roles[host.role].stack:
+        raise KiwiError("which service of which machine? <service>.<machine>, e.g. git.papaya (machines: %s)"
+                        % ", ".join(h.name for h in fleet.hosts.values() if h.role in roles and roles[h.role].stack))
+    if not onionmod.NAME.match(service) or (args.client and not onionmod.NAME.match(args.client)):
+        raise KiwiError("a service and a person are named in small letters, digits and -")
+    role = roles[host.role]
+    rolesmod.resolve_settings(role, host, ms)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms)
+    sites = sorted(n[:-len(host.hostname) - 1] for _ip, n in r.dns_records() if n.endswith("." + host.hostname))
+    if service not in sites:
+        raise KiwiError("%s has no site called %s (it has: %s)" % (host.name, service, ", ".join(sites) or "none on the VPN yet"))
+    if role.node_type != "master" and "vpn-client" not in host.modules:
+        raise KiwiError("%s has no VPN client: Tor would leave through its own connection. Hidden services need one" % host.name)
+    have = onionmod.services(host) if "onion" in host.modules else {}
+    address = onionmod.address(onionmod.service_key(fleet.seed(), host.name, service)[1])
+    base = os.path.basename(fleet.path)
+    if args.show:
+        if args.show not in have.get(service, []):
+            raise KiwiError("%s is not a name of %s.%s (names: %s)" % (args.show, service, host.name, ", ".join(have.get(service, [])) or "none"))
+        print("%s opens http://%s in Tor Browser. When it asks for a key:\n  %s"
+              % (args.show, address, onionmod.browser_line(fleet.seed(), host.name, service, args.show)))
+        return
+    if args.remove:
+        if service not in have:
+            raise KiwiError("%s.%s is no hidden service" % (service, host.name))
+        if args.client:
+            if args.client not in have[service]:
+                raise KiwiError("%s is not a name of %s.%s" % (args.client, service, host.name))
+            have[service] = [c for c in have[service] if c != args.client]
+            said = "%s can no longer open %s.%s%s" % (args.client, service, host.name,
+                                                       ": nobody is named now, so anyone with the address gets in. --remove without "
+                                                       "--client takes the service away" if not have[service] else "")
+        else:
+            del have[service]
+            said = "%s.%s is no hidden service any more" % (service, host.name)
+    else:
+        clients = have.setdefault(service, [])
+        if args.client and args.client not in clients:
+            clients.append(args.client)
+        said = "%s.%s is a hidden service: http://%s" % (service, host.name, address)
+    value = {"services": {s: ({"clients": c} if c else {}) for s, c in have.items()}}
+    mods = list(host.modules) if "onion" in host.modules else list(host.modules) + ["onion"]
+    path = os.path.realpath(fleet.path)
+    before = util.read_text(path)
+    text = before
+    for where, v in ((["hosts", host.name, host.role, "modules"], mods), (["hosts", host.name, host.role, "onion"], value)):
+        text = fleettext.put(text, where, v) if text is not None else None
+    if text is None:            # laid out in a way the text edit does not follow: from the data, comments lost
+        doc = formmod.Doc.parse(before)
+        block = doc.block(host.name).setdefault(host.role, {})
+        block["modules"], block["onion"] = mods, value
+        text = doc.dump()
+        if any(x.lstrip().startswith("#") for x in before.splitlines()[2:]):
+            util.say("%s was written anew: the comments in it are not kept" % base)
+    util.write_text(path, text, 0o600)
+    errs = config.Fleet.load(fleet.path).errors
+    if errs:
+        util.write_text(path, before, 0o600)
+        raise KiwiError(errs[0])
+    util.say(said)
+    if args.client and not args.remove:
+        util.say("only %s. What %s types when Tor Browser asks for a key:\n  %s"
+                 % (", ".join(have[service]), args.client, onionmod.browser_line(fleet.seed(), host.name, service, args.client)))
+    elif not args.remove and not have[service]:
+        util.say("anyone with the address gets in, and meets the service's own login")
+    util.say("bring it to the machine: kiwi-server apply %s %s" % (base, host.name))
 
 
 def cmd_federate(args):
@@ -2925,6 +3043,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server recovery <fleet>                  if something breaks: could it come back, and what to do
   kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
   kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
+  kiwi-server onion <fleet> [service.machine]        hidden services: a site for anyone with Tor, or for named people
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -3114,6 +3233,10 @@ def build_parser():
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
     s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
+    s = sub("onion", cmd_onion); s.add_argument("fleet"); s.add_argument("what", nargs="?", help="<service>.<machine>, e.g. git.papaya")
+    s.add_argument("--client", metavar="NAME", help="only named people get in: add this name (with --remove: take it away)")
+    s.add_argument("--show", metavar="NAME", help="what this person types into Tor Browser")
+    s.add_argument("--remove", action="store_true", help="take the hidden service away, or with --client that name")
     s = sub("access", cmd_access); s.add_argument("fleet"); s.add_argument("who", nargs="?", help="a group of the VPN or a linked network")
     s.add_argument("what", nargs="*", help="all, nodes, nothing, a machine, service.machine or machine:port")
     s.add_argument("--add", action="store_true", help="give these too, and keep what it has")

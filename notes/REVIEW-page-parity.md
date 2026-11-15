@@ -58,3 +58,6 @@ menu): the VPN's groups and the linked networks, a tick per machine and service.
 Since 2.95.0, in all three: "If something breaks" (`recovery`): could the network come back, and what to do in
 each case; and "This machine is lost or was replaced" on a set-up machine (the first install's steps again).
 
+Since 2.96.0, in all three: hidden services (`onion`; on the page and in the app under "Who may reach what").
+The app does not show a person's key yet (`onion … --show NAME` in a terminal, or the page).
+

@@ -8,15 +8,25 @@
 {{ pad }}add_header X-Frame-Options "SAMEORIGIN" always;
 {{ pad }}add_header X-Robots-Tag "noindex, nofollow" always;
 {% endmacro %}
-{% macro proxy(s) %}
+{% macro proxy(s, hidden=false) %}
             set $backend {{ s.proxy_pass }};
             proxy_pass $backend;
             proxy_http_version 1.1;
+{% if hidden %}
+            # the service hears its usual name and https, so it does not send a stranger to a name only the VPN knows
+            proxy_set_header Host {{ s.server_name }};
+            proxy_set_header X-Real-IP 127.0.0.1;
+            proxy_set_header X-Forwarded-For 127.0.0.1;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Host {{ s.server_name }};
+            proxy_redirect https://{{ s.server_name }}/ /;
+{% else %}
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
             proxy_set_header X-Forwarded-Host $server_name;
+{% endif %}
 {% if s.websocket %}
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
@@ -28,7 +38,7 @@
    block above, so who is shut out of this name (federation, VPN groups) is said here again, first #}
 {% set own = namespace(rules=false) %}
 {% for d in s.extra_directives %}{% if d.startswith('allow ') or d.startswith('deny ') %}{% set own.rules = true %}{% endif %}{% endfor %}
-{% if own.rules %}
+{% if own.rules and not hidden %}
 {% set fed = federation or {} %}
 {% set fn = (fed.names or {}).get(s.server_name) %}
 {% for c in (fn.allow or []) if fn %}
@@ -43,7 +53,9 @@
 {% endfor %}
 {% endif %}
 {% for d in s.extra_directives %}
+{% if not (hidden and (d.startswith('allow ') or d.startswith('deny '))) %}
             {{ d }}
+{% endif %}
 {% endfor %}
 {% endmacro %}
 worker_processes auto;
@@ -220,4 +232,40 @@ http {
 {% endfor %}
     }
 {% endfor %}
+{% for s in servers if (onion or {}).get(s.server_name) %}
+
+    # {{ s.comment }}, as a hidden service: Tor hands it over on this port, which only the stack reaches
+    server {
+        listen 8043;
+        server_name {{ onion[s.server_name] }};
+        {{ headers(s, '        ') | trim }}
+        client_max_body_size {{ s.client_max_body_size or '0' }};
+{% if s.proxy_read_timeout %}
+        proxy_read_timeout {{ s.proxy_read_timeout }};
+        client_body_timeout {{ s.proxy_read_timeout }};
+{% endif %}
+
+        location / {
+            {{ proxy(s, true) | trim }}
+        }
+{% for loc in s.extra_locations %}
+
+        location {{ loc.path }} {
+            {{ loc.config }}
+{% if loc.proxy %}
+            {{ proxy(s, true) | trim }}
+{% endif %}
+        }
+{% endfor %}
+    }
+{% endfor %}
+{% if onion %}
+
+    # an address that is no hidden service of this machine: nothing
+    server {
+        listen 8043 default_server;
+        server_name _;
+        return 444;
+    }
+{% endif %}
 }

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.96.0 — hidden services
+
+- **`kiwi-server onion <fleet> git.papaya`** makes one service of a machine a Tor hidden
+  service: an address that anyone opens with Tor Browser, for people who are not on your
+  VPN. `--client anna` limits it to named people and prints the key anna types;
+  `--show anna` prints it again; `--remove` takes a name or the service away;
+  `kiwi-server onion <fleet>` lists them with their addresses.
+- **Tor never leaves through a home connection.** A node's Tor shares its VPN client's
+  network: it goes to the master and leaves there, through the master's VPN exit or,
+  when it has none, from the master's own address (kiwi-modules 0.36.0, module `onion`).
+- The addresses and the keys derive from the fleet's seed: known before the machine is
+  set up, kept by a machine installed anew. A person's private key never goes to a
+  machine.
+- On the control page under "Who may reach what" and in the app's dialog of that name:
+  a tick per service, names for the people, a person's key shown on asking (noted in
+  Activity). `kiwi-server access` lists the hidden services beside the groups.
+- A change of one value in the fleet file (`access`, `onion`) keeps the file's comments.
+- The control node looks again after two minutes while a machine is gone, instead of
+  after ten: a master that hangs is restarted sooner.
+- [docs/design/onion.md](docs/design/onion.md): the design, and what comes next (a
+  switch that sends any service's traffic through the VPN, as the download station's
+  already goes).
+
 ## 2.95.0 — if something breaks
 
 - **`kiwi-server recovery <fleet>`** says, before anything breaks, whether the network

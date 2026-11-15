@@ -27,3 +27,4 @@ pages:
   - design/federation.md: "Design: federation"
   - design/local-first.md: "Design: local first"
   - design/recovery.md: "Design: autonomy and recovery"
+  - design/onion.md: "Design: hidden services"

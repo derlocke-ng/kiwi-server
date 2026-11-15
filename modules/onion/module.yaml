@@ -1,0 +1,57 @@
+schema_version: "1.0"
+
+module:
+  name: onion
+  title: Hidden services
+  version: 1.0.0
+  description: "Sites of this machine as Tor hidden services, for people who are not on the VPN. Tor leaves through the VPN client, never through the machine's own connection"
+  category: security
+  node_types: [master, node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client, vpn-server]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  torrc: torrc.j2
+  start_script: start.sh.j2
+
+outputs:
+  torrc: { path: "{{ container_prefix }}-onion/etc/torrc", mode: 0644 }
+  start_script: { path: "{{ container_prefix }}-onion/etc/start.sh", mode: 0700 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-onion/etc", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-onion/var", type: dir, required: true }
+
+urls:
+  - "Hidden services: {% for name, k in keys.items() %}{{ name }}.{{ hostname }} is http://{{ k.address }}{{ ' (named keys only)' if k.clients else '' }}{{ ', ' if not loop.last }}{% else %}none yet (kiwi-server onion){% endfor %}"
+
+settings:
+  - key: services
+    type: object
+    label: Hidden services
+    help: |
+      Which sites of this machine are hidden services. YAML: service -> {clients: [names]}, the service as in its address (git for git.<hostname>).
+      No clients: anyone with the address gets in. With clients: only who holds one of their keys (kiwi-server onion shows them).
+    default: {}
+  - key: keys
+    type: object
+    group: Generated
+    label: Keys and addresses
+    help: "Filled in by kiwi-server from the fleet's seed: service -> its address, its key files (secret, public) and the public keys of its named clients (clients: name -> key)."
+    default: {}
+  - key: image
+    group: Advanced
+    help: "The container image this module runs."
+    default: docker.io/dockurr/tor

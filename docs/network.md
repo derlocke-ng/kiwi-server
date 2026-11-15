@@ -197,6 +197,47 @@ To see that the rules hold, with a real VPN client per group:
 python3 tests/drills/access.py ~/kiwi/fleet.yaml sorbet
 ```
 
+## Hidden services
+
+A hidden service gives one service of a machine an address that anyone opens with
+Tor Browser: no public name, no open port at home, no address of yours in
+anyone's log. It is for people who are not on your VPN, strangers included
+([design](design/onion.md)).
+
+```bash
+kiwi-server onion ~/kiwi/fleet.yaml git.papaya
+```
+
+That makes `git.papaya` a hidden service and prints its address
+(`http://….onion`). Apply the machine, and the address works. Anyone who has it
+gets in and meets the service's own login.
+
+For named people only:
+
+```bash
+kiwi-server onion ~/kiwi/fleet.yaml cloud.papaya --client anna
+```
+
+It prints a key. Anna opens the address in Tor Browser and types the key when
+it asks. Without a key the service cannot even be found.
+
+- `kiwi-server onion <fleet>` lists the hidden services with their addresses.
+- `--show anna` prints anna's key again.
+- `--remove --client anna` takes anna's key away; `--remove` alone takes the
+  hidden service away.
+
+Tor never leaves through your connection at home. The Tor process of a node
+shares its VPN client's network: what it sends goes to the master and leaves
+there, through the master's VPN exit or, when it has none, from the master's own
+address. Your internet provider at home sees the VPN to your master and nothing
+else.
+
+The address and the keys come from the fleet's seed. They are known before the
+machine is set up, and a machine installed anew keeps its addresses.
+
+Mind: a service open to anyone is open to anyone. Keep its own sign-up off
+unless strangers should have accounts.
+
 ## Federation
 
 Two networks can share chosen services with each other

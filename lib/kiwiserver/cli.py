@@ -1985,6 +1985,10 @@ def cmd_adopt(args):
     util.say("%s: adopted; now its role" % hosts[0].name)
     args.hosts, args.ssh, args.no_run = [hosts[0].name], tgt, False
     cmd_apply(args)
+    if hosts[0].target == "coreos":     # a starter's machine: what the starter needed goes now
+        mode = "" if "control" in hosts[0].modules else " joined"
+        remote.run(tgt, "sudo sh -c '[ ! -x %s ] || %s%s'" % (startermod.DONE, startermod.DONE, mode))
+        util.say("%s: the starter's page and key are gone; it is a node of the network" % hosts[0].name)
 
 
 def cmd_control(args):

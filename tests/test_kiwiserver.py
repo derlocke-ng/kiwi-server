@@ -3162,6 +3162,42 @@ class TestOnion(Base):
         # Jabber's ports are at the node's VPN address only: no machine answers its names with a home address
         self.assertEqual(sorted(r._mesh_only), ["chat.example.org", "jabber.papaya.home"])
 
+    def test_a_waiting_starter_is_taken_in_from_the_control_node(self):
+        """The control node's side: the starter is asked with the code, its host keys are kept for its
+        address, the machine joins the fleet file as it is (coreos, its address), and a job adopts it."""
+        f = self.net()
+        c = controlmod.Control(f.path, kiwi_cmd=["true"], run_dir=os.path.join(self.tmp, "ram"))
+        sec = os.path.join(os.path.dirname(f.path), "secrets")
+        os.makedirs(sec, exist_ok=True)
+        write(os.path.join(sec, "admin_ed25519.pub"), "ssh-ed25519 AAAAfleetkey kiwi\n")
+        asked, started = [], []
+
+        def ask(address, body):
+            asked.append((address, body))
+            if body["code"] != "abcd-1234":
+                raise KiwiError("that is not the code on this machine's screen")
+            return {"host_keys": ["ssh-ed25519 AAAAstarterhost"], "hostname": "kiwi"}
+        with mock.patch.object(c, "locked", lambda: False), mock.patch.object(c, "save_fleet", lambda *a, **k: None), \
+                mock.patch.object(c, "start", lambda action, hosts, user="admin", at="", **k: started.append((action, hosts, at)) or "job1"):
+            with self.assertRaisesRegex(KiwiError, "An address looks like"):
+                c.take_in("kiwi.local", "abcd-1234", "cloud")
+            with self.assertRaisesRegex(KiwiError, "not the code"):
+                c.take_in("192.168.1.40", "0000-0000", "cloud", ask=ask)
+            self.assertNotIn("192.168.1.40", util.read_text(f.path))                      # nothing added for a wrong code
+            self.assertEqual(c.take_in("192.168.1.40", "abcd-1234", "cloud", "fig", ask=ask), "job1")
+        self.assertEqual(asked[-1][1]["key"], "ssh-ed25519 AAAAfleetkey kiwi")
+        host = yaml.safe_load(util.read_text(f.path))["hosts"]["fig"]
+        self.assertEqual((host["target"], host["network"]["address"], host["network"]["dhcp"]), ("coreos", "192.168.1.40/24", False))
+        self.assertNotIn("disk", host)                                                   # installed already
+        self.assertIn("192.168.1.40 ssh-ed25519 AAAAstarterhost", util.read_text(os.path.join(sec, "known_hosts")))
+        self.assertEqual(started, [("adopt", ["fig"], "192.168.1.40")])
+        argv = c.argv("adopt", ["fig"], "192.168.1.40")
+        self.assertEqual(argv[1:], ["adopt", c.fleet_path, "fig", "--as", "core@192.168.1.40", "--key",
+                                    os.path.join(os.path.dirname(f.path), "secrets", "admin_ed25519")])
+        with self.assertRaisesRegex(KiwiError, "already a machine called fig"):
+            with mock.patch.object(c, "locked", lambda: False):
+                c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=ask)
+
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)
@@ -8781,6 +8817,52 @@ class TestFirstRunPage(StoreBase):
         except urllib.error.HTTPError as e:
             with e:
                 return e.code, e.headers.get("location") or e.read().decode(), ""
+
+    def test_a_starter_is_taken_into_a_network_once_with_the_code_on_its_screen(self):
+        """The waiting machine's side: the control node of a network that exists sends the code from
+        this machine's screen and its key; the key goes in through the starter key, the host keys go back."""
+        import json as js
+        import urllib.request
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0wmN/Cr3JXqmLW7u+g9pTh+wyqDHpSQEdz2mt5tnUD kiwi-fleet"
+        ran = []
+
+        def fake(argv, input=None, **kw):
+            ran.append((argv, input))
+            return subprocess.CompletedProcess(argv, 0, "ssh-ed25519 AAAAhostkey root@kiwi\necdsa-sha2-nistp256 AAAAecdsa root@kiwi\nkiwi\n", "")
+
+        def post(body):
+            req = urllib.request.Request(self.url + "/api/join-me", data=js.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, js.loads(r.read())
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code, js.loads(e.read())
+        import urllib.error
+        code = self.c.setup_code()
+        self.assertEqual(post({"code": code, "key": key, "network": "home"})[0], 403)        # no starter here
+        with mock.patch.dict(os.environ, {"KIWI_STARTER": "1"}), mock.patch.object(controlmod.subprocess, "run", fake):
+            st, out = post({"code": "0000-0000", "key": key, "network": "home"})
+            self.assertEqual((st, out["error"]), (403, "that is not the code on this machine's screen"))
+            st, out = post({"code": code, "key": key + "\nssh-ed25519 AAAAother x", "network": "home"})
+            self.assertEqual((st, out["error"]), (403, "that is not a public SSH key"))              # one key, nothing more
+            self.assertEqual(ran, [])
+            st, out = post({"code": code, "key": key, "network": "home"})
+            self.assertEqual(st, 200, out)
+            self.assertEqual(out["host_keys"], ["ssh-ed25519 AAAAhostkey", "ecdsa-sha2-nistp256 AAAAecdsa"])
+            self.assertEqual(out["hostname"], "kiwi")
+            argv, given = ran[0]
+            self.assertIn("/starter/id_ed25519", argv)
+            self.assertIn("core@127.0.0.1", argv)
+            self.assertEqual(given, key + "\n")                                          # the key on the input, not in the command
+            st, out = post({"code": code, "key": key, "network": "home"})
+            self.assertEqual((st, out["error"]), (403, "this machine is being taken into home already"))     # once
+        status, body, _ = self.ask("/setup")
+        self.assertIn("This machine joins home", body)                                  # no new network made here
+        self.assertNotIn("Its address on the Internet", body)
+        status, body, _ = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=code))
+        self.assertTrue(self.c.fresh())
 
     def test_the_questions_make_a_network_that_rests_encrypted(self):
         self.assertTrue(self.c.fresh())

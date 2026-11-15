@@ -513,11 +513,23 @@ table inet kiwi_starter {
 
 DONE_SH = r"""#!/bin/bash
 # Kiwi Server starter: this machine is a node of the network now. What the starter needed goes:
-# its key, its page on port 80, its message on the screen. Run by the machine's own first role
-# (kiwi-server apply), after the stack has taken over the control part.
+# its key, its page on port 80, its message on the screen. Run after the machine's first role
+# (kiwi-server apply): on the network's first node once the stack has taken over the control
+# part; with `joined`, on a machine another control node took in, which has no control part:
+# the starter's goes too.
 set -u
 q=/etc/containers/systemd/kn-control.container
-if ! grep -q '^# kiwi-server stack' "$q" 2>/dev/null; then
+joined=${1:-}
+if [ "$joined" = joined ]; then
+    if grep -q '^# kiwi-server stack' "$q" 2>/dev/null; then
+        joined=        # it has a control part of the network's own after all: that one stays
+    else
+        systemctl stop kn-control.service 2>/dev/null
+        rm -f "$q"
+        podman rm -f kn-control >/dev/null 2>&1
+        rm -rf @FLEET_DIR@
+    fi
+elif ! grep -q '^# kiwi-server stack' "$q" 2>/dev/null; then
     echo "kiwi-starter-done: the stack has not taken over the control part: nothing is taken away" >&2
     exit 1
 fi
@@ -538,14 +550,14 @@ rm -rf @KEY_DIR@ /etc/kiwi-starter @ISSUE@ /usr/local/bin/kiwi-starter-key /usr/
 systemctl daemon-reload
 # the control part as the stack defines it: on the network's own names from now on, its keys locked
 # until someone logs in there
-systemctl restart kn-control.service
+[ "$joined" = joined ] || systemctl restart kn-control.service
 rm -f "$0"
 echo "kiwi-starter-done: this machine is a node now"
 """
 
 
 def done_script():
-    return _fill(DONE_SH, KEY_DIR=KEY_DIR, ISSUE=ISSUE)
+    return _fill(DONE_SH, KEY_DIR=KEY_DIR, ISSUE=ISSUE, FLEET_DIR=FLEET_DIR)
 
 
 def _fill(text, **kw):

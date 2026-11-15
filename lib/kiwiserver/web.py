@@ -404,6 +404,17 @@ machines at home, then your phone.</p>{% endblock %}""",
 {% for b in m.bars %}<div class="meter" title="{{ b.more }}"><span>{{ b.label }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span><span>{{ b.pct }} %</span></div>{% endfor %}
 {% if m.chips %}<div class="chips">{% for c in m.chips[:3] %}<span class="chip">{{ c }}</span>{% endfor %}{% if m.chips|length > 3 %}<span class="chip">+{{ m.chips|length - 3 }}</span>{% endif %}</div>{% endif %}</a>
 {% endfor %}</div>{% if not machines %}<p class="muted">No machines yet.</p>{% endif %}
+<details{% if take_error %} open{% endif %}><summary>A machine with the starter stick is waiting</summary>
+<form method="post" action="/machines/take-in" class="card">{{ tok }}
+<p class="muted" style="margin:0 0 8px">A machine you started from the starter stick, on this home network, shows an address and a
+setup code on its screen. Type both here: the code shows that you are at that machine.</p>
+<label for="t_address">Its address</label><input id="t_address" name="address" placeholder="192.168.1.40" required>
+<label for="t_code">Its setup code</label><input id="t_code" name="code" placeholder="abcd-1234" autocomplete="off" required>
+<label for="t_preset">What it does</label><select id="t_preset" name="preset">{% for value, label in presets.items() %}
+<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+<label for="t_name">Name</label><p class="muted" style="margin:0 0 4px">Empty: it is named after a fruit.</p><input id="t_name" name="name">
+{% if take_error %}<p class="bad">{{ take_error }}</p>{% endif %}
+<div class="actions"><button class="primary">Take it in</button></div></form></details>
 <details><summary>Add a machine at home</summary><form method="post" action="/machines/add" class="card">{{ tok }}
 <label for="preset">What it does</label><select id="preset" name="preset">{% for value, label in presets.items() %}
 <option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
@@ -814,6 +825,12 @@ anything new. It still knows what it saw before; if that computer was lost or st
 onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done by itself until the next login.')">{{ tok }}<button>Lock the keys now</button></form></div>
 {% endblock %}""",
 
+    "joined.html": """{% extends "base.html" %}{% block main %}
+<h1>This machine joins {{ network }}</h1>
+<div class="banner ok">The network's control page has taken it in and sets it up now.</div>
+<p>Nothing more to do here. In a few minutes this page goes away, and the machine shows up on the control page of
+your network, under Machines.</p>
+{% endblock %}""",
     "status.html": """{% extends "base.html" %}{% block title %}Status{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120">
 <h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>{{ "How the services are" if h.strangers else "How the network is" }}</h1>
@@ -1368,10 +1385,27 @@ def make_app(control: Control):
             a["nodes"].append(m)
         return a
 
+    @app.post("/api/join-me")
+    async def api_join_me(request: Request):
+        """A starter, taken into a network that exists: its control node sends the code from this
+        machine's screen and the key it will come in with (Control.join_as_starter)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        try:
+            out = await run_in_threadpool(control.join_as_starter, str(body.get("code") or ""), str(body.get("key") or ""),
+                                          str(body.get("network") or ""), address(request))
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        return out
+
     @app.get("/setup")
     def setup_form(request: Request):
         if not control.fresh():
             return login_page()
+        if control.joined():
+            return page("joined.html", network=control.joined())
         return setup_page(host=request.headers.get("host", ""))
 
     @app.post("/setup")
@@ -1573,7 +1607,8 @@ def make_app(control: Control):
         ms, st, _info = machines()
         from . import setup as setupmod
         return page("machines.html", request, "/machines", machines=ms, looked=st.get("time"), looking=control.looking,
-                    presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"))
+                    presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"),
+                    take_error=request.query_params.get("take_error"))
 
     @app.get("/services")
     def services_page(request: Request):
@@ -1594,6 +1629,18 @@ def make_app(control: Control):
             t["onion"] = hidden.get("%s.%s" % (t["site"].split(".", 1)[0], t["machine"]))
             by.setdefault(t["machine"], []).append(t)
         return page("services.html", request, "/services", by_machine=list(by.items()))
+
+    @app.post("/machines/take-in")
+    def machines_take_in(request: Request, address: str = Form(""), code: str = Form(""), preset: str = Form("cloud"),
+                         name: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            jid = control.take_in(address, code, preset, name, user=u)
+        except KiwiError as e:
+            return RedirectResponse("/machines?" + urllib.parse.urlencode({"take_error": str(e)}), status_code=303)
+        return RedirectResponse("/jobs/%s" % jid, status_code=303)
 
     @app.post("/machines/add")
     def machines_add(request: Request, preset: str = Form("cloud"), address: str = Form(""), name: str = Form(""),

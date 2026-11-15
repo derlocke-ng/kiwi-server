@@ -104,6 +104,13 @@ step as a button:
 "Add a machine at home" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.
 
+**A machine started from the starter stick** needs no install media: start it on the
+home network, and its screen shows its address and a setup code. On Machines, "A machine
+with the starter stick is waiting": type both, say what it does, and "Take it in". The
+code shows that you are at that machine; the control page hands it the network's key
+and sets it up, and the starter's own page goes away. It keeps the address it has, as a
+fixed one, and its disk is not encrypted (the starter installed it already).
+
 Install media hold the machine's keys, so they are made in memory and never on this
 machine's disk: they are gone after a restart and after the machine is set up, and
 "Make the install media again" brings them back. Two fit at a time with the control

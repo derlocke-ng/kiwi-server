@@ -23,7 +23,9 @@ import threading
 import time
 import types
 import unittest
+import urllib.error
 import urllib.parse
+import urllib.request
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -7667,6 +7669,7 @@ class TestWeb(StoreBase):
         code, body = self.ask("/controllers/invite", {"csrf": tok})
         self.assertEqual(code, 200)
         link = re.search(r'<pre id="inv">(http://127\.0\.0\.1:\d+/#join=[a-z0-9]+\.[0-9a-f]{8})</pre>', body).group(1)
+        self.assertIn('<div class="qr"><svg', body)                               # the link as a QR code too
         self.assertEqual(self.c.join(controlsync.parse_invite(link)[1], "laptop", store.keygen()[1], "10.9.3.2"), "laptop")
         self.assertIn("<strong>laptop</strong>", self.ask("/controllers")[1])
         self.ask("/controllers/remove", {"name": "laptop"})                       # forged: nothing
@@ -7743,6 +7746,19 @@ class TestControllers(StoreBase):
         rc, out = self.laptop_does("join", self.n.new_invite(self.url))
         self.assertNotEqual(rc, 0)
         self.assertIn("holds a fleet already", out)                                       # not twice into one folder
+        # a computer that joined makes the link for the next one itself, without the page
+        rc, out = self.laptop_does("invite", "--porcelain")
+        self.assertEqual(rc, 0, out)
+        made = json.loads(out.strip().splitlines()[-1])
+        url, code = controlsync.parse_invite(made["link"])
+        self.assertEqual(url, self.url)
+        self.assertIn("<svg", made["qr"])
+        self.assertTrue(self.n.join(code, "third", store.keygen()[1]))                    # and it lets one in
+        req = urllib.request.Request(self.url + "/api/invite", data=b"{}", method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets none
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 401)
+        e.exception.close()
         # the laptop changes the fleet and pushes: the open node takes it
         with open(self.laptop, "a") as fh:
             fh.write("# from the laptop\n")

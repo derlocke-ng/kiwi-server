@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.115.0 — add a computer from the app
+
+- **Add a computer** in the app: menu, **Use another computer…**, **Add a computer**
+  makes the invite link itself (`kiwi-server control invite <fleet>`), with a button
+  that copies it and a QR code. Before, only the control page could make it.
+- The control page shows the link as a QR code too.
+- **Join** in the app fills in an invite link that was copied a moment ago.
+
 ## 2.114.0 — Firefox Sync
 
 - **Firefox Sync** (kiwi-modules 0.45.0): add `firefox-sync` to a machine and your

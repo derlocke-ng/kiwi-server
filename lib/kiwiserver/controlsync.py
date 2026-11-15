@@ -278,6 +278,20 @@ def api_for(fleet_dir, key=None):
     return api, key
 
 
+def invite_api(fleet_dir, key=None):
+    """An invite link for one more computer, made by the control node for this one: what the
+    page's button makes, without opening the page. It works once, for fifteen minutes."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("POST", "/api/invite", {})
+    if status in (404, 405):
+        raise KiwiError("the control node is older than this: bring it up to date, or make the link on its "
+                        "page (Computers, Add a computer)")
+    if status != 200 or "link" not in out:
+        raise KiwiError(out.get("error") or "the control node refused (%d)" % status)
+    # under the address this computer knows the control node by, whatever the node heard itself called
+    return "%s/#join=%s" % (remote_of(fleet_dir)["url"].rstrip("/"), parse_invite(out["link"])[1])
+
+
 def parse_invite(link):
     """(the control node's URL, the code) of an invite link: https://control.<host>/#join=<code>."""
     link = (link or "").strip()

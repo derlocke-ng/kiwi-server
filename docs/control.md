@@ -182,8 +182,11 @@ dialog offers this as "After a power cut".
 ## More computers
 
 1. On the page: **computers**, **Add a computer**. Copy the link (it works once, for
-   fifteen minutes).
-2. On the new computer, in Kiwi Server: **Join a fleet**, paste the link.
+   fifteen minutes). Or in Kiwi Server on a computer that has the network: menu,
+   **Use another computer…**, **Add a computer** (`kiwi-server control invite <fleet>`).
+   Both show the link as a QR code too.
+2. On the new computer, in Kiwi Server: **Join a fleet**, paste the link. A link
+   copied a moment ago is filled in already.
 
 That is all: the computer makes its own key (in its keyring), checks that the
 link is from this fleet, fetches the fleet and opens it. Without the app:

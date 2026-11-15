@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.116.0 — a node's service open to the Internet, through the master
+
+- **A service on a node can have a public name** (kiwi-modules 0.46.1): give it one,
+  point the name at the master, and set `reverse-proxy: { public: true }` on the node.
+  The master hands the name on through the VPN, still encrypted; the node holds the
+  Let's Encrypt certificate and sees each visitor's own address. Nothing is opened at
+  home. kiwi-server tells the master which names and ports of which node to hand on.
+  [roles.md](docs/roles.md#a-nodes-service-open-to-the-internet).
+- **Jabber runs on a node**: the service, its accounts and its certificate stay there;
+  the master hands the public name and Jabber's ports on. Tried with a new drill,
+  `tests/drills/jabber-doors.py`: logins from the Internet, the VPN and Tor with one
+  service, the page for new accounts with its captcha through all three.
+- **Connect this computer** when a machine of the network has the computer's name: the
+  computer gets a name of its own on the VPN (`lime-pc`) instead of an error the app had
+  no answer to.
+- A service removed from a machine leaves no failed unit behind (kiwi-stack 0.9.8).
+
 ## 2.115.0 — add a computer from the app
 
 - **Add a computer** in the app: menu, **Use another computer…**, **Add a computer**

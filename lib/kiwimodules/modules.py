@@ -117,6 +117,9 @@ class Module:
         fw = meta.get("firewall") or {}
         self.firewall_rules = [str(r) for r in (fw.get("rules") or [])]
         self.firewall_scope = str(fw.get("scope") or "vpn-client")
+        # ports the master hands on to this machine when the service has a public name:
+        # "5222:15222/proxy" = the master's 5222 to this machine's 15222, with the PROXY protocol
+        self.expose_ports = [str(p) for p in ((meta.get("expose") or {}).get("ports") or [])]
         st = meta.get("storage") or {}
         self.bind_mounts = list(st.get("bind_mounts") or [])
         self.volumes = [str(v) for v in (st.get("volumes") or [])]
@@ -775,6 +778,28 @@ class Renderer:
                         rules.append(rule)
         return rules
 
+    def exposure(self, spec):
+        """What of this machine strangers reach through the master, when its proxy is public:
+        (the names outside the fleet's domain, the ports modules ask to have handed on, as
+        dicts port / to / proxy_protocol). kiwi-server gives both to the master."""
+        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        base = self.base_context(spec, ordered)
+        if not (spec.module_config.get("reverse-proxy") or {}).get("public"):
+            return [], []
+        _up, servers = self.nginx_blocks(spec, ordered, base)
+        names = [s["server_name"] for s in servers if not (s["server_name"] + ".").endswith(".%s." % spec.domain)]
+        base["via"] = str((spec.module_config.get("reverse-proxy") or {}).get("via") or "")
+        ports = []
+        for name in ordered:
+            mod = self.ms.get(name)
+            ctx = self.module_context(spec, ordered, base, name)
+            for entry in mod.expose_ports:
+                for word in self.expand(str(entry), ctx, "modules/%s expose.ports" % name).split():
+                    port, _, to = word.partition(":")
+                    to, _, flag = to.partition("/")
+                    ports.append({"port": int(port), "to": int(to or port), "proxy_protocol": flag == "proxy"})
+        return names, ports
+
     # ---- the bundle --------------------------------------------------------------------
     def render(self, spec):
         ordered = self.ms.resolve(spec.modules, spec.node_type)
@@ -792,6 +817,11 @@ class Renderer:
         for s in servers:
             s["public"] = public and not (s["server_name"] + ".").endswith(".%s." % spec.domain)
         base["public_names"] = [s["server_name"] for s in servers if s["public"]]
+        rp = spec.module_config.get("reverse-proxy") or {}
+        # a node's public names come through the master (via: its mesh address); the master
+        # knows which names and ports to hand on (exposed)
+        base["via"] = str(rp.get("via") or "")
+        base["exposed"] = rp.get("exposed") or {}
         base["module_rules"] = self.vpn_rules(spec, ordered, base)
         base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and any(
             self.ms.get(n).needs_vpn_dnat for n in ordered)

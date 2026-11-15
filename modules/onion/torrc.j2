@@ -9,10 +9,10 @@ DataDirectory /var/lib/tor
 HiddenServiceDir /var/lib/tor/onion/{{ name }}
 HiddenServicePort 80 {{ proxy }}:8043
 {# Jabber's own port beside its page: apps connect to <address>.onion, port 5222. The service in
-   the WireGuard server's network is the site jabber; a separate public instance is the site xmpp #}
+   the network of the machine's door to the VPN is the site jabber; a separate public instance is the site xmpp #}
 {% set jabber = module_config.get('xmpp') %}
 {% if jabber is not none and name == 'jabber' %}
-HiddenServicePort 5222 {{ container_ips.get('vpn-server') }}:5222
+HiddenServicePort 5222 {{ container_ips.get('vpn-server' if node_type == 'master' else 'vpn-client') }}:5222
 {% elif jabber is not none and name == 'xmpp' and jabber.get('separate') %}
 HiddenServicePort 5222 {{ container_ips.get('xmpp') }}:5222
 {% endif %}

@@ -62,10 +62,14 @@ account() {
 }
 account &
 
-# a renewed certificate: taken over and loaded within the hour, without a restart
+# a new certificate: taken over and loaded without a restart. Within a minute during the first
+# hour (a public name starts on the fleet's certificate until Let's Encrypt's is there), within
+# the hour after that (a renewal)
 (
     was=$(cat /kiwi-certs/fullchain.pem | sha256sum)
-    while sleep 3600; do
+    rounds=0
+    while sleep $([ "$rounds" -lt 60 ] && echo 60 || echo 3600); do
+        rounds=$((rounds + 1))
         now=$(cat /kiwi-certs/fullchain.pem 2>/dev/null | sha256sum)
         if [ -s /kiwi-certs/fullchain.pem ] && [ "$now" != "$was" ]; then
             certs && as_ejabberd "ejabberdctl reload_config" >/dev/null 2>&1 && say "the renewed certificate is in use"

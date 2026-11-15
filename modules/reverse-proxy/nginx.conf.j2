@@ -72,6 +72,44 @@ pid        /var/run/nginx.pid;
 events {
     worker_connections 1024;
 }
+{% set ex = exposed or {} %}
+{# with names handed on to nodes, 443 belongs to the stream block: this machine's own sites move behind it #}
+{% set tls_listen = '127.0.0.1:8443 ssl proxy_protocol' if ex.names else '443 ssl' %}
+{% if ex.names or ex.ports %}
+
+# What lives on a node and is open to the internet. A connection for one of those names goes
+# on to the node as it came, still encrypted (the node holds the certificate), with the
+# address it came from in front (PROXY protocol). Everything else is this machine's own.
+stream {
+{% if ex.names %}
+    map $ssl_preread_server_name $kiwi_to {
+        default 127.0.0.1:8443;
+{% for name, ip in ex.names.items() %}
+        {{ name }} {{ ip }}:8443;
+{% endfor %}
+    }
+    server {
+        listen 443;
+        ssl_preread on;
+        proxy_pass $kiwi_to;
+        proxy_protocol on;
+        proxy_connect_timeout 10s;
+        proxy_timeout 1h;
+    }
+{% endif %}
+{% for p in ex.ports or [] %}
+    server {
+        listen {{ p.port }};
+        proxy_pass {{ p.to }};
+{% if p.proxy_protocol %}
+        proxy_protocol on;
+{% endif %}
+        proxy_connect_timeout 10s;
+        proxy_timeout 1h;
+    }
+{% endfor %}
+}
+{% endif %}
 
 http {
 {% if onion %}
@@ -118,6 +156,15 @@ http {
     gzip_proxied expired no-cache no-store private no_last_modified no_etag auth;
     gzip_types application/atom+xml text/javascript application/javascript application/json application/ld+json application/manifest+json application/rss+xml application/vnd.geo+json application/vnd.ms-fontobject application/wasm application/x-font-ttf application/x-web-app-manifest+json application/xhtml+xml application/xml font/opentype image/bmp image/svg+xml image/x-icon text/cache-manifest text/css text/plain text/vcard text/vnd.rim.location.xloc text/vtt text/x-component text/x-cross-domain-policy;
 
+{% if ex.names %}
+    # the stream block above hands every connection over with the address it came from
+    set_real_ip_from 127.0.0.1;
+    real_ip_header proxy_protocol;
+{% endif %}
+{% if ex.names or (via and public_names) %}
+    # sites answer on a port of their own behind the door people use (443): a redirect must not name it
+    port_in_redirect off;
+{% endif %}
     ssl_certificate     /etc/nginx/fullchain.pem;
     ssl_certificate_key /etc/nginx/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -172,18 +219,50 @@ http {
 {% endif %}
     }
 
+{% for name, ip in (ex.names or {}).items() %}
+    # {{ name }} lives on a node: Let's Encrypt's question goes there too
+    server {
+        listen 80;
+        server_name {{ name }};
+        location /.well-known/acme-challenge/ {
+            proxy_pass http://{{ ip }}:80;
+            proxy_set_header Host $host;
+        }
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+{% endfor %}
     # a name no module announced: close the connection instead of serving the first block
     server {
-        listen 443 ssl default_server;
+        listen {{ tls_listen }} default_server;
         http2 on;
         server_name _;
         return 444;
     }
+{% if via and public_names %}
+    server {
+        listen 8443 ssl proxy_protocol default_server;
+        http2 on;
+        server_name _;
+        return 444;
+    }
+{% endif %}
 {% for s in servers %}
 
     # {{ s.comment }}
     server {
+{% if s.public and via %}
+        # from the VPN, as every site of this machine
         listen 443 ssl;
+        # open to the internet through the master: it hands the connection on, with the visitor's address in front
+        listen 8443 ssl proxy_protocol;
+        set_real_ip_from {{ via }};
+        real_ip_header proxy_protocol;
+{% else %}
+        listen {{ tls_listen }};
+{% endif %}
         http2 on;
         server_name {{ s.server_name }};
 {% set fed = federation or {} %}
@@ -213,7 +292,7 @@ http {
         limit_req zone=kiwi_public burst={{ rate_limit * 4 }} nodelay;
         limit_conn kiwi_conn 60;
 {% endif %}
-{% elif public_names %}
+{% elif public_names and not via %}
         # 443 is open to the internet on this machine; this site is not for it
         allow {{ mesh_subnet }};
         deny all;

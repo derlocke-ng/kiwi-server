@@ -227,10 +227,19 @@ def stack_errors(ms, host, role):
     and `apply` would stop on, so `validate` reports them too."""
     if not role.stack:
         return []
+    # a node open to the internet: checked as it will be rendered, with a master that hands on
+    rp = host.module_settings.get("reverse-proxy") if "reverse-proxy" in host.modules else None
+    stand_in = (rp is not None and role.node_type != "master" and rp.get("public") and not rp.get("via")
+                and any(h.role == "master" for h in host.fleet.hosts.values()))
+    if stand_in:
+        rp["via"] = "192.0.2.1"
     try:
         modmod.Renderer(ms).render(rolesmod.stack_spec(host, role))
     except KiwiError as e:
         return [str(e)]
+    finally:
+        if stand_in:
+            rp.pop("via", None)
     return []
 
 
@@ -274,6 +283,7 @@ class Renderer:
         self._scanned = True
         recs, needs_ca, master_ip, node_lan = [], False, "", []
         self._caches = []       # (LAN interface, hostname, registries, apt) of the nodes that run the cache module
+        open_nodes = []         # (name, mesh address, public names, ports) of the nodes open to the internet
         for h in self.fleet.hosts.values():
             try:
                 if h.role not in self.roles or h.validate(self.roles):
@@ -297,12 +307,30 @@ class Renderer:
                         self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt"))))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
+                if role.node_type != "master" and (h.module_settings.get("reverse-proxy") or {}).get("public"):
+                    public, ports = modmod.Renderer(self.ms).exposure(spec)
+                    open_nodes.append((h.name, spec.vpn_ip, public, ports))
                 for n in names:
                     if "*" not in n and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
                 if not re.search(r"vpn-client\.wireguard_config: file not found", str(e)):   # not enrolled yet: no mesh name yet
                     util.warn("dns records: skipping %s: %s" % (h.name, e))
+        # a node open to the internet: the master hands its public names and ports on. On the
+        # VPN those names stay the node's own (the records above): a device reaches the service
+        # there directly, when its group may reach that machine
+        exposed = {"names": {}, "ports": []}
+        for name, ip, public, ports in open_nodes if master_ip else []:
+            for n in public:
+                exposed["names"][n] = ip
+            for p in ports:
+                taken = next((x for x in exposed["ports"] if x["port"] == p["port"]), None)
+                if taken:
+                    raise KiwiError("%s: the master's port %d is handed on to %s already: one machine per public port"
+                                    % (name, p["port"], taken["to"].split(":")[0]))
+                exposed["ports"].append({"port": p["port"], "to": "%s:%d" % (ip, p["to"]),
+                                         "proxy_protocol": p["proxy_protocol"]})
+        self._exposed = exposed
         self._records, self._needs_ca, self._master_ip, self._node_lan = recs, needs_ca, master_ip, node_lan
 
     def dns_records(self):
@@ -391,6 +419,13 @@ class Renderer:
             host.module_settings["reverse-proxy"]["onion"] = sites
             if "xmpp" in host.modules:      # Jabber answers at its hidden service's name too, and on its own port
                 host.module_settings["xmpp"]["onion"] = {n: k["address"] for n, k in keys.items() if n in ("jabber", "xmpp")}
+        if "reverse-proxy" in host.modules:
+            # a node open to the internet: its public names and ports come in through the master
+            rp = host.module_settings["reverse-proxy"]
+            if role.node_type == "master" and (self._exposed["names"] or self._exposed["ports"]):
+                rp["exposed"] = self._exposed
+            elif role.node_type != "master" and rp.get("public") and self._master_ip:
+                rp["via"] = self._master_ip
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
@@ -2317,6 +2352,20 @@ def cmd_qr(args):
         print(qrmod.text_blocks(data))
 
 
+def connect_name(machines, wanted, hostname):
+    """What this computer is called on the VPN: the name given, else its own. A computer that
+    happens to be called like one of the machines gets a name of its own, the same one each
+    time, so that the app needs no question for it."""
+    if wanted:
+        if wanted in machines:
+            raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % wanted)
+        return wanted
+    name = re.sub(r"[^a-z0-9-]+", "-", hostname.split(".")[0].lower()).strip("-") or "computer"
+    if name not in machines:
+        return name
+    return next(n for n in ["%s-pc" % name] + ["%s-pc-%d" % (name, i) for i in range(2, 50)] if n not in machines)
+
+
 def cmd_connect(args):
     """This computer becomes a device of the network: its own place on the VPN, a connection
     that carries only the network, and the network's certificates trusted in its browsers."""
@@ -2324,9 +2373,9 @@ def cmd_connect(args):
     fleet, roles, ms = load(args)
     path = args.fleet
     domain = fleet.defaults.get("domain") or "home"
-    name = args.name or re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-") or "computer"
-    if name in fleet.hosts:
-        raise KiwiError("%s is a machine of this network already: give this computer another name with --name" % name)
+    name = connect_name(fleet.hosts, args.name, socket.gethostname())
+    if not args.name and name != connect_name({}, None, socket.gethostname()):
+        util.say("a machine of this network has this computer's name: on the VPN this computer is called %s" % name)
     if args.remove:
         if connectmod.have_networkmanager() and connectmod.down(domain):
             util.say("the connection %s is gone from this computer" % connectmod.connection_name(domain))

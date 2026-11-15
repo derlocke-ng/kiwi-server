@@ -3093,6 +3093,51 @@ class TestOnion(Base):
         write(os.path.join(self.tmp, "secrets", "seed"), "T" * 32)
         return f
 
+    def test_a_computer_called_like_a_machine_gets_its_own_name_on_the_vpn(self):
+        machines = {"lime": None, "papaya": None}
+        self.assertEqual(cli.connect_name(machines, None, "Desk.fritz.box"), "desk")
+        self.assertEqual(cli.connect_name(machines, None, "lime"), "lime-pc")          # no question, no dead end
+        self.assertEqual(cli.connect_name(dict(machines, **{"lime-pc": None}), None, "lime"), "lime-pc-2")
+        self.assertEqual(cli.connect_name(machines, "laptop", "lime"), "laptop")
+        with self.assertRaises(KiwiError):
+            cli.connect_name(machines, "papaya", "lime")                               # a name asked for is not bent
+
+    def test_a_nodes_public_name_comes_in_through_the_master(self):
+        """Jabber on a node with a public name: the node's proxy is open to the internet, the
+        master hands the name and Jabber's ports on, and on the VPN the name leads to the master."""
+        f = self.net()
+        d = yaml.safe_load(util.read_text(f.path))
+        node = d["hosts"]["papaya"]["node"]
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        had = fleet.hosts["papaya"]
+        cli.Renderer(fleet, roles, os.path.join(self.tmp, "out0"), None, ms).prepare(had)
+        node["modules"] = list(had.modules) + ["xmpp"]                 # the preset's parts, and Jabber
+        node["xmpp"] = {"xmpp_domain": "chat.example.org"}
+        node["reverse-proxy"] = {"public": True}
+        write(f.path, yaml.safe_dump(d, sort_keys=False))
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        gate, papaya = fleet.hosts["gate"], fleet.hosts["papaya"]
+        b = r.bundle(papaya, r.prepare(papaya))
+        there = rolesmod.stack_spec(papaya, r.prepare(papaya)).vpn_ip
+        here = rolesmod.stack_spec(gate, r.prepare(gate)).vpn_ip
+        nginx = b.files["kn-nginx/nginx.conf"][0]
+        self.assertIn("listen 8443 ssl proxy_protocol;", nginx)
+        self.assertIn("set_real_ip_from %s;" % here, nginx)
+        self.assertEqual(b.compose["services"]["kn-xmpp"]["network_mode"], "service:kn-vpn-client")
+        m = r.bundle(gate, r.prepare(gate))
+        nginx = m.files["km-nginx/nginx.conf"][0]
+        self.assertIn("chat.example.org %s:8443;" % there, nginx)
+        self.assertIn("proxy_pass %s:15222;" % there, nginx)
+        ports = m.compose["services"]["km-vpn-server"]["ports"]
+        for want in ("443:443/tcp", "5222:5222/tcp", "5223:5223/tcp", "5269:5269/tcp"):
+            self.assertTrue(any(p.endswith(want) for p in ports), (want, ports))
+        # on the VPN the public name is the node's own: a device comes straight to it
+        self.assertIn((there, "chat.example.org"), r.dns_records())
+        self.assertNotIn((here, "chat.example.org"), r.dns_records())
+        self.assertIn("listen 443 ssl;\n        # open to the internet through the master", b.files["kn-nginx/nginx.conf"][0])
+        self.assertIn((there, "jabber.papaya.home"), r.dns_records())
+
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)

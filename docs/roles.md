@@ -199,8 +199,16 @@ Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB.
 Tried on a test node behind the master (15 November 2026, `tests/drills/jabber-doors.py`):
 with one service, logins from the Internet (5222 and 5223), from the VPN and
 through Tor; the page for new accounts with its captcha through all three; a
-wrong password refused; the service sees the visitor's own address. Not tried:
-two apart, an app, rooms, files, another server writing in.
+wrong password refused; the service sees the visitor's own address. With two
+apart: the public one from the Internet and through Tor, the internal one
+through Tor and its page. Not tried: an app, rooms, files, another server
+writing in.
+
+On a node Jabber answers at the machine's VPN address: a device at home reaches
+it through the VPN or the home's gateway. With two apart on a node, a device on
+the VPN that asks for the public name is led to the node, where the internal
+service answers on Jabber's ports: for the public one, use it from outside the
+VPN, or through its hidden service.
 
 ## Pastebin
 

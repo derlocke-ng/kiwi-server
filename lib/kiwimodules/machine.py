@@ -14,6 +14,7 @@
       cloud: { admin_password: ... }
     dns_records: [[10.8.0.1, gate.home], [10.8.0.25, sh3.home]]   # the network's names (optional)
     lan_addresses: { 10.8.0.25: 192.168.1.25 }   # nodes on this machine's own LAN: their traffic stays on it (optional)
+    mesh_only: [jabber.sh3.home]                 # names that keep their mesh address there all the same (optional)
     master_ip: 10.8.0.1             # the nodes' DNS upstream and the mesh route (optional)
     ca_cert: ca/kiwiCA.pem          # the network's CA, trusted inside the containers (optional)
     seed: seed                      # 32 random bytes: generated secrets derive from it (optional)
@@ -88,7 +89,7 @@ class Machine:
         if not isinstance(data, dict) or not data.get("name"):
             raise KiwiError("the machine file needs at least name: and role:")
         self.cfg = deep_merge(DEFAULTS, {k: v for k, v in data.items()
-                                         if k not in ("dns_records", "lan_addresses", "master_ip", "ca_cert", "seed")})
+                                         if k not in ("dns_records", "lan_addresses", "mesh_only", "master_ip", "ca_cert", "seed")})
         self.name = str(data["name"])
         self.hostname = str(data.get("hostname") or (self.name + ("." + self.cfg["domain"] if self.cfg.get("domain") else "")))
         self.target = str(self.cfg.get("target") or "ucore")
@@ -101,6 +102,7 @@ class Machine:
         self.secrets = Secrets(directory, data.get("seed"))
         self.dns_records = [(str(ip), str(n)) for ip, n in (data.get("dns_records") or [])]
         self.lan_addresses = {str(k): str(v) for k, v in (data.get("lan_addresses") or {}).items()}
+        self.mesh_only = [str(n) for n in data.get("mesh_only") or []]
         self.master_ip = str(data.get("master_ip") or "")
         self.ca_cert = read_text(self.secrets.resolve_path(data["ca_cert"])) if data.get("ca_cert") else None
 

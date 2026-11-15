@@ -102,6 +102,8 @@ nginx:
     # the page of the service on the VPN: new accounts (/register), files, chat for web apps
     - server_name: "{{ internal_host }}"
       site: jabber
+      # on a node its ports are at the machine's VPN address only: at home the name leads there too
+      mesh_only: "{{ 'yes' if node_type != 'master' else '' }}"
       proxy_pass: "http://{{ local_http }}"
       websocket: true
       client_max_body_size: "{{ upload_mb }}m"
@@ -113,6 +115,7 @@ nginx:
     # the same service under its public name
     - server_name: "{{ xmpp_domain }}"
       site: xmpp
+      mesh_only: "{{ 'yes' if node_type != 'master' else '' }}"
       proxy_pass: "http://{{ local_http }}"
       websocket: true
       client_max_body_size: "{{ upload_mb }}m"
@@ -125,6 +128,7 @@ nginx:
     # two instances: the public one has a container of its own
     - server_name: "{{ xmpp_domain }}"
       site: xmpp
+      mesh_only: "{{ 'yes' if node_type != 'master' else '' }}"
       proxy_pass: "http://{{ container_prefix }}-xmpp-public:5280"
       websocket: true
       client_max_body_size: "{{ upload_mb }}m"

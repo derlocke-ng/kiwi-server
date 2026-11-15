@@ -3111,8 +3111,9 @@ class TestOnion(Base):
         fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
         had = fleet.hosts["papaya"]
         cli.Renderer(fleet, roles, os.path.join(self.tmp, "out0"), None, ms).prepare(had)
-        node["modules"] = list(had.modules) + ["xmpp"]                 # the preset's parts, and Jabber
+        node["modules"] = list(had.modules) + ["xmpp", "onion"]        # the preset's parts, Jabber, and Tor
         node["xmpp"] = {"xmpp_domain": "chat.example.org"}
+        node["onion"] = {"services": {"xmpp": {}, "jabber": {}}}       # the public site by what its module calls it
         node["reverse-proxy"] = {"public": True}
         write(f.path, yaml.safe_dump(d, sort_keys=False))
         fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
@@ -3125,6 +3126,16 @@ class TestOnion(Base):
         self.assertIn("listen 8443 ssl proxy_protocol;", nginx)
         self.assertIn("set_real_ip_from %s;" % here, nginx)
         self.assertEqual(b.compose["services"]["kn-xmpp"]["network_mode"], "service:kn-vpn-client")
+        # a hidden service for the public site, named after what the module calls it
+        torrc = b.files["kn-onion/etc/torrc"][0]
+        self.assertIn("HiddenServiceDir /var/lib/tor/onion/xmpp", torrc)
+        self.assertIn("HiddenServiceDir /var/lib/tor/onion/jabber", torrc)
+        tor = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "xmpp")[1])
+        at = nginx.index("server_name %s;" % tor)
+        self.assertIn("proxy_set_header Host chat.example.org;", nginx[at:at + 900])
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "--porcelain")
+        rows = {x["service"]: x["site"] for x in json.loads(out)["services"]}
+        self.assertEqual(rows, {"xmpp": "chat.example.org", "jabber": "jabber.papaya.home"})
         m = r.bundle(gate, r.prepare(gate))
         nginx = m.files["km-nginx/nginx.conf"][0]
         self.assertIn("chat.example.org %s:8443;" % there, nginx)
@@ -3137,6 +3148,8 @@ class TestOnion(Base):
         self.assertNotIn((here, "chat.example.org"), r.dns_records())
         self.assertIn("listen 443 ssl;\n        # open to the internet through the master", b.files["kn-nginx/nginx.conf"][0])
         self.assertIn((there, "jabber.papaya.home"), r.dns_records())
+        # Jabber's ports are at the node's VPN address only: no machine answers its names with a home address
+        self.assertEqual(sorted(r._mesh_only), ["chat.example.org", "jabber.papaya.home"])
 
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):
         f = self.net()

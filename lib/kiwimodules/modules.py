@@ -222,7 +222,7 @@ class StackSpec:
 
     def __init__(self, node_type, hostname, modules, docker_dir="/home/user/docker",
                  docker_subnet=None, mtu=None, timezone="UTC", vpn_ip="", pub_iface="",
-                 variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None,
+                 variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None, mesh_only=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
                  ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None):
         if node_type not in ("master", "node"):
@@ -255,6 +255,9 @@ class StackSpec:
         self.files = dict(files or {})        # "module/key" -> bytes (embedded file settings)
         self.dns_records = list(dns_records or [])  # (ip, name) pairs for the dns module
         self.lan_addresses = dict(lan_addresses or {})  # mesh address: LAN address, of the nodes on this one's LAN
+        # names that keep their mesh address on a LAN too: the service answers there only (Jabber's
+        # ports on a node are at its VPN address, not at its address at home)
+        self.mesh_only = set(mesh_only or [])
         self.service_user = service_user
         self.master_ip = master_ip or ""        # the master's mesh address: the nodes' DNS upstream
         self.mesh_subnet = mesh_subnet or "10.8.0.0/16"
@@ -414,7 +417,7 @@ class Renderer:
             "module_config": {m: dict(v) for m, v in spec.module_config.items()},
             "mesh_ips": sorted({ip for ip, _n in spec.dns_records}),
             "dns_records": list(spec.dns_records),
-            "lan_addresses": dict(spec.lan_addresses),
+            "lan_addresses": dict(spec.lan_addresses), "mesh_only": sorted(spec.mesh_only),
             "master_ip": spec.master_ip, "mesh_subnet": spec.mesh_subnet, "domain": spec.domain,
             "runtime": spec.runtime,
             # the mesh is behind the WireGuard server on a master, behind the VPN client on a node
@@ -679,6 +682,8 @@ class Renderer:
                 try:
                     s = {"module": name, "site": str(e.get("site") or ""),     # (for logins)
                          "admin": bool(e.get("admin", False)),                # an admin page: see admin_names
+                         # answers at the machine's mesh address only: see mesh_only_names
+                         "mesh_only": bool(self.expand(str(e.get("mesh_only") or ""), ctx, what).strip()),
                          "server_name": self.expand(e["server_name"], ctx, what),
                          "proxy_pass": proxy_pass,
                          "websocket": bool(e.get("websocket", False)),
@@ -728,6 +733,15 @@ class Renderer:
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
         return [s["server_name"] for s in servers if s.get("admin")]
+
+    def mesh_only_names(self, spec):
+        """The names among service_names whose service answers at the machine's mesh address
+        only (`mesh_only:` in a module's nginx block): on a LAN they are not answered with the
+        machine's address at home."""
+        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        base = self.base_context(spec, ordered)
+        _upstreams, servers = self.nginx_blocks(spec, ordered, base)
+        return [s["server_name"] for s in servers if s.get("mesh_only")]
 
     # ---- logins ----------------------------------------------------------------------
     def logins(self, spec):
@@ -954,7 +968,8 @@ class Renderer:
         bundle.mesh_via = base["mesh_via"]
         bundle.mesh_subnet = spec.mesh_subnet if base["mesh_via"] else ""
         # the host's own names point at itself: its services are published on the host
-        bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip else spec.lan_addresses.get(ip, ip), n)
+        bundle.hosts = [("127.0.0.1" if spec.vpn_ip and ip == spec.vpn_ip
+                         else ip if n in spec.mesh_only else spec.lan_addresses.get(ip, ip), n)
                         for ip, n in spec.dns_records]
         # the host's own resolver: this stack's Pi-hole, when there is one
         bundle.dns_ip = base.get("dns_container_ip") or "" if "dns" in ordered else ""

@@ -1,5 +1,8 @@
 # Getting started
 
+To see first what a network can look like and what each machine in it does:
+[Example setups](examples.md).
+
 ## Make a fleet
 
 ```bash

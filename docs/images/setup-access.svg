@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 718" role="img" aria-labelledby="s4-t s4-d">
+<title id="s4-t">Who may reach what</title>
+<desc id="s4-d">Three groups of devices and what passes. The devices group reaches everything. The guests group reaches cloud.papaya.home only: papaya's nginx refuses vault.papaya.home, and the master's firewall drops anything for lychee. The contractor group reaches port 22 of lychee only, and the master drops anything for papaya.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:22px;font-weight:700}
+.sub{font-size:14px;fill:#536050}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:15px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.m{font-size:12px;fill:#5d6a59}
+.c{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#1e281b}
+.cb{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:14px;font-weight:700;fill:#1e281b}
+.w{fill:#fff}
+.lb{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#fafbf7;stroke-width:5px;stroke-linejoin:round}
+.dv{fill:#fff;stroke:#7f8a7b;stroke-width:1.5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nx{fill:#fff;stroke:#2b3628;stroke-width:2}
+.sep{stroke:#dfe4da;stroke-width:1.2}
+.req{fill:none;stroke:#2b3628;stroke-width:2}
+.ok{fill:#3d7a1f}
+.no{fill:#b5402c}
+.gl{fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.note{fill:#fff;stroke:#d3d9cd;stroke-width:1.2}
+.lg{font-size:12px;fill:#38432f}
+.lgh{stroke:#dfe4da;stroke-width:1.2}
+</style>
+<defs>
+<marker id="s4-ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2b3628"/></marker>
+<g id="s4-ok"><circle class="ok" r="9"/><path class="gl" d="M-4,0 L-1,3.5 L4.5,-3.5"/></g>
+<g id="s4-no"><circle class="no" r="9"/><path class="gl" d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5"/></g>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="716" rx="16"/>
+<text class="ttl" x="32" y="48">Who may reach what</text>
+<text class="sub" x="32" y="73">Every device on the VPN belongs to a group. A group reaches what it is given, and nothing else.</text>
+
+<!-- column heads -->
+<text class="rl" x="32" y="110">THE GROUP</text>
+<text class="rl" x="380" y="104" text-anchor="middle">1 · THE MASTER'S FIREWALL</text>
+<text class="m" x="380" y="119" text-anchor="middle">drops what is not given</text>
+<text class="rl" x="600" y="104" text-anchor="middle">2 · THE NODE'S NGINX</text>
+<text class="m" x="600" y="119" text-anchor="middle">refuses names not given</text>
+<text class="rl" x="736" y="110">WHAT ARRIVES</text>
+<line class="sep" x1="24" y1="226" x2="936" y2="226"/>
+<line class="sep" x1="24" y1="392" x2="936" y2="392"/>
+
+<!-- checkpoints -->
+<rect class="ms" x="366" y="130" width="28" height="386" rx="6"/>
+<rect fill="#fafbf7" x="364" y="164" width="32" height="12"/>
+<rect fill="#fafbf7" x="364" y="256" width="32" height="12"/>
+<rect fill="#fafbf7" x="364" y="300" width="32" height="12"/>
+<rect fill="#fafbf7" x="364" y="430" width="32" height="12"/>
+<rect class="nx" x="588" y="150" width="24" height="40" rx="6"/>
+<rect class="nx" x="588" y="244" width="24" height="76" rx="6"/>
+
+<!-- lane 1: devices -->
+<rect class="dv" x="24" y="136" width="236" height="78" rx="18"/>
+<text class="cb" x="44" y="160">devices</text><text class="c" x="128" y="160">10.8.3.0/24</text>
+<text class="d" x="44" y="180">the family's phones and laptops</text>
+<text class="m" x="44" y="200">given: all</text>
+<path class="req" d="M260,170 H720" marker-end="url(#s4-ak)"/>
+<use href="#s4-ok" x="736" y="170"/>
+<text class="d" x="754" y="166">every machine and service,</text>
+<text class="d" x="754" y="184">other devices, admin pages</text>
+
+<!-- lane 2: guests -->
+<rect class="dv" x="24" y="250" width="236" height="122" rx="18"/>
+<text class="cb" x="44" y="276">guests</text><text class="c" x="128" y="276">10.8.1.0/24</text>
+<text class="d" x="44" y="296">a visitor's phone</text>
+<text class="m" x="44" y="316">given: cloud.papaya</text>
+<text class="m" x="44" y="334">(a new network gives</text>
+<text class="m" x="44" y="350">guests every node)</text>
+<path class="req" d="M260,262 H720" marker-end="url(#s4-ak)"/>
+<use href="#s4-ok" x="736" y="262"/>
+<text class="c" x="754" y="266">cloud.papaya.home</text>
+<path class="req" d="M260,306 H566"/>
+<use href="#s4-no" x="576" y="306"/>
+<use href="#s4-no" x="736" y="306"/>
+<text class="c" x="754" y="304">vault.papaya.home</text>
+<text class="m" x="754" y="321">refused by papaya's nginx</text>
+<path class="req" d="M260,352 H344"/>
+<use href="#s4-no" x="354" y="352"/>
+<use href="#s4-no" x="736" y="352"/>
+<text class="c" x="754" y="350">lychee</text>
+<text class="m" x="754" y="367">dropped by the master</text>
+<text class="lb" x="412" y="337">passes the firewall as papaya:443, like cloud</text>
+
+<!-- lane 3: contractor -->
+<rect class="dv" x="24" y="414" width="236" height="96" rx="18"/>
+<text class="cb" x="44" y="440">contractor</text>
+<text class="d" x="44" y="460">a contractor's laptop</text>
+<text class="m" x="44" y="480">a group of its own (--new)</text>
+<text class="m" x="44" y="498">given: lychee:22</text>
+<path class="req" d="M260,436 H720" marker-end="url(#s4-ak)"/>
+<use href="#s4-ok" x="736" y="436"/>
+<text class="c" x="754" y="440">lychee port 22 (SSH)</text>
+<text class="lb" x="412" y="428">a port, not a web name: the firewall alone decides</text>
+<path class="req" d="M260,484 H344"/>
+<use href="#s4-no" x="354" y="484"/>
+<use href="#s4-no" x="736" y="484"/>
+<text class="c" x="754" y="482">papaya</text>
+<text class="m" x="754" y="499">dropped by the master</text>
+
+<!-- notes -->
+<rect class="note" x="24" y="534" width="912" height="128" rx="10"/>
+<text class="d" x="42" y="560">A device outside every group reaches everything. The master is always reachable, because it answers the names.</text>
+<text class="d" x="42" y="580">A linked network is given access in the same words. To change what a group is given:</text>
+<text class="c" x="42" y="606">kiwi-server access ~/kiwi/fleet.yaml guests cloud.papaya</text>
+<text class="d" x="42" y="630">or "Who may reach what" on the control page, a tick per machine and service. The master gets the change with</text>
+<text class="d" x="42" y="648">its next apply; a node too, when single services of it are named.</text>
+<!-- legend -->
+<line class="lgh" x1="24" y1="676" x2="936" y2="676"/>
+<path class="req" d="M32,692 h34" marker-end="url(#s4-ak)"/>
+<text class="lg" x="78" y="696">a request</text>
+<use href="#s4-ok" x="178" y="692"/>
+<text class="lg" x="193" y="696">passes</text>
+<use href="#s4-no" x="272" y="692"/>
+<text class="lg" x="287" y="696">stopped</text>
+</svg>

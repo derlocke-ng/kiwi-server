@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 738" role="img" aria-labelledby="s1-t s1-d">
+<title id="s1-t">The smallest network</title>
+<desc id="s1-d">A rented master at a hoster connects a phone and a laptop that can be anywhere with one server at home, papaya. Each of them opens a WireGuard tunnel to the master. papaya keeps the data and serves cloud.papaya.home and vault.papaya.home.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:22px;font-weight:700}
+.sub{font-size:14px;fill:#536050}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:15px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.c{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#1e281b}
+.w{fill:#fff}
+.wd{font-size:12.5px;fill:#edf6e4}
+.lb{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#fafbf7;stroke-width:5px;stroke-linejoin:round}
+.reg{fill:#eef1ea;stroke:#c3cbbd;stroke-width:1.5}
+.hst{fill:#fff;stroke:#c3cbbd;stroke-width:1.5}
+.inet{fill:none;stroke:#9aa395;stroke-width:1.5;stroke-dasharray:6 5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nd{fill:#fff;stroke:#2b3628;stroke-width:2}
+.dv{fill:#fff;stroke:#7f8a7b;stroke-width:1.5}
+.tun{fill:none;stroke:#5ea832;stroke-width:9;stroke-linejoin:round;stroke-linecap:round}
+.tunc{fill:none;stroke:#fff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.lan{fill:none;stroke:#8a9486;stroke-width:2}
+.net{fill:none;stroke:#8a9486;stroke-width:2;stroke-dasharray:7 5}
+.num{fill:#3d7a1f}
+.step{fill:#fff;stroke:#d3d9cd;stroke-width:1.2}
+.lg{font-size:12px;fill:#38432f}
+.lgh{stroke:#dfe4da;stroke-width:1.2}
+</style>
+<defs>
+<marker id="s1-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a9486"/></marker>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="736" rx="16"/>
+<text class="ttl" x="32" y="48">The smallest network</text>
+<text class="sub" x="32" y="73">One rented master, one server at home, a phone and a laptop. The master connects them; your data stays at home.</text>
+
+<!-- the Internet -->
+<rect class="inet" x="696" y="104" width="236" height="104" rx="12"/>
+<text class="rl" x="714" y="128">INTERNET</text>
+<text class="d" x="714" y="152">Websites and apps that the</text>
+<text class="d" x="714" y="170">phone opens outside your</text>
+<text class="d" x="714" y="188">network.</text>
+
+
+<rect class="hst" x="306" y="98" width="356" height="222" rx="12"/>
+<text class="rl" x="324" y="122">A RENTED SERVER AT A HOSTER</text>
+<rect class="reg" x="24" y="356" width="290" height="208" rx="12"/>
+<text class="rl" x="42" y="380">ANYWHERE: MOBILE DATA, A HOTEL</text>
+<rect class="reg" x="436" y="372" width="500" height="192" rx="12"/>
+<text class="rl" x="454" y="396">HOME LAN · 192.168.1.0/24</text>
+<!-- tunnels: after the regions, before the boxes -->
+<path class="tun" d="M294,420 L384,302"/><path class="tunc" d="M294,420 L384,302"/>
+<path class="tun" d="M294,516 L350,516 L430,302"/><path class="tunc" d="M294,516 L350,516 L430,302"/>
+<path class="tun" d="M786,392 V268 H644"/><path class="tunc" d="M786,392 V268 H644"/>
+<path class="net" d="M644,166 L690,160" marker-end="url(#s1-ag)"/>
+
+<!-- hoster and master -->
+<rect class="ms" x="324" y="134" width="320" height="168" rx="10"/>
+<text class="b w" x="342" y="160">sorbet · master</text>
+<text class="wd" x="342" y="184">WireGuard server (wg-easy) on UDP 51820:</text>
+<text class="wd" x="342" y="201">its only open port for the VPN.</text>
+<text class="wd" x="342" y="222">Pi-hole answers every name under .home.</text>
+<text class="wd" x="342" y="243">The exit to the Internet, optionally through</text>
+<text class="wd" x="342" y="260">Mullvad (the double hop).</text>
+<text class="wd" x="342" y="285" font-weight="700">It keeps none of your files.</text>
+
+<!-- anywhere -->
+<rect class="dv" x="42" y="392" width="252" height="80" rx="18"/>
+<text class="b" x="62" y="418">phone</text>
+<text class="d" x="62" y="438">WireGuard app, group devices.</text>
+<text class="d" x="62" y="456">All its traffic goes through the VPN.</text>
+<rect class="dv" x="42" y="480" width="252" height="74" rx="18"/>
+<text class="b" x="62" y="504">laptop</text>
+<text class="d" x="62" y="524">kiwi-server connect. Only the</text>
+<text class="d" x="62" y="541">network's names (.home) use the VPN.</text>
+
+<!-- home -->
+<rect class="nd" x="652" y="392" width="268" height="158" rx="10"/>
+<text class="b" x="670" y="418">papaya · node</text>
+<text class="d" x="670" y="440">Opens its tunnel to the master itself.</text>
+<text class="d" x="670" y="458">nginx with a certificate from the</text>
+<text class="d" x="670" y="476">network's own certificate authority.</text>
+<text class="c" x="670" y="502">cloud.papaya.home</text><text class="d" x="808" y="502">Nextcloud</text>
+<text class="c" x="670" y="522">vault.papaya.home</text><text class="d" x="808" y="522">Vaultwarden</text>
+<text class="d" x="670" y="541" font-weight="700">Your files are here.</text>
+<rect class="dv" x="720" y="334" width="132" height="34" rx="6"/>
+<text class="d" x="736" y="356">home router (NAT)</text>
+<text class="d" x="454" y="430">No port is forwarded at home.</text>
+<text class="d" x="454" y="448">papaya opens the connection,</text>
+<text class="d" x="454" y="466">and the replies come back on it.</text>
+
+<!-- line labels -->
+<text class="lb" x="190" y="344">WireGuard: everything</text>
+<text class="lb" x="440" y="348">WireGuard: only .home</text>
+<text class="lb" x="798" y="300">WireGuard,</text>
+<text class="lb" x="798" y="316">opened from home</text>
+
+<!-- how the phone opens a service -->
+<text class="rl" x="32" y="600">HOW THE PHONE OPENS CLOUD.PAPAYA.HOME</text>
+<rect class="step" x="32" y="612" width="290" height="70" rx="10"/>
+<circle class="num" cx="52" cy="634" r="11"/><text class="b w" x="47.5" y="639">1</text>
+<text class="d" x="72" y="638">It asks the master's Pi-hole for the</text>
+<text class="d" x="72" y="656">name and gets papaya's address on</text>
+<text class="d" x="72" y="674">the VPN.</text>
+<rect class="step" x="335" y="612" width="290" height="70" rx="10"/>
+<circle class="num" cx="355" cy="634" r="11"/><text class="b w" x="350.5" y="639">2</text>
+<text class="d" x="375" y="638">The request goes through the phone's</text>
+<text class="d" x="375" y="656">tunnel to the master, and from there</text>
+<text class="d" x="375" y="674">through papaya's tunnel.</text>
+<rect class="step" x="638" y="612" width="290" height="70" rx="10"/>
+<circle class="num" cx="658" cy="634" r="11"/><text class="b w" x="653.5" y="639">3</text>
+<text class="d" x="678" y="638">nginx on papaya shows its certificate</text>
+<text class="d" x="678" y="656">and hands the request to Nextcloud.</text>
+<text class="d" x="678" y="674">The data never rests on the master.</text>
+<!-- legend -->
+<line class="lgh" x1="24" y1="696" x2="936" y2="696"/>
+<path class="tun" d="M36,712 h28"/><path class="tunc" d="M36,712 h28"/>
+<text class="lg" x="78" y="716">WireGuard tunnel</text>
+<path class="net" d="M218,712 h36"/>
+<text class="lg" x="264" y="716">Internet, outside the VPN</text>
+</svg>

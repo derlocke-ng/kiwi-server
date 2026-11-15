@@ -54,6 +54,7 @@ Step by step: [docs/getting-started.md](docs/getting-started.md).
 |---|---|
 | [Install](docs/install.md) | kiwi or the checkout, what it needs, the ISO toolchain |
 | [Getting started](docs/getting-started.md) | a new fleet, the first ISO, apply, offline media, netcup servers |
+| [Example setups](docs/examples.md) | pictures of possible networks and what each part does |
 | [The fleet file](docs/fleet.md) | the settings, the role block, names and the domain |
 | [Roles and modules](docs/roles.md) | master and node, presets, a public hub, the LAN cache, writing a role |
 | [The network](docs/network.md) | joining the mesh, DNS, the MTU, federation, [routers](docs/routers.md) |

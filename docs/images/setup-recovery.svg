@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 918" role="img" aria-labelledby="s7-t s7-d">
+<title id="s7-t">When something breaks</title>
+<desc id="s7-d">The control node papaya at home looks at every machine every ten minutes. When the rented master sorbet stops answering, the control node has the hoster switch it off and on, then carries the unlock ring from home to the master's disk, which waits at boot. A lost node, lychee, is installed anew by a person from its install media and then brings its data back from its backups by itself. A list says what a person still does.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:22px;font-weight:700}
+.sub{font-size:14px;fill:#536050}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:15px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.m{font-size:12px;fill:#5d6a59}
+.c{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#1e281b}
+.w{fill:#fff}
+.wd{font-size:12.5px;fill:#edf6e4}
+.lb{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#fafbf7;stroke-width:5px;stroke-linejoin:round}
+.reg{fill:#eef1ea;stroke:#c3cbbd;stroke-width:1.5}
+.hst{fill:#fff;stroke:#c3cbbd;stroke-width:1.5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nd{fill:#fff;stroke:#2b3628;stroke-width:2}
+.dv{fill:#fff;stroke:#7f8a7b;stroke-width:1.5}
+.tag{fill:#e4f0da;stroke:#3d7a1f;stroke-width:1.2}
+.tg{font-size:11px;font-weight:700;fill:#2a5713}
+.tun{fill:none;stroke:#5ea832;stroke-width:9;stroke-linejoin:round;stroke-linecap:round}
+.tunc{fill:none;stroke:#fff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.net{fill:none;stroke:#8a9486;stroke-width:2;stroke-dasharray:7 5}
+.bak{fill:none;stroke:#2b3628;stroke-width:2.2;stroke-dasharray:12 4 3 4}
+.unl{fill:none;stroke:#2b3628;stroke-width:3.2;stroke-dasharray:.1 7;stroke-linecap:round;stroke-linejoin:round}
+.req{fill:none;stroke:#2b3628;stroke-width:1.8}
+.num{fill:#2b3628}
+.note{fill:#fff;stroke:#d3d9cd;stroke-width:1.2}
+.lg{font-size:12px;fill:#38432f}
+.lgh{stroke:#dfe4da;stroke-width:1.2}
+</style>
+<defs>
+<marker id="s7-ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2b3628"/></marker>
+<marker id="s7-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a9486"/></marker>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="916" rx="16"/>
+<text class="ttl" x="32" y="48">When something breaks</text>
+<text class="sub" x="32" y="73">The control node at home watches the network and does what the fleet file allows. The rest is for a person.</text>
+
+<!-- regions -->
+<rect class="hst" x="24" y="98" width="576" height="232" rx="12"/>
+<text class="rl" x="42" y="122">A RENTED SERVER AT A HOSTER</text>
+<rect class="reg" x="24" y="380" width="576" height="340" rx="12"/>
+<text class="rl" x="42" y="404">HOME</text>
+
+<!-- lines -->
+<path class="tun" d="M236,420 V362 H420 V314"/><path class="tunc" d="M236,420 V362 H420 V314"/>
+<path class="net" d="M100,420 V220" marker-end="url(#s7-ag)"/>
+<path class="req" d="M206,182 H246" marker-end="url(#s7-ak)"/>
+<path class="unl" d="M164,420 V342 H300 V320" marker-end="url(#s7-ak)"/>
+<path class="bak" d="M282,560 H356" marker-end="url(#s7-ak)"/>
+<path class="req" d="M470,664 V646" marker-end="url(#s7-ak)"/>
+
+<!-- hoster -->
+<rect class="dv" x="44" y="146" width="162" height="72" rx="6"/>
+<text class="b" x="60" y="172">netcup API</text>
+<text class="m" x="60" y="192">the hoster's switch</text>
+<text class="m" x="60" y="208">for its servers</text>
+<rect class="ms" x="250" y="138" width="330" height="176" rx="10"/>
+<text class="b w" x="268" y="164">sorbet · master</text>
+<text class="wd" x="268" y="188">A rented server with an encrypted disk.</text>
+<text class="wd" x="268" y="209">After a restart its disk waits at boot,</text>
+<text class="wd" x="268" y="226">with SSH in its initramfs.</text>
+<text class="wd" x="268" y="247">Its ring stays at home. The disk opens</text>
+<text class="wd" x="268" y="264">when the control node brings the ring.</text>
+<text class="wd" x="268" y="285">The fleet keeps a copy of its VPN state,</text>
+<text class="wd" x="268" y="302">so a new install knows every device.</text>
+
+<!-- home -->
+<rect class="nd" x="44" y="420" width="238" height="226" rx="10"/>
+<text class="b" x="60" y="446">papaya · node</text>
+<rect class="tag" x="168" y="432" width="62" height="20" rx="10"/><text class="tg" x="179" y="446">control</text>
+<text class="d" x="60" y="470">The control node: kiwi-server</text>
+<text class="d" x="60" y="488">with a page for the phone.</text>
+<text class="d" x="60" y="510">It holds the network, encrypted.</text>
+<text class="d" x="60" y="532">tang: serves sorbet's ring.</text>
+<text class="d" x="60" y="554">backup-server: keeps</text>
+<text class="d" x="60" y="572">lychee's backups.</text>
+<text class="d" x="60" y="598">After a power cut it stays</text>
+<text class="d" x="60" y="616">locked until a login, or until a</text>
+<text class="d" x="60" y="634">ring on another machine opens it.</text>
+<rect class="nd" x="356" y="420" width="226" height="226" rx="10"/>
+<text class="b" x="372" y="446">lychee · node</text>
+<text class="d" x="372" y="470">Lost: its disk failed.</text>
+<text class="d" x="372" y="492">Installed anew under the</text>
+<text class="d" x="372" y="510">same name, from its install</text>
+<text class="d" x="372" y="528">media.</text>
+<text class="d" x="372" y="550">At its first set-up it finds</text>
+<text class="d" x="372" y="568">itself in its backups and</text>
+<text class="d" x="372" y="586">brings every module back</text>
+<text class="d" x="372" y="604">by itself, then backs up</text>
+<text class="d" x="372" y="622">as before.</text>
+<rect class="dv" x="380" y="664" width="180" height="40" rx="18"/>
+<text class="d" x="470" y="689" text-anchor="middle">install media, USB stick</text>
+<text class="lb" x="319" y="548" text-anchor="middle">restore</text>
+
+<!-- step numbers on the picture -->
+<circle class="num" cx="328" cy="362" r="10"/><text class="b w" x="323.5" y="367">1</text>
+<circle class="num" cx="100" cy="300" r="10"/><text class="b w" x="95.5" y="305">2</text>
+<circle class="num" cx="164" cy="380" r="10"/><text class="b w" x="159.5" y="385">3</text>
+<circle class="num" cx="582" cy="684" r="10"/><text class="b w" x="577.5" y="689">5</text>
+<circle class="num" cx="319" cy="584" r="10"/><text class="b w" x="314.5" y="589">6</text>
+
+<!-- the steps -->
+<rect class="note" x="620" y="98" width="316" height="372" rx="10"/>
+<text class="rl" x="638" y="122">THE MASTER STOPS ANSWERING</text>
+<circle class="num" cx="648" cy="144" r="10"/><text class="b w" x="643.5" y="149">1</text>
+<text class="d" x="668" y="148">The control node looks at every</text>
+<text class="d" x="668" y="166">machine every ten minutes.</text>
+<circle class="num" cx="648" cy="192" r="10"/><text class="b w" x="643.5" y="197">2</text>
+<text class="d" x="668" y="196">Gone for 15 minutes: it has the</text>
+<text class="d" x="668" y="214">hoster switch the master off and</text>
+<text class="d" x="668" y="232">on. Nothing on it is touched.</text>
+<text class="c" x="668" y="256">master: { after: 15, do: restart }</text>
+<circle class="num" cx="648" cy="294" r="10"/><text class="b w" x="643.5" y="299">3</text>
+<text class="d" x="668" y="298">The disk waits at boot. The control</text>
+<text class="d" x="668" y="316">node carries the ring from home to</text>
+<text class="d" x="668" y="334">the master's own address.</text>
+<circle class="num" cx="648" cy="360" r="10"/><text class="b w" x="643.5" y="365">4</text>
+<text class="d" x="668" y="364">The master runs. The nodes and</text>
+<text class="d" x="668" y="382">devices connect again by themselves.</text>
+<text class="m" x="638" y="410">The control node holds back after a restart</text>
+<text class="m" x="638" y="426">less than an hour ago, after three in a day,</text>
+<text class="m" x="638" y="442">and when it cannot reach the hoster. Every</text>
+<text class="m" x="638" y="458">restart is written to Activity.</text>
+<rect class="note" x="620" y="490" width="316" height="230" rx="10"/>
+<text class="rl" x="638" y="514">A MACHINE IS LOST</text>
+<circle class="num" cx="648" cy="536" r="10"/><text class="b w" x="643.5" y="541">5</text>
+<text class="d" x="668" y="540">A person makes its install media,</text>
+<text class="d" x="668" y="558">writes them to a USB stick and</text>
+<text class="d" x="668" y="576">starts the machine from it. Its disk</text>
+<text class="d" x="668" y="594">is erased.</text>
+<circle class="num" cx="648" cy="620" r="10"/><text class="b w" x="643.5" y="625">6</text>
+<text class="d" x="668" y="624">"Set it up" on the page. The data</text>
+<text class="d" x="668" y="642">comes back from the backups by</text>
+<text class="d" x="668" y="660">itself. A machine without backups</text>
+<text class="d" x="668" y="678">starts empty.</text>
+
+<!-- what a person still does -->
+<rect class="note" x="24" y="740" width="912" height="122" rx="10"/>
+<text class="rl" x="42" y="764">WHAT A PERSON STILL DOES</text>
+<text class="d" x="42" y="788">• Start a machine at home from its install media.</text>
+<text class="d" x="42" y="808">• Bring one service back to an earlier day from a snapshot.</text>
+<text class="d" x="42" y="828">• Decide to install a master anew: the control node only restarts it.</text>
+<text class="d" x="42" y="848">• Log in to the control node after a power cut, unless a ring opens it.</text>
+<text class="d" x="490" y="788">• Keep the recovery key on paper, apart from a copy.</text>
+<text class="d" x="490" y="808">• Keep a copy of the network away from the machines.</text>
+<text class="d" x="490" y="828">• Look when the control node holds back.</text>
+<text class="d" x="490" y="848">• Read the readiness report: kiwi-server recovery.</text>
+<!-- legend -->
+<line class="lgh" x1="24" y1="876" x2="936" y2="876"/>
+<path class="tun" d="M36,892 h28"/><path class="tunc" d="M36,892 h28"/>
+<text class="lg" x="78" y="896">WireGuard tunnel</text>
+<path class="net" d="M218,892 h36"/>
+<text class="lg" x="264" y="896">Internet, outside the VPN</text>
+<path class="unl" d="M467,892 h36"/>
+<text class="lg" x="513" y="896">unlock request at boot</text>
+<path class="bak" d="M695,892 h36"/>
+<text class="lg" x="741" y="896">backup</text>
+<path class="req" d="M811,892 h34" marker-end="url(#s7-ak)"/>
+<text class="lg" x="857" y="896">a request</text>
+</svg>

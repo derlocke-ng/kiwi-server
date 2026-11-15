@@ -1,0 +1,124 @@
+schema_version: "1.0"
+
+module:
+  name: git
+  title: Forgejo
+  version: 1.0.0
+  description: "Forgejo, git hosting with a web page, behind the reverse proxy at git.<hostname>; git over SSH on a port of its own"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client, reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: ["{{ ssh_port ~ '/tcp' if ssh_port else '' }}"]
+
+firewall:
+  scope: vpn-client
+  rules:
+    # git over SSH from the mesh: the port of the mesh address on to the container
+    - "{% if ssh_port %}-t nat -A PREROUTING -d ${VPN_IP} -p tcp --dport {{ ssh_port }} -j DNAT --to-destination {{ container_ip }}:2222{% endif %}"
+
+templates:
+  compose: docker-compose.yml.j2
+  start: start.sh.j2
+
+outputs:
+  start: { path: "{{ container_prefix }}-git/start.sh", mode: 0755 }
+
+derived:
+  git_host: "{{ git_hostname or 'git.' ~ hostname }}"
+  admin_address: "{{ admin_email or 'admin@' ~ hostname }}"
+
+validate:
+  - when: "admin_user | lower in ['admin', 'api', 'user', 'ghost', 'explore', 'login', 'org', 'repo', 'v2']"
+    error: "git.admin_user: Forgejo keeps the name {{ admin_user }} for itself; take another one, e.g. kiwi"
+  - when: "ssh_port == 22"
+    error: "git.ssh_port: 22 is the host's own ssh; take another port, e.g. 2223"
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-git/data", type: dir, required: true }
+
+urls:
+  - "Forgejo: https://{{ git_host }} — user {{ admin_user }}, the git.admin_password setting"
+  - "{% if ssh_port %}Git over SSH: git clone ssh://git@{{ git_host }}:{{ ssh_port }}/<user>/<repository>.git — a VPN group needs {{ hostname.split('.')[0] }}:{{ ssh_port }} in kiwi-server access{% else %}Git over HTTPS only: git clone https://{{ git_host }}/<user>/<repository>.git{% endif %}"
+
+logins:
+  - label: Git (Forgejo)
+    user: "{{ admin_user }}"
+    password: admin_password
+    note: "The admin of Forgejo. Every start of the container sets this password again, so a password changed inside Forgejo goes back to this one."
+
+nginx:
+  upstream:
+    name: forgejo
+    server: "{{ container_prefix }}-git:3000"
+  server_name: "{{ git_host }}"
+  proxy_pass: "http://forgejo"
+  client_max_body_size: "0"
+  proxy_read_timeout: 600s
+  comment: Forgejo
+  extra_directives:
+    - "proxy_request_buffering off;"
+
+backup:
+  frozen:
+    containers: ["{{ container_prefix }}-git"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-git/data"]
+
+settings:
+  - key: git_hostname
+    label: Name
+    help: "Empty: git.<hostname>."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: admin_user
+    label: Admin user
+    help: "The Forgejo user that is admin, made at the first start. Forgejo keeps the name admin for itself."
+    default: kiwi
+    pattern: '[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?'
+  - key: admin_password
+    type: secret
+    generate: true
+    rotate: restart
+    label: Admin password
+    help: "The password of the admin user. Every start of the container sets it again, so a password changed inside Forgejo goes back to this one. Empty: generated from the seed."
+  - key: admin_email
+    label: Admin email
+    help: "The email address of the admin user. Forgejo sends no mail. Empty: admin@<hostname>."
+    default: ""
+    pattern: '([^@\s]+@[^@\s]+)?'
+  - key: registration
+    type: bool
+    label: Open registration
+    help: "On: anyone who can open the page can make an account there, without a mail to confirm it. Off: only the admin makes accounts, under Site administration."
+    default: false
+  - key: private
+    type: bool
+    label: Sign in to see anything
+    help: "On: someone who has not signed in sees only the sign-in page, not even public repositories. Off: public repositories and profiles can be seen without an account."
+    default: true
+  - key: ssh_port
+    type: int
+    label: SSH port
+    help: "The host port for git over SSH: git clone ssh://git@git.<hostname>:2223/<user>/<repository>.git. 0: no SSH, only HTTPS. Not 22, which the host's own ssh uses, and not 2224, sftp's."
+    default: 2223
+  - key: secret_key
+    type: secret
+    generate: true
+    group: Generated
+    help: "Encrypts what Forgejo keeps for its users, such as their two-factor keys. With a new one those stop working, so it keeps its value when the seed is replaced. Empty: generated from the fleet's seed."
+  - key: extra_env
+    type: map
+    group: Advanced
+    label: Extra environment variables
+    help: "KEY=value, passed to Forgejo as they are, e.g. FORGEJO__repository__DEFAULT_PRIVATE=private."
+    default: {}
+  - key: image
+    group: Advanced
+    help: "The container image of Forgejo, pinned by its major version, in its rootless form (the start script needs it). 15 is the long-term release, with fixes until July 2027. Forgejo cannot go back to an older version once a newer one has opened its data."
+    default: codeberg.org/forgejo/forgejo:15-rootless

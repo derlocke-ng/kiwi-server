@@ -123,6 +123,9 @@ def try_one(x):
         if "invalid admin token" in t.lower():
             return "FAIL", "invalid admin token"
         return verdict(code, (200, 303), (401,))
+    if m == "git":
+        code, _t, _h = ask(b + "/api/v1/user", auth=(user, pw), headers={"Accept": "application/json"})
+        return verdict(code, (200,), (401, 403))
     if m == "opencloud":
         # its sign-in page's own call: 204 for a wrong password, 200 with who signed in for a right one
         code, t, _h = jpost(b + "/signin/v1/identifier/_/logon", {"params": [user, pw, "1"]},

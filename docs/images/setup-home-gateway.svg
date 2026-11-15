@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 778" role="img" aria-labelledby="s2-t s2-d">
+<title id="s2-t">A home with a gateway</title>
+<desc id="s2-d">A home LAN with three nodes behind one rented master. lime, a small board with the gateway preset, is the ad blocker, DNS server and gateway of the LAN, so a TV and guests' phones use the VPN without an app. papaya runs the services. lychee stores papaya's backups, sent every night across the LAN.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:22px;font-weight:700}
+.sub{font-size:14px;fill:#536050}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:15px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.c{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#1e281b}
+.w{fill:#fff}
+.wd{font-size:12.5px;fill:#edf6e4}
+.lb{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#fafbf7;stroke-width:5px;stroke-linejoin:round}
+.lbr{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#eef1ea;stroke-width:5px;stroke-linejoin:round}
+.reg{fill:#eef1ea;stroke:#c3cbbd;stroke-width:1.5}
+.hst{fill:#fff;stroke:#c3cbbd;stroke-width:1.5}
+.inet{fill:none;stroke:#9aa395;stroke-width:1.5;stroke-dasharray:6 5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nd{fill:#fff;stroke:#2b3628;stroke-width:2}
+.dv{fill:#fff;stroke:#7f8a7b;stroke-width:1.5}
+.tag{fill:#e4f0da;stroke:#3d7a1f;stroke-width:1.2}
+.tg{font-size:11px;font-weight:700;fill:#2a5713}
+.tun{fill:none;stroke:#5ea832;stroke-width:9;stroke-linejoin:round;stroke-linecap:round}
+.tunc{fill:none;stroke:#fff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.lan{fill:none;stroke:#8a9486;stroke-width:2}
+.net{fill:none;stroke:#8a9486;stroke-width:2;stroke-dasharray:7 5}
+.bak{fill:none;stroke:#2b3628;stroke-width:2.2;stroke-dasharray:12 4 3 4}
+.lg{font-size:12px;fill:#38432f}
+.lgh{stroke:#dfe4da;stroke-width:1.2}
+</style>
+<defs>
+<marker id="s2-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a9486"/></marker>
+<marker id="s2-ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2b3628"/></marker>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="776" rx="16"/>
+<text class="ttl" x="32" y="48">A home with a gateway</text>
+<text class="sub" x="32" y="73">A small board makes the whole home LAN part of the network: its ad blocker, its DNS and its way out.</text>
+
+<!-- regions -->
+<rect class="hst" x="258" y="98" width="380" height="182" rx="12"/>
+<text class="rl" x="276" y="122">A RENTED SERVER AT A HOSTER</text>
+<rect class="inet" x="696" y="112" width="236" height="96" rx="12"/>
+<text class="rl" x="714" y="136">INTERNET</text>
+<text class="d" x="714" y="160">The home's traffic comes</text>
+<text class="d" x="714" y="178">out here, at the master's</text>
+<text class="d" x="714" y="196">address or Mullvad's.</text>
+<rect class="reg" x="24" y="330" width="912" height="392" rx="12"/>
+<text class="rl" x="42" y="354">HOME LAN · 192.168.1.0/24</text>
+
+<!-- lines -->
+<path class="tun" d="M183,392 V372 H418 V264"/><path class="tunc" d="M183,392 V372 H418 V264"/>
+<path class="tun" d="M448,392 V264"/><path class="tunc" d="M448,392 V264"/>
+<path class="tun" d="M776,392 V372 H478 V264"/><path class="tunc" d="M776,392 V372 H478 V264"/>
+<path class="net" d="M620,160 L690,160" marker-end="url(#s2-ag)"/>
+<path class="lan" d="M80,630 V600"/><path class="lan" d="M183,630 V600"/><path class="lan" d="M286,630 V600"/>
+<path class="bak" d="M520,600 V650 H700 V600" marker-end="url(#s2-ak)"/>
+
+<!-- master -->
+<rect class="ms" x="276" y="134" width="344" height="130" rx="10"/>
+<text class="b w" x="294" y="160">sorbet · master</text>
+<text class="wd" x="294" y="184">WireGuard server: every node opens its</text>
+<text class="wd" x="294" y="201">own tunnel to it.</text>
+<text class="wd" x="294" y="222">Pi-hole for the whole network.</text>
+<text class="wd" x="294" y="243">The exit to the Internet.</text>
+
+<!-- router on the edge of the LAN -->
+<rect class="dv" x="384" y="312" width="128" height="36" rx="6"/>
+<text class="d" x="400" y="335">home router (NAT)</text>
+
+<!-- lime -->
+<rect class="nd" x="42" y="392" width="282" height="208" rx="10"/>
+<text class="b" x="60" y="418">lime · node</text>
+<rect class="tag" x="160" y="404" width="64" height="20" rx="10"/><text class="tg" x="171" y="418">gateway</text>
+<text class="d" x="60" y="440">A small arm64 board.</text>
+<text class="d" x="60" y="462">Pi-hole: the ad blocker and DNS server</text>
+<text class="d" x="60" y="480">of the LAN. It asks the master's Pi-hole</text>
+<text class="d" x="60" y="498">first, Quad9 only while it is unreachable.</text>
+<text class="d" x="60" y="520">Routes the LAN's Internet traffic</text>
+<text class="d" x="60" y="538">through its own tunnel.</text>
+<text class="d" x="60" y="560">Download station (Transmission,</text>
+<text class="d" x="60" y="578">JDownloader): no Internet without VPN.</text>
+
+<!-- papaya -->
+<rect class="nd" x="356" y="392" width="282" height="208" rx="10"/>
+<text class="b" x="374" y="418">papaya · node</text>
+<text class="d" x="374" y="440">The services and their data.</text>
+<text class="c" x="374" y="466">cloud.papaya.home</text><text class="d" x="550" y="466">Nextcloud</text>
+<text class="c" x="374" y="488">immich.papaya.home</text><text class="d" x="550" y="488">Immich</text>
+<text class="c" x="374" y="510">paperless.papaya.home</text><text class="d" x="550" y="510">Paperless</text>
+<text class="c" x="374" y="532">vault.papaya.home</text><text class="d" x="550" y="532">Vaultwarden</text>
+<text class="d" x="374" y="566">backup module: sends its data to</text>
+<text class="d" x="374" y="584">lychee, encrypted with restic.</text>
+
+<!-- lychee -->
+<rect class="nd" x="670" y="392" width="248" height="208" rx="10"/>
+<text class="b" x="688" y="418">lychee · node</text>
+<rect class="tag" x="796" y="404" width="58" height="20" rx="10"/><text class="tg" x="806" y="418">backup</text>
+<text class="d" x="688" y="440">backup-server on a big disk.</text>
+<text class="c" x="688" y="466">backup.lychee.home</text>
+<text class="d" x="688" y="490">Keeps papaya's snapshots.</text>
+<text class="d" x="688" y="512">A machine can add to its backups,</text>
+<text class="d" x="688" y="530">not delete them. Old snapshots are</text>
+<text class="d" x="688" y="548">pruned from the computer that holds</text>
+<text class="d" x="688" y="566">the keys.</text>
+
+<!-- devices on the LAN -->
+<rect class="dv" x="42" y="630" width="76" height="40" rx="18"/><text class="d" x="80" y="655" text-anchor="middle">TV</text>
+<rect class="dv" x="126" y="630" width="114" height="40" rx="18"/><text class="d" x="183" y="655" text-anchor="middle">guest's phone</text>
+<rect class="dv" x="248" y="630" width="76" height="40" rx="18"/><text class="d" x="286" y="655" text-anchor="middle">laptop</text>
+<text class="d" x="48" y="694">DNS server and gateway: lime. Set once in the router's DHCP.</text>
+<text class="d" x="48" y="711">No VPN app on these devices.</text>
+
+<!-- line labels -->
+<text class="lb" x="530" y="304">three tunnels, one per node, through the home router</text>
+<text class="lbr" x="548" y="674">every night, over HTTPS,</text>
+<text class="lbr" x="548" y="691">across the LAN</text>
+<!-- legend -->
+<line class="lgh" x1="24" y1="736" x2="936" y2="736"/>
+<path class="tun" d="M36,752 h28"/><path class="tunc" d="M36,752 h28"/>
+<text class="lg" x="78" y="756">WireGuard tunnel</text>
+<path class="lan" d="M218,752 h36"/>
+<text class="lg" x="264" y="756">home LAN</text>
+<path class="bak" d="M348,752 h36"/>
+<text class="lg" x="394" y="756">backup</text>
+<path class="net" d="M464,752 h36"/>
+<text class="lg" x="510" y="756">Internet, outside the VPN</text>
+</svg>

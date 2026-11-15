@@ -18,7 +18,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import VERSION, form as formmod
+from . import VERSION, form as formmod, health as healthmod
 from .control import ACTIONS, Control
 from .util import KiwiError
 
@@ -131,7 +131,8 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 <span><span class="dot ok"></span>fine</span><b>{{ h.ok }}</b>
 {% if h.warn %}<span><span class="dot warn"></span>want a look</span><b>{{ h.warn }}</b>{% endif %}
 {% if h.bad %}<span><span class="dot bad"></span>with a problem</span><b>{{ h.bad }}</b>{% endif %}
-{% if h.down %}<span><span class="dot down"></span>not reachable</span><b>{{ h.down }}</b>{% endif %}</div>{% endif %}
+{% if h.down %}<span><span class="dot down"></span>not reachable</span><b>{{ h.down }}</b>{% endif %}
+<a class="t" href="/status">What everyone sees: the status page</a></div>{% endif %}
 <div class="row2">{{ theme() }}<form class="inline" method="post" action="/logout" style="flex:3;display:flex">{{ tok }}<button>Log out</button></form></div></div></aside>
 <div><header class="top"><a class="brand" href="/">{{ icon("kiwi") }}<span>Kiwi <small>{{ h.domain }}</small></span></a>
 {% if h.total %}<span class="pill {{ h.level }}">{{ h.word }}</span>{% endif %}{{ theme() }}</header>
@@ -351,6 +352,7 @@ machines at home, then your phone.</p>{% endblock %}""",
 {% elif looking or not looked %}<div class="banner warn">Checking your machines… this takes a minute.</div>
 <script>setTimeout(function(){location.reload()},6000)</script>
 {% elif bad %}<div class="banner bad">{{ bad|length }} of {{ machines|length }} machines {{ "has" if bad|length == 1 else "have" }} a problem</div>
+{% elif silent %}<div class="banner bad">{{ silent|length }} {{ "service does" if silent|length == 1 else "services do" }} not answer</div>
 {% elif warn %}<div class="banner warn">Everything runs. {{ warn|length }} {{ "machine wants" if warn|length == 1 else "machines want" }} a look.</div>
 {% else %}<div class="banner ok">All {{ machines|length }} machines are fine</div>{% endif %}
 <div class="row"><span class="muted">{% if looked %}Checked {{ ago(looked) }} ago. It checks every ten minutes by itself.{% endif %}
@@ -366,6 +368,10 @@ machines at home, then your phone.</p>{% endblock %}""",
 {% elif e.kind == "locked" %}<p class="muted">Open the machine's page: <em>Unlock it</em> is there.</p>
 {% elif e.kind == "tell" %}<p class="muted">Nothing is done by itself here. <a href="/help#gone">What you can do, and how to let the control node restart it.</a></p>{% endif %}</div>{% endfor %}
 
+{% for s in silent %}<div class="card"><div class="row"><strong><span class="dot bad"></span>{{ s.label }}</strong>
+<a class="btn" href="/hosts/{{ s.host }}">Open {{ s.host }}</a></div><p>It does not answer at {{ s.site }}, for {{ age(now - s.since) }}.</p>
+<p class="muted">Its machine answers and may say that everything runs: the service itself was asked for a page and gave none.
+<em>Apply</em> on the machine's page sets it up again; what the machine says, word for word, is under Details there.</p></div>{% endfor %}
 {% set todo = machines|selectattr("problems")|list %}{% if todo %}<h2>Needs a look</h2>
 {% for m in todo %}{% for p in m.problems %}<div class="card"><div class="row"><strong><span class="dot {{ p.level }}"></span>{{ m.name }}</strong>
 <a class="btn" href="/hosts/{{ m.name }}">Open</a></div><p>{{ p.text }}</p>
@@ -514,6 +520,10 @@ placeholder="{{ "set; leave empty to keep it" if f.set else "set for every machi
 {% for f in more %}{{ field(f) }}{% endfor %}</details>{% endif %}
 {{ "</details>"|safe if g.advanced else "</div>"|safe }}{% endfor %}
 <div class="actions"><button class="primary">Save</button></div></form>{% endif %}
+{% if not host %}<div class="card"><h2 style="margin-top:0">Try the messages</h2><p>Sends one test message to every place set under
+"Messages when something is wrong" (save first). <span class="muted">Real ones come when something has been wrong for a
+while, and when it is fine again. What everyone on your network sees without a login is <a href="/status">the status page</a>.</span></p>
+<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="tell-test"><button>Send a test message</button></form></div>{% endif %}
 {% endblock %}""",
 
     "job.html": """{% extends "base.html" %}{% block main %}
@@ -778,6 +788,31 @@ anything new. It still knows what it saw before; if that computer was lost or st
 onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done by itself until the next login.')">{{ tok }}<button>Lock the keys now</button></form></div>
 {% endblock %}""",
 
+    "status.html": """{% extends "base.html" %}{% block title %}Status{% endblock %}{% block main %}
+<meta http-equiv="refresh" content="120">
+<h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>How the network is</h1>
+{% set down = h.services|rejectattr("ok")|list %}{% set off = (h.machines.of or 0) - (h.machines.on or 0) %}
+{% if not h.checked %}<div class="banner warn">Nothing has been checked yet.</div>
+{% elif stale %}<div class="banner warn">Not checked for {{ age(now - h.checked) }}. The machine that checks is off, or waits for
+the people who run this network to unlock it.</div>
+{% elif down %}<div class="banner bad">{{ down|length }} {{ "service does" if down|length == 1 else "services do" }} not answer</div>
+{% elif off > 0 %}<div class="banner warn">The services answer. {{ off }} {{ "machine does" if off == 1 else "machines do" }} not.</div>
+{% else %}<div class="banner ok">Everything works</div>{% endif %}
+{% if h.checked %}<p class="muted">Checked {{ age(now - h.checked) }} ago; it checks every ten minutes.
+{% if h.machines.of %}{{ h.machines.on }} of {{ h.machines.of }} machines answer.{% endif %}
+{% if h.window %}When updates need it, the machines restart: {{ h.window }}.{% endif %}</p>{% endif %}
+{% if h.services %}<h2>Services</h2>
+{% for s in h.services %}<div class="card"><div class="row"><strong><span class="dot {{ "ok" if s.ok else "bad" }}"></span>{{ s.label }}</strong>
+<span class="state {{ "ok" if s.ok else "bad" }}">{{ "works" if s.ok else "does not answer" }}</span></div>
+<span class="muted"><a href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a>{% if not s.ok %} · for {{ age(now - s.since) }}{% endif %}</span></div>{% endfor %}{% endif %}
+{% if h.checked %}<h2>The last seven days</h2>
+{% for i in h.incidents %}<p><span class="dot {{ "ok" if i.to else "bad" }}"></span>{{ age(now - i.from) }} ago: {{ i.text }}{% if i.to %},
+for {{ age(i.to - i.from) }}{% else %}, and still{% endif %}</p>
+{% else %}<p class="muted">Nothing was wrong.</p>{% endfor %}{% endif %}
+<p class="muted small" style="margin-top:28px">This page needs no login. It shows which services work, and no addresses or
+settings. The people who run this network see more on their control page.</p>
+{% endblock %}""",
+
     "help.html": """{% extends "base.html" %}{% block main %}
 <h1>Help</h1>
 <h2>What is this page?</h2><p>This machine looks after your network. It checks every machine every ten minutes, and from
@@ -928,12 +963,8 @@ FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's pha
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "remove": "Removing",
-        "rotate-seed": "Replacing the secrets inside the services"}
-SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
-            "portainer": "Containers (Portainer)", "immich": "Photos (Immich)", "paperless": "Documents (Paperless)",
-            "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",
-            "wg": "VPN devices (wg-easy)", "control": "This page", "backup": "Backup store", "cache": "Local cache",
-            "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)"}
+        "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message"}
+SERVICES = healthmod.SERVICES        # a service by the first part of its name, in plain words
 HINTS = (
     ("unreachable", "It did not answer. Is it switched on and online? After a restart, give it a minute, then check again."),
     ("disk is locked", "Its disk is encrypted and waits to be unlocked after a restart. \"Unlock it\" on its page "
@@ -1220,6 +1251,13 @@ def make_app(control: Control):
                             "facts": s.get("facts") or {}, "output": s.get("output") or ""})
         return out, st, info
 
+    @app.get("/status")
+    def status_page():
+        """How the network is, for everyone on it: no login, nothing but names people use and whether they work."""
+        now = time.time()
+        h = healthmod.public(control.health(), now)
+        return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+
     @app.get("/healthz")
     def healthz():
         return {"ok": True, "version": VERSION, "locked": control.locked(), "damaged": bool(control.damaged())}
@@ -1480,8 +1518,10 @@ def make_app(control: Control):
         ms, st, _info = machines()
         from . import setup as setupmod
         devs = control.devices()
+        up = {m["name"] for m in ms if m["state"] in ("ok", "warn", "bad")}
+        silent = [s for s in control.health().get("services") or [] if not s["ok"] and s["host"] in up]
         return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
-                    stats=stats(ms, devs), wide=picture(ms, len(devs), 4), narrow=picture(ms, len(devs), 1),
+                    stats=stats(ms, devs), wide=picture(ms, len(devs), 4), narrow=picture(ms, len(devs), 1), silent=silent, now=time.time(),
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
                     add_error=request.query_params.get("add_error"))
 

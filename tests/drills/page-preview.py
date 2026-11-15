@@ -36,6 +36,8 @@ def main():
     case.c.kiwi = [sys.executable, stand_in]
     case.ask("/login", {"password": case.PW})               # the store opens: the devices go into it, not beside it
     case.c.refresh_status()
+    with open(case.c.health_file, "w") as fh:                # for /status, and for Home's services that do not answer
+        json.dump(madeup.health(time.time()), fh)
     os.makedirs(os.path.join(case.f.dir, "secrets", "devices"), exist_ok=True)
     for d in ("annas-phone", "laptop", "tablet"):
         with open(os.path.join(case.f.dir, "secrets", "devices", d + ".conf"), "w") as fh:

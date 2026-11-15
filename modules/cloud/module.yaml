@@ -26,12 +26,14 @@ templates:
   kiwi_config: kiwi.config.php.j2
   folders_script: cloud-folders.sh.j2
   folders_service: kn-cloud-folders.service.j2
+  db_start: db-start.sh.j2
 
 derived:
   has_folders: "{{ 'yes' if shared_folders or read_only_folders else '' }}"
 
 outputs:
   kiwi_config: { path: "nextcloud-aio-nextcloud/kiwi.config.php", mode: 0644 }
+  db_start: { path: "nextcloud-aio-database/kiwi-start.sh", mode: 0755 }
   folders_script: { path: "kiwi/cloud-folders.sh", mode: 0755, when: has_folders }
   folders_service: { kind: host_unit, name: kn-cloud-folders.service, when: has_folders }
 

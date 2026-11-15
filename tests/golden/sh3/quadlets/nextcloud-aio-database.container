@@ -27,6 +27,9 @@ AddHost=vault.sh3.home:172.128.0.5
 AddHost=portainer.sh3.home:172.128.0.5
 Volume=nextcloud_aio_database:/var/lib/postgresql/data:rw
 Volume=nextcloud_aio_database_dump:/mnt/data:rw
+Volume=/home/user/docker/nextcloud-aio-database/kiwi-start.sh:/kiwi-start.sh:ro,z
+PodmanArgs=--entrypoint=/bin/sh
+Exec=/kiwi-start.sh
 HealthCmd=/healthcheck.sh
 HealthInterval=30s
 HealthTimeout=30s

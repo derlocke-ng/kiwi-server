@@ -120,6 +120,10 @@ services:
     image: ghcr.io/nextcloud-releases/aio-postgresql:latest
     container_name: nextcloud-aio-database
     init: true
+    entrypoint:
+    - /bin/sh
+    command:
+    - /kiwi-start.sh
     restart: unless-stopped
     read_only: true
     user: '999'
@@ -141,6 +145,7 @@ services:
     volumes:
     - nextcloud_aio_database:/var/lib/postgresql/data:rw
     - nextcloud_aio_database_dump:/mnt/data:rw
+    - /home/user/docker/nextcloud-aio-database/kiwi-start.sh:/kiwi-start.sh:ro,z
     healthcheck:
       test: /healthcheck.sh
       interval: 30s

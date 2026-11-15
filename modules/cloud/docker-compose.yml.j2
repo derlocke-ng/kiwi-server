@@ -62,6 +62,9 @@ services:
     image: {{ img }}aio-postgresql:{{ tag }}
     container_name: nextcloud-aio-database
     init: true
+    # kiwi-start.sh puts postgresql.conf back when a power cut emptied it, then runs the image's /start.sh
+    entrypoint: ["/bin/sh"]
+    command: ["/kiwi-start.sh"]
     restart: unless-stopped
     read_only: true
     user: "999"
@@ -81,6 +84,7 @@ services:
     volumes:
       - nextcloud_aio_database:/var/lib/postgresql/data:rw
       - nextcloud_aio_database_dump:/mnt/data:rw
+      - {{ docker_dir }}/nextcloud-aio-database/kiwi-start.sh:/kiwi-start.sh:ro,z
     healthcheck: {{ hc }}
     logging:
       driver: json-file

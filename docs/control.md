@@ -16,6 +16,7 @@ that booted. The page:
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
+| **The status page** | for everyone on the network, without a login, at `https://status.<host>`: which services work, since when one does not, the last week's incidents |
 
 On a computer the menu is at the side, with how the machines are below it; on a phone
 it is a bar at the bottom, with the rest under "More". The page follows the device's
@@ -305,6 +306,49 @@ kiwi-server gone ~/kiwi/fleet.yaml --dry-run
 ```
 
 What is planned beyond a restart: [design/recovery.md](design/recovery.md).
+
+## The status page, and messages
+
+After every look the control node also asks every service for a page, the way a
+device on the network does. A machine can say that all its containers run while
+a service answers nobody (a database that lost its settings in a power cut does
+that); the question finds it. What is wrong is kept with its time.
+
+**The status page** shows it to everyone who may reach this machine's web pages,
+without a login: `https://status.<host>`. Each service by the name people know,
+"works" or "does not answer" and for how long, how many machines answer, when
+machines restart for updates, and what was wrong in the last seven days. It shows
+no admin page, no address and no setting. Who may open it is set like for any
+service ([Who may reach what](network.md#who-may-reach-what)); `status_page: false`
+in the node's `control:` block switches it off. Home shows the same to the people
+who run the network, with the machine to open.
+
+**Messages** go out when something has been wrong for ten minutes, and once more
+when it is fine again: a machine or a service that does not answer, a problem a
+machine reports (a full disk, a backup that is too old), and what the control
+node did by itself (a master restarted, a disk opened). "Settings for every
+machine" has the fields, under "Messages when something is wrong":
+
+```yaml
+defaults:
+  notify:
+    mail: { to: [me@example.org], host: smtp.example.org, user: me, password: "...", from: kiwi@example.org }
+    ntfy: { url: https://ntfy.sh/a-name-only-you-know }     # a push message on the phone
+    webhook: { url: https://example.org/hook }              # JSON: an SMS gateway, a chat room
+    heartbeat: https://hc-ping.com/your-check               # asked after every look
+    after: 10                                               # minutes
+```
+
+One, two or all three; a place that fails says why in Activity and does not stop
+the others. "Send a test message" on the settings page tries them, as does:
+
+```bash
+kiwi-server notify ~/kiwi/fleet.yaml --test
+```
+
+When the control node itself is off, it cannot say so. That is what `heartbeat`
+is for: a service outside (healthchecks.io, or your own) that is asked after
+every look and tells you when the asking stops.
 
 ## Mind
 

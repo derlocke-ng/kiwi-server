@@ -31,7 +31,8 @@ import yaml
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk  # noqa: E402
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoCairo  # noqa: E402
 
 APP_ID = "eu.kiwinetwork.KiwiServer"
 esc = GLib.markup_escape_text
@@ -56,6 +57,7 @@ CSS = b"""
 .ks-pill.new { background: alpha(@accent_bg_color, .24); color: @accent_color; }
 .ks-help { min-width: 22px; min-height: 22px; padding: 0; }
 .ks-tile { padding: 12px 16px; }
+.ks-picture { padding: 12px; }
 .ks-tile-value { font-size: 1.7em; font-weight: 700; font-feature-settings: "tnum"; }
 .ks-tile-value.ok   { color: @success_color; }
 .ks-tile-value.warn { color: @warning_color; }
@@ -1662,6 +1664,144 @@ def flow(children, most):
         box.append(c)
         box.get_last_child().set_focusable(False)
     return box
+
+
+def tags(modules):
+    """What a machine is for the others, from its parts."""
+    return [word for part, word in (("control", "control node"), ("gateway", "gateway"), ("backup-server", "keeps backups"))
+            if part in (modules or [])]
+
+
+class NetworkPicture(Gtk.DrawingArea):
+    """The network as a picture: the master, and a line to every other machine, green when the
+    machine answers and grey and broken when it does not. Wide, the machines stand in rows under
+    the master; narrow, as a list. A click on a machine opens it. `master` and each of `rest` are
+    (name, state, answers, caption)."""
+    BW, BH, GAP, PAD, MW, MH = 158, 48, 20, 24, 250, 52
+    COLOURS = {"ok": (.18, .76, .49), "warn": (.90, .65, .04), "bad": (.88, .11, .14), "down": (.88, .11, .14)}   # the dots' colours
+
+    def __init__(self, win, master, rest):
+        super().__init__(hexpand=True)
+        self.win, self.master, self.rest = win, master, rest
+        self.boxes, self.lines, self.laid = [], [], None
+        self.set_draw_func(self.draw)
+        self.connect("resize", lambda _a, width, _h: self.lay_out(width))
+        self.lay_out(720)
+        click = Gtk.GestureClick()
+        click.connect("released", lambda _g, _n, x, y: self.at(x, y) and self.win.select_scope(self.at(x, y)["name"]))
+        self.add_controller(click)
+        move = Gtk.EventControllerMotion()
+        move.connect("motion", self.moved)
+        self.add_controller(move)
+        self.update_property([Gtk.AccessibleProperty.LABEL],
+                             ["Your network: the master %s and %d machines linked to it" % (master[0], len(rest))])
+
+    def lay_out(self, width):
+        """Where every box and line goes for this width."""
+        per_row = max(1, min(4, (width - 2 * self.PAD + self.GAP) // (self.BW + self.GAP)))
+        per_row = per_row if per_row > 1 else 1
+        if self.laid == (width, per_row):
+            return
+        self.laid, self.boxes, self.lines = (width, per_row), [], []
+        bw, bh, gap, pad, mw, mh = self.BW, self.BH, self.GAP, self.PAD, self.MW, self.MH
+
+        def box(m, x, y, w, h, top=False):
+            self.boxes.append({"name": m[0], "state": m[1], "cap": m[3], "x": x, "y": y, "w": w, "h": h, "master": top})
+
+        def line(x1, y1, x2, y2, m=None):
+            self.lines.append((x1, y1, x2, y2, None if m is None else "up" if m[2] else "off"))
+        if per_row == 1:                        # a list under the master
+            w = min(width, 460)
+            off, tx, x = (width - w) // 2, 28, 52
+            box(self.master, off + 10, 6, w - 20, mh, True)
+            y = 6 + mh + 14
+            for m in self.rest:
+                line(off + tx, y + bh // 2, off + x, y + bh // 2, m)
+                box(m, off + x, y, w - 10 - x, bh)
+                y += bh + 12
+            line(off + tx, 6 + mh, off + tx, y - 12 - bh // 2)
+            height = y - 12 + 6
+        else:
+            w = 2 * pad + per_row * bw + (per_row - 1) * gap
+            off, tx = (width - w) // 2, 10
+            rows = [self.rest[i:i + per_row] for i in range(0, len(self.rest), per_row)]
+            cx, top, step = off + w // 2, 6 + mh + 44, bh + 40
+            box(self.master, cx - mw // 2, 6, mw, mh, True)
+            for r, row in enumerate(rows):
+                by = top + r * step - 20
+                start = off + ((w - len(row) * bw - (len(row) - 1) * gap) // 2 if len(rows) == 1 else pad)
+                mids = [start + i * (bw + gap) + bw // 2 for i in range(len(row))]
+                if r == 0:
+                    line(cx, 6 + mh, cx, by)
+                    line(min([cx, mids[0]] + ([off + tx] if len(rows) > 1 else [])), by, max(cx, mids[-1]), by)
+                else:
+                    line(off + tx, by, mids[-1], by)
+                for i, m in enumerate(row):
+                    line(mids[i], by, mids[i], top + r * step, m)
+                    box(m, mids[i] - bw // 2, top + r * step, bw, bh)
+            if len(rows) > 1:
+                line(off + tx, top - 20, off + tx, top + (len(rows) - 1) * step - 20)
+            height = top + (len(rows) - 1) * step + bh + 6
+        self.set_content_height(height)
+        self.queue_draw()
+
+    def at(self, x, y):
+        return next((b for b in self.boxes if b["x"] <= x <= b["x"] + b["w"] and b["y"] <= y <= b["y"] + b["h"]), None)
+
+    def moved(self, _c, x, y):
+        b = self.at(x, y)
+        self.set_cursor(Gdk.Cursor.new_from_name("pointer") if b else None)
+        self.set_tooltip_text("%s: %s" % (b["name"], WORDS.get(b["state"], b["state"])) if b else None)
+
+    def draw(self, _area, cr, _width, _height):
+        fg = self.get_color()
+        ink = lambda a: cr.set_source_rgba(fg.red, fg.green, fg.blue, a)                       # noqa: E731
+        paint = lambda state: cr.set_source_rgb(*self.COLOURS[state])                             # noqa: E731
+        try:
+            accent = Adw.StyleManager.get_default().get_accent_color_rgba()
+            accent = (accent.red, accent.green, accent.blue)
+        except AttributeError:                  # an older libadwaita: its blue
+            accent = (.21, .52, .89)
+        cr.set_line_width(2)
+        cr.set_line_cap(1)                      # round
+        for x1, y1, x2, y2, kind in self.lines:
+            cr.set_dash([5, 5] if kind == "off" else [])
+            if kind == "up":
+                paint("ok")
+            else:
+                ink(.4 if kind == "off" else .3)
+            cr.move_to(x1, y1)
+            cr.line_to(x2, y2)
+            cr.stroke()
+        cr.set_dash([])
+        for b in self.boxes:
+            x, y, w, h, r = b["x"] + .5, b["y"] + .5, b["w"], b["h"], 8
+            cr.new_sub_path()
+            for cx, cy, a in ((x + w - r, y + r, -.5), (x + w - r, y + h - r, 0), (x + r, y + h - r, .5), (x + r, y + r, 1)):
+                cr.arc(cx, cy, r, a * 3.14159265, (a + .5) * 3.14159265)
+            cr.close_path()
+            ink(.05)
+            cr.fill_preserve()
+            cr.set_line_width(1.5 if b["master"] else 1)
+            if b["master"]:
+                cr.set_source_rgb(*accent)
+            else:
+                ink(.3)
+            cr.stroke()
+            cr.arc(x + 17, y + h // 2 - 5, 5, 0, 6.2831853)
+            if b["state"] in self.COLOURS:
+                paint(b["state"])
+            else:
+                ink(.3)
+            cr.fill()
+            for markup, dy, alpha in (("<b>%s</b>" % esc(b["name"]), 5, 1), ("<small>%s</small>" % esc(b["cap"]), 25, .65)):
+                text = self.create_pango_layout("")
+                text.set_markup(markup)
+                text.set_width(int((w - 38) * Pango.SCALE))
+                text.set_ellipsize(Pango.EllipsizeMode.END)
+                ink(alpha)
+                cr.move_to(x + 30, y + (h - self.BH) // 2 + dy)
+                PangoCairo.show_layout(cr, text)
 
 
 class Column:
@@ -3431,7 +3571,39 @@ class Window(Adw.ApplicationWindow):
         return {"hosts": len(hosts), "answers": len(answers), "online": len(good),
                 "running": sum(a["facts"]["running"] for a in good),
                 "expected": sum(a["facts"]["expected"] for a in good),
-                "attention": [(h, level, text) for h in hosts for level, text in self.problems_of(h)]}
+                "attention": [(h, level, text) for h in hosts for level, text in self.problems_of(h)],
+                "backup": self.oldest_backup(hosts)}
+
+    def oldest_backup(self, hosts):
+        """(words, what they say, colour) for the tile: the machine whose last backup is oldest. None: nothing saves."""
+        saved = [(a["facts"]["backup"].get("age"), h) for h in hosts
+                 for a in [self.live.get(h)] if a and a["ok"] and a["facts"].get("backup")]
+        if not saved:
+            return None
+        never = [h for age, h in saved if age is None]
+        if never:
+            return ("never", "%s was not saved yet" % never[0], "bad")
+        age, who = max(saved)
+        return (" ".join(duration(age).split(" ")[:2]), "oldest backup: %s" % who,
+                "bad" if age > 3 * 86400 else "warn" if age > 36 * 3600 else None)
+
+    def picture(self):
+        """The picture of the network, or None while there is no master with a machine beside it."""
+        rows = []
+        for h in self.doc.hosts():
+            role = self.value_of(h, "role", "bare")
+            if role == "bare":
+                continue
+            mods = (self.status.get(h) or {}).get("modules") or []
+            rows.append((h, self.state_of(h), bool((self.live.get(h) or {}).get("ok")), ", ".join(tags(mods)[:2]) or role, role))
+        masters = [r for r in rows if r[4] == "master"]
+        rest = [r for r in rows if r[4] != "master"]
+        if not masters or not rest:
+            return None
+        folder = os.path.join(self.doc.dir, "secrets", "devices")
+        n = len([f for f in os.listdir(folder) if f.endswith(".conf")]) if os.path.isdir(folder) and not self.locked() else 0
+        cap = "master" + (" · %d %s on its VPN" % (n, "device" if n == 1 else "devices") if n else "")
+        return NetworkPicture(self, masters[0][:3] + (cap,), [r[:4] for r in masters[1:] + rest])
 
     def fleet_line(self):
         n = self.numbers()
@@ -3674,7 +3846,7 @@ class Window(Adw.ApplicationWindow):
         head.append(Gtk.Label(label=name, xalign=0, hexpand=True, ellipsize=3, css_classes=["heading"]))
         head.append(pill(self.value_of(name, "role", "bare"), "dim"))
         body.append(head)
-        body.append(caption(st.get("hostname") or ""))
+        body.append(caption(" · ".join([st.get("hostname") or ""] + tags(st.get("modules")))))
         grid = Gtk.Grid(column_spacing=8, row_spacing=4)
 
         def line(row, label, fraction, text):
@@ -3684,13 +3856,16 @@ class Window(Adw.ApplicationWindow):
             value.set_xalign(1)
             grid.attach(value, 2, row, 1, 1)
         if f:
+            if f.get("load") and f.get("cpus"):
+                used = min(1, f["load"][0] / f["cpus"])
+                line(0, "CPU", used, "%d %%" % (used * 100))
             m = f.get("memory") or {}
             if m.get("total"):
                 used = 1 - m["available"] / m["total"]
-                line(0, "Memory", used, "%d %%" % (used * 100))
+                line(1, "Memory", used, "%d %%" % (used * 100))
             for i, d in enumerate(f.get("disks") or []):
                 used = d["used"] / d["size"] if d["size"] else 0
-                line(i + 1, "Disk %s" % d["mount"] if len(f["disks"]) > 1 else "Disk", used, "%d %%" % (used * 100))
+                line(i + 2, "Disk %s" % d["mount"] if len(f["disks"]) > 1 else "Disk", used, "%d %%" % (used * 100))
             body.append(grid)
         body.append(caption(self.machine_line(name)))
         btn = Gtk.Button(child=body, css_classes=["card"], tooltip_text=WORDS[state])
@@ -3713,8 +3888,7 @@ class Window(Adw.ApplicationWindow):
                  "bad" if n["running"] < n["expected"] else None),
             tile(str(len(n["attention"])) if n["answers"] else "–", "to look at",
                  "warn" if n["attention"] else "ok" if n["answers"] else None),
-            tile(store[0], store[1], store[2]),
-        ], 4))
+        ] + ([tile(*n["backup"])] if n["backup"] else []) + [tile(store[0], store[1], store[2])], 5 if n["backup"] else 4))
         if self.store and not self.store.get("store"):
             g = Adw.PreferencesGroup(title="Protect your network's keys")
             row = Adw.ActionRow(use_markup=False, title="The keys lie on this computer as plain files",
@@ -3749,6 +3923,12 @@ class Window(Adw.ApplicationWindow):
         names = sorted(self.doc.hosts(), key=lambda h: order.get(self.group_of(h), len(order)))
         machines.add(flow([self.machine_card(h) for h in names], 3))
         parts.append(machines)
+        picture = self.picture()
+        if picture:
+            linked = Adw.PreferencesGroup(title="How they are linked", description="Every machine holds a link to the master. "
+                                          "A green line: the machine answers. A grey, broken one: it does not.")
+            linked.add(Gtk.Frame(child=picture, css_classes=["card", "ks-picture"]))
+            parts.append(linked)
         net = Adw.PreferencesGroup(title="Network")
         info = self.fleet_info
         if info.get("domain"):

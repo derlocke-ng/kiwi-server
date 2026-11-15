@@ -7101,6 +7101,29 @@ def _have_web():
             return False
 
 
+class TestMadeUpNetwork(unittest.TestCase):
+    """The made-up network of the page and app previews (tests/drills/madeup.py) says what real
+    machines say: a field the app or the page reads must not be missing from it."""
+
+    def test_its_machines_answer_like_real_ones(self):
+        sys.path.insert(0, os.path.join(ROOT, "tests", "drills"))
+        self.addCleanup(sys.path.pop, 0)
+        import madeup
+        from kiwiserver import facts
+        listed, status = madeup.answers()
+        self.assertEqual([h["name"] for h in listed["hosts"]], [h["host"] for h in status["hosts"]])
+        answering = [h for h in status["hosts"] if h["ok"]]
+        self.assertTrue(answering and len(answering) < len(status["hosts"]))          # one does not answer
+        for h in answering:
+            self.assertEqual(set(facts.parse("")) - set(h["facts"]), set(), h["host"])
+        for h in status["hosts"]:
+            self.assertEqual({"host", "target", "ok", "output", "state", "problems", "notes", "facts"} - set(h), set())
+        self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]), sorted(h["name"] for h in listed["hosts"]))
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "drills", "madeup.py"), "status", "x", "--porcelain"],
+                           capture_output=True, text=True)
+        self.assertEqual(json.loads(r.stdout), status)
+
+
 @unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
 class TestWeb(StoreBase):
     """The pages over a real socket, asked the way a browser asks: a form posted under the

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.106.0 — the app shows the network as a picture
+
+- **The app's overview has the picture too**: "How they are linked" draws the master
+  and a line to every other machine, green when the machine answers, grey and broken
+  when it does not. A click on a machine opens it. Narrow windows get it as a list.
+- Every machine's card says what it is for the others (control node, gateway, keeps
+  backups) and shows its processor's load beside memory and disks. A new number on
+  top: how old the oldest last backup is, and whose it is.
+- `tests/drills/app-preview.sh` shows the app in a browser with a made-up network,
+  the same one `page-preview.py` uses (`madeup.py`).
+
 ## 2.105.0 — the control page's new look
 
 - **A menu at the side, numbers on top.** On a computer the control page has its menu

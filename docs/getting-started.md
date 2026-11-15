@@ -29,9 +29,15 @@ address, a setup code and a QR code, on its screen. The page asks the questions
 of this chapter and makes the network ([control.md](control.md), "Start a
 network from the page").
 
-What is there today is the stick and the first-run page. That the machine from
-the stick becomes the network's first node by one button, and the sign-in at
-the hoster on the page, are the next steps ([design](design/starter.md)).
+The machine from the stick is the network's first machine at home: the
+questions list it as "This machine", it keeps the address the router gave it,
+and nothing is installed again. When the master runs, "Set it up" on the page
+gives it its services. The page then moves, like every service, onto the VPN:
+`https://control.<name>.<domain>`. Put the phone on the VPN first (Devices).
+
+This last step is built and tested in parts; the whole run on one machine, from
+the stick to the first node, has not been done yet. The sign-in at the hoster
+on the page is the next step ([design](design/starter.md)).
 
 ## Make a fleet
 

@@ -16,7 +16,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import recovery as recoverymod
+from . import recovery as recoverymod, starter as startermod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -816,7 +816,7 @@ def cmd_list(args):
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
-                     "phase": nxt[0], "next": nxt[1], "provider": (h.cfg.get("vps") or {}).get("provider") or "",
+                     "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
@@ -927,6 +927,19 @@ def cmd_next(args):
             phase, built = "install", True
         else:
             return
+    if starter_host(fleet) == h.name:
+        # the machine the starter stick installed, set up by the control part that runs on it: what an
+        # install would have written is put in place with the starter key, then its role, as a unit
+        # of the machine itself, since the role replaces the container this runs in
+        if go("%s is the machine this runs on. Set it up now (a few minutes; it downloads what it runs)?" % h.name):
+            check(fleet, roles, ms, [h])
+            script, _b = Renderer(fleet, roles, out_dir, make_tc(args), ms, media_dir_for(args, fleet)).script(h)
+            tgt = adoptmod.run_coreos(h, "core@127.0.0.1", script, key=STARTER_KEY)
+            os.environ["KIWI_CONTROL_HOST"] = h.name
+            run("apply", path, h.name, "--ssh", tgt)
+            util.say("%s: this page moves. When the machine is set up, open https://control.%s from a device on your VPN "
+                     "and log in again" % (h.name, h.hostname))
+        return
     # phase == "install": the media exist. Is the machine there already? A machine nobody has
     # met is not looked for by its name (that resolves on the VPN only): its fixed address at
     # home, or a master's address on the Internet, is where the first contact goes.
@@ -1046,6 +1059,17 @@ def shown_path(path):
     return "~" + path[len(home):] if path.startswith(home + os.sep) else path
 
 
+STARTER_KEY = "/starter/id_ed25519"
+
+
+def starter_host(fleet):
+    """On a machine the starter stick installed, as long as it is not a node yet: the name of the
+    fleet's machine that is this one (the one with the control part). None everywhere else."""
+    if os.environ.get("KIWI_STARTER") != "1" or not os.path.isfile(STARTER_KEY):
+        return None
+    return next((h.name for h in fleet.hosts.values() if "control" in (h.modules or [])), None)
+
+
 def next_step(fleet, roles, host, errors, out):
     """(phase, what to do next) for a machine, from what this computer knows: the fleet file
     and the output. `status` knows whether it runs; the app combines the two."""
@@ -1060,6 +1084,8 @@ def next_step(fleet, roles, host, errors, out):
         return "applied", "kiwi-server status %s %s says how it is" % (fname, host.name)
     if host.role == "bare":
         return "bare", "give it a role in the fleet file, or install it bare: kiwi-server build %s %s" % (fname, host.name)
+    if starter_host(fleet) == host.name:
+        return "install", "it is the machine this runs on: kiwi-server next %s %s sets it up" % (fname, host.name)
     if not out.status()["iso"]:
         if (host.cfg.get("vps") or {}).get("server") or host.role in roles and roles[host.role].node_type == "master":
             return "build", "kiwi-server build %s %s, then kiwi-server vps install (netcup) or boot the ISO" % (fname, host.name)
@@ -1738,9 +1764,11 @@ def cmd_apply(args):
             if os.environ.get("KIWI_CONTROL_HOST") == h.name:
                 # the control node applies itself: the role may restart the container this runs in,
                 # so it runs as a unit of its own on the machine and outlives the connection
+                # a machine the starter stick installed takes away what the starter needed, when the role is in
                 remote.run(tgt, "systemctl reset-failed kiwi-self-apply 2>/dev/null; systemd-run --collect "
                                 "--unit=kiwi-self-apply bash -c %s" % shlex.quote(
-                                    "bash /var/lib/kiwi-server/role.sh --force" + (" && " + UPDATE_IMAGES if update else "")))
+                                    "bash /var/lib/kiwi-server/role.sh --force" + (" && " + UPDATE_IMAGES if update else "")
+                                    + " && { [ ! -x %s ] || %s; }" % (startermod.DONE, startermod.DONE)))
                 util.say("%s: applying itself, detached (this page may drop for a moment); on the machine: "
                          "journalctl -u kiwi-self-apply -f" % h.name)
                 continue
@@ -1784,7 +1812,11 @@ def cmd_adopt(args):
     if len(hosts) != 1:
         raise KiwiError("which host? kiwi-server adopt <fleet> <host> --as user@address")
     check(fleet, roles, ms, hosts)      # the fleet's mistakes before the board is touched
-    tgt = adoptmod.run(hosts[0], getattr(args, "as"), new_host_key=args.new_host_key)
+    if hosts[0].target == "coreos":     # a machine that runs CoreOS already (the starter stick's)
+        script, _b = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet)).script(hosts[0])
+        tgt = adoptmod.run_coreos(hosts[0], getattr(args, "as"), script, key=args.key)
+    else:
+        tgt = adoptmod.run(hosts[0], getattr(args, "as"), new_host_key=args.new_host_key)
     util.say("%s: adopted; now its role" % hosts[0].name)
     args.hosts, args.ssh, args.no_run = [hosts[0].name], tgt, False
     cmd_apply(args)
@@ -2977,7 +3009,6 @@ def cmd_build(args):
 
 def build_starter(args):
     """The starter image (docs/design/starter.md): no fleet, no secret, the same for everybody."""
-    from . import starter as startermod
     if args.fleet or args.hosts:
         raise KiwiError("the starter image has no fleet in it: kiwi-server build --starter [--output FILE]")
     for flag in ("bare", "offline", "no_backup", "output_dir"):
@@ -3268,6 +3299,7 @@ def build_parser():
                    help="the board's own login (root or a sudo user, a password works), e.g. odroid@192.168.2.40")
     s.add_argument("--new-host-key", action="store_true",
                    help="the board was flashed again: forget the host key the fleet knows for that address")
+    s.add_argument("--key", metavar="FILE", help="target coreos (a machine the starter stick installed): the key that login takes")
     s = sub("watch", cmd_watch); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--once", action="store_true", help="one look, then exit (what the timer runs)")

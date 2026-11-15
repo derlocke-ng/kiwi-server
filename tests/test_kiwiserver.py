@@ -528,7 +528,7 @@ class TestStarter(Base):
 
     def scripts(self):
         return {"install": starter.install_script(), "screen": starter.screen_script(), "key": starter.key_script(),
-                "page": starter.page_script()}
+                "page": starter.page_script(), "done": starter.done_script()}
 
     def test_scripts_parse(self):
         for name, text in self.scripts().items():
@@ -548,7 +548,7 @@ class TestStarter(Base):
         self.assertIn("connection.mdns=2", files["/etc/NetworkManager/conf.d/50-kiwi-mdns.conf"])
         q = files["/etc/containers/systemd/kn-control.container"]
         for line in ("Image=ghcr.io/derlocke-ng/kiwi-server-control:2", "ContainerName=kn-control", "Network=host",
-                     "Volume=/var/lib/kiwi-control:/fleet:Z", "Volume=/var/lib/kiwi-starter:/starter:ro,Z",
+                     "Volume=/var/home/user/docker/kn-control:/fleet:Z", "Volume=/var/lib/kiwi-starter:/starter:ro,Z",
                      "Tmpfs=/run/kiwi:size=2g,mode=0700", "Environment=XDG_RUNTIME_DIR=/run/kiwi",
                      "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait", "Restart=always",
                      "Requires=kiwi-starter-key.service"):
@@ -569,7 +569,51 @@ class TestStarter(Base):
         self.assertEqual(set(units), {"kiwi-starter-key.service", "kiwi-starter-port80.service", "kiwi-starter-screen.service"})
         self.assertTrue(all(u["enabled"] for u in units.values()))
         dirs = {d["path"]: d["mode"] for d in bu["storage"]["directories"]}
-        self.assertEqual(dirs, {"/var/lib/kiwi-starter": 0o700, "/var/lib/kiwi-control": 0o700})
+        # the fleet where a node's control part keeps it: the node this machine becomes finds it there
+        self.assertEqual(dirs, {"/var/lib/kiwi-starter": 0o700, "/var/home/user/docker/kn-control": 0o700})
+        self.assertIn("Environment=KIWI_STARTER=1\n", q)
+        done = files[starter.DONE]
+        self.assertIn("grep -q '^# kiwi-server stack' \"$q\"", done)       # nothing goes before the stack has the control part
+        self.assertIn("nft delete table inet kiwi_starter", done)
+        self.assertIn("rm -rf /var/lib/kiwi-starter ", done)
+        self.assertIn("systemctl restart kn-control.service", done)
+        self.assertNotIn("kiwi-starter.installed", done)                      # the mark stays: the stick never installs over it
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_this_machine_is_the_first_node(self):
+        answers = dict(TestSetup.ANSWERS, nodes=[{"name": "mango", "preset": "cloud", "address": "192.168.2.57"},
+                                                 {"name": "quince", "preset": "cloud"}], this_address="192.168.2.57")
+        self.assertEqual(setupmod.check(answers), {})
+        data, _made = setupmod.make(answers, self.tmp)
+        mango, quince = data["hosts"]["mango"], data["hosts"]["quince"]
+        self.assertEqual(mango["target"], "coreos")                           # the starter's system, as it is
+        self.assertNotIn("disk", mango)
+        self.assertEqual(mango["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "control"])
+        self.assertEqual(mango["network"], {"dhcp": False, "address": "192.168.2.57/16", "gateway": "192.168.2.1",
+                                            "dns": ["192.168.2.1"]})
+        self.assertEqual((quince["target"], "modules" in quince["node"]), ("ucore", False))
+        self.assertIn("cannot be left out", setupmod.check(dict(answers, nodes=answers["nodes"][1:]))["nodes"])
+        # which machine it is: only on a starter, and the one with the control part. Its step is not
+        # install media: it runs already
+        path = os.path.join(self.tmp, "fleet.yaml")
+        setupmod.write(path, data)
+        write(os.path.join(self.tmp, "secrets", "mango.home.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.2/24\n")
+
+        def listed():
+            rc, out, err = TestSetup.run_cli(self, "list", path, "--porcelain")
+            self.assertEqual(rc, 0, err)
+            return {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual((listed()["mango"]["phase"], listed()["mango"]["here"]), ("build", False))
+        key = os.path.join(self.tmp, "starter-key")
+        write(key, "x")
+        was = cli.STARTER_KEY
+        cli.STARTER_KEY = key
+        self.addCleanup(setattr, cli, "STARTER_KEY", was)
+        with mock.patch.dict(os.environ, {"KIWI_STARTER": "1"}):
+            hosts = listed()
+        self.assertEqual((hosts["mango"]["phase"], hosts["mango"]["here"]), ("install", True))
+        self.assertIn("the machine this runs on", hosts["mango"]["next"])
+        self.assertFalse(hosts["quince"]["here"])
 
     def test_live_system(self):
         bu = starter.live_butane('{"ignition": {"version": "3.5.0"}}')
@@ -855,6 +899,60 @@ class TestAdopt(Base):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"u": {}}})
         with self.assertRaisesRegex(KiwiError, "target: debian"):
             adoptmod.run(f.hosts["u"], "root@x", runner=None)
+
+    def coreos_host(self, **over):
+        f = self.fleet({"defaults": self.base_defaults(target="coreos", timezone="Europe/Berlin",
+                                                       admin={"user": "core", "password": "pw", "ssh_keys": [KEY]}),
+                        "hosts": {"fig": dict({"hostname": "fig.home"}, **over)}})
+        return f.hosts["fig"]
+
+    def test_a_running_coreos_gets_what_ignition_would_have_written(self):
+        files = adoptmod.coreos_files(self.coreos_host(), "echo the role\n")
+        script = files["adopt.sh"][0]
+        path = os.path.join(self.tmp, "adopt.sh")
+        write(path, script)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        if have("shellcheck"):
+            r = subprocess.run(["shellcheck", "-S", "warning", "-s", "bash", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+        names = {line.split()[1]: line.split()[3] for line in script.splitlines() if line.startswith("put ")}
+        self.assertEqual(files[next(n for n, where in names.items() if where == "/etc/hostname")][0], "fig.home\n")
+        self.assertEqual(files[next(n for n, where in names.items() if where == "/var/lib/kiwi-server/role.sh")][0], "echo the role\n")
+        self.assertIn("put ", script)
+        self.assertIn("/etc/systemd/system/kiwi-role.service", script)
+        self.assertIn("systemctl enable kiwi-role.service", script)                # enabled, not started: apply runs the role
+        self.assertNotIn("enable --now kiwi-role.service", script)
+        self.assertIn("ln -sfn ../usr/share/zoneinfo/Europe/Berlin /etc/localtime", script)
+        self.assertIn('authorized_keys.d/ignition', script)                        # where an install has them
+        self.assertIn("usermod -p ", script)
+        self.assertEqual(files["authorized_keys"][0], KEY + "\n")
+        self.assertIn("/run/ostree-booted", script)
+
+    def test_a_running_coreos_is_not_encrypted_or_another_target(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"u": {}}})
+        with self.assertRaisesRegex(KiwiError, "target: coreos"):
+            adoptmod.coreos_files(f.hosts["u"], "")
+        h = self.coreos_host()
+        h.cfg["unlock"] = {"rings": ["house"], "threshold": 1}
+        with self.assertRaisesRegex(KiwiError, "cannot be encrypted"):
+            adoptmod.coreos_files(h, "")
+        calls = []
+
+        def runner(argv, **kw):
+            calls.append((argv, kw.get("input")))
+            return subprocess.CompletedProcess(argv, 0)
+        was = remote.run_ok
+        remote.run_ok = lambda tgt: True
+        self.addCleanup(setattr, remote, "run_ok", was)
+        tgt = adoptmod.run_coreos(self.coreos_host(), "core@192.168.1.30", "echo role\n", key="/starter/id_ed25519", runner=runner)
+        self.assertEqual(tgt, "core@192.168.1.30")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("/starter/id_ed25519", calls[0][0])
+        self.assertIn("BatchMode=yes", calls[0][0])
+        import tarfile, io as _io
+        names = tarfile.open(fileobj=_io.BytesIO(calls[0][1]), mode="r:gz").getnames()
+        self.assertIn("adopt.sh", names)
+        self.assertIn("sudo bash /var/tmp/kiwi-adopt/adopt.sh", calls[1][0][-1])
 
     def test_new_host_key_forgets_the_address(self):
         calls = []
@@ -8363,6 +8461,38 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.ask("/", cookie=cookie)[0], 200)
         self.c.lock_store()
         self.assertTrue(self.c.login(self.PW))
+
+    def test_on_a_starter_this_machine_is_the_first_node(self):
+        from kiwiserver import setup as setupmod
+        real = setupmod.detect
+
+        def detect(probe=True):         # what a machine the starter stick installed finds: itself
+            return dict(real(probe=False), subnet="192.168.1.0/24", gateway="192.168.1.1", this="192.168.1.57", addresses=[])
+        with mock.patch.object(setupmod, "detect", detect):
+            body = self.ask("/setup")[1]
+            self.assertIn("<strong>This machine</strong>", body)
+            self.assertIn('<input type="hidden" name="nodes.0.address" value="192.168.1.57">', body)
+            self.assertNotIn(">Leave it out</button></div>\n<p class=\"muted\">The machine this page runs on", body)
+            self.assertNotIn('name="nodes.0.disk"', body)           # nothing is installed: no disk, no system to choose
+            form = dict(self.FORM, **{"nodes.0.address": "192.168.1.57", "nodes.0.name": "mango"})
+            gone = {k: v for k, v in form.items() if not k.startswith("nodes.")}
+            body = self.ask("/setup", dict(gone, password=self.PW, again=self.PW, code=self.c.setup_code()))[1]
+            self.assertIn("cannot be left out", body)               # a form that was changed
+            self.assertTrue(self.c.fresh())
+            _s, body, cookie = self.ask("/setup", dict(form, password=self.PW, again=self.PW, code=self.c.setup_code()))
+            self.assertIn("AGE-SECRET-KEY-", body)
+        raw = yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))["hosts"]["mango"]
+        self.assertEqual((raw["target"], raw["node"]["modules"][-1], raw["network"]["address"]),
+                         ("coreos", "control", "192.168.1.57/24"))
+        # its step on Home: no install media, and where the page goes
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "phase": "applied", "modules": [], "sites": []},
+            {"name": "mango", "hostname": "mango.home", "role": "node", "phase": "install", "here": True, "modules": ["control"],
+             "sites": []}]}))
+        body = self.ask("/", cookie=cookie)[1]
+        self.assertIn("It is the machine this page runs on", body)
+        self.assertIn("https://control.mango.home", body)
+        self.assertNotIn("Make its install media", body)
 
     def made(self):
         """A network made on the page: (cookie, csrf token)."""

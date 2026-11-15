@@ -22,7 +22,10 @@ HOSTNAME = "kiwi"
 MIN_DISK_BYTES = 16 * 1000 ** 3
 MARKER = "kiwi-starter.installed"       # on the installed disk's boot file system (label `boot`)
 KEY_DIR = "/var/lib/kiwi-starter"        # the starter key; /starter in the control container, read-only
-FLEET_DIR = "/var/lib/kiwi-control"      # /fleet in the control container
+# /fleet in the control container: where a node's control part keeps the fleet (<docker dir>/kn-control,
+# /home being /var/home on CoreOS), so that the node this machine becomes finds it there
+FLEET_DIR = "/var/home/user/docker/kn-control"
+DONE = "/usr/local/bin/kiwi-starter-done"
 ISSUE = "/etc/issue.d/50-kiwi.issue"
 PAGE_DIR = "/run/kiwi-starter/page"      # the live system's page: what it shows, the number, the yes
 CONSOLE_KARGS = ["console=tty0", "console=ttyS0,115200n8"]   # the last is /dev/console
@@ -508,6 +511,43 @@ table inet kiwi_starter {
 """
 
 
+DONE_SH = r"""#!/bin/bash
+# Kiwi Server starter: this machine is a node of the network now. What the starter needed goes:
+# its key, its page on port 80, its message on the screen. Run by the machine's own first role
+# (kiwi-server apply), after the stack has taken over the control part.
+set -u
+q=/etc/containers/systemd/kn-control.container
+if ! grep -q '^# kiwi-server stack' "$q" 2>/dev/null; then
+    echo "kiwi-starter-done: the stack has not taken over the control part: nothing is taken away" >&2
+    exit 1
+fi
+systemctl disable --now kiwi-starter-screen.service kiwi-starter-port80.service 2>/dev/null
+nft delete table inet kiwi_starter 2>/dev/null
+h=/home/core/.ssh
+if [ -s @KEY_DIR@/id_ed25519.pub ] && [ -f "$h/authorized_keys" ]; then
+    grep -vxF "$(cat @KEY_DIR@/id_ed25519.pub)" "$h/authorized_keys" > "$h/authorized_keys.new"
+    install -m 0600 -o core -g core "$h/authorized_keys.new" "$h/authorized_keys"
+    rm -f "$h/authorized_keys.new"
+    restorecon -R "$h" 2>/dev/null
+fi
+systemctl disable kiwi-starter-key.service 2>/dev/null
+rm -rf @KEY_DIR@ /etc/kiwi-starter @ISSUE@ /usr/local/bin/kiwi-starter-key /usr/local/bin/kiwi-starter-screen \
+    /etc/systemd/system/kiwi-starter-key.service /etc/systemd/system/kiwi-starter-port80.service \
+    /etc/systemd/system/kiwi-starter-screen.service \
+    /etc/systemd/resolved.conf.d/50-kiwi-mdns.conf /etc/NetworkManager/conf.d/50-kiwi-mdns.conf
+systemctl daemon-reload
+# the control part as the stack defines it: on the network's own names from now on, its keys locked
+# until someone logs in there
+systemctl restart kn-control.service
+rm -f "$0"
+echo "kiwi-starter-done: this machine is a node now"
+"""
+
+
+def done_script():
+    return _fill(DONE_SH, KEY_DIR=KEY_DIR, ISSUE=ISSUE)
+
+
 def _fill(text, **kw):
     for k, v in kw.items():
         text = text.replace("@%s@" % k, v)
@@ -549,6 +589,7 @@ def control_quadlet(image=CONTROL_IMAGE):
         "Volume=%s:/starter:ro,Z" % KEY_DIR,
         "Tmpfs=/run/kiwi:size=2g,mode=0700",
         "Environment=XDG_RUNTIME_DIR=/run/kiwi",
+        "Environment=KIWI_STARTER=1",       # the fleet's first node is the machine this runs on
         "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait",
         "",
         "[Service]",
@@ -588,6 +629,7 @@ def installed_butane():
         f("/etc/kiwi-starter/port80.nft", PORT80_NFT),
         f("/usr/local/bin/kiwi-starter-key", key_script(), mode=0o755),
         f("/usr/local/bin/kiwi-starter-screen", screen_script(), mode=0o755),
+        f(DONE, done_script(), mode=0o755),
     ]
     dirs = [{"path": KEY_DIR, "mode": 0o700}, {"path": FLEET_DIR, "mode": 0o700}]
     units = [

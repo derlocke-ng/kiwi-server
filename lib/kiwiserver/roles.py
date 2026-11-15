@@ -125,12 +125,30 @@ def mount_lines(mounts):
     out += ["%s %s %s" % m for m in mounts]
     out += ["KS_MOUNTS",
             "    echo '# kiwi-server mounts: end' >> /etc/fstab",
-            "}", "",
-            "ks_role_apply() {",
-            "    ks_mounts",
-            "    ks_role_apply_role \"$@\"",
             "}", ""]
     return out
+
+
+def watchdog_lines():
+    """The role script's part for the hardware watchdog. systemd feeds it while it lives; a
+    machine that hangs is reset after a minute, one that hangs in a restart or shutdown
+    after ten (seen: a machine that hung in its update reboot for 39 minutes, until someone
+    reset it). Where there is no such device, or `watchdog: false`, nothing is set."""
+    conf = "/etc/systemd/system.conf.d/50-kiwi-watchdog.conf"
+    return ["# ---- hardware watchdog (fleet.yaml watchdog) --------------------------------",
+            "ks_watchdog() {",
+            "    if [[ $KS_WATCHDOG == 1 && -e /dev/watchdog ]]; then",
+            "        install -d /etc/systemd/system.conf.d",
+            "        if ! grep -qs '^RebootWatchdogSec=10min' %s; then" % conf,
+            "            printf '[Manager]\\nRuntimeWatchdogSec=60s\\nRebootWatchdogSec=10min\\n' > %s" % conf,
+            "            systemctl daemon-reexec || true",
+            "            ks_say \"hardware watchdog: a hang resets this machine after a minute, a hung restart after ten\"",
+            "        fi",
+            "    elif [[ -e %s ]]; then" % conf,
+            "        rm -f %s" % conf,
+            "        systemctl daemon-reexec || true",
+            "    fi",
+            "}", ""]
 
 
 def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None):
@@ -171,6 +189,7 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
         _bash_var("KS_UPDATES_ENABLED", bool(u["enabled"])),
         _bash_var("KS_UPDATES_DAYS", u["days"]),
         _bash_var("KS_UPDATES_TIME", u["time"]),
+        _bash_var("KS_WATCHDOG", bool(host.cfg.get("watchdog", True))),
         "declare -A KS_FILES=()",
     ]
     for key, data in sorted(host.role_files.items()):
@@ -192,14 +211,17 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
             lines.append("KS_FILES[quadlet/%s]=%s" % (name, _q(util.b64(text))))
     from . import config
     mounts = config.mounts_of(host.cfg)
-    if mounts:      # the role's own steps come after the data disks: its services find their folders
-        body = body.replace("ks_role_apply ()", "ks_role_apply()", 1).replace("ks_role_apply()", "ks_role_apply_role()", 1)
+    # the role's own steps come after the machine's: the watchdog, and the data disks its services need
+    body = body.replace("ks_role_apply ()", "ks_role_apply()", 1).replace("ks_role_apply()", "ks_role_apply_role()", 1)
     lines += ["", "# ---- common library (roles/common/lib.sh) ------------------------------",
               lib_text.rstrip("\n"), "",
               "# ---- role: %s (roles/%s/apply.sh) --------------------------------" % (role.name, role.name),
               body.rstrip("\n"), ""]
+    lines += watchdog_lines()
     if mounts:
         lines += mount_lines(mounts)
+    lines += ["ks_role_apply() {", "    ks_watchdog"] + (["    ks_mounts"] if mounts else []) + [
+        "    ks_role_apply_role", "}", ""]
     lines += [
               "# ---- post script (fleet.yaml post_script) -----------------------------",
               "ks_post_script() {"]

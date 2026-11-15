@@ -101,6 +101,18 @@ your window.
 `updates.days: []` means any day; `updates.enabled: false` turns all of it
 off.
 
+Two things keep a restart from taking a machine away:
+
+- **No restart while the disk could not be opened again.** A machine whose disk
+  opens through unlock rings asks them before it restarts for updates. When too
+  few answer, it does not restart, says so in its journal, and tries again in
+  the next window. Without this a machine restarts into a locked disk on the
+  night the machine with its ring is off.
+- **A hang is reset.** Where the machine has a hardware watchdog (most boards,
+  mini PCs and virtual machines do), systemd feeds it. A machine that hangs is
+  reset after a minute, one that hangs in the middle of a restart after ten.
+  `watchdog: false` in the machine's settings switches it off.
+
 ## A master in RAM
 
 `target: coreos-ram` ([design](design/ram-master.md)) is the CoreOS live ISO

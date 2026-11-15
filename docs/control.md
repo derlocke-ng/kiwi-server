@@ -197,6 +197,10 @@ That is all: the computer makes its own key (in its keyring), checks that the
 link is from this fleet, fetches the fleet and opens it. Without the app:
 `kiwi-server control join ~/kiwi/fleet.yaml <link>`.
 
+A computer at home that is not on the VPN stays in step too: when the control
+page's name does not open there, the machine is reached at its fixed address at
+home, which the fleet file knows.
+
 **Remove** on the page takes its key out again: it reads nothing newer. What
 it read before, it knows: see the next section.
 

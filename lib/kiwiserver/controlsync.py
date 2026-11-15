@@ -274,8 +274,36 @@ def api_for(fleet_dir, key=None):
         raise KiwiError("this computer's key for the fleet is not in the keyring: --identity FILE")
     ca = os.path.join(fleet_dir, CA)
     api = Api(r["url"], ca if os.path.isfile(ca) else None, r.get("address"))
-    api.login(r["name"], key, os.path.join(fleet_dir, "control"))
+    try:
+        api.login(r["name"], key, os.path.join(fleet_dir, "control"))
+    except KiwiError as e:
+        # a computer at home that is not on the VPN: the name does not open, the machine's address at
+        # home does. Its certificate is still checked against the fleet's CA, for the same name
+        home = None if r.get("address") or "does not answer" not in str(e) else home_address(fleet_dir, r["url"])
+        if not home:
+            raise
+        api = Api(r["url"], ca if os.path.isfile(ca) else None, home)
+        api.login(r["name"], key, os.path.join(fleet_dir, "control"))
+        util.say("the control node answers at its address at home (%s): this computer is not on the VPN" % home)
     return api, key
+
+
+def home_address(fleet_dir, url):
+    """The control node's fixed address at home, from the fleet file here: the machine whose
+    name the control page's address carries (control.<machine>.<domain>). None when it has none."""
+    import yaml
+    try:
+        fleet = next(os.path.join(fleet_dir, f) for f in ("fleet.yaml", "fleet.yml") if os.path.isfile(os.path.join(fleet_dir, f)))
+        data = yaml.safe_load(util.read_text(fleet)) or {}
+    except (StopIteration, OSError, yaml.YAMLError):
+        return None
+    name = (urllib.parse.urlsplit(url).hostname or "").split(".")
+    for host, cfg in (data.get("hosts") or {}).items():
+        if host in name[1:2] and isinstance(cfg, dict):
+            net = dict((data.get("defaults") or {}).get("network") or {}, **(cfg.get("network") or {}))
+            if net.get("address") and not net.get("dhcp", False):
+                return str(net["address"]).split("/")[0]
+    return None
 
 
 def invite_api(fleet_dir, key=None):

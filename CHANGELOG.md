@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.121.0 — a computer at home finds the control node; the master's door counts connections
+
+- **A computer at home that is not on the VPN** stays in step with the control node: when
+  the control page's name does not open, kiwi-server reaches the machine at its fixed
+  address at home (from the fleet file), its certificate still checked against the
+  fleet's CA. Before, such a computer could not sync, and the control node went on with
+  an older copy of the network.
+- **The master's door counts connections** (kiwi-modules 0.47.1): one address may hold
+  four times `rate_limit` connections at once at 443 and the handed-on ports. What the
+  master hands on to a node passes the node's limits, which cannot keep an address out.
+- Jabber's admin password may start with a dash.
+- Tried on the test network: the public status page (`status.dlhost.eu`: the five services
+  open to the Internet, asked at the master's address) and the pastebin on a node under
+  a public name (`paste.dlhost.eu`), both from the Internet.
+
 ## 2.120.0 — hidden services reworked, an authenticator, a public status page
 
 - **Hidden services** (kiwi-modules 0.47.0), after seventeen of them were opened

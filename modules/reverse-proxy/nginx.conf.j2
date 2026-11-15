@@ -83,6 +83,12 @@ events {
 # on to the node as it came, still encrypted (the node holds the certificate), with the
 # address it came from in front (PROXY protocol). Everything else is this machine's own.
 stream {
+{% if rate_limit %}
+    # one address may hold this many connections at once through this door: what is handed on to a
+    # node is counted here too, where the node's own limits cannot keep an address out
+    limit_conn_zone $binary_remote_addr zone=kiwi_door:10m;
+    limit_conn_log_level warn;
+{% endif %}
 {% if ex.names %}
     map $ssl_preread_server_name $kiwi_to {
         default 127.0.0.1:8443;
@@ -96,6 +102,9 @@ stream {
         proxy_pass $kiwi_to;
         proxy_protocol on;
         proxy_connect_timeout 10s;
+{% if rate_limit %}
+        limit_conn kiwi_door {{ rate_limit * 4 }};
+{% endif %}
         proxy_timeout 1h;
     }
 {% endif %}
@@ -107,6 +116,9 @@ stream {
         proxy_protocol on;
 {% endif %}
         proxy_connect_timeout 10s;
+{% if rate_limit %}
+        limit_conn kiwi_door {{ rate_limit * 4 }};
+{% endif %}
         proxy_timeout 1h;
     }
 {% endfor %}

@@ -218,8 +218,10 @@ its link along (PrivateBin). A paste is encrypted in the browser; the server
 keeps what it cannot read, and the link carries the key.
 
 - **On the VPN**: `https://paste.<machine>`.
-- **For the Internet**, on a master: `paste: { paste_domain: paste.example.org }`
-  with `reverse-proxy: { public: true }`.
+- **For the Internet**: `paste: { paste_domain: paste.example.org }` with
+  `reverse-proxy: { public: true }` on the machine, and the name pointing at
+  the master. On a node the master hands the name on
+  ([above](#a-nodes-service-open-to-the-internet)); tried so on a test node.
 - **For strangers without a public name**: `onion: { services: { paste: {} } }`,
   a hidden service ([network.md](network.md#hidden-services)).
 

@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 from . import util
 from .util import KiwiError
@@ -120,3 +121,31 @@ def system_trust_command(ca_pem, domain):
         return "sudo trust anchor --store %s" % ca_pem
     return ("sudo cp %s /usr/local/share/ca-certificates/kiwi-%s.crt && sudo update-ca-certificates"
             % (ca_pem, domain.split(".")[0]))
+
+
+def resolves(name, seconds, lookup=None):
+    """Does the name resolve within so many seconds? The system's resolver waits minutes for a
+    DNS server that is not there (a master that is off), and nothing can end that wait: the
+    question is asked beside this one, and left behind when it takes too long."""
+    import socket
+    import threading
+    lookup = lookup or (lambda: socket.getaddrinfo(name, 443))
+    found = []
+
+    def ask():
+        try:
+            lookup()
+            found.append(True)
+        except OSError:
+            pass
+    end = time.time() + seconds
+    while time.time() < end:
+        t = threading.Thread(target=ask, daemon=True)
+        t.start()
+        t.join(max(0.1, end - time.time()))
+        if found:
+            return True
+        if t.is_alive():
+            return False            # still waiting on the resolver: no use asking again
+        time.sleep(1)
+    return False

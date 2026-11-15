@@ -2199,16 +2199,12 @@ def cmd_connect(args):
                  "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
         master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"), None)
         if master:
-            for _ in range(10):
-                try:
-                    socket.getaddrinfo(master.hostname, 443)
-                    util.say("%s answers: this computer reaches the network" % master.hostname)
-                    break
-                except OSError:
-                    time.sleep(1)
+            if connectmod.resolves(master.hostname, 15):
+                util.say("%s answers: this computer reaches the network" % master.hostname)
             else:
-                util.warn("%s does not resolve yet. Is the master running? nmcli connection up %s tries again"
-                          % (master.hostname, con))
+                # the connection is set up either way: it works from the moment the master answers
+                util.warn("%s does not answer yet. Is the master running? This computer is connected as soon as it is: "
+                          "nothing more to do here" % master.hostname)
     if os.path.isfile(ca) and not args.no_trust:
         took, why = connectmod.trust(ca, domain, make_tc(args))
         if took:

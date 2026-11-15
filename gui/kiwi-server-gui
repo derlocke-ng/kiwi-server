@@ -2912,6 +2912,10 @@ class Window(Adw.ApplicationWindow):
         self.content_hb.pack_start(self.b_refresh)
         self.b_log = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Show output")
         self.content_hb.pack_end(self.b_log)
+        self.b_stop = Gtk.Button(icon_name="process-stop-symbolic", tooltip_text="Stop what is running", visible=False)
+        self.b_stop.add_css_class("destructive-action")
+        self.b_stop.connect("clicked", lambda *_: self.stop_task())
+        self.content_hb.pack_end(self.b_stop)
         host_menu = Gio.Menu()
         section = Gio.Menu()
         section.append("Build its ISO…", "win.build-host")
@@ -4419,15 +4423,31 @@ class Window(Adw.ApplicationWindow):
             rc, said = 1, []
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        text=True, stdin=subprocess.DEVNULL)
+                                        text=True, stdin=subprocess.DEVNULL, start_new_session=True)
+                self._proc = proc
                 for line in proc.stdout:
                     said.append(line)
                     GLib.idle_add(self.append_log, line)
                 rc = proc.wait()
             except Exception as e:  # noqa: BLE001
                 GLib.idle_add(self.append_log, "%s\n" % e)
+            self._proc = None
             GLib.idle_add(self.after_spawn, rc, "".join(said[-40:]), list(args))
         threading.Thread(target=worker, daemon=True).start()
+
+    def stop_task(self):
+        """Stop what is running: the command and everything it started. A second press does not ask."""
+        proc = getattr(self, "_proc", None)
+        if proc is None or proc.poll() is not None:
+            return
+        import signal
+        again = getattr(self, "_stopping", None) is proc
+        self._stopping = proc
+        try:
+            os.killpg(proc.pid, signal.SIGKILL if again else signal.SIGTERM)
+        except OSError:
+            pass
+        self.append_log("\n(stopped here%s)\n" % (", hard" if again else ""))
 
     def after_spawn(self, rc, said="", args=()):
         self.set_busy(False, "")
@@ -4468,6 +4488,7 @@ class Window(Adw.ApplicationWindow):
     def set_busy(self, busy, msg):
         self.busy = busy
         self.progress.set_visible(busy)
+        self.b_stop.set_visible(busy)
         if busy and self._pulse is None:
             self._pulse = GLib.timeout_add(120, self._do_pulse)
         elif not busy and self._pulse is not None:

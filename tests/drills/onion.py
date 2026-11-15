@@ -37,7 +37,6 @@ host = _fleet.hosts[svc["host"]]
 rolesmod.resolve_settings(roles[host.role], host, ms)
 node = Machine(host)
 prefix = modmod.PREFIX[roles[host.role].node_type]
-socks = "%s:9050" % (master.host.module_settings["vpn-server"].get("server_ip") or "10.8.0.1")
 failed = 0
 
 
@@ -54,35 +53,37 @@ check(mode == "container:" + vpn, "Tor shares the VPN client's network (%s)" % (
 tor_exit = node.out("podman exec %s-vpn-client sh -c 'wget -qO- -T 10 https://api.ipify.org'" % prefix).strip()
 own = node.out("curl -s --max-time 10 https://api.ipify.org").strip()
 check(bool(tor_exit) and tor_exit != own, "what Tor sends leaves somewhere else than the machine's own connection")
-curl = "curl -s --max-time 90 --socks5-hostname %s -o /dev/null -w '%%{http_code}' " % socks
 url = "http://%s/" % svc["address"]
-if not svc["clients"]:
-    code = "000"
-    for _ in range(8):          # a service that was just made, or just opened to anyone, takes minutes to be found
-        code = master.out(curl + url)
-        if code != "000":
-            break
-        time.sleep(30)
-    check(code[:1] in "23", "it opens through Tor (HTTP %s)" % code)
-    other = master.out(curl + "-H 'Host: nothing.%s' %s" % (host.hostname, url))
-    check(other == "000", "another site's name on that address gets nothing (HTTP %s)" % other)
-else:
-    code = master.out(curl + url)
-    check(code == "000", "without a key it is not found (HTTP %s)" % code)
-    person = svc["clients"][0]
-    rc, key = kiwi("onion", args.fleet, what, "--show", person)
-    line = "%s:descriptor:x25519:%s\n" % (svc["address"][:-len(".onion")], key[-1].strip())
-    script = ("set -e; D=$(mktemp -d); mkdir -p $D/auth $D/data; cat > $D/auth/p.auth_private; "
+
+
+def through_tor(key_line="", header=""):
+    """The HTTP status the address gives through a Tor client started on the master for the
+    moment, with a person's key or with none. 000: not found, or nothing answered."""
+    script = ("set -e; D=$(mktemp -d); mkdir -p $D/auth $D/data; cat > $D/in; [ -s $D/in ] && mv $D/in $D/auth/p.auth_private; "
               "printf 'SocksPort 127.0.0.1:9150\\nClientOnionAuthDir /auth\\nDataDirectory /data\\n' > $D/torrc; chown -R 101:102 $D/auth $D/data; "
               "podman rm -f kiwi-drill-tor >/dev/null 2>&1 || true; "
               "podman run -d --rm --name kiwi-drill-tor --network host --entrypoint su-exec -v $D/torrc:/torrc:ro,z -v $D/auth:/auth:z "
               "-v $D/data:/data:z docker.io/dockurr/tor tor tor -f /torrc >/dev/null; "
-              "for i in $(seq 24); do podman logs kiwi-drill-tor 2>&1 | grep -q 'Bootstrapped 100' && break; sleep 5; done; "
-              "curl -s --max-time 90 --socks5-hostname 127.0.0.1:9150 -o /dev/null -w '%{http_code}' " + url + "; "
+              "for i in $(seq 24); do podman logs kiwi-drill-tor 2>&1 | grep -q 'Bootstrapped 100' && break; sleep 5; done; c=000; "
+              "for i in 1 2 3 4; do c=$(curl -s --max-time 90 --socks5-hostname 127.0.0.1:9150 -o /dev/null -w '%{http_code}' "
+              + header + " " + url + ") || true; [ \"$c\" != 000 ] && break; " + ("sleep 20; " if not key_line and not header else "break; ") + "done; echo $c; "
               "podman rm -f kiwi-drill-tor >/dev/null 2>&1; rm -rf $D")
     r = subprocess.run(["ssh"] + cli.remote.ssh_opts() + ["-o", "ConnectTimeout=10", master.target, "sudo sh -c " + cli.shlex.quote(script)],
-                       input=line, capture_output=True, text=True, timeout=600)
-    code = r.stdout.strip()[-3:]
+                       input=key_line, capture_output=True, text=True, timeout=900)
+    return r.stdout.strip()[-3:]
+
+
+if not svc["clients"]:
+    code = through_tor()
+    check(code[:1] in "23", "it opens through Tor (HTTP %s)" % code)
+    other = through_tor(header="-H 'Host: nothing.%s'" % host.hostname)
+    check(other == "000", "another site's name on that address gets nothing (HTTP %s)" % other)
+else:
+    person = svc["clients"][0]
+    rc, key = kiwi("onion", args.fleet, what, "--show", person)
+    code = through_tor("%s:descriptor:x25519:%s\n" % (svc["address"][:-len(".onion")], key[-1].strip()))
     check(code[:1] in "23", "with %s's key it opens (HTTP %s)" % (person, code))
+    code = through_tor()
+    check(code == "000", "without a key it is not found (HTTP %s)" % code)
 print("\n%s" % ("as it should be" if not failed else "%d things are not as they should be" % failed))
 sys.exit(1 if failed else 0)

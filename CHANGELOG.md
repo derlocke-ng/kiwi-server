@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.97.1 — a control node that is older says so
+
+- `kiwi-server control push` says when the control node runs an older version than this
+  computer, and how to update it. An older control node does not know a part that came
+  since, and its page then calls a machine's settings wrong ("unknown module 'onion'")
+  though nothing is wrong with them. Seen on the test network.
+- Taking away a machine's last hidden service takes the `onion` part off the machine
+  too: it does not run Tor for nothing.
+- The hidden-service drill asks through a Tor client of its own on the master, with a
+  key and with none. Run for real with Forgejo (`git.medlar`): the page opens through
+  Tor, another site's name on the address gets nothing.
+
 ## 2.97.0 — git hosting, and pictures of what a network can be
 
 - kiwi-modules 0.37.0: a new part `git` for a node: Forgejo at `git.<machine>`, its

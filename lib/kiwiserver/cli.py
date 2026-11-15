@@ -1875,6 +1875,11 @@ def cmd_control(args):
         if args.action == "push":
             n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
             util.say("the control node holds this copy now (%d files)" % n)
+            old = controlsync.older_node(fleet_dir, VERSION, key)
+            if old:
+                util.warn("the control node runs %s, this computer %s. It does not know what came since, and its page may "
+                          "call a machine's settings wrong. Update it: kiwi-server apply %s <its machine> --update"
+                          % (old, VERSION, fleet_name))
         else:
             n = controlsync.pull_api(fleet_dir, fleet_name, args.force, key)
             util.say("%d files from the control node: this copy is its" % n if n else "in step with the control node")
@@ -2692,6 +2697,8 @@ def cmd_onion(args):
         said = "%s.%s is a hidden service: http://%s" % (service, host.name, address)
     value = {"services": {s: ({"clients": c} if c else {}) for s, c in have.items()}}
     mods = list(host.modules) if "onion" in host.modules else list(host.modules) + ["onion"]
+    if not have:                # no hidden service left: the machine does not run Tor for nothing
+        mods = [x for x in mods if x != "onion"]
     path = os.path.realpath(fleet.path)
     before = util.read_text(path)
     text = before

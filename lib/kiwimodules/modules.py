@@ -836,7 +836,8 @@ class Renderer:
                     out = {"path": out}
                 if out.get("when") and not ctx.get(str(out["when"])):
                     continue
-                text = self.render_text(mod.template(key), ctx, "modules/%s/%s" % (name, fname))
+                # `output` names the file being made: one template may make several (two instances of a server)
+                text = self.render_text(mod.template(key), dict(ctx, output=key), "modules/%s/%s" % (name, fname))
                 where = "modules/%s/module.yaml outputs.%s" % (name, key)
                 if out.get("kind") == "host_unit":
                     unit = self.expand(out.get("name") or fname.replace(".j2", ""), ctx, where)

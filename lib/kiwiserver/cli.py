@@ -389,6 +389,8 @@ class Renderer:
                 sites[mine[k["service"]]] = k["address"]
             host.module_settings["onion"]["keys"] = keys
             host.module_settings["reverse-proxy"]["onion"] = sites
+            if "xmpp" in host.modules:      # Jabber answers at its hidden service's name too, and on its own port
+                host.module_settings["xmpp"]["onion"] = {n: k["address"] for n, k in keys.items() if n in ("jabber", "xmpp")}
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []

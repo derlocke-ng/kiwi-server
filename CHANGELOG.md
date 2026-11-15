@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.112.0 — Jabber: a registration page, a captcha, three doors
+
+- **Jabber moved to ejabberd** (kiwi-modules 0.43.0), for what was asked: people make
+  their own account in the app or at `https://<name>/register`, each after a captcha.
+  A server set up with 2.110 or 2.111 starts empty (its accounts were Prosody's), and
+  its name on the VPN is `jabber.<master>` now, not `chat.`.
+- **One service, three doors**: the VPN (`jabber.<master>`), the Internet
+  (`xmpp_domain`) and Tor (`onion: { services: { jabber: {} } }`: the page and port 5222
+  at the hidden address, and accounts `@<address>.onion`). Or two apart with
+  `separate: true`: an internal and a public service that exchange no messages.
+  [roles.md](docs/roles.md#jabber).
+- Hidden services: what a page links to under its usual name leads back to the hidden
+  address. `tests/drills/onion.py` also asks a Jabber hidden service on its own port.
+- Tried on the test master: login over the VPN, the captcha on the page and in the
+  app's form, the page and port 5222 through Tor. Not tried: a public name (the test
+  name still points at a web proxy), two apart, an app.
+
 ## 2.111.0 — payments with BTCPay Server
 
 - **BTCPay Server** (kiwi-modules 0.42.0): add `btcpay` to a node and take Bitcoin

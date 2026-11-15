@@ -130,23 +130,45 @@ XMPP app works: Conversations (Android), Monal (iPhone, Mac), Dino, Gajim.
 hosts:
   sorbet:
     master:
-      modules: [vpn-client, vpn-server, dns, reverse-proxy, xmpp]
+      modules: [vpn-client, vpn-server, dns, reverse-proxy, xmpp, onion]
+      xmpp: { xmpp_domain: chat.example.org }      # the Internet's door
+      onion: { services: { jabber: {} } }          # Tor's door
 ```
 
-- **For the VPN** (the default): addresses are `<name>@chat.<master>`, like
-  `anna@chat.sorbet.home`. Only devices on the VPN reach it; the certificate is
-  the fleet's, so a device needs the fleet's CA (as for every service).
-- **For the Internet**: `xmpp: { xmpp_domain: chat.example.org }`, a name that
-  points at the master in DNS, with `reverse-proxy: { public: true }`. People
-  log in from anywhere, and can write with people on other Jabber servers. The
-  certificate comes from Let's Encrypt. The master then answers on 5222 and
-  5269.
-- **Accounts.** `kiwi-server logins` shows the admin's (`admin@…`). Nobody can
-  register by themselves: the admin invites people from the app (Conversations:
-  the account's menu, "Invite to server"; Gajim: the server's commands), and
-  each makes an account with a password of their own.
-- Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB;
-  history is kept `history_days` (365).
+It is one service with up to three doors:
+
+- **The VPN** (always): `jabber.<master>`, like `jabber.sorbet.home`. Without a
+  public name that is also what comes after the @ (`anna@jabber.sorbet.home`),
+  and the certificate is the fleet's.
+- **The Internet**: `xmpp_domain`, a name that points at the master in DNS as a
+  plain record (no proxy in front: Jabber is not web traffic), with
+  `reverse-proxy: { public: true }`. That name then comes after the @
+  (`anna@chat.example.org`), the certificate is Let's Encrypt's, people log in
+  from anywhere on 5222 and write with people on other servers. An app on the
+  VPN can keep `jabber.<master>` as the server it connects to.
+- **Tor**: `onion: { services: { jabber: {} } }`; `kiwi-server onion` shows the
+  address. An app connects to `<address>.onion`, port 5222, and the page is
+  there too. Someone who cannot check a certificate can have an account
+  `@<address>.onion`.
+
+**Two apart.** `xmpp: { xmpp_domain: …, separate: true }` keeps the VPN's
+service to itself (accounts `@jabber.<master>`, nobody outside reaches it) and
+runs a second one for the public name. Their accounts are apart and the two
+exchange no messages. The public one's hidden service is `xmpp`, not `jabber`.
+
+**Accounts.** `kiwi-server logins` shows the admin's. Everyone else makes their
+own: in the app ("create a new account" on the server), or on the page
+`https://<name>/register`, each after a captcha. One new account per address in
+ten minutes; an address that keeps typing wrong passwords is shut out for an
+hour. `registration: false` leaves accounts to the admin (the app's server
+commands, or `/admin` on the page).
+
+Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB.
+
+Tried on the test master (15 November 2026): the admin logs in over the VPN,
+the page shows a captcha and refuses a wrong answer, the app's registration
+form carries one, and through Tor the page opens and a Jabber server answers
+on 5222. Not tried: a public name, two apart, an app.
 
 ## Payments (BTCPay Server)
 

@@ -185,6 +185,28 @@ keeps what it cannot read, and the link carries the key.
 `title`, `default_expire` (a week), `size_mb` (10) and `file_upload` are its
 settings. The pastes are in the machine's backup.
 
+## Firefox Sync
+
+Add `firefox-sync` to a machine's modules and your Firefox browsers keep their
+bookmarks, tabs, passwords and history on that machine, not at Mozilla. It is
+Mozilla's own sync server with a database of its own.
+
+In every Firefox that should use it, before signing in to sync: `about:config`,
+then `identity.sync.tokenserver.uri` =
+`https://ffsync.<machine>/1.0/sync/1.5`. A browser that syncs already is signed
+out of sync first.
+
+- **The login** still goes through a Mozilla account: the server asks Mozilla
+  who someone is. What is synced is encrypted by the browser and stored here.
+- **The certificate**: Firefox keeps its own list of authorities. The fleet's CA
+  goes into it (Settings, Certificates, Import), or the device trusts the CA and
+  Firefox is told to follow (`security.enterprise_roots.enabled`).
+- The device must be on the VPN to sync, as for every service.
+- Mozilla's image is for x86-64 machines only, not for the small boards.
+- Tried on the test network (15 November 2026): the server says that it and its
+  database are fine, and it asks for a login. A browser syncing was not tried:
+  that needs a Mozilla account.
+
 ## Payments (BTCPay Server)
 
 Add `btcpay` to a node's modules and you take Bitcoin payments yourself: BTCPay

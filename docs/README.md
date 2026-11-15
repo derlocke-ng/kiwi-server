@@ -38,6 +38,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Federation](design/federation.md) | two networks sharing services |
 | [Recovery](design/recovery.md) | what runs by itself when something breaks, and what is planned |
 | [Hidden services](design/onion.md) | services for strangers over Tor, never through a home connection |
+| [The starter image](design/starter.md) | a network from a phone: one image, the rest in a browser |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
 

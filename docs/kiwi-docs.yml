@@ -29,3 +29,4 @@ pages:
   - design/local-first.md: "Design: local first"
   - design/recovery.md: "Design: autonomy and recovery"
   - design/onion.md: "Design: hidden services"
+  - design/starter.md: "Design: the starter image"

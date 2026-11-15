@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.95.0 — if something breaks
+
+- **`kiwi-server recovery <fleet>`** says, before anything breaks, whether the network
+  could be brought back: is there a copy of the network and how old is it, does every
+  machine with data save it to another machine, does a disk still open when one machine
+  is lost, does the fleet keep the master's VPN state, who can open the network's keys,
+  and what happens when the master stops answering. Gaps come first, each with what to
+  do. Then the cases, with this network's names: a service's data is wrong, a machine is
+  dead, the master is dead, a phone or a computer is lost, the control node is gone, a
+  whole home is gone.
+- **"If something breaks"** on the control page (from Home and Help) and in the app's
+  menu shows the same report, with buttons to the place for each case.
+- **"This machine is lost or was replaced"** on a set-up machine's page and in its menu
+  in the app: its install media and its set-up again, under the same name. A machine
+  with backups brings its data back by itself afterwards.
+- `backup` notes where and when the network's copy was stored, so the report can say.
+- **A master with an encrypted disk comes back by itself.** After a restart it waits at
+  boot for its unlock ring, which lives at home. The control node now forwards the ring
+  when it sees the machine waiting, at most six times a day (`recovery: { unlock: false }`
+  switches it off; Settings, "Open a disk that waits at boot"). Together with 2.93.0's
+  restart, a master that hangs is switched off and on, opened and running again with
+  nobody there.
+- `kiwi-server gone` is the new name of 2.93.0's `recover` (a look at machines that do
+  not answer); `recover` still works. It was one letter from `recovery`.
+- Fixed: the control page could read a file of the last look while it was being written,
+  and answer with an error once in a while.
+- New page: [docs/recovery.md](docs/recovery.md), "When something breaks".
+
 ## 2.94.0 — who may reach what
 
 - **`kiwi-server access <fleet>`** lists every group of the VPN and every linked network

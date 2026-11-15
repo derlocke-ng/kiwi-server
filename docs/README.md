@@ -19,6 +19,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [The control node](control.md) | everyone | kiwi-server on a home node, a page for the phone, `control push` |
 | [Boards](boards.md) | everyone | an Odroid or other arm64 board with its own Debian or Armbian, `adopt` |
 | [Backups](backups.md) | everyone | the fleet directory, each machine's data, restore, prune |
+| [When something breaks](recovery.md) | everyone | the readiness report, and what to do when data, a machine, the master, a device, a computer or a home is lost |
 | [Security](security.md) | everyone | the secret store, the seed, encrypted disks and unlock at boot, SSH |
 | [The desktop app](gui.md) | everyone | Kiwi Server, the overview, a host's pages |
 | [Routers](routers.md) | everyone | a whole LAN on the mesh through its router |

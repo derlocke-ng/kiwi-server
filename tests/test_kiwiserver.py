@@ -34,7 +34,7 @@ os.environ["KIWI_SERVER_HOME"] = ROOT
 import yaml  # noqa: E402
 
 from kiwiserver import VERSION, backup, certs, cli, config, federation as fedmod, iso, modules as modmod, remote, roles as rolesmod, router, wgeasy  # noqa: E402
-from kiwiserver import address as addressmod, adopt as adoptmod, control as controlmod, controlsync, facts, form as formmod, luks, mtu, plan as planmod, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
+from kiwiserver import address as addressmod, adopt as adoptmod, control as controlmod, controlsync, facts, form as formmod, luks, mtu, plan as planmod, recovery, setup as setupmod, sshca, sshport, store, unlock  # noqa: E402
 from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
@@ -4876,7 +4876,7 @@ class TestVps(Base):
     def recover(self, f, ok, *more):
         seen = os.path.join(self.tmp, "seen.json")
         write(seen, json.dumps({"hosts": [{"host": "x", "ok": ok}]}))
-        rc, out, err = self.run_cli("recover", f.path, "--porcelain", "--status", seen, *more)
+        rc, out, err = self.run_cli("gone", f.path, "--porcelain", "--status", seen, *more)
         self.assertEqual(rc, 0, err)
         return json.loads(out.strip().splitlines()[-1])["events"]
 
@@ -4899,6 +4899,19 @@ class TestVps(Base):
         self.assertEqual(len([1 for m, _p, _b in self.api.calls if m == "PATCH"]), 2)
         self.assertEqual(self.recover(f, True), [])              # it is back
         self.assertEqual(cli.fleet_state(f)["gone"], {})
+
+    def test_a_locked_machine_with_no_ring_to_forward_is_told_about(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "target": "debian", "debian": {"encrypt": True}, "unlock": {"rings": ["house"]}, "vps": {"server": 7}}}})
+        cli.record_applied(f, "x")
+        seen = os.path.join(self.tmp, "seen.json")
+        write(seen, json.dumps({"hosts": [{"host": "x", "ok": False, "locked": True}]}))
+        rc, out, err = self.run_cli("gone", f.path, "--porcelain", "--status", seen)
+        self.assertEqual(rc, 0, err)
+        ev = json.loads(out.strip().splitlines()[-1])["events"]
+        self.assertEqual([e["kind"] for e in ev], ["locked"])
+        self.assertIn("waits at boot with its disk locked", ev[0]["text"])
+        self.assertEqual(self.api.calls, [])                        # not gone: its server is left alone
 
     def test_recover_does_nothing_without_a_login_at_the_provider(self):
         d = self.base_defaults(recovery={"node": {"after": 1, "do": "restart"}})
@@ -4971,6 +4984,33 @@ class TestWatchdog(unittest.TestCase):
         self.assertEqual([e["kind"] for e in ev], ["held"])
         self.assertIn("nothing was done", ev[0]["text"])
         self.assertEqual(state.get("acted", {}).get("gate"), [])
+
+    def test_a_disk_that_waits_at_boot_is_opened_and_not_counted_as_gone(self):
+        f, state, done = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 900}}, []
+
+        def step(now, unlock=done.append):
+            if isinstance(unlock, bool):                            # the fleet file's switch
+                f.defaults["recovery"]["unlock"], unlock = unlock, done.append
+            return watchdogmod.step(f, {"gate": "master", "pi": "node"}, {"gate": False, "pi": True}, state, now,
+                                    lambda n: self.fail("a machine that is there is not restarted"), None, {"gate": True}, unlock)
+        ev = step(self.NOW)
+        self.assertEqual(([e["kind"] for e in ev], done, state["gone"]), (["unlocked"], ["gate"], {}))
+        self.assertIn("its ring was forwarded, it starts now", ev[0]["text"])
+        ev = step(self.NOW + 60)                                    # a moment later: not twice
+        self.assertEqual(([e["kind"] for e in ev], done), (["unlocked"], ["gate"]))
+        ev = step(self.NOW + 600)
+        self.assertEqual(done, ["gate", "gate"])
+
+        def cannot(_n):
+            raise KiwiError("the machines that open it do not answer")
+        ev = step(self.NOW + 1200, unlock=cannot)
+        self.assertEqual([e["kind"] for e in ev], ["locked"])
+        self.assertIn("do not answer", ev[0]["text"])
+        ev = step(self.NOW + 1800, unlock=False)                    # switched off in the fleet file
+        self.assertEqual(([e["kind"] for e in ev], done), (["locked"], ["gate", "gate"]))
+        state["opened"]["gate"] = [self.NOW + 1900 + i for i in range(6)]
+        ev = step(self.NOW + 3000, unlock=True)
+        self.assertIn("6 times today", ev[0]["text"])               # it opens and locks again: a person looks
 
     def test_a_policy_that_makes_no_sense_is_said(self):
         for bad in ({"do": "explode"}, {"after": "soon"}, {"after": 0}):
@@ -8232,6 +8272,312 @@ class TestFirstRunPage(StoreBase):
             fleet_name, plain, _kept = backup.open_copy(fh.read(), recovery)
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
+
+    # ---- if something breaks ----
+    def test_if_something_breaks_says_the_gaps_of_a_new_network_and_where_to_go(self):
+        cookie, _csrf = self.made()
+        self.assertEqual(self.ask("/recovery")[:2], (303, "/login"))
+        status, body, _ = self.ask("/recovery", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("If something breaks", body)
+        self.assertIn('<span class="dot warn"></span>No copy of the network has been made yet', body)
+        self.assertRegex(body, r"keeps data \([a-z, -]+\) and has no backup")     # the node of a new network
+        self.assertIn("Only the control node opens the network&#39;s keys, besides the recovery key", body)
+        self.assertIn('<span class="dot "></span>Your recovery key cannot be checked', body)     # grey: cannot tell
+        node, master = self.node(), next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
+        for link in ("/backups/network.tar", "/devices", "/controllers", "/hosts/%s#rebuild" % node,
+                     "/hosts/%s#rebuild" % master):
+            self.assertIn('href="%s"' % link, body)
+        self.assertIn("kiwi-server rotate", body)                   # the terminal's way, under each case
+        self.assertIn('href="/recovery"', self.ask("/", cookie=cookie)[1])       # a tile on Home
+        self.assertIn('href="/recovery"', self.ask("/help", cookie=cookie)[1])
+        # what it can tell from the last look: how old a machine's backup is
+        self.c.kiwi = [sys.executable, "-c", "import sys; print(sys.argv[1:])"]
+        with self.assertRaises(KiwiError):
+            self.c.recovery()                                       # no report: said, not shown as one
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"hosts": [], "time": time.time()}))
+        said = os.path.join(self.tmp, "argv")
+        self.c.kiwi = [sys.executable, "-c", "import json, sys; open(%r, 'w').write(json.dumps(sys.argv[1:])); "
+                       "print(json.dumps({'checks': [], 'cases': []}))" % said]
+        self.assertEqual(self.c.recovery(), {"checks": [], "cases": []})
+        self.assertEqual(json.loads(util.read_text(said))[-5:], ["recovery", os.path.join(self.dir, "fleet.yaml"), "--porcelain",
+                                                                "--status", os.path.join(self.c.run, "status.json")])
+
+    def test_a_machine_that_is_set_up_has_its_rebuild_on_its_page(self):
+        cookie, csrf = self.made()
+        node, fleet = self.node(), os.path.join(self.dir, "fleet.yaml")
+
+        def section():
+            body = self.ask("/hosts/" + node, cookie=cookie)[1]
+            return body[body.index('id="rebuild"'):body.index("</details>", body.index('id="rebuild"'))] if 'id="rebuild"' in body else ""
+        self.assertEqual(section(), "")                                         # not set up: "Still to set up" has it
+        made = config.Fleet.load(fleet)
+        write(made.resolve_path("secrets/%s.home.conf" % node), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.25/24\n")
+        cli.record_applied(made, node)
+        self.c.fleet_info(fresh=True)
+        found = section()
+        self.assertIn("This machine is lost or was replaced", found)
+        self.assertIn('name="action" value="build"', found)
+        self.assertIn('name="host" value="%s"' % node, found)
+        self.assertIn("It has no backups: after the set-up it starts empty", found)
+        self.assertNotIn(" open>", found[:80])
+        write(os.path.join(self.c.media_dir(), node, node + ".iso"), "an image")  # its media are made: the next steps
+        found = section()
+        self.assertIn(" open>", found[:120])
+        self.assertIn('href="/hosts/%s/media"' % node, found)
+        self.assertIn('name="action" value="setup"', found)
+        # its buttons post the actions that exist: the media, then its set-up (`next` for that machine)
+        self.c.kiwi = [sys.executable, "-c", "print('ran')"]
+        for action in ("build", "setup"):
+            status, where, _ = self.ask("/run", {"action": action, "host": node, "csrf": csrf}, cookie)
+            self.assertEqual(status, 303)
+            job = self.c.job(where.rsplit("/", 1)[1])
+            self.assertEqual((job["action"], job["hosts"]), (action, [node]))
+        self.assertEqual(self.c.argv("setup", [node])[-4:], ["next", fleet, node, "--yes"])
+        # a master at a hoster Kiwi Server installs at: the one button, after a confirmation
+        data = self.data()
+        master = next(n for n, h in data["hosts"].items() if h["role"] == "master")
+        data["hosts"][master]["vps"] = {"provider": "netcup"}
+        util.write_text(os.path.realpath(fleet), yaml.safe_dump(data, sort_keys=False))
+        cli.record_applied(config.Fleet.load(fleet), master)
+        self.c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
+                       "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
+        self.c.fleet_info(fresh=True)
+        body = self.ask("/hosts/" + master, cookie=cookie)[1]
+        found = body[body.index('id="rebuild"'):]
+        self.assertIn("Install it at netcup", found)
+        self.assertIn("EVERYTHING ON THAT SERVER IS ERASED", found)
+        self.assertIn('name="action" value="setup"', found)
+        self.assertNotIn('value="build"', found[:found.index("</details>")])
+
+
+class TestRecovery(Base):
+    """`kiwi-server recovery`: could the network come back, and what to do when something is lost."""
+    run_cli = StoreBase.run_cli
+
+    def setUp(self):
+        super().setUp()
+        write(os.path.join(self.tmp, "secrets", "seed"), "S" * 32)
+        self.units = os.path.join(self.tmp, "units")
+        units = mock.patch.object(backup, "_user_units", lambda: self.units)
+        units.start()
+        self.addCleanup(units.stop)
+
+    def network(self, **change):
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        d = self.base_defaults(network={"dhcp": False, "gateway": "192.168.2.1", "dns": ["9.9.9.9"]})
+        hosts = {
+            "sorbet": {"role": "master", "master": self.master(), "vps": {"provider": "netcup"}, "network": {"dhcp": True}},
+            "lychee": {"network": {"address": "192.168.2.61/24"}, "role": "node",
+                       "node": dict(node, modules=["vpn-client", "reverse-proxy", "backup-server", "tang"],
+                                    **{"backup-server": {"clients": ["papaya.kiwi"]}})},
+            "papaya": {"network": {"address": "192.168.2.30/24"}, "role": "node", "unlock": {"rings": ["infra"]},
+                       "node": dict(node, modules=["vpn-client", "reverse-proxy", "vault", "backup"],
+                                    backup={"servers": ["https://backup.lychee.kiwi"]})},
+            "quince": {"network": {"dhcp": True}, "role": "node", "node": dict(node, modules=["vpn-client", "reverse-proxy", "vault"])}}
+        for name, block in change.items():
+            hosts[name] = block
+        return self.fleet({"defaults": d, "hosts": hosts})
+
+    def report(self, f, status=None, now=None):
+        rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
+        return rep, {c["id"]: c for c in rep["checks"]}
+
+    def test_a_new_network_has_its_gaps_first_and_the_reminder_of_the_key(self):
+        f = self.network()
+        rep, checks = self.report(f)
+        oks = [c["ok"] for c in rep["checks"]]
+        self.assertEqual(oks, sorted(oks, key=lambda o: {False: 0, None: 1, True: 2}[o]))      # gaps first
+        self.assertIs(checks["copy"]["ok"], False)                  # never made
+        self.assertIn("backup fleet.yaml", checks["copy"]["fix"])
+        self.assertIs(checks["data:quince"]["ok"], False)           # data, no backup
+        self.assertIn("vault", checks["data:quince"]["text"])
+        self.assertIs(checks["data:lychee"]["ok"], False)           # the ring keys are data too
+        self.assertIsNone(checks["data:papaya"]["ok"])              # set to back up, not set up yet
+        self.assertNotIn("data:sorbet", checks)                     # tor's state is made anew; the VPN state the fleet keeps
+        self.assertIs(checks["keys"]["ok"], False)                  # no store, no recovery key
+        self.assertIsNone(checks["recovery-key"]["ok"])
+        self.assertTrue(all(set(c) == {"id", "ok", "text", "fix"} for c in rep["checks"]))
+
+    def test_the_copy_is_noted_where_and_when_backup_stored_it(self):
+        f = self.network()
+        now = time.time()
+        recovery.record_copy(f, ["papaya", "gone"], now=now - 3600)
+        _r, checks = self.report(f, now=now)
+        self.assertIs(checks["copy"]["ok"], True)
+        self.assertIn("on papaya", checks["copy"]["text"])
+        self.assertNotIn("gone", checks["copy"]["text"])            # a machine no longer in the fleet
+        self.assertIn("keep one somewhere else", checks["copy"]["text"])
+        _r, checks = self.report(f, now=now + 15 * 86400)
+        self.assertIs(checks["copy"]["ok"], False)
+        self.assertIn("15 days old", checks["copy"]["text"])
+        recovery.record_copy(f, local=os.path.join(self.tmp, "stick"), now=now)
+        _r, checks = self.report(f, now=now)
+        self.assertIn("stick", checks["copy"]["text"])
+        self.assertNotIn("somewhere else", checks["copy"]["text"])
+        # nothing on record, but machines are set up: a copy may exist that this version did not note
+        state = cli.fleet_state(f)
+        state.pop("copy")
+        util.write_text(cli._state_path(f), json.dumps(state))
+        cli.record_applied(f, "lychee")
+        _r, checks = self.report(f)
+        self.assertIsNone(checks["copy"]["ok"])
+
+    @unittest.skipUnless(have("openssl"), "openssl not installed")
+    def test_backup_notes_each_machine_and_the_folder(self):
+        f = self.network()
+        pw = os.path.join(self.tmp, "pass")
+        write(pw, "a passphrase")
+        stick = os.path.join(self.tmp, "stick")
+        os.makedirs(stick)
+        stored = []
+        with mock.patch.object(backup, "store_remote", lambda data, tgt, name, keep: stored.append(tgt) or [name]), \
+                mock.patch.object(backup, "ssh_target", lambda h, o=None: "core@" + h.name):
+            rc, _out, err = self.run_cli("backup", f.path, "lychee", "papaya", "--local", stick, "--passphrase-file", pw)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(stored, ["core@lychee", "core@papaya"])
+        rec = cli.fleet_state(f)["copy"]
+        self.assertEqual(sorted(rec["hosts"]), ["lychee", "papaya"])
+        self.assertEqual(rec["local"]["dir"], stick)
+
+    def test_a_machines_backups_from_its_settings_and_the_last_look(self):
+        f = self.network()
+        cli.record_applied(f, "papaya")
+        now = time.time()
+        _r, checks = self.report(f)
+        self.assertIs(checks["data:papaya"]["ok"], True)            # no look: its settings
+        self.assertIn("to lychee", checks["data:papaya"]["text"])
+
+        def looked(**backup_facts):
+            return {"time": now - 600, "hosts": [{"host": "papaya", "ok": True, "facts": {"backup": backup_facts}}]}
+        _r, checks = self.report(f, looked(last=1, age=3 * 3600, held="", copies=[]), now=now)
+        self.assertIs(checks["data:papaya"]["ok"], True)
+        self.assertIn("3 hours ago", checks["data:papaya"]["text"])
+        _r, checks = self.report(f, looked(last=1, age=40 * 3600, held="", copies=[]), now=now)
+        self.assertIs(checks["data:papaya"]["ok"], False)
+        self.assertIn("40 hours old", checks["data:papaya"]["text"])
+        self.assertIn("backups fleet.yaml papaya --now", checks["data:papaya"]["fix"])
+        _r, checks = self.report(f, looked(last=0, age=None, held="", copies=[]), now=now)
+        self.assertIs(checks["data:papaya"]["ok"], False)
+        _r, checks = self.report(f, {"hosts": [{"host": "papaya", "ok": False, "facts": {}}]}, now=now)
+        self.assertIsNone(checks["data:papaya"]["ok"])              # did not answer: cannot tell
+        # a backup server that does not take its backups, and one that is itself
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        f = self.network(lychee={"network": {"address": "192.168.2.61/24"}, "role": "node",
+                                 "node": dict(node, modules=["vpn-client", "reverse-proxy", "backup-server", "tang"])})
+        _r, checks = self.report(f)
+        self.assertIs(checks["data:papaya"]["ok"], False)
+        self.assertIn("lychee does not take the backups of papaya", checks["data:papaya"]["text"])
+        f = self.network(papaya={"network": {"address": "192.168.2.30/24"}, "role": "node",
+                                 "node": dict(node, modules=["vpn-client", "reverse-proxy", "vault", "backup", "backup-server"],
+                                              backup={"servers": ["https://backup.papaya.kiwi"]})})
+        _r, checks = self.report(f)
+        self.assertIn("only on itself", checks["data:papaya"]["text"])
+
+    def test_a_disk_whose_rings_are_all_on_one_machine(self):
+        f = self.network()
+        _r, checks = self.report(f)
+        self.assertIs(checks["unlock:papaya"]["ok"], False)
+        self.assertIn("If lychee is lost, papaya stays locked", checks["unlock:papaya"]["text"])
+        self.assertIn("unlock fleet.yaml papaya --manual", checks["unlock:papaya"]["fix"])
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        f = self.network(quince={"network": {"address": "192.168.2.31/24"}, "role": "node",
+                                 "node": dict(node, modules=["vpn-client", "reverse-proxy", "tang"], tang={"rings": {"attic": 7501}})},
+                         papaya={"network": {"address": "192.168.2.30/24"}, "role": "node",
+                                 "unlock": {"rings": ["infra", "attic"], "threshold": 1}, "node": dict(node, preset="minimal")})
+        _r, checks = self.report(f)
+        self.assertIs(checks["unlock:papaya"]["ok"], True)
+        self.assertIn("lychee and quince", checks["unlock:papaya"]["text"])
+        f = self.network(papaya={"network": {"address": "192.168.2.30/24"}, "role": "node", "unlock": {"rings": ["nowhere"]},
+                                 "node": dict(node, preset="minimal")})
+        _r, checks = self.report(f)
+        self.assertIn("No machine serves the ring nowhere", checks["unlock:papaya"]["text"])
+
+    def test_the_master_its_vpn_state_its_reinstall_and_a_master_in_memory(self):
+        f = self.network()
+        _r, checks = self.report(f)
+        self.assertIsNone(checks["master-vpn:sorbet"]["ok"])        # not set up yet
+        self.assertIs(checks["master-install:sorbet"]["ok"], True)
+        self.assertIn("at netcup", checks["master-install:sorbet"]["text"])
+        cli.record_applied(f, "sorbet")
+        _r, checks = self.report(f)
+        self.assertIs(checks["master-vpn:sorbet"]["ok"], False)
+        self.assertIn("apply fleet.yaml sorbet", checks["master-vpn:sorbet"]["fix"])
+        write(f.resolve_path("secrets/wg-easy/sorbet.json"), '{"server": {"privateKey": "K"}}')
+        rep, checks = self.report(f)
+        self.assertIs(checks["master-vpn:sorbet"]["ok"], True)
+        master = next(k for k in rep["cases"] if k["id"] == "master")
+        self.assertIn("no new codes", master["by_itself"])
+        self.assertEqual(master["how"][0]["label"], "Install sorbet again at netcup")
+        self.assertEqual(master["how"][0]["command"], "kiwi-server next fleet.yaml sorbet --yes")
+        # in memory: its role comes back after a restart only when something watches it
+        f = self.network(sorbet={"role": "master", "target": "coreos-ram", "master": self.master()})
+        _r, checks = self.report(f)
+        self.assertIs(checks["master-watch:sorbet"]["ok"], False)
+        self.assertIn("watch fleet.yaml --timer on", checks["master-watch:sorbet"]["fix"])
+        self.assertIn("by hand", checks["master-install:sorbet"]["text"])
+        from kiwiserver.targets import ram as ram_t
+        write(os.path.join(self.units, ram_t._unit(f.path) + ".timer"), "[Timer]\n")
+        _r, checks = self.report(f)
+        self.assertIs(checks["master-watch:sorbet"]["ok"], True)
+
+    def test_who_opens_the_keys(self):
+        f = self.network()
+        for ways, ok in (([("recovery", "age1x")], False), ([("recovery", "age1x"), ("desktop", "age1y")], False),
+                         ([("recovery", "age1x"), ("desktop", "age1y"), ("laptop", "age1z")], True)):
+            with mock.patch.object(store.Store, "exists", lambda self: True), \
+                    mock.patch.object(store.Store, "ways", lambda self, w=ways: w):
+                _r, checks = self.report(f)
+            self.assertIs(checks["keys"]["ok"], ok, ways)
+        self.assertIn("laptop", checks["keys"]["text"])
+        self.assertIn("the computer the network was set up with", checks["keys"]["text"])
+
+    def test_the_cases_are_filled_with_the_networks_names(self):
+        f = self.network()
+        rep, _c = self.report(f)
+        self.assertEqual([k["id"] for k in rep["cases"]], ["data", "machine", "master", "device", "computer", "network", "home"])
+        for k in rep["cases"]:
+            self.assertEqual(set(k), {"id", "title", "by_itself", "you", "how"})
+            self.assertTrue(k["title"] and k["by_itself"] and k["you"])
+            for h in k["how"]:
+                self.assertEqual(set(h), {"label", "command", "page", "app"})
+        by = {k["id"]: k for k in rep["cases"]}
+        self.assertEqual([(h["page"], h["app"]) for h in by["data"]["how"]], [("/backups/papaya", "snapshots:papaya")])
+        rebuild = {h["app"]: h for h in by["machine"]["how"]}
+        self.assertEqual(rebuild["rebuild:lychee"]["command"],
+                         "kiwi-server build fleet.yaml lychee\nkiwi-server next fleet.yaml lychee --yes")
+        self.assertIn("--ssh core@<its address> --new-host-key", rebuild["rebuild:quince"]["command"])   # its router's address
+        self.assertIn("unlock:papaya", rebuild)
+        self.assertNotIn("rebuild:sorbet", rebuild)                 # the master has its own case
+        self.assertEqual([h["app"] for h in by["computer"]["how"]], [None, "rotate"])
+        self.assertEqual([h["app"] for h in by["network"]["how"]], ["restore-copy", "copy"])
+        # a whole home: the master, the machine with the backups, the others
+        self.assertEqual([h["label"] for h in by["home"]["how"]][:3], ["Bring it back from a copy", "1. sorbet", "2. lychee"])
+        # the copy noted on a machine at home: the restore fetches it from there
+        recovery.record_copy(f, ["lychee"])
+        rep, _c = self.report(f)
+        self.assertIn("restore --from core@192.168.2.61", next(k for k in rep["cases"] if k["id"] == "network")["how"][0]["command"])
+
+    def test_the_command_says_it_short_and_as_json(self):
+        f = self.network()
+        rc, out, err = self.run_cli("recovery", f.path, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        data = json.loads(out)
+        self.assertEqual(sorted(data), ["cases", "checks", "fleet", "looked"])
+        rc, out, err = self.run_cli("recovery", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.startswith("Ready?\n  gap  "))
+        self.assertIn("If something breaks", out)
+        self.assertIn("kiwi-server next fleet.yaml sorbet --yes".replace("fleet.yaml", f.path), out)
+        status = os.path.join(self.tmp, "status.json")
+        write(status, json.dumps({"hosts": [{"host": "papaya", "ok": False, "facts": {}}]}))
+        rc, out, err = self.run_cli("recovery", f.path, "--status", status, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(next(c for c in json.loads(out)["checks"] if c["id"] == "data:papaya")["ok"])
+        write(status, "not json")
+        rc, _out, err = self.run_cli("recovery", f.path, "--status", status)
+        self.assertEqual(rc, 1)
+        self.assertIn("not what status --porcelain gives", err)
 
 
 if __name__ == "__main__":

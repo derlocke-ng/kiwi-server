@@ -6,7 +6,8 @@ In the app: menu, **Back up the network now**, **Save a copy of the network…**
 commands below do the same.
 
 Two things need a backup: the fleet directory on your computer, and each
-machine's own data.
+machine's own data. What to do when something is lost, and a report that says
+whether your backups would bring it back: [When something breaks](recovery.md).
 
 ## The fleet directory
 

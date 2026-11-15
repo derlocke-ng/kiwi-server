@@ -267,10 +267,12 @@ machines at home, then your phone.</p>{% endblock %}""",
 <div class="row"><span class="muted">{% if looked %}Checked {{ ago(looked) }} ago. It checks every ten minutes by itself.{% endif %}
 {% if error %}<span class="bad">{{ error }}</span>{% endif %}</span>
 <form class="inline" method="post" action="/refresh">{{ tok }}<button>Check now</button></form></div>
-{% for e in gone %}<div class="card"><div class="row"><strong><span class="dot {{ "warn" if e.kind in ["waiting", "restarted"] else "bad" }}"></span>{{ e.host }}</strong>
+{% for e in gone %}<div class="card"><div class="row"><strong><span class="dot {{ "warn" if e.kind in ["waiting", "restarted", "unlocked"] else "bad" }}"></span>{{ e.host }}</strong>
 <a class="btn" href="/hosts/{{ e.host }}">Open</a></div><p>{{ e.text }}.</p>
 {% if e.kind == "waiting" %}<p class="muted">Nothing is done yet: a short break is normal.</p>
 {% elif e.kind == "restarted" %}<p class="muted">It needs a few minutes to come back. Activity says when it was done.</p>
+{% elif e.kind == "unlocked" %}<p class="muted">It needs a minute or two to start. Activity says when it was done.</p>
+{% elif e.kind == "locked" %}<p class="muted">Open the machine's page: <em>Unlock it</em> is there.</p>
 {% elif e.kind == "tell" %}<p class="muted">Nothing is done by itself here. <a href="/help#gone">What you can do, and how to let the control node restart it.</a></p>{% endif %}</div>{% endfor %}
 
 {% set todo = machines|selectattr("problems")|list %}{% if todo %}<h2>Needs a look</h2>

@@ -140,6 +140,9 @@ BASE_GROUPS = [
              scope="defaults", default="tell", help="restart works for a node at a provider; one at home can only be told about"),
         dict(path=("recovery", "node", "after"), type="int", label="…after this many minutes", scope="defaults", default=60,
              help="How long a node must be gone before that happens"),
+        dict(path=("recovery", "unlock"), type="bool", label="Open a disk that waits at boot", scope="defaults", default=True,
+             help="A machine that restarted and waits with its disk locked gets its unlock ring forwarded by the control "
+                  "node. Off: someone presses Unlock it"),
     ]),
     ("uCore", [
         dict(path=("ucore", "image"), type="string", label="Image", default="ghcr.io/ublue-os/ucore:stable",

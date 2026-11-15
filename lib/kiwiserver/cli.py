@@ -1339,7 +1339,18 @@ def cmd_recover(args):
         with contextlib.redirect_stdout(buf):
             main(["status", args.fleet, "--porcelain"])
         seen = json.loads(buf.getvalue() or "{}")
-    said = {h["host"]: bool(h.get("ok")) or bool(h.get("locked")) for h in seen.get("hosts") or []}   # a locked disk is not gone
+    said = {h["host"]: bool(h.get("ok")) for h in seen.get("hosts") or []}
+    waits = {h["host"]: bool(h.get("locked")) for h in seen.get("hosts") or []}      # there, its disk locked: not gone
+
+    def open_it(name):
+        h = fleet.hosts[name]
+        if not unlock._forwarded_rings(h):
+            # a ring at home it reaches by itself: it opens when a machine that serves it is back
+            raise KiwiError(unlock.locked_advice(h, args.fleet))
+        if args.dry_run:
+            return
+        if main(["unlock", args.fleet, name]):
+            raise KiwiError("forwarding its ring did not open it")
 
     def where(name):
         h = fleet.hosts[name]
@@ -1353,7 +1364,7 @@ def cmd_recover(args):
         rc = main(["vps", "restart", args.fleet, name] + (["--api", args.api] if args.api else []))
         if rc:
             raise KiwiError("the provider did not do it")
-    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where)
+    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
@@ -1363,7 +1374,7 @@ def cmd_recover(args):
         print(json.dumps({"events": events}))
         return
     for e in events:
-        (util.warn if e["kind"] in ("tell", "held") else util.say)(e["text"])
+        (util.warn if e["kind"] in ("tell", "held", "locked") else util.say)(e["text"])
     if not events:
         util.say("every machine that is set up answers")
 

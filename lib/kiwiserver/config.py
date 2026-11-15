@@ -150,6 +150,7 @@ DEFAULTS = {
     "recovery": {
         "master": {"after": 15, "do": "tell"},
         "node": {"after": 60, "do": "tell"},
+        "unlock": True,
     },
     "backup": {
         # the fleet directory itself (fleet file, secrets/, the CA), encrypted,

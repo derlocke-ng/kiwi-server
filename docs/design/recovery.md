@@ -12,15 +12,16 @@ not the network.
 | System updates | staged by the system, restart in the machine's update window |
 | Service updates | `kiwi-stack update` by timer (weekly) |
 | Backups | every night, each machine to its backup machines; the network's own copy to the machines |
-| Disk unlock | Tang rings; a machine opens when one ring answers |
+| Disk unlock | Tang rings; a machine opens when one ring answers. A rented master cannot reach a ring at home: the control node forwards it when it sees the master waiting (2.95.0) |
+| A master that hangs | the control node switches it off and on at its provider, when the fleet file allows it (2.93.0) |
 | A RAM master after a power cut | `watch` sends its role again |
 | A gateway's routing | watched twice a minute and put back |
 | An ad blocker's blocklist | looked at hourly, fetched again when empty |
 
 ## What does not, and the ladder
 
-Nobody acts when a machine is gone, nothing reaches a node once its master is gone, and a
-lost site is rebuilt by a person, step by step. Recovery is a ladder; each rung is tried
+A master that is gone for good is not installed anew by itself, nothing reaches a node once
+its master is gone, and a lost site is rebuilt by a person, step by step. Recovery is a ladder; each rung is tried
 before the next, and each has an owner-set permission:
 
 1. **A service**: systemd restarts it (today). Its data back from a snapshot: a person.
@@ -87,8 +88,9 @@ data) is what the recovery page lists.
 ## Steps
 
 1. The readiness report, the recovery page, rebuilding a lost machine from the app and the
-   page.
-2. The policy, and the control node restarting a master at its provider by itself.
+   page. Built in 2.95.0 (`kiwi-server recovery`, [recovery.md](../recovery.md)).
+2. The policy, and the control node restarting a master at its provider by itself. Built
+   in 2.93.0; 2.95.0 adds the unlock ring forwarded to a master that waits at boot.
 3. `reinstall` for a master; the same for a rented node.
 4. The emergency channel: onion SSH on every machine, the control node's fallback.
 5. Nodes ask the control node over Tor for their master and switch by themselves.

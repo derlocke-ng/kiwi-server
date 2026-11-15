@@ -282,8 +282,17 @@ The control node holds back in three cases, whatever the fleet file says:
 - The provider does not answer. Then the control node itself may be the one
   without a connection, and it does nothing.
 
-Every restart is in Activity. A machine whose disk waits to be unlocked counts
-as there, not as gone. By hand, and without doing anything:
+Every restart is in Activity.
+
+A machine whose disk waits to be unlocked at boot counts as there, not as gone.
+The control node forwards its unlock ring by itself, so a rented master with an
+encrypted disk comes back after a restart with nobody there. The ring stays at
+home; the control node only carries it to the machine's own address.
+`recovery: { unlock: false }` switches that off, and "Unlock it" on the
+machine's page does it by hand. A machine whose rings are all at home opens
+when one of the machines that serve them is back.
+
+One look by hand, without doing anything:
 
 ```bash
 kiwi-server gone ~/kiwi/fleet.yaml --dry-run

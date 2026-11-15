@@ -4900,6 +4900,19 @@ class TestVps(Base):
         self.assertEqual(self.recover(f, True), [])              # it is back
         self.assertEqual(cli.fleet_state(f)["gone"], {})
 
+    def test_a_locked_machine_with_no_ring_to_forward_is_told_about(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "target": "debian", "debian": {"encrypt": True}, "unlock": {"rings": ["house"]}, "vps": {"server": 7}}}})
+        cli.record_applied(f, "x")
+        seen = os.path.join(self.tmp, "seen.json")
+        write(seen, json.dumps({"hosts": [{"host": "x", "ok": False, "locked": True}]}))
+        rc, out, err = self.run_cli("gone", f.path, "--porcelain", "--status", seen)
+        self.assertEqual(rc, 0, err)
+        ev = json.loads(out.strip().splitlines()[-1])["events"]
+        self.assertEqual([e["kind"] for e in ev], ["locked"])
+        self.assertIn("waits at boot with its disk locked", ev[0]["text"])
+        self.assertEqual(self.api.calls, [])                        # not gone: its server is left alone
+
     def test_recover_does_nothing_without_a_login_at_the_provider(self):
         d = self.base_defaults(recovery={"node": {"after": 1, "do": "restart"}})
         f = self.fleet({"defaults": d, "hosts": {"x": {"role": "bare", "target": "debian", "vps": {"server": 7}}}})
@@ -4971,6 +4984,33 @@ class TestWatchdog(unittest.TestCase):
         self.assertEqual([e["kind"] for e in ev], ["held"])
         self.assertIn("nothing was done", ev[0]["text"])
         self.assertEqual(state.get("acted", {}).get("gate"), [])
+
+    def test_a_disk_that_waits_at_boot_is_opened_and_not_counted_as_gone(self):
+        f, state, done = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 900}}, []
+
+        def step(now, unlock=done.append):
+            if isinstance(unlock, bool):                            # the fleet file's switch
+                f.defaults["recovery"]["unlock"], unlock = unlock, done.append
+            return watchdogmod.step(f, {"gate": "master", "pi": "node"}, {"gate": False, "pi": True}, state, now,
+                                    lambda n: self.fail("a machine that is there is not restarted"), None, {"gate": True}, unlock)
+        ev = step(self.NOW)
+        self.assertEqual(([e["kind"] for e in ev], done, state["gone"]), (["unlocked"], ["gate"], {}))
+        self.assertIn("its ring was forwarded, it starts now", ev[0]["text"])
+        ev = step(self.NOW + 60)                                    # a moment later: not twice
+        self.assertEqual(([e["kind"] for e in ev], done), (["unlocked"], ["gate"]))
+        ev = step(self.NOW + 600)
+        self.assertEqual(done, ["gate", "gate"])
+
+        def cannot(_n):
+            raise KiwiError("the machines that open it do not answer")
+        ev = step(self.NOW + 1200, unlock=cannot)
+        self.assertEqual([e["kind"] for e in ev], ["locked"])
+        self.assertIn("do not answer", ev[0]["text"])
+        ev = step(self.NOW + 1800, unlock=False)                    # switched off in the fleet file
+        self.assertEqual(([e["kind"] for e in ev], done), (["locked"], ["gate", "gate"]))
+        state["opened"]["gate"] = [self.NOW + 1900 + i for i in range(6)]
+        ev = step(self.NOW + 3000, unlock=True)
+        self.assertIn("6 times today", ev[0]["text"])               # it opens and locks again: a person looks
 
     def test_a_policy_that_makes_no_sense_is_said(self):
         for bad in ({"do": "explode"}, {"after": "soon"}, {"after": 0}):

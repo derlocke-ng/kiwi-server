@@ -1196,6 +1196,8 @@ class Control:
         for e in events:
             if e.get("kind") == "restarted":
                 self.audit("control", "restarted %s at its provider: it did not answer" % e["host"], host=e["host"])
+            elif e.get("kind") == "unlocked" and e["text"].endswith("it starts now"):
+                self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
         return events
 
     def gone(self):
@@ -1323,7 +1325,7 @@ class Control:
                 if now - last_status >= self.status_minutes * 60:
                     last_status = now
                     self.refresh_status()
-                    if any(e.get("kind") == "restarted" for e in self.recover()):
+                    if any(e.get("kind") in ("restarted", "unlocked") for e in self.recover()):
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                 if self.watch_seconds and self.has_ram_masters():
                     with self.lock:

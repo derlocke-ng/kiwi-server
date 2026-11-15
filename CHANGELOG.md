@@ -16,6 +16,12 @@
   in the app: its install media and its set-up again, under the same name. A machine
   with backups brings its data back by itself afterwards.
 - `backup` notes where and when the network's copy was stored, so the report can say.
+- **A master with an encrypted disk comes back by itself.** After a restart it waits at
+  boot for its unlock ring, which lives at home. The control node now forwards the ring
+  when it sees the machine waiting, at most six times a day (`recovery: { unlock: false }`
+  switches it off; Settings, "Open a disk that waits at boot"). Together with 2.93.0's
+  restart, a master that hangs is switched off and on, opened and running again with
+  nobody there.
 - `kiwi-server gone` is the new name of 2.93.0's `recover` (a look at machines that do
   not answer); `recover` still works. It was one letter from `recovery`.
 - Fixed: the control page could read a file of the last look while it was being written,

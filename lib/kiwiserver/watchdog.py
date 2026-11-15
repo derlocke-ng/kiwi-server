@@ -7,6 +7,10 @@ unreachable and what may then be done without a person:
       master: { after: 15, do: restart }     # minutes; tell | restart | reinstall
       node:   { after: 60, do: tell }
 
+A machine that is there but waits at boot with its disk locked gets its unlock ring forwarded
+(`recovery: { unlock: false }` switches that off): the ring lives at home, and the control
+node is what stays in the house. That is how a rented master comes back after a restart.
+
 `tell` says it (the page shows it). `restart` is a power cycle through the machine's
 provider: it destroys nothing. `reinstall` is not built yet and is read as `restart`.
 Guards no policy switches off: the same machine is not acted on twice within an hour nor
@@ -19,6 +23,7 @@ DO = ("tell", "restart", "reinstall")
 DEFAULT = {"master": {"after": 15, "do": "tell"}, "node": {"after": 60, "do": "tell"}}
 AGAIN_AFTER = 3600          # seconds between two acts on one machine
 A_DAY = 3                   # acts on one machine in 24 hours
+OPEN_AGAIN = 300            # seconds between two tries to open one disk
 
 
 def policy(fleet, kind):
@@ -33,16 +38,41 @@ def policy(fleet, kind):
     return after, cfg["do"]
 
 
-def step(fleet, kinds, said, state, now, restart, where=None):
+def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None):
     """One look. `kinds`: {machine: "master"|"node"} for the machines that have their role;
     `said`: {machine: bool} whether it answered just now; `state`: the fleet's state, changed
     in place (`gone`: since when, `acted`: when); `restart(name)` does a power cycle and may
-    raise KiwiError; `where(name)` says what the machine is at its provider, or None. Returns the events: [{host, kind: waiting|tell|restarted|held, text}]."""
+    raise KiwiError; `where(name)` says what the machine is at its provider, or None. `locked`: {machine: bool}
+    whether it waits at boot with its disk locked; `unlock(name)` forwards its ring and may raise
+    KiwiError. More kinds of events then: unlocked, locked. Returns the events: [{host, kind: waiting|tell|restarted|held, text}]."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
     for name in list(gone):
         if said.get(name) or name not in kinds:
             del gone[name]                      # back, or no longer a machine of the network
+    opened = state.setdefault("opened", {})
     for name, kind in kinds.items():
+        if (locked or {}).get(name):            # there, but its disk waits: not gone
+            gone.pop(name, None)
+            what = "%s waits at boot with its disk locked" % name
+            times = [t for t in opened.get(name, []) if now - t < 86400]
+            opened[name] = times
+            if unlock is None or (fleet.defaults.get("recovery") or {}).get("unlock", True) is False:
+                events.append({"host": name, "kind": "locked", "text": what})
+            elif len(times) >= 2 * A_DAY:
+                events.append({"host": name, "kind": "locked",
+                               "text": what + ". Its ring was forwarded %d times today and it waits again: look at it" % len(times)})
+            elif times and now - times[-1] < OPEN_AGAIN:
+                events.append({"host": name, "kind": "unlocked", "text": what + ": its ring was forwarded a moment ago"})
+            else:
+                try:
+                    unlock(name)
+                except KiwiError as e:
+                    events.append({"host": name, "kind": "locked", "text": what + ". It could not be opened from here (%s)"
+                                   % str(e).splitlines()[0][:160]})
+                    continue
+                times.append(now)
+                events.append({"host": name, "kind": "unlocked", "text": what + ": its ring was forwarded, it starts now"})
+            continue
         if said.get(name, True):
             continue
         since = gone.setdefault(name, now)

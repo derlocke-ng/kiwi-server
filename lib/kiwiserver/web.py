@@ -159,6 +159,13 @@ and installs it there by itself. <strong>Everything on that server is erased.</s
 {% elif m.phase == "build" %}<p>Next: its install media, a file of about 1 GB. <span class="muted">Making it takes a few minutes.</span></p>
 <form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="build"><input type="hidden" name="host" value="{{ m.name }}">
 <button class="primary">Make its install media</button></form>
+{% elif m.phase == "install" and m.here %}<p>It is the machine this page runs on: nothing is installed again. Setting it up
+takes a few minutes; it downloads what it runs.</p>
+<p><strong>This page moves then.</strong> Like every service of your network it opens on your VPN only, at
+<code>https://control.{{ m.hostname }}</code>: put the phone or computer you hold on the VPN first
+(<a href="/devices">Devices</a>), and log in there again when the machine is set up.</p>
+<div class="actions"><form class="inline" method="post" action="/run" onsubmit="return confirm('Set up {{ m.name }} now? This page moves to https://control.{{ m.hostname }}, on your VPN.')">{{ tok }}<input type="hidden" name="action" value="setup">
+<input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Set it up</button></form></div>
 {% elif m.phase == "install" %}{% if m.media %}<p><strong>1.</strong> Fetch its install media ({{ (m.media / 1048576) | round | int }} MB)
 {% if m.role == "master" %}and upload them as an ISO at your hoster (a master at home: write them to a USB stick).
 {% else %}and write them to a USB stick.{% endif %}
@@ -242,12 +249,16 @@ should be yours.</p>
 {% for q in step.questions if not q.advanced and q.type not in ("machines", "lookup") %}
 {{ field(q, q.id, values.get(q.id, q.default or ""), errors.get(q.id)) }}{% endfor %}
 {% for q in step.questions if q.type == "machines" %}
-<div id="machines">{% for m in machines %}{% set i = loop.index0 %}<div class="card machine"><div class="row"><strong>A machine at home</strong>
-<button type="button" class="drop">Leave it out</button></div>
-{% for f in q.fields if not f.advanced %}{{ field(f, "nodes.%d.%s" % (i, f.id), m.get(f.id, ""), errors.get("nodes.%d.%s" % (i, f.id))) }}{% endfor %}
+<div id="machines">{% for m in machines %}{% set i = loop.index0 %}<div class="card machine"><div class="row"><strong>{{ "This machine" if m.this else "A machine at home" }}</strong>
+{% if not m.this %}<button type="button" class="drop">Leave it out</button>{% endif %}</div>
+{% if m.this %}<p class="muted">The machine this page runs on. It becomes your first home server, as it is: nothing is
+installed again, and it keeps the address it has now, {{ m.address }}.</p>
+<input type="hidden" name="nodes.{{ i }}.address" value="{{ m.address }}">{% endif %}
+{% for f in q.fields if not f.advanced and not (m.this and f.id == "address") %}{{ field(f, "nodes.%d.%s" % (i, f.id), m.get(f.id, ""), errors.get("nodes.%d.%s" % (i, f.id))) }}{% endfor %}
 <details><summary>More settings</summary>
-{% for f in q.fields if f.advanced %}{{ field(f, "nodes.%d.%s" % (i, f.id), m.get(f.id, ""), errors.get("nodes.%d.%s" % (i, f.id))) }}{% endfor %}
+{% for f in q.fields if f.advanced and not (m.this and f.id in ("target", "disk")) %}{{ field(f, "nodes.%d.%s" % (i, f.id), m.get(f.id, ""), errors.get("nodes.%d.%s" % (i, f.id))) }}{% endfor %}
 </details></div>{% endfor %}</div>
+{% if errors.get("nodes") %}<p class="bad">{{ errors.nodes }}</p>{% endif %}
 <p class="muted" id="none">{{ q.none }}</p>
 <div class="actions"><button type="button" id="add">{{ q.add }}</button></div>
 <template id="machine"><div class="card machine"><div class="row"><strong>A machine at home</strong>
@@ -1191,6 +1202,7 @@ def make_app(control: Control):
             out.append({"name": h["name"], "hostname": h["hostname"], "role": h["role"], "modules": h.get("modules") or [],
                         "sites": h.get("sites") or [], "vpn_ip": h.get("vpn_ip") or "", "next": h.get("next") or "",
                         "phase": h.get("phase") or "", "provider": h.get("provider") or "", "address": h.get("address") or "",
+                        "here": bool(h.get("here")),
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",
                         "problems": (s or {}).get("problems") or [], "notes": (s or {}).get("notes") or [],
@@ -1203,7 +1215,7 @@ def make_app(control: Control):
         for name, s in said.items():            # a look at a machine the fleet file no longer names
             if name not in [m["name"] for m in out]:
                 out.append({"name": name, "hostname": name, "role": "", "modules": [], "sites": [], "vpn_ip": "",
-                            "next": "", "phase": "", "provider": "", "address": "", "media": 0, "on_done": "", "master_ready": True, "known": True, "bars": bars(s.get("facts") or {}), "tags": [], "chips": [], "state": s.get("state") or "unknown",
+                            "next": "", "phase": "", "provider": "", "address": "", "media": 0, "on_done": "", "master_ready": True, "here": False, "known": True, "bars": bars(s.get("facts") or {}), "tags": [], "chips": [], "state": s.get("state") or "unknown",
                             "problems": s.get("problems") or [], "notes": s.get("notes") or [],
                             "facts": s.get("facts") or {}, "output": s.get("output") or ""})
         return out, st, info
@@ -1229,9 +1241,13 @@ def make_app(control: Control):
                     q["advanced"] = False
                     q["help"] = "Check that it is your home's. " + q.get("help", "")
         values = dict(values or {})
+        if found.get("this") and "nodes" not in values:         # the starter's machine: the first one at home
+            values["nodes"] = [{"address": found["this"], "name": setupmod.free_name("node")}]
         fields = next(q["fields"] for st in steps for q in st["questions"] if q.get("type") == "machines")
         blank = {f["id"]: f.get("default", "") for f in fields}
         machines = [dict(blank, **m) for m in values.get("nodes") or []]
+        for m in machines:
+            m["this"] = bool(found.get("this")) and str(m.get("address") or "").split("/")[0] == found["this"]
         free = {"addresses": found.get("addresses") or [], "names": list(setupmod.NODES)}
         errors = errors or {}
         opened = [st["id"] for st in steps if any(q.get("advanced") and q["id"] in errors for q in st["questions"])]
@@ -1258,6 +1274,9 @@ def make_app(control: Control):
             for q in st["questions"]:
                 if q.get("when") and q["id"] in a and not setupmod._when(q, a):
                     del a[q["id"]]
+        this = setupmod.detect(probe=False).get("this")
+        if this:
+            a["this_address"] = this        # from the machine, never from the form
         taken = set()
         a["nodes"] = []
         for i in sorted(nodes)[:8]:

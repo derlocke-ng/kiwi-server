@@ -77,16 +77,33 @@ control part. The handover has to be exact, since the control node sets up the m
 it runs on:
 
 - The starter keeps the fleet where a node's control part keeps it
-  (`<docker dir>/kn-control`), and runs its container under the name and unit the stack
-  uses (`kn-control`). When the role brings the stack, it finds its own container there
-  and replaces the unit; the store on disk is the same file.
+  (`/home/user/docker/kn-control`, the default `<docker dir>/kn-control`), and runs its
+  container under the name and unit the stack uses (`kn-control`). The role's stack
+  writes its own `kn-control.container` over the starter's; the store on disk is the
+  same file. The container that runs keeps the starter's definition until it is
+  restarted, which the last step does.
 - The questionnaire on a starter knows "this machine": it is the first node, target
   `coreos`, its disk is not asked for, and its address is the one the router gave it,
   which it keeps from then on (fixed). The person names it.
-- "Set it up" for this machine needs no install media. It runs the role over SSH to the
-  machine's own address with the starter key, as `adopt` does for a machine someone else
-  installed, and takes the starter key out of `authorized_keys` when the fleet's own key
-  is in.
+- "Set it up" for this machine needs no install media (`kiwi-server next`, with
+  `KIWI_STARTER=1` in the starter's container: the fleet's machine with the control part
+  is this one). Three steps:
+  1. What Ignition would have written at an install is put in place over SSH to
+     127.0.0.1 with the starter key (`adopt.run_coreos`): the files, the units, the
+     fleet's keys for the admin user. An encrypted disk or kernel arguments are refused:
+     they need an install.
+  2. The role runs as a unit of the machine itself (`kiwi-self-apply`), since it replaces
+     the container the command runs in.
+  3. When the role is in, `/usr/local/bin/kiwi-starter-done` (part of the starter image)
+     takes away what the starter needed: its key, port 80, the message on the screen,
+     the mDNS name. It does nothing unless the stack has taken over the control part, so
+     a role that failed leaves the starter's page reachable. Then it restarts
+     `kn-control`: the page is now at `https://control.<name>.<domain>`, on the VPN, its
+     keys locked until someone logs in there.
+- The mark on the boot partition stays: the stick never installs over this machine.
+- Its disk is not encrypted (the starter installs plain Fedora CoreOS). The network's
+  keys rest encrypted in the store as on every control node; the data of its services
+  does not.
 - A node needs the master before it can be set up (its place on the VPN is made there).
   The page says so, as it does for every node: the master's step comes first.
 
@@ -122,8 +139,8 @@ back from a copy" on its first-run page with the recovery key ([recovery.md](rec
 | Bring a network back from a copy on the first-run page | exists |
 | `adopt`: a machine someone else installed | exists, from a terminal |
 | The starter image: build, disk choice, console message, mDNS, the starter key | built: `kiwi-server build --starter`, tried in a VM |
-| A yes before a disk that holds something is erased (keyboard, or a page) | being built |
-| "This machine" as the first node in the page's questionnaire | to build |
+| A yes before a disk that holds something is erased (keyboard, or a page) | built (2.104.0), tried in a VM |
+| "This machine" as the first node in the page's questionnaire, and its "Set it up" | built (2.107.0), tested in parts; the whole run in a VM with a master is the next drill |
 | The hoster's sign-in on the page | to build |
 | A network without a master | to design: what a node does with no VPN |
 | A waiting machine that asks to join | to build (the join token) |

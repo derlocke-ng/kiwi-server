@@ -115,7 +115,9 @@ Two things keep a restart from taking a machine away:
   machine with a ring must come up without needing a ring itself (a small board
   with no disk encryption does), or the home waits for someone to type a key.
   `tests/drills/power-cut.py` does this to a home: every machine off at once and on
-  again.
+  again. Tried on 15 November 2026 together with the master's server switched off at
+  its provider (`master-gone.py`): the home was back by itself after 7 minutes, and the
+  control node, once it was up, restarted the master and opened its disk: 12 minutes.
 - **A hang is reset.** Where the machine has a hardware watchdog (most boards,
   mini PCs and virtual machines do), systemd feeds it. A machine that hangs is
   reset after a minute, one that hangs in the middle of a restart after ten.

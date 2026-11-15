@@ -14,6 +14,8 @@ import random
 import re
 import subprocess
 
+import yaml
+
 from . import config, providers, util
 from .util import KiwiError
 
@@ -154,6 +156,9 @@ def detect(probe=True):
         for a in (addrs[0].get("addr_info", []) if addrs else []):
             if a.get("family") == "inet":
                 found["subnet"] = str(ipaddress.ip_interface("%s/%s" % (a["local"], a["prefixlen"])).network)
+                if os.environ.get("KIWI_STARTER") == "1":
+                    # on a machine the starter stick installed, the network's first node is this machine
+                    found["this"] = a["local"]
                 break
     link = os.path.realpath("/etc/localtime")
     if "zoneinfo/" in link:
@@ -256,7 +261,9 @@ def questions(found=None):
              "help": "auto: the install finds the machine's one disk. A device like /dev/vda when it has several. "
                      "Everything on it is erased."}]},
         {"step": "At home", "id": "home",
-         "intro": "The machines at your place. Add the one that will keep your files; more can come later.",
+         "intro": ("The machines at your place. This machine is the first: it keeps your files. More can come later."
+                   if found.get("this") else
+                   "The machines at your place. Add the one that will keep your files; more can come later."),
          "questions": [
             {"id": "nodes", "label": "Machines at home", "type": "machines", "default": [],
              "add": "Add a machine at home",
@@ -367,6 +374,9 @@ def check(a):
     v = str(a.get("master_disk") or "auto")
     if v != "auto" and not v.startswith("/dev/"):
         bad["master_disk"] = "auto, or a device like /dev/vda."
+    if a.get("this_address") and [str(n.get("address") or "").split("/")[0] for n in a.get("nodes") or []].count(
+            str(a["this_address"])) != 1:
+        bad["nodes"] = "This machine is the first one at home, at %s: it cannot be left out." % a["this_address"]
     return bad
 
 
@@ -377,8 +387,17 @@ def _answers_valid(a):
     return str(a.get("domain") or "home").strip(".").lower()
 
 
+def preset_modules(preset):
+    """The parts a preset of the node role stands for."""
+    from . import roles as rolesmod
+    with open(os.path.join(rolesmod.roles_dir(), "node", "role.yaml")) as fh:
+        return list(yaml.safe_load(fh)["presets"][preset]["modules"])
+
+
 def make(answers, fleet_dir):
-    """The fleet file's data for these answers, and what was made beside it."""
+    """The fleet file's data for these answers, and what was made beside it. With `this_address`
+    (a machine the starter stick installed), the node at that address is the machine this runs
+    on: it is not installed again and carries the control part."""
     a = dict(answers)
     a.setdefault("master_name", random.choice(MASTERS))
     domain = _answers_valid(a)
@@ -434,6 +453,14 @@ def make(answers, fleet_dir):
             h["network"] = {"dhcp": False, "address": address}
             if a.get("lan_gateway"):
                 h["network"]["gateway"] = a["lan_gateway"]
+            if a.get("this_address") and address.split("/")[0] == str(a["this_address"]):
+                # the starter's system as it is, its address as the router gave it, and the control part:
+                # `modules` replaces the preset's list, so it is that list and one more
+                h["target"] = "coreos"
+                del h["disk"]
+                node["modules"] = preset_modules(node["preset"]) + ["control"]
+                if a.get("lan_gateway"):
+                    h["network"]["dns"] = [a["lan_gateway"]]
         hosts[name] = h
     return {"defaults": defaults, "hosts": hosts}, made
 

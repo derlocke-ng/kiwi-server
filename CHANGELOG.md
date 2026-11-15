@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.107.0 — the starter's machine becomes the first node
+
+- **"This machine" in the questions.** On a machine the starter stick installed, the
+  first-run page lists that machine as the first one at home: it keeps the address the
+  router gave it, nothing is installed again, and it carries the control part.
+- **"Set it up" without install media.** What an install would have written is put in
+  place with the starter key (`kiwi-server adopt` now also takes a machine that runs
+  Fedora CoreOS: `--as core@address --key FILE`), then the role runs as a unit of the
+  machine itself. When it is in, the starter takes its own things away (its key, port
+  80, the message on the screen) and the control page moves to
+  `https://control.<name>.<domain>`, on the VPN.
+- The starter keeps the fleet where a node's control part keeps it, so the node it
+  becomes finds it there. A starter image made before this version keeps it elsewhere:
+  make the image again.
+- Tested in parts (the takeover script, the questions, the page). **Not done yet**: the
+  whole run on one machine with a master. Until then, treat it as untried.
+- Tried on the test network: the master's server and the whole home off together. The
+  home was back by itself after 7 minutes, the master, restarted and unlocked by the
+  control node, after 12.
+
 ## 2.106.0 — the app shows the network as a picture
 
 - **The app's overview has the picture too**: "How they are linked" draws the master

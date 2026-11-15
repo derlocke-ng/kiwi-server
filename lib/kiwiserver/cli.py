@@ -1882,7 +1882,14 @@ def cmd_control(args):
         return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
-            n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
+            try:
+                n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
+            except KiwiError as e:
+                if "does not know a controller" in str(e):
+                    # a node whose copy is damaged (or was installed anew) knows no computer any more
+                    raise KiwiError("%s. If its copy is damaged or it was installed anew, this computer's copy goes there over "
+                                    "SSH: kiwi-server control push %s --ssh <admin>@<its address> --force" % (e, fleet_name))
+                raise
             util.say("the control node holds this copy now (%d files)" % n)
             old = controlsync.older_node(fleet_dir, VERSION, key)
             if old:

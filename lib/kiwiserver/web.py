@@ -117,8 +117,9 @@ TEMPLATES = {
 {% if damaged %}<div class="banner bad">This machine's copy of your network is damaged: {{ damaged | join(", ") }}
 {{ "is" if damaged|length == 1 else "are" }} empty. That is what a power cut in the middle of a change left behind on
 older versions. No password opens it as it is.</div>
-<div class="card"><p><strong>Bring it back.</strong> From a computer that manages the network, with the app (Sync now) or:</p>
-<pre>kiwi-server control push &lt;fleet&gt; --force</pre>
+<div class="card"><p><strong>Bring it back.</strong> From a computer that manages the network, over SSH (this machine no longer
+knows which computers may sync with it):</p>
+<pre>kiwi-server control push &lt;fleet&gt; --ssh &lt;admin&gt;@&lt;this machine's address&gt; --force</pre>
 <p>Without such a computer: the newest copy of the network is on your other machines and in this machine's own
 backups. Start this machine's page anew and choose <em>bring it back from a copy</em>, with your recovery key
 (<a href="/help">Help</a>).</p></div>{% endif %}

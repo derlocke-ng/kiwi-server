@@ -69,6 +69,40 @@ The master is the one step that needs something outside the house:
   their names; the VPN, access from outside and the hidden services come when a master is
   added. A person can see what they are getting before they rent anything.
 
+## How the stick's machine becomes the first node
+
+The installed starter is plain Fedora CoreOS with one container. The network it makes
+has this machine in it, and the same control container goes on running as that node's
+control part. The handover has to be exact, since the control node sets up the machine
+it runs on:
+
+- The starter keeps the fleet where a node's control part keeps it
+  (`<docker dir>/kn-control`), and runs its container under the name and unit the stack
+  uses (`kn-control`). When the role brings the stack, it finds its own container there
+  and replaces the unit; the store on disk is the same file.
+- The questionnaire on a starter knows "this machine": it is the first node, target
+  `coreos`, its disk is not asked for, and its address is the one the router gave it,
+  which it keeps from then on (fixed). The person names it.
+- "Set it up" for this machine needs no install media. It runs the role over SSH to the
+  machine's own address with the starter key, as `adopt` does for a machine someone else
+  installed, and takes the starter key out of `authorized_keys` when the fleet's own key
+  is in.
+- A node needs the master before it can be set up (its place on the VPN is made there).
+  The page says so, as it does for every node: the master's step comes first.
+
+## The master from the page
+
+- **Sign in at the hoster.** The page shows a link and a code (the hoster's device
+  sign-in); the person opens it on the phone, the page waits and then lists the servers
+  of the account. Choosing one makes it the master and installs it: the control image
+  makes the install media in memory, uploads them, installs, and applies the master
+  role. This is `vps login`, `vps list` and `vps install`, with buttons.
+- **A server the person set up elsewhere**: its address is typed, its install media are
+  downloaded from the page and started in the hoster's panel, as today.
+- **No master yet** stays a later phase. A node's parts assume the VPN today (each takes
+  its place in the VPN client's network); a home-only start means deciding what a node
+  is without one, and how it moves when a master comes.
+
 ## Joining machines, and a lost site
 
 More machines join with the same image: started on the home network, a second starter
@@ -87,7 +121,8 @@ back from a copy" on its first-run page with the recovery key ([recovery.md](rec
 | The machine steps on the page, install media in memory | exists |
 | Bring a network back from a copy on the first-run page | exists |
 | `adopt`: a machine someone else installed | exists, from a terminal |
-| The starter image: build, disk choice, console message, mDNS, the starter key | to build |
+| The starter image: build, disk choice, console message, mDNS, the starter key | built: `kiwi-server build --starter`, tried in a VM |
+| A yes before a disk that holds something is erased (keyboard, or a page) | being built |
 | "This machine" as the first node in the page's questionnaire | to build |
 | The hoster's sign-in on the page | to build |
 | A network without a master | to design: what a node does with no VPN |

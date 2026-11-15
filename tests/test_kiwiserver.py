@@ -6822,6 +6822,9 @@ class TestLogins(Base):
             for x in h["logins"]:
                 if x["address"].startswith("https://"):
                     self.assertIn(urllib.parse.urlsplit(x["address"]).hostname, h["sites"])
+            self.assertEqual(sorted(h["site_labels"]), sorted(h["sites"]))          # every site has its name in words
+            for site, words in h["site_labels"].items():
+                self.assertTrue(words and words[0].isupper(), (site, words))
         for generated in (secrets["cloud"]["admin_password"], secrets["portainer"]["admin_password"]):
             self.assertNotIn(generated, out)
         rc, out, _err = self.run_cli("roles", "--porcelain")

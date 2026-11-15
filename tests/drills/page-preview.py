@@ -35,8 +35,7 @@ def main():
                  % (json.dumps(listed), json.dumps(status)))
     case.c.kiwi = [sys.executable, stand_in]
     # two hidden services, made up: the Services page shows their addresses
-    case.c.onion = lambda: {"vault.papaya": {"address": "kiwi" + "a2" * 26 + ".onion", "clients": [], "site": "vault.papaya.home"},
-                            "git.medlar": {"address": "kiwi" + "b3" * 26 + ".onion", "clients": ["anna"], "site": "git.medlar.home"}}
+    case.c.onion = lambda: {"%s.%s" % (x["service"], x["host"]): x for x in madeup.hidden()["services"]}
     case.ask("/login", {"password": case.PW})               # the store opens: the devices go into it, not beside it
     case.c.refresh_status()
     with open(case.c.health_file, "w") as fh:                # for /status, and for Home's services that do not answer

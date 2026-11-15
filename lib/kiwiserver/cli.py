@@ -16,7 +16,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import recovery as recoverymod, starter as startermod
+from . import health as healthmod, recovery as recoverymod, starter as startermod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -860,6 +860,8 @@ def cmd_list(args):
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
                      "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname],
+                     # what each site is, in words: the app and the page say the same
+                     "site_labels": {n: healthmod.label(n) for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname},
                      "admin_sites": sorted(r._admin.get(h.hostname) or []),
                      "logins": [] if errs else loginsmod.listed(h, roles, ms),     # without the passwords
                      "status": o.status(), "dir": o.dir, "iso": o.iso,

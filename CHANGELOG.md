@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.118.0 — hidden-service addresses in the app
+
+- **The app shows a service's hidden-service address** where the service is: on a
+  machine's page, under *Open a service*, with who may open it and a button that copies
+  it. Before, it was only in the dialog *Who may reach what*.
+- Services are named in words there too (*Files (Nextcloud)*), also when they have no
+  login: `kiwi-server list --porcelain` carries the names (`site_labels`), the same ones
+  the control page uses.
+- The app's preview drill runs on a session bus of its own: started beside a running Kiwi
+  Server, it handed its made-up network to that window instead of starting.
+
 ## 2.117.0 — the control page, grouped; hidden services where the services are
 
 - **The page's menu is grouped**, after a look at how The Foreman lays out its pages:

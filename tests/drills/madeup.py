@@ -39,7 +39,8 @@ def answers():
     hosts, said = [], []
     for name, role, modules, sites, state, problems, f in MACHINES:
         hosts.append({"name": name, "hostname": name + ".home", "role": role, "modules": modules, "phase": "applied",
-                      "sites": ["%s.%s.home" % (s, name) for s in sites], "vpn_ip": "10.9.0.%d" % (len(hosts) + 1),
+                      "sites": ["%s.%s.home" % (s, name) for s in sites],
+                      "site_labels": {"%s.%s.home" % (s, name): LABELS.get(s, s.capitalize()) for s in sites}, "vpn_ip": "10.9.0.%d" % (len(hosts) + 1),
                       "next": "", "errors": [], "target": "ucore", "provider": "", "address": "192.168.1.%d" % (30 + len(hosts)), "logins": []})
         if f:           # what a machine that answers always says, from its parts
             f = dict(f, encryption="bound", tunnel={"container": "kn-vpn-client", "running": True, "mtu": 1376, "forward": True},
@@ -50,7 +51,8 @@ def answers():
     return {"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts}, {"hosts": said}
 
 
-LABELS = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "photos": "Photos", "paperless": "Documents (Paperless)",
+LABELS = {"wg": "VPN devices (wg-easy)", "pihole": "Ad blocker (Pi-hole)", "portainer": "Containers (Portainer)",
+          "git": "Git (Forgejo)", "control": "This page", "cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "photos": "Photos", "paperless": "Documents (Paperless)",
           "git": "Git (Forgejo)"}
 
 
@@ -82,8 +84,15 @@ def fleet_yaml():
     return "\n".join(lines) + "\n"
 
 
-if __name__ == "__main__":          # as a stand-in for kiwi-server: madeup.py list|status|secrets ...
+def hidden():
+    """Two hidden services, as `onion --porcelain` lists them: one for anyone, one for a named person."""
+    return {"services": [
+        {"host": "papaya", "service": "vault", "site": "vault.papaya.home", "address": "kiwi" + "a2" * 26 + ".onion", "clients": []},
+        {"host": "medlar", "service": "git", "site": "git.medlar.home", "address": "kiwi" + "b3" * 26 + ".onion", "clients": ["anna"]}]}
+
+
+if __name__ == "__main__":          # as a stand-in for kiwi-server: madeup.py list|status|secrets|onion ...
     what = sys.argv[1] if len(sys.argv) > 1 else ""
     listed, status = answers()
-    print(json.dumps(listed if what == "list" else status if what == "status" else
+    print(json.dumps(listed if what == "list" else status if what == "status" else hidden() if what == "onion" else
                      {"store": True, "open": True} if what == "secrets" else {}))

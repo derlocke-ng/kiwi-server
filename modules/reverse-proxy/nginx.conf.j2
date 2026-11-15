@@ -70,6 +70,10 @@ events {
 }
 
 http {
+{% if onion %}
+    # a .onion name is 62 characters: more than nginx's table of names takes as it comes
+    server_names_hash_bucket_size 128;
+{% endif %}
     include       /etc/nginx/mime.types;
     default_type  application/octet-stream;
     types {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.121.2 — the logins drill and BTCPay
+
+- `tests/drills/logins.py` tries BTCPay through its login page. Its old check (Basic
+  authentication) only passed in the first five minutes of an account: since 2.4.2 BTCPay
+  switches that off afterwards, and a login that works was called wrong. An account that
+  was changed inside BTCPay (its password, two-factor login) is reported as not decided.
+- After 2.116.0 to 2.121.1 changed the master's port 443, the access drill was run again:
+  203 tries, none other than the rules say; and the logins drill: every login the network
+  keeps works.
+
 ## 2.121.1 — logins through Tor, tried
 
 - `tests/drills/onion-sites.py --logins` logs in through Tor by a service's own API where

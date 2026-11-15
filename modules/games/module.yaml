@@ -1,0 +1,142 @@
+schema_version: "1.0"
+
+module:
+  name: games
+  title: Game servers
+  version: 1.0.0
+  description: "Game servers for the people on your network: Minecraft, Enshrouded, Abiotic Factor, Zandronum, Valheim, Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One container and one folder per server, reachable at home and through the VPN"
+  category: gaming
+  node_types: [node]
+
+dependencies:
+  required: [vpn-client]
+  optional: []
+
+network:
+  needs_vpn_dnat: false
+  # every port of every server, on the machine's address at home
+  open_ports:
+    - "{% for n, s in servers.items() if s.game in catalog %}{% set g = catalog[s.game] %}{% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}{% for p in g.ports %}{{ (p.split('/')[0] | int) + shift }}/{{ p.split('/')[1] }} {% endfor %}{% endfor %}"
+
+firewall:
+  scope: vpn-client
+  rules:
+    # from the VPN: a server's port at the machine's mesh address goes on to the port the machine publishes
+    - |
+      {% for n, s in servers.items() if s.game in catalog %}{% set g = catalog[s.game] %}{% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}{% for p in g.ports %}
+      -t nat -A PREROUTING -d ${VPN_IP} -p {{ p.split('/')[1] }} --dport {{ (p.split('/')[0] | int) + shift }} -j DNAT --to-destination {{ docker_gateway }}:{{ (p.split('/')[0] | int) + shift }}
+      {% endfor %}{% endfor %}
+
+templates:
+  compose: docker-compose.yml.j2
+
+validate:
+  - when: "servers.values() | map(attribute='game') | reject('in', catalog) | list"
+    error: "games.servers: no such game: {{ servers.values() | map(attribute='game') | reject('in', catalog) | join(', ') }}. Known: {{ catalog.keys() | sort | join(', ') }} (catalog: adds your own)"
+  - when: "not eula and servers.values() | map(attribute='game') | select('in', ['minecraft', 'minecraft-bedrock']) | list"
+    error: "games.eula: a Minecraft server needs its licence accepted (https://aka.ms/MinecraftEULA): eula: true"
+  - when: "servers.keys() | reject('match', '^[a-z0-9][a-z0-9-]{0,30}$') | list"
+    error: "games.servers: a server's name is made of lowercase letters, digits and dashes: {{ servers.keys() | reject('match', '^[a-z0-9][a-z0-9-]{0,30}$') | join(', ') }}"
+
+storage:
+  bind_mounts:
+    # what a server keeps (worlds, saves): backed up. What it downloads (the game itself): not
+    - { each: servers, host: "{% for k in ((catalog.get(servers[item].game) or {}).data or {}) %}${DOCKERDIR}/{{ container_prefix }}-games/{{ item }}/{{ k }} {% endfor %}", type: dir }
+    - { each: servers, host: "{% for k in ((catalog.get(servers[item].game) or {}).files or {}) %}${DOCKERDIR}/{{ container_prefix }}-games-files/{{ item }}/{{ k }} {% endfor %}", type: dir }
+
+urls:
+  - "{% for n, s in servers.items() if s.game in catalog %}{% set g = catalog[s.game] %}{% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}{{ g.title }} \"{{ n }}\": {{ hostname }}:{{ (g.ports[0].split('/')[0] | int) + shift }} (at home, and from the VPN for a group with {{ hostname.split('.')[0] }}:{{ (g.ports[0].split('/')[0] | int) + shift }} in kiwi-server access){% if not loop.last %}; {% endif %}{% endfor %}"
+
+backup:
+  paths: ["${DOCKERDIR}/{{ container_prefix }}-games"]
+
+settings:
+  - key: servers
+    type: object
+    label: Servers
+    help: |
+      One entry per server, YAML: name -> {game, port, name, password, memory, env, args, image}.
+      game: one of the catalog (minecraft, minecraft-bedrock, enshrouded, abiotic-factor, zandronum, valheim, factorio, satisfactory, palworld, terraria).
+      port: the server's first port on this machine, when the game's usual one is taken by another server; its other ports move with it.
+      name: what players see. password: to join, where the game has one. memory: for Minecraft, like 4G.
+      env: more settings of the image, as NAME: value. args: the server's command line, where the game takes one. image: another image than the catalog's.
+      Example: survival: {game: minecraft, memory: 4G}
+    default: {}
+  - key: eula
+    type: bool
+    label: Minecraft's licence accepted
+    help: "Minecraft servers start only when its end user licence is accepted: https://aka.ms/MinecraftEULA"
+    default: false
+  - key: catalog
+    type: object
+    label: Catalog
+    advanced: true
+    help: |
+      The games this module knows, YAML: game -> {title, image, ports, data, files, env, command}. Add your own here.
+      ports: the ports it listens on, like 25565/tcp; the first is the one players type. data: folders it keeps its worlds in (name -> path in the container), backed up.
+      files: folders for what it downloads (the game itself), not backed up. env: the image's settings; {name}, {password}, {memory} and {server} stand for the server's own. command: its command line.
+      Run here and seen working: minecraft, zandronum. The others are set up as their images document it.
+    default:
+      minecraft:
+        title: Minecraft (Java)
+        image: docker.io/itzg/minecraft-server:latest
+        ports: [25565/tcp]
+        data: { data: /data }
+        env: { EULA: "TRUE", UID: "1000", GID: "1000", MEMORY: "{memory}", MOTD: "{name}" }
+      minecraft-bedrock:
+        title: Minecraft (Bedrock)
+        image: docker.io/itzg/minecraft-bedrock-server:latest
+        ports: [19132/udp]
+        data: { data: /data }
+        env: { EULA: "TRUE", UID: "1000", GID: "1000", SERVER_NAME: "{name}" }
+      enshrouded:
+        title: Enshrouded
+        image: docker.io/mornedhels/enshrouded-server:latest
+        ports: [15637/udp]
+        data: { savegame: /opt/enshrouded/server/savegame }
+        files: { game: /opt/enshrouded }
+        env: { SERVER_NAME: "{name}", SERVER_PASSWORD: "{password}", PUID: "1000", PGID: "1000" }
+      abiotic-factor:
+        title: Abiotic Factor
+        image: ghcr.io/pleut/abiotic-factor-linux-docker:latest
+        ports: [7777/udp, 27015/udp]
+        data: { saves: /server/AbioticFactor/Saved }
+        files: { game: /server }
+        env: { MaxServerPlayers: "6", Port: "7777", QueryPort: "27015", ServerPassword: "{password}", SteamServerName: "{name}", WorldSaveName: "Cascade", AutoUpdate: "true" }
+      zandronum:
+        title: Zandronum (Doom)
+        image: docker.io/rcdailey/zandronum-server:official-latest
+        ports: [10666/udp]
+        data: { data: /data }
+        command: "zandronum-server -port 10666 -iwad /data/freedoom2.wad +sv_hostname {server} +deathmatch 1 +map MAP01"
+      valheim:
+        title: Valheim
+        image: docker.io/lloesche/valheim-server:latest
+        ports: [2456/udp, 2457/udp]
+        data: { config: /config }
+        files: { game: /opt/valheim }
+        env: { SERVER_NAME: "{name}", WORLD_NAME: "Dedicated", SERVER_PASS: "{password}", SERVER_PUBLIC: "false", PUID: "1000", PGID: "1000" }
+      factorio:
+        title: Factorio
+        image: docker.io/factoriotools/factorio:stable
+        ports: [34197/udp]
+        data: { factorio: /factorio }
+        env: { PUID: "1000", PGID: "1000" }
+      satisfactory:
+        title: Satisfactory
+        image: docker.io/wolveix/satisfactory-server:latest
+        ports: [7777/udp, 7777/tcp, 8888/tcp]
+        data: { config: /config }
+        env: { MAXPLAYERS: "4", PUID: "1000", PGID: "1000" }
+      palworld:
+        title: Palworld
+        image: docker.io/thijsvanloef/palworld-server-docker:latest
+        ports: [8211/udp, 27015/udp]
+        data: { palworld: /palworld }
+        env: { PORT: "8211", PLAYERS: "16", SERVER_NAME: "{name}", SERVER_PASSWORD: "{password}", ADMIN_PASSWORD: "{password}", COMMUNITY: "false", MULTITHREADING: "true", PUID: "1000", PGID: "1000" }
+      terraria:
+        title: Terraria
+        image: docker.io/ryshe/terraria:latest
+        ports: [7777/tcp]
+        data: { worlds: /root/.local/share/Terraria/Worlds }
+        command: "-world /root/.local/share/Terraria/Worlds/{server}.wld -autocreate 2"

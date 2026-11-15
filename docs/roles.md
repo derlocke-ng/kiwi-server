@@ -76,6 +76,48 @@ images and Debian packages from it instead of the internet, by themselves;
 with the cache off they go to the source. `cache: { data_dir: /mnt/data/cache }`
 puts it on a big disk. Design: [Local first](design/local-first.md).
 
+## Game servers
+
+Add `games` to a node's modules and list the servers, each with a name of its
+own and its game:
+
+```yaml
+hosts:
+  medlar:
+    node:
+      modules: [vpn-client, reverse-proxy, games]
+      games:
+        eula: true                 # Minecraft's licence: https://aka.ms/MinecraftEULA
+        servers:
+          survival: { game: minecraft, memory: 4G, name: Our world }
+          doom: { game: zandronum }
+          lab: { game: abiotic-factor, port: 7800, password: "..." }
+```
+
+The games it knows: `minecraft`, `minecraft-bedrock`, `enshrouded`,
+`abiotic-factor`, `zandronum`, `valheim`, `factorio`, `satisfactory`,
+`palworld`, `terraria`. `catalog:` in the same block takes more: an image, its
+ports and where it keeps its worlds. Minecraft and Zandronum were run on a test
+machine; the others are set up as their images document it and are not tried.
+
+- **Where players connect.** At home: the machine's address and the game's port
+  (`medlar.home:25565`). From the VPN: the same name; give the group the port in
+  "Who may reach what" (`medlar:25565`,
+  [network.md](network.md#who-may-reach-what)). Nothing is opened to the
+  Internet: a friend plays as a device on your VPN, in a group that reaches that
+  one port and nothing else.
+- **Two servers of games that share a port**: `port:` moves one of them. Its
+  other ports move with it.
+- **What is kept.** A server's worlds are in `kn-games/<server>` on the machine
+  and in its backup. What a game downloads (Enshrouded, Abiotic Factor and
+  Valheim fetch several GB at the first start) is in `kn-games-files/<server>`
+  and is not backed up.
+- **Zandronum** needs a game file: put `freedoom2.wad` (free, from
+  freedoom.github.io) or your own `doom2.wad` into `kn-games/<server>/data`;
+  `args:` is the server's command line.
+- The big games need a machine for it: Enshrouded wants about 16 GB of memory,
+  Abiotic Factor and Palworld about 8.
+
 ## Writing a role
 
 A role is `roles/<name>/` with `role.yaml` and `apply.sh`. A module role

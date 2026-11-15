@@ -1434,7 +1434,9 @@ class Control:
                     last_status = now
                     self.refresh_status()
                     events = self.recover()
-                    self.tell()
+                    said = self.tell()
+                    if said and said.get("down"):      # a service does not answer: look again soon, for its message and its return
+                        last_status = now - self.status_minutes * 60 + 180
                     if any(e.get("kind") in ("restarted", "unlocked") for e in events):
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                     elif any(e.get("kind") == "waiting" for e in events):

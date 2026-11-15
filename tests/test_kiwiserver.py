@@ -1246,7 +1246,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 25)
+        self.assertEqual(len(ms.names()), 26)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -6336,7 +6336,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 25)
+        self.assertEqual(len(json.loads(out)["modules"]), 26)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -7252,8 +7252,15 @@ class TestHealth(Base):
         self.assertEqual([e["kind"] for e in health.update(st, ms, sv, did, 5000)], ["did"])
         self.assertEqual(health.update(st, ms, sv, did, 5100), [])
         # a page that wants a login answers; a proxy without its service does not
-        seen = {"a.home": (True, 200), "b.home": (False, 502)}
-        self.assertEqual(health.probe(["a.home", "b.home"], one=lambda site, timeout: seen[site]), seen)
+        seen, asked = {"a.home": (True, 200), "b.home": (False, 502)}, []
+
+        def one(site, timeout):
+            asked.append(site)
+            return seen[site]
+        self.assertEqual(health.probe(["a.home", "b.home"], one=one, sleep=lambda s: None), seen)
+        self.assertEqual(asked, ["a.home", "b.home", "b.home"])                    # the silent one is asked once more
+        lost = iter([(False, "timed out"), (True, 200)])
+        self.assertEqual(health.probe(["c.home"], one=lambda site, timeout: next(lost), sleep=lambda s: None), {"c.home": (True, 200)})
         self.assertEqual(health.probe([]), {})
 
     def test_messages_go_out_by_mail_push_and_webhook(self):

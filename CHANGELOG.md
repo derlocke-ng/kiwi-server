@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.98.0 — admin pages, and every app
+
+- **Admin pages are a class of their own.** The control page, Portainer, Pi-hole, the
+  VPN's device page, the backup server and the cache are the network's controls, not
+  apps (kiwi-modules 0.38.0 marks them). A group of the VPN opens them only with its
+  admin switch on, or when one is named for it; a linked network only when one is named.
+  Until now "everything" and "every node" included them without saying so, and a linked
+  network that was given a whole machine got its control page with it.
+  `kiwi-server access` lists the admin pages of your network. Apply the machines.
+- **Every app**: a new level, `apps`. The web pages of every node and nothing else of
+  them: no SSH, no other port, no admin pages. A new network has a group `family` with
+  it, for the people of the house.
+- "Who may reach what" on the control page and in the app: "Every app" beside
+  "Everything", the admin pages of a machine set apart from its apps, and a new group
+  starts with nothing, every app, or everything.
+- The access drill knows the admin pages and the apps level.
+- Fixed: a value changed in the fleet file kept the comments only for some layouts; a
+  block of plain words (a machine's `unlock:`) made it write the whole file anew.
+
 ## 2.97.1 — a control node that is older says so
 
 - `kiwi-server control push` says when the control node runs an older version than this

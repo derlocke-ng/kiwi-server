@@ -47,6 +47,7 @@ nginx:
   client_max_body_size: "0"
   proxy_read_timeout: 600s
   comment: Backups
+  admin: true          # machines back up here from their own addresses; no page for people
   extra_directives:
     - "proxy_request_buffering off;"
 

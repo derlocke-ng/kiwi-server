@@ -557,25 +557,36 @@ The master is always reachable: it answers the names.</p>
 {{ w.devices | join(", ") }}{% endif %}</span></div>
 <p class="muted" style="margin:4px 0">Now: {{ w.says }}.</p>
 {% if w.kind == "group" %}<label><input type="checkbox" name="all.{{ w.name }}" style="width:auto"{% if w.open.all %} checked{% endif %}>
-Everything on the VPN</label>{% endif %}
+Everything on the VPN</label>
+<label><input type="checkbox" name="apps.{{ w.name }}" style="width:auto"{% if w.open.apps %} checked{% endif %}>
+Every app <span class="muted">· the pages of every machine, no admin pages, nothing else of the machines</span></label>{% endif %}
 {% for m in machines if not m.master %}{% set o = w.open.machines[m.name] %}<div style="margin:6px 0">
 <label style="display:inline"><input type="checkbox" name="m.{{ w.name }}.{{ m.name }}" style="width:auto"{% if o.whole %} checked{% endif %}>
 <strong>{{ m.name }}</strong>, all of it</label>{% if m.services %}<span class="muted"> · or only:</span>
-{% for s in m.services %}<label style="display:inline;white-space:nowrap;margin-left:8px"><input type="checkbox"
-name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.services %} checked{% endif %}> {{ s }}</label>{% endfor %}{% endif %}
+{% for s in m.services if s not in m.admin %}<label style="display:inline;white-space:nowrap;margin-left:8px"><input type="checkbox"
+name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.services %} checked{% endif %}> {{ s }}</label>{% endfor %}
+{% if m.admin %}<span class="muted" style="margin-left:8px">· admin pages:</span>
+{% for s in m.admin %}<label style="display:inline;white-space:nowrap;margin-left:8px"><input type="checkbox"
+name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.services %} checked{% endif %}> {{ s }}</label>{% endfor %}{% endif %}{% endif %}
 </div>{% endfor %}
 <label for="p-{{ w.name }}">Single ports{{ " and addresses" if w.kind == "group" else "" }}</label>
 <input id="p-{{ w.name }}" name="p.{{ w.name }}" placeholder="lychee:22" value="{{ w.extra | join(' ') }}">
 {% if w.kind == "group" %}<div style="margin-top:8px">
 <label style="display:inline"><input type="checkbox" name="peers.{{ w.name }}" style="width:auto"{% if w.peers %} checked{% endif %}> Other devices on the VPN</label>
 <label style="display:inline;margin-left:12px"><input type="checkbox" name="internet.{{ w.name }}" style="width:auto"{% if w.internet %} checked{% endif %}> The Internet through the VPN</label>
-<label style="display:inline;margin-left:12px"><input type="checkbox" name="admin.{{ w.name }}" style="width:auto"{% if w.admin %} checked{% endif %}> The master's admin pages</label>
-</div>{% else %}<p class="muted" style="margin:6px 0 0">Who of {{ w.name }} may come, and the way out:
+<label style="display:inline;margin-left:12px"><input type="checkbox" name="admin.{{ w.name }}" style="width:auto"{% if w.admin %} checked{% endif %}> The admin pages</label>
+<p class="muted" style="margin:4px 0 0">Admin pages are the network's controls: this control page, Portainer, Pi-hole, the
+VPN's device page, backups. Without this tick a group does not open them, also not with "everything", unless one is
+ticked above.</p></div>{% else %}<p class="muted" style="margin:6px 0 0">Who of {{ w.name }} may come, and the way out:
 <a href="/federation">Linked networks</a>.</p>{% endif %}
 </div>{% endfor %}
-<div class="card"><label for="new">A new group</label><p class="muted" style="margin:0 0 4px">A name like family or
-work. It starts with nothing; tick what it may open after saving. A device joins it under
-<a href="/devices">Add a phone or laptop</a>.</p><input id="new" name="new" placeholder="family" pattern="[a-z0-9][a-z0-9-]*"></div>
+<div class="card"><label for="new">A new group</label><p class="muted" style="margin:0 0 4px">A name like kids or
+work. A device joins it under <a href="/devices">Add a phone or laptop</a>.</p>
+<input id="new" name="new" placeholder="kids" pattern="[a-z0-9][a-z0-9-]*">
+<label for="newas">It starts with</label><select id="newas" name="new_as">
+<option value="nothing">nothing: tick what it may open after saving</option>
+<option value="apps">every app: for the people of the house</option>
+<option value="all">everything and the admin pages: for your own devices</option></select></div>
 <div class="actions"><button class="primary">Save</button></div></form>
 <p class="muted">Devices outside every group reach everything{% if loose %}: {{ loose | join(", ") }}{% endif %}.</p>
 
@@ -1516,7 +1527,7 @@ def make_app(control: Control):
                 if "all." + n in form and w["kind"] == "group":
                     reach = ["all"]
                 else:
-                    reach = []
+                    reach = ["apps"] if "apps." + n in form and w["kind"] == "group" else []
                     for m in a["machines"]:
                         if m["master"]:
                             continue
@@ -1526,7 +1537,8 @@ def make_app(control: Control):
                             reach += ["%s.%s" % (s, m["name"]) for s in m["services"] if "s.%s.%s.%s" % (n, m["name"], s) in form]
                     reach += [e for e in str(form.get("p." + n, "")).split() if e not in reach]
                 changes[n] = dict({"reach": reach}, **{k: "%s.%s" % (k, n) in form for k in ("peers", "internet", "admin")})
-            done = control.save_access(changes, new=str(form.get("new", "")).strip().lower(), user=u)
+            done = control.save_access(changes, new=str(form.get("new", "")).strip().lower(),
+                                       new_as=str(form.get("new_as", "nothing")), user=u)
         except KiwiError as e:
             return access_page(request, error=str(e))
         return RedirectResponse("/access?saved=" + urllib.parse.quote(", ".join(done)) if done else "/access", status_code=303)

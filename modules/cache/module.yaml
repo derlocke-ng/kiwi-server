@@ -50,6 +50,7 @@ nginx:
   client_max_body_size: "0"
   proxy_read_timeout: 900s
   comment: Cache (container images)
+  admin: true          # for machines, not for people
   extra_locations:
     - path: "~ ^/v2/docker\\.io/(.*)$"
       config: "set $mirror http://{{ container_prefix }}-cache-docker:5000; rewrite ^/v2/docker\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"

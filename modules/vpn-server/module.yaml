@@ -47,6 +47,7 @@ logins:
 nginx:
   servers:
     - server_name: "{{ wg_hostname or 'wg.' ~ hostname }}"
+      admin: true
       proxy_pass: "http://{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ '-vpn-server' }}:51821"
       websocket: true
       when: has_reverse_proxy
@@ -124,14 +125,15 @@ settings:
     label: Client groups
     help: |
       Who may reach what, by the client address range wg-easy gives them. YAML: name -> {subnet, reach, peers, internet, admin}.
-      reach: what in the mesh the group may reach — all (default), nodes (every node), a node by its name, one service of a node (cloud.papaya: its web address only), one port of a node (papaya:22), addresses or subnets. The server itself is always reachable (DNS).
-      peers: may members reach other VPN clients (default true). internet: may they leave through the exit (default true). admin: may they open the admin pages wg.<hostname>, pihole.<hostname> and the wg-easy port (default false).
+      reach: what in the mesh the group may reach — all (default), nodes (every node), apps (the web pages of every node and nothing else of them), a node by its name, one service of a node (cloud.papaya: its web address only), one port of a node (papaya:22), addresses or subnets. The server itself is always reachable (DNS).
+      peers: may members reach other VPN clients (default true). internet: may they leave through the exit (default true). admin: may they open the admin pages (default false): the master's wg.<hostname> and pihole.<hostname>, and on every node the control page, Portainer, Pi-hole, the backup server and the cache. Without it a node refuses the group those pages, whatever else it reaches there, unless one is named in reach.
       Clients outside every group are the plain mesh: everything, admin pages as admin_from_mesh says.
     default:
       guests:  { subnet: 10.8.1.0/24, reach: [nodes], peers: false }
       pentest: { subnet: 10.8.2.0/24, reach: [], peers: false }
       devices: { subnet: 10.8.3.0/24, reach: [all], admin: true }
       routers: { subnet: 10.8.4.0/24, reach: [all] }
+      family:  { subnet: 10.8.5.0/24, reach: [apps] }
   - key: admin_from_mesh
     type: bool
     label: Admin pages for clients outside every group

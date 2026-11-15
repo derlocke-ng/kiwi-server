@@ -14,7 +14,8 @@ from .access import _block
 
 
 def _flow(value):
-    return yaml.safe_dump(value, default_flow_style=True, width=1000, sort_keys=False).strip()
+    # a plain word comes with YAML's end-of-document mark on a line of its own
+    return yaml.safe_dump(value, default_flow_style=True, width=1000, sort_keys=False).replace("\n...", "").strip()
 
 
 def _lines(key, value, pad):

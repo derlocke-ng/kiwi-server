@@ -1283,9 +1283,13 @@ class AccessDialog(Adw.Dialog):
                 "group" if group else "linked network", w["range"],
                 (" · " + ", ".join(w["devices"])) if w["devices"] else "", w["says"]))
             r = {"all": None, "machines": {}, "flags": {}}
+            r["apps"] = None
             if group:
                 r["all"] = Adw.SwitchRow(title="Everything on the VPN", active=w["open"]["all"])
                 g.add(r["all"])
+                r["apps"] = Adw.SwitchRow(title="Every app", active=w["open"].get("apps", False),
+                                          subtitle="The pages of every machine: no admin pages, nothing else of the machines")
+                g.add(r["apps"])
             for m in self.machines:
                 o = w["open"]["machines"].get(m["name"]) or {"whole": False, "services": [], "ports": []}
                 exp = Adw.ExpanderRow(title=m["name"], subtitle="all of it" if o["whole"] else
@@ -1294,7 +1298,9 @@ class AccessDialog(Adw.Dialog):
                 exp.add_row(whole)
                 svc = {}
                 for name in m["services"]:
-                    svc[name] = Adw.SwitchRow(title=name, subtitle="only this page", active=name in o["services"])
+                    svc[name] = Adw.SwitchRow(title=name, active=name in o["services"], subtitle=(
+                        "an admin page: only with this, or with “The admin pages”" if name in m.get("admin", [])
+                        else "only this page"))
                     exp.add_row(svc[name])
                 r["machines"][m["name"]] = (whole, svc)
                 g.add(exp)
@@ -1303,7 +1309,7 @@ class AccessDialog(Adw.Dialog):
             g.add(r["extra"])
             if group:
                 for key, title in (("peers", "Other devices on the VPN"), ("internet", "The Internet through the VPN"),
-                                   ("admin", "The master's admin pages")):
+                                   ("admin", "The admin pages (control page, Portainer, Pi-hole, backups)")):
                     r["flags"][key] = Adw.SwitchRow(title=title, active=bool(w[key]))
                     g.add(r["flags"][key])
             self.rows[w["name"]] = r
@@ -1354,7 +1360,7 @@ class AccessDialog(Adw.Dialog):
         if r["all"] is not None and r["all"].get_active():
             reach = ["all"]
         else:
-            reach = []
+            reach = ["apps"] if r["apps"] is not None and r["apps"].get_active() else []
             for m in self.machines:
                 whole, svc = r["machines"][m["name"]]
                 if whole.get_active():

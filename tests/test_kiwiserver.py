@@ -2441,6 +2441,68 @@ class TestAccess(Base):
         self.assertEqual(rules["names"], {"cloud.papaya.home": ["10.8.5.0/24"], "vault.papaya.home": ["10.8.1.0/24"]})
         self.assertEqual(accessmod.node_rules(groups, "lychee", "lychee.home"), {})   # a port: the master's firewall alone
 
+    def test_admin_pages_open_only_with_the_switch_or_by_name(self):
+        groups = {"devices": {"subnet": "10.8.3.0/24", "reach": ["all"], "admin": True},
+                  "routers": {"subnet": "10.8.4.0/24", "reach": ["all"]},
+                  "guests": {"subnet": "10.8.1.0/24", "reach": ["nodes"]},
+                  "family": {"subnet": "10.8.5.0/24", "reach": ["apps"]},
+                  "work": {"subnet": "10.8.6.0/24", "reach": ["cloud.papaya"]},
+                  "ops": {"subnet": "10.8.7.0/24", "reach": ["apps", "portainer.papaya"]}}
+        pages = ["control.papaya.home", "portainer.papaya.home"]
+        rules = accessmod.node_rules(groups, "papaya", "papaya.home", pages)
+        self.assertEqual(rules["names"]["control.papaya.home"],
+                         ["10.8.1.0/24", "10.8.4.0/24", "10.8.5.0/24", "10.8.6.0/24", "10.8.7.0/24"])      # all but devices
+        self.assertEqual(rules["names"]["portainer.papaya.home"],
+                         ["10.8.1.0/24", "10.8.4.0/24", "10.8.5.0/24", "10.8.6.0/24"])                      # ops has it by name
+        self.assertEqual(rules["names"]["cloud.papaya.home"], [])
+        self.assertEqual(rules["others"], ["10.8.6.0/24"])                       # only work is limited to names
+        # a node with no admin page and no limited group: nothing to refuse
+        self.assertEqual(accessmod.node_rules(groups, "lychee", "lychee.home", []), {})
+        self.assertEqual(accessmod.node_rules({"devices": groups["devices"]}, "papaya", "papaya.home", pages), {})
+        self.assertEqual(accessmod.canon("apps", self.FOUND, "home"), "apps")
+        with self.assertRaisesRegex(KiwiError, "not apps"):
+            accessmod.canon("apps", self.FOUND, "home", group=False)
+        self.assertEqual(accessmod.words(["apps", "papaya:22"]), "every app, papaya:22")
+
+    def test_a_linked_network_opens_an_admin_page_only_by_name(self):
+        found = fedmod.with_addresses({
+            "b": {"mesh": "10.10.0.0/16", "share": ["papaya"], "from": []},
+            "c": {"mesh": "10.11.0.0/16", "share": ["control.papaya", "cloud.papaya"], "from": []}}, "10.9.0.0/16")
+        plain = fedmod.node_rules(found, "papaya", "home")
+        rules = fedmod.admin_rules(plain, found, "papaya", ["control.papaya.home", "portainer.papaya.home"], "home")
+        self.assertEqual(rules["names"]["control.papaya.home"], {"allow": ["10.9.255.2"], "deny": ["10.9.255.1", "10.9.255.2"]})
+        self.assertEqual(rules["names"]["portainer.papaya.home"], {"allow": [], "deny": ["10.9.255.1", "10.9.255.2"]})
+        self.assertEqual(rules["names"]["cloud.papaya.home"]["allow"], ["10.9.255.2"])       # as before
+        self.assertEqual(fedmod.admin_rules(plain, {}, "papaya", ["control.papaya.home"], "home"), plain)
+
+    def test_every_app_is_the_pages_without_the_admin_pages_and_without_ssh(self):
+        f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master(**{"vpn-server": {
+                "wg_host": "vpn.example.org", "wg_password": "w",
+                "groups": {"family": {"subnet": "10.8.5.0/24", "reach": ["apps"]}}}})},
+            "papaya": {"role": "node", "node": self.node_cloud(preset="cloud")}}})
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        start = r.bundle(fleet.hosts["gate"], r.prepare(fleet.hosts["gate"])).files["km-vpn-server/start.sh"][0]
+        self.assertIn("-s 10.8.5.0/24 -d 10.8.0.25 -p tcp --dport 443 -j ACCEPT", start)
+        self.assertIn("-s 10.8.5.0/24 -d 10.8.0.25 -j DROP", start)                 # no SSH, nothing else
+        node = fleet.hosts["papaya"]
+        nginx = r.bundle(node, r.prepare(node)).files["kn-nginx/nginx.conf"][0]
+        site = lambda n: nginx.split("server_name %s.papaya.home;" % n, 1)[1].split("server {", 1)[0]      # noqa: E731
+        self.assertIn("deny 10.8.5.0/24;", site("portainer"))                       # an admin page
+        self.assertNotIn("deny 10.8.5.0/24;", site("cloud"))
+        self.assertNotIn("deny 10.8.5.0/24;", site("vault"))
+        rc, out, err = TestManage.run_cli(self, "access", f.path)
+        self.assertRegex(out, r"family +10\.8\.5\.0/24 +every app")
+        self.assertIn("portainer.papaya", out.split("admin pages (only", 1)[1].splitlines()[0])
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "--admin", "yes")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("apply fleet.yaml gate papaya", out + err)                     # the node's own web server changes
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        node = fleet.hosts["papaya"]
+        self.assertNotIn("deny 10.8.5.0/24;", r.bundle(node, r.prepare(node)).files["kn-nginx/nginx.conf"][0])
+
     def test_what_the_page_ticks(self):
         rows = accessmod.view({"guests": {"subnet": "10.8.1.0/24", "reach": ["nodes"], "peers": False},
                                "work": {"subnet": "10.8.5.0/24", "reach": ["cloud.papaya", "lychee:22", "10.8.0.99", "gone"]},
@@ -2601,6 +2663,11 @@ class TestOnion(Base):
         again = fleettext.put(out, ["hosts", "papaya", "node", "onion"], {"services": {}})
         self.assertEqual(yaml.safe_load(again)["hosts"]["papaya"]["node"]["onion"], {"services": {}})
         self.assertIsNone(fleettext.put("hosts: {papaya: {node: {}}}\n", ["hosts", "papaya", "node", "onion"], {}))   # not laid out as a block
+        # a block whose values are plain words and numbers (seen with a machine's unlock: settings)
+        text = "hosts:\n  papaya:\n    unlock:\n      control: house      # the ring\n    role: node\n"
+        out = fleettext.put(text, ["hosts", "papaya", "unlock"], {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True})
+        self.assertEqual(yaml.safe_load(out)["hosts"]["papaya"], {
+            "unlock": {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True}, "role": "node"})
 
     def net(self):
         f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
@@ -8144,27 +8211,32 @@ class TestFirstRunPage(StoreBase):
         write(config.Fleet.load(path).resolve_path("secrets/%s.home.conf" % node), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.9/32\n")
         body = self.ask("/access", cookie=cookie)[1]
         self.assertIn("Who may reach what", body)
-        for g in ("guests", "pentest", "devices", "routers"):
+        for g in ("guests", "pentest", "devices", "routers", "family"):
             self.assertIn("<strong>%s</strong>" % g, body)
+        self.assertIn('name="apps.family" style="width:auto" checked', body)       # the people of the house: every app
+        self.assertIn("admin pages:</span>", body)
         self.assertIn('name="s.guests.%s.cloud"' % node, body)
         self.assertNotIn('name="m.guests.%s"' % master, body)            # the master is never ticked
         # as the page shows it, but: guests only the cloud's page, and a new group
         shown = {"csrf": csrf, "internet.guests": "on", "internet.pentest": "on",
                  "all.devices": "on", "peers.devices": "on", "internet.devices": "on", "admin.devices": "on",
-                 "all.routers": "on", "peers.routers": "on", "internet.routers": "on"}
-        status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on", "new": "family"}), cookie=cookie)
-        self.assertEqual((status, where), (303, "/access?saved=family%2C%20guests"))
+                 "all.routers": "on", "peers.routers": "on", "internet.routers": "on",
+                 "apps.family": "on", "peers.family": "on", "internet.family": "on"}
+        status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on", "new": "kids", "new_as": "apps"}),
+                                    cookie=cookie)
+        self.assertEqual((status, where), (303, "/access?saved=kids%2C%20guests"))
         groups = self.data()["hosts"][master]["master"]["vpn-server"]["groups"]
         self.assertEqual(groups["guests"], {"subnet": "10.8.1.0/24", "reach": ["cloud.%s" % node], "peers": False})
-        self.assertEqual(groups["family"], {"subnet": "10.8.5.0/24", "reach": [], "peers": False})
+        self.assertEqual(groups["kids"], {"subnet": "10.8.6.0/24", "reach": ["apps"], "peers": True})
+        self.assertEqual(groups["family"]["reach"], ["apps"])
         self.assertEqual(groups["devices"]["reach"], ["all"])
         self.assertTrue(os.path.islink(path))                           # still a link into memory
         self.assertIn("who may reach what changed", str(self.c.audit_tail(3)))
-        body = self.ask("/access?saved=family%2C%20guests", cookie=cookie)[1]
-        self.assertIn("Saved: family, guests", body)
+        body = self.ask("/access?saved=kids%2C%20guests", cookie=cookie)[1]
+        self.assertIn("Saved: kids, guests", body)
         self.assertIn("Now: cloud.%s." % node, body)
         # nothing changed: nothing written; a name that is none is said and nothing is kept of it
-        shown["internet.family"] = "on"
+        shown.update({"apps.kids": "on", "peers.kids": "on", "internet.kids": "on"})
         status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on"}), cookie=cookie)
         self.assertEqual((status, where), (303, "/access"))
         body = self.ask("/access", dict(shown, **{"p.guests": "grape:22"}), cookie=cookie)[1]

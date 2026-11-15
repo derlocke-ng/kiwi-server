@@ -43,6 +43,7 @@ nginx:
   proxy_pass: "http://control"
   proxy_read_timeout: 300s
   comment: Kiwi control
+  admin: true          # an admin page: only for VPN groups that are given the admin pages
   extra_directives:
     - "allow {{ mesh_subnet }};"
     - "{% if allow_from %}allow {{ allow_from }};{% endif %}"

@@ -241,12 +241,18 @@ brought back today ([When something breaks](recovery.md)).
 | Who | Reaches | Enforced by |
 |---|---|---|
 | a device outside every group | everything on the VPN | nothing stops it |
-| `devices` | everything, other devices, the master's admin pages | the master's firewall |
-| `routers` | everything and other devices, no admin pages | the master's firewall |
-| `guests`, as a new network has it | every node; no other devices, no admin pages | the master's firewall |
+| `devices` | everything, other devices, the admin pages | the master's firewall |
+| `family` (from 2.98.0) | every app: the web pages of every node; no SSH, no admin pages | the master's firewall, and each node's nginx for the admin pages |
+| `routers` | everything and other devices, no admin pages | the master's firewall, and each node's nginx for the admin pages |
+| `guests`, as a new network has it | every node; no other devices, no admin pages | the master's firewall, and each node's nginx for the admin pages |
 | `guests` given one service | that service's web address only | the master's firewall, and the node's nginx for its other names |
 | `pentest` | nothing but the master, which answers the names | the master's firewall |
 | a group given one port, such as `lychee:22` | that port | the master's firewall |
 | a linked network | only what you share: a machine, a service or a port, never `all`; `from` limits which of its addresses may come | your master's firewall and the node's nginx |
 | a stranger over Tor, from 2.96.0 | one service through its `.onion` address; with `--client`, only people with a key | Tor's client authorization, and the node's nginx answering as that one site |
 | anyone on the Internet | the master's open ports: WireGuard on UDP 51820 and SSH, plus what you add, such as a public hub on 80 and 443, ring relay ports or a link on UDP 51822; nothing at home | the master's firewall; fail2ban for SSH |
+
+Admin pages are the network's controls: the control page, Portainer, Pi-hole,
+the VPN's device page, the backup server, the cache. A group opens them only
+with its admin switch, or when one is named for it; a linked network only when
+one is named (from 2.98.0).

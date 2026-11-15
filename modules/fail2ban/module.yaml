@@ -26,12 +26,14 @@ templates:
   ratelimit: ratelimit.sh.j2
   log_unit: kn-sshd-log.service.j2
   probe_filter: kiwi-nginx-probe.conf.j2
+  refused_filter: kiwi-nginx-refused.conf.j2
 
 outputs:
   jail: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/jail.d/kiwi.local", mode: 0644 }
   ratelimit: { path: "{{ container_prefix }}-fail2ban/init/50-kiwi-ratelimit", mode: 0755 }
   log_unit: { kind: host_unit, name: kn-sshd-log.service }
   probe_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-probe.conf", mode: 0644 }
+  refused_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-refused.conf", mode: 0644 }
 
 storage:
   bind_mounts:

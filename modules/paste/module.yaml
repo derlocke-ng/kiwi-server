@@ -1,0 +1,84 @@
+schema_version: "1.0"
+
+module:
+  name: paste
+  title: Pastebin (PrivateBin)
+  version: 1.0.0
+  description: "A pastebin: a page to put a text (or a file) on and pass its link along. PrivateBin encrypts in the browser, the server keeps what it cannot read. At paste.<hostname> for the mesh; public with a public name on a master, or as a hidden service with the onion module"
+  category: productivity
+  node_types: [master, node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client, onion]
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  config: conf.php.j2
+
+outputs:
+  config: { path: "{{ container_prefix }}-paste/conf.php", mode: 0644 }
+
+derived:
+  paste_host: "{{ paste_domain or 'paste.' ~ hostname }}"
+
+validate:
+  - { when: "size_mb < 1 or size_mb > 100", error: "paste.size_mb: 1 to 100" }
+
+storage:
+  volumes: [privatebin_data]
+
+urls:
+  - "Pastebin: https://{{ paste_host }}"
+
+nginx:
+  upstream:
+    name: privatebin
+    server: "{{ container_prefix }}-paste:8080"
+  server_name: "{{ paste_host }}"
+  site: paste
+  proxy_pass: "http://privatebin"
+  client_max_body_size: "{{ size_mb + 5 }}m"
+  comment: Pastebin (PrivateBin)
+
+backup:
+  volumes: [privatebin_data]
+
+settings:
+  - key: paste_domain
+    label: Name
+    help: "Empty: paste.<hostname>, a mesh name, for people on the VPN. On a master a public name here (paste.example.org, pointing at it in DNS) opens it to the Internet, with reverse-proxy.public. For strangers without a public name: the onion module, onion.services: paste."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: title
+    label: Title
+    help: "What the page calls itself."
+    default: Paste
+  - key: default_expire
+    type: enum
+    options: [5min, 10min, 1hour, 1day, 1week, 1month, 1year, never]
+    label: A paste is kept for
+    help: "What the page suggests; whoever pastes can choose another."
+    default: 1week
+  - key: size_mb
+    type: int
+    label: Largest paste (MB)
+    help: "A paste, or a file attached to it, may be this big."
+    default: 10
+  - key: file_upload
+    type: bool
+    label: Files
+    help: "A file can be attached to a paste."
+    default: true
+  - key: image
+    label: Image
+    help: "PrivateBin's own image, pinned by version."
+    default: docker.io/privatebin/nginx-fpm-alpine:2.1.1

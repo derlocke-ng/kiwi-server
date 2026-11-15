@@ -14,3 +14,13 @@ logpath  = /var/log/kiwi/sshd.log
 backend  = polling
 # aggressive: also preauth disconnects and timeouts, which is most of what bots do
 mode     = aggressive
+
+# who was banned three times in a day is out for a week, on every port
+[recidive]
+enabled  = true
+logpath  = /config/log/fail2ban/fail2ban.log
+backend  = polling
+banaction = iptables-allports
+bantime  = 1w
+findtime = 1d
+maxretry = 3

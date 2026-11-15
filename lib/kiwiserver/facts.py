@@ -73,6 +73,10 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             kv service "$s $(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)"
         fi
     done
+    if "$rt" inspect "${STACK_PREFIX:-km}-fail2ban" >/dev/null 2>&1; then
+        # how many addresses are shut out right now, over all its jails
+        kv banned "$("$rt" exec "${STACK_PREFIX:-km}-fail2ban" fail2ban-client banned 2>/dev/null | grep -oE "'[0-9a-fA-F.:]+'" | sort -u | wc -l)"
+    fi
     if [ -n "${STACK_VPN_CONTAINER:-}" ]; then
         kv vpn "$STACK_VPN_CONTAINER"
         kv tunnel "$("$rt" exec "$STACK_VPN_CONTAINER" ip -o link show tun0 2>/dev/null | sed -n 's/.* mtu \([0-9]*\) .*/\1/p')"
@@ -199,6 +203,8 @@ def parse(data, local_now=None):
         out["backup_store"] = {"mount": store[0], "free_kib": _int(store[1]), "repos": repos}
     if certificates:
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
+    if raw.get("banned", "").isdigit():
+        out["banned"] = int(raw["banned"])
     if raw.get("luks"):
         out["encryption"] = "none" if raw["luks"] == "none" else ("bound" if _int(raw["luks"]) else "key")
     if raw.get("vpn"):
@@ -265,6 +271,8 @@ def assess(f):
         problems.append(warn("the clock is %+d s off from this computer's" % f["skew"]))
     if f.get("reboot"):
         notes.append("an update is waiting for a reboot")
+    if f.get("banned"):
+        notes.append("fail2ban keeps %d %s out right now" % (f["banned"], "address" if f["banned"] == 1 else "addresses"))
     b = f.get("backup")
     if b:
         if b.get("held"):

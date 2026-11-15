@@ -92,6 +92,21 @@ http {
     access_log /dev/stdout main;
 {% endif %}
 
+{% if rate_limit and (public_names or onion) %}
+    # how fast one address may ask a site that strangers reach. A page that loads many files at
+    # once fits into the burst; who keeps asking faster gets 429, and fail2ban reads who it was
+    limit_req_zone $binary_remote_addr zone=kiwi_public:10m rate={{ rate_limit }}r/s;
+    limit_conn_zone $binary_remote_addr zone=kiwi_conn:10m;
+    # a hidden service's visitors all come from Tor, as one address: the limit is the site's
+    limit_req_zone $server_name zone=kiwi_onion:1m rate={{ rate_limit * 3 }}r/s;
+    limit_req_status 429;
+    limit_conn_status 429;
+    limit_req_log_level warn;
+{% endif %}
+    # a client that sends its request or takes its answer too slowly is let go
+    client_header_timeout 20s;
+    send_timeout 60s;
+    reset_timedout_connection on;
     sendfile on;
     tcp_nopush on;
     keepalive_timeout 65;
@@ -194,6 +209,10 @@ http {
 {% if s.public %}
         ssl_certificate     /etc/nginx/acme/{{ s.server_name }}/fullchain.pem;
         ssl_certificate_key /etc/nginx/acme/{{ s.server_name }}/privkey.pem;
+{% if rate_limit %}
+        limit_req zone=kiwi_public burst={{ rate_limit * 4 }} nodelay;
+        limit_conn kiwi_conn 60;
+{% endif %}
 {% elif public_names %}
         # 443 is open to the internet on this machine; this site is not for it
         allow {{ mesh_subnet }};
@@ -246,6 +265,9 @@ http {
     server {
         listen 8043;
         server_name {{ onion[s.server_name] }};
+{% if rate_limit %}
+        limit_req zone=kiwi_onion burst={{ rate_limit * 12 }} nodelay;
+{% endif %}
         {{ headers(s, '        ') | trim }}
         client_max_body_size {{ s.client_max_body_size or '0' }};
 {% if s.proxy_read_timeout %}

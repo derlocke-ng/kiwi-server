@@ -99,6 +99,11 @@ settings:
     label: Send HSTS headers
     help: "On: browsers are told to reach these sites over HTTPS only, for half a year, subdomains included. A site that decides this itself, as Nextcloud's does, keeps its own choice."
     default: true
+  - key: rate_limit
+    type: int
+    label: Requests per second from one address
+    help: "For sites that strangers reach (a public name, a hidden service): how many requests a second one address may send, with four times that at once for a page that loads many files. Who asks faster gets an error, and on a master with fail2ban is banned when it goes on. A hidden service's visitors all look like one address, so there the limit is three times this for the whole site. Sites of the VPN are not limited. 0: no limit."
+    default: 20
   - key: public
     type: bool
     label: Open to the internet

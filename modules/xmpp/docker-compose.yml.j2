@@ -17,6 +17,9 @@
       - KIWI_ONION={{ onion_host }}
       - KIWI_ADMIN={{ admin_user }}
       - KIWI_ADMIN_PASSWORD={{ admin_password }}
+      # where its accounts were before they had a folder of their own per name (data, public)
+      - KIWI_OLD={{ data }}
+      - KIWI_OTHER={{ 'public' if data == 'data' else 'data' }}
 {{ caller() }}
     restart: unless-stopped
     stop_grace_period: 60s
@@ -27,9 +30,9 @@
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-xmpp/start.sh:/kiwi-start.sh:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ config }}:/opt/ejabberd/conf/ejabberd.yml:ro,z
-      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ data }}/database:/opt/ejabberd/database:z
-      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ data }}/upload:/opt/ejabberd/upload:z
-      - {{ docker_dir }}/{{ container_prefix }}-xmpp/{{ data }}/certs:/opt/ejabberd/conf/certs:z
+      # the accounts, messages and files of each name in a folder of its own (hosts/<name>): when
+      # one service becomes two or two one, the accounts stay with their name
+      - {{ docker_dir }}/{{ container_prefix }}-xmpp:/kiwi-xmpp:z
       # the proxy's certificate for the name: the fleet CA's, or Let's Encrypt's for a public name
       - {{ docker_dir }}/{{ container_prefix }}-nginx{{ certs }}:/kiwi-certs:ro,z
 {% endmacro %}

@@ -13,6 +13,33 @@ C=/opt/ejabberd/conf/certs
 say() { echo "kiwi: $*"; }
 as_ejabberd() { su ejabberd -s /bin/sh -c "$1"; }
 
+# the folder of this name: its accounts, messages, files and certificates. Made once; for a
+# service from before there were such folders, from the old folder that holds this name's
+# accounts (its own first, else the other service's), which stays as it was
+X=/kiwi-xmpp
+d=$X/hosts/$host
+mentions() { cat "$X/$1"/database/passwd.D* 2>/dev/null | grep -aqF "$host"; }
+if [ ! -d "$d/database" ]; then
+    from=
+    for o in "$KIWI_OLD" "$KIWI_OTHER"; do
+        if [ -n "$o" ] && mentions "$o"; then from=$o; break; fi
+    done
+    if [ -z "$from" ] && [ -n "$(ls -A "$X/$KIWI_OLD/database" 2>/dev/null)" ]; then from=$KIWI_OLD; fi
+    rm -rf "$d.new"
+    mkdir -p "$d.new"
+    if [ -n "$from" ]; then
+        cp -a "$X/$from/." "$d.new/" && say "the accounts of $host come from the folder $from (it stays as it was)"
+    fi
+    mkdir -p "$d.new/database" "$d.new/upload" "$d.new/certs"
+    mv "$d.new" "$d"
+fi
+for x in database upload; do
+    rm -rf "/opt/ejabberd/$x"
+    ln -s "$d/$x" "/opt/ejabberd/$x"
+done
+rm -rf "$C"
+ln -s "$d/certs" "$C"
+
 n=0
 until [ -s /kiwi-certs/fullchain.pem ] && [ -s /kiwi-certs/privkey.pem ]; do
     # a public name: the proxy fetches its certificate at its first start
@@ -33,7 +60,7 @@ if [ -n "$onion" ] && [ ! -s "$C/$onion.pem" ]; then
     fi
     rm -f "$C/.k" "$C/.c"
 fi
-chown -R ejabberd:ejabberd "$C" /opt/ejabberd/database /opt/ejabberd/upload
+chown -R ejabberd:ejabberd "$d"
 chmod 0600 "$C"/*.pem 2>/dev/null
 
 account() {

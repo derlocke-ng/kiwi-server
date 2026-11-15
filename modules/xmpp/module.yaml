@@ -79,12 +79,8 @@ validate:
 
 storage:
   bind_mounts:
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data/database", type: dir, required: true }
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data/upload", type: dir, required: true }
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/data/certs", type: dir, required: true }
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/public/database", type: dir, required: true, when: two }
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/public/upload", type: dir, required: true, when: two }
-    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/public/certs", type: dir, required: true, when: two }
+    # one folder per name under hosts/: start.sh makes it (from an older layout's data/ or public/)
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/hosts", type: dir, required: true }
 
 urls:
   - "Jabber: {{ admin_user }}@{{ main_host }} in any XMPP app (Conversations, Monal, Dino, Gajim); from the VPN the server is {{ internal_host }}{% if xmpp_domain and not separate %}, from the Internet {{ xmpp_domain }}{% endif %}{% if registration %}; new accounts: https://{{ internal_host }}/register{% endif %}"
@@ -147,8 +143,8 @@ nginx:
 
 backup:
   frozen:
-    containers: ["{{ container_prefix }}-xmpp"]
-    paths: ["${DOCKERDIR}/{{ container_prefix }}-xmpp/data", "{% if two %}${DOCKERDIR}/{{ container_prefix }}-xmpp/public{% endif %}"]
+    containers: ["{{ container_prefix }}-xmpp", "{% if two %}{{ container_prefix }}-xmpp-public{% endif %}"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-xmpp/hosts"]
 
 settings:
   - key: image

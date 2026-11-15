@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.96.2 — a hidden service on a real machine
+
+- kiwi-modules 0.36.1: with a hidden service the machine's web server did not start. A
+  `.onion` name is longer than nginx's table of names takes by default. Found on the
+  first real machine; apply a machine that has a hidden service.
+- `tests/drills/onion.py` tries a hidden service for real, and did on the test network:
+  the machine's Tor shares the VPN client's network and leaves at the master's exit, not
+  through the machine's own connection; the address opens through Tor and another site's
+  name on it gets nothing; limited to a named person it opens with that person's key and
+  cannot be found without one.
+
 ## 2.96.1 — connect does not hang, the app can stop a task
 
 - `kiwi-server connect` (and "Connect this computer…" in the app) waited for minutes

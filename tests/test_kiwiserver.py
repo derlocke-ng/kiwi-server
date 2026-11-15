@@ -3111,7 +3111,8 @@ class TestOnion(Base):
         fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
         had = fleet.hosts["papaya"]
         cli.Renderer(fleet, roles, os.path.join(self.tmp, "out0"), None, ms).prepare(had)
-        node["modules"] = list(had.modules) + ["xmpp", "onion"]        # the preset's parts, Jabber, and Tor
+        node["modules"] = list(had.modules) + ["xmpp", "onion", "games"]        # the preset's parts, Jabber, Tor, a game
+        node["games"] = {"servers": {"doom": {"game": "zandronum", "public": True}}}
         node["xmpp"] = {"xmpp_domain": "chat.example.org"}
         node["onion"] = {"services": {"xmpp": {}, "jabber": {}}, "tls": True}     # the public site by what its module calls it
         node["reverse-proxy"] = {"public": True}
@@ -3150,7 +3151,8 @@ class TestOnion(Base):
         self.assertIn("chat.example.org %s:8443;" % there, nginx)
         self.assertIn("proxy_pass %s:15222;" % there, nginx)
         ports = m.compose["services"]["km-vpn-server"]["ports"]
-        for want in ("443:443/tcp", "5222:5222/tcp", "5223:5223/tcp", "5269:5269/tcp"):
+        self.assertIn("listen 10666 udp;\n        proxy_pass %s:10666;" % there, nginx)      # a public game server: its port as it is
+        for want in ("443:443/tcp", "5222:5222/tcp", "5223:5223/tcp", "5269:5269/tcp", "10666:10666/udp"):
             self.assertTrue(any(p.endswith(want) for p in ports), (want, ports))
         # on the VPN the public name is the node's own: a device comes straight to it
         self.assertIn((there, "chat.example.org"), r.dns_records())

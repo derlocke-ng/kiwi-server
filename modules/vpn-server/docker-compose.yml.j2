@@ -47,7 +47,7 @@ services:
 {% endif %}
 {# and what it hands on to a node besides web sites #}
 {% for p in (exposed or {}).get('ports', []) %}
-      - "{{ public_ip ~ ':' if public_ip else '' }}{{ p.port }}:{{ p.port }}/tcp"
+      - "{{ public_ip ~ ':' if public_ip else '' }}{{ p.port }}:{{ p.port }}/{{ p.proto or 'tcp' }}"
 {% endfor %}
 {% if has_dns and module_config.get('dns', {}).get('network_mode') == 'vpn-server' %}
       - "127.0.0.1:8080:{{ module_config.get('dns', {}).get('web_port') or 8081 }}/tcp"

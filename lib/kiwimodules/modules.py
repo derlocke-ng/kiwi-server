@@ -117,8 +117,9 @@ class Module:
         fw = meta.get("firewall") or {}
         self.firewall_rules = [str(r) for r in (fw.get("rules") or [])]
         self.firewall_scope = str(fw.get("scope") or "vpn-client")
-        # ports the master hands on to this machine when the service has a public name:
-        # "5222:15222/proxy" = the master's 5222 to this machine's 15222, with the PROXY protocol
+        # ports the master hands on to this machine when the service is open to the internet:
+        # "5222:15222/proxy" = the master's 5222 (TCP) to this machine's 15222, with the PROXY protocol;
+        # "25565/tcp", "10666/udp" = that port as it is
         self.expose_ports = [str(p) for p in ((meta.get("expose") or {}).get("ports") or [])]
         st = meta.get("storage") or {}
         self.bind_mounts = list(st.get("bind_mounts") or [])
@@ -800,10 +801,10 @@ class Renderer:
         dicts port / to / proxy_protocol). kiwi-server gives both to the master."""
         ordered = self.ms.resolve(spec.modules, spec.node_type)
         base = self.base_context(spec, ordered)
-        if not (spec.module_config.get("reverse-proxy") or {}).get("public"):
-            return [], []
-        _up, servers = self.nginx_blocks(spec, ordered, base)
-        names = [s["server_name"] for s in servers if not (s["server_name"] + ".").endswith(".%s." % spec.domain)]
+        names = []
+        if (spec.module_config.get("reverse-proxy") or {}).get("public"):      # web sites: only with a public proxy
+            _up, servers = self.nginx_blocks(spec, ordered, base)
+            names = [s["server_name"] for s in servers if not (s["server_name"] + ".").endswith(".%s." % spec.domain)]
         base["via"] = str((spec.module_config.get("reverse-proxy") or {}).get("via") or "")
         ports = []
         for name in ordered:
@@ -811,9 +812,10 @@ class Renderer:
             ctx = self.module_context(spec, ordered, base, name)
             for entry in mod.expose_ports:
                 for word in self.expand(str(entry), ctx, "modules/%s expose.ports" % name).split():
-                    port, _, to = word.partition(":")
-                    to, _, flag = to.partition("/")
-                    ports.append({"port": int(port), "to": int(to or port), "proxy_protocol": flag == "proxy"})
+                    where, _, flag = word.partition("/")
+                    port, _, to = where.partition(":")
+                    ports.append({"port": int(port), "to": int(to or port), "proxy_protocol": flag == "proxy",
+                                  "proto": "udp" if flag == "udp" else "tcp"})
         return names, ports
 
     # ---- the bundle --------------------------------------------------------------------

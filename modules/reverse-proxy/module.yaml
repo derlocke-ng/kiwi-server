@@ -20,7 +20,7 @@ network:
   open_ports:
     - "{% if not network_mode or public_names or (exposed or {}).get('names') %}80/tcp 443/tcp{% endif %}"
     # what the master hands on to a node besides web sites (Jabber's ports, say)
-    - "{% for p in (exposed or {}).get('ports', []) %}{{ p.port }}/tcp {% endfor %}"
+    - "{% for p in (exposed or {}).get('ports', []) %}{{ p.port }}/{{ p.proto or 'tcp' }} {% endfor %}"
 
 firewall:
   scope: vpn-client

@@ -132,9 +132,15 @@ document it and are not tried.
 - **Where players connect.** At home: the machine's address and the game's port
   (`medlar.home:25565`). From the VPN: the same name; give the group the port in
   "Who may reach what" (`medlar:25565`,
-  [network.md](network.md#who-may-reach-what)). Nothing is opened to the
-  Internet: a friend plays as a device on your VPN, in a group that reaches that
-  one port and nothing else.
+  [network.md](network.md#who-may-reach-what)). Unless you say so, nothing is
+  opened to the Internet: a friend plays as a device on your VPN, in a group
+  that reaches that one port and nothing else.
+- **Open to the Internet**: `public: true` at a server
+  (`survival: { game: minecraft, public: true }`). Players then join at the
+  master's address and the game's port; the master hands the ports on to the
+  machine, TCP and UDP. Nothing is opened at home, and the game sees the
+  master's address for everyone. Apply the master and the machine. Tried with
+  Minecraft and Zandronum on a test node (`tests/drills/game-ports.py`).
 - **Two servers of games that share a port**: `port:` moves one of them. Its
   other ports move with it.
 - **What is kept.** A server's worlds are in `kn-games/<server>` on the machine

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.122.0 — a game server open to the Internet, through the master
+
+- **`public: true` at a game server** (kiwi-modules 0.48.0): players outside your VPN join
+  at the master's address; the master hands the game's ports on to the machine, TCP and
+  UDP. Nothing is opened at home. [roles.md](docs/roles.md#game-servers).
+- kiwi-server tells the master about a node's ports whether or not the node has a public
+  web site, and with their protocol.
+- New drill: `tests/drills/game-ports.py` asks a game server the way its client does.
+  Tried on the test network: Minecraft (TCP) and Zandronum (UDP) answer at the master's
+  public address.
+
 ## 2.121.2 — the logins drill and BTCPay
 
 - `tests/drills/logins.py` tries BTCPay through its login page. Its old check (Basic

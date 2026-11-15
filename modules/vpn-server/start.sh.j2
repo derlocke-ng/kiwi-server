@@ -172,9 +172,11 @@ iptables -t mangle -A OUTPUT -p tcp --sport 443 ! -d {{ mesh_subnet }} -j MARK -
 {% set open = [] %}
 {% set xm = module_config.get('xmpp', {}) %}
 {% if has_xmpp and xm.get('xmpp_domain') and not xm.get('separate') %}{% set _ = open.extend([5222, 5223, 5269]) %}{% endif %}
-{% for p in (exposed or {}).get('ports', []) %}{% set _ = open.append(p.port) %}{% endfor %}
 {% for port in open %}
 iptables -t mangle -A OUTPUT -p tcp --sport {{ port }} ! -d {{ mesh_subnet }} -j MARK --set-mark 65
+{% endfor %}
+{% for p in (exposed or {}).get('ports', []) %}
+iptables -t mangle -A OUTPUT -p {{ p.proto or 'tcp' }} --sport {{ p.port }} ! -d {{ mesh_subnet }} -j MARK --set-mark 65
 {% endfor %}
 {% endif %}
 {% if federation %}

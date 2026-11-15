@@ -169,6 +169,47 @@ rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled' ||
 cut -d' ' -f1,2 $k.pub
 '''
 
+# A machine whose disk opens through unlock rings must not restart by itself while too few
+# of them answer: it would wait at boot, locked, until someone comes (seen for real: a
+# machine restarted for a kernel update in the night its only ring's machine was being
+# installed anew). The update reboots ask this first. Exit 0: go ahead.
+RINGS_ANSWER_PATH = "/usr/local/sbin/kiwi-rings-answer"
+RINGS_ANSWER = r'''#!/bin/sh
+# kiwi-server: do the unlock rings of this machine's disk answer right now?
+# 0: yes, or no disk here opens through a ring. 1: too few answer; a restart would lock it.
+for name in $(lsblk -rno NAME,FSTYPE | awk '$2 == "crypto_LUKS" { print $1 }'); do
+    clevis luks list -d "/dev/$name" 2>/dev/null | while read -r slot; do
+        case $slot in *tang*) ;; *) continue ;; esac
+        need=$(printf '%s' "$slot" | grep -o '"t":[0-9]*' | head -n 1 | cut -d: -f2)
+        ok=0
+        for url in $(printf '%s' "$slot" | grep -o '"url":"[^"]*"' | cut -d'"' -f4); do
+            curl -fs --max-time 5 -o /dev/null "$url/adv" && ok=$((ok + 1))
+        done
+        [ "$ok" -ge "${need:-1}" ] && exit 3          # this slot opens the disk
+    done
+    case $? in
+        3) ;;                                           # a slot of this disk is fine
+        *) clevis luks list -d "/dev/$name" 2>/dev/null | grep -q tang || continue
+           echo "kiwi-server: the unlock rings of /dev/$name do not answer: no restart now, it would wait locked"
+           exit 1 ;;
+    esac
+done
+exit 0
+'''
+INSTALL_RINGS_ANSWER = r'''
+set -eu
+install -d /usr/local/sbin
+cat > %(path)s.new
+chmod 0755 %(path)s.new
+mv %(path)s.new %(path)s
+for unit in kiwi-staged-reboot kiwi-reboot-if-required; do
+    d=/etc/systemd/system/$unit.service.d
+    mkdir -p $d
+    printf '[Service]\n# no restart for updates while the disk could not be opened again\nExecCondition=%(path)s\n' > $d/rings.conf
+done
+systemctl daemon-reload
+''' % {"path": RINGS_ANSWER_PATH}
+
 _CONNECTED = "kiwi-unlock-connected"
 SSH_PORT = {"debian": 2222}      # else 22: CoreOS's initramfs sshd takes the normal port
 
@@ -449,6 +490,8 @@ def bind(host, tgt, servers):
     if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
+    # and no machine restarts for updates while the rings that open it do not answer
+    remote.run(tgt, INSTALL_RINGS_ANSWER, RINGS_ANSWER.encode())
     if host.cfg["unlock"].get("ssh"):
         _initramfs_ssh(host, tgt)
         if coreos:

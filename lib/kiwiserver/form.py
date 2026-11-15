@@ -75,6 +75,9 @@ BASE_GROUPS = [
              help="Mon Tue … Sun, space separated; empty = any day. Updates install continuously, this is when a reboot may happen"),
         dict(path=("updates", "time"), type="string", label="Reboot time", default="03:30", help="HH:MM local time"),
         dict(path=("updates", "length_minutes"), type="int", label="Window length (minutes)", default=90, help="How long after the reboot time a reboot may still start"),
+        dict(path=("watchdog",), type="bool", label="Hardware watchdog", default=True,
+             help="On: a machine that hangs is reset by its hardware watchdog after a minute, one that hangs in a "
+                  "restart after ten. Nothing is set where the machine has none"),
     ]),
     ("When a machine is gone", [
         dict(path=("recovery", "master", "do"), type="enum", label="A master that does not answer", options=["tell", "restart"],

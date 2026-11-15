@@ -146,6 +146,9 @@ DEFAULTS = {
         "name_constraints": [],  # e.g. [kiwi]: the CA may only sign names under these domains
     },
     "post_script": "",
+    # the hardware watchdog, where the machine has one: a machine that hangs, also in the
+    # middle of a restart, is reset by it (roles.render_script, ks_watchdog)
+    "watchdog": True,
     # data disks beside the system disk: "LABEL=data /mnt/data" or {device, at, format}. Mounted
     # before the role and its services start; never erased (mounts_of, roles.render_script)
     "mounts": [],

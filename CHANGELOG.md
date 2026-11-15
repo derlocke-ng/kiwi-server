@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.100.0 — a restart does not take a machine away
+
+Found in one night, with a machine being installed anew while the others ran:
+
+- **No restart for updates while the unlock rings do not answer.** A machine whose
+  disk opens through rings asks them before it restarts in the update window. When too
+  few answer, it stays up and tries again in the next window. Before, a machine
+  restarted for a kernel update while the machine with its only ring was off, and
+  waited locked until someone typed its key. Comes with the next apply
+  (`/usr/local/sbin/kiwi-rings-answer`, asked by both update reboot units).
+- **A hardware watchdog**, where the machine has one: a machine that hangs is reset
+  after a minute, one that hangs in a restart after ten. Before, a machine hung in its
+  update restart for 39 minutes, with SSH and its services already stopped, until
+  someone reset it. `watchdog: false` switches it off; "Hardware watchdog" in the app
+  and on the page.
+- Proven the same night: a machine installed anew from its media (papaya: encrypted
+  system disk opened by two rings, its data disk mounted from the fleet file) came back
+  with its services, its logins, its unlock ring's keys and its control node, from the
+  backups on another machine. What it lost is what changed since its last nightly
+  backup.
+
 ## 2.99.0 — a second disk for the data
 
 - **`mounts:`** in a machine's settings ("Data disks" in the app and on the page): a

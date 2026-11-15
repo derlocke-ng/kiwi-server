@@ -2791,7 +2791,7 @@ class TestMounts(Base):
         self.assertIn("ks_role_apply_role() {", script)                  # the role's own steps, under another name
         tail = script.split("# ---- data disks (fleet.yaml mounts)", 1)[1]
         self.assertIn("LABEL=data /mnt/data \nUUID=0a1b-2c /srv/media xfs\nKS_MOUNTS", tail)
-        self.assertLess(tail.index("    ks_mounts\n"), tail.index("    ks_role_apply_role \"$@\""))
+        self.assertLess(tail.index("    ks_mounts\n"), tail.index("    ks_role_apply_role\n"))
         self.assertIn("nofail", tail)                                    # a disk that is gone does not keep the machine from booting
         self.assertLess(tail.index("install -m 0644 /dev/null /etc/fstab"), tail.index("sed -i"))     # uCore has no fstab
         self.assertIn("[[ -n $fmt ]] || ks_die", tail)                   # no filesystem and none asked for: stop, never format
@@ -2800,8 +2800,7 @@ class TestMounts(Base):
         write(p, script)
         self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
         plain = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}}), "x")
-        self.assertNotIn("ks_mounts", plain)                             # a machine with one disk: as before
-        self.assertNotIn("ks_role_apply_role", plain)
+        self.assertNotIn("ks_mounts", plain)                             # a machine with one disk: nothing to mount
         del h
 
     def test_disks_lists_them_and_says_the_line_for_one_that_is_not_mounted(self):
@@ -2817,6 +2816,61 @@ class TestMounts(Base):
             self.assertNotIn("LABEL=boot", out + err)
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x", "--porcelain")
             self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1"])
+
+
+class TestNoLockout(Base):
+    """A machine does not restart for updates while its unlock rings do not answer, and one
+    that hangs is reset by its hardware watchdog. Both seen for real in one night."""
+
+    def answer(self, slots, up, luks=True):
+        """The exit code and words of the check, with `slots` as clevis lists them and the
+        rings in `up` answering."""
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d, exist_ok=True)
+        write(os.path.join(d, "lsblk"), "#!/bin/sh\n%s\n" % ("echo 'sda1 ext4'; echo 'sda2 crypto_LUKS'" if luks else "echo 'sda1 ext4'"))
+        write(os.path.join(d, "clevis"), "#!/bin/sh\ncat <<'X'\n%s\nX\n" % "\n".join(slots))
+        write(os.path.join(d, "curl"), "#!/bin/sh\nfor a; do u=$a; done\ncase \" %s \" in *\" $u \"*) exit 0 ;; esac\nexit 7\n"
+              % " ".join(x + "/adv" for x in up))
+        for f in ("lsblk", "clevis", "curl"):
+            os.chmod(os.path.join(d, f), 0o755)
+        script = os.path.join(self.tmp, "rings-answer")
+        write(script, unlock.RINGS_ANSWER)
+        r = subprocess.run(["sh", script], capture_output=True, text=True, env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
+        return r.returncode, r.stdout + r.stderr
+
+    def test_no_restart_while_the_rings_do_not_answer(self):
+        one = ['1: sss \'{"t":1,"pins":{"tang":[{"url":"http://192.168.2.30:7500"}]}}\'']
+        two = ['1: sss \'{"t":1,"pins":{"tang":[{"url":"http://192.168.2.61:7500"},{"url":"http://192.168.2.64:7500"}]}}\'']
+        both = ['1: sss \'{"t":2,"pins":{"tang":[{"url":"http://192.168.2.61:7500"},{"url":"http://192.168.2.64:7500"}]}}\'']
+        self.assertEqual(self.answer(one, ["http://192.168.2.30:7500"])[0], 0)
+        rc, said = self.answer(one, [])
+        self.assertEqual(rc, 1)                                              # lychee, the night papaya was installed anew
+        self.assertIn("do not answer: no restart now", said)
+        self.assertEqual(self.answer(two, ["http://192.168.2.64:7500"])[0], 0)    # one of two is enough
+        self.assertEqual(self.answer(two, [])[0], 1)
+        self.assertEqual(self.answer(both, ["http://192.168.2.64:7500"])[0], 1)   # both are needed
+        self.assertEqual(self.answer(both, ["http://192.168.2.61:7500", "http://192.168.2.64:7500"])[0], 0)
+        self.assertEqual(self.answer(['1: tang \'{"url":"http://192.168.2.30:7500"}\''], ["http://192.168.2.30:7500"])[0], 0)
+        self.assertEqual(self.answer(['1: tang \'{"url":"http://127.0.0.1:7500"}\''], [])[0], 1)     # a forwarded ring: never by itself
+        self.assertEqual(self.answer(['0: tpm2 \'{}\''], [])[0], 0)             # no ring opens it: not ours to hold
+        self.assertEqual(self.answer(one, [], luks=False)[0], 0)                 # no encrypted disk
+        self.assertIn("ExecCondition=%s" % unlock.RINGS_ANSWER_PATH, unlock.INSTALL_RINGS_ANSWER)
+        for unit in ("kiwi-staged-reboot", "kiwi-reboot-if-required"):
+            self.assertIn(unit, unlock.INSTALL_RINGS_ANSWER)
+
+    def test_the_role_script_sets_the_hardware_watchdog(self):
+        script = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}}), "x")
+        self.assertIn("RuntimeWatchdogSec=60s", script)
+        self.assertIn("RebootWatchdogSec=10min", script)
+        self.assertIn("KS_WATCHDOG=1", script)
+        self.assertIn("[[ $KS_WATCHDOG == 1 && -e /dev/watchdog ]]", script)       # only where the machine has one
+        tail = script.split("# ---- hardware watchdog", 1)[1]
+        self.assertLess(tail.index("    ks_watchdog\n"), tail.index("    ks_role_apply_role\n"))
+        off = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare", "watchdog": False}}}), "x")
+        self.assertIn("KS_WATCHDOG=0", off)                                       # switched off: the file goes
+        p = os.path.join(self.tmp, "x.role.sh")
+        write(p, script)
+        self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
 
 
 class TestFederation(Base):
@@ -3451,6 +3505,9 @@ class TestUnlock(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
+            if unlock.RINGS_ANSWER_PATH in script:       # the check before an update restart: looked at by its own test
+                self.guard = (tgt, data)
+                return b""
             calls.append((tgt, script, data))
             if "tang-show-keys" in script:
                 return b"THUMBPRINT\n"
@@ -3845,6 +3902,9 @@ class TestUnlock(Base):
         with a, b:
             unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
         self.assertFalse([c for c in calls if "kiwi-reboot-if-required" in c[1]])
+        # but it asks its rings before it restarts in that window
+        self.assertEqual(self.guard[0], "core@lychee")
+        self.assertIn(b"do the unlock rings of this machine's disk answer", self.guard[1])
 
     def test_the_initramfs_brings_up_its_loopback(self):
         self.assertIn("ip link set lo up", unlock.LOOPBACK_HOOK)

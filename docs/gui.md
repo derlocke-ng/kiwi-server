@@ -21,8 +21,12 @@ it, then shows the fleet with its next steps.
 
 ## The overview
 
-It counts machines, services and what needs a look, with a card per machine,
-and lists what comes next for every machine not installed yet: enroll, build,
+It counts machines, services and what needs a look, and says how old the oldest
+last backup is. Every machine has a card: what it is for the others (control
+node, gateway, keeps backups), its processor's load, its memory and its disks.
+*How they are linked* is a picture of the network: the master, and a line to
+every other machine, green when the machine answers and grey and broken when
+it does not; a click on a machine opens it. The overview also lists what comes next for every machine not installed yet: enroll, build,
 install, apply. *+* adds a host with the next free fruit (or fruit dish, for a
 master) as its name.
 

@@ -23,7 +23,7 @@ run included. Compared command by command and setting by setting.
 
 | The page has | State |
 |---|---|
-| Home's four numbers, a card per machine with load, memory and disk, the picture of the network (2.105.0) | open: the app shows a list |
+| The picture of the network, the processor's load and the oldest last backup on Home (2.105.0) | **built** in 2.106.0: "How they are linked" on the overview, a CPU line on every card, a tile for the oldest backup |
 | Preview (`plan`) | open |
 | Update everything (`apply --update`) | open |
 | Remove a phone or laptop (`enroll --remove`), show its QR code again | open |

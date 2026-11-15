@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 838" role="img" aria-labelledby="s5-t s5-d">
+<title id="s5-t">Two networks linked</title>
+<desc id="s5-d">Two networks, kiwi and kiwi2, each with its own master, names and mesh. Their masters sorbet and crumble are linked by a WireGuard tunnel on UDP 51822. kiwi shares cloud.papaya.home with kiwi2 and nothing else. kiwi's devices leave to the Internet at crumble, kiwi2's master.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:22px;font-weight:700}
+.sub{font-size:14px;fill:#536050}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:15px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.m{font-size:12px;fill:#5d6a59}
+.c{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#1e281b}
+.w{fill:#fff}
+.wd{font-size:12.5px;fill:#edf6e4}
+.lb{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#fafbf7;stroke-width:5px;stroke-linejoin:round}
+.reg{fill:#eef1ea;stroke:#c3cbbd;stroke-width:1.5}
+.lnk{fill:#eef1ea;stroke:#5ea832;stroke-width:2;stroke-dasharray:9 5}
+.inet{fill:none;stroke:#9aa395;stroke-width:1.5;stroke-dasharray:6 5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nd{fill:#fff;stroke:#2b3628;stroke-width:2}
+.dv{fill:#fff;stroke:#7f8a7b;stroke-width:1.5}
+.tun{fill:none;stroke:#5ea832;stroke-width:9;stroke-linejoin:round;stroke-linecap:round}
+.tunc{fill:none;stroke:#fff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.net{fill:none;stroke:#8a9486;stroke-width:2;stroke-dasharray:7 5}
+.req{fill:none;stroke:#2b3628;stroke-width:1.8;stroke-linejoin:round}
+.num{fill:#2b3628}
+.ok{fill:#3d7a1f}
+.no{fill:#b5402c}
+.gl{fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.note{fill:#fff;stroke:#d3d9cd;stroke-width:1.2}
+.lg{font-size:12px;fill:#38432f}
+.lgh{stroke:#dfe4da;stroke-width:1.2}
+</style>
+<defs>
+<marker id="s5-ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2b3628"/></marker>
+<marker id="s5-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a9486"/></marker>
+<g id="s5-ok"><circle class="ok" r="8"/><path class="gl" d="M-3.5,0 L-1,3 L4,-3"/></g>
+<g id="s5-no"><circle class="no" r="8"/><path class="gl" d="M-3,-3 L3,3 M3,-3 L-3,3"/></g>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="836" rx="16"/>
+<text class="ttl" x="32" y="48">Two networks linked</text>
+<text class="sub" x="32" y="73">Each network keeps its own master, names, keys and certificate authority. Each decides alone what it shares.</text>
+
+<!-- regions -->
+<rect class="inet" x="560" y="96" width="376" height="56" rx="12"/>
+<text class="rl" x="578" y="120">INTERNET</text>
+<text class="d" x="578" y="140">kiwi's devices come out here, at crumble.</text>
+<rect class="reg" x="24" y="170" width="424" height="430" rx="12"/>
+<text class="b" x="42" y="196">kiwi</text><text class="m" x="80" y="196">names .home, mesh 10.8.0.0/16</text>
+<rect class="lnk" x="512" y="170" width="424" height="430" rx="12"/>
+<text class="b" x="530" y="196">kiwi2</text><text class="m" x="578" y="196">a linked network: names .internal, mesh 10.10.0.0/16</text>
+
+<!-- tunnels and the link -->
+<path class="tun" d="M136,412 V326"/><path class="tunc" d="M136,412 V326"/>
+<path class="tun" d="M330,392 V326"/><path class="tunc" d="M330,392 V326"/>
+<path class="tun" d="M630,392 V326"/><path class="tunc" d="M630,392 V326"/>
+<path class="tun" d="M826,412 V326"/><path class="tunc" d="M826,412 V326"/>
+<path class="tun" d="M424,268 H536"/><path class="tunc" d="M424,268 H536"/>
+<path class="net" d="M898,210 V158" marker-end="url(#s5-ag)"/>
+
+<!-- flow 1: kiwi2's laptop to cloud.papaya -->
+<path class="req" d="M842,412 V340"/>
+<path class="req" d="M536,248 H424" marker-end="url(#s5-ak)"/>
+<path class="req" d="M346,340 V384" marker-end="url(#s5-ak)"/>
+<!-- flow 2: kiwi's phone to the Internet -->
+<path class="req" d="M424,288 H536" marker-end="url(#s5-ak)"/>
+
+<!-- masters -->
+<rect class="ms" x="44" y="210" width="380" height="116" rx="10"/>
+<text class="b w" x="62" y="236">sorbet · master of kiwi</text>
+<text class="wd" x="62" y="259">Its Pi-hole asks crumble for .internal.</text>
+<text class="wd" x="62" y="279">Lets kiwi2 reach cloud.papaya, nothing else.</text>
+<text class="wd" x="62" y="299">Sends its devices' Internet traffic</text>
+<text class="wd" x="62" y="316">over the link (exit: true).</text>
+<rect class="ms" x="536" y="210" width="380" height="116" rx="10"/>
+<text class="b w" x="554" y="236">crumble · master of kiwi2</text>
+<text class="wd" x="554" y="259">Its Pi-hole asks sorbet for .home.</text>
+<text class="wd" x="554" y="279">Lets kiwi out to the Internet (internet: true),</text>
+<text class="wd" x="554" y="299">never to a private address of kiwi2.</text>
+<text class="wd" x="554" y="316">It sees sorbet's address, not which device.</text>
+
+<!-- kiwi below -->
+<rect class="dv" x="44" y="412" width="184" height="64" rx="18"/>
+<text class="b" x="62" y="436">phone</text>
+<text class="m" x="62" y="456">kiwi, group devices</text>
+<rect class="nd" x="244" y="392" width="184" height="188" rx="10"/>
+<text class="b" x="262" y="418">papaya · node</text>
+<use href="#s5-ok" x="270" y="446"/>
+<text class="c" x="284" y="450">cloud.papaya</text>
+<text class="m" x="262" y="470">shared with kiwi2,</text>
+<text class="m" x="262" y="486">port 443 only</text>
+<use href="#s5-no" x="270" y="514"/>
+<text class="c" x="284" y="518">vault.papaya</text>
+<text class="m" x="262" y="538">not shared: papaya's</text>
+<text class="m" x="262" y="554">nginx refuses it</text>
+
+<!-- kiwi2 below -->
+<rect class="nd" x="536" y="392" width="184" height="140" rx="10"/>
+<text class="b" x="554" y="418">quince · node</text>
+<text class="c" x="554" y="444">immich.quince</text>
+<text class="m" x="554" y="464">not shared with kiwi:</text>
+<text class="m" x="554" y="480">kiwi's devices do not</text>
+<text class="m" x="554" y="496">reach it.</text>
+<rect class="dv" x="736" y="412" width="184" height="64" rx="18"/>
+<text class="b" x="754" y="436">a friend's laptop</text>
+<text class="m" x="754" y="456">kiwi2</text>
+
+<!-- labels -->
+<circle class="num" cx="480" cy="232" r="10"/><text class="b w" x="475.5" y="237">1</text>
+<circle class="num" cx="480" cy="306" r="10"/><text class="b w" x="475.5" y="311">2</text>
+<text class="lb" x="480" y="340" text-anchor="middle">the link: WireGuard</text>
+<text class="lb" x="480" y="356" text-anchor="middle">between the masters,</text>
+<text class="lb" x="480" y="372" text-anchor="middle">UDP 51822</text>
+
+<!-- what happens -->
+<rect class="note" x="24" y="620" width="448" height="104" rx="10"/>
+<circle class="num" cx="48" cy="646" r="10"/><text class="b w" x="43.5" y="651">1</text>
+<text class="d" x="68" y="650">The friend opens cloud.papaya.home. crumble's</text>
+<text class="d" x="68" y="668">Pi-hole asks sorbet's for the name. The request</text>
+<text class="d" x="68" y="686">crosses the link, and sorbet lets it through to</text>
+<text class="d" x="68" y="704">papaya, because kiwi shares that one service.</text>
+<rect class="note" x="488" y="620" width="448" height="104" rx="10"/>
+<circle class="num" cx="512" cy="646" r="10"/><text class="b w" x="507.5" y="651">2</text>
+<text class="d" x="532" y="650">The phone opens a website. Its traffic goes to</text>
+<text class="d" x="532" y="668">sorbet, crosses the link and leaves at crumble.</text>
+<text class="d" x="532" y="686">With the link down the phone has no Internet:</text>
+<text class="d" x="532" y="704">it does not fall back to sorbet's own connection.</text>
+<text class="c" x="32" y="752">kiwi-server federate ~/kiwi/fleet.yaml ~/kiwi2/fleet.yaml --exit</text>
+<text class="c" x="32" y="774">kiwi-server access ~/kiwi/fleet.yaml kiwi2 cloud.papaya</text>
+<!-- legend -->
+<line class="lgh" x1="24" y1="796" x2="936" y2="796"/>
+<path class="tun" d="M36,812 h28"/><path class="tunc" d="M36,812 h28"/>
+<text class="lg" x="78" y="816">WireGuard tunnel</text>
+<path class="req" d="M218,812 h34" marker-end="url(#s5-ak)"/>
+<text class="lg" x="264" y="816">a request</text>
+<path class="net" d="M355,812 h36"/>
+<text class="lg" x="401" y="816">Internet, outside the VPN</text>
+<use href="#s5-ok" x="613" y="812"/>
+<text class="lg" x="628" y="816">passes</text>
+<use href="#s5-no" x="707" y="812"/>
+<text class="lg" x="722" y="816">stopped</text>
+</svg>

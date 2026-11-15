@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 330" role="img" aria-labelledby="s0-t s0-d">
+<title id="s0-t">How to read the pictures</title>
+<desc id="s0-d">The shapes and lines used in every example picture. A green box is a master, a white box with a dark border is a node, a rounded white box is a device. A grey area is a home LAN, a white area a rented server at a hoster, a dashed grey outline the Internet, a dashed green outline a linked network. A green tube is a WireGuard tunnel, a grey line the home LAN, a dashed grey line traffic outside the VPN, a dash-dot line a backup, a dotted line an unlock request at boot, a purple dashed line Tor, and a dark arrow a request. A green tick means it passes, a red cross that it is stopped.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:18px;font-weight:700}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:14px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.w{fill:#fff}
+.reg{fill:#eef1ea;stroke:#c3cbbd;stroke-width:1.5}
+.hst{fill:#fff;stroke:#c3cbbd;stroke-width:1.5}
+.inet{fill:none;stroke:#9aa395;stroke-width:1.5;stroke-dasharray:6 5}
+.lnk{fill:#eef1ea;stroke:#5ea832;stroke-width:2;stroke-dasharray:9 5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nd{fill:#fff;stroke:#2b3628;stroke-width:2}
+.dv{fill:#fff;stroke:#7f8a7b;stroke-width:1.5}
+.tag{fill:#e4f0da;stroke:#3d7a1f;stroke-width:1.2}
+.tg{font-size:11px;font-weight:700;fill:#2a5713}
+.tun{fill:none;stroke:#5ea832;stroke-width:9;stroke-linecap:round}
+.tunc{fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round}
+.lan{fill:none;stroke:#8a9486;stroke-width:2}
+.net{fill:none;stroke:#8a9486;stroke-width:2;stroke-dasharray:7 5}
+.bak{fill:none;stroke:#2b3628;stroke-width:2.2;stroke-dasharray:12 4 3 4}
+.unl{fill:none;stroke:#2b3628;stroke-width:3.2;stroke-dasharray:.1 7;stroke-linecap:round}
+.tor{fill:none;stroke:#6a4c93;stroke-width:2.5;stroke-dasharray:6 4}
+.req{fill:none;stroke:#2b3628;stroke-width:1.8}
+.ok{fill:#3d7a1f}
+.no{fill:#b5402c}
+.gl{fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+</style>
+<defs>
+<marker id="s0-ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2b3628"/></marker>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="328" rx="16"/>
+<text class="ttl" x="32" y="42">How to read the pictures</text>
+
+<!-- machines -->
+<text class="rl" x="32" y="76">MACHINES</text>
+<rect class="ms" x="32" y="88" width="132" height="44" rx="8"/><text class="b w" x="48" y="115">sorbet · master</text>
+<rect class="nd" x="180" y="88" width="132" height="44" rx="8"/><text class="b" x="196" y="115">papaya · node</text>
+<rect class="dv" x="328" y="88" width="92" height="44" rx="18"/><text class="b" x="374" y="115" text-anchor="middle">phone</text>
+<rect class="tag" x="436" y="100" width="62" height="20" rx="10"/><text class="tg" x="447" y="114">control</text>
+<text class="d" x="32" y="152">master</text><text class="d" x="180" y="152">node</text><text class="d" x="328" y="152">device</text><text class="d" x="436" y="152">what a node also is</text>
+
+<!-- places -->
+<text class="rl" x="560" y="76">PLACES</text>
+<rect class="reg" x="560" y="88" width="80" height="44" rx="8"/>
+<rect class="hst" x="652" y="88" width="80" height="44" rx="8"/>
+<rect class="inet" x="744" y="88" width="80" height="44" rx="8"/>
+<rect class="lnk" x="836" y="88" width="92" height="44" rx="8"/>
+<text class="d" x="560" y="152">home LAN</text><text class="d" x="652" y="152">hoster</text><text class="d" x="744" y="152">Internet</text><text class="d" x="836" y="152">linked network</text>
+
+<!-- lines -->
+<text class="rl" x="32" y="196">LINES</text>
+<path class="tun" d="M36,216 h28"/><path class="tunc" d="M36,216 h28"/><text class="d" x="78" y="220">WireGuard tunnel</text>
+<path class="lan" d="M260,216 h36"/><text class="d" x="306" y="220">home LAN</text>
+<path class="net" d="M440,216 h36"/><text class="d" x="486" y="220">Internet, outside the VPN</text>
+<path class="bak" d="M700,216 h36"/><text class="d" x="746" y="220">backup</text>
+<path class="unl" d="M32,256 h36"/><text class="d" x="78" y="260">unlock request at boot</text>
+<path class="tor" d="M260,256 h36"/><text class="d" x="306" y="260">Tor</text>
+<path class="req" d="M440,256 h34" marker-end="url(#s0-ak)"/><text class="d" x="486" y="260">a request, and where it goes</text>
+<g transform="translate(709,256)"><circle class="ok" r="9"/><path class="gl" d="M-4,0 L-1,3.5 L4.5,-3.5"/></g><text class="d" x="726" y="260">passes</text>
+<g transform="translate(809,256)"><circle class="no" r="9"/><path class="gl" d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5"/></g><text class="d" x="826" y="260">stopped</text>
+<text class="d" x="32" y="304">Names are examples: masters are named after fruit dishes (sorbet, crumble), nodes after fruits (papaya, lychee, lime).</text>
+</svg>

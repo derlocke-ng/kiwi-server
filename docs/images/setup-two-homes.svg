@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 808" role="img" aria-labelledby="s3-t s3-d">
+<title id="s3-t">Two homes</title>
+<desc id="s3-d">Two homes behind one rented master. papaya in the flat and lychee in the parents' house each keep the other's backups and each serve the Tang ring that unlocks the other's encrypted disk. At boot a disk asks a public port of the master, which relays the request through the VPN to the ring in the other house.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;fill:#1e281b}
+.panel{fill:#fafbf7;stroke:#d3d9cd;stroke-width:1.5}
+.ttl{font-size:22px;font-weight:700}
+.sub{font-size:14px;fill:#536050}
+.rl{font-size:11.5px;font-weight:700;fill:#5d6a59;letter-spacing:.07em}
+.b{font-size:15px;font-weight:700}
+.d{font-size:12.5px;fill:#38432f}
+.c{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#1e281b}
+.cw{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;font-size:12px;fill:#fff}
+.w{fill:#fff}
+.wd{font-size:12.5px;fill:#edf6e4}
+.lb{font-size:12px;fill:#2b3628;paint-order:stroke;stroke:#fafbf7;stroke-width:5px;stroke-linejoin:round}
+.reg{fill:#eef1ea;stroke:#c3cbbd;stroke-width:1.5}
+.hst{fill:#fff;stroke:#c3cbbd;stroke-width:1.5}
+.ms{fill:#3d7a1f;stroke:#2a5713;stroke-width:2}
+.nd{fill:#fff;stroke:#2b3628;stroke-width:2}
+.tun{fill:none;stroke:#5ea832;stroke-width:9;stroke-linejoin:round;stroke-linecap:round}
+.tunc{fill:none;stroke:#fff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.bak{fill:none;stroke:#2b3628;stroke-width:2.2;stroke-dasharray:12 4 3 4}
+.unl{fill:none;stroke:#2b3628;stroke-width:3.2;stroke-dasharray:.1 7;stroke-linecap:round}
+.num{fill:#2b3628}
+.note{fill:#fff;stroke:#d3d9cd;stroke-width:1.2}
+.lg{font-size:12px;fill:#38432f}
+.lgh{stroke:#dfe4da;stroke-width:1.2}
+</style>
+<defs>
+<marker id="s3-ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2b3628"/></marker>
+</defs>
+<rect class="panel" x="1" y="1" width="958" height="806" rx="16"/>
+<text class="ttl" x="32" y="48">Two homes</text>
+<text class="sub" x="32" y="73">Two houses behind one master. Each keeps the other's backups, and the ring that unlocks the other's disk.</text>
+
+<!-- regions -->
+<rect class="hst" x="300" y="98" width="360" height="224" rx="12"/>
+<text class="rl" x="318" y="122">A RENTED SERVER AT A HOSTER</text>
+<rect class="reg" x="24" y="360" width="400" height="276" rx="12"/>
+<text class="rl" x="42" y="384">HOME A · YOUR FLAT</text>
+<rect class="reg" x="536" y="360" width="400" height="276" rx="12"/>
+<text class="rl" x="648" y="384">HOME B · THE PARENTS' HOUSE</text>
+
+<!-- lines -->
+<path class="tun" d="M330,400 V342 H436 V306"/><path class="tunc" d="M330,400 V342 H436 V306"/>
+<path class="tun" d="M630,400 V342 H524 V306"/><path class="tunc" d="M630,400 V342 H524 V306"/>
+<path class="unl" d="M250,400 V206 H310" marker-end="url(#s3-ak)"/>
+<path class="unl" d="M650,206 H856 V392" marker-end="url(#s3-ak)"/>
+<path class="bak" d="M404,478 H550" marker-end="url(#s3-ak)"/>
+<path class="bak" d="M556,532 H410" marker-end="url(#s3-ak)"/>
+
+<!-- master -->
+<rect class="ms" x="318" y="134" width="324" height="172" rx="10"/>
+<text class="b w" x="336" y="160">sorbet · master</text>
+<text class="wd" x="336" y="183">Both nodes open their tunnels to it.</text>
+<text class="wd" x="336" y="204">Two public ports pass a ring request</text>
+<text class="wd" x="336" y="221">into the VPN:</text>
+<text class="cw" x="348" y="241">7500 → lychee, ring house</text>
+<text class="cw" x="348" y="259">7501 → papaya, ring flat</text>
+<text class="wd" x="336" y="279">Only from addresses that the VPN's</text>
+<text class="wd" x="336" y="296">own clients last connected from.</text>
+
+<!-- papaya -->
+<rect class="nd" x="44" y="400" width="360" height="216" rx="10"/>
+<text class="b" x="62" y="426">papaya · node</text>
+<text class="c" x="62" y="450">cloud.papaya.home</text>
+<text class="c" x="62" y="468">vault.papaya.home</text>
+<text class="d" x="62" y="494">backup-server: keeps lychee's backups.</text>
+<text class="d" x="62" y="516">tang: serves the ring flat.</text>
+<text class="d" x="62" y="542">Encrypted disk, bound to the ring house.</text>
+<text class="d" x="62" y="564">At boot it asks the master's port 7500</text>
+<text class="d" x="62" y="582">and opens when lychee's ring answers.</text>
+<text class="d" x="62" y="604">Its key is kept in the fleet, for a console.</text>
+
+<!-- lychee -->
+<rect class="nd" x="556" y="400" width="360" height="216" rx="10"/>
+<text class="b" x="574" y="426">lychee · node</text>
+<text class="c" x="574" y="450">immich.lychee.home</text>
+<text class="c" x="574" y="468">paperless.lychee.home</text>
+<text class="d" x="574" y="494">backup-server: keeps papaya's backups.</text>
+<text class="d" x="574" y="516">tang: serves the ring house.</text>
+<text class="d" x="574" y="542">Encrypted disk, bound to the ring flat.</text>
+<text class="d" x="574" y="564">At boot it asks the master's port 7501</text>
+<text class="d" x="574" y="582">and opens when papaya's ring answers.</text>
+<text class="d" x="574" y="604">Its key is kept in the fleet, for a console.</text>
+
+<!-- line labels -->
+<circle class="num" cx="128" cy="180" r="10"/><text class="b w" x="123.5" y="185">1</text>
+<text class="lb" x="146" y="176">At boot, papaya's disk</text>
+<text class="lb" x="146" y="192">asks the master's port 7500.</text>
+<circle class="num" cx="672" cy="180" r="10"/><text class="b w" x="667.5" y="185">2</text>
+<text class="lb" x="690" y="176">The master passes it through</text>
+<text class="lb" x="690" y="192">the VPN to lychee's ring house.</text>
+<text class="lb" x="480" y="462" text-anchor="middle">backups</text>
+<text class="lb" x="480" y="510" text-anchor="middle">every night</text>
+<text class="lb" x="480" y="556" text-anchor="middle">lychee's</text>
+<text class="lb" x="480" y="572" text-anchor="middle">backups</text>
+<text class="lb" x="480" y="446" text-anchor="middle">papaya's</text>
+
+<!-- notes -->
+<rect class="note" x="24" y="654" width="912" height="100" rx="10"/>
+<text class="b" x="42" y="680">When one house is lost</text>
+<text class="d" x="42" y="702">Its machines' data is still in the other house, in their backups. The other house's disk keeps running, but at its next start it</text>
+<text class="d" x="42" y="720">waits until someone types its key, because its only ring is gone. The readiness report (kiwi-server recovery) marks this as a gap:</text>
+<text class="d" x="42" y="738">a second ring on another machine closes it. Backups go through the VPN; a ring request reaches the master over the Internet first.</text>
+<!-- legend -->
+<line class="lgh" x1="24" y1="766" x2="936" y2="766"/>
+<path class="tun" d="M36,782 h28"/><path class="tunc" d="M36,782 h28"/>
+<text class="lg" x="78" y="786">WireGuard tunnel</text>
+<path class="bak" d="M218,782 h36"/>
+<text class="lg" x="264" y="786">backup</text>
+<path class="unl" d="M334,782 h36"/>
+<text class="lg" x="380" y="786">unlock request at boot</text>
+</svg>

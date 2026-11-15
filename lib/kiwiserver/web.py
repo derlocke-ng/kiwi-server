@@ -791,6 +791,11 @@ is. One that does not is erased and installed anew at {{ m.provider }}.{% else %
 back by itself, then backs up as before.{% elif m.role == "master" %}It keeps no data of its own. Its place on the VPN
 comes back from the copy the fleet keeps of it; <a href="/recovery">If something breaks</a> says whether there is one.
 {% else %}It has no backups: after the set-up it starts empty.{% endif %}</p>
+{% if "backup" in m.modules and m.state != "down" %}<div class="card"><p><strong>First: save its data.</strong>
+{{ m.name }} still answers. Installed anew, it gets back what its last backup holds{% if m.facts.backup and m.facts.backup.age is not none %},
+and that one is {{ age(m.facts.backup.age) }} old{% endif %}. What changed since then would be gone.</p>
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="save">
+<input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Save its data now</button></form></div>{% endif %}
 {{ step(dict(m, phase="build" if m.provider or not m.media else "install"), tok) }}</details>{% endif %}"""
 
 # if something breaks: the report of `kiwi-server recovery`, its checks and its cases

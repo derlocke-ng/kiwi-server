@@ -1030,6 +1030,12 @@ class RebuildDialog(Adw.Dialog):
             row.add_suffix(self.button("Install…", self.install, provider))
             g.add(row)
         else:
+            if "backup" in (st.get("modules") or []):
+                row = long_row("First: save its data", "If the machine still answers. Installed anew, it gets back what "
+                                                        "its last backup holds; what changed since would be gone.")
+                row.add_suffix(self.button("Save now", lambda: (self.close(), win.spawn(
+                    ["backups", win.doc.path, host, "--now"], "Saving the data of %s…" % host))))
+                g.add(row)
             row = long_row("1. Make its install media", "One file of about 1 GB.")
             row.add_suffix(self.button("Make…", lambda: (self.close(), win.confirm_build(host))))
             g.add(row)

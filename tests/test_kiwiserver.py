@@ -2663,6 +2663,11 @@ class TestOnion(Base):
         again = fleettext.put(out, ["hosts", "papaya", "node", "onion"], {"services": {}})
         self.assertEqual(yaml.safe_load(again)["hosts"]["papaya"]["node"]["onion"], {"services": {}})
         self.assertIsNone(fleettext.put("hosts: {papaya: {node: {}}}\n", ["hosts", "papaya", "node", "onion"], {}))   # not laid out as a block
+        # a block whose values are plain words and numbers (seen with a machine's unlock: settings)
+        text = "hosts:\n  papaya:\n    unlock:\n      control: house      # the ring\n    role: node\n"
+        out = fleettext.put(text, ["hosts", "papaya", "unlock"], {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True})
+        self.assertEqual(yaml.safe_load(out)["hosts"]["papaya"], {
+            "unlock": {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True}, "role": "node"})
 
     def net(self):
         f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {

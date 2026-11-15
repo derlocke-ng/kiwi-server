@@ -16,6 +16,8 @@
   "Everything", the admin pages of a machine set apart from its apps, and a new group
   starts with nothing, every app, or everything.
 - The access drill knows the admin pages and the apps level.
+- Fixed: a value changed in the fleet file kept the comments only for some layouts; a
+  block of plain words (a machine's `unlock:`) made it write the whole file anew.
 
 ## 2.97.1 — a control node that is older says so
 

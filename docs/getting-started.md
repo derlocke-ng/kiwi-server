@@ -3,6 +3,36 @@
 To see first what a network can look like and what each machine in it does:
 [Example setups](examples.md).
 
+## Without a Linux computer: the starter stick
+
+A network can also start from one USB stick and a phone or a Windows PC. The
+stick carries no secret; every copy is the same.
+
+```bash
+kiwi-server build --starter
+```
+
+That makes `kiwi-starter.iso`. Written to a stick and started on a machine with
+a network cable, it does this by itself:
+
+- A blank disk, and only one in the machine: it installs there.
+- A disk that holds something (Windows, another Linux): it asks first, on the
+  screen ("type ERASE") and on a small page at `http://kiwi.local`, with one
+  button. Nothing is erased without that yes.
+- Several disks, or one that is too small (under 16 GB): it installs nothing and
+  says so.
+- A machine that is installed already: it starts that system and says to take
+  the stick out.
+
+The installed machine shows where to open its page: `http://kiwi.local`, its
+address, a setup code and a QR code, on its screen. The page asks the questions
+of this chapter and makes the network ([control.md](control.md), "Start a
+network from the page").
+
+What is there today is the stick and the first-run page. That the machine from
+the stick becomes the network's first node by one button, and the sign-in at
+the hoster on the page, are the next steps ([design](design/starter.md)).
+
 ## Make a fleet
 
 ```bash

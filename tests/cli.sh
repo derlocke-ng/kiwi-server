@@ -73,6 +73,14 @@ if command -v butane >/dev/null; then butane --strict output/sh3/sh3.bu >/dev/nu
 if ! "$ks" build fleet.yaml lab1 --toolchain native 2>"$tmp/err"; then
     grep -qiE 'coreos-installer|not installed|missing' "$tmp/err"
 fi
+# the starter image takes no fleet file, and refuses one (no tools are run here: it would fetch Fedora CoreOS)
+"$ks" help | grep -q 'kiwi-server build --starter'
+if "$ks" build fleet.yaml --starter 2>"$tmp/err"; then echo "build --starter with a fleet must refuse" >&2; exit 1; fi
+grep -q 'no fleet in it' "$tmp/err"
+if "$ks" build 2>"$tmp/err"; then echo "build without a fleet must refuse" >&2; exit 1; fi
+grep -q 'build --starter' "$tmp/err"
+if "$ks" build --starter --base "$tmp/none.iso" --output "$tmp/starter.iso" 2>"$tmp/err"; then echo "a missing --base must refuse" >&2; exit 1; fi
+grep -q 'no such file' "$tmp/err" && test ! -e "$tmp/starter.iso"
 # the GUI half, as kiwi installs it on a desktop (KIWI_GUI=1): desktop entry under
 # the app id, the kiwi-icons artwork in hicolor, scalable plus the bitmaps
 app=eu.kiwinetwork.KiwiServer

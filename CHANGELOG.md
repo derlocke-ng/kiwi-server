@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.104.0 — the starter stick
+
+- **`kiwi-server build --starter`** makes one install image with no secret and no fleet
+  in it: for a USB stick, for people with a phone or a Windows PC and no Linux computer.
+  It installs to the one blank disk it finds, takes its address from the router,
+  answers to `kiwi.local`, and shows on its screen where to open its first-run page:
+  the address, a setup code and a QR code.
+- **It asks before it erases.** A disk that holds something (the stick says what:
+  Windows, Linux, macOS, data) is erased only after a yes: `ERASE` typed at the machine,
+  or one button on a small page at `kiwi.local`. Several disks, or a disk under 16 GB:
+  nothing is installed. A machine that is installed already is started, not installed
+  again, also with the stick left in.
+- Tried in virtual machines (`tests/drills/starter-vm.sh`): a blank disk, the same
+  machine with the stick left in, two disks, a small disk, a disk with a Windows layout
+  answered by the button and by typing. Not tried: real hardware, Secure Boot, and
+  `kiwi.local` from another device on a real network.
+- A control node whose copy is damaged, or that was installed anew, no longer knows the
+  computers that sync with it: `control push` says how to bring this computer's copy
+  there over SSH, and so does the node's page.
+- kiwi-stack 0.9.7: a machine forces what an apply wrote to its disk.
+- Not yet: the stick's machine as the network's first node by one button, and the
+  sign-in at the hoster on the page ([design](docs/design/starter.md)).
+
 ## 2.103.0 — a power cut right after a change
 
 - **The network's files survive a power cut in the moment they are written.** Found by

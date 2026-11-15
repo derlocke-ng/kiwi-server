@@ -913,6 +913,9 @@ ks_stack_apply() {
             systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
         fi
     done
+    # what was just written, forced to the disk: after a power cut in the next minute the
+    # stack's files would otherwise come back empty, and nothing would start
+    sync -f "$KS_STACK_DIR" 2>/dev/null || sync
     ks_say "stack is up in $KS_STACK_DIR — manage it with: sudo kiwi-stack start|stop|update|status|verify|logs"
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done
 }
@@ -997,6 +1000,7 @@ ks_main() {
     ks_post_script
     trap - ERR
     rm -f "$KS_FAILED"
+    sync            # a role that says it is done is on the disk
     date -u +%FT%TZ > "$KS_MARKER"
     ks_say "role $KS_ROLE applied — log: $KS_LOG"
     # the script carries every secret of this host: it stays for `kiwi-stack` re-runs

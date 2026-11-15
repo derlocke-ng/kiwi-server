@@ -1882,7 +1882,14 @@ def cmd_control(args):
         return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
-            n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
+            try:
+                n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
+            except KiwiError as e:
+                if "does not know a controller" in str(e):
+                    # a node whose copy is damaged (or was installed anew) knows no computer any more
+                    raise KiwiError("%s. If its copy is damaged or it was installed anew, this computer's copy goes there over "
+                                    "SSH: kiwi-server control push %s --ssh <admin>@<its address> --force" % (e, fleet_name))
+                raise
             util.say("the control node holds this copy now (%d files)" % n)
             old = controlsync.older_node(fleet_dir, VERSION, key)
             if old:
@@ -2956,7 +2963,33 @@ def cmd_render(args):
 
 
 def cmd_build(args):
+    if args.starter:
+        build_starter(args)
+        return
+    if args.output or args.stream or args.base or args.debug_shell:
+        raise KiwiError("--output, --stream and --base are for the starter image (--starter); "
+                        "a fleet's media go to -o/--output-dir DIR")
+    if not args.fleet:
+        raise KiwiError("build needs a fleet file: kiwi-server build <fleet> [host...], or the starter image: "
+                        "kiwi-server build --starter")
     _render_or_build(args, build=True)
+
+
+def build_starter(args):
+    """The starter image (docs/design/starter.md): no fleet, no secret, the same for everybody."""
+    from . import starter as startermod
+    if args.fleet or args.hosts:
+        raise KiwiError("the starter image has no fleet in it: kiwi-server build --starter [--output FILE]")
+    for flag in ("bare", "offline", "no_backup", "output_dir"):
+        if getattr(args, flag, None):
+            raise KiwiError("--%s is for a fleet's media, not for the starter image" % flag.replace("_", "-"))
+    if args.base and not os.path.isfile(args.base):
+        raise KiwiError("no such file: %s" % args.base)
+    out = os.path.abspath(args.output or "kiwi-starter.iso")
+    util.say("building the starter image -> %s" % out)
+    startermod.build_iso(make_tc(args), out, cache_dir_for(args), stream=args.stream or "stable",
+                         base=args.base, debug_shell=args.debug_shell)
+    util.say("%s (%d MB): write it to a USB stick, start the machine from it" % (out, os.path.getsize(out) >> 20))
 
 
 def cmd_toolchain(args):
@@ -3056,6 +3089,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server show <fleet> <host>               the effective configuration of one host
   kiwi-server render <fleet> [host...]          role scripts, stacks, Butane/Ignition or preseed
   kiwi-server build <fleet> [host...]           render, then the unattended ISO per host: the base system (--offline: the role and its secrets too)
+  kiwi-server build --starter [--output FILE]   the starter image: one ISO for any machine, no fleet in it; the network starts on its page
   kiwi-server script <fleet> <host>             print the script for any machine: the base system (--offline: the role and its secrets too)
   kiwi-server ca <fleet>                        the fleet CA (created on first use)
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
@@ -3161,12 +3195,18 @@ def build_parser():
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
     s = sub("logins", cmd_logins); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     for name, fn in (("render", cmd_render), ("build", cmd_build)):
-        s = sub(name, fn); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+        s = sub(name, fn); s.add_argument("fleet", nargs="?" if name == "build" else None); s.add_argument("hosts", nargs="*")
         s.add_argument("--bare", action="store_true",
                        help="the base system only: the role and its stack's secrets come later with apply (what build does by default)")
         if name == "build":
             s.add_argument("--offline", action="store_true",
                            help="the role and its secrets on the ISO too, for a machine that cannot be reached over SSH")
+            s.add_argument("--starter", action="store_true",
+                           help="the starter image instead: no fleet file, no secret; installs itself and shows the first-run page")
+            s.add_argument("--output", metavar="FILE", help="--starter: where the ISO goes (default ./kiwi-starter.iso)")
+            s.add_argument("--stream", choices=("stable", "testing", "next"), help="--starter: the Fedora CoreOS stream (default stable)")
+            s.add_argument("--base", metavar="ISO", help="--starter: this Fedora CoreOS live ISO instead of the stream's latest")
+            s.add_argument("--debug-shell", action="store_true", help=argparse.SUPPRESS)   # drills: a root shell on ttyS1
         s.add_argument("--no-backup", action="store_true", help="skip the fleet backup to backup.hosts afterwards")
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")

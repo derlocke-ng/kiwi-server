@@ -41,6 +41,7 @@ from kiwiserver import util  # noqa: E402
 from kiwiserver import watchdog as watchdogmod  # noqa: E402
 from kiwiserver import access as accessmod  # noqa: E402
 from kiwiserver import fleettext, onion as onionmod  # noqa: E402
+from kiwiserver import starter  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEh+test+kiwi+server+key+0000000000000000000 test@kiwi"
@@ -520,6 +521,310 @@ class TestDebian(Base):
         if have("shellcheck"):
             r = subprocess.run(["shellcheck", "-S", "warning", "-s", "sh", p], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stdout)
+
+
+class TestStarter(Base):
+    """The starter image: its two Ignition configs, the live system's disk choice, the command."""
+
+    def scripts(self):
+        return {"install": starter.install_script(), "screen": starter.screen_script(), "key": starter.key_script(),
+                "page": starter.page_script()}
+
+    def test_scripts_parse(self):
+        for name, text in self.scripts().items():
+            path = os.path.join(self.tmp, name + ".sh")
+            write(path, text)
+            self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0, name)     # they are bash: `sh` is dash elsewhere
+            if have("shellcheck"):
+                r = subprocess.run(["shellcheck", "-S", "warning", path], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_installed_system(self):
+        bu = starter.installed_butane()
+        self.assertNotIn("passwd", bu)                  # no password, no key but the starter key
+        files = {f["path"]: f["contents"]["inline"] for f in bu["storage"]["files"]}
+        self.assertEqual(files["/etc/hostname"], "kiwi\n")
+        self.assertIn("MulticastDNS=yes", files["/etc/systemd/resolved.conf.d/50-kiwi-mdns.conf"])
+        self.assertIn("connection.mdns=2", files["/etc/NetworkManager/conf.d/50-kiwi-mdns.conf"])
+        q = files["/etc/containers/systemd/kn-control.container"]
+        for line in ("Image=ghcr.io/derlocke-ng/kiwi-server-control:2", "ContainerName=kn-control", "Network=host",
+                     "Volume=/var/lib/kiwi-control:/fleet:Z", "Volume=/var/lib/kiwi-starter:/starter:ro,Z",
+                     "Tmpfs=/run/kiwi:size=2g,mode=0700", "Environment=XDG_RUNTIME_DIR=/run/kiwi",
+                     "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait", "Restart=always",
+                     "Requires=kiwi-starter-key.service"):
+            self.assertIn(line + "\n", q)
+        self.assertIn("tcp dport 80 redirect to :8740", files["/etc/kiwi-starter/port80.nft"])
+        key = files["/usr/local/bin/kiwi-starter-key"]
+        self.assertIn("ssh-keygen -q -t ed25519 -N '' -C kiwi-starter -f \"$d/id_ed25519\"", key)
+        self.assertIn('chmod 0600 "$d/id_ed25519"', key)
+        self.assertIn("h=/home/core/.ssh", key)
+        screen = files["/usr/local/bin/kiwi-starter-screen"]
+        self.assertIn("_SYSTEMD_INVOCATION_ID=$id", screen)     # the code of this start only
+        self.assertIn("Its setup code: ", screen)
+        self.assertIn("qr.text_blocks", screen)
+        self.assertIn("ISSUE=/etc/issue.d/50-kiwi.issue", screen)
+        # the sentence the control image prints is what the screen looks for
+        self.assertIn("Its setup code: %s", util.read_text(os.path.join(ROOT, "lib", "kiwiserver", "cli.py")))
+        units = {u["name"]: u for u in bu["systemd"]["units"]}
+        self.assertEqual(set(units), {"kiwi-starter-key.service", "kiwi-starter-port80.service", "kiwi-starter-screen.service"})
+        self.assertTrue(all(u["enabled"] for u in units.values()))
+        dirs = {d["path"]: d["mode"] for d in bu["storage"]["directories"]}
+        self.assertEqual(dirs, {"/var/lib/kiwi-starter": 0o700, "/var/lib/kiwi-control": 0o700})
+
+    def test_live_system(self):
+        bu = starter.live_butane('{"ignition": {"version": "3.5.0"}}')
+        self.assertNotIn("passwd", bu)
+        files = {f["path"]: f for f in bu["storage"]["files"]}
+        self.assertEqual(files["/etc/kiwi-starter/installed.ign"]["contents"]["inline"], '{"ignition": {"version": "3.5.0"}}')
+        self.assertEqual(files["/etc/kiwi-starter/installed.ign"]["mode"], 0o600)
+        units = {u["name"]: u for u in bu["systemd"]["units"]}
+        self.assertIn("ConditionKernelCommandLine=coreos.liveiso", units["kiwi-starter-install.service"]["contents"])
+        # the page: port 80, one script run per connection, the request on its standard input
+        self.assertIn("ListenStream=80\nAccept=yes\n", units["kiwi-starter-page.socket"]["contents"])
+        self.assertTrue(units["kiwi-starter-page.socket"]["enabled"])
+        self.assertIn("StandardInput=socket\n", units["kiwi-starter-page@.service"]["contents"])
+        # kiwi.local on the stick too
+        self.assertEqual(files["/etc/hostname"]["contents"]["inline"], "kiwi\n")
+        self.assertIn("/etc/systemd/resolved.conf.d/50-kiwi-mdns.conf", files)
+        script = files["/usr/local/bin/kiwi-starter-install"]["contents"]["inline"]
+        self.assertIn('coreos-installer install "$disk" --offline -i "$IGNITION"', script)
+        self.assertIn("INSTALL_ARGS=()", script)
+        self.assertIn("INSTALL_ARGS=(--append-karg systemd.debug_shell=ttyS1)", starter.install_script(debug_shell=True))
+        if have("butane"):
+            for name, b in (("live", bu), ("installed", starter.installed_butane())):
+                path = os.path.join(self.tmp, name + ".bu")
+                write(path, coreos_t.to_yaml(b))
+                r = subprocess.run(["butane", "--strict", path], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    FAKE_LSBLK = r"""#!/usr/bin/env python3
+# lsblk, from the disks in $FAKE_DISKS (JSON): -o columns, -d, a device or every disk
+import json, os, sys
+a = sys.argv[1:]
+disks = json.load(open(os.environ["FAKE_DISKS"]))
+cols = next(a[i + 1] for i, x in enumerate(a) if x.startswith("-") and x.endswith("o")).split(",")
+whole = any(x.startswith("-") and "d" in x for x in a)
+dev = [x for x in a if x.startswith("/")]
+rows = []
+for name, d in disks.items():
+    if dev and dev[0] != name:
+        continue
+    rows.append(dict(d, NAME=name, TYPE="disk"))
+    if not whole and dev:
+        rows += [dict(p, TYPE="part") for p in d.get("parts", [])]
+if "PKNAME" in cols:
+    sys.exit(0)
+for r in rows:
+    print(" ".join(str(r.get(c, "")) for c in cols))
+"""
+    FAKE_WIPEFS = r"""#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:-1] != ["--no-act", "--noheadings", "--output", "TYPE"]:     # (-o is --offset: found on the stick)
+    sys.exit("wipefs: unexpected arguments %s" % sys.argv[1:])
+d = json.load(open(os.environ["FAKE_DISKS"]))[sys.argv[-1]]
+print("\n".join(d.get("sigs", [])))
+"""
+
+    def live_sh(self, disks, live="/dev/sda", marked=(), call="decide", script=None):
+        """A function of the live script with stand-in lsblk, wipefs, findmnt and mount on PATH.
+        disks: name -> {SIZE, RM, RO, TRAN, MODEL, FSTYPE, sigs, parts: [{NAME, FSTYPE, PARTTYPE, LABEL}]}"""
+        fake = os.path.join(self.tmp, "fakebin")
+        os.makedirs(fake, exist_ok=True)
+        full = {}
+        for name, d in disks.items():
+            d = dict({"RM": 0, "RO": 0, "TRAN": "", "MODEL": "", "FSTYPE": "", "PARTTYPE": "", "LABEL": ""}, **d)
+            d["parts"] = [dict({"FSTYPE": "", "PARTTYPE": "", "LABEL": ""}, **p) for p in d.get("parts", [])]
+            full[name] = d
+        write(os.path.join(self.tmp, "disks.json"), json.dumps(full))
+        write(os.path.join(fake, "lsblk"), self.FAKE_LSBLK)
+        write(os.path.join(fake, "wipefs"), self.FAKE_WIPEFS)
+        write(os.path.join(fake, "findmnt"), '#!/bin/sh\necho "$FAKE_LIVE"\n')
+        write(os.path.join(fake, "mount"), '#!/bin/sh\nfor p in $FAKE_MARKED; do [ "$p" = "$3" ] && touch "$4/kiwi-starter.installed"; done\nexit 0\n')
+        write(os.path.join(fake, "umount"), '#!/bin/sh\nrm -f "$1"/*\n')
+        for t in ("lsblk", "wipefs", "findmnt", "mount", "umount"):
+            os.chmod(os.path.join(fake, t), 0o755)
+        path = os.path.join(self.tmp, "live.sh")
+        write(path, script or starter.install_script())
+        env = dict(os.environ, PATH=fake + ":" + os.environ["PATH"], FAKE_DISKS=os.path.join(self.tmp, "disks.json"),
+                   FAKE_LIVE=live, FAKE_MARKED=" ".join(marked), KIWI_PAGE_DIR=os.path.join(self.tmp, "page"))
+        r = subprocess.run(["bash", "-c", '. "$0"; %s' % call, path], env=env, capture_output=True, text=True)
+        return r
+
+    def decide(self, disks, **kw):
+        r = self.live_sh(disks, **kw)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    G = 1000 ** 3
+    # the stick, a USB disk that is not removable, a removable card reader, zram, a read-only disk
+    OTHERS = {"/dev/sda": {"SIZE": 2 * G, "RM": 1, "RO": 1, "TRAN": "usb", "MODEL": "Flash\\x20Drive"},
+              "/dev/sdb": {"SIZE": 32 * G, "TRAN": "usb", "MODEL": "USB\\x20Disk"},
+              "/dev/sdc": {"SIZE": 64 * G, "RM": 1, "MODEL": "Card"},
+              "/dev/zram0": {"SIZE": 8 * G}, "/dev/mmcblk0boot0": {"SIZE": 32 * G, "RO": 1}}
+    WINDOWS = {"SIZE": 500 * G, "MODEL": "Samsung\\x20SSD", "sigs": ["gpt", "PMBR"], "parts": [
+        {"NAME": "/dev/nvme0n1p1", "FSTYPE": "vfat", "PARTTYPE": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"},
+        {"NAME": "/dev/nvme0n1p2", "PARTTYPE": "e3c9e316-0b5c-4db8-817d-f92df00215ae"},
+        {"NAME": "/dev/nvme0n1p3", "FSTYPE": "ntfs", "PARTTYPE": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"}]}
+    LINUX = {"SIZE": 250 * G, "sigs": ["dos"], "parts": [
+        {"NAME": "/dev/sdd1", "FSTYPE": "ext4", "PARTTYPE": "0x83"}, {"NAME": "/dev/sdd2", "FSTYPE": "swap", "PARTTYPE": "0x82"}]}
+
+    def test_disk_choice(self):
+        blank = {"SIZE": 20 * self.G}
+        vda = {"/dev/vda": blank}
+        self.assertEqual(self.decide(dict(vda, **self.OTHERS)), "install /dev/vda")
+        self.assertEqual(self.decide(self.OTHERS), "none")
+        self.assertEqual(self.decide(dict(vda, **{"/dev/vdb": {"SIZE": 500 * self.G}}, **self.OTHERS)),
+                         "several /dev/vda /dev/vdb")
+        self.assertEqual(self.decide(dict({"/dev/vda": {"SIZE": 8 * self.G}}, **self.OTHERS)), "small /dev/vda")
+        self.assertEqual(self.decide(dict(vda, **{"/dev/vdb": {"SIZE": 15 * self.G}})), "install /dev/vda")
+        # blank: an empty partition table is blank; a partition, a file system or any other signature is not
+        self.assertEqual(self.decide({"/dev/vda": dict(blank, sigs=["gpt", "PMBR"])}), "install /dev/vda")
+        self.assertEqual(self.decide({"/dev/vda": dict(blank, sigs=["ext4"], FSTYPE="ext4")}), "ask /dev/vda")
+        self.assertEqual(self.decide({"/dev/vda": dict(blank, sigs=["zfs_member"])}), "ask /dev/vda")
+        self.assertEqual(self.decide({"/dev/vda": dict(blank, parts=[{"NAME": "/dev/vda1"}])}), "ask /dev/vda")
+        self.assertEqual(self.decide({"/dev/nvme0n1": self.WINDOWS}), "ask /dev/nvme0n1")
+        self.assertEqual(self.decide({"/dev/sdd": self.LINUX}), "ask /dev/sdd")
+        # a disk that holds a Kiwi system is not installed over and not asked about; with several, the marked one starts
+        kiwi = dict(blank, sigs=["gpt", "PMBR"], parts=[{"NAME": "/dev/vda3", "FSTYPE": "ext4", "LABEL": "boot"}])
+        self.assertEqual(self.decide(dict({"/dev/vda": kiwi}, **self.OTHERS), marked=["/dev/vda3"]), "installed /dev/vda")
+        self.assertEqual(self.decide({"/dev/vda": kiwi}), "ask /dev/vda")       # the same layout without the marker
+        self.assertEqual(self.decide({"/dev/vda": blank, "/dev/vdb": dict(kiwi, parts=[{"NAME": "/dev/vdb3", "LABEL": "boot"}])},
+                                     marked=["/dev/vdb3"]), "installed /dev/vdb")
+        # the device the live system started from is left out, also when it is no USB stick
+        self.assertEqual(self.decide(dict(vda, **{"/dev/nvme0n1": {"SIZE": 64 * self.G, "TRAN": "nvme"}}), live="/dev/nvme0n1"),
+                         "install /dev/vda")
+        # what the message lists: every disk with its size and model, and why one is left out
+        text = self.decide(dict(vda, **{"/dev/vdb": {"SIZE": 500 * self.G, "MODEL": "Samsung\\x20SSD"}}, **self.OTHERS), call="describe")
+        self.assertIn("vda  20.0 GB  no model", text)
+        self.assertIn("vdb  500.0 GB  Samsung SSD", text)
+        self.assertIn("sda  2.0 GB  Flash Drive  (the stick this started from)", text)
+        self.assertIn("sdb  32.0 GB  USB Disk  (USB, left alone)", text)
+        self.assertIn("sdc  64.0 GB  Card  (removable, left alone)", text)
+        self.assertNotIn("zram", text)
+        self.assertIn("too small", self.decide({"/dev/vda": {"SIZE": 8 * self.G}}, call="describe"))
+
+    def test_what_a_disk_holds(self):
+        def holds(d, name="/dev/vda"):
+            return self.decide({name: d}, call='contents "%s"' % name)
+        self.assertEqual(holds(self.WINDOWS, "/dev/nvme0n1"), "Windows")     # the EFI partition says nothing
+        self.assertEqual(holds(self.LINUX, "/dev/sdd"), "Linux")
+        self.assertEqual(holds({"SIZE": 1, "parts": [{"NAME": "/dev/vda1", "PARTTYPE": "0x7"}]}), "Windows")
+        self.assertEqual(holds({"SIZE": 1, "parts": [{"NAME": "/dev/vda1", "FSTYPE": "crypto_LUKS"},
+                                                      {"NAME": "/dev/vda2", "FSTYPE": "LVM2_member"}]}), "Linux")
+        self.assertEqual(holds({"SIZE": 1, "parts": [{"NAME": "/dev/vda1", "FSTYPE": "apfs"}]}), "macOS")
+        self.assertEqual(holds({"SIZE": 1, "parts": [{"NAME": "/dev/vda1", "FSTYPE": "ntfs"},
+                                                      {"NAME": "/dev/vda2", "FSTYPE": "btrfs"}]}), "Windows and Linux")
+        self.assertEqual(holds({"SIZE": 1, "parts": [{"NAME": "/dev/vda1", "FSTYPE": "exfat"}]}), "data")
+        self.assertEqual(holds({"SIZE": 1, "FSTYPE": "xfs"}), "Linux")          # a file system on the whole disk
+
+    def test_the_yes_at_the_console(self):
+        for typed, yes in (("ERASE", True), ("ERASE\r", True), ("erase", False), ("Erase", False), ("ERASE ", False),
+                           ("yes", False), ("", False), ("ERAS", False), ("ERASE ERASE", False)):
+            write(os.path.join(self.tmp, "live.sh"), starter.install_script())
+            r = subprocess.run(["bash", "-c", '. "$0"; console_yes "$1"', os.path.join(self.tmp, "live.sh"), typed],
+                               capture_output=True, text=True, env=dict(os.environ, KIWI_PAGE_DIR=os.path.join(self.tmp, "page")))
+            self.assertEqual(r.returncode == 0, yes, repr(typed))
+
+    def page(self, request, state="ask", nonce="12345678901234567890"):
+        d = os.path.join(self.tmp, "page")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        write(os.path.join(d, "state"), state + "\n")
+        write(os.path.join(d, "message"), "kiwi: one disk <here>\nInstalling Kiwi ERASES this disk\n")
+        if nonce:
+            write(os.path.join(d, "nonce"), nonce + "\n")
+        path = os.path.join(self.tmp, "page.sh")
+        write(path, starter.page_script())
+        r = subprocess.run(["bash", path], input=request.encode(), capture_output=True, timeout=30,
+                           env=dict(os.environ, KIWI_PAGE_DIR=d))
+        out = r.stdout.decode()
+        head, _, body = out.partition("\r\n\r\n")
+        self.assertIn("Content-Length: %d\r\n" % len(body.encode()), head)
+        return head.split("\r\n")[0], body, os.path.exists(os.path.join(d, "yes")), util.read_text(os.path.join(d, "state")).strip()
+
+    def test_the_page(self):
+        status, body, yes, _ = self.page("GET / HTTP/1.1\r\nHost: kiwi.local\r\n\r\n")
+        self.assertEqual(status, "HTTP/1.0 200 OK")
+        self.assertIn("<p>one disk &lt;here&gt;</p>", body)              # the message, escaped
+        self.assertIn("<input type=hidden name=n value=12345678901234567890>", body)
+        self.assertIn("<button>Erase this disk and install</button>", body)
+        self.assertFalse(yes)
+        # the yes: a POST with the number the page carries; then the page says it installs
+        form = "n=12345678901234567890"
+        post = "POST /erase HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: %d\r\n\r\n%s"
+        status, body, yes, state = self.page(post % (len(form), form))
+        self.assertEqual((status, yes, state), ("HTTP/1.0 200 OK", True, "installing"))
+        self.assertIn("Installing. This page changes when the machine has started again.", body)
+        # no yes: a GET of the button's address, another number, no number, a page with nothing to ask
+        for request, kw in (("GET /erase HTTP/1.1\r\n\r\n", {}),
+                            (post % (len("n=1"), "n=1"), {}),
+                            (post % (len("x=$(reboot)"), "x=$(reboot)"), {}),
+                            (post % (len(form), form), {"state": "info"}),
+                            (post % (len(form), form), {"nonce": None}),
+                            ("POST /erase HTTP/1.1\r\n\r\n", {})):
+            status, body, yes, _ = self.page(request, **kw)
+            self.assertFalse(yes, request)
+            self.assertNotEqual(status, "HTTP/1.0 200 OK", request)
+        status, body, yes, _ = self.page("GET / HTTP/1.1\r\n\r\n", state="info")
+        self.assertNotIn("<button>", body)                              # several disks: nothing to press
+        self.assertIn("refresh", self.page("GET / HTTP/1.1\r\n\r\n", state="installing")[1])
+
+    def test_parser(self):
+        a = cli.build_parser().parse_args(["build", "--starter", "--output", "x.iso", "--stream", "testing"])
+        self.assertEqual((a.fleet, a.hosts, a.starter, a.output, a.stream), (None, [], True, "x.iso", "testing"))
+        a = cli.build_parser().parse_args(["build", "fleet.yaml", "lab1"])
+        self.assertEqual((a.fleet, a.hosts, a.starter), ("fleet.yaml", ["lab1"], False))
+        for argv, msg in ((["build"], "build needs a fleet file"),
+                          (["build", "fleet.yaml", "--starter"], "no fleet in it"),
+                          (["build", "fleet.yaml", "--output", "x.iso"], "for the starter image"),
+                          (["build", "--starter", "--offline"], "--offline is for a fleet"),
+                          (["build", "--starter", "--base", os.path.join(self.tmp, "nope.iso")], "no such file")):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(argv), 1, argv)
+            self.assertIn(msg, err.getvalue())
+
+    def fake_tc(self, calls, base):
+        class FakeTC:
+            def run(self, argv, mounts=(), relabel=True, **kw):
+                calls.append((list(argv), list(mounts), relabel))
+                if argv[0] == "butane":
+                    write(argv[argv.index("-o") + 1], '{"ignition": {"version": "3.5.0"}}')
+                elif argv[:3] == ["coreos-installer", "iso", "customize"]:
+                    write(argv[argv.index("-o") + 1], "iso")
+                return type("R", (), {"stdout": base + "\n", "stderr": ""})()
+        return FakeTC()
+
+    def test_build_iso(self):
+        base = os.path.join(self.tmp, "cache", "fcos.iso")
+        write(base, "")
+        out = os.path.join(self.tmp, "out", "kiwi-starter.iso")
+        calls = []
+        write(out, "stale")
+        starter.build_iso(self.fake_tc(calls, base), out, os.path.join(self.tmp, "cache"))
+        self.assertEqual(util.read_text(out), "iso")
+        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o644)     # no secret in it
+        self.assertEqual(os.listdir(os.path.dirname(out)), ["kiwi-starter.iso"])   # the work folder is gone
+        names = [c[0][:3] for c in calls]
+        self.assertEqual(names, [["butane", "--strict", "--pretty"], ["butane", "--strict", "--pretty"],
+                                 ["coreos-installer", "download", "-s"], ["coreos-installer", "iso", "customize"]])
+        self.assertEqual(calls[2][0][3], "stable")
+        cust, mounts, relabel = calls[3]
+        self.assertTrue(cust[cust.index("--live-ignition") + 1].endswith("/live.ign"))
+        self.assertEqual([cust[i + 1] for i, x in enumerate(cust) if x == "--live-karg-append"],
+                         ["console=tty0", "console=ttyS0,115200n8"])
+        self.assertNotIn("--dest-ignition", cust)       # the live script installs, not coreos-installer's own service
+        self.assertNotIn("--dest-device", cust)
+        self.assertEqual(cust[-1], base)
+        self.assertFalse(relabel)                       # nothing of the person's folders is relabelled
+        self.assertNotIn(os.path.dirname(out), mounts)  # only the work folder beside it and the base's folder
+        # through the command: --base skips the download, --debug-shell reaches the kernel arguments
+        calls.clear()
+        with mock.patch.object(cli, "make_tc", lambda a: self.fake_tc(calls, base)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["build", "--starter", "--output", out, "--base", base, "--debug-shell"]), 0)
+        self.assertEqual([c[0][0] for c in calls], ["butane", "butane", "coreos-installer"])
+        self.assertIn("systemd.debug_shell=ttyS1", calls[2][0])
 
 
 class TestAdopt(Base):

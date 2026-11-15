@@ -41,10 +41,37 @@ ACTIONS = {
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
     "tell-test": ("notify", False),
+    "adopt": ("adopt", True),           # a waiting starter, taken in (take_in)
 }
 CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock", "remove"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
+
+
+
+def _ask_starter(address, body, timeout=30):
+    """The waiting starter's answer to being taken in (join_as_starter, through its page's API),
+    or KiwiError with what it said. Plain HTTP on the home network, as its first-run page is."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request("http://%s:8740/api/join-me" % address, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.loads(r.read(100000) or b"{}")
+    except urllib.error.HTTPError as e:
+        with e:
+            try:
+                why = json.loads(e.read(10000) or b"{}").get("error")
+            except ValueError:
+                why = None
+        raise KiwiError(why or "the machine at %s said no (%d)" % (address, e.code))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise KiwiError("no starter answers at %s: is it switched on, and does its screen show that address? (%s)"
+                        % (address, getattr(e, "reason", e)))
+    if not out.get("host_keys"):
+        raise KiwiError("the machine at %s gave no host keys" % address)
+    return out
 
 
 class Control:
@@ -71,6 +98,7 @@ class Control:
         self._arming = threading.Lock()       # see arm_auto
         self._join = None                     # the join code that is out, if one is
         self._setup_code = None               # the first run's code, while there is no network here yet
+        self._joined = ""                     # a starter: the network whose control node is taking it in
         self._tokens = {}                     # token -> (controller, expires): who may sync
 
     # ---- the password and the store ----------------------------------------------------
@@ -124,12 +152,93 @@ class Control:
         recent.append(now)
         return False
 
+    # ---- a starter that joins a network that exists ---------------------------------------
+    # A second machine started from the starter stick shows the same first-run page and setup
+    # code. The network's control node takes it in: the person types the code from this machine's
+    # screen into the control page, which sends it here with the key it will log in with. The
+    # code is the proof that the person is at this machine; the key goes to the admin user's
+    # authorized keys, through the starter key, and this machine's own host keys go back, so that
+    # the control node knows it is talking to this machine and no other.
+    def joined(self):
+        return self._joined
+
+    def join_as_starter(self, code, key, network, address="?"):
+        """This starter is taken into a network: (its SSH host keys, its hostname). Once."""
+        from .cli import STARTER_KEY
+        if os.environ.get("KIWI_STARTER") != "1" or not self.fresh():
+            raise KiwiError("this machine is no starter waiting to be set up")
+        if self._joined:
+            raise KiwiError("this machine is being taken into %s already" % self._joined)
+        if not self.setup_code_ok(code, address):
+            raise KiwiError("that is not the code on this machine's screen")
+        key = (key or "").strip()
+        if "\n" in key or not re.match(r"^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-9+/]+={0,2}( [^\s]{0,80})?$", key):
+            raise KiwiError("that is not a public SSH key")
+        network = re.sub(r"[^A-Za-z0-9 ._-]", "", str(network or ""))[:60] or "a network"
+        script = ('read -r k; h=/home/core/.ssh; grep -qxF "$k" "$h/authorized_keys" 2>/dev/null '
+                  '|| printf "%s\\n" "$k" >> "$h/authorized_keys"; cat /etc/ssh/ssh_host_*_key.pub; hostname')
+        try:
+            r = subprocess.run(["ssh", "-i", STARTER_KEY, "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+                                "-o", "IdentityAgent=none", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                                "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=10", "core@127.0.0.1", script],
+                               input=key + "\n", capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise KiwiError("this machine could not reach itself: %s" % e)
+        lines = [x.strip() for x in r.stdout.splitlines() if x.strip()]
+        keys = [x for x in lines if re.match(r"^(ssh-ed25519|ecdsa-sha2-nistp\d+|ssh-rsa) ", x)]
+        if r.returncode != 0 or not keys:
+            raise KiwiError("this machine could not let the key in: %s" % (r.stderr.strip()[-200:] or "no answer"))
+        self._joined, self._setup_code = network, None        # the code worked once: no first run here any more
+        self.audit("starter", "taken in by %s" % network, address=address)
+        return {"host_keys": [" ".join(k.split()[:2]) for k in keys], "hostname": lines[-1] if lines[-1] not in keys else ""}
+
+    def take_in(self, address, code, preset, name="", user="admin", ask=None):
+        """A machine that runs the starter stick and waits on the home network: told the network's
+        key, with the code from its screen as the proof that the person is at it; added to the fleet
+        with the address it has; then taken over and set up by a job (`kiwi-server adopt`). The job's id."""
+        import ipaddress
+        import yaml
+        from . import setup as setupmod
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        address = (address or "").strip()
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            raise KiwiError("An address looks like 192.168.1.30: the waiting machine shows its own on its screen.")
+        if preset not in setupmod.PRESETS:
+            raise KiwiError("what should it do?")
+        name = (name or "").strip().lower()
+        hosts = (yaml.safe_load(util.read_text(os.path.realpath(self.fleet_path))) or {}).get("hosts") or {}
+        if name and name in hosts:
+            raise KiwiError("there is already a machine called %s" % name)
+        if any(str((h or {}).get("network", {}).get("address", "")).split("/")[0] == address for h in hosts.values()):
+            raise KiwiError("a machine of the network has that address already")
+        pub = os.path.join(self.fleet_dir, "secrets", "admin_ed25519.pub")
+        if not os.path.isfile(pub):
+            raise KiwiError("the network's own SSH key is missing (secrets/admin_ed25519.pub)")
+        info = self.fleet_info() or {}
+        answer = (ask or _ask_starter)(address, {"code": code, "key": util.read_text(pub).strip(),
+                                                 "network": str(info.get("domain") or "")})
+        known = os.path.join(self.fleet_dir, "secrets", "known_hosts")
+        subprocess.run(["ssh-keygen", "-R", address, "-f", known], capture_output=True)
+        if os.path.isfile(known + ".old"):
+            os.remove(known + ".old")
+        with open(known, "a") as fh:
+            for k in answer["host_keys"]:
+                fh.write("%s %s\n" % (address, k))
+        made = self.add_machine(preset, address, name, target="coreos", user=user)
+        self.audit(user, "a waiting starter taken in", hosts=[made], address=address)
+        return self.start("adopt", [made], user=user, at=address)
+
     def first_run(self, code, password, answers, address="?"):
         """The new network from the questionnaire's answers. Returns (recovery key, session token)."""
         from . import setup as setupmod
         with self.lock:
             if not self.fresh():
                 raise KiwiError("this machine has a network already")
+            if self._joined:
+                raise KiwiError("this machine is being taken into %s" % self._joined)
             if not self.setup_code_ok(code, address):
                 raise KiwiError("that is not the setup code")
             password = (password or "").strip()
@@ -709,6 +818,16 @@ class Control:
             for h in hosts:                 # left out: gone for good, or about to be installed anew
                 argv += ["--waive", h]
             return argv
+        if action == "adopt":               # a waiting starter: its key is in, its host keys are known
+            import ipaddress
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            try:
+                ipaddress.ip_address(at)
+            except ValueError:
+                raise KiwiError("An address looks like 192.168.1.30.")
+            return list(self.kiwi) + ["adopt", self.fleet_path, hosts[0], "--as", "core@%s" % at,
+                                      "--key", os.path.join(self.fleet_dir, "secrets", "admin_ed25519")]
         if action == "setup":               # a machine's next step, as `kiwi-server next` takes it
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
@@ -1069,7 +1188,7 @@ class Control:
             raise KiwiError("the fleet is locked: log in")
         if preset not in setupmod.PRESETS:
             raise KiwiError("what should it do?")
-        if target not in ("", "ucore", "debian"):
+        if target not in ("", "ucore", "debian", "coreos"):       # coreos: a starter's system as it is
             raise KiwiError("the system is ucore or debian")
         with self.lock:
             path = os.path.realpath(self.fleet_path)
@@ -1089,11 +1208,12 @@ class Control:
                 prefix = ip.network.prefixlen if "/" in address else int(like.rsplit("/", 1)[1]) if like else 24
                 net = "{ dhcp: false, address: %s/%d%s }" % (ip.ip, prefix, ", gateway: %s" % gateway if gateway else "")
             setupmod.add_host(path, name, "node", preset, target or "ucore")
+            disk = "" if target == "coreos" else "\n    disk: auto"        # a starter's system is installed already
             if net:
                 text = util.read_text(path).rstrip("\n")
-                util.write_text(path, text + "\n    disk: auto\n    network: %s\n" % net, 0o600)
+                util.write_text(path, text + disk + "\n    network: %s\n" % net, 0o600)
             else:
-                util.write_text(path, util.read_text(path).rstrip("\n") + "\n    disk: auto\n", 0o600)
+                util.write_text(path, util.read_text(path).rstrip("\n") + disk + "\n", 0o600)
             self.save_fleet()
         self.audit(user, "machine added", hosts=[name])
         self.fleet_info(fresh=True)

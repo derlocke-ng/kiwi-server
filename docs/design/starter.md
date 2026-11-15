@@ -123,9 +123,15 @@ it runs on:
 ## Joining machines, and a lost site
 
 More machines join with the same image: started on the home network, a second starter
-finds the control node (`kiwi.local` is taken) and shows a join code; the control page
-lists it under "a machine is waiting" and gives it a role. That is the generic image and
-join token of [control-plane.md](control-plane.md), with the network already there.
+shows its address and setup code, as the first one did. On the network's control page,
+Machines, "A machine with the starter stick is waiting" takes both: the control node
+sends the code to the waiting machine with the network's public key, the waiting machine
+checks the code (once; five wrong ones and it waits), puts the key in through its starter
+key and answers with its SSH host keys, which the control node keeps for its address. Then
+`kiwi-server adopt` gives it its role, and `kiwi-starter-done joined` takes the starter's
+page, key and control container away. The code is the person's presence at the machine;
+the host keys tie the rest to that machine. Plain HTTP on the home network, as the
+first-run page is.
 
 A site that is gone is rebuilt the same way: the starter on new hardware, then "bring it
 back from a copy" on its first-run page with the recovery key ([recovery.md](recovery.md)).
@@ -143,7 +149,7 @@ back from a copy" on its first-run page with the recovery key ([recovery.md](rec
 | "This machine" as the first node in the page's questionnaire, and its "Set it up" | built (2.107.0), tried in a VM with a rented master and a hard reset after (2.107.1, `starter-vm.sh first-node`) |
 | The hoster's sign-in on the page | to build |
 | A network without a master | to design: what a node does with no VPN |
-| A waiting machine that asks to join | to build (the join token) |
+| A waiting machine, taken in from the control page (its address and setup code) | built (2.123.0) |
 | A phone app | later: it talks to the control node's API, as the page does |
 
 Ideas taken from KIWI NG's self-install images (another project, an OS image builder):

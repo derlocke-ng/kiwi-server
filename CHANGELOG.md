@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.123.0 — a second starter machine, taken in from the control page
+
+- **More machines from the starter stick**: start a machine from the stick on the home
+  network; its screen shows its address and setup code. On the control page, Machines,
+  "A machine with the starter stick is waiting": type both and say what it does. The
+  control node hands it the network's key (the code is the proof that you are at that
+  machine), keeps its SSH host keys, adds it to the network with the address it has, and
+  sets it up; the starter's page and key go away. [control.md](docs/control.md).
+- The starter's page answers `POST /api/join-me` (once, with its setup code), and shows
+  "This machine joins …" from then on instead of the questions for a new network.
+- `kiwi-starter-done joined`: on a machine without a control part of the network's own,
+  the starter's control container goes too.
+- Tried: unit tests on both sides; a home power cut of the test network (every machine
+  back by itself in 2.3 minutes, the control node unlocked by itself).
+
 ## 2.122.0 — a game server open to the Internet, through the master
 
 - **`public: true` at a game server** (kiwi-modules 0.48.0): players outside your VPN join

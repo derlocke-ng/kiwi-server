@@ -2893,7 +2893,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
-  kiwi-server recover <fleet> [--dry-run]             machines that are gone: what the recovery policy allows done
+  kiwi-server gone <fleet> [--dry-run]                machines that do not answer: what the fleet allows done about it
   kiwi-server remove <fleet> <host> [--yes]            a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
@@ -3006,7 +3006,7 @@ def build_parser():
     s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")
     s.add_argument("--yes", action="store_true", help="install: wipe the server's disk without asking")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake netcup (tests)
-    s = sub("recover", cmd_recover); s.add_argument("fleet")
+    s = sub("gone", cmd_recover, aliases=["recover"]); s.add_argument("fleet")      # recover: its name in 2.93.0
     s.add_argument("--status", metavar="FILE", help="what `status --porcelain` said, instead of asking the machines again")
     s.add_argument("--dry-run", action="store_true", help="say what would be done, do nothing, remember nothing")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake provider (tests)

@@ -305,6 +305,29 @@ def master_checks(fleet, roles, hosts, applied, fleet_arg):
                                   "role, and nothing does that by itself." % n,
                                   "On a computer that is always on: kiwi-server watch %s --timer on. A control node does "
                                   "it too." % f))
+        # a master that stops answering: told about, or restarted at its provider (watchdog.py)
+        from . import watchdog
+        try:
+            after, do = watchdog.policy(fleet, "master")
+        except KiwiError:
+            after, do = 15, "tell"
+        if n in applied and not control:
+            out.append(_check("master-gone:" + n, False, "Nothing looks whether %s still answers: this network has no "
+                              "control node." % n, "A home server with the control module looks every ten minutes and "
+                              "says so on its page: “A home server that looks after it…” in the app."))
+        elif n in applied and do == "tell":
+            out.append(_check("master-gone:" + n, None, "When %s stops answering, the control node says so on its page "
+                              "after %d minutes. It does nothing else by itself." % (n, after),
+                              "It can restart the server at its provider: Settings for every machine, “When a machine "
+                              "is gone”, restart. It has to be signed in there (kiwi-server vps login %s)." % f))
+        elif n in applied:
+            known = os.path.isfile(fleet.resolve_path("secrets/netcup.token"))
+            out.append(_check("master-gone:" + n, True if known else False,
+                              ("When %s stops answering for %d minutes, the control node restarts it at its provider, at "
+                               "most three times a day." % (n, after)) if known else
+                              ("The control node may restart %s when it stops answering, but nobody is signed in at its "
+                               "provider from here." % n),
+                              "" if known else "Sign in once: kiwi-server vps login %s." % f))
         where = (h.cfg.get("vps") or {}).get("provider")
         if where in providers.PROVIDERS:
             out.append(_check("master-install:" + n, True, "%s can be installed again at %s from here, with one button."
@@ -412,7 +435,9 @@ def cases(fleet, roles, ms, hosts, state, fleet_arg):
                "find it again by themselves only when that address is a name you point to the new server.")
     out.append({"id": "master", "title": "The master is dead",
                 "by_itself": "The machines at home keep running and keep their data. Until the master is back, nothing "
-                             "reaches them from outside, and your devices have no VPN."
+                             "reaches them from outside, and your devices have no VPN. A control node says so on "
+                             "its page, and restarts the server at its provider when the settings allow it (“When a "
+                             "machine is gone”)."
                 + (" %s runs in memory: after a restart it gets its role back by itself when a control node or a timer "
                    "watches it." % names(ram) if ram else "")
                 + (" The fleet keeps a copy of the VPN state of %s: set up again, your devices and machines connect as "

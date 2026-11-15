@@ -286,7 +286,7 @@ Every restart is in Activity. A machine whose disk waits to be unlocked counts
 as there, not as gone. By hand, and without doing anything:
 
 ```bash
-kiwi-server recover ~/kiwi/fleet.yaml --dry-run
+kiwi-server gone ~/kiwi/fleet.yaml --dry-run
 ```
 
 What is planned beyond a restart: [design/recovery.md](design/recovery.md).

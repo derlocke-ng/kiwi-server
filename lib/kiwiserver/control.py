@@ -1133,10 +1133,21 @@ class Control:
         return [json.loads(util.read_text(os.path.join(self.jobs_dir, f))) for f in names]
 
     # ---- the looks it takes by itself ------------------------------------------------
+    @staticmethod
+    def _put(path, text):
+        """What a look found, in one piece: a page asked in the same moment reads the old
+        file or the new one, never half of one."""
+        tmp = "%s.%d.tmp" % (path, threading.get_ident())
+        util.write_text(tmp, text, 0o600)
+        os.replace(tmp, path)
+
     def status(self):
         """The last `status --porcelain`, or None."""
         path = os.path.join(self.run, "status.json")
-        return json.loads(util.read_text(path)) if os.path.isfile(path) else None
+        try:
+            return json.loads(util.read_text(path)) if os.path.isfile(path) else None
+        except (OSError, ValueError):
+            return None
 
     looking = False                         # a look at every machine is under way
 
@@ -1161,7 +1172,7 @@ class Control:
         except ValueError:
             data = {"hosts": [], "error": (r.stderr or r.stdout or "no output").strip()[-500:]}
         data["time"] = self.clock()
-        util.write_text(os.path.join(self.run, "status.json"), json.dumps(data), 0o600)
+        self._put(os.path.join(self.run, "status.json"), json.dumps(data))
         try:
             self.fleet_info(fresh=True)
         except (OSError, ValueError):
@@ -1170,18 +1181,18 @@ class Control:
 
     def recover(self):
         """After a look: what the fleet's `recovery:` allows done about a machine that is gone
-        (`kiwi-server recover`): told on the page, or restarted at its provider."""
+        (`kiwi-server gone`): told on the page, or restarted at its provider."""
         seen = os.path.join(self.run, "status.json")
         if self.locked() or not os.path.isfile(seen):
             return self.gone()
         with self.lock:
-            r = subprocess.run(list(self.kiwi) + ["recover", self.fleet_path, "--porcelain", "--status", seen],
+            r = subprocess.run(list(self.kiwi) + ["gone", self.fleet_path, "--porcelain", "--status", seen],
                                capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
         try:
             events = json.loads((r.stdout.strip().splitlines() or [""])[-1])["events"]
         except (ValueError, KeyError, TypeError):
             return self.gone()
-        util.write_text(os.path.join(self.run, "recover.json"), json.dumps(events), 0o600)
+        self._put(os.path.join(self.run, "recover.json"), json.dumps(events))
         for e in events:
             if e.get("kind") == "restarted":
                 self.audit("control", "restarted %s at its provider: it did not answer" % e["host"], host=e["host"])
@@ -1205,11 +1216,15 @@ class Control:
             r = subprocess.run(list(self.kiwi) + ["list", self.fleet_path, "--porcelain"], capture_output=True,
                                text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
             try:
-                json.loads(r.stdout)
+                data = json.loads(r.stdout)
             except ValueError:
                 return None
-            util.write_text(path, r.stdout, 0o600)
-        return json.loads(util.read_text(path))
+            self._put(path, r.stdout)
+            return data
+        try:
+            return json.loads(util.read_text(path))
+        except (OSError, ValueError):
+            return None
 
     # ---- logins: what a person types to get into a service ------------------------------
     def logins(self, host):

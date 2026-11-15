@@ -54,3 +54,7 @@ hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in
 Since 2.93.0 and 2.94.0, in all three: what is done about a machine that does not answer (Settings, "When a
 machine is gone"; `recover`), and who may reach what (`access`; "Who may reach what" on the page and in the app's
 menu): the VPN's groups and the linked networks, a tick per machine and service.
+
+Since 2.95.0, in all three: "If something breaks" (`recovery`): could the network come back, and what to do in
+each case; and "This machine is lost or was replaced" on a set-up machine (the first install's steps again).
+

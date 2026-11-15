@@ -4876,7 +4876,7 @@ class TestVps(Base):
     def recover(self, f, ok, *more):
         seen = os.path.join(self.tmp, "seen.json")
         write(seen, json.dumps({"hosts": [{"host": "x", "ok": ok}]}))
-        rc, out, err = self.run_cli("recover", f.path, "--porcelain", "--status", seen, *more)
+        rc, out, err = self.run_cli("gone", f.path, "--porcelain", "--status", seen, *more)
         self.assertEqual(rc, 0, err)
         return json.loads(out.strip().splitlines()[-1])["events"]
 

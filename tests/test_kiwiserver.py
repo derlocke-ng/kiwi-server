@@ -534,8 +534,7 @@ class TestStarter(Base):
         for name, text in self.scripts().items():
             path = os.path.join(self.tmp, name + ".sh")
             write(path, text)
-            self.assertEqual(subprocess.run(["sh", "-n", path]).returncode, 0, name)
-            self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0, name)
+            self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0, name)     # they are bash: `sh` is dash elsewhere
             if have("shellcheck"):
                 r = subprocess.run(["shellcheck", "-S", "warning", path], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, r.stdout)

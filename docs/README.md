@@ -40,6 +40,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Hidden services](design/onion.md) | services for strangers over Tor, never through a home connection |
 | [The starter image](design/starter.md) | a network from a phone: one image, the rest in a browser |
 | [A network without a master](design/no-master.md) | one machine at home first, a master later |
+| [Keeping data across a reinstall](design/data-partition.md) | one-disk machines: a kept, encrypted data partition (not built; questions open) |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
 

@@ -4344,7 +4344,12 @@ class Window(Adw.ApplicationWindow):
         A step that is done is not listed."""
         rows = []
         devices = os.path.join(self.doc.dir, "secrets", "devices")
-        if not (os.path.isdir(devices) and any(f.endswith(".conf") for f in os.listdir(devices))) and not self.locked():
+        alone = not any(self.value_of(h, "role", "bare") == "master" for h in self.doc.hosts())
+        if alone:       # docs/design/no-master.md: no VPN to put a phone on yet
+            rows.append(("Your services open at home only", "The network has no master yet: away from home nothing "
+                         "opens, and a phone finds the names when your router hands out the first machine as DNS.",
+                         None, None))
+        elif not (os.path.isdir(devices) and any(f.endswith(".conf") for f in os.listdir(devices))) and not self.locked():
             rows.append(("Put your phone on the VPN", "Then your files, photos and passwords open from anywhere.",
                          "Add a device…", lambda: DeviceDialog(self).present(self)))
         backed = any("backup" in ((self.status.get(h) or {}).get("modules") or []) for h in self.doc.hosts())
@@ -4361,9 +4366,10 @@ class Window(Adw.ApplicationWindow):
         g = Adw.PreferencesGroup(title="What next", description="Your machines run. These make the network useful and safe.")
         for title, text, label, action in rows:
             row = Adw.ActionRow(use_markup=False, title=title, subtitle=text, subtitle_lines=4)
-            b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
-            b.connect("clicked", lambda _b, a=action: a())
-            row.add_suffix(b)
+            if action:          # a note without a button: something to know, nothing to press
+                b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+                b.connect("clicked", lambda _b, a=action: a())
+                row.add_suffix(b)
             g.add(row)
         return g
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.149.0 — a network without a master (yet)
+
+- The first-run questions (control page, app, `kiwi-server init`) have "No master yet: my services
+  open at home only". The fleet then has no master: each machine at home gets `vpn: false` and its
+  fixed address, the first one runs Pi-hole and answers for every machine's names with home
+  addresses. A gateway is refused (it leads into the VPN). kiwi-modules 0.61.1 brings `vpn: false`
+  (the home address and the home subnet stand in for the VPN's, so the control page opens at home).
+- `kiwi-server add FLEET node` in such a network writes `vpn: false`; `kiwi-server add FLEET master
+  --address A` puts every machine at home back onto the VPN, the fleet file's comments kept.
+- Drill: `tests/drills/starter-vm.sh alone` (the starter in a local VM, without a master).
+- A list written as `- item` lines at its key's indent is replaced in the text now (fleettext).
+- Without a master, the page and the app no longer say "the master first", and instead of putting
+  a phone on the VPN they say how a phone finds the services at home. Design and what is still to
+  build (adding a master later): docs/design/no-master.md.
+
 ## 2.148.0 — the status page from the app
 
 - Under the message settings (Defaults), next to "Send a test message": "Open the status page", the

@@ -756,13 +756,24 @@ def cmd_add(args):
     """A new host in the fleet file, named after a fruit (a node) or a fruit dish (a master)
     unless a name is given."""
     import yaml
-    taken = set((yaml.safe_load(util.read_text(args.fleet)) or {}).get("hosts") or {})
+    data = yaml.safe_load(util.read_text(args.fleet)) or {}
+    taken = set(data.get("hosts") or {})
+    off = setupmod.alone(data)
     name = args.name or setupmod.free_name(args.role, taken)
-    setupmod.add_host(args.fleet, name, args.role, args.preset or "", args.target or "")
+    setupmod.add_host(args.fleet, name, args.role, args.preset or "", args.target or "", args.address or "")
     util.say("added %s as a %s to %s" % (name, args.role, args.fleet))
     fname = os.path.basename(args.fleet)
-    if args.role == "master":
-        util.say("next: set its wg_host (the public address) in the fleet file, then kiwi-server build %s %s" % (fname, name))
+    if args.role == "master" and off:   # a network without a master gets one: its machines go onto the VPN
+        moved = setupmod.onto_the_vpn(args.fleet)
+        util.say("%s go%s onto the VPN: build and install %s first%s, then for each: kiwi-server enroll %s <machine>, "
+                 "kiwi-server apply %s <machine>" % (", ".join(moved) or "no machine", "es" if len(moved) == 1 else "",
+                                                       name, "" if args.address else " (set its wg_host first)", fname, fname))
+    elif args.role == "master":
+        util.say("next: %skiwi-server build %s %s" % ("" if args.address else "set its wg_host (the public address) in the "
+                                                      "fleet file, then ", fname, name))
+    elif args.role == "node" and off:
+        util.say("next: give it its fixed address at home (network.address in the fleet file); without a master its "
+                 "services answer there. Then kiwi-server build %s %s" % (fname, name))
     elif args.role == "node":
         util.say("next: once its master runs, kiwi-server enroll %s %s; then kiwi-server build %s %s" % (fname, name, fname, name))
     else:
@@ -3670,6 +3681,7 @@ def build_parser():
     s.add_argument("name", nargs="?", help="default: a free fruit (a node) or fruit dish (a master)")
     s.add_argument("--preset", choices=["gateway", "cloud", "minimal"], help="a node's module list (default minimal)")
     s.add_argument("--target", choices=["ucore", "coreos", "debian"], help="its system (default: the fleet's)")
+    s.add_argument("--address", help="a master: its public address or name (vpn-server.wg_host)")
     s = sub("remove", cmd_remove); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--yes", action="store_true", help="do not ask")
     s.add_argument("--master", help="which master, when the fleet has more than one")

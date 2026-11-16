@@ -24,6 +24,11 @@
 #              for this machine: it becomes the node, the starter's things go, the control page moves
 #              to https://control.<name>.<domain>. Needs KIWI_NEVER (servers never to touch),
 #              FN_SERVER (the server's id), FN_ADDRESS (its address) and FN_TOKEN (a netcup token file)
+#   alone      the VM of `install`, still running: a new network with "No master yet" from its
+#              first-run page (docs/design/no-master.md), "This machine" the only one; "Set it up"
+#              makes it the node off the VPN: nginx, Pi-hole and the control part, no VPN client;
+#              the names answer with its home address, the control page opens from the home network;
+#              then a hard reset. Touches no server
 #   stop       kill the VM this script started (by its pid)
 #
 # WORKDIR (default ~/kiwi-vm/starter) keeps the ISO, the disks, serial-*.log and qemu.pid.
@@ -448,6 +453,65 @@ EOF2
     check $? "no starter unit is left, the role did not run again, port 80 is the proxy's"
     node_checks
     say "done after $(( $(date +%s) - t0 )) s; the VM keeps running (stop ends it); the master on server $sid keeps running"
+    ;;
+alone)
+    log=serial-install.log; node=mango
+    code=$(grep -aoE 'Setup code: [0-9a-f-]+' "$log" | tail -1 | cut -d' ' -f3)
+    [ -n "$code" ] && kill -0 "$(cat qemu.pid 2>/dev/null)" 2>/dev/null || { say "FAIL run install first: its VM must be running"; exit 1; }
+    t0=$(date +%s); rm -f "$jar"
+    (umask 077; head -c 18 /dev/urandom | base64 | tr -d '/+=' > page-password)
+    curl -s -o page-setup.html --max-time 30 "$base/setup"
+    this=$(grep -o 'name="nodes.0.address" value="[0-9.]*"' page-setup.html | cut -d'"' -f4)
+    grep -q 'value="none"' page-setup.html && [ "$this" = 10.0.2.15 ]; check $? "the questions offer 'No master yet' and list this machine ($this)"
+    made=$(curl -s -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
+        --data-urlencode "again@page-password" --data-urlencode "master_where=none" --data-urlencode "lan_subnet=10.0.2.0/24" \
+        --data-urlencode "lan_gateway=10.0.2.2" --data-urlencode "nodes.0.preset=minimal" --data-urlencode "nodes.0.address=$this" \
+        --data-urlencode "nodes.0.name=$node" "$base/setup" | grep -c 'AGE-SECRET-KEY-')
+    [ "$made" -ge 1 ] && grep -q kiwi_session "$jar"; check $? "the answers made a network without a master"
+    say "$node: $(phase $node)"
+    # "Set it up" until the machine takes its role (no place on a VPN to get first)
+    ok=1
+    for i in 1 2; do
+        job setup $node 900 || { ok=1; break; }
+        ok=0
+        sh_vm 'systemctl is-active kiwi-self-apply.service' | grep -qxE 'active|activating' && break
+        say "    after step $i: $(phase $node)"
+    done
+    check $ok "'Set it up' took the machine over"
+    n=240; state=
+    while [ "$n" -gt 0 ]; do
+        state=$(sh_vm 'systemctl is-active kiwi-self-apply.service; test -e /usr/local/bin/kiwi-starter-done && echo starter || echo node' | tr '\n' ' ')
+        case $state in *inactive*|*failed*) break ;; esac
+        sleep 15; n=$((n - 1))
+    done
+    say "the role ended: $state ($(( $(date +%s) - t0 )) s)"
+    sh_vm 'journalctl -u kiwi-self-apply --no-pager -o cat | tail -6' | sed 's/^/    /'
+    [[ $state == *inactive*node* ]]; check $? "the role is in and the starter took its things away"
+    alone_checks() {
+        local out n=24
+        while [ "$n" -gt 0 ]; do
+            out=$(sh_vm 'podman ps --format "{{.Names}}" | sort | tr "\n" " "')
+            grep -qw kn-pihole <<< "$out" && grep -qw kn-nginx <<< "$out" && grep -qw kn-control <<< "$out" && break
+            sleep 5; n=$((n - 1))
+        done
+        say "    containers: $out"
+        grep -qw kn-pihole <<< "$out" && grep -qw kn-nginx <<< "$out" && grep -qw kn-control <<< "$out" && ! grep -qw kn-vpn-client <<< "$out"
+        check $? "Pi-hole, nginx and the control part run; no VPN client"
+        out=$(sh_vm "getent hosts control.$node.home | awk '{print \$1}' | head -1")
+        [ "$out" = 10.0.2.15 ]; check $? "control.$node.home is its home address ($out)"
+        out=$(sh_vm "curl -sk -o /dev/null -w '%{http_code}' --max-time 20 --resolve control.$node.home:443:10.0.2.15 https://control.$node.home/login")
+        [ "$out" = 200 ]; check $? "the control page opens from the home network ($out)"
+    }
+    alone_checks
+    before=$(grep -ac 'login:' "$log")
+    python3 - "$w/monitor.sock" <<'EOF2'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.5); s.sendall(b"system_reset\n"); time.sleep(1)
+EOF2
+    n=60; while [ "$n" -gt 0 ] && [ "$(grep -ac 'login:' "$log")" -le "$before" ]; do sleep 5; n=$((n - 1)); done
+    tail -c 400 "$log" | grep -aq "^$node login:"; check $? "after a hard reset its console shows the node's login"
+    alone_checks
+    say "done after $(( $(date +%s) - t0 )) s; the VM keeps running (stop ends it)"
     ;;
 stop) stop ;;
 all)

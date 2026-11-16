@@ -1,4 +1,4 @@
-# A network without a master (design, not built)
+# A network without a master
 
 For a home that starts with one machine and no rented server: a phone user with the
 starter stick, or someone trying Kiwi out. The starter design leaves this open
@@ -17,6 +17,30 @@ Tried on 16 November 2026 with a fleet of one node (`cloud` preset) and no maste
 
 So a node is built around its VPN address. Its names (`cloud.mango.home`) point at that
 address, and the master's Pi-hole answers for them.
+
+## What is built (kiwi-server 2.149.0, kiwi-modules 0.61.1)
+
+- The stack setting `vpn: false` on a node: no VPN client (left out of the presets and of
+  what parts require), and its fixed home address stands in for its VPN address.
+- The first-run questions (page, app, `kiwi-server init`): "No master yet". The fleet then
+  has no master; every machine at home gets `vpn: false` and needs a fixed address; the
+  first one runs `dns` (Pi-hole) and answers for every machine's names with home
+  addresses. A gateway is refused: it leads into the VPN.
+- The page and the app say what it means: no "master first", and no VPN for a phone (the
+  Devices page says how a phone finds the names at home).
+- Tried: the questions on a local page, the node's stack rendered (nginx on 80/443 at
+  home, Pi-hole's records). Not yet tried on a real machine.
+
+- The home subnet stands in for the VPN's subnet too, so what is only for the network
+  itself (the control page) lets the home network in.
+- `kiwi-server add FLEET node` in such a network writes `vpn: false` and asks for the
+  fixed address. `kiwi-server add FLEET master --address A` puts every machine at home back
+  onto the VPN (`vpn: true`, its VPN client back, first in its module list), comments kept;
+  then: build and install the master, enroll and apply each machine.
+- A drill: `tests/drills/starter-vm.sh alone` (the starter in a local VM, "No master yet",
+  "Set it up", the names and the control page from the home network, a hard reset).
+
+Still to build: "Add a master" as a button on the page and in the app.
 
 ## Proposal
 
@@ -58,8 +82,8 @@ address" then listens on the home network. Nothing else in the modules changes.
 
 | Piece | Where |
 |---|---|
-| `vpn_ip` falls back to the home address when the fleet has no master | kiwi-server `bundle()`, the stack's checks |
-| Presets without `vpn-client` when there is no master; no `enroll` step | setup.py, `next_step` |
-| "No master yet" in the questions; the warning about outside and backups | setup.py, the page, the app |
-| "Add a master" for a network that has none | the page, the app, `kiwi-server add` |
-| A drill: one node, no master, then a master added | tests/drills |
+| `vpn: false`: the home address as the VPN address, no VPN client | built: kiwi-modules 0.61.0 |
+| "No master yet" in the questions; what it means on the page and in the app | built: 2.149.0 |
+| The warning when one machine keeps everything and nothing is backed up elsewhere | the page's "If something breaks" says it already |
+| "Add a master" for a network that has none | built in `kiwi-server add`; the page and the app: to build |
+| A drill: one node, no master | built: `starter-vm.sh alone` |

@@ -140,12 +140,17 @@ def resolve_settings(role, host, modset=None):
         elif not isinstance(wanted, list):
             raise KiwiError("%s.modules must be a list of module names" % where)
         wanted = [str(m) for m in wanted]
+        no_vpn = host.role_settings.get("vpn") is False and role.node_type != "master"
+        if no_vpn:      # a network without a master (yet): the presets' VPN client is left out
+            if raw.get("modules") is not None and "vpn-client" in wanted:
+                raise KiwiError("%s: vpn is false, so vpn-client cannot be in modules" % where)
+            wanted = [m for m in wanted if m != "vpn-client"]
         # a node whose sites strangers reach bans who keeps failing at them: fail2ban comes with it
         if (role.node_type != "master" and "reverse-proxy" in wanted and "fail2ban" not in wanted
                 and isinstance(raw.get("reverse-proxy"), dict) and raw["reverse-proxy"].get("public")
                 and "fail2ban" in ms.modules):
             wanted.append("fail2ban")
-        ordered = ms.resolve(wanted, role.node_type)
+        ordered = ms.resolve(wanted, role.node_type, ("vpn-client",) if no_vpn else ())
         host.modules = ordered
         for name in ordered:
             mod = ms.get(name)
@@ -168,6 +173,8 @@ def resolve_settings(role, host, modset=None):
                 vals["container_ip"] = str(block["container_ip"])
             host.module_settings[name] = vals
         _mesh_address_from_wireguard(host, module_files, where)
+        if no_vpn:
+            _home_address_as_mesh(host, where)
         allowed = role_keys | {"modules"} | set(ordered)
         unknown = sorted(set(raw) - allowed)
         if unknown:
@@ -185,6 +192,27 @@ def resolve_settings(role, host, modset=None):
     return host.role_settings
 
 
+def _home_address_as_mesh(host, where):
+    """vpn: false: the machine's fixed address at home stands in for its mesh address, so every
+    part that answers "at the mesh address" answers on the home network."""
+    import ipaddress
+    net = (getattr(host, "cfg", None) or {}).get("network") or {}
+    addr = str(net.get("address") or "")
+    if net.get("dhcp", True) or not addr:
+        raise KiwiError("%s: vpn is false, so its services answer at its address at home: give it a fixed one "
+                        "(network: { dhcp: false, address: 192.168.1.30/24 })" % where)
+    try:
+        iface = ipaddress.ip_interface(addr if "/" in addr else addr + "/24")
+    except ValueError:
+        raise KiwiError("%s: network.address %r is not an address like 192.168.1.30/24" % (where, addr))
+    rs = host.role_settings
+    if not rs.get("vpn_ip"):
+        rs["vpn_ip"] = str(iface.ip)
+    # and the home network stands in for the mesh: what is "ours" (admin pages, fail2ban) is the home's
+    if rs.get("mesh_subnet") in (None, "", "10.8.0.0/16"):
+        rs["mesh_subnet"] = str(iface.network)
+
+
 def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None, mesh_only=None):
     rs = host.role_settings
     vpn_ip = rs.get("vpn_ip") or ""
@@ -192,6 +220,7 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_add
         vpn_ip = host.module_settings["vpn-server"].get("server_ip") or ""
     return modmod.StackSpec(
         node_type=role.node_type, hostname=host.hostname, modules=host.modules,
+        without=("vpn-client",) if rs.get("vpn") is False and role.node_type != "master" else (),
         docker_dir=rs.get("docker_dir") or "/home/user/docker",
         docker_subnet=rs.get("docker_subnet") or None,
         wg_mtu=rs.get("wg_mtu") or None, bridge_mtu=rs.get("bridge_mtu") or None,

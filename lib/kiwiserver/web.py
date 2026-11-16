@@ -403,8 +403,8 @@ your network's keys after every restart of this machine.</p>
 It is shown once. If you forget the password of this page, it is the only way back to your network's keys.</p>
 <pre style="font-size:1.05rem">{{ recovery }}</pre>
 <div class="actions"><a class="btn primary" href="/">I have written it down</a></div></div>
-<p class="muted">Next, on the page that follows: the machines, one after the other. The master first, then the
-machines at home, then your phone.</p>{% endblock %}""",
+<p class="muted">Next, on the page that follows: the machines, one after the other{% if not alone %}. The master first, then the
+machines at home, then your phone{% endif %}.</p>{% endblock %}""",
     "recover.html": """{% extends "base.html" %}{% block main %}
 <p><a href="/login">← Back</a></p><h1>A new password with the recovery key</h1>
 <form method="post" action="/recover" class="card" autocomplete="off">
@@ -449,7 +449,7 @@ machines at home, then your phone.</p>{% endblock %}""",
 
 {% from "step.html" import step with context %}
 {% set fresh = machines|selectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
-{% if fresh %}<h2>Still to set up</h2><p class="muted">One machine after the other: the master first.</p>
+{% if fresh %}<h2>Still to set up</h2><p class="muted">One machine after the other{% if not alone %}: the master first{% endif %}.</p>
 {% for m in fresh %}{{ step(m, tok) }}{% endfor %}{% endif %}
 
 {% if wide %}<h2>How they are linked</h2><div class="card pic"><div class="wide">{{ wide }}</div><div class="narrow">{{ narrow }}</div>
@@ -457,7 +457,7 @@ machines at home, then your phone.</p>{% endblock %}""",
 <h2>Go on</h2><div class="tiles">
 <a class="tile" href="/machines"><b>Machines</b><span>How each one is, add one, update them all</span></a>
 <a class="tile" href="/services"><b>Services</b><span>Open what runs on them, with its login</span></a>
-<a class="tile" href="/devices"><b>Add a phone or laptop</b><span>Put a device on your VPN with a QR code</span></a>
+<a class="tile" href="/devices"><b>Add a phone or laptop</b><span>{% if alone %}Without a master: your services at home{% else %}Put a device on your VPN with a QR code{% endif %}</span></a>
 <a class="tile" href="/access"><b>Say who may reach what</b><span>Which devices and linked networks open which machine or service</span></a></div>
 {% endblock %}""",
     "machines.html": """{% extends "base.html" %}{% block main %}
@@ -658,6 +658,10 @@ poll();
     "devices.html": """{% extends "base.html" %}{% block main %}
 <h1>Devices</h1><p class="muted">Phones, tablets and laptops that use your VPN. On the VPN a device reaches your
 services from anywhere and browses through your network.</p>
+{% if alone %}<div class="banner warn">Your network has no master yet, so there is no VPN to put a device on.</div>
+<div class="card"><p>At home, your services open by their names when a device asks {{ alone }} for names: set {{ alone }}'s
+address as the DNS server in your router (or in the device's Wi-Fi settings). Without that, open them by address.
+Away from home they do not open: a master gives your devices the VPN.</p></div>{% endif %}
 {% if config %}<div class="card"><h2 style="margin-top:0">{{ shown }} is ready</h2>
 <ol><li>Install the <strong>WireGuard</strong> app on the device (App Store, Play Store, wireguard.com).</li>
 <li>In the app: <strong>+</strong>, then <strong>Scan from QR code</strong>. Scan this:</li></ol>
@@ -1492,7 +1496,18 @@ def make_app(control: Control):
         if request is not None:
             tok = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">'
                                     % control.csrf(request.cookies.get(COOKIE)))
+        kw.setdefault("alone", alone())
         return HTMLResponse(env.get_template(template).render(tok=tok, nav=nav, shell=shell_state() if nav else None, **kw))
+
+    def alone():
+        """A network without a master (docs/design/no-master.md): the name of the machine that answers
+        for the names at home (its dns part), or "" when the network has a master or no machines."""
+        if control.locked() or not os.path.isfile(os.path.join(control.run, "fleet.json")):
+            return ""                   # only what is known already: a page never waits for it
+        hosts = (control.fleet_info() or {}).get("hosts") or []
+        if not hosts or any(h.get("role") == "master" for h in hosts):
+            return ""
+        return next((h["name"] for h in hosts if "dns" in (h.get("modules") or [])), hosts[0]["name"])
 
     def shell_state():
         """What every page's frame shows: how the machines are, and how many there are."""
@@ -1732,7 +1747,7 @@ def make_app(control: Control):
                                                       str(form.get("hoster") or ""))
         except KiwiError as e:
             return await run_in_threadpool(setup_page, shown, {}, str(e), request.headers.get("host", ""))
-        r = page("recovery.html", recovery=recovery)
+        r = page("recovery.html", recovery=recovery, alone=answers.get("master_where") == "none")
         secure = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
         r.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
         return r

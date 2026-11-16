@@ -204,13 +204,14 @@ class ModuleSet:
             raise KiwiError("unknown module %r (have: %s)" % (name, ", ".join(self.modules)))
         return self.modules[name]
 
-    def resolve(self, names, node_type=None):
+    def resolve(self, names, node_type=None, without=()):
         """Dependencies first, requested order otherwise. A required module
-        that was not asked for is added; a cycle or an unknown name is an error."""
+        that was not asked for is added; a cycle or an unknown name is an error.
+        `without`: requirements that are not added (vpn-client on a machine with no VPN)."""
         order, seen, visiting = [], set(), set()
 
         def visit(n, chain):
-            if n in seen:
+            if n in seen or (chain and n in without):
                 return
             if n in visiting:
                 raise KiwiError("module dependency cycle: %s -> %s" % (" -> ".join(chain), n))
@@ -251,12 +252,13 @@ class StackSpec:
                  docker_subnet=None, mtu=None, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None, mesh_only=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
-                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None):
+                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=()):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
         self.hostname = hostname
         self.modules = list(modules)
+        self.without = tuple(without or ())     # requirements left out: ("vpn-client",) on a machine with no VPN
         self.docker_dir = docker_dir.rstrip("/")
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
         # two MTUs, not one: the tunnels' (gluetun, wg-easy's wg0 and the configs it
@@ -751,7 +753,7 @@ class Renderer:
     def service_names(self, spec):
         """The names the reverse proxy would answer for — what the fleet's DNS
         records must carry for this host. Cheap: no compose rendering."""
-        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
         return [s["server_name"] for s in servers] + [s["alias"] for s in servers if s["alias"] and s["alias"] != s["server_name"]]
@@ -760,7 +762,7 @@ class Renderer:
         """The names among service_names that are admin pages (`admin: true` in a module's
         nginx block): the control page, Portainer, Pi-hole, the WireGuard page, the backup
         server, the cache. Who on the VPN may open them is decided apart from the apps."""
-        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
         return [s["server_name"] for s in servers if s.get("admin")]
@@ -769,7 +771,7 @@ class Renderer:
         """The names among service_names whose service answers at the machine's mesh address
         only (`mesh_only:` in a module's nginx block): on a LAN they are not answered with the
         machine's address at home."""
-        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
         return [s["server_name"] for s in servers if s.get("mesh_only")]
@@ -780,7 +782,7 @@ class Renderer:
         (`logins:`), with the address, the user name and the password as this machine has
         them. Cheap: no compose rendering. The passwords are in it: for the eyes of the
         person who asked, never for a log."""
-        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
         base = self.base_context(spec, ordered)
         # a site is served by the reverse proxy: without one, nothing answers at its name
         servers = self.nginx_blocks(spec, ordered, base)[1] if "reverse-proxy" in ordered else []
@@ -827,7 +829,7 @@ class Renderer:
         """What of this machine strangers reach through the master, when its proxy is public:
         (the names outside the fleet's domain, the ports modules ask to have handed on, as
         dicts port / to / proxy_protocol). kiwi-server gives both to the master."""
-        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
         base = self.base_context(spec, ordered)
         names = []
         if (spec.module_config.get("reverse-proxy") or {}).get("public"):      # web sites: only with a public proxy
@@ -869,7 +871,7 @@ class Renderer:
 
     # ---- the bundle --------------------------------------------------------------------
     def render(self, spec):
-        ordered = self.ms.resolve(spec.modules, spec.node_type)
+        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
         base = self.base_context(spec, ordered)
         bundle = Bundle()
         bundle.container_ips = dict(base["container_ips"])

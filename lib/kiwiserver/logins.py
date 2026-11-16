@@ -9,7 +9,7 @@ that was changed inside a service is not known here.
 The passwords are the answer of this command and of the control page's /api/hosts/<name>/logins,
 and of nothing else: never a log, the audit or an error message.
 """
-from . import modules as modmod, roles as rolesmod
+from . import luks, modules as modmod, roles as rolesmod
 from .util import KiwiError
 
 COLUMNS = ("SERVICE", "ADDRESS", "USER NAME", "PASSWORD")
@@ -24,7 +24,22 @@ def for_host(host, role, ms):
     if not role.stack:
         return []
     found = modmod.Renderer(ms).logins(rolesmod.stack_spec(host, role))
-    return [dict(x, has_password=bool(x["password"])) for x in found] + at_home(host, role)
+    return [dict(x, has_password=bool(x["password"])) for x in found] + at_home(host, role) + disk(host)
+
+
+def disk(host):
+    """The key of the machine's encrypted disk, for its screen: what is typed when it starts and no
+    ring opens it (a power cut with the rings away, or a machine alone with none). Without it
+    written down somewhere, a lone machine is lost after a power cut."""
+    try:
+        key = luks.current_key(host)
+    except (OSError, KiwiError, KeyError, TypeError, AttributeError):
+        key = ""
+    if not key:
+        return []
+    return [{"module": "disk", "label": "The disk's key", "address": "", "user": "", "password": key, "has_password": True,
+             "note": "Typed at the machine's screen when it starts and nothing opens its disk by itself. "
+                     "Write it down and keep it away from the machine."}]
 
 
 def at_home(host, role):

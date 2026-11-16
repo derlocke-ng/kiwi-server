@@ -1983,6 +1983,11 @@ def cmd_apply(args):
                 util.say("%s: in place at /var/lib/kiwi-server/role.sh — run it with: sudo bash /var/lib/kiwi-server/role.sh --force" % h.name)
                 continue
             if os.environ.get("KIWI_CONTROL_HOST") == h.name:
+                # its disk first (over SSH, nothing restarts): the starter's TPM gives way to the rings or the console key
+                if unlock.wanted(h):
+                    unlock.bind(h, tgt, servers)
+                elif h.target in ("coreos", "ucore"):
+                    unlock.drop_standin(h, tgt)
                 # the control node applies itself: the role may restart the container this runs in,
                 # so it runs as a unit of its own on the machine and outlives the connection
                 # a machine the starter stick installed takes away what the starter needed, when the role is in
@@ -2003,6 +2008,8 @@ def cmd_apply(args):
                     util.warn("%s: the images were not updated — sudo kiwi-stack update on the machine" % h.name)
             if unlock.wanted(h):
                 unlock.bind(h, tgt, servers)
+            elif h.target in ("coreos", "ucore"):      # the starter's TPM, on a machine with no rings: the console key instead
+                unlock.drop_standin(h, tgt)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs

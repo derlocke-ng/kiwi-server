@@ -94,8 +94,20 @@ vm() {
     stop
     [ -f vars.fd ] || cp "$OVMF/OVMF_VARS.fd" vars.fd
     rm -f "$log" debug.sock serial0.sock
+    # a TPM 2.0 (swtpm), as most PCs have one: the stick encrypts with it. TPM=0: a machine without
+    local tpm=()
+    if [ "${TPM:-1}" = 1 ]; then
+        mkdir -p tpm
+        if ! { [ -S tpm/sock ] && pgrep -f "swtpm socket --tpmstate dir=$w/tp[m]" >/dev/null; }; then
+            rm -f tpm/sock
+            swtpm socket --tpmstate dir="$w/tpm" --ctrl type=unixio,path="$w/tpm/sock" --tpm2 --daemon
+            for _ in $(seq 20); do [ -S tpm/sock ] && break; sleep 0.2; done
+        fi
+        tpm=(-chardev socket,id=chrtpm,path="$w/tpm/sock" -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0)
+    fi
     qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 4096 \
         -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.fd" -drive if=pflash,format=raw,file=vars.fd \
+        "${tpm[@]}" \
         -device qemu-xhci,id=xhci \
         -drive if=none,id=stick,format=raw,readonly=on,file="$iso" -device usb-storage,bus=xhci.0,drive=stick,bootindex=$stick_idx \
         -drive if=none,id=usbdisk,format=raw,file=usb-blank.img -device usb-storage,bus=xhci.0,drive=usbdisk \

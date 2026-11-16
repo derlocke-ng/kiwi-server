@@ -47,6 +47,11 @@ a network cable, it does this by itself:
   the one you press is erased and installed on, the others stay as they are.
   (Or unplug the others and start again.)
 - One disk that is too small (under 16 GB): it installs nothing and says so.
+- The disk is encrypted. Until a network takes the machine in, its TPM opens
+  it; then the network's rings do, or a key you type at its screen. A machine
+  without a TPM 2.0 (look for TPM, fTPM or PTT in its firmware settings) or with
+  less than 4 GB of memory is installed without encryption only when you type
+  PLAIN (or press the page's button), and it says so on every page after.
 - When an install stops, the page says why, with what the installer said.
 - A machine that is installed already: it starts that system and says to take
   the stick out.

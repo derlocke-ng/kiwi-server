@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.159.0 — the starter stick encrypts the disk
+
+The first step of encryption by default (docs/design/encryption.md).
+
+- **The starter stick installs encrypted.** There is no ring before there is a network, so the
+  machine's TPM 2.0 opens the disk until a network takes the machine in. Then `apply` adds the
+  key for the console, binds the network's rings, or leaves the console key alone when there is
+  no ring yet, and removes the TPM: from then on the TPM opens nothing. This also happens when
+  the control node sets itself up ("Set it up" on the starter's page). Tried in a local VM with
+  an emulated TPM (`tests/drills/standin-vm.sh`): installed by itself, then opened by the ring,
+  and by the console key with the ring away.
+- **Without a TPM 2.0, or with less than 4 GB of memory, only by choice:** the stick says why it
+  cannot encrypt and installs only when PLAIN is typed at its screen or the page's button is
+  pressed. Its screen says afterwards whether the disk is encrypted.
+- **An unencrypted disk is a warning**, on the control page's overview and the machine's page
+  and in `status`, not a note.
+- **The disk's key is among a machine's logins** (the Logins tab, `kiwi-server logins`): a
+  machine alone at home waits for it at its screen after a power cut.
+- Taking in a starter machine keeps a disk the stick encrypted, and sets the kernel arguments
+  its rings need.
+
 ## 2.158.0 — Jabber: one page for new accounts; its admin panel from the VPN only
 
 With kiwi-modules 0.66.0.

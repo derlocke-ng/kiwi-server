@@ -463,15 +463,47 @@ def _ip_setting(host):
 
 
 def _bound(listing):
-    """[(slot, t, urls)] of what `clevis luks list` shows as an sss tree of tang pins."""
+    """[(slot, t, urls)] of what `clevis luks list` shows as an sss tree of tang pins. A TPM's
+    binding (the starter's stand-in) is there as urls ["tpm2"], so a rebind removes it."""
     out = []
-    for m in re.finditer(r"^(\d+): sss '(\{.*\})'\s*$", listing, re.M):
+    for m in re.finditer(r"^(\d+): (sss|tpm2) '(\{.*\})'\s*$", listing, re.M):
         try:
-            cfg = json.loads(m.group(2))
-            out.append((m.group(1), int(cfg["t"]), sorted(p["url"] for p in cfg["pins"]["tang"])))
-        except (ValueError, KeyError, TypeError):
+            cfg = json.loads(m.group(3))
+            if m.group(2) == "tpm2" or "tpm2" in cfg.get("pins", {}):
+                out.append((m.group(1), int(cfg.get("t", 1)), ["tpm2"]))
+            else:
+                out.append((m.group(1), int(cfg["t"]), sorted(p["url"] for p in cfg["pins"]["tang"])))
+        except (ValueError, KeyError, TypeError, AttributeError):
             continue
     return out
+
+
+# stdin: nothing. The slots the machine's TPM opens (the starter's stand-in) are removed; the
+# key for the console must be in another slot before (ADD_KEY_SCRIPT)
+DROP_TPM_SCRIPT = luks._PRELUDE + r'''
+for dev in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
+    for slot in $(clevis luks list -d "$dev" 2>/dev/null | sed -n 's/^\([0-9]*\): \(sss\|tpm2\) .*tpm2.*/\1/p'); do
+        clevis luks unbind -f -d "$dev" -s "$slot" </dev/null || exit 1
+        echo "dropped $dev $slot"
+    done
+done
+'''
+
+
+def drop_standin(host, tgt, servers=None):
+    """A CoreOS disk the starter stick bound to the machine's TPM, on a machine with no rings:
+    the key for the console goes in (shown nowhere, kept in secrets/luks), then the TPM's slot
+    goes. From then on the disk opens with that key only. True when something changed."""
+    listing = remote.run(tgt, "sudo clevis luks list -d \"$(sudo blkid -c /dev/null -t TYPE=crypto_LUKS -o device | head -n1)\" "
+                              "2>/dev/null || true").decode(errors="replace")
+    if not [b for b in _bound(listing) if b[2] == ["tpm2"]]:
+        return False
+    _coreos_key(host, tgt, servers or {})
+    out = remote.run(tgt, DROP_TPM_SCRIPT).decode(errors="replace")
+    if "dropped" in out:
+        util.say("%s: the disk no longer opens by its TPM; it opens with the key in %s (typed at its screen)"
+                 % (host.name, luks.key_file(host)))
+    return "dropped" in out
 
 
 def _unlock_key(fleet):

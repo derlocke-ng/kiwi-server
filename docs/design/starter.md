@@ -51,9 +51,11 @@ file. It carries no secret and no fleet: every copy is the same.
 - A key pair made at the first boot, private half readable by the control container
   only, public half authorized for the admin user: the control node's way to set up the
   machine it runs on. The role replaces it with the fleet's own key.
-- No disk encryption yet: the unlock rings do not exist before there is a network. The
-  page offers it later for the machines that are added, and a reinstall of this one once
-  another machine can hold its ring.
+- The disk is encrypted (since 2.159.0, design/encryption.md): the rings do not exist
+  before there is a network, so the machine's TPM opens it until the network takes it in
+  and binds its rings or the key for the console. A machine without a TPM 2.0 (or with
+  less than 4 GB) installs only after PLAIN at its screen or the page's button, and then
+  says on every page that its disk is not encrypted.
 
 ## What the page does after the questions
 
@@ -92,8 +94,9 @@ it runs on:
   is this one). Three steps:
   1. What Ignition would have written at an install is put in place over SSH to
      127.0.0.1 with the starter key (`adopt.run_coreos`): the files, the units, the
-     fleet's keys for the admin user. An encrypted disk or kernel arguments are refused:
-     they need an install.
+     fleet's keys for the admin user. A disk the stick encrypted is kept; `apply` then
+     binds it to the network's rings or the console key and removes the TPM. Encrypting a
+     plain disk, or kernel arguments of its own, are refused: they need an install.
   2. The role runs as a unit of the machine itself (`kiwi-self-apply`), since it replaces
      the container the command runs in.
   3. When the role is in, `/usr/local/bin/kiwi-starter-done` (part of the starter image)
@@ -103,9 +106,8 @@ it runs on:
      `kn-control`: the page is now at `https://control.<name>.<domain>`, on the VPN, its
      keys locked until someone logs in there.
 - The mark on the boot partition stays: the stick never installs over this machine.
-- Its disk is not encrypted (the starter installs plain Fedora CoreOS). The network's
-  keys rest encrypted in the store as on every control node; the data of its services
-  does not.
+- Its disk is encrypted as above. Until a second machine at home holds a ring for it,
+  it opens with the key for the console after a power cut (`secrets/luks/<name>.key`).
 - A node needs the master before it can be set up (its place on the VPN is made there).
   The page says so, as it does for every node: the master's step comes first.
 

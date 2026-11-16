@@ -67,6 +67,14 @@ some minutes (`debian.reencrypt`).
 Encrypting a CoreOS root takes about 4 GiB of memory at the first boot: on
 less, use `target: debian`.
 
+**The starter stick** encrypts too, before there is any ring: the machine's
+TPM 2.0 opens the disk until the network takes it in. Then `apply` adds the key
+for the console, binds the network's rings (or leaves the console key alone,
+when there is no ring yet) and removes the TPM: from then on the TPM opens
+nothing. A machine without a TPM is installed plain only after PLAIN at its
+screen. A disk that is not encrypted is a warning on the control page's
+overview ("Needs a look"), on the machine's page and in `status`.
+
 ### Unlocking at boot
 
 A disk can open itself at boot. The `tang` module on one node serves a

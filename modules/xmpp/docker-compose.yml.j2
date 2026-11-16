@@ -78,7 +78,7 @@ services:
     container_name: {{ container_prefix }}-xmpp-join
     restart: unless-stopped
     command: ["signup", "serve", "--state", "/state", "--ejabberd", {{ pages | tojson | tojson }},
-              "--ways", "{{ join_ways }}", "--brand", {{ (brand or domain) | tojson }}, "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
+              "--ways", "{{ join_ways }}", "--brand", {{ (brand or xmpp_domain or internal_host) | tojson }}, "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
     networks:
       {{ network_name }}: {}
     volumes:

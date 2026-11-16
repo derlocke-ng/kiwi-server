@@ -11,6 +11,15 @@
 
 
 
+
+## 2.132.0 — where to change what
+
+- **Services** on the control page: under each service, **Settings** opens its module's part of
+  the machine's settings (what kiwi-server sets: names, who may sign up, sizes, switches), and
+  **Admin page** opens the app's own admin page (what is inside it: users, rooms, repositories).
+- A Jabber password made for an accepted request is easy to read out: four groups of five, no 0/O
+  or 1/l. Jabber's sign-up page has the server's name (kiwi-modules 0.55.2).
+
 ## 2.131.1 — a command word with spaces
 
 - kiwi-modules 0.55.1: each word of a container's command is quoted in its systemd unit; Jabber's

@@ -2,6 +2,7 @@
 import base64
 import copy
 import os
+import threading
 
 
 class KiwiError(Exception):
@@ -46,7 +47,7 @@ def write_text(path, text, mode=0o644):
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d-%d.tmp" % (path, os.getpid(), threading.get_ident())     # one per writer
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
@@ -60,7 +61,7 @@ def write_bytes(path, data, mode=0o644):
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d-%d.tmp" % (path, os.getpid(), threading.get_ident())     # one per writer
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "wb") as f:
         f.write(data)

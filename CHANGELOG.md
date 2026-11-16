@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.152.3 — kiwi-modules 0.61.2; the docs know a network without a master
+
+- kiwi-modules 0.61.2: its file writers have a temporary file per writer too.
+- docs/getting-started.md: "No master yet" in the questions, and `add … master --address`.
+
 ## 2.152.2 — certificates made one at a time
 
 - The fleet's CA and the machines' certificates are made by one command at a time per CA folder

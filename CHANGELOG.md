@@ -12,6 +12,16 @@
 
 
 
+
+## 2.133.0 — Nextcloud signs people in with the network's accounts
+
+- **`kiwi-server accounts <fleet> connect <host> cloud`** (and Connect under Accounts on the control
+  page): after the next apply, Nextcloud shows "Log in with accounts" and a person's first sign-in
+  makes their Nextcloud user (kiwi-modules 0.56.x, Nextcloud's own OpenID Connect app). The admin and
+  people made in Nextcloud keep their own passwords.
+- Drill `sso-browser.py … --nextcloud`: a real browser signs in to Nextcloud with an account (on the
+  test network: Kanidm on one node, Nextcloud on another).
+
 ## 2.132.0 — where to change what
 
 - **Services** on the control page: under each service, **Settings** opens its module's part of

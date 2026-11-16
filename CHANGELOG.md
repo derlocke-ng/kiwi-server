@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.154.0 — the starter stick, ready to download, and it lets you choose the disk
+
+- Every release carries the starter stick: `kiwi-starter.iso`, its `SHA256SUMS` and a Sigstore
+  signature made by the project's build (`.github/workflows/starter.yml`, with the release's own
+  control image). The newest is always at
+  https://github.com/derlocke-ng/kiwi-server/releases/latest/download/kiwi-starter.iso, so a phone
+  or Windows user no longer needs kiwi-server to make one. docs/getting-started.md says how to
+  check it.
+- A machine with several disks: the stick's page shows them, one button each, and installs on the
+  one pressed; the others stay as they are. Before, it said "unplug the others".
+
 ## 2.153.0 — nobody banned for using a service; a machine's page in tabs; safer install disks
 
 - **fail2ban as others ship it** (kiwi-modules 0.62.0, compared with fail2ban, Debian, YunoHost,

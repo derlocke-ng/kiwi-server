@@ -1,0 +1,66 @@
+# starter — the starter stick (docs/design/starter.md) as a file of every release, for people
+# without Linux or a terminal: kiwi-starter.iso, its SHA256SUMS, and a Sigstore signature made by
+# this workflow (keyless: it says which repository and workflow made the file).
+#
+# Built with the release's own control image (it has butane, coreos-installer and xorriso), once
+# that image is pushed; the release workflow makes the GitHub Release. A release that has the
+# file already is left alone. The newest is always at
+#   https://github.com/<owner>/kiwi-server/releases/latest/download/kiwi-starter.iso
+name: starter
+
+on:
+  workflow_run:
+    workflows: ["control image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write     # the release's files
+  id-token: write     # the keyless signature
+
+concurrency:
+  group: starter
+  cancel-in-progress: false
+
+jobs:
+  starter:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - id: v
+        run: |
+          v=$(sed -n 's/^VERSION=//p' kiwi.manifest | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+      - id: has
+        name: the release, and whether it has the stick already
+        run: |
+          for i in $(seq 1 30); do gh release view "${{ steps.v.outputs.tag }}" >/dev/null 2>&1 && break; sleep 20; done
+          gh release view "${{ steps.v.outputs.tag }}" >/dev/null || { echo "no release ${{ steps.v.outputs.tag }}"; exit 1; }
+          if gh release view "${{ steps.v.outputs.tag }}" --json assets -q '.assets[].name' | grep -qx kiwi-starter.iso; then
+              echo "done=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: build it with the release's control image
+        if: steps.has.outputs.done != '1'
+        run: |
+          mkdir -p out cache
+          image=ghcr.io/${{ github.repository_owner }}/kiwi-server-control:${{ steps.v.outputs.version }}
+          docker run --rm -v "$PWD/out:/out" -v "$PWD/cache:/cache" --entrypoint kiwi-server "$image" \
+              build --starter --output /out/kiwi-starter.iso --cache /cache --toolchain native
+          (cd out && sha256sum kiwi-starter.iso > SHA256SUMS && cat SHA256SUMS)
+      - uses: sigstore/cosign-installer@v3
+        if: steps.has.outputs.done != '1'
+      - name: sign it
+        if: steps.has.outputs.done != '1'
+        run: cosign sign-blob --yes --bundle out/kiwi-starter.iso.sigstore.json out/kiwi-starter.iso
+      - name: attach it to the release
+        if: steps.has.outputs.done != '1'
+        run: |
+          gh release upload "${{ steps.v.outputs.tag }}" out/kiwi-starter.iso out/SHA256SUMS out/kiwi-starter.iso.sigstore.json --clobber

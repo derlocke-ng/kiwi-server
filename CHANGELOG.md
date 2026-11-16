@@ -4,6 +4,17 @@
 
 
 
+
+## 2.128.0 — the network's accounts on the control page
+
+- **Accounts** on the control page: the requests to accept or deny, invite codes to make and
+  withdraw, the accounts with a new password link or deletion. `kiwi-server accounts <fleet>`
+  does the same from a terminal (`invite`, `requests`, `accept`, `deny`, `create`, `link`,
+  `list`, `delete`, `jabber`).
+- The sign-up page remembers where Kanidm is, so the control node's calls need only its folder.
+- Drill `join-browser.py`: in a real browser, a stranger signs up with an invite code and by
+  asking, sets a password with the link and signs in (8 of 8 on a test node).
+
 ## 2.127.0 — accounts with a sign-up page, the look of monitoring tools, one name per service
 
 - **Accounts for the public** (kiwi-modules 0.52.0, module `accounts`, [Accounts](docs/roles.md#accounts)):

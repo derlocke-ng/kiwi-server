@@ -23,8 +23,8 @@ def facts(load, cpus, mem, disks, running, backup=None, up=400000):
 MACHINES = [
     ("sorbet", "master", ["vpn-client", "vpn-server", "dns", "reverse-proxy", "backup"], ["wg", "pihole"], "ok", [],
      facts(0.21, 2, (4, 1.3), [("/var", 60, 14)], 9, 7 * 3600)),
-    ("papaya", "node", ["vpn-client", "reverse-proxy", "cloud", "vault", "immich", "paperless", "gateway", "backup", "backup-server", "control"],
-     ["cloud", "vault", "photos", "paperless", "control"], "ok", [], facts(0.9, 4, (16, 9.2), [("/var", 230, 61), ("/var/mnt/data", 1800, 1210)], 21, 5 * 3600)),
+    ("papaya", "node", ["vpn-client", "reverse-proxy", "cloud", "vault", "immich", "paperless", "gateway", "backup", "backup-server", "control", "accounts"],
+     ["cloud", "vault", "photos", "paperless", "control", "id"], "ok", [], facts(0.9, 4, (16, 9.2), [("/var", 230, 61), ("/var/mnt/data", 1800, 1210)], 21, 5 * 3600)),
     ("lychee", "node", ["vpn-client", "reverse-proxy", "portainer", "backup-server", "tang", "backup"], ["portainer"], "ok", [],
      facts(0.1, 2, (4, 1.1), [("/var", 480, 395)], 6, 6 * 3600)),
     ("quince", "node", ["vpn-client", "reverse-proxy", "vault", "gateway", "backup"], ["vault"], "warn",
@@ -109,3 +109,23 @@ if __name__ == "__main__":          # as a stand-in for kiwi-server: madeup.py l
     listed, status = answers()
     print(json.dumps(listed if what == "list" else status if what == "status" else hidden() if what == "onion" else
                      {"store": True, "open": True} if what == "secrets" else {}))
+
+
+def accounts(*argv, user="admin"):
+    """What `kiwi-server accounts` would say about a made-up sign-up: three people, two waiting, codes."""
+    now = time.time()
+    what = argv[0] if argv else ""
+    if what == "list":
+        return [{"name": [n], "displayname": [d], "memberof": (["jabber@id.papaya.home"] if j else [])}
+                for n, d, j in (("anna", "Anna Berg", True), ("bert", "Bert", False), ("carla", "Carla from the club", False))]
+    if what == "invites":
+        return [{"hint": "9c21", "uses": 3, "used": 1, "until": now + 9 * 86400, "note": "the climbing club", "live": True},
+                {"hint": "b0d4", "uses": 1, "used": 1, "until": now + 2 * 86400, "note": "Dora", "live": False}]
+    if what == "requests":
+        return [{"hint": "4db9", "name": "emil", "why": "Emil, Anna's brother: for the shared photos", "at": now - 5400, "state": "waiting"},
+                {"hint": "7a7f", "name": "fritz", "why": "I would like a Jabber account to talk to my neighbours", "at": now - 86400, "state": "waiting"}]
+    if what == "invite":
+        return {"code": "kiwi-6350-7b83-4a21"}
+    if what in ("create", "link"):
+        return {"name": argv[1], "link": "https://id.papaya.home/ui/reset?token=made-up-token"}
+    return {"state": "done"}

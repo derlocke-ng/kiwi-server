@@ -90,6 +90,26 @@ stranger reaches it, and keeps 90 days of it. The status page and the messages c
 **Proposal: keep our own checks and page.** Adopting Gatus would ask every service twice. Look
 at it again if people want maintenance notices or alerts that ours do not send.
 
+## Names: on the VPN, on the Internet, over Tor
+
+A service can have three doors: its name on the VPN (`git.medlar.home`), a public name the master
+hands on (`git.example.org`), and a hidden service (`….onion`). An app knows one address of its
+own (Forgejo's ROOT_URL, Nextcloud's trusted domains, Kanidm's origin, to which passkeys belong),
+so the rule is:
+
+1. **One name per service: the public one if it has one, else the VPN name.** Inside the network
+   the public name already leads to the machine's mesh address (the network's own DNS), so people
+   at home and on the VPN use the same name as strangers, and never pass the master's doors
+   (no rate limit, no ban).
+2. **The VPN name stays as an alias** that sends the browser on to the public name (301): old
+   bookmarks and apps keep working.
+3. **Tor is the second door.** Every app that can list more than one address of its own is told
+   its onion address (as Paperless, PrivateBin and BTCPay are today); the pages show it. An app
+   that knows one address only works over Tor without the parts bound to its name: Kanidm signs
+   people in with a password there, not with a passkey.
+4. **The pages show every door of a service**: the control page's Services, the status page,
+   the front page for strangers, each with the VPN name, the public name and the onion address.
+
 ## The front page for strangers
 
 A page for each public name of the network, made from what kiwi-server knows:

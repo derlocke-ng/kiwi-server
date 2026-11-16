@@ -1542,6 +1542,24 @@ class Control:
             lines = [x for x in (r.stderr or "").strip().splitlines() if x.strip()]
             raise KiwiError((lines[-1] if lines else "no answer").replace("error: ", "")[:300])
 
+    def role_script(self, host):
+        """The role script Apply would send to a machine (`script --offline`), for reading.
+        Rendered anew each time into the open store's memory; it holds the machine's passwords,
+        so it is handed on and kept nowhere here."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not HOST.match(host or ""):
+            raise KiwiError("not a host name: %r" % host)
+        try:
+            r = subprocess.run(list(self.kiwi) + ["script", self.fleet_path, host, "--offline"], capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=180)
+        except subprocess.TimeoutExpired:
+            raise KiwiError("the role script of %s took too long to make" % host)
+        if r.returncode != 0 or not r.stdout.strip():
+            lines = [x for x in (r.stderr or "").strip().splitlines() if x.strip()]
+            raise KiwiError((lines[-1] if lines else "no script came out").replace("error: ", "")[:300])
+        return r.stdout
+
     # ---- devices: phones and laptops on the VPN ---------------------------------------
     def devices(self):
         d = os.path.join(self.fleet_dir, "secrets", "devices")

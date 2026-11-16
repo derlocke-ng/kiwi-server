@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.145.0 — the role script on the control page
+
+- A machine's page links to "The role script": what Apply sends to it and runs there, made on
+  request in the open store's memory and shown as text, as the app's "Show role script" does. It
+  holds the machine's secrets: it is written nowhere, and the activity list says it was shown.
+
 ## 2.144.0 — prune, start new and the tools check on the control page
 
 - Backups: "Prune now" on each machine that keeps backups (with its free space), and "Start new"

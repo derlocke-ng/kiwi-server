@@ -9378,6 +9378,29 @@ class TestFirstRunPage(StoreBase):
                          (303, "/hosts/fig"))                                               # a machine can still be added
         self.at_rest()
 
+    def test_the_role_script_is_made_when_asked_and_kept_nowhere(self):
+        cookie, _csrf = self.made()
+        master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
+        self.assertIn('href="/hosts/%s/script"' % master, self.ask("/hosts/" + master, cookie=cookie)[1])
+        status, body, _ = self.ask("/hosts/%s/script" % master)                 # no login: no script
+        self.assertNotIn("#!", body)
+        self.assertNotIn("role script shown", str(self.c.audit_tail(20)))
+        status, body, _ = self.ask("/hosts/%s/script" % master, cookie=cookie)
+        self.assertEqual(status, 200, body[-300:])
+        self.assertTrue(body.startswith("#!"), body[:80])
+        self.assertIn("It embeds this host's secrets", body)
+        last = self.c.audit_tail(1)[0]
+        self.assertEqual((last["what"], last["hosts"]), ("role script shown", [master]))
+        mark = ("role script for host %s" % master).encode()                    # made in memory, written nowhere
+        for top in (self.dir, self.c.dir, self.c.run):
+            for dp, _dn, names in os.walk(top):
+                for n in names:
+                    if os.path.isfile(os.path.join(dp, n)):
+                        self.assertNotIn(mark, util.read_bytes(os.path.join(dp, n)), os.path.join(dp, n))
+        status, body, _ = self.ask("/hosts/nosuch/script", cookie=cookie)
+        self.assertEqual(status, 400)
+        self.assertIn("could not be made", body)
+
     def test_a_machines_logins_are_listed_and_a_password_is_fetched_when_asked(self):
         cookie, _csrf = self.made()
         master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")

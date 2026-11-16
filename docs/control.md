@@ -134,6 +134,15 @@ On Home, under *Open a service*, the link *login* below a service leads to
 that card. What the list holds and where the passwords come from:
 [Sign in to a service](machines.md#sign-in-to-a-service).
 
+### The role script
+
+Below a machine's details, the link *The role script* opens what *Apply*
+sends to that machine and runs there, as plain text. It is made when you open
+the link, in the memory of the unlocked store, and is written nowhere. It
+holds the machine's secrets, so keep it to yourself. *Activity* records that
+it was shown. In the app: *Show role script*; in a terminal:
+`kiwi-server script FLEET HOST`.
+
 ### The password is forgotten
 
 "I forgot the password" on the login page takes the recovery key and a new password.

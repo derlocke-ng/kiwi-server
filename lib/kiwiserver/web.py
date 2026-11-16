@@ -526,6 +526,8 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <dt>Parts</dt><dd>{{ m.modules|join(", ") }}</dd></dl>
 {% if m.notes %}<ul class="muted">{% for n in m.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
 {% if m.output %}<details><summary>What the machine said, word for word</summary><pre>{{ m.output }}</pre></details>{% endif %}</div>{% endif %}
+<p class="muted small"><a href="/hosts/{{ m.name }}/script" target="_blank" rel="noopener">The role script</a>: what
+<em>Apply</em> sends to {{ m.name }} and runs there, to read. It holds the machine's passwords.</p>
 
 {% include "rebuild.html" %}
 <details style="margin-top:28px"><summary>Remove this machine</summary><div class="card"><p>{{ m.name }} leaves the network
@@ -1936,6 +1938,20 @@ def make_app(control: Control):
             return JSONResponse({"error": str(e)}, status_code=400)
         control.audit(u, "logins shown", hosts=[name])
         return JSONResponse({"host": name, "logins": found}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/hosts/{name}/script")
+    def host_script(request: Request, name: str):
+        """The role script, as plain text: like "Show password", in the audit by name only."""
+        u = user(request)
+        if not u:
+            return login_page()
+        try:
+            text = control.role_script(name)
+        except KiwiError as e:
+            return Response("The role script could not be made: %s\n" % e, media_type="text/plain; charset=utf-8",
+                            status_code=400, headers={"Cache-Control": "no-store"})
+        control.audit(u, "role script shown", hosts=[name])
+        return Response(text, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "no-store"})
 
     # ---- settings: a machine's, and the defaults every machine inherits (form.py) -----------
     def settings_page(request, host, typed=None, wrong=None, error=None, touched=()):

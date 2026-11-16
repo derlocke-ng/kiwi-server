@@ -1,5 +1,6 @@
 # onion — this machine's hidden services. Tor shares the VPN client's network: what it sends
-# leaves at the master, never through this machine's own connection.
+# leaves at the master, or at a commercial VPN on a machine off the mesh, never through this
+# machine's own connection.
 services:
   {{ container_prefix }}-onion:
     image: {{ image }}

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.155.0 — Tor behind a commercial VPN without a master; settings say where they come from
+
+- **Hidden services without a master** (kiwi-modules 0.63.0): Tor must never leave on the home line,
+  so a machine in a network without a master can run them when a commercial VPN is its exit (a
+  `vpn-client` with `vpn_provider: mullvad`, `protonvpn`, …, in its modules). Tor and downloads
+  leave there; the home network is never routed into it. `kiwi-server onion` says so when the exit
+  is missing. docs/design/onion.md, no-master.md.
+- **A machine's settings say where each value comes from** (after Foreman): "set here" on what the
+  machine sets itself, one tick to bring it back to what every machine has, and "Only what NAME
+  sets itself" to see just those.
+
 ## 2.154.0 — the starter stick, ready to download, and it lets you choose the disk
 
 - Every release carries the starter stick: `kiwi-starter.iso`, its `SHA256SUMS` and a Sigstore

@@ -81,7 +81,7 @@ settings:
       The games this module knows, YAML: game -> {title, image, ports, data, files, env, command}. Add your own here.
       ports: the ports it listens on, like 25565/tcp; the first is the one players type. data: folders it keeps its worlds in (name -> path in the container), backed up.
       files: folders for what it downloads (the game itself), not backed up. env: the image's settings; {name}, {password}, {memory} and {server} stand for the server's own. command: its command line.
-      Run here and seen working: minecraft, zandronum. The others are set up as their images document it.
+      Run here and seen working: minecraft, zandronum; started and listening (kiwi-server's tests/drills/game-images.py): terraria, factorio, minecraft-bedrock. The others are set up as their images document it.
     default:
       minecraft:
         title: Minecraft (Java)
@@ -92,9 +92,10 @@ settings:
       minecraft-bedrock:
         title: Minecraft (Bedrock)
         image: docker.io/itzg/minecraft-bedrock-server:latest
-        ports: [19132/udp]
+        # since 1.26.50 (NetherNet): TCP 19132 for the handshake, the game itself on the UDP port named here
+        ports: [19132/tcp, 19132/udp]
         data: { data: /data }
-        env: { EULA: "TRUE", UID: "1000", GID: "1000", SERVER_NAME: "{name}" }
+        env: { EULA: "TRUE", SERVER_NAME: "{name}", SERVER_UDP_PORTS: "19132" }
       enshrouded:
         title: Enshrouded
         image: docker.io/mornedhels/enshrouded-server:latest

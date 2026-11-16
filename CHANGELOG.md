@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.139.3 — Minecraft Bedrock as it runs now
+
+- kiwi-modules 0.60.3: Bedrock's catalog entry follows its current networking (TCP 19132 and a UDP
+  game port) and can write its folder.
+- Drill `tests/drills/game-images.py`: starts games of the catalog on this computer and checks that
+  they listen. Terraria, Factorio, Bedrock and Valheim pass.
+
 ## 2.139.2 — whole files after a power cut during an apply
 
 - kiwi-stack 0.9.9: each file an apply replaces on a machine is on the disk before it takes the

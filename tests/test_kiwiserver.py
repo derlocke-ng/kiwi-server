@@ -455,6 +455,9 @@ class TestDebian(Base):
         self.assertNotIn("d-i partman-auto/disk string", ps)
         self.assertIn("d-i partman/early_command string D=$(for d in $(list-devices disk)", ps)
         self.assertIn('debconf-set partman-auto/disk "$D"', ps)       # only when there is exactly one
+        self.assertIn("readlink -f /sys/block/${d##*/} | grep -q /usb ||", ps)   # a USB backup disk is never chosen
+        from kiwiserver import iso
+        self.assertIn('$6!="usb"', iso.AUTO_DISK_SCRIPT)                          # nor on CoreOS
         self.assertIn("d-i grub-installer/bootdev string default", ps)
 
     def test_literal_passphrase_is_kept_and_warned_about(self):
@@ -826,6 +829,23 @@ print("\n".join(d.get("sigs", [])))
         status, body, yes, _ = self.page("GET / HTTP/1.1\r\n\r\n", state="info")
         self.assertNotIn("<button>", body)                              # several disks: nothing to press
         self.assertIn("refresh", self.page("GET / HTTP/1.1\r\n\r\n", state="installing")[1])
+
+    def test_a_stopped_install_shows_what_the_installer_said(self):
+        orig = self.page
+
+        def with_details(*a, **kw):
+            real_write = write
+
+            def hook(path, text, *x, **y):
+                real_write(path, text, *x, **y)
+                if path.endswith("message"):
+                    real_write(os.path.join(os.path.dirname(path), "details"), "coreos-installer: error <writing>\nsecond line\n")
+            with mock.patch(__name__ + ".write", hook):
+                return orig(*a, **kw)
+        status, body, _yes, _ = with_details("GET / HTTP/1.1\r\n\r\n", state="info")
+        self.assertIn("<summary>What the installer said</summary>", body)
+        self.assertIn("coreos-installer: error &lt;writing&gt;\nsecond line", body)     # escaped, line by line
+        self.assertIn("journalctl -u kiwi-starter-install -n 30", starter.install_script() if hasattr(starter, "install_script") else starter.INSTALL_SH)
 
     def test_parser(self):
         a = cli.build_parser().parse_args(["build", "--starter", "--output", "x.iso", "--stream", "testing"])
@@ -7938,6 +7958,21 @@ class TestWeb(StoreBase):
         self.assertIn("raw words", body)
         self.assertIn("has not answered yet", self.ask("/hosts/sorbet")[1])
         self.assertIn("saved 2 hours ago", self.ask("/backups")[1])
+        # a machine's page in tabs, with its parts' state on top (after Foreman), and its history
+        body = self.ask("/hosts/papaya")[1]
+        self.assertIn('<a href="/hosts/papaya" class="on">Overview</a>', body)
+        self.assertIn('class="chip ok">backup 2 hours ago</span>', body)
+        self.c.audit("admin", "apply", hosts=["papaya"], job="j1", result="failed")
+        self.c.audit("admin", "apply", hosts=["sorbet"], job="j2", result="ok")
+        body = self.ask("/hosts/papaya")[1]
+        self.assertIn('class="chip bad">last apply: did not work', body)
+        body = self.ask("/hosts/papaya?tab=history")[1]
+        self.assertIn('class="on">History</a>', body)
+        self.assertIn("did not work", body)
+        self.assertNotIn("j2", body)                                             # another machine's
+        self.assertNotIn("Changes nothing.", body)                               # the overview is its own tab
+        self.assertIn("Save now", self.ask("/hosts/papaya?tab=backups")[1])
+        self.assertIn('class="on">Overview</a>', self.ask("/hosts/papaya?tab=nonsense")[1])
         self.assertNotIn("Start new", self.ask("/backups")[1])                       # nothing waits
         self.assertNotIn("Prune now", self.ask("/backups")[1])                       # nor keeps backups
         util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
@@ -9721,7 +9756,7 @@ class TestFirstRunPage(StoreBase):
         wg, pihole = host.module_settings["vpn-server"]["wg_password"], host.module_settings["dns"]["pihole_password"]
         self.assertEqual((len(wg), len(pihole)), (32, 32))                      # from the seed: nobody typed them
         # the machine's page: a row per service, the label a link, and no password in it
-        status, body, _ = self.ask("/hosts/" + master, cookie=cookie)
+        status, body, _ = self.ask("/hosts/%s?tab=services" % master, cookie=cookie)
         self.assertEqual(status, 200)
         self.assertIn('<h2 id="logins" style="scroll-margin-top:64px">Logins</h2>', body)
         self.assertIn('<a href="https://wg.%s" target="_blank" rel="noopener">VPN devices (wg-easy)</a>' % host.hostname, body)
@@ -9732,7 +9767,7 @@ class TestFirstRunPage(StoreBase):
             self.assertNotIn(secret, body)
         self.assertNotIn(wg, util.read_text(os.path.join(self.c.run, "fleet.json")))    # nor in what the page keeps
         # a machine that is not on the VPN yet has no card
-        self.assertNotIn('id="logins"', self.ask("/hosts/" + self.node(), cookie=cookie)[1])
+        self.assertNotIn('id="logins"', self.ask("/hosts/%s?tab=services" % self.node(), cookie=cookie)[1])
         # asked for: only with a login
         api = "/api/hosts/%s/logins" % master
         status, said, _ = self.ask(api)
@@ -9778,7 +9813,7 @@ class TestFirstRunPage(StoreBase):
         with mock.patch.object(self.c, "fleet_info", lambda **_k: info):
             body = self.ask("/services", cookie=cookie)[1]             # every service under its machine
         self.assertIn("<h1>Services</h1>", body)
-        self.assertEqual(body.count('href="/hosts/%s#logins">login</a>' % master), 2)
+        self.assertEqual(body.count('href="/hosts/%s?tab=services#logins">login</a>' % master), 2)
         self.assertNotIn(wg, body)
         # the keys locked: nothing is handed out
         self.c.lock_store()

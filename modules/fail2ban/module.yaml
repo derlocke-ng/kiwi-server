@@ -88,8 +88,17 @@ settings:
     default: "10m"
   - key: bantime
     label: Ban for
-    help: "How long a banned address stays out, e.g. 1h or 1d. -1: for good."
-    default: "1h"
+    help: "How long a banned address stays out the first time, e.g. 10m or 1h; each time it comes back, longer (up to bantime_max). -1: for good."
+    default: "10m"
+  - key: bantime_max
+    label: Longest ban
+    help: "The longest a ban grows to for an address that keeps coming back."
+    default: "1w"
+  - key: ignore_home
+    type: bool
+    label: Never ban home networks
+    help: "Private addresses (10.x, 172.16-31.x, 192.168.x, fc00::/7) are never banned: whoever is inside a home is one of its people. Off: only the mesh and the addresses below."
+    default: true
   - key: ratelimit
     type: int
     label: New SSH connections per minute

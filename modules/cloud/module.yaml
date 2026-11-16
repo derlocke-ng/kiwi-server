@@ -83,6 +83,10 @@ nginx:
       hsts: true
       client_max_body_size: "0"
       proxy_read_timeout: 86400s
+      # notify-push (/push/ws): the desktop and phone apps' websocket. Without the Upgrade header it
+      # answered 400 every two minutes, the app's close frame then reached nginx as a bad request,
+      # and fail2ban (nginx-bad-request) banned a Nextcloud user for using Nextcloud
+      websocket: true
       cors:
         origins: cors_origins
         path: /remote.php/dav/
@@ -90,7 +94,6 @@ nginx:
         allow_headers: "Authorization, Content-Type, Depth, If-Match, If-None-Match, Prefer"
         expose_headers: "ETag, DAV, Location"
       extra_directives:
-        - "proxy_set_header Connection $http_connection;"
         - "proxy_redirect off;"
         - "rewrite ^/\\.well-known/carddav https://$server_name/remote.php/dav/ redirect;"
         - "rewrite ^/\\.well-known/caldav https://$server_name/remote.php/dav/ redirect;"

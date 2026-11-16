@@ -1002,6 +1002,8 @@ class Control:
                 util.warn("control: the fleet file was not saved: %s" % e)
             meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
             self._write(meta)
+        if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
+            self.audit(meta["user"], meta["action"], hosts=meta["hosts"], job=meta["id"], result=meta["state"])
         try:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):

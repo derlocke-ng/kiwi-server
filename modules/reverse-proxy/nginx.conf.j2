@@ -162,6 +162,13 @@ http {
     }
     limit_req_zone $kiwi_limit_key zone=kiwi_public:10m rate={{ rate_limit }}r/s;
     limit_conn_zone $kiwi_limit_key zone=kiwi_conn:10m;
+    # those files and bulk paths have a limit of their own, ten times as high: an address ending
+    # in .png must not be a way around every limit
+    map $kiwi_limit_key $kiwi_bulk_key {
+        "" $binary_remote_addr;
+        default "";
+    }
+    limit_req_zone $kiwi_bulk_key zone=kiwi_bulk:10m rate={{ rate_limit * 10 }}r/s;
     # a hidden service's visitors all come from Tor, as one address: the limit is the site's
     limit_req_zone $server_name zone=kiwi_onion:1m rate={{ rate_limit * 3 }}r/s;
     limit_req_status 429;
@@ -190,7 +197,8 @@ http {
 {% endif %}
 {% if via and public_names %}
     # whom fail2ban banned here (its action kiwi-nginx-deny): the visitors come through the master, so
-    # only nginx knows their address. The list is empty until someone is banned
+    # only nginx knows their address. One list per jail, empty until someone is banned. A banned
+    # visitor's connection is closed (444): no 403 that another jail would count
     geo $kiwi_banned {
         default 0;
         include /etc/nginx/banned/*.map;
@@ -309,7 +317,7 @@ http {
         set_real_ip_from {{ via }};
         real_ip_header proxy_protocol;
         if ($kiwi_banned) {
-            return 403;
+            return 444;
         }
 {% else %}
         listen {{ tls_listen }};
@@ -341,10 +349,12 @@ http {
         ssl_certificate_key /etc/nginx/acme/{{ s.server_name }}/privkey.pem;
 {% if rate_limit %}
         limit_req zone=kiwi_public burst={{ rate_limit * 4 }} nodelay;
+        limit_req zone=kiwi_bulk burst={{ rate_limit * 40 }} nodelay;
         limit_conn kiwi_conn 60;
 {% endif %}
-{% elif public_names and not via %}
-        # 443 is open to the internet on this machine; this site is not for it
+{% elif (public_names or ex.names) and not via %}
+        # 443 is open to the internet on this machine (its own public names, or a node's it hands on);
+        # this site is not for it
         allow {{ mesh_subnet }};
         deny all;
 {% endif %}
@@ -396,7 +406,7 @@ http {
         listen {{ '443 ssl' if via else tls_listen }};
         http2 on;
         server_name {{ s.alias }};
-{% if public_names and not via %}
+{% if (public_names or ex.names) and not via %}
         allow {{ mesh_subnet }};
         deny all;
 {% endif %}

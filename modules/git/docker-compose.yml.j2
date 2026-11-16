@@ -48,7 +48,8 @@ services:
       - KIWI_OIDC_SECRET={{ accounts_secret }}
       - FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION=true
       - FORGEJO__oauth2_client__USERNAME=nickname
-      - FORGEJO__oauth2_client__ACCOUNT_LINKING=auto
+      # never hand an existing account to someone with the same name: linking one asks for its password
+      - FORGEJO__oauth2_client__ACCOUNT_LINKING=login
       - FORGEJO__oauth2_client__UPDATE_AVATAR=false
       # the accounts' page has a certificate of the fleet's CA
       - SSL_CERT_DIR=/etc/ssl/certs:/kiwi-ca

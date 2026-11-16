@@ -76,26 +76,51 @@ def starter_handshake(fleet_path, fleet_dir, address, code, preset, name, domain
     pub = os.path.join(fleet_dir, "secrets", "admin_ed25519.pub")
     if not os.path.isfile(pub):
         raise KiwiError("the network's own SSH key is missing (secrets/admin_ed25519.pub)")
-    answer = (ask or _ask_starter)(address, {"code": code, "key": util.read_text(pub).strip(), "network": domain})
+    key = util.read_text(pub).strip()
+    nonce = pysecrets.token_hex(16)
+    answer = (ask or _ask_starter)(address, {"nonce": nonce, "key": key, "network": domain,
+                                             "mac": join_mac(code, "kiwi-join-1", nonce, domain, key)})
+    keys, hostname = list(answer.get("host_keys") or []), str(answer.get("hostname") or "")
+    # the answer counts only from the machine that knows the code, and only as keys, nothing else
+    if not hmac.compare_digest(str(answer.get("mac") or ""), join_mac(code, "kiwi-join-2", nonce, "\n".join(keys), hostname)):
+        raise KiwiError("the answer at %s is not from the machine whose code you typed: nothing was kept" % address)
+    if not keys or len(keys) > 4 or not all(isinstance(k, str) and HOST_KEY.match(k) for k in keys):
+        raise KiwiError("the machine at %s sent something that is not its SSH host keys: nothing was kept" % address)
     known = os.path.join(fleet_dir, "secrets", "known_hosts")
     subprocess.run(["ssh-keygen", "-R", address, "-f", known], capture_output=True)
     if os.path.isfile(known + ".old"):
         os.remove(known + ".old")
     with open(known, "a") as fh:
-        for k in answer["host_keys"]:
+        for k in keys:
             fh.write("%s %s\n" % (address, k))
     return address, name
 
 
+HOST_KEY = re.compile(r"^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-9+/]{40,1000}={0,2}$")
+HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,62})$")
+
+
+def join_mac(code, *parts):
+    """The proof of the code on a starter's screen, without sending the code: HMAC over the parts.
+    Both sides know the code (the person typed it on one, the other shows it); a device that only
+    answers at the address does not, so it can neither take the network's key nor send keys of its own."""
+    msg = "\x1f".join(str(p) for p in parts).encode()
+    return hmac.new((code or "").strip().lower().encode(), msg, hashlib.sha256).hexdigest()
+
+
 def _ask_starter(address, body, timeout=30):
     """The waiting starter's answer to being taken in (join_as_starter, through its page's API),
-    or KiwiError with what it said. Plain HTTP on the home network, as its first-run page is."""
+    or KiwiError with what it said. HTTPS with the starter's own certificate, which nobody vouches
+    for: what proves the answer is its HMAC with the code (join_mac), not the certificate."""
+    import ssl
     import urllib.error
     import urllib.request
-    req = urllib.request.Request("http://%s:8740/api/join-me" % address, data=json.dumps(body).encode(),
+    ctx = ssl.create_default_context()
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    req = urllib.request.Request("https://%s:8743/api/join-me" % address, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
             out = json.loads(r.read(100000) or b"{}")
     except urllib.error.HTTPError as e:
         with e:
@@ -179,14 +204,19 @@ class Control:
             self._setup_code = "%s-%s" % (raw[:4], raw[4:])
         return self._setup_code
 
-    def setup_code_ok(self, code, address="?"):
-        """Five wrong tries from an address: ten minutes of nothing, as at the login."""
+    def setup_code_ok(self, code, address="?", mac=None):
+        """Five wrong tries from an address: ten minutes of nothing, as at the login. `mac`: instead
+        of the code, (parts, proof) made with it (join_mac), so that the code itself never travels."""
         now = self.clock()
         recent = [t for t in self.failures.get(address, []) if now - t < 600]
         self.failures[address] = recent
-        if len(recent) >= 5:
+        if len(recent) >= 5 or sum(len(v) for v in self.failures.values()) >= 50:     # and a cap over all addresses
             return False
-        if hmac.compare_digest((code or "").strip().lower().encode(), self.setup_code().encode()):
+        if mac is not None:
+            parts, proof = mac
+            if hmac.compare_digest(str(proof or ""), join_mac(self.setup_code(), *parts)):
+                return True
+        elif hmac.compare_digest((code or "").strip().lower().encode(), self.setup_code().encode()):
             return True
         recent.append(now)
         return False
@@ -201,19 +231,21 @@ class Control:
     def joined(self):
         return self._joined
 
-    def join_as_starter(self, code, key, network, address="?"):
-        """This starter is taken into a network: (its SSH host keys, its hostname). Once."""
+    def join_as_starter(self, nonce, mac, key, network, address="?"):
+        """This starter is taken into a network: (its SSH host keys, its hostname, and the proof that
+        this machine, which shows the code, sent them). Once. The code never travels: `mac` proves it."""
         from .cli import STARTER_KEY
         if os.environ.get("KIWI_STARTER") != "1" or not self.fresh():
             raise KiwiError("this machine is no starter waiting to be set up")
         if self._joined:
             raise KiwiError("this machine is being taken into %s already" % self._joined)
-        if not self.setup_code_ok(code, address):
+        nonce, key, network_raw = str(nonce or ""), (key or "").strip(), str(network or "")
+        if not re.match(r"^[0-9a-f]{32}$", nonce) or not self.setup_code_ok(
+                None, address, mac=(("kiwi-join-1", nonce, network_raw, key), mac)):
             raise KiwiError("that is not the code on this machine's screen")
-        key = (key or "").strip()
         if "\n" in key or not re.match(r"^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-9+/]+={0,2}( [^\s]{0,80})?$", key):
             raise KiwiError("that is not a public SSH key")
-        network = re.sub(r"[^A-Za-z0-9 ._-]", "", str(network or ""))[:60] or "a network"
+        network = re.sub(r"[^A-Za-z0-9 ._-]", "", network_raw)[:60] or "a network"
         script = ('read -r k; h=/home/core/.ssh; grep -qxF "$k" "$h/authorized_keys" 2>/dev/null '
                   '|| printf "%s\\n" "$k" >> "$h/authorized_keys"; cat /etc/ssh/ssh_host_*_key.pub; hostname')
         try:
@@ -227,9 +259,12 @@ class Control:
         keys = [x for x in lines if re.match(r"^(ssh-ed25519|ecdsa-sha2-nistp\d+|ssh-rsa) ", x)]
         if r.returncode != 0 or not keys:
             raise KiwiError("this machine could not let the key in: %s" % (r.stderr.strip()[-200:] or "no answer"))
+        host_keys = [" ".join(k.split()[:2]) for k in keys]
+        hostname = lines[-1] if lines[-1] not in keys else ""
+        proof = join_mac(self.setup_code(), "kiwi-join-2", nonce, "\n".join(host_keys), hostname)
         self._joined, self._setup_code = network, None        # the code worked once: no first run here any more
         self.audit("starter", "taken in by %s" % network, address=address)
-        return {"host_keys": [" ".join(k.split()[:2]) for k in keys], "hostname": lines[-1] if lines[-1] not in keys else ""}
+        return {"host_keys": host_keys, "hostname": hostname, "mac": proof}
 
     def take_in(self, address, code, preset, name="", user="admin", ask=None):
         """A machine that runs the starter stick and waits on the home network: told the network's

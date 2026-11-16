@@ -252,13 +252,14 @@ class StackSpec:
                  docker_subnet=None, mtu=None, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None, mesh_only=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
-                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=()):
+                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=(), at_home=False):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
         self.hostname = hostname
         self.modules = list(modules)
         self.without = tuple(without or ())     # requirements left out: ("vpn-client",) on a machine with no VPN
+        self.at_home = bool(at_home)            # a master at home: its own connection is the home line
         self.docker_dir = docker_dir.rstrip("/")
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
         # two MTUs, not one: the tunnels' (gluetun, wg-easy's wg0 and the configs it
@@ -430,7 +431,7 @@ class Renderer:
             "docker_subnet": subnet, "docker_gateway": gateway, "docker_subnet_base": base, "docker_ip_range": ip_range,
             "docker_dir": spec.docker_dir, "bridge_mtu": str(spec.bridge_mtu), "wg_mtu": str(spec.wg_mtu),
             "timezone": spec.timezone,
-            "vpn_ip": spec.vpn_ip, "pub_iface": spec.pub_iface, "service_user": spec.service_user,
+            "vpn_ip": spec.vpn_ip, "pub_iface": spec.pub_iface, "service_user": spec.service_user, "at_home": spec.at_home,
             "container_ips": ips, "modules": list(ordered),
             "has_nextcloud": "cloud" in ordered,
             "proxy_ip": ips.get("reverse-proxy", ""),

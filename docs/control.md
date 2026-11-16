@@ -69,14 +69,15 @@ mkdir -p ~/kiwi-control
 ```
 
 ```bash
-podman run -d --name kn-control --network host -v ~/kiwi-control:/fleet:Z --tmpfs /run/kiwi:size=2g,mode=0700 -e XDG_RUNTIME_DIR=/run/kiwi ghcr.io/derlocke-ng/kiwi-server-control:2 serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait
+podman run -d --name kn-control --network host -v ~/kiwi-control:/fleet:Z --tmpfs /run/kiwi:size=2g,mode=0700 -e XDG_RUNTIME_DIR=/run/kiwi ghcr.io/derlocke-ng/kiwi-server-control:2 serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --https 0.0.0.0:8743 --wait
 ```
 
 ```bash
 podman logs kn-control
 ```
 
-The last command shows a setup code. Open `http://<the machine's address>:8740` from a
+The last command shows a setup code and the fingerprint of the page's own certificate. Open
+`https://<the machine's address>:8743` (the browser warns once: compare the fingerprint) from a
 computer in the same home network, answer the questions, type the code and choose a
 password for the page. The page then shows the recovery key once: write it down.
 
@@ -89,8 +90,10 @@ password for the page. The page then shows the recovery key once: write it down.
   it, type the address.
 - The new network is made in memory. On the disk are only the encrypted files
   (`fleet.yaml.age`, `secrets.age`); after a restart the password opens them.
-- Until the machine has its role, the page is plain HTTP in your home network: do the
-  first run at home, not over a network you do not own.
+- Until the machine has its role, the page has a certificate of its own (made at each start, so the
+  browser warns once; the screen shows its fingerprint to compare), and plain HTTP only sends the
+  browser to it. The setup code, the password and the hoster's sign-in never travel unencrypted.
+  Still, do the first run at home, not over a network you do not own.
 - A control node that waits for `kiwi-server control push` shows the same page; a push
   from the computer the network was made on takes its place.
 

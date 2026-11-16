@@ -11,6 +11,25 @@ import warnings
 from kiwimodules.util import KiwiError, b64, deep_merge, read_bytes, read_text  # noqa: E402,F401
 
 
+def proxies():
+    """The addresses whose X-Real-IP is believed (KIWI_PROXY, comma separated): the reverse proxy in
+    front of a page. Anyone else could write any address there and slip past a limit per address."""
+    return {x.strip() for x in os.environ.get("KIWI_PROXY", "").split(",") if x.strip()}
+
+
+def client_address(request, none="?"):
+    """Who asks: the address the proxy saw when the request comes through the proxy, else the peer's own."""
+    peer = request.client.host if request.client else ""
+    if peer and peer in proxies():
+        return request.headers.get("x-real-ip") or peer
+    return peer or none
+
+
+def forwarded_allow():
+    """uvicorn's forwarded_allow_ips: the proxy only (127.0.0.1 when none is named)."""
+    return ",".join(sorted(proxies())) or "127.0.0.1"
+
+
 _held = __import__("threading").local()
 
 

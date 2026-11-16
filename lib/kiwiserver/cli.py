@@ -2255,9 +2255,16 @@ def cmd_serve(args):
         from . import web
     except ImportError as e:
         raise KiwiError("serve needs fastapi and uvicorn (%s): the control image has them" % e)
-    util.say("serving %s on http://%s" % (args.fleet, args.listen))
+    tls_dir = None
+    if args.https:          # a page with no proxy in front (the starter): a certificate of its own, made now
+        tls_dir = os.path.join(c.run, "tls")
+        _k, _c, fp = web.self_signed(tls_dir)
+        util.say("serving %s on https://%s (http://%s sends the browser there). Its page's certificate: %s"
+                 % (args.fleet, args.https, args.listen, fp))
+    else:
+        util.say("serving %s on http://%s" % (args.fleet, args.listen))
     sys.stdout.flush()      # into a container's log now: without a terminal the setup code above would wait in a buffer
-    web.serve(c, args.listen)
+    web.serve(c, args.listen, https=args.https, tls_dir=tls_dir)
 
 
 ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
@@ -2384,7 +2391,7 @@ def cmd_signup(args):
         if args.terms_file and os.path.isfile(args.terms_file):
             terms = util.read_text(args.terms_file)
         uvicorn.run(signupmod.make_app(s, brand=args.brand or "", terms=terms), host=host.strip("[]"), port=int(port),
-                    log_level="warning", proxy_headers=True, forwarded_allow_ips="*")
+                    log_level="warning", proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
         return
     if what == "invite":
         print(json.dumps({"code": s.invite(uses=args.uses, days=args.days, note=args.note or "")}))
@@ -3197,7 +3204,8 @@ def cmd_onion(args):
                         % (service, host.name, host.name, ", ".join(sorted(usable)) or "none"))
     if service not in sites:
         raise KiwiError("%s has no site called %s (it has: %s)" % (host.name, service, ", ".join(sites) or "none on the VPN yet"))
-    if role.node_type != "master" and "vpn-client" not in host.modules:
+    at_home = role.node_type == "master" and bool((host.role_settings or {}).get("at_home"))
+    if (role.node_type != "master" or at_home) and "vpn-client" not in host.modules:
         direct = bool(((host.role_settings_raw or {}).get("onion") or {}).get("without_vpn"))
         if not direct:
             raise KiwiError("%s has no VPN client, so its Tor would leave through its own connection, where your internet "
@@ -3814,6 +3822,8 @@ def build_parser():
     s.add_argument("--set-password", action="store_true",
                    help="set the password that opens the store on the control node (from the terminal or stdin)")
     s.add_argument("--wait", action="store_true", help="wait for the fleet and its password instead of ending (the control module)")
+    s.add_argument("--https", metavar="ADDR:PORT",
+                   help="the pages over HTTPS there, with a certificate of their own; --listen then only sends the browser on (the starter)")
     s = sub("adopt", cmd_adopt); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--as", required=True, metavar="USER@ADDR",
                    help="the board's own login (root or a sudo user, a password works), e.g. odroid@192.168.2.40")

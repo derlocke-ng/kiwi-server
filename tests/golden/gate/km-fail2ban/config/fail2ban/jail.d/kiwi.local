@@ -8,9 +8,8 @@ bantime.maxtime = 1w
 findtime = 10m
 maxretry = 5
 banaction = iptables-multiport
-# never: this machine, the mesh, the docker network, home networks (private addresses: who
-# is inside a home is a person of it, as mailcow, SWAG and YunoHost treat them), and what the fleet names
-ignoreip = 127.0.0.1/8 ::1 10.8.0.0/16 172.64.0.0/24 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7 
+# never: this machine, the mesh, the docker network, and what the fleet names
+ignoreip = 127.0.0.1/8 ::1 10.8.0.0/16 172.64.0.0/24 
 
 [sshd]
 enabled  = true

@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.request
 
+from . import util
 from .util import KiwiError
 
 NAME = re.compile(r"^[a-z][a-z0-9_-]{1,31}$")
@@ -339,7 +340,7 @@ def make_app(signup: Signup, brand="", terms=""):
             over_tor=bool(signup.id_onion) and host == signup.id_onion, page_host=host, ways=signup.ways, **kw))
 
     def address(request):
-        return request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+        return util.client_address(request, none="")
 
     @app.get("/")
     def root():

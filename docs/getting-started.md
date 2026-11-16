@@ -51,7 +51,7 @@ a network cable, it does this by itself:
 - A machine that is installed already: it starts that system and says to take
   the stick out.
 
-The installed machine shows where to open its page: `http://kiwi.local`, its
+The installed machine shows where to open its page: `https://kiwi.local`, its
 address, a setup code and a QR code, on its screen. The page asks the questions
 of this chapter and makes the network ([control.md](control.md), "Start a
 network from the page").

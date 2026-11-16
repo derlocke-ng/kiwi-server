@@ -9,7 +9,7 @@ MASTER is its public address (and SSH port), NODE its mesh address, e.g.
     tests/drills/fail2ban.py ~/kiwi/fleet.yaml 5.45.103.177:41022 10.9.0.13 https://paste.dlhost.eu
 
 1. a page that loads a hundred and fifty files at once: nothing refused, nobody banned
-2. a scanner asking for /wp-login.php: banned within seconds, by the node's nginx (403)
+2. a scanner asking for /wp-login.php: banned within seconds, by the node's nginx (the connection is closed)
 3. let out again on the node: the page answers again
 4. the node never bans the network's own addresses: it got the master's list
 5. with --app NAME: a wrong login at that app reaches the jail's file, and the jail's pattern
@@ -92,9 +92,9 @@ try:
     for _ in range(12):
         time.sleep(5)
         code = run(o.master, C + " -o /dev/null -w '%%{http_code}' %s/" % shlex.quote(url))
-        if code == "403":
+        if code == "000":         # nginx closes the connection of a banned address (444): no answer at all
             break
-    say(code == "403", "a scanner is banned, by the node's nginx (%s)" % code)
+    say(code == "000", "a scanner is banned, by the node's nginx (the connection closed: %s)" % code)
     # Tor may have taken another exit since the first request: the address banned is the one the
     # scanner's requests came from, as the node logged them
     scanner = run(o.node, "grep -h 'wp-login.php' /var/home/*/docker/kn-nginx/log/access.log /home/*/docker/kn-nginx/log/access.log "

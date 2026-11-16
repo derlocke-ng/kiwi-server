@@ -519,6 +519,14 @@ setup_code() {      # from this start of the container only: a code of an earlie
         sed -n 's/.*Its setup code: \([0-9a-f]\{4\}-[0-9a-f]\{4\}\).*/\1/p' | tail -n1
 }
 
+fingerprint() {     # the page's certificate of this start, as a browser shows it (the first 8 pairs)
+    local id
+    id=$(systemctl show -p InvocationID --value "$UNIT" 2>/dev/null)
+    [ -n "$id" ] || return 0
+    journalctl -q -o cat "_SYSTEMD_INVOCATION_ID=$id" 2>/dev/null |
+        sed -n "s/.*Its page's certificate: \([0-9A-F:]*\).*/\1/p" | tail -n1 | cut -d: -f1-8
+}
+
 qr() {  # the control image has kiwi-server's QR encoder; text blocks for a terminal
     podman exec kn-control python3 -c 'import sys; from kiwiserver import qr; print(qr.text_blocks(sys.argv[1]))' "$1" 2>/dev/null
 }
@@ -528,13 +536,16 @@ while :; do
     id=$(systemctl show -p InvocationID --value "$UNIT" 2>/dev/null)
     addr=$(address)
     code=$(setup_code)
-    state="$id|$addr|$code"
+    fp=$(fingerprint)
+    state="$id|$addr|$code|$fp"
     if [ "$state" != "$last" ]; then
         lines=("Kiwi Server")
         if [ -z "$addr" ]; then
             lines+=("This machine waits for an address from the router: is the network cable in?")
         else
-            lines+=("Open http://kiwi.local or http://$addr" "on a phone or computer in this home network.")
+            lines+=("Open https://kiwi.local or https://$addr" "on a phone or computer in this home network.")
+            [ -n "$fp" ] && lines+=("The browser warns once: this machine made its own certificate." \
+                                    "It is the right one when it begins $fp")
         fi
         if [ -n "$code" ]; then
             lines+=("Setup code: $code")
@@ -543,7 +554,7 @@ while :; do
         fi
         block=
         if [ -n "$addr" ] && [ -n "$code" ]; then
-            block=$(qr "http://$addr/") || block=
+            block=$(qr "https://$addr/") || block=
             [ -n "$block" ] || state=      # the container is not there yet: try again
         fi
         [ -n "$block" ] && mapfile -t qrl <<< "$block" && lines+=("${qrl[@]}")
@@ -554,17 +565,19 @@ while :; do
 done
 """
 
-PORT80_NFT = """# Kiwi Server starter: port 80 leads to the control page on 8740
+PORT80_NFT = """# Kiwi Server starter: port 80 leads to the control page's redirect on 8740, port 443 to the page on 8743
 table inet kiwi_starter
 delete table inet kiwi_starter
 table inet kiwi_starter {
     chain prerouting {
         type nat hook prerouting priority dstnat; policy accept;
         tcp dport 80 redirect to :8740
+        tcp dport 443 redirect to :8743
     }
     chain output {
         type nat hook output priority -100; policy accept;
         fib daddr type local tcp dport 80 redirect to :8740
+        fib daddr type local tcp dport 443 redirect to :8743
     }
 }
 """
@@ -661,7 +674,9 @@ def control_quadlet(image=CONTROL_IMAGE):
         "Tmpfs=/run/kiwi:size=2g,mode=0700",
         "Environment=XDG_RUNTIME_DIR=/run/kiwi",
         "Environment=KIWI_STARTER=1",       # the fleet's first node is the machine this runs on
-        "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait",
+        # HTTPS with a certificate of its own (made at each start, in RAM): the setup code, the password
+        # and the hoster's sign-in never cross the home network unencrypted; 8740 only sends the browser on
+        "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --https 0.0.0.0:8743 --wait",
         "",
         "[Service]",
         "Restart=always",

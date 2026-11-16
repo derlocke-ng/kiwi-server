@@ -33,6 +33,12 @@ settings:
     label: Network MTU (old name)
     help: "Replaced by wg_mtu and bridge_mtu. A value here is taken as wg_mtu, with a warning; the bridge stays at bridge_mtu. 0: not set."
     default: 0
+  - key: at_home
+    group: Stack
+    type: bool
+    label: A master at home
+    help: "Yes: this master runs at home, behind your router. Its own connection is then your home line, so Tor (the tor and onion parts) runs only through its VPN exit, or where you chose Tor without a VPN. The first questions set it."
+    default: false
   - key: vpn
     group: Stack
     type: bool

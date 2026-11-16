@@ -97,7 +97,7 @@ settings:
   - key: ignore_home
     type: bool
     label: Never ban home networks
-    help: "Private addresses (10.x, 172.16-31.x, 192.168.x, fc00::/7) are never banned: whoever is inside a home is one of its people. Off: only the mesh and the addresses below."
+    help: "On a machine at home, private addresses (10.x, 172.16-31.x, 192.168.x, fc00::/7) are never banned: whoever is inside a home is one of its people. A master never needs it (nobody reaches it from a private address but the mesh). Off: only the mesh and the addresses below."
     default: true
   - key: ratelimit
     type: int

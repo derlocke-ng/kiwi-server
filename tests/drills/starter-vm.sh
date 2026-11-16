@@ -42,7 +42,7 @@ cmd=${1:-all}
 mkdir -p "$w"; cd "$w" || exit 2
 w=$PWD
 OVMF=/usr/share/edk2/ovmf
-P8740=${P8740:-18740}; P80=${P80:-18080}
+P8740=${P8740:-18740}; P80=${P80:-18080}; P8743=${P8743:-18743}
 iso=$w/starter-debug.iso
 image=ghcr.io/derlocke-ng/kiwi-server-control:2
 # kiwi.local asked by another process (a container) on the VM's network, as a phone would ask
@@ -96,7 +96,7 @@ vm() {
         -drive if=none,id=stick,format=raw,readonly=on,file="$iso" -device usb-storage,bus=xhci.0,drive=stick,bootindex=$stick_idx \
         -drive if=none,id=usbdisk,format=raw,file=usb-blank.img -device usb-storage,bus=xhci.0,drive=usbdisk \
         "${disks[@]}" \
-        -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$P8740"-:8740,hostfwd=tcp:127.0.0.1:"$P80"-:80 -device virtio-net-pci,netdev=n0 \
+        -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$P8740"-:8740,hostfwd=tcp:127.0.0.1:"$P80"-:80,hostfwd=tcp:127.0.0.1:"$P8743"-:8743 -device virtio-net-pci,netdev=n0 \
         -display none -chardev socket,id=s0,path=serial0.sock,server=on,wait=off,logfile="$log" -serial chardev:s0 -chardev socket,id=dbg,path=debug.sock,server=on,wait=off -serial chardev:dbg \
         -monitor unix:monitor.sock,server=on,wait=off -daemonize -pidfile qemu.pid
 }
@@ -139,19 +139,29 @@ mdns() {
         podman run --rm --network host -v /run/mdns-probe.py:/probe.py:ro,z --entrypoint python3 $image /probe.py kiwi.local \$a"
 }
 
-page() {    # page PORT: the first-run page, after its redirects
-    curl -s -L -o "page-$1.html" -w '%{http_code} %{url_effective}' --max-time 20 "http://127.0.0.1:$1/"
+page() {    # page PORT: the first-run page over HTTPS (its own certificate), after its redirects
+    curl -sk -L -o "page-$1.html" -w '%{http_code} %{url_effective}' --max-time 20 "https://127.0.0.1:$1/"
+}
+
+sends_on() {    # PORT: plain HTTP there only sends the browser to HTTPS
+    curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "http://127.0.0.1:$1/setup"
 }
 
 up_checks() {   # LOG: the installed system came up with its page and screen
     local log=$1 r
     wait_log "$log" 'Setup code: [0-9a-f]{4}-[0-9a-f]{4}' 1200; check $? "the console shows a setup code ($(grep -aoE 'Setup code: [0-9a-f-]+' "$log" | tail -1))"
-    grep -aqE 'Open http://kiwi.local or http://[0-9.]+' "$log"; check $? "the console shows the address ($(grep -aoE 'or http://[0-9.]+' "$log" | tail -1))"
+    grep -aqE 'Open https://kiwi.local or https://[0-9.]+' "$log"; check $? "the console shows the address ($(grep -aoE 'or https://[0-9.]+' "$log" | tail -1))"
+    grep -aqE 'It is the right one when it begins [0-9A-F]{2}(:[0-9A-F]{2}){7}' "$log"; check $? "the console shows the certificate's fingerprint"
     grep -aq $'▀' "$log"; check $? "the console shows the QR code"
-    r=$(page "$P8740"); say "8740: $r"
-    [[ $r == "200 "*/setup ]] && grep -q 'action="/setup"' "page-$P8740.html"; check $? "port 8740 ends at the first-run page with the questions"
-    r=$(page "$P80"); say "80: $r"
-    [[ $r == "200 "*/setup ]] && grep -q 'action="/setup"' "page-$P80.html"; check $? "port 80 ends at the same page"
+    r=$(page "$P8743"); say "8743: $r"
+    [[ $r == "200 "*/setup ]] && grep -q 'action="/setup"' "page-$P8743.html"; check $? "HTTPS (8743) ends at the first-run page with the questions"
+    fp=$(echo | openssl s_client -connect 127.0.0.1:$P8743 2>/dev/null | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2 | cut -d: -f1-8)
+    grep -aq "begins $fp" "$log"; check $? "the page's certificate is the one the console names ($fp)"
+    r=$(sends_on "$P8740"); say "8740: $r"
+    [[ $r == "308 https://127.0.0.1:8743/setup" ]]; check $? "plain HTTP on 8740 only sends the browser to HTTPS"
+    r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 -H 'Host: kiwi.local' "http://127.0.0.1:$P80/setup")
+    say "80: $r"
+    [[ $r == "308 https://kiwi.local/setup" ]]; check $? "http://kiwi.local only sends the browser to https://kiwi.local (443)"
 }
 
 inspect() {     # LOG: no password, mDNS, a new code after the container restarts
@@ -206,9 +216,9 @@ asks() {    # LOG: the stick asks before it erases the disk, and does nothing fo
 }
 
 # ---- first-node: the page's forms, posted the way its buttons post them ----
-base=http://127.0.0.1:$P8740
+base=https://127.0.0.1:$P8743
 jar=$w/cookies.txt
-csrf() { curl -s -b "$jar" --max-time 20 "$base/" | grep -o 'name="csrf" value="[^"]*"' | head -1 | cut -d'"' -f4; }
+csrf() { curl -sk -b "$jar" --max-time 20 "$base/" | grep -o 'name="csrf" value="[^"]*"' | head -1 | cut -d'"' -f4; }
 job() {     # job ACTION HOST SECONDS: start it as the page's button does, wait for its end, say how it ended
     local loc id n=$3 state=running off=0 r
     loc=$(curl -s -b "$jar" -o /dev/null -w '%{redirect_url}' --max-time 30 --data-urlencode "csrf=$(csrf)" \
@@ -217,7 +227,7 @@ job() {     # job ACTION HOST SECONDS: start it as the page's button does, wait 
     [ -n "$id" ] && [ "$id" != "$loc" ] || { say "    no task was started for $1 $2 ($loc)"; return 1; }
     : > "job-$1-$2.log"
     while [ "$n" -gt 0 ]; do
-        r=$(curl -s -b "$jar" --max-time 20 "$base/api/jobs/$id/log?offset=$off") || r=
+        r=$(curl -sk -b "$jar" --max-time 20 "$base/api/jobs/$id/log?offset=$off") || r=
         state=$(python3 -c 'import json,sys
 try:
     d = json.loads(sys.argv[1]); open(sys.argv[2], "a").write(d["text"]); print(d["state"], d["offset"])
@@ -231,7 +241,7 @@ except Exception:
     return 1
 }
 phase() {   # phase HOST: what the page's list says about it
-    curl -s -b "$jar" --max-time 20 "$base/" > page-home.html
+    curl -sk -b "$jar" --max-time 20 "$base/" > page-home.html
     python3 - "$1" <<'EOF2'
 import re, sys
 html = open("page-home.html").read()
@@ -361,7 +371,7 @@ first-node)
     # a throwaway network: its page password is kept beside the disks, for a look by hand afterwards
     (umask 077; head -c 18 /dev/urandom | base64 | tr -d '/+=' > page-password)
     # 1. the questions
-    curl -s -o page-setup.html --max-time 30 "$base/setup"
+    curl -sk -o page-setup.html --max-time 30 "$base/setup"
     this=$(grep -o 'name="nodes.0.address" value="[0-9.]*"' page-setup.html | cut -d'"' -f4)
     grep -q '<strong>This machine</strong>' page-setup.html && [ "$this" = 10.0.2.15 ]; check $? "the questions list this machine as the first at home, at its address ($this)"
     made=$(curl -s -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
@@ -375,7 +385,7 @@ first-node)
     say "$master: $(phase $master)"; say "$node: $(phase $node)"
     # 2. the master: its install media are made on the machine, fetched, and installed at the provider
     job build $master 1800; check $? "the machine made the master's install media ($(( $(date +%s) - t0 )) s)"
-    curl -s -b "$jar" -o master.iso --max-time 600 "$base/hosts/$master/media"
+    curl -sk -b "$jar" -o master.iso --max-time 600 "$base/hosts/$master/media"
     [ "$(stat -c %s master.iso 2>/dev/null || echo 0)" -gt 100000000 ]; check $? "the install media were fetched from the page ($(( $(stat -c %s master.iso) >> 20 )) MB)"
     python3 - "$here/lib" "$token" "$sid" "$w/master.iso" <<'EOF2'
 import sys, time
@@ -431,7 +441,7 @@ EOF2
         [ "$out" = "1 $node None" ]; check $? "the control part is the node's own, its keys locked until someone logs in ($out)"
     }
     node_checks
-    r=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$base/login"); [ "$r" = 000 ]
+    r=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$base/login"); [ "$r" = 000 ]
     check $? "the starter's page on 8740 is gone ($r)"
     # a power cut right after: the machine is reset hard and must come back as the node. Nothing is
     # typed while it starts (keys on the serial ports would stop its boot menu)
@@ -460,7 +470,7 @@ alone)
     [ -n "$code" ] && kill -0 "$(cat qemu.pid 2>/dev/null)" 2>/dev/null || { say "FAIL run install first: its VM must be running"; exit 1; }
     t0=$(date +%s); rm -f "$jar"
     (umask 077; head -c 18 /dev/urandom | base64 | tr -d '/+=' > page-password)
-    curl -s -o page-setup.html --max-time 30 "$base/setup"
+    curl -sk -o page-setup.html --max-time 30 "$base/setup"
     this=$(grep -o 'name="nodes.0.address" value="[0-9.]*"' page-setup.html | cut -d'"' -f4)
     grep -q 'value="none"' page-setup.html && [ "$this" = 10.0.2.15 ]; check $? "the questions offer 'No master yet' and list this machine ($this)"
     made=$(curl -s -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \

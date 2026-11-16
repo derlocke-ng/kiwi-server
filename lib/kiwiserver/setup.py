@@ -594,6 +594,8 @@ def make(answers, fleet_dir):
             vc["server_regions" if a["exit"] == "windscribe" else "server_countries"] = a.get("exit_country") or "Germany"
         master = {"vpn-client": vc, "vpn-server": {"wg_host": addr}}
     alone = a.get("master_where") == "none"
+    if a.get("master_where") == "home":     # its own connection is the home line: Tor only through a VPN exit there
+        master["at_home"] = True
     hosts = {} if alone else {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master}}
     if a.get("master_where") in providers.PROVIDERS:
         hosts[m]["vps"] = {"provider": a["master_where"]}

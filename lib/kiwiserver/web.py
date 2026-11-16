@@ -20,7 +20,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import VERSION, form as formmod, health as healthmod, providers as providersmod
+from . import VERSION, form as formmod, health as healthmod, providers as providersmod, util
 from .control import ACTIONS, Control
 from .util import KiwiError
 
@@ -1612,7 +1612,7 @@ def make_app(control: Control):
         return control.session(request.cookies.get(COOKIE))
 
     def address(request):
-        return request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+        return util.client_address(request)
 
     def posted(request, csrf):
         """The user, when the form came from one of this session's own pages. Not by the
@@ -1790,16 +1790,18 @@ def make_app(control: Control):
 
     @app.post("/api/join-me")
     async def api_join_me(request: Request):
-        """A starter, taken into a network that exists: its control node sends the code from this
-        machine's screen and the key it will come in with (Control.join_as_starter)."""
+        """A starter, taken into a network that exists: its control node proves it has the code from this
+        machine's screen (without sending it) and sends the key it will come in with (Control.join_as_starter)."""
         try:
             body = await request.json()
         except ValueError:
             body = {}
         try:
-            out = await run_in_threadpool(control.join_as_starter, str(body.get("code") or ""), str(body.get("key") or ""),
+            out = await run_in_threadpool(control.join_as_starter, str(body.get("nonce") or ""), str(body.get("mac") or ""),
+                                          str(body.get("key") or ""),
                                           str(body.get("network") or ""), address(request))
         except KiwiError as e:
+            await asyncio.sleep(1)
             return JSONResponse({"error": str(e)}, status_code=403)
         return out
 
@@ -2774,13 +2776,61 @@ def make_app(control: Control):
     return app
 
 
-def serve(control: Control, listen="127.0.0.1:8740"):
+def self_signed(folder):
+    """A certificate of the page's own (key and certificate in `folder`, which is in RAM), for a page that
+    has no proxy in front: the starter's first run, on the home network. Returns (key, cert, the
+    SHA-256 fingerprint as the browser shows it)."""
+    import subprocess
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    key, cert = os.path.join(folder, "page.key"), os.path.join(folder, "page.crt")
+    r = subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                        "-days", "90", "-subj", "/CN=kiwi.local", "-addext", "subjectAltName=DNS:kiwi.local",
+                        "-keyout", key, "-out", cert], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise KiwiError("no certificate for the page: %s" % (r.stderr.strip().splitlines() or ["openssl failed"])[-1])
+    os.chmod(key, 0o600)
+    fp = subprocess.run(["openssl", "x509", "-in", cert, "-noout", "-fingerprint", "-sha256"], capture_output=True, text=True)
+    return key, cert, fp.stdout.strip().split("=", 1)[-1]
+
+
+def redirect_app(https_port):
+    """Plain HTTP that only sends the browser to the HTTPS page: nothing typed there travels unencrypted."""
+    from fastapi import FastAPI
+    from fastapi.responses import RedirectResponse as Redirect
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.api_route("/{path:path}", methods=["GET", "HEAD", "POST"])
+    def anywhere(request: Request, path: str):
+        host = (request.headers.get("host") or "kiwi.local").strip()
+        name, _, port = host.rpartition(":") if host.count(":") == 1 else (host, "", "")
+        name = name or host
+        # asked on port 80 (no port in the name): HTTPS on 443, which leads to the page; else its own port
+        target = "https://%s%s/%s" % (name, ":%d" % https_port if port else "", path)
+        return Redirect(target, status_code=308)
+    return app
+
+
+def serve(control: Control, listen="127.0.0.1:8740", https=None, tls_dir=None):
+    """The pages on `listen`. With `https` (ADDR:PORT): the pages there, with a certificate of their own,
+    and `listen` only sends the browser on to them."""
     import uvicorn
     host, port = listen.rsplit(":", 1)
     stop = threading.Event()
     threading.Thread(target=control.loop, args=(stop,), daemon=True).start()
     try:
-        uvicorn.run(make_app(control), host=host.strip("[]"), port=int(port), log_level="warning",
-                    proxy_headers=True, forwarded_allow_ips="*")
+        if https:
+            shost, sport = https.rsplit(":", 1)
+            tls_dir = tls_dir or os.path.join(control.run, "tls")
+            key, cert = os.path.join(tls_dir, "page.key"), os.path.join(tls_dir, "page.crt")
+            if not (os.path.isfile(key) and os.path.isfile(cert)):     # made by the caller already, who said its fingerprint
+                key, cert, _fp = self_signed(tls_dir)
+            plain = uvicorn.Server(uvicorn.Config(redirect_app(int(sport)), host=host.strip("[]"), port=int(port),
+                                                  log_level="warning"))
+            threading.Thread(target=plain.run, daemon=True).start()
+            uvicorn.run(make_app(control), host=shost.strip("[]"), port=int(sport), log_level="warning",
+                        ssl_keyfile=key, ssl_certfile=cert, proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
+        else:
+            uvicorn.run(make_app(control), host=host.strip("[]"), port=int(port), log_level="warning",
+                        proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
     finally:
         stop.set()

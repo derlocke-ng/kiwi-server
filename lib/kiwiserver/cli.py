@@ -84,6 +84,10 @@ def static_lan(host):
         return None
 
 
+def has_master(fleet, roles):
+    return any(h.role in roles and roles[h.role].node_type == "master" for h in fleet.hosts.values())
+
+
 class Outputs:
     """Where a host's files go and which of them exist."""
 
@@ -1905,6 +1909,16 @@ def cmd_check(args):
     hosts = sorted({n for _ip, n in records if n.count(".") == 1})
     failed = []
     masters = [h for h in fleet.select(args.hosts) if h.role in roles and roles[h.role].node_type == "master"]
+    if not masters and not has_master(fleet, roles):
+        # a network without a master (docs/design/no-master.md): asked from the machines that answer for the names
+        for h in fleet.select(args.hosts):
+            if h.role in roles and not h.validate(roles):
+                rolesmod.resolve_settings(roles[h.role], h, ms)
+                if "dns" in h.modules:
+                    masters.append(h)
+        if not masters:
+            raise KiwiError("this network has no master, and none of these machines answers for the names (dns): "
+                            "check asks from one that does")
     if not masters:
         raise KiwiError("no master among these hosts: check asks from the master")
     for h in masters:
@@ -2996,6 +3010,8 @@ def _access_facts(args):
     masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"
                and "vpn-server" in (h.modules or [])]
     if len(masters) != 1:
+        if not masters and not has_master(fleet, roles):
+            raise KiwiError("this network has no master yet, so no VPN: who may reach what comes with a master")
         raise KiwiError("access is about the VPN of one master: this fleet has %d with a VPN server" % len(masters))
     master = masters[0]
     groups = (master.module_settings.get("vpn-server") or {}).get("groups") or {}

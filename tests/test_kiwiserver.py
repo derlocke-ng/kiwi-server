@@ -2432,6 +2432,25 @@ class TestSetup(Base):
         self.assertEqual(listed["mango"]["vpn_ip"], "192.168.2.30")               # the home address stands in
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_without_a_master_check_asks_the_names_machine_and_access_says_why_not(self):
+        alone = dict(self.ANSWERS, master_where="none", master_address="",
+                     nodes=[{"name": "mango", "preset": "cloud", "address": "192.168.2.30/16"},
+                            {"name": "quince", "preset": "minimal", "address": "192.168.2.31/16"}])
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(alone))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers)[0], 0)
+        rc, out, err = self.run_cli("access", dest)
+        self.assertIn("no master yet, so no VPN", err)
+        asked = []
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: asked.append(h.name) or "core@x"), \
+                mock.patch.object(remote, "run", lambda tgt, script, **kw: b"dns mango.home 192.168.2.30\n"):
+            rc, out, err = self.run_cli("check", dest)
+        self.assertEqual((rc, asked), (0, ["mango"]), err)                       # the machine with the names
+        rc, out, err = self.run_cli("check", dest, "quince")
+        self.assertIn("none of these machines answers for the names", err)
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
     def test_a_network_without_a_master_gets_one(self):
         """docs/design/no-master.md: `add FLEET master` puts the machines at home back on the VPN."""
         alone = dict(self.ANSWERS, master_where="none", master_address="",
@@ -9150,6 +9169,7 @@ class TestFirstRunPage(StoreBase):
         body = self.ask("/", cookie=cookie)[1]
         self.assertIn("One machine after the other.", body)
         self.assertIn("Without a master: your services at home", body)
+        self.assertNotIn('href="/access"><b>Say who may reach what', body)        # no VPN, no rules for it
         body = self.ask("/devices", cookie=cookie)[1]
         self.assertIn("no master yet, so there is no VPN", body)
         self.assertIn("asks mango for names", body)

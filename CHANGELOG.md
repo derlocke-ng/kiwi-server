@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.152.1 — two writers never break the store
+
+- The encrypted store (`secrets.age`), its list of keys and the control node's `fleet.yaml.age`
+  were written through one shared temporary file. Two commands saving at the same moment (a backup
+  and the control node's own look, say) could leave a store that half of each made, which the
+  recovery key no longer opened, or stop with "No such file". Each writer has its own temporary
+  file now. Found through a test that failed once in CI.
+
 ## 2.152.0 — add a master at netcup from the page
 
 - "Add a master" on Machines (a network without a master) offers "Sign in at netcup and pick it",

@@ -228,7 +228,7 @@ class Store:
                 "the control node's password makes its secret key" if name == "control" else
                 "its secret key is in that computer's keyring")
             lines += ["# %s (%s)" % (name, note), key]
-        tmp = self.recipients + ".tmp"
+        tmp = util.tmp_name(self.recipients)
         with open(tmp, "w") as f:
             f.write("\n".join(lines) + "\n")
         os.chmod(tmp, 0o644)
@@ -332,7 +332,7 @@ class Store:
         return self.exists() and not self.is_open()
 
     def _encrypt(self, data):
-        tmp = self.file + ".tmp"
+        tmp = util.tmp_name(self.file)
         r = subprocess.run([_tool("age"), "-e", "-R", self.recipients, "-o", tmp], input=data, capture_output=True)
         if r.returncode != 0:
             raise KiwiError("age could not encrypt the store: %s" % r.stderr.decode(errors="replace").strip()[:200])

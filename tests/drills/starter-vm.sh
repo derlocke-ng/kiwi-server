@@ -497,8 +497,9 @@ alone)
         say "    containers: $out"
         grep -qw kn-pihole <<< "$out" && grep -qw kn-nginx <<< "$out" && grep -qw kn-control <<< "$out" && ! grep -qw kn-vpn-client <<< "$out"
         check $? "Pi-hole, nginx and the control part run; no VPN client"
-        out=$(sh_vm "getent hosts control.$node.home | awk '{print \$1}' | head -1")
-        [ "$out" = 10.0.2.15 ]; check $? "control.$node.home is its home address ($out)"
+        # what a device at home is told (the machine itself has its own names on 127.0.0.1)
+        out=$(sh_vm "podman exec kn-pihole dig +short +time=3 @127.0.0.1 control.$node.home | tail -1")
+        [ "$out" = 10.0.2.15 ]; check $? "its Pi-hole answers control.$node.home with its home address ($out)"
         out=$(sh_vm "curl -sk -o /dev/null -w '%{http_code}' --max-time 20 --resolve control.$node.home:443:10.0.2.15 https://control.$node.home/login")
         [ "$out" = 200 ]; check $? "the control page opens from the home network ($out)"
     }

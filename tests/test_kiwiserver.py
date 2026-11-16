@@ -5382,6 +5382,29 @@ class TestStore(StoreBase):
         with open(os.path.join(self.secrets, *path)) as fh:
             return fh.read()
 
+    def test_writers_at_the_same_moment_never_break_the_store(self):
+        """Two commands that save the store at once (a backup, and the control node's own look) used
+        one shared temporary file: the store could end up half of each, and the recovery key no
+        longer opened it. Each writer has its own now."""
+        recovery = self.init()
+        errors = []
+
+        def write_and_sync(i):
+            try:
+                write(os.path.join(self.secrets, "t%d" % i), "x" * (2000 + i))
+                store.Store.for_fleet(self.f.path).sync()
+            except KiwiError as e:          # one may refuse ("saved over meanwhile"): never break the file
+                errors.append(str(e))
+        for _round in range(3):
+            threads = [threading.Thread(target=write_and_sync, args=(i,)) for i in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))
+            self.assertIn(b"t7", opened)                                      # what was written is in it
+        self.assertEqual([n for n in os.listdir(self.tmp) if n.endswith(".tmp")], [])
+
     def test_init_moves_secrets_into_the_store(self):
         self.init()
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "secrets.age")))

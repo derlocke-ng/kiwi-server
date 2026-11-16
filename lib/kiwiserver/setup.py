@@ -111,11 +111,52 @@ def free_name(role, taken=()):
     return "%s%d" % (pool[0], n)
 
 
-def add_host(path, name, role, preset="", target=""):
-    """A new host block at the end of the fleet file, written as text so its comments stay."""
+def alone(data):
+    """A fleet's data without a master (docs/design/no-master.md)?"""
+    hosts = (data or {}).get("hosts") or {}
+    return bool(hosts) and not any((h or {}).get("role") == "master" for h in hosts.values())
+
+
+def onto_the_vpn(path):
+    """A network without a master gets one: each machine at home that is off the VPN (`vpn: false`)
+    goes back on it. Its VPN client comes back (`enroll` fetches its config once the master runs)
+    and leads its own module list when it has one. Changed in the text, so comments stay; where
+    the text is laid out otherwise, the file is written from its data. The machines that changed."""
+    import yaml
+    from . import fleettext
+    text = util.read_text(path)
+    data = yaml.safe_load(text) or {}
+    domain = (data.get("defaults") or {}).get("domain") or "home"
+    edits, changed = [], []
+    for name, h in (data.get("hosts") or {}).items():
+        node = (h or {}).get("node")
+        if not isinstance(node, dict) or node.get("vpn") is not False:
+            continue
+        changed.append(name)
+        edits += [(["hosts", name, "node", "vpn"], True),
+                  (["hosts", name, "node", "vpn-client"], {"wireguard_config": "secrets/%s.%s.conf" % (name, domain)})]
+        if isinstance(node.get("modules"), list) and "vpn-client" not in node["modules"]:
+            edits.append((["hosts", name, "node", "modules"], ["vpn-client"] + list(node["modules"])))
+    for keys, value in edits:
+        d = data
+        for k in keys[:-1]:
+            d = d[k]
+        d[keys[-1]] = value
+        if text is not None:
+            text = fleettext.put(text, keys, value)
+    if changed:
+        util.write_text(path, text if text is not None else
+                        yaml.safe_dump(data, sort_keys=False, default_flow_style=False), 0o600)
+    return changed
+
+
+def add_host(path, name, role, preset="", target="", address=""):
+    """A new host block at the end of the fleet file, written as text so its comments stay.
+    `address`: a master's public address or name (its vpn-server.wg_host)."""
     text = util.read_text(path)
     import yaml
     data = yaml.safe_load(text) or {}
+    off = alone(data)       # a network without a master: a new node is off the VPN too
     if name in (data.get("hosts") or {}):
         raise KiwiError("there is already a host called %s" % name)
     if not config._LABEL.match(name):
@@ -126,7 +167,11 @@ def add_host(path, name, role, preset="", target=""):
     if role == "master":
         lines += ["" if target else "    target: debian", "    master:",
                   "      modules: [vpn-server, dns, tor, reverse-proxy]",
-                  "      vpn-server: { wg_host: <its public address or name> }"]
+                  "      vpn-server: { wg_host: %s }" % (address or "<its public address or name>")]
+    elif role == "node" and off:
+        lines += ["    node:", "      preset: %s" % (preset or "minimal"), "      vpn: false",
+                  "    network:", "      dhcp: false",
+                  '      address: ""        # its fixed address at home, like 192.168.1.31/24']
     elif role == "node":
         domain = (data.get("defaults") or {}).get("domain") or "home"
         lines += ["    node:", "      preset: %s" % (preset or "minimal"),
@@ -267,7 +312,8 @@ def questions(found=None):
          "intro": "Kiwi Server builds your own private network: your files, photos and passwords on machines of your "
                   "own, reachable from anywhere through your own VPN. You need three things.",
          "notes": ["A master: the one machine that is reachable from the Internet and that everything connects to. A "
-                   "small rented server for a few euros a month is the usual choice. None of your data is kept on it.",
+                   "small rented server for a few euros a month is the usual choice. None of your data is kept on it. "
+                   "It can come later: until then your services open at home only.",
                    "A machine at home that stays on, for your files: a mini PC or an old laptop. It can come later.",
                    "A USB stick (4 GB or more) for each machine at home, and about an hour.",
                    "Found on this computer: time zone %s, keyboard %s, %s."
@@ -296,17 +342,18 @@ def questions(found=None):
              "options": [{"value": p.id, "label": "A rented server at %s (Kiwi Server installs it for you)" % p.name}
                          for p in providers.PROVIDERS.values()] + [
                 {"value": "vps", "label": "A rented server somewhere else (you start it from the install media)"},
-                {"value": "home", "label": "A machine at home (your router must pass a port on to it)"}]},
+                {"value": "home", "label": "A machine at home (your router must pass a port on to it)"},
+                {"value": "none", "label": "No master yet: my services open at home only (a master can come later)"}]},
             {"id": "provider_server", "label": "Your server there", "type": "lookup", "lookup": "master_where",
              "when": "master_where in %s" % ",".join(providers.PROVIDERS),
              "names": {p.id: p.name for p in providers.PROVIDERS.values()},
              "help": "Sign in at the hoster in your browser. Kiwi Server then lists your servers and takes the address "
                      "of the one you pick; nothing is changed there yet. Without it, type the address below."},
-            {"id": "master_address", "label": "Its address on the Internet", "required": True,
+            {"id": "master_address", "label": "Its address on the Internet", "required": True, "when": "master_where in %s" % ",".join(list(providers.PROVIDERS) + ["vps", "home"]),
              "help": "A rented server: the IPv4 address your hoster shows for it, like 203.0.113.7. At home: a name "
                      "from a dynamic DNS service that points at your router, like myhome.example.org. Your phones and "
                      "machines connect to it."},
-            {"id": "exit", "label": "How your devices reach the Internet on the VPN", "type": "choice", "default": "direct",
+            {"id": "exit", "label": "How your devices reach the Internet on the VPN", "type": "choice", "default": "direct", "when": "master_where in %s" % ",".join(list(providers.PROVIDERS) + ["vps", "home"]),
              "options": [{"value": "direct", "label": "Through the master's own connection (simplest)"}] + [
                 {"value": k, "label": ("Through " + v[0] + " (more private; needs an account there)") if k != "custom" else
                  "Through another VPN provider (its WireGuard config)"} for k, v in EXITS.items()]},
@@ -323,8 +370,8 @@ def questions(found=None):
             {"id": "exit_endpoint", "label": "Server address and port", "required": True, "when": "exit == 'custom'",
              "help": "The Endpoint line under [Peer], like 185.65.135.1:51820. An address, not a name."},
             {"id": "exit_country", "label": "Exit country", "default": "Germany", "when": "exit in mullvad,protonvpn,nordvpn,surfshark,airvpn,windscribe,ivpn,fastestvpn"},
-            {"id": "master_name", "label": "Its name", "default": random.choice(MASTERS), "advanced": True},
-            {"id": "master_disk", "label": "Its disk", "default": "auto", "advanced": True,
+            {"id": "master_name", "label": "Its name", "default": random.choice(MASTERS), "advanced": True, "when": "master_where in %s" % ",".join(list(providers.PROVIDERS) + ["vps", "home"])},
+            {"id": "master_disk", "label": "Its disk", "default": "auto", "advanced": True, "when": "master_where in %s" % ",".join(list(providers.PROVIDERS) + ["vps", "home"]),
              "help": "auto: the install finds the machine's one disk. A device like /dev/vda when it has several. "
                      "Everything on it is erased."}]},
         {"step": "At home", "id": "home",
@@ -353,8 +400,8 @@ def questions(found=None):
          "intro": "Kiwi Server now makes every key and password of your network and keeps them encrypted on this "
                   "computer. You get a recovery key, shown once: write it down. It is the way back in if this "
                   "computer is lost.",
-         "notes": ["After that you get a list of steps, one machine after the other: the master first, then the machines "
-                   "at home, then your phone."],
+         "notes": ["After that you get a list of steps, one machine after the other: the master first (if there is one), "
+                   "then the machines at home, then your phone."],
          "questions": []},
     ]
 
@@ -379,7 +426,17 @@ def check(a):
         if adv and adv[0] == "error":
             bad["domain"] = adv[1]
     addr = str(a.get("master_address") or "").strip()
-    if not addr:
+    if a.get("master_where") == "none":     # a network without a master (yet): docs/design/no-master.md
+        if not [n for n in a.get("nodes") or [] if n.get("address")]:
+            bad["nodes"] = ("Without a master, the network is the machines at home: add one, with its address. "
+                            "Its services answer there.")
+        for i, n in enumerate(a.get("nodes") or []):
+            if not n.get("address"):
+                bad["nodes.%d.address" % i] = "Without a master, each machine needs its fixed address at home."
+            if n.get("preset") == "gateway":
+                bad["nodes.%d.preset" % i] = ("A gateway leads your home into the VPN and out through it: it comes "
+                                              "with a master. Take cloud for now.")
+    elif not addr:
         bad["master_address"] = "The master's address is needed: it is what your phones and machines connect to."
     else:
         try:
@@ -413,7 +470,7 @@ def check(a):
             except ValueError:
                 bad["exit_endpoint"] = "The Endpoint line under [Peer] is needed as an address and port, like 185.65.135.1:51820."
     names = [a.get("master_name") or ""]
-    if not _name_ok(names[0]):
+    if not _name_ok(names[0]) and a.get("master_where") != "none":
         bad["master_name"] = "A name is made of lowercase letters, digits and dashes."
     net = None
     try:
@@ -506,7 +563,7 @@ def make(answers, fleet_dir):
         "tls": {"auto": True, "ca_dir": "secrets/ca", "name_constraints": [domain]},
     }
     m = a["master_name"]
-    addr = str(a["master_address"]).strip()
+    addr = str(a.get("master_address") or "").strip()
     master = {"modules": ["vpn-server", "dns", "tor", "reverse-proxy"], "dns": {"mullvad_socks": False},
               "vpn-server": {"wg_host": addr}}
     if a.get("exit") in EXITS:
@@ -524,7 +581,8 @@ def make(answers, fleet_dir):
         else:   # Windscribe sorts its servers by region, which are countries there
             vc["server_regions" if a["exit"] == "windscribe" else "server_countries"] = a.get("exit_country") or "Germany"
         master = {"vpn-client": vc, "vpn-server": {"wg_host": addr}}
-    hosts = {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master}}
+    alone = a.get("master_where") == "none"
+    hosts = {} if alone else {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master}}
     if a.get("master_where") in providers.PROVIDERS:
         hosts[m]["vps"] = {"provider": a["master_where"]}
         if a.get("provider_server"):    # picked from the hoster's list: the install knows which one
@@ -537,6 +595,11 @@ def make(answers, fleet_dir):
         name = n["name"]
         node = {"preset": n.get("preset") or "cloud",
                 "vpn-client": {"wireguard_config": "secrets/%s.%s.conf" % (name, domain)}}
+        if alone:       # no VPN: its home address stands in, and the first machine answers for the names
+            del node["vpn-client"]
+            node["vpn"] = False
+            if not [x for x in hosts.values() if "dns" in x["node"].get("modules", [])]:
+                node["modules"] = ["dns"] + [x for x in preset_modules(node["preset"]) if x not in ("vpn-client", "dns")]
         if node["preset"] == "gateway":
             node["downloader"] = {"download_dir": n.get("download_dir") or "/home/user/downloads"}
         h = {"role": "node", "target": n.get("target") or "ucore", "disk": n.get("disk") or "auto", "node": node}
@@ -550,7 +613,8 @@ def make(answers, fleet_dir):
                 # `modules` replaces the preset's list, so it is that list and one more
                 h["target"] = "coreos"
                 del h["disk"]
-                node["modules"] = preset_modules(node["preset"]) + ["control"]
+                node["modules"] = (node.get("modules") or [x for x in preset_modules(node["preset"])
+                                                          if not (alone and x == "vpn-client")]) + ["control"]
                 if a.get("lan_gateway"):
                     h["network"]["dns"] = [a["lan_gateway"]]
         hosts[name] = h

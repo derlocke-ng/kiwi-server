@@ -2401,6 +2401,70 @@ class TestSetup(Base):
         self.assertEqual(hosts["mango"]["phase"], "build", hosts["mango"]["next"])
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_no_master_yet_makes_machines_that_answer_at_home(self):
+        """docs/design/no-master.md: no master, no VPN; the first machine answers for the names."""
+        alone = dict(self.ANSWERS, master_where="none", master_address="",
+                     nodes=[{"name": "mango", "preset": "cloud", "address": "192.168.2.30/16"},
+                            {"name": "quince", "preset": "minimal", "address": "192.168.2.31/16"}])
+        from kiwiserver import setup as setupmod
+        self.assertEqual(setupmod.check(alone), {})                               # no master's address asked
+        self.assertIn("nodes.1.address", setupmod.check(dict(alone, nodes=alone["nodes"][:1] + [{"name": "quince", "preset": "cloud"}])))
+        self.assertIn("comes with a master", setupmod.check(dict(alone, nodes=[dict(alone["nodes"][0], preset="gateway")]))["nodes.0.preset"])
+        self.assertIn("nodes", setupmod.check(dict(alone, nodes=[])))
+        questions = {q["id"]: q for st in setupmod.questions(setupmod.detect(probe=False)) for q in st["questions"]}
+        self.assertIn("none", [o["value"] for o in questions["master_where"]["options"]])
+        self.assertFalse(setupmod._when(questions["master_address"], {"master_where": "none"}))
+        self.assertFalse(setupmod._when(questions["exit"], {"master_where": "none"}))
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(alone))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        rc, out, err = self.run_cli("init", dest, "--answers", answers)
+        self.assertEqual(rc, 0, err)
+        hosts = yaml.safe_load(util.read_text(dest))["hosts"]
+        self.assertEqual(sorted(hosts), ["mango", "quince"])                      # no master
+        self.assertEqual(hosts["mango"]["node"]["modules"][0], "dns")             # the first answers for the names
+        self.assertFalse(hosts["quince"]["node"]["vpn"])
+        self.assertNotIn("vpn-client", json.dumps(hosts))
+        rc, out, err = self.run_cli("list", dest, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        listed = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual((listed["mango"]["phase"], listed["quince"]["phase"]), ("build", "build"))   # nothing to enroll
+        self.assertEqual(listed["mango"]["vpn_ip"], "192.168.2.30")               # the home address stands in
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_network_without_a_master_gets_one(self):
+        """docs/design/no-master.md: `add FLEET master` puts the machines at home back on the VPN."""
+        alone = dict(self.ANSWERS, master_where="none", master_address="",
+                     nodes=[{"name": "mango", "preset": "cloud", "address": "192.168.2.30/16"}])
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(alone))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers)[0], 0)
+        with open(dest, "a") as fh:
+            fh.write("  # a comment kept by hand\n")
+        # a node added now is off the VPN too: there is none
+        rc, out, err = self.run_cli("add", dest, "node", "quince")
+        self.assertEqual(rc, 0, err)
+        hosts = yaml.safe_load(util.read_text(dest))["hosts"]
+        self.assertIs(hosts["quince"]["node"]["vpn"], False)
+        self.assertNotIn("vpn-client", hosts["quince"]["node"])
+        self.assertIn("fixed address", err + out)
+        # a master comes: every machine at home goes onto the VPN
+        rc, out, err = self.run_cli("add", dest, "master", "trifle", "--address", "203.0.113.7")
+        self.assertEqual(rc, 0, err)
+        hosts = yaml.safe_load(util.read_text(dest))["hosts"]
+        self.assertEqual(hosts["trifle"]["master"]["vpn-server"]["wg_host"], "203.0.113.7")
+        for n in ("mango", "quince"):
+            self.assertIs(hosts[n]["node"]["vpn"], True)
+            self.assertEqual(hosts[n]["node"]["vpn-client"], {"wireguard_config": "secrets/%s.home.conf" % n})
+        self.assertEqual(hosts["mango"]["node"]["modules"][:2], ["vpn-client", "dns"])
+        self.assertIn("a comment kept by hand", util.read_text(dest))
+        self.assertIn("enroll", err + out)
+        rc, out, err = self.run_cli("list", dest, "--porcelain")
+        listed = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual((listed["trifle"]["phase"], listed["mango"]["phase"]), ("build", "enroll"))
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
     def test_next_sets_a_fresh_machine_up_at_its_address(self):
         answers = os.path.join(self.tmp, "answers.json")
         write(answers, json.dumps(self.ANSWERS))
@@ -2467,7 +2531,7 @@ class TestSetup(Base):
                             "",
                             "", "2", "192.168.1.1", "10.0.0.5", "-",    # a gateway: the router's address, another network, none
                             "n"])
-        self.assertIn("A number from 1 to 3", said)
+        self.assertIn("A number from 1 to 4", said)
         self.assertIn("inside a home network", said)
         self.assertIn("neither an address", said)
         self.assertIn("is your router's address", said)
@@ -9066,6 +9130,29 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.ask("/", cookie=cookie)[0], 200)
         self.c.lock_store()
         self.assertTrue(self.c.login(self.PW))
+
+    def test_no_master_yet_from_the_page(self):
+        """docs/design/no-master.md: the first run without a master; the page then says what that means."""
+        form = {"master_where": "none", "lan_subnet": "192.168.1.0/24", "lan_gateway": "192.168.1.1",
+                "nodes.0.preset": "cloud", "nodes.0.address": "192.168.1.30", "nodes.0.name": "mango"}
+        body = self.ask("/setup", dict(form, **{"nodes.0.address": ""}, password=self.PW, again=self.PW,
+                                       code=self.c.setup_code()))[1]
+        self.assertIn("each machine needs its fixed address at home", body)
+        status, body, cookie = self.ask("/setup", dict(form, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        self.assertIn("AGE-SECRET-KEY-", body)
+        self.assertNotIn("The master first", body)
+        hosts = yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))["hosts"]
+        self.assertEqual(list(hosts), ["mango"])
+        self.assertFalse(hosts["mango"]["node"]["vpn"])
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": "mango", "hostname": "mango.home", "role": "node", "phase": "build", "modules": ["dns", "cloud"],
+             "sites": [], "next": "build it"}]}))
+        body = self.ask("/", cookie=cookie)[1]
+        self.assertIn("One machine after the other.", body)
+        self.assertIn("Without a master: your services at home", body)
+        body = self.ask("/devices", cookie=cookie)[1]
+        self.assertIn("no master yet, so there is no VPN", body)
+        self.assertIn("asks mango for names", body)
 
     def test_the_hoster_is_signed_in_from_the_page_and_its_login_is_sealed(self):
         """"Sign in and pick it": the device login at netcup runs on the machine, the page lists the

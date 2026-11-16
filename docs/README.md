@@ -39,7 +39,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Recovery](design/recovery.md) | what runs by itself when something breaks, and what is planned |
 | [Hidden services](design/onion.md) | services for strangers over Tor, never through a home connection |
 | [The starter image](design/starter.md) | a network from a phone: one image, the rest in a browser |
-| [A network without a master](design/no-master.md) | one machine at home first, a master later (not built) |
+| [A network without a master](design/no-master.md) | one machine at home first, a master later |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
 

@@ -42,6 +42,8 @@ def put(text, path, value):
     at = _block(lines, list(path))
     if at:
         start, end, indent = at
+        while end < len(lines) and lines[end].startswith(" " * indent + "- "):
+            end += 1            # a list written as `- item` lines at the key's own indent belongs to it
         new = _lines(path[-1], value, " " * indent)
         head = lines[start]
         if "#" in head and len(new) == 1 and end == start + 1:      # a comment on its line stays there

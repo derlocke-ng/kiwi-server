@@ -857,8 +857,8 @@ the people who run this network to unlock it.</div>
 .svc .scale b{color:var(--fg);font-weight:600}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin:4px 0 14px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-@media (max-width:640px){.svc .bars span:nth-child(-n+60){display:none}.svc .scale .far{display:none}.svc .scale .near{display:inline}}
 .svc .scale .near{display:none}
+@media (max-width:640px){.svc .bars span:nth-child(-n+60){display:none}.svc .scale .far{display:none}.svc .scale .near{display:inline}}
 </style>
 <h2>Services</h2>
 <div class="legend"><span><i style="background:var(--ok)"></i>worked all day</span><span><i style="background:color-mix(in srgb,var(--ok) 55%,var(--warn))"></i>a short gap</span>

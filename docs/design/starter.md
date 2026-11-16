@@ -147,7 +147,7 @@ back from a copy" on its first-run page with the recovery key ([recovery.md](rec
 | The starter image: build, disk choice, console message, mDNS, the starter key | built: `kiwi-server build --starter`, tried in a VM |
 | A yes before a disk that holds something is erased (keyboard, or a page) | built (2.104.0), tried in a VM |
 | "This machine" as the first node in the page's questionnaire, and its "Set it up" | built (2.107.0), tried in a VM with a rented master and a hard reset after (2.107.1, `starter-vm.sh first-node`) |
-| The hoster's sign-in on the page | to build |
+| The hoster's sign-in on the page | built (2.146.0): "Sign in and pick it" in the first-run questions; the login is sealed with the network, so the master's step installs it |
 | A network without a master | to design: what a node does with no VPN |
 | A waiting machine, taken in from the control page (its address and setup code) | built (2.123.0) |
 | A phone app | later: it talks to the control node's API, as the page does |

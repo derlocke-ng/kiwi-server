@@ -119,6 +119,8 @@ def snapshot(root):
         for here, dirs, files in os.walk(root):
             dirs.sort()
             for name in sorted(dirs + files):
+                if name == ".kiwi-lock":        # a writer's lock (util.dir_lock), not a secret
+                    continue
                 path = os.path.join(here, name)
                 info = tar.gettarinfo(path, arcname=os.path.relpath(path, root))
                 info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, "", ""
@@ -424,19 +426,23 @@ class Store:
         os.symlink(self._tree(), self.link)
 
     def sync(self):
-        """Encrypt what changed. Needs only the public keys, so it works from any command."""
+        """Encrypt what changed. Needs only the public keys, so it works from any command.
+        One at a time (a lock in the open store's RAM): two at once could write the older
+        snapshot last while the digest says the newer one, and a secret written in between
+        never reached secrets.age."""
         if not self.is_open():
             return False
-        data = snapshot(self._tree())
-        digest = hashlib.sha256(data).hexdigest()
-        with open(self._digest_file()) as f:
-            if f.read() == digest:
-                return False
-        self._unchanged_on_disk()
-        self._encrypt(data)
-        with open(self._digest_file(), "w") as f:
-            f.write(digest)
-        return True
+        with util.dir_lock(self.runtime()):
+            data = snapshot(self._tree())
+            digest = hashlib.sha256(data).hexdigest()
+            with open(self._digest_file()) as f:
+                if f.read() == digest:
+                    return False
+            self._unchanged_on_disk()
+            self._encrypt(data)
+            with open(self._digest_file(), "w") as f:
+                f.write(digest)
+            return True
 
     def lock(self):
         self.sync()

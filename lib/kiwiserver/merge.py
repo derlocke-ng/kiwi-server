@@ -47,7 +47,7 @@ def read_tree(root):
     for dp, _dn, fns in os.walk(root):
         for fn in fns:
             p = os.path.join(dp, fn)
-            if os.path.isfile(p) and not os.path.islink(p):
+            if fn != ".kiwi-lock" and os.path.isfile(p) and not os.path.islink(p):     # (a writer's lock)
                 out[os.path.relpath(p, root)] = util.read_bytes(p)
     return out
 

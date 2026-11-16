@@ -19,6 +19,9 @@
   safe when the machine's own disk is not seen.
 - **The starter stick's page shows why an install stopped**: the installer's last lines, for a
   phone that has no console to read them on.
+- **The secret store saves one at a time**: two saves at once could leave the older snapshot on
+  disk while it counted as the newer, so a secret written in between (a new device's key) never
+  reached `secrets.age`. Found by the test 2.152.1 added, failing once in CI.
 
 ## 2.152.4 — looking for a waiting disk no longer gets you banned
 

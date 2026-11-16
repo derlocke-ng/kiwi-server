@@ -73,8 +73,7 @@ def put_tree(fleet_dir, fleet_name, plain, tree):
     for name in plain:
         path = os.path.join(fleet_dir, fleet_name if name == "fleet.yaml" else name)
         if name in tree:
-            util.write_bytes(path + ".tmp", tree[name], 0o600)
-            os.replace(path + ".tmp", path)
+            util.write_bytes(path, tree[name], 0o600)
         elif os.path.isfile(path):
             os.remove(path)
     secrets = os.path.join(fleet_dir, "secrets")
@@ -87,8 +86,7 @@ def put_tree(fleet_dir, fleet_name, plain, tree):
         if os.path.isfile(path) and util.read_bytes(path) == data:
             continue
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-        util.write_bytes(path + ".tmp", data, 0o600)
-        os.replace(path + ".tmp", path)
+        util.write_bytes(path, data, 0o600)
 
 
 def _pack(tree):
@@ -116,8 +114,7 @@ def save_base(fleet_dir, st, tree):
     """What both sides hold now, for the next time they differ."""
     path = os.path.join(fleet_dir, BASE)
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    util.write_bytes(path + ".tmp", storemod.encrypt_bytes(st.recipients, _pack(tree)), 0o600)
-    os.replace(path + ".tmp", path)
+    util.write_bytes(path, storemod.encrypt_bytes(st.recipients, _pack(tree)), 0o600)
 
 
 def load_base(fleet_dir, identity):

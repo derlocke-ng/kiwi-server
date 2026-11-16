@@ -5382,6 +5382,34 @@ class TestStore(StoreBase):
         with open(os.path.join(self.secrets, *path)) as fh:
             return fh.read()
 
+    @unittest.skipUnless(have("openssl"), "openssl not installed")
+    def test_certificates_made_at_the_same_moment_belong_together(self):
+        """Renders at once (the control node's look, an apply, the page) once could make two CAs, or keep
+        one's key with the other's certificate. One at a time per CA folder now."""
+        from kiwiserver import certs
+        ca = os.path.join(self.tmp, "ca")
+        got, errors = [], []
+
+        def make():
+            try:
+                got.append(certs.ensure_host_cert(ca, "mango.home"))
+            except Exception as e:      # noqa: BLE001
+                errors.append(repr(e))
+        threads = [threading.Thread(target=make) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len({k for k, _f in got}), 1)
+        key, full = got[0]
+        r = subprocess.run(["openssl", "verify", "-CAfile", os.path.join(ca, "kiwiCA.pem"), os.path.join(os.path.dirname(full), "cert.pem")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)                  # signed by the one CA there is
+        mod = lambda args: subprocess.run(["openssl"] + args, capture_output=True, text=True).stdout   # noqa: E731
+        self.assertEqual(mod(["rsa", "-noout", "-modulus", "-in", key]),
+                         mod(["x509", "-noout", "-modulus", "-in", os.path.join(os.path.dirname(full), "cert.pem")]))
+
     def test_writers_at_the_same_moment_never_break_the_store(self):
         """Two commands that save the store at once (a backup, and the control node's own look) used
         one shared temporary file: the store could end up half of each, and the recovery key no
@@ -5401,8 +5429,12 @@ class TestStore(StoreBase):
                 t.start()
             for t in threads:
                 t.join()
-            opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))
-            self.assertIn(b"t7", opened)                                      # what was written is in it
+            opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))   # never broken
+            self.assertTrue(opened)
+        store.Store.for_fleet(self.f.path).sync()       # a refused one is saved by the next: all of it is there
+        opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))
+        for i in range(8):
+            self.assertIn(b"t%d" % i, opened)
         self.assertEqual([n for n in os.listdir(self.tmp) if n.endswith(".tmp")], [])
 
     def test_init_moves_secrets_into_the_store(self):

@@ -11,6 +11,36 @@ import warnings
 from kiwimodules.util import KiwiError, b64, deep_merge, read_bytes, read_text  # noqa: E402,F401
 
 
+_held = __import__("threading").local()
+
+
+def dir_lock(d):
+    """One writer at a time in folder `d`, across processes and threads (flock on d/.kiwi-lock).
+    The same thread may take it again inside (a certificate that makes the CA first)."""
+    import contextlib
+    import fcntl
+
+    @contextlib.contextmanager
+    def held():
+        key = os.path.realpath(d)
+        mine = getattr(_held, "dirs", None)
+        if mine is None:
+            mine = _held.dirs = set()
+        if key in mine:
+            yield
+            return
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        fd = os.open(os.path.join(d, ".kiwi-lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            mine.add(key)
+            yield
+        finally:
+            mine.discard(key)
+            os.close(fd)
+    return held()
+
+
 def tmp_name(path):
     """A temporary name beside `path` that no other process or thread writing `path` at the same
     moment uses: two writers on one shared ".tmp" interleave, and the one renamed last may be

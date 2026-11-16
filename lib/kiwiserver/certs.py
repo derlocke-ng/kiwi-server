@@ -29,7 +29,7 @@ def _openssl(args, **kw):
         raise KiwiError("openssl %s failed: %s" % (args[0], (e.stderr or "").strip().splitlines()[-1:]))
 
 
-def ensure_ca(ca_dir, days=DAYS, name_constraints=()):
+def _ensure_ca(ca_dir, days=DAYS, name_constraints=()):
     """kiwiCA.key / kiwiCA.pem in ca_dir, created on first use. With name
     constraints the CA can only sign names under the given domains — a
     stolen kiwiCA.key is then worthless for anything else, which matters
@@ -66,10 +66,10 @@ def cert_valid(pem_path, min_days=30):
     return r.returncode == 0
 
 
-def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=()):
+def _ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=()):
     """(privkey.pem, fullchain.pem) for hostname and *.hostname, reused while
     they exist, cover the names and have more than 30 days left."""
-    ca_key, ca_pem = ensure_ca(ca_dir, ca_days, name_constraints)
+    ca_key, ca_pem = _ensure_ca(ca_dir, ca_days, name_constraints)
     d = os.path.join(ca_dir, "hosts", hostname)
     key = os.path.join(d, "privkey.pem")
     full = os.path.join(d, "fullchain.pem")
@@ -99,7 +99,7 @@ def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constr
     return key, full
 
 
-def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), own=False):
+def _ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), own=False):
     """(privkey.pem, fullchain.pem) for exactly these names, kept under hosts/<label>: reused
     while they exist, cover the names and have more than 30 days left. For names that are
     not a machine's own, like the addresses of its hidden services. `own`: signed by itself,
@@ -121,7 +121,7 @@ def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_c
         os.chmod(key + ".tmp", 0o600)
         os.replace(key + ".tmp", key)
         return key, full
-    ca_key, ca_pem = ensure_ca(ca_dir, ca_days, name_constraints)
+    ca_key, ca_pem = _ensure_ca(ca_dir, ca_days, name_constraints)
     key, full, crt = os.path.join(d, "privkey.pem"), os.path.join(d, "fullchain.pem"), os.path.join(d, "cert.pem")
     if os.path.isfile(key) and os.path.isfile(full) and os.path.isfile(crt) \
             and cert_valid(crt) and set(cert_names(crt)) == set(names):
@@ -143,3 +143,22 @@ def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_c
         if os.path.exists(f):
             os.unlink(f)
     return key, full
+
+
+def ensure_ca(ca_dir, days=DAYS, name_constraints=()):
+    """The fleet's CA (_ensure_ca), made by one command at a time: two at once made two CAs."""
+    with util.dir_lock(ca_dir):
+        return _ensure_ca(ca_dir, days, name_constraints)
+
+
+def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=()):
+    """A machine's certificate (_ensure_host_cert), one command at a time per CA folder: two at once
+    could keep the key of one with the certificate of the other."""
+    with util.dir_lock(ca_dir):
+        return _ensure_host_cert(ca_dir, hostname, days, ca_days, name_constraints)
+
+
+def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), own=False):
+    """A certificate for these names (_ensure_names_cert), one command at a time per CA folder."""
+    with util.dir_lock(ca_dir):
+        return _ensure_names_cert(ca_dir, label, names, days, ca_days, name_constraints, own)

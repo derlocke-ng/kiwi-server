@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.152.2 — certificates made one at a time
+
+- The fleet's CA and the machines' certificates are made by one command at a time per CA folder
+  (a lock there). Two renders at once (the control node's look, an apply, the page) could make two
+  CAs, keep one certificate's key with another's certificate, or stop with "No such file".
+
 ## 2.152.1 — two writers never break the store
 
 - The encrypted store (`secrets.age`), its list of keys and the control node's `fleet.yaml.age`

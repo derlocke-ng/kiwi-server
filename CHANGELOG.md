@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.139.4 — the docs' commands are checked
+
+- A test reads every `kiwi-server …` line in the README and docs/ and checks that the command
+  exists and takes the flags shown (57 lines today, all right). The docs are what a newcomer types.
+- kiwi-modules 0.60.4: the games catalog says all ten games were started from it and listened.
+
 ## 2.139.3 — Minecraft Bedrock as it runs now
 
 - kiwi-modules 0.60.3: Bedrock's catalog entry follows its current networking (TCP 19132 and a UDP

@@ -1548,8 +1548,9 @@ def cmd_notify(args):
     master = next((h for h in fleet.hosts.values() if h.role == "master"), None)
     door = str(((master.cfg.get("master") or {}).get("vpn-server") or {}).get("wg_host") or "") if master else ""
     outside = {s for s, _n, _a in sites if not s.endswith(ending)}
-    answers = health.probe([s for s, _n, _a in sites], **({"at": {s: door for s in outside}} if door and outside else {}))
-    services = [{"site": s, "host": n, "admin": a, "ok": answers[s][0], "public": s in outside} for s, n, a in sites]
+    took = {}
+    answers = health.probe([s for s, _n, _a in sites], took=took, **({"at": {s: door for s in outside}} if door and outside else {}))
+    services = [{"site": s, "host": n, "admin": a, "ok": answers[s][0], "public": s in outside, "ms": took.get(s)} for s, n, a in sites]
     if services and not any(x["ok"] for x in services):
         # not one answers: this computer is not on the network (its names do not open from here),
         # so nothing is known about the services, and nothing is said about them

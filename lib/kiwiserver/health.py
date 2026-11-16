@@ -27,6 +27,7 @@ SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "p
             "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "jabber": "Jabber", "auth": "Authenticator (2FAuth)", "paste": "Pastebin", "ffsync": "Firefox Sync", "xmpp": "Jabber (public)", "pay": "Payments (BTCPay Server)",
             "status": "Status page"}
 KEEP_DAYS = 30
+HISTORY_DAYS = 90       # the bars of the status page: one a day, as status pages show it
 KEEP_INCIDENTS = 200
 
 
@@ -64,16 +65,21 @@ def probe_one(site, timeout=6, at=None):
         return False, str(getattr(e, "reason", e))[:80]
 
 
-def probe(sites, timeout=6, workers=8, one=probe_one, again=2, sleep=time.sleep, at=None):
+def probe(sites, timeout=6, workers=8, one=probe_one, again=2, sleep=time.sleep, at=None, took=None):
     """{site: (answers, what it said)} for every site, asked side by side. One that does not
     answer is asked once more a moment later: a single lost question is not a service that is down.
-    `at`: {site: address} for the names to ask at an address of their own (see probe_one)."""
+    `at`: {site: address} for the names to ask at an address of their own (see probe_one).
+    `took`: a dict that gets how long each answer took, in milliseconds."""
     sites, at = list(sites), at or {}
     if not sites:
         return {}
 
     def ask(s):
-        return one(s, timeout, at[s]) if s in at else one(s, timeout)
+        t0 = time.monotonic()
+        r = one(s, timeout, at[s]) if s in at else one(s, timeout)
+        if took is not None:
+            took[s] = int((time.monotonic() - t0) * 1000)
+        return r
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         out = dict(zip(sites, pool.map(ask, sites)))
         silent = [s for s in sites if not out[s][0]]
@@ -156,7 +162,48 @@ def update(state, machines, services, happened, now, after=600):
                          "public": bool(s.get("public")),      # open to the Internet: the public status page shows these
                          "since": old.get("since", now) if old.get("ok") == ok else now})
         state["services"] = rows
+        record_days(state, rows, {s["site"]: s.get("ms") for s in services}, now)
     return events
+
+
+def _day(t):
+    return time.strftime("%Y-%m-%d", time.localtime(t))
+
+
+def record_days(state, rows, ms, now):
+    """Each service's day: how often it was asked, how often it answered, how fast (the bars
+    and the uptime of the status page). Kept for HISTORY_DAYS."""
+    days = state.setdefault("days", {})
+    today = _day(now)
+    for r in rows:
+        d = days.setdefault(r["site"], {}).setdefault(today, [0, 0, 0, 0])
+        d[0] += 1
+        d[1] += 1 if r["ok"] else 0
+        if r["ok"] and ms.get(r["site"]) is not None:
+            d[2] += int(ms[r["site"]])
+            d[3] += 1
+    oldest = _day(now - HISTORY_DAYS * 86400)
+    for site in list(days):
+        for day in [k for k in days[site] if k <= oldest]:
+            del days[site][day]
+        if not days[site]:
+            del days[site]
+
+
+def history(state, site, now, n=HISTORY_DAYS):
+    """The last n days of one service, oldest first: [{day, pct (None: not asked), ms}],
+    and its uptime over those days (None when it was never asked)."""
+    known = (state.get("days") or {}).get(site) or {}
+    out, asked, answered = [], 0, 0
+    for i in range(n - 1, -1, -1):
+        day = _day(now - i * 86400)
+        c = known.get(day)
+        if c and c[0]:
+            asked, answered = asked + c[0], answered + c[1]
+            out.append({"day": day, "pct": 100.0 * c[1] / c[0], "ms": c[2] // c[3] if c[3] else None})
+        else:
+            out.append({"day": day, "pct": None, "ms": None})
+    return out, (100.0 * answered / asked if asked else None)
 
 
 def message(events, network=""):
@@ -181,12 +228,19 @@ def public(state, now=None, strangers=False):
     machines, and of what was wrong only what was wrong with those services."""
     now = now or time.time()
     rows = [s for s in state.get("services") or [] if not s.get("admin") and (s.get("public") or not strangers)]
+    shown = []
+    for s in rows:
+        bars, uptime = history(state, s["site"], now)
+        last = next((b["ms"] for b in reversed(bars) if b["ms"] is not None), None)
+        shown.append(dict(s, bars=bars, uptime=uptime, ms=last))
+    rows = shown
     names = ["(%s)" % s["site"] for s in rows]
     return {
         "checked": state.get("checked") or 0,
         "services": sorted(rows, key=lambda s: (s["ok"], s["label"], s["site"])),
         "machines": {} if strangers else state.get("machines") or {},
-        "incidents": [dict(i, text=re.sub(r" \([^)]*\)$", "", i["text"])) for i in reversed(state.get("incidents") or [])
+        "incidents": [dict(i, text=re.sub(r" \([^)]*\)$", "", i["text"]), when=time.strftime("%d %b, %H:%M", time.localtime(i["from"])))
+                      for i in reversed(state.get("incidents") or [])
                       if (i["to"] or now) > now - 7 * 86400 and (not strangers or any(n in i["text"] for n in names))][:20],
         "window": "" if strangers else state.get("window") or "",
         "strangers": strangers,

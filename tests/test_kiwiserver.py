@@ -6170,6 +6170,28 @@ peers=4 3
         self.assertEqual(f["encryption"], "bound")
         self.assertFalse([n for n in notes if "disk" in n])
 
+    def test_the_status_page_keeps_ninety_days_of_each_service(self):
+        from kiwiserver import health
+        now = time.mktime((2026, 11, 16, 12, 0, 0, 0, 0, -1))
+        state = {}
+        rows = [{"site": "paste.example.org", "host": "medlar", "admin": False, "ok": True, "public": True, "ms": 120}]
+        health.update(state, [{"name": "medlar", "ok": True, "problems": []}], rows, [], now - 100 * 86400)  # too old to keep, later
+        for k in range(3):                                   # three looks today, one of them without an answer
+            health.update(state, [{"name": "medlar", "ok": True, "problems": []}], [dict(rows[0], ok=(k != 1))], [], now + k * 600)
+        health.update(state, [{"name": "medlar", "ok": True, "problems": []}], rows, [], now - 86400)      # yesterday
+        bars, uptime = health.history(state, "paste.example.org", now + 1800)
+        self.assertEqual(len(bars), 90)
+        self.assertEqual(bars[-1]["day"], "2026-11-16")
+        self.assertAlmostEqual(bars[-1]["pct"], 200 / 3)
+        self.assertEqual(bars[-2]["pct"], 100.0)
+        self.assertIsNone(bars[0]["pct"])                                       # not asked: no colour
+        self.assertAlmostEqual(uptime, 75.0)                                    # 3 of 4 looks over the days kept
+        self.assertEqual(bars[-1]["ms"], 120)
+        self.assertNotIn(time.strftime("%Y-%m-%d", time.localtime(now - 100 * 86400)), state["days"]["paste.example.org"])
+        shown = health.public(state, now + 1800, strangers=True)["services"][0]
+        self.assertEqual(len(shown["bars"]), 90)
+        self.assertEqual(shown["ms"], 120)
+
     def test_status_text_and_probe_come_apart(self):
         human, data = facts.split("applied: x\n%s\nuptime=1\n" % facts.MARK)
         self.assertEqual((human, data), ("applied: x\n", "uptime=1\n"))
@@ -7763,7 +7785,8 @@ class TestWeb(StoreBase):
         # the page for the Internet: the services open to it, and nothing of the rest
         code, body = self.ask("/status/public")
         self.assertEqual(code, 200)
-        for words in ("Everything works", "How the services are", "chat.example.org", "Chat does not answer", "for 10 minutes"):
+        for words in ("Everything works", "How the services are", "chat.example.org", "Chat does not answer", "for 10 minutes",
+                      'class="bars"', "90 days ago", "not checked yet"):
             self.assertIn(words, body)
         for words in ("papaya", "Nextcloud", "Vaultwarden", "machines answer", "Sun 03:30", "csrf", "Log out"):
             self.assertNotIn(words, body)

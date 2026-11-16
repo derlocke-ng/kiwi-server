@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.136.0 — Paperless signs people in with the network's accounts; passwords over Tor work
+
+- `kiwi-server accounts FLEET connect HOST paperless`, and Connect on the Accounts page: Paperless
+  (kiwi-modules 0.58.0) offers "Sign in with accounts" after the next apply of that machine.
+- Over Tor, setting the password at the accounts' page failed with 403: the browser dropped Kanidm's
+  cookie, made for the usual name. Hidden services now hand cookies the hidden address (kiwi-modules
+  0.58.1). The sign-up page over Tor offers a password only: a passkey belongs to the usual name.
+- Drills: `sso-browser.py --paperless`; `join-tor.py` waits as long as Tor needs and shows where it
+  stopped.
+
 
 
 

@@ -2085,7 +2085,7 @@ def make_app(control: Control):
                 error = error or str(e)
         connectable = [{"host": h["name"], "module": m, "label": label,
                         "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-%s.json" % (h["name"], m)))}
-                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"))
+                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"))
                        if m in (h.get("modules") or [])]
         return page("accounts.html", request, "/accounts", available=available, connectable=connectable, jabber=jabber, people=sorted(people, key=lambda p: p["name"]),
                     invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
@@ -2135,8 +2135,9 @@ def make_app(control: Control):
                 control.accounts("delete", name.strip().lower(), user=u)
                 return accounts_page(request)
             if what == "connect":
-                module = note.strip() if note.strip() in ("git", "cloud") else "git"
-                label = {"git": "Forgejo", "cloud": "Nextcloud"}[module]
+                labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless"}
+                module = note.strip() if note.strip() in labels else "git"
+                label = labels[module]
                 control.accounts("connect", name.strip(), module, user=u)
                 return accounts_page(request, shown={"title": "%s on %s is connected" % (label, name.strip()), "value": "kiwi-server apply %s" % name.strip(),
                                                      "text": "Apply that machine now (Machines, %s, Apply): then its %s signs people in with these accounts." % (name.strip(), label),

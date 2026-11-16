@@ -35,6 +35,17 @@ services:
       - PAPERLESS_FILENAME_FORMAT={{ filename_format }}
       - PAPERLESS_FILENAME_FORMAT_REMOVE_NONE=true
 {% endif %}
+{% if accounts_client %}
+      # the network's accounts: "Sign in with accounts"; a person's first sign-in makes their user
+      - PAPERLESS_APPS=allauth.socialaccount.providers.openid_connect
+      - {{ ("PAPERLESS_SOCIALACCOUNT_PROVIDERS=" ~ ({"openid_connect": {"APPS": [{"provider_id": "accounts", "name": "accounts",
+           "client_id": accounts_client, "secret": accounts_secret, "settings": {"server_url": accounts_issuer}}]}} | tojson)) | tojson }}
+      - PAPERLESS_SOCIAL_AUTO_SIGNUP=true
+      - PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS=true
+{% if ca_cert_dir %}
+      - REQUESTS_CA_BUNDLE=/usr/src/paperless/kiwi-ca-bundle.pem
+{% endif %}
+{% endif %}
 {% if office_documents %}
       - PAPERLESS_TIKA_ENABLED=1
       - PAPERLESS_TIKA_ENDPOINT=http://{{ container_prefix }}-paperless-tika:9998
@@ -56,6 +67,10 @@ services:
       - {{ store_path }}/media:/usr/src/paperless/media:z
       - {{ store_path }}/export:/usr/src/paperless/export:z
       - {{ consume_path }}:/usr/src/paperless/consume:z
+{% if accounts_client and ca_cert_dir %}
+      - {{ ca_cert_dir }}:/kiwi-ca:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-paperless/init:/custom-cont-init.d:ro,z
+{% endif %}
 
   {{ container_prefix }}-paperless-redis:
     image: {{ redis_image }}

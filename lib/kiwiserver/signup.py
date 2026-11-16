@@ -278,7 +278,7 @@ keep the link you get until you have set your password{% endif %}.{% if onion %}
 {% if made.address %}<p class="big">{{ made.address }}</p>
 {% if made.password %}<p>Its password, shown this once: <b class="big">{{ made.password }}</b><br><span class="muted small">Sign in with it in your app, then change it there.</span></p>
 {% else %}<p>Sign in with it and your password in your app.</p>{% endif %}
-{% else %}<p>Set its password (or a passkey) now. The link works for a day, once:</p>
+{% else %}<p>Set its password{% if not over_tor %} (or a passkey){% endif %} now. The link works for a day, once:</p>{% if over_tor %}<p class="small">Over Tor a password is the way: a passkey belongs to the network's usual name ({{ id_host }}).</p>{% endif %}
 <p><a class="btn primary link" href="{{ made.link }}">Set my password</a></p>{% endif %}
 <p class="muted small">Lost {{ "the password" if made.address else "it" }}? The people who run this network can help.</p></div>
 {% elif asked %}<div class="card"><h2 style="margin-top:0">Your request is waiting</h2>

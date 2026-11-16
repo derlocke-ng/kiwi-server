@@ -1,0 +1,5 @@
+#!/bin/sh
+# kiwi-server: the accounts' page has a certificate of the fleet's CA. Paperless asks it with Python's
+# requests, which trusts its own list only: this list is the system's and the fleet's CA together
+# (REQUESTS_CA_BUNDLE). Paperless runs scripts in /custom-cont-init.d as root before it starts.
+cat /etc/ssl/certs/ca-certificates.crt /kiwi-ca/kiwiCA.crt > /usr/src/paperless/kiwi-ca-bundle.pem

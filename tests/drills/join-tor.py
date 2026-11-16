@@ -22,9 +22,9 @@ import time
 
 fleet, master, mport, onion = sys.argv[1:5]
 fd = os.path.dirname(os.path.abspath(fleet))
-SSH = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=10",
-       "-o", "UserKnownHostsFile=" + os.path.join(fd, "secrets", "known_hosts"), "-i", os.path.join(fd, "secrets", "admin_ed25519"),
-       "-p", mport, "core@" + master]
+OPTS = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=10",
+        "-o", "UserKnownHostsFile=" + os.path.join(fd, "secrets", "known_hosts"), "-i", os.path.join(fd, "secrets", "admin_ed25519"), "-p", mport]
+SSH = OPTS + ["core@" + master]
 PORT = random.randint(20000, 29000)
 up = """D=$(mktemp -d); mkdir -p $D/data
 printf 'SocksPort 127.0.0.1:9152\\nDataDirectory /data\\n' > $D/torrc
@@ -38,7 +38,8 @@ podman logs kiwi-drill-tor-j 2>&1 | grep -c 'Bootstrapped 100'
 ready = subprocess.run(SSH + ["sudo sh -s"], input=up, capture_output=True, text=True, timeout=400).stdout.strip()
 if not ready or ready.splitlines()[-1] == "0":
     sys.exit("drill: Tor on the master did not get ready")
-tunnel = subprocess.Popen(SSH + ["-N", "-L", "127.0.0.1:%d:127.0.0.1:9152" % PORT])
+# ssh's own options go before the host: after it they would be a command for the master
+tunnel = subprocess.Popen(OPTS + ["-N", "-L", "127.0.0.1:%d:127.0.0.1:9152" % PORT, "core@" + master])
 code = json.loads(subprocess.run(["kiwi-server", "accounts", fleet, "invite", "--note", "tor drill"], capture_output=True,
                                  text=True, check=True).stdout.strip().splitlines()[-1])["code"]
 name = "tor%s" % secrets.token_hex(3)
@@ -60,6 +61,10 @@ with sync_playwright() as p:
         "network.proxy.socks_remote_dns": True, "network.dns.blockDotOnion": False,
         "dom.securecontext.allowlist_onions": True, "network.http.referer.hideOnionSource": True})
     pg = b.new_page()
+    log = out.setdefault("log", [])
+    pg.on("console", lambda m: log.append("console %s: %s" % (m.type, m.text[:200])))
+    pg.on("requestfailed", lambda r: log.append("failed %s %s" % (r.method, r.url.split("?")[0][-80:])))
+    pg.on("response", lambda r: r.status >= 400 and log.append("%d %s %s" % (r.status, r.request.method, r.url.split("?")[0][-80:])))
     go(pg, "http://%s/" % onion); out["front_door"] = pg.url
     pg.screenshot(path="/shots/tor-1-join.png")
     pg.fill("#i-code", code); pg.fill("#i-name", name); pg.click("form[action='/join/invite'] button")
@@ -68,17 +73,27 @@ with sync_playwright() as p:
     link = pg.get_attribute("a.link", "href") or ""
     out["link"] = link.split("?")[0]
     go(pg, link)
-    pg.get_by_text("Add Password").click(); pg.wait_for_timeout(2000)
-    pg.fill("#new-password", pw); pg.fill("#new-password-check", pw)
-    pg.get_by_role("button", name="Submit").click(); pg.wait_for_timeout(3000)
-    pg.get_by_role("button", name="Save Changes").click(); pg.wait_for_timeout(4000)
-    pg.screenshot(path="/shots/tor-3-saved.png")
-    q = b.new_context().new_page()
-    go(q, "http://%s/ui/login" % onion)
-    q.fill("input[name=username], #username", name); q.keyboard.press("Enter"); q.wait_for_timeout(4000)
-    q.fill("input[type=password]", pw); q.keyboard.press("Enter"); q.wait_for_timeout(6000)
-    q.screenshot(path="/shots/tor-4-signed-in.png")
-    out["signed_in"] = "Sign out" in q.inner_text("body"); out["at"] = q.url.split("/")[2]
+    T = 120000  # Tor: every step may take a while
+    try:
+        pg.get_by_text("Add Password").click(timeout=T)
+        pg.wait_for_selector("#new-password", timeout=T)
+        pg.fill("#new-password", pw); pg.fill("#new-password-check", pw)
+        pg.get_by_role("button", name="Submit").click(timeout=T)
+        pg.get_by_role("button", name="Save Changes").click(timeout=T)
+        pg.wait_for_timeout(6000)
+        pg.screenshot(path="/shots/tor-3-saved.png")
+        q = b.new_context().new_page()
+        go(q, "http://%s/ui/login" % onion)
+        q.fill("input[name=username], #username", name, timeout=T); q.keyboard.press("Enter")
+        q.wait_for_selector("input[type=password]", timeout=T)
+        q.fill("input[type=password]", pw); q.keyboard.press("Enter")
+        q.get_by_text("Sign out").first.wait_for(timeout=T)
+        q.screenshot(path="/shots/tor-4-signed-in.png")
+        out["signed_in"] = True; out["at"] = q.url.split("/")[2]
+    except Exception as e:
+        out["error"] = str(e).splitlines()[0][:160]
+        for i, page in enumerate(b.contexts[-1].pages if b.contexts else []):
+            page.screenshot(path="/shots/tor-fail-%d.png" % i)
     b.close()
 print(json.dumps(out))
 '''
@@ -104,6 +119,10 @@ try:
     except (ValueError, IndexError):
         res = {}
         print((r.stderr or r.stdout)[-1500:])
+    if res.get("error"):
+        print("   stopped at: " + res["error"])
+        for line in res.get("log", [])[-15:]:
+            print("   " + line.replace(onion, "<onion>"))
     say(res.get("front_door", "").endswith("/join"), "the onion address opens the sign-up page")
     say(res.get("link", "").startswith("http://%s/ui/reset" % onion), "the password link stays on Tor: %s" % res.get("link", "").replace(onion, "<onion>"))
     say(res.get("signed_in") and res.get("at") == onion, "the person signs in over Tor")

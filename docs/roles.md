@@ -278,7 +278,9 @@ strangers should sign up.
   `connect <host> immich`; its admin page stays editable, kiwi sets only the sign-in
   part of its settings, and the phone app signs in the same way.
 - **Over Tor** a person sets a password at the accounts' page; a passkey belongs to
-  the usual name and does not work at the hidden address.
+  the usual name and does not work at the hidden address. A service opened as a
+  hidden service sends "Sign in with accounts" to the accounts' usual name: that
+  works over Tor only when the accounts have a public name.
 - **On the control page, Accounts** shows the requests to accept or deny, makes
   invite codes, and makes accounts and new password links; `kiwi-server accounts
   <fleet> …` does the same from a terminal.

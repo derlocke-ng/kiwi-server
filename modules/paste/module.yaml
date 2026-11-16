@@ -44,6 +44,8 @@ nginx:
     name: privatebin
     server: "{{ container_prefix }}-paste:8080"
   server_name: "{{ paste_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'paste.' ~ hostname if paste_domain else '' }}"
   # usable as a hidden service: its page was tried through Tor
   onion: true
   site: paste

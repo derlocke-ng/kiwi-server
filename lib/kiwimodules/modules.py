@@ -714,6 +714,8 @@ class Renderer:
                          # answers at the machine's mesh address only: see mesh_only_names
                          "mesh_only": bool(self.expand(str(e.get("mesh_only") or ""), ctx, what).strip()),
                          "server_name": self.expand(e["server_name"], ctx, what),
+                         # its name on the VPN, when it has a public one: that name sends the browser on (301)
+                         "alias": self.expand(str(e.get("alias") or ""), ctx, what).strip(),
                          "proxy_pass": proxy_pass,
                          "websocket": bool(e.get("websocket", False)),
                          "hsts": None if hsts is None else bool(hsts),   # None: the module setting decides
@@ -752,7 +754,7 @@ class Renderer:
         ordered = self.ms.resolve(spec.modules, spec.node_type)
         base = self.base_context(spec, ordered)
         _upstreams, servers = self.nginx_blocks(spec, ordered, base)
-        return [s["server_name"] for s in servers]
+        return [s["server_name"] for s in servers] + [s["alias"] for s in servers if s["alias"] and s["alias"] != s["server_name"]]
 
     def admin_names(self, spec):
         """The names among service_names that are admin pages (`admin: true` in a module's

@@ -3,6 +3,20 @@
 
 
 
+
+## 2.127.0 — accounts with a sign-up page, the look of monitoring tools, one name per service
+
+- **Accounts for the public** (kiwi-modules 0.52.0, module `accounts`, [Accounts](docs/roles.md#accounts)):
+  Kanidm keeps the network's people; `kiwi-server signup` is its sign-up page at `/join`, with
+  invite codes and requests the people who run the network accept, and a link to set the password
+  instead of an email. Chosen over Authentik after a test on a node: 59 MB against 800
+  (docs/design/public-services.md).
+- **The pages look like monitoring tools now** (as Checkmate does): a darker, quieter palette,
+  small capitals over the numbers, the services as a table with each one's last 90 days, how much of
+  the time it worked, how fast it answers and where it is open (VPN, Internet, Tor).
+- **A service with a public name keeps its VPN name**, which sends the browser on to the public one.
+- Drills: `accounts-spike.sh`, `accounts-browser.py` (a real browser sets a password and signs in).
+
 ## 2.126.0 — a status page like the others, every VPN provider
 
 - **The status page shows each service's last 90 days**: a bar a day, green when it worked all

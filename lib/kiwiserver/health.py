@@ -25,7 +25,7 @@ SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "p
             "opencloud": "Files (OpenCloud)", "dl": "Downloads (Transmission)", "jd": "Downloads (JDownloader)",
             "wg": "VPN devices (wg-easy)", "control": "This page", "backup": "Backup store", "cache": "Local cache",
             "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "jabber": "Jabber", "auth": "Authenticator (2FAuth)", "paste": "Pastebin", "ffsync": "Firefox Sync", "xmpp": "Jabber (public)", "pay": "Payments (BTCPay Server)",
-            "status": "Status page"}
+            "status": "Status page", "id": "Accounts"}
 KEEP_DAYS = 30
 HISTORY_DAYS = 90       # the bars of the status page: one a day, as status pages show it
 KEEP_INCIDENTS = 200

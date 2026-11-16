@@ -1,0 +1,85 @@
+#!/bin/sh
+# The network's accounts on {{ hostname }} (Kanidm), for kiwi-server and its sign-up page:
+#   accounts.sh create NAME [DISPLAY NAME]   a new account; prints the link that sets its password
+#   accounts.sh reset NAME                   a new link for an account (a lost password)
+#   accounts.sh list                         the accounts, one JSON object a line
+#   accounts.sh delete NAME
+#   accounts.sh jabber NAME on|off           whether Jabber takes this account (LDAP)
+#   accounts.sh setup                        the rules for everyone, and the sign-up page's token (every apply)
+# Each call takes the admin over afresh (its password is never kept: a new one each time) and
+# runs Kanidm's own command line in a container that is gone afterwards.
+set -eu
+rt={{ runtime }}
+url=https://{{ container_ip }}:8443
+link=https://{{ id_host }}/ui/reset?token=
+tools={{ tools_image }}
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT; chmod 700 "$work"
+pw=$($rt exec {{ container_prefix }}-accounts kanidmd recover-account idm_admin -c /config/server.toml 2>&1 |
+     grep -o 'new_password[^,}]*' | sed 's/new_password[": ]*//; s/"//g' | tr -d ' \n')
+[ -n "$pw" ] || { echo "accounts: Kanidm did not give its admin over (is it running?)" >&2; exit 1; }
+k() { $rt run --rm --network host -e KANIDM_URL=$url -e KANIDM_SKIP_HOSTNAME_VERIFICATION=true -e KANIDM_ACCEPT_INVALID_CERTS=true \
+          -e KANIDM_NAME=idm_admin -e RUST_LOG=error ${KANIDM_PASSWORD:+-e KANIDM_PASSWORD} -v "$work:/root:z" "$tools" kanidm "$@" </dev/null; }
+KANIDM_PASSWORD=$pw; export KANIDM_PASSWORD
+k login >/dev/null 2>&1 || { echo "accounts: the admin could not log in to Kanidm" >&2; exit 1; }
+unset KANIDM_PASSWORD
+# the rules for everyone, set again when the settings change: what a person needs to sign in,
+# how long a password is at least, and (Jabber) that LDAP takes the same password as the pages
+policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }}"
+mark={{ docker_dir }}/{{ container_prefix }}-accounts/data/.kiwi-policy
+if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
+    k group account-policy enable idm_all_persons >/dev/null 2>&1 || true
+    k group account-policy credential-type-minimum idm_all_persons {{ 'mfa' if second_factor else 'any' }} >/dev/null 2>&1
+    k group account-policy password-minimum-length idm_all_persons {{ password_min_length }} >/dev/null 2>&1
+{% if ldap %}
+    if ! k group get jabber 2>&1 | grep -q "name: jabber"; then
+        k group create jabber >/dev/null 2>&1; k group posix set jabber >/dev/null 2>&1
+    fi
+    k group account-policy enable jabber >/dev/null 2>&1 || true
+    k group account-policy allow-primary-cred-fallback jabber true >/dev/null 2>&1
+{% endif %}
+    printf '%s' "$policy" > "$mark"
+fi
+token() {   # the link's token, out of what Kanidm prints
+    k person credential create-reset-token "$1" --ttl "${2:-86400}" 2>/dev/null | grep -o 'token=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2
+}
+name_ok() { echo "$1" | grep -Eq '^[a-z][a-z0-9_-]{1,31}$' || { echo "accounts: a name is 2-32 lowercase letters, digits, - and _" >&2; exit 2; }; }
+case "${1:-}" in
+    create)
+        name_ok "$2"
+        k person create "$2" "${3:-$2}" >/dev/null 2>&1 || { echo "accounts: $2 exists already" >&2; exit 3; }
+        t=$(token "$2"); printf '{"name": "%s", "link": "%s%s"}\n' "$2" "$link" "$t" ;;
+    reset)
+        name_ok "$2"; t=$(token "$2")
+        [ -n "$t" ] || { echo "accounts: no account $2" >&2; exit 3; }
+        printf '{"name": "%s", "link": "%s%s"}\n' "$2" "$link" "$t" ;;
+    list)       # a JSON list of the accounts as Kanidm says them
+        k person list -o json 2>/dev/null | grep '^\[' || echo "[]" ;;
+    delete)
+        name_ok "$2"
+        k person delete "$2" 2>&1 | grep -q "deleted" || { echo "accounts: no account $2" >&2; exit 3; }
+        printf '{"name": "%s", "deleted": true}\n' "$2" ;;
+    jabber)
+        name_ok "$2"
+        if ! k group get jabber 2>&1 | grep -q "^name: jabber\|name: jabber"; then
+            k group create jabber >/dev/null 2>&1; k group posix set jabber >/dev/null 2>&1
+        fi
+        if [ "${3:-on}" = on ]; then k person posix set "$2" >/dev/null 2>&1; k group add-members jabber "$2" >/dev/null 2>&1
+        else k group remove-members jabber "$2" >/dev/null 2>&1; fi
+        k group get jabber 2>/dev/null | grep -q "member: $2@" && on=on || on=off
+        printf '{"name": "%s", "jabber": "%s"}\n' "$2" "$on" ;;
+    setup)
+        # the sign-up page's own service account: it may make people and their links, nothing else
+        tok={{ docker_dir }}/{{ container_prefix }}-accounts/signup/token
+        if [ ! -s "$tok" ]; then
+            k service-account get kiwi-signup 2>&1 | grep -q "name: kiwi-signup" ||
+                k service-account create kiwi-signup "Sign-up page" idm_admins >/dev/null 2>&1
+            k group add-members idm_people_admins kiwi-signup >/dev/null 2>&1
+            new=$(k service-account api-token generate kiwi-signup "sign-up page" --readwrite 2>/dev/null | grep -o 'ey[A-Za-z0-9._-]*' | head -1)
+            [ -n "$new" ] || { echo "accounts: Kanidm gave the sign-up page no token" >&2; exit 1; }
+            mkdir -p "${tok%/*}"; umask 077; printf '%s' "$new" > "$tok"
+            $rt restart {{ container_prefix }}-signup >/dev/null 2>&1 || true
+        fi
+        echo '{"setup": "done"}' ;;
+    *)
+        sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

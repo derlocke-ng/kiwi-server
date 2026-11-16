@@ -381,6 +381,20 @@ http {
 {% endfor %}
     }
 {% endfor %}
+{% for s in servers if s.alias and s.alias != s.server_name %}
+
+    # {{ s.comment }}: its name on the VPN, which sends the browser on to its public name
+    server {
+        listen {{ '443 ssl' if via else tls_listen }};
+        http2 on;
+        server_name {{ s.alias }};
+{% if public_names and not via %}
+        allow {{ mesh_subnet }};
+        deny all;
+{% endif %}
+        return 301 https://{{ s.server_name }}$request_uri;
+    }
+{% endfor %}
 {% for s in servers if (onion or {}).get(s.server_name) %}
 
     # {{ s.comment }}, as a hidden service: Tor hands it over on this port, which only the stack reaches

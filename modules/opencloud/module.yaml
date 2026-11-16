@@ -50,6 +50,8 @@ nginx:
     name: opencloud
     server: "{{ container_prefix }}-opencloud:9200"
   server_name: "{{ opencloud_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'opencloud.' ~ hostname if opencloud_domain else '' }}"
   proxy_pass: "http://opencloud"
   websocket: true
   client_max_body_size: "0"

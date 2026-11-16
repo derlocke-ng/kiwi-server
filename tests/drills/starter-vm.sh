@@ -29,6 +29,9 @@
 #              makes it the node off the VPN: nginx, Pi-hole and the control part, no VPN client;
 #              the names answer with its home address, the control page opens from the home network;
 #              then a hard reset. Touches no server
+#   up         the VM of `install`, still running: the page and screen checks again (after `code`)
+#   handshake  the VM of `install`, still running: taken in as a network would, with a wrong code,
+#              the right one and once more; the answer's proof and host keys checked
 #   stop       kill the VM this script started (by its pid)
 #
 # WORKDIR (default ~/kiwi-vm/starter) keeps the ISO, the disks, serial-*.log and qemu.pid.
@@ -356,6 +359,46 @@ code)
     kill "$srv" 2>/dev/null; rm -f code.tgz
     say "$out"
     [[ $out == "$(sed -n 's/^VERSION=//p' "$here/kiwi.manifest") /opt/kiwi-server/"* ]]; check $? "the VM's control part runs this checkout's code"
+    ;;
+up)     # the VM of `install`, still running (after `code`, say): its page and screen checked again
+    up_checks "${2:-serial-install.log}"
+    ;;
+handshake)  # the VM of `install`, still running: taken in as a network would (Control.join_as_starter)
+    log=${2:-serial-install.log}
+    code=$(grep -aoE 'Setup code: [0-9a-f]{4}-[0-9a-f]{4}' "$log" | tail -1 | cut -d' ' -f3)
+    rm -f hs-key hs-key.pub; ssh-keygen -q -t ed25519 -N '' -C kiwi-drill -f hs-key
+    ours=$(sh_vm 'cat /etc/ssh/ssh_host_*_key.pub' | awk '/^(ssh-|ecdsa-)/ { print $1" "$2 }' | LC_ALL=C sort)
+    out=$(python3 - "https://127.0.0.1:$P8743/api/join-me" "$code" "$(cat hs-key.pub)" <<'EOF'
+import hashlib, hmac, json, os, ssl, sys, urllib.error, urllib.request
+url, code, key = sys.argv[1:4]
+mac = lambda c, *p: hmac.new(c.encode(), "\x1f".join(p).encode(), hashlib.sha256).hexdigest()
+ctx = ssl._create_unverified_context()
+def ask(c):
+    nonce = os.urandom(16).hex()
+    body = {"nonce": nonce, "key": key, "network": "drill", "mac": mac(c, "kiwi-join-1", nonce, "drill", key)}
+    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=60) as r:
+            return nonce, r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return nonce, e.code, json.load(e)
+_, st, a = ask("0000-0000")
+print("WRONG", st, a.get("error", ""))
+nonce, st, a = ask(code)
+good = st == 200 and hmac.compare_digest(a.get("mac", ""), mac(code, "kiwi-join-2", nonce, "\n".join(a.get("host_keys", [])), a.get("hostname", "")))
+print("RIGHT", st, "proof-ok" if good else "proof-BAD", a.get("hostname", ""))
+for k in sorted(a.get("host_keys", []), key=lambda x: x.encode()):
+    print("KEY", k)
+_, st, a = ask(code)
+print("AGAIN", st, a.get("error", ""))
+EOF
+)
+    printf '%s\n' "$out" | grep -v '^KEY' | sed 's/^/    /'
+    grep -q '^WRONG 403 that is not the code' <<< "$out"; check $? "a wrong code is refused, and nothing comes back"
+    grep -q '^RIGHT 200 proof-ok' <<< "$out"; check $? "the right code: the answer carries the stick's proof of the code"
+    [ -n "$ours" ] && [ "$(sed -n 's/^KEY //p' <<< "$out")" = "$ours" ]; check $? "the host keys it sent are the VM's own ($(wc -l <<< "$ours"))"
+    sh_vm 'cat /home/core/.ssh/authorized_keys' | grep -q 'kiwi-drill$'; check $? "the network's key is let in"
+    grep -q '^AGAIN 403 .*already' <<< "$out"; check $? "a second take-in is refused"
     ;;
 first-node)
     sid=${FN_SERVER:-}; addr=${FN_ADDRESS:-}; token=${FN_TOKEN:-}

@@ -81,9 +81,9 @@ case "${1:-}" in
         fi
         shift 2
         pkce=off
-        for url in "$@"; do
-            if [ "$url" = --pkce ]; then pkce=on
-            else k system oauth2 add-redirect-url "$c" "$url" >/dev/null 2>&1 || true; fi
+        for cb in "$@"; do                      # (not $url: that is Kanidm's own address)
+            if [ "$cb" = --pkce ]; then pkce=on
+            else k system oauth2 add-redirect-url "$c" "$cb" >/dev/null 2>&1 || true; fi
         done
         k system oauth2 update-scope-map "$c" idm_all_persons openid email profile groups >/dev/null 2>&1
         k system oauth2 prefer-short-username "$c" >/dev/null 2>&1 || true

@@ -4721,6 +4721,14 @@ class TestRemote(Base):
         def __init__(self, rc=0, out=b"", err=b""):
             self.returncode, self.stdout, self.stderr = rc, out, err
 
+    def test_a_command_that_stops_without_a_word_is_not_called_an_ssh_failure(self):
+        with self.assertRaisesRegex(KiwiError, r"core@a: the command there stopped \(exit status 101\)"):
+            remote.run("core@a", "false", runner=lambda argv, input=None, capture_output=True: self.R(101))
+        with self.assertRaisesRegex(KiwiError, r"core@a: ssh failed"):
+            remote.run("core@a", "true", runner=lambda argv, input=None, capture_output=True: self.R(255))
+        with self.assertRaisesRegex(KiwiError, r"core@a: accounts: no account x"):
+            remote.run("core@a", "x", runner=lambda argv, input=None, capture_output=True: self.R(3, err=b"accounts: no account x\n"))
+
     def test_target_run_and_put(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
         self.assertEqual(remote.target(f.hosts["a"]), "core@a.kiwi")

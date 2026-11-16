@@ -181,7 +181,9 @@ def shows_key_from(address, port, known_hosts, runner=subprocess.run):
 
 def _fail(where, r):
     text = (r.stderr or b"").decode(errors="replace")
-    lines = text.strip().splitlines() or ["ssh failed"]
+    # ssh itself fails with 255; anything else is the command there, which may stop without a word
+    lines = text.strip().splitlines() or ["ssh failed" if r.returncode == 255 else
+                                          "the command there stopped (exit status %d) without saying why" % r.returncode]
     if "REMOTE HOST IDENTIFICATION HAS CHANGED" in text or "Host key verification failed" in text:
         host = where.rsplit("@", 1)[-1]
         # CoreOS: the initramfs answers on the system's port, with a key of its own

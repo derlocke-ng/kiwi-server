@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.139.1 — connecting a service works; a silent stop is called one
+
+- `accounts connect` (kiwi-modules 0.60.2): the accounts script lost Kanidm's address after the first
+  callback and stopped; Immich's three callbacks found it.
+- A command on a machine that stops without a message is no longer reported as "ssh failed": it says
+  that it stopped, with its exit status.
+
 ## 2.139.0 — Connect in the app; connecting works again
 
 - The app's Accounts… has "Services that sign people in with these accounts", with Connect, as the

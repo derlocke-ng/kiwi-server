@@ -1,0 +1,9 @@
+[Unit]
+Description=fail2ban on {{ hostname }}: the network's own addresses, looked at every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

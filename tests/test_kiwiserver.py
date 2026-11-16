@@ -1954,7 +1954,7 @@ class TestModules(Base):
         self.assertIn("short='mullvad.kiwi'", script)
         self.assertIn("dir='/home/user/docker/km-pihole/mullvad-socks'", script)
         self.assertEqual(sorted(b.units), ["km-mullvad-socks.service", "km-mullvad-socks.timer", "km-pihole-blocklist.service",
-                                           "km-pihole-blocklist.timer", "kn-sshd-log.service"])
+                                           "km-pihole-blocklist.timer", "kn-fail2ban-own.service", "kn-fail2ban-own.timer", "kn-sshd-log.service"])
         self.assertIn("ExecStart=/usr/bin/bash /home/user/docker/kiwi/mullvad-socks.sh", b.units["km-mullvad-socks.service"])
         self.assertIn("TimeoutStartSec=", b.units["km-mullvad-socks.service"])
         self.assertIn("Unit=km-mullvad-socks.service", b.units["km-mullvad-socks.timer"])
@@ -1963,7 +1963,7 @@ class TestModules(Base):
         full = rolesmod.render_script(host, role, VERSION, bundle=b)
         units = re.search(r"^KS_STACK_UNITS=\((.*)\)$", full, re.M).group(1).replace("'", "").split()
         self.assertEqual(sorted(units), ["km-mullvad-socks.service", "km-mullvad-socks.timer", "km-pihole-blocklist.service",
-                                         "km-pihole-blocklist.timer", "kn-sshd-log.service"])
+                                         "km-pihole-blocklist.timer", "kn-fail2ban-own.service", "kn-fail2ban-own.timer", "kn-sshd-log.service"])
         self.assertIn("'kiwi/mullvad-socks.sh:0755'", full)
 
     def test_mullvad_socks_records_are_opt_in_elsewhere(self):
@@ -1981,7 +1981,7 @@ class TestModules(Base):
         self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["km-pihole"]["environment"]))
         self.assertNotIn("mullvad", "\n".join(b.compose["services"]["km-pihole"]["volumes"]))
         self.assertEqual(sorted(b.units), ["km-pihole-blocklist.service", "km-pihole-blocklist.timer",
-                                           "kn-sshd-log.service"])          # the blocklist's, and fail2ban's from the master preset
+                                           "kn-fail2ban-own.service", "kn-fail2ban-own.timer", "kn-sshd-log.service"])          # the blocklist's, and fail2ban's from the master preset
         self.assertFalse([f for f in b.files if "mullvad" in f])
         self.assertFalse([d for d in b.dirs if "mullvad" in d])
         node = self.node_gw()
@@ -2013,7 +2013,7 @@ class TestModules(Base):
         m = self.master(); m["dns"]["mullvad_socks_url"] = ""; m["dns"]["mullvad_socks"] = False
         host, role, spec = self.spec("gate", role="master", **{"master": m})
         self.assertEqual(sorted(modmod.Renderer(self.ms).render(spec).units),
-                         ["km-pihole-blocklist.service", "km-pihole-blocklist.timer", "kn-sshd-log.service"])
+                         ["km-pihole-blocklist.service", "km-pihole-blocklist.timer", "kn-fail2ban-own.service", "kn-fail2ban-own.timer", "kn-sshd-log.service"])
 
     def test_a_secret_is_never_echoed_by_a_pattern_error(self):
         from kiwiserver import schema

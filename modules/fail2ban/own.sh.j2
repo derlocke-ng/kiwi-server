@@ -1,0 +1,22 @@
+#!/bin/sh
+# fail2ban on {{ hostname }}: the addresses this network's own machines reach the master from (their
+# WireGuard endpoints: a home's public address) are never banned. Someone at home who tests, or many
+# devices behind that one address, would otherwise lock the whole home out of the public names. Run
+# every minute by kn-fail2ban-own.timer; it changes something only when the addresses change.
+rt={{ runtime }}
+machines=" {{ mesh_ips | join(' ') }} "
+now=$($rt exec {{ container_prefix }}-vpn-server wg show wg0 dump 2>/dev/null | awk 'NR > 1 { split($4, a, "/"); split($3, e, ":"); print a[1], e[1] }' |
+      while read -r mesh ip; do case "$machines" in *" $mesh "*) [ "$ip" != "(none)" ] && echo "$ip" ;; esac; done | sort -u | tr '\n' ' ')
+# a restarted fail2ban forgets what it was told: its start time is part of what is remembered
+now="$now@$($rt inspect -f '{% raw %}{{.State.StartedAt}}{% endraw %}' {{ container_prefix }}-fail2ban 2>/dev/null)"
+was=$(cat /run/kiwi-fail2ban-own 2>/dev/null)
+[ "$now" = "$was" ] && exit 0
+# one call into the container: every jail, every address, never banned and let out
+printf '%s\n' "${now%@*}" | $rt exec -i {{ container_prefix }}-fail2ban sh -c '
+    read -r ips
+    for j in $(fail2ban-client status | sed -n "s/.*Jail list:[[:space:]]*//p" | tr "," " "); do
+        for ip in $ips; do
+            fail2ban-client set "$j" addignoreip "$ip" >/dev/null 2>&1
+            fail2ban-client set "$j" unbanip "$ip" >/dev/null 2>&1
+        done
+    done' && printf '%s' "$now" > /run/kiwi-fail2ban-own

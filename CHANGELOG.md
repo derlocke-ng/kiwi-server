@@ -14,6 +14,13 @@
 
 
 
+
+## 2.135.0 — signing up over Tor
+
+- The accounts as a hidden service (`kiwi-server onion <fleet> id.<machine> --anyway`): someone who
+  comes to the sign-up page over Tor gets a password link and a way to sign in that stay on Tor
+  (kiwi-modules 0.57.0, `kiwi-server signup --id-onion`).
+
 ## 2.134.0 — Accounts in the app
 
 - **The app has Accounts…** in its menu, as the control page has: the requests to accept or deny, invite

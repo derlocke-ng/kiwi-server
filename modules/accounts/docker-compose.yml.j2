@@ -25,7 +25,8 @@ services:
     container_name: {{ container_prefix }}-signup
     restart: unless-stopped
     command: ["signup", "serve", "--state", "/state", "--kanidm", "https://{{ container_prefix }}-accounts:8443",
-              "--token-file", "/state/token", "--id-host", "{{ id_host }}", "--brand", "{{ brand or domain }}",
+              "--token-file", "/state/token", "--id-host", "{{ id_host }}", "--id-onion", "{{ (onion or {}).values() | first | default('') }}",
+              "--brand", "{{ brand or domain }}",
               "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
     networks:
       {{ network_name }}: {}

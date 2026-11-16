@@ -2294,13 +2294,15 @@ def cmd_signup(args):
     if what == "serve":
         os.makedirs(args.state, mode=0o700, exist_ok=True)
         util.write_text(conf, json.dumps({"kanidm": args.kanidm, "token_file": args.token_file, "id_host": args.id_host,
-                                          "ejabberd": ejabberd, "ways": ways}) + "\n", 0o600)
+                                          "ejabberd": ejabberd, "ways": ways, "id_onion": args.id_onion}) + "\n", 0o600)
     elif not args.kanidm and not ejabberd and os.path.isfile(conf):
         c = json.loads(util.read_text(conf))
         args.kanidm, args.token_file, args.id_host = c.get("kanidm", ""), c.get("token_file", ""), c.get("id_host", "")
         ejabberd, ways = c.get("ejabberd"), c.get("ways") or ways
+        args.id_onion = args.id_onion or c.get("id_onion", "")
     s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "",
-                         ejabberd=ejabberd, invites="invites" in ways, requests="requests" in ways, captcha="captcha" in ways)
+                         ejabberd=ejabberd, invites="invites" in ways, requests="requests" in ways, captcha="captcha" in ways,
+                         id_onion=args.id_onion or "")
     if what == "serve":
         import uvicorn
         host, _, port = args.listen.rpartition(":")
@@ -3718,6 +3720,7 @@ def build_parser():
     s.add_argument("--ejabberd", default="", metavar="JSON",
                    help='Jabber addresses instead: {"<page name>": {"api": "http://…:5281/api", "host": "<Jabber domain>", "onion": "…"}}')
     s.add_argument("--ways", default="", help="invites,requests,captcha: the ways to an account the page offers")
+    s.add_argument("--id-onion", default="", help="the accounts' hidden service: links stay on Tor for who came over Tor")
     s.add_argument("--uses", type=int, default=1, help="invite: how many accounts the code makes")
     s.add_argument("--days", type=int, default=14, help="invite: how long the code is good")
     s.add_argument("--note", default="", help="invite: for whom (shown on the control page)")

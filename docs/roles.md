@@ -271,9 +271,12 @@ strangers should sign up.
   apply of that machine: "Sign in with accounts", and a person's first sign-in makes
   their Forgejo user. The same for Nextcloud with `connect <host> cloud`: "Log in with
   accounts", next to the admin's own password. Paperless: `connect <host> paperless`.
-  Vaultwarden: `connect <host> vault`, then "Use single sign-on"; the person still
+  Vaultwarden: `connect <host> vault`, then "Use single sign-on" (the email it asks
+  first is only a hint: the account comes from the sign-on); the person still
   sets a master password, which unlocks the vault and never leaves their device. A
-  vault user made earlier with an email and password stays as it is.
+  vault user made earlier with an email and password stays as it is. Immich:
+  `connect <host> immich`; its admin page stays editable, kiwi sets only the sign-in
+  part of its settings, and the phone app signs in the same way.
 - **Over Tor** a person sets a password at the accounts' page; a passkey belongs to
   the usual name and does not work at the hidden address.
 - **On the control page, Accounts** shows the requests to accept or deny, makes

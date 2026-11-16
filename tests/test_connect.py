@@ -16,6 +16,8 @@ class TestConnectable(unittest.TestCase):
         self.assertEqual(names["cloud"], ("cloud.papaya.home", "/apps/user_oidc/code"))
         self.assertEqual(names["paperless"], ("paperless.papaya.home", "/accounts/oidc/accounts/login/callback/"))
         self.assertEqual(names["vault"], ("vault.papaya.home", "/identity/connect/oidc-signin"))
+        self.assertEqual(names["immich"], ("immich.papaya.home", ("/auth/login", "/user-settings", "/api/oauth/mobile-redirect")))
+        self.assertEqual(cli.PKCE, {"immich"})
 
     def test_a_vault_with_its_own_address_is_found_there(self):
         h = types.SimpleNamespace(hostname="papaya.home")

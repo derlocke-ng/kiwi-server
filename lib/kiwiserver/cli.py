@@ -2208,7 +2208,12 @@ CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." +
                "paperless": ("Paperless", lambda s, h: s.get("paperless_domain") or "paperless." + h.hostname,
                              "/accounts/oidc/accounts/login/callback/"),
                "vault": ("Vaultwarden", lambda s, h: (s.get("vault_domain") or "").split("://")[-1].strip("/") or "vault." + h.hostname,
-                         "/identity/connect/oidc-signin")}
+                         "/identity/connect/oidc-signin"),
+               # Immich: its web page twice, and the page that hands the phone app its answer
+               "immich": ("Immich", lambda s, h: s.get("immich_domain") or "immich." + h.hostname,
+                          ("/auth/login", "/user-settings", "/api/oauth/mobile-redirect"))}
+# the services that send a PKCE challenge themselves: Kanidm keeps checking it for them
+PKCE = {"immich"}
 
 
 def accounts_file(fleet, host, module):
@@ -2257,11 +2262,14 @@ def cmd_accounts(args):
         rolesmod.resolve_settings(roles[target.role], target, ms)
         if module not in target.modules:
             raise KiwiError("%s does not run %s" % (target.name, module))
-        label, site, callback = CONNECTABLE[module]
+        label, site, callbacks = CONNECTABLE[module]
         name = site(target.module_settings.get(module) or {}, target)
         client = "%s-%s" % (module, target.name)
+        words = [client, "%s on %s" % (label, target.name), "https://" + name]
+        words += ["https://" + name + c for c in ((callbacks,) if isinstance(callbacks, str) else callbacks)]
+        words += ["--pkce"] if module in PKCE else []
         cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); sudo sh \"$S\" oauth %s"
-               % " ".join(shlex.quote(x) for x in (client, "%s on %s" % (label, target.name), "https://" + name, "https://" + name + callback)))
+               % " ".join(shlex.quote(x) for x in words))
         answer = json.loads(remote.run(remote.reach(h, args.ssh), cmd).decode(errors="replace").strip().splitlines()[-1])
         path = accounts_file(fleet, target.name, module)
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)

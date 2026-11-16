@@ -1,0 +1,14 @@
+[Unit]
+Description=Immich on {{ hostname }}: sign-in with the network's accounts
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=kiwi-stack.service
+Wants=kiwi-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/immich-accounts.sh
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

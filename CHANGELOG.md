@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.138.0 — Immich signs people in with the network's accounts
+
+- `kiwi-server accounts FLEET connect HOST immich`, and Connect on the Accounts page: Immich
+  (kiwi-modules 0.60.0) gets "Sign in with accounts" in its own settings; its admin page stays
+  editable, and the phone app signs in the same way. A service can now have several callbacks, and
+  Kanidm keeps checking PKCE for a service that sends it (Immich).
+- Drills: `sso-browser.py --immich`; `--vault` types the email Vaultwarden asks first (a hint only).
+
 ## 2.137.0 — Vaultwarden signs people in with the network's accounts
 
 - `kiwi-server accounts FLEET connect HOST vault`, and Connect on the Accounts page: Vaultwarden

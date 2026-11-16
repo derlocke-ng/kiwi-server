@@ -110,6 +110,12 @@ step as a button:
 "Add a machine at home" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.
 
+**A network without a master** ("No master yet" in the first questions): its machines
+are off the VPN and answer at their fixed addresses at home; the first one answers for
+the names. Away from home nothing opens. On Machines, "Add a master" takes its address
+on the Internet; the machines at home then go onto its VPN, and Home lists the steps:
+the master first, then each machine's place on the VPN and its setup.
+
 **A machine started from the starter stick** needs no install media: start it on the
 home network, and its screen shows its address and a setup code. On Machines, "A machine
 with the starter stick is waiting": type both, say what it does, and "Take it in". The

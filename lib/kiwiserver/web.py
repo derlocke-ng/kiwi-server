@@ -492,6 +492,16 @@ named after a fruit.</p><input id="mname" name="name">
 <option value="debian">Debian 13</option></select></details>
 {% if add_error %}<p class="bad">{{ add_error }}</p>{% endif %}
 <div class="actions"><button class="primary">Add it</button></div></form></details>
+{% if alone %}<details{% if master_error %} open{% endif %}><summary>Add a master</summary><form method="post" action="/machines/add-master" class="card">{{ tok }}
+<p>A master makes your services open from anywhere, through your own VPN, and gives your phones a place on it. It is
+a small rented server (or a machine at home whose port your router passes on). Your machines at home go onto its VPN:
+after it is set up, each one gets its place there and is set up again (Home lists the steps).</p>
+<label for="maddr">Its address on the Internet</label><p class="muted" style="margin:0 0 4px">The IPv4 address your
+hoster shows, like 203.0.113.7, or a dynamic DNS name for a master at home.</p><input id="maddr" name="address" required>
+<details><summary>More settings</summary><label for="mmname">Name</label><p class="muted" style="margin:0 0 4px">Empty: it is
+named after a fruit dish.</p><input id="mmname" name="name"></details>
+{% if master_error %}<p class="bad">{{ master_error }}</p>{% endif %}
+<div class="actions"><button class="primary">Add the master</button></div></form></details>{% endif %}
 
 {% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
@@ -1924,7 +1934,7 @@ def make_app(control: Control):
         from . import setup as setupmod
         return page("machines.html", request, "/machines", machines=ms, looked=st.get("time"), looking=control.looking,
                     presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"),
-                    take_error=request.query_params.get("take_error"))
+                    take_error=request.query_params.get("take_error"), master_error=request.query_params.get("master_error"))
 
     @app.get("/services")
     def services_page(request: Request):
@@ -1977,6 +1987,17 @@ def make_app(control: Control):
             made = control.add_machine(preset, address, name, target, user=u)
         except KiwiError as e:
             return RedirectResponse("/machines?" + urllib.parse.urlencode({"add_error": str(e)}), status_code=303)
+        return RedirectResponse("/hosts/" + made, status_code=303)
+
+    @app.post("/machines/add-master")
+    def machines_add_master(request: Request, address: str = Form(""), name: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            made, _moved = control.add_master(address, name, user=u)
+        except KiwiError as e:
+            return RedirectResponse("/machines?" + urllib.parse.urlencode({"master_error": str(e)}), status_code=303)
         return RedirectResponse("/hosts/" + made, status_code=303)
 
     @app.get("/hosts/{name}/media")

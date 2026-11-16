@@ -59,7 +59,12 @@ def add_home_machine(path, preset, address="", name="", target=""):
             raise KiwiError("An address looks like 192.168.1.30.")
         prefix = ip.network.prefixlen if "/" in address else int(like.rsplit("/", 1)[1]) if like else 24
         net = "{ dhcp: false, address: %s/%d%s }" % (ip.ip, prefix, ", gateway: %s" % gateway if gateway else "")
-    add_host(path, name, "node", preset, target or "ucore")
+    if alone(data):         # no master: off the VPN, so its address at home is where it answers
+        if not net:
+            raise KiwiError("Without a master, a machine needs its fixed address at home: its services answer there.")
+        if preset == "gateway":
+            raise KiwiError("A gateway leads your home into the VPN: it comes with a master.")
+    add_host(path, name, "node", preset, target or "ucore", network=not net)
     disk = "" if target == "coreos" else "\n    disk: auto"        # a starter's system is installed already
     text = util.read_text(path).rstrip("\n") + disk
     util.write_text(path, text + ("\n    network: %s\n" % net if net else "\n"), 0o600)
@@ -150,7 +155,7 @@ def onto_the_vpn(path):
     return changed
 
 
-def add_host(path, name, role, preset="", target="", address=""):
+def add_host(path, name, role, preset="", target="", address="", network=True):
     """A new host block at the end of the fleet file, written as text so its comments stay.
     `address`: a master's public address or name (its vpn-server.wg_host)."""
     text = util.read_text(path)
@@ -169,9 +174,9 @@ def add_host(path, name, role, preset="", target="", address=""):
                   "      modules: [vpn-server, dns, tor, reverse-proxy]",
                   "      vpn-server: { wg_host: %s }" % (address or "<its public address or name>")]
     elif role == "node" and off:
-        lines += ["    node:", "      preset: %s" % (preset or "minimal"), "      vpn: false",
-                  "    network:", "      dhcp: false",
-                  '      address: ""        # its fixed address at home, like 192.168.1.31/24']
+        lines += ["    node:", "      preset: %s" % (preset or "minimal"), "      vpn: false"]
+        if network:         # the caller writes its own
+            lines += ["    network:", "      dhcp: false", '      address: ""        # its fixed address at home, like 192.168.1.31/24']
     elif role == "node":
         domain = (data.get("defaults") or {}).get("domain") or "home"
         lines += ["    node:", "      preset: %s" % (preset or "minimal"),
@@ -414,6 +419,22 @@ def _name_ok(n):
     return bool(config._LABEL.match(n or ""))
 
 
+def master_problem(addr):
+    """What is wrong with a master's public address or name, in a sentence, or ""."""
+    addr = str(addr or "").strip()
+    if not addr:
+        return "The master's address is needed: it is what your phones and machines connect to."
+    try:
+        ip = ipaddress.ip_address(addr)
+        if any(ip in ipaddress.ip_network(n) for n in _AT_HOME if ip.version == 4) or ip.is_loopback or ip.is_link_local:
+            return ("%s is an address inside a home network: nothing on the Internet can reach it. "
+                    "Give the address your hoster shows, or a dynamic DNS name for a master at home." % addr)
+    except ValueError:
+        if not re.fullmatch(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", addr.lower()):
+            return "That is neither an address like 203.0.113.7 nor a name like vpn.example.org."
+    return ""
+
+
 def check(a):
     """{question id: what is wrong, in a sentence} for these answers; a machine's fields are
     `nodes.<number>.<field>`. Empty when all is well."""
@@ -436,17 +457,8 @@ def check(a):
             if n.get("preset") == "gateway":
                 bad["nodes.%d.preset" % i] = ("A gateway leads your home into the VPN and out through it: it comes "
                                               "with a master. Take cloud for now.")
-    elif not addr:
-        bad["master_address"] = "The master's address is needed: it is what your phones and machines connect to."
-    else:
-        try:
-            ip = ipaddress.ip_address(addr)
-            if any(ip in ipaddress.ip_network(n) for n in _AT_HOME if ip.version == 4) or ip.is_loopback or ip.is_link_local:
-                bad["master_address"] = ("%s is an address inside a home network: nothing on the Internet can reach it. "
-                                         "Give the address your hoster shows, or a dynamic DNS name for a master at home." % addr)
-        except ValueError:
-            if not re.fullmatch(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", addr.lower()):
-                bad["master_address"] = "That is neither an address like 203.0.113.7 nor a name like vpn.example.org."
+    elif master_problem(addr):
+        bad["master_address"] = master_problem(addr)
     if a.get("exit") in EXITS:
         _exit_answers(a)
         name, needs_addr, needs_psk, where = EXITS[a["exit"]]

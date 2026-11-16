@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.148.0 — the status page from the app
+
+- Under the message settings (Defaults), next to "Send a test message": "Open the status page", the
+  control node's page of what everyone on the network sees without a login, as the control page
+  links it there.
+
 ## 2.147.0 — the control node's Activity in the app
 
 - The app's menu has "Activity…": the control node's newest tasks and who did what, as on its

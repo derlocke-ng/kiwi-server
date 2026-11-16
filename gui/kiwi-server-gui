@@ -739,6 +739,13 @@ class Form:
                 test = Adw.ButtonRow(title="Send a test message", start_icon_name="mail-send-symbolic")
                 test.connect("activated", lambda *_: self.test_message())
                 g.add(test)
+                control = self.win.control_host()
+                if control:     # what everyone on the network sees without a login, as the page says there
+                    host = (self.win.status.get(control) or {}).get("hostname") or control
+                    status = Adw.ButtonRow(title="Open the status page", end_icon_name="adw-external-link-symbolic")
+                    status.connect("activated", lambda *_, h=host: Gtk.UriLauncher.new(
+                        "https://control.%s/status" % h).launch(self.win, None, None))
+                    g.add(status)
             if title in ADVANCED_SECTIONS:
                 advanced.append(g)
                 continue

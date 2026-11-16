@@ -411,7 +411,8 @@ defaults:
 ```
 
 One, two or all three; a place that fails says why in Activity and does not stop
-the others. "Send a test message" on the settings page tries them, as does:
+the others. "Send a test message" on the settings page tries them (in the app:
+Defaults, under the messages, beside "Open the status page"), as does:
 
 ```bash
 kiwi-server notify ~/kiwi/fleet.yaml --test

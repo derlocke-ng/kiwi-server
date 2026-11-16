@@ -9153,6 +9153,22 @@ class TestFirstRunPage(StoreBase):
         body = self.ask("/devices", cookie=cookie)[1]
         self.assertIn("no master yet, so there is no VPN", body)
         self.assertIn("asks mango for names", body)
+        # a master comes, from the Machines page: the machines at home go onto its VPN
+        body = self.ask("/machines", cookie=cookie)[1]
+        self.assertIn("<summary>Add a master</summary>", body)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        status, where, _c = self.ask("/machines/add-master", {"address": "192.168.1.9", "csrf": csrf}, cookie=cookie)
+        self.assertIn("inside+a+home+network", where)                            # said where it was asked
+        status, where, _c = self.ask("/machines/add-master", {"address": "203.0.113.7", "name": "trifle", "csrf": csrf},
+                                     cookie=cookie)
+        self.assertEqual((status, where), (303, "/hosts/trifle"))
+        hosts = yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))["hosts"]
+        self.assertEqual(hosts["trifle"]["master"]["vpn-server"]["wg_host"], "203.0.113.7")
+        self.assertIs(hosts["mango"]["node"]["vpn"], True)
+        self.assertEqual(hosts["mango"]["node"]["modules"][0], "vpn-client")
+        self.assertEqual(self.c.audit_tail(1)[0]["what"], "master added")
+        self.assertIn("this network has a master already", self.ask(
+            "/machines/add-master", {"address": "203.0.113.8", "csrf": csrf}, cookie=cookie)[1].replace("+", " "))
 
     def test_the_hoster_is_signed_in_from_the_page_and_its_login_is_sealed(self):
         """"Sign in and pick it": the device login at netcup runs on the machine, the page lists the

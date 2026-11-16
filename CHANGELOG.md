@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.150.0 — add a master, from the page and the app
+
+- A network without a master: the control page's Machines has "Add a master" (its address on the
+  Internet); the machines at home go onto its VPN, as `kiwi-server add FLEET master --address A`
+  does. The app's "Add a host" does the same when the new host is a master, and a node added
+  there without a master is off the VPN and asks for its fixed address.
+- A machine at home added on the page in such a network needs its fixed address; a gateway is refused.
+
 ## 2.149.0 — a network without a master (yet)
 
 - The first-run questions (control page, app, `kiwi-server init`) have "No master yet: my services

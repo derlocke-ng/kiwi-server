@@ -4991,14 +4991,30 @@ class Window(Adw.ApplicationWindow):
             if name in self.doc.hosts() or name == "defaults":
                 self.toast("There is already a host called %s" % name)
                 return
+            # docs/design/no-master.md: a network without a master keeps its machines off the VPN
+            alone = bool(self.doc.hosts()) and not any(self.doc.get(h, ("role",)) == "master" for h in self.doc.hosts())
+            domain = self.doc.get("defaults", ("domain",)) or "home"
             self.doc.add_host(name)
             kind = roles[role.get_selected()][0]
             self.doc.set(name, ("role",), kind)
             if kind == "master":            # what `kiwi-server add` writes; wg_host is the user's to fill in
                 self.doc.set(name, ("target",), "debian")
                 self.doc.set(name, ("master", "modules"), ["vpn-server", "dns", "tor", "reverse-proxy"])
+                for h in self.doc.hosts() if alone else []:     # its machines at home go onto its VPN
+                    if self.doc.get(h, ("node", "vpn")) is False:
+                        self.doc.set(h, ("node", "vpn"), True)
+                        self.doc.set(h, ("node", "vpn-client", "wireguard_config"), "secrets/%s.%s.conf" % (h, domain))
+                        mods = self.doc.get(h, ("node", "modules"))
+                        if isinstance(mods, list) and "vpn-client" not in mods:
+                            self.doc.set(h, ("node", "modules"), ["vpn-client"] + list(mods))
+                if alone:
+                    self.toast("Your machines at home go onto %s's VPN: set it up first, then each of them" % name)
+            elif kind == "node" and alone:
+                self.doc.set(name, ("node", "preset"), "minimal")
+                self.doc.set(name, ("node", "vpn"), False)
+                self.doc.set(name, ("network", "dhcp"), False)
+                self.toast("Without a master it answers at its address at home: give it a fixed one (Network)")
             elif kind == "node":
-                domain = self.doc.get("defaults", ("domain",)) or "home"
                 self.doc.set(name, ("node", "preset"), "minimal")
                 self.doc.set(name, ("node", "vpn-client", "wireguard_config"), "secrets/%s.%s.conf" % (name, domain))
             self.mark_dirty()

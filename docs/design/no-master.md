@@ -40,7 +40,7 @@ address, and the master's Pi-hole answers for them.
 - A drill: `tests/drills/starter-vm.sh alone` (the starter in a local VM, "No master yet",
   "Set it up", the names and the control page from the home network, a hard reset).
 
-Still to build: "Add a master" as a button on the page and in the app.
+- "Add a master" on the control page (Machines) and in the app's "Add a host" (2.150.0).
 
 ## Proposal
 
@@ -85,5 +85,5 @@ address" then listens on the home network. Nothing else in the modules changes.
 | `vpn: false`: the home address as the VPN address, no VPN client | built: kiwi-modules 0.61.0 |
 | "No master yet" in the questions; what it means on the page and in the app | built: 2.149.0 |
 | The warning when one machine keeps everything and nothing is backed up elsewhere | the page's "If something breaks" says it already |
-| "Add a master" for a network that has none | built in `kiwi-server add`; the page and the app: to build |
+| "Add a master" for a network that has none | built: `kiwi-server add`, the page's Machines, the app (2.150.0) |
 | A drill: one node, no master | built: `starter-vm.sh alone` |

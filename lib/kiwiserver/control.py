@@ -1343,6 +1343,29 @@ class Control:
         self.fleet_info(fresh=True)
         return name
 
+    def add_master(self, address, name="", user="admin"):
+        """A network without a master gets one (docs/design/no-master.md): its block in the fleet
+        file, and every machine at home back onto the VPN. Returns (its name, the machines moved)."""
+        from . import setup as setupmod
+        import yaml
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        problem = setupmod.master_problem(address)
+        if problem:
+            raise KiwiError(problem)
+        with self.lock:
+            path = os.path.realpath(self.fleet_path)
+            data = yaml.safe_load(util.read_text(path)) or {}
+            if not setupmod.alone(data):
+                raise KiwiError("this network has a master already")
+            name = (name or "").strip().lower() or setupmod.free_name("master", set(data.get("hosts") or {}))
+            setupmod.add_host(path, name, "master", address=str(address).strip())
+            moved = setupmod.onto_the_vpn(path)
+            self.save_fleet()
+        self.audit(user, "master added", hosts=[name] + moved)
+        self.fleet_info(fresh=True)
+        return name, moved
+
     # ---- settings: what the app's form edits, from the page ---------------------------
     def schema(self):
         """The settings every role and module has, the base fields and the targets, as the CLI

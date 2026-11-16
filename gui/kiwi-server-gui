@@ -735,6 +735,10 @@ class Form:
                     g.add(self.row_for(f))
             if later:
                 g.add(self.folded("For its next install", "Target, disks, keyboard and language", later))
+            if title == "Messages when something is wrong" and self.scope == "defaults":
+                test = Adw.ButtonRow(title="Send a test message", start_icon_name="mail-send-symbolic")
+                test.connect("activated", lambda *_: self.test_message())
+                g.add(test)
             if title in ADVANCED_SECTIONS:
                 advanced.append(g)
                 continue
@@ -749,6 +753,21 @@ class Form:
         self.rebuild_role_group()
         self.loading = False
         self.select(getattr(self.win, "settings_section", None))
+
+    def test_message(self):
+        """One message on every channel that is set, as the control page's button does (saved first:
+        the command reads the fleet file)."""
+        win = self.win
+        if win.doc.dirty and not win.save():
+            return
+        win.toast("Sending a test message…")
+
+        def work():
+            rc, out, err = run_cli(win.cli, ["notify", win.doc.path, "--test"], timeout=120)
+            said = ((err or out).strip().splitlines() or [""])[-1].replace("error: ", "")
+            GLib.idle_add(lambda: win.toast("Test message sent: look on your phone or in your mail" if rc == 0
+                                            else "Not sent: %s" % (said or "no channel is set")) and False)
+        threading.Thread(target=work, daemon=True).start()
 
     def folded(self, title, subtitle, fields, settings=False):
         """Rows that are rarely changed, folded away under one row that opens them."""

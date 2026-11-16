@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.140.0 — a test message from the app
+
+- The app's settings, Defaults, "Messages when something is wrong": **Send a test message** sends one
+  on every channel that is set, as the control page's button does. Unsaved settings are saved first.
+
 ## 2.139.4 — the docs' commands are checked
 
 - A test reads every `kiwi-server …` line in the README and docs/ and checks that the command

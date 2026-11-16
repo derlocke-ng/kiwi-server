@@ -476,6 +476,14 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 {% for b in m.bars %}<div class="meter" title="{{ b.more }}"><span>{{ b.label }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span><span>{{ b.pct }} %</span></div>{% endfor %}
 {% if m.chips %}<div class="chips">{% for c in m.chips[:3] %}<span class="chip">{{ c }}</span>{% endfor %}{% if m.chips|length > 3 %}<span class="chip">+{{ m.chips|length - 3 }}</span>{% endif %}</div>{% endif %}</a>
 {% endfor %}</div>{% if not machines %}<p class="muted">No machines yet.</p>{% endif %}
+{% if running|length > 1 %}<details><summary>Several at once</summary><form method="post" action="/run-many" class="card">{{ tok }}
+<p class="muted" style="margin:0 0 8px">The ticked machines, one after the other. A machine that fails does not stop the
+others; each one's History says how it went.</p>
+{% for m in running %}<label class="check"><input type="checkbox" name="host" value="{{ m.name }}"><span>{{ m.name }}
+<span class="muted small">{{ kind(m.role) }}</span></span></label>{% endfor %}
+<div class="actions"><button name="action" value="status">Check them</button><button name="action" value="plan">Preview</button>
+<button class="primary" name="action" value="apply" onclick="return confirm('Apply to the ticked machines now? Services that changed restart for a moment.')">Apply</button></div>
+</form></details>{% endif %}
 <details{% if take_error %} open{% endif %}><summary>A machine with the starter stick is waiting</summary>
 <form method="post" action="/machines/take-in" class="card">{{ tok }}
 <p class="muted" style="margin:0 0 8px">A machine you started from the starter stick, on this home network, shows an address and a
@@ -621,7 +629,7 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
 {% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
 <b>{{ verb(j.action) }}</b><span class="state {{ j.state }}">{{ jobword(j.state) }}</span></div>
-<span class="muted small">{{ (j.started or "")[:16]|replace("T", " ") }} · {{ j.user }}</span></a>{% endfor %}{% endif %}
+<span class="muted small">{{ (ago(j.started) ~ " ago") if j.started else "not started yet" }} · {{ j.user }}</span></a>{% endfor %}{% endif %}
 <h2>Log</h2>{% for e in history %}<div class="card row"><span>{{ e.what }}{% if e.result %} <span class="state {{ e.result }}">{{ jobword(e.result) }}</span>{% endif %}
 {% if e.part %}<span class="muted">· {{ e.part }}</span>{% endif %}</span>
 <span class="muted small">{{ e.time[:16]|replace("T", " ") }} · {{ e.user }}</span></div>
@@ -2290,6 +2298,23 @@ def make_app(control: Control):
             if action == "backup":              # said where the button is
                 ms, _st, _info = machines()
                 return page("backups.html", request, "/backups", machines=ms, error="Nothing was saved: %s" % e)
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return RedirectResponse("/jobs/" + jid, status_code=303)
+
+    @app.post("/run-many")
+    async def run_many(request: Request):
+        """One action on the ticked machines (after Foreman): check, preview or apply."""
+        form = await request.form()
+        u = posted(request, str(form.get("csrf") or ""))
+        if not u:
+            return login_page()
+        action = str(form.get("action") or "")
+        hosts = [str(h) for h in form.getlist("host")][:50]
+        if action not in ("status", "plan", "apply") or not hosts:
+            return RedirectResponse("/machines", status_code=303)
+        try:
+            jid = control.start(action, hosts, user=u)
+        except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return RedirectResponse("/jobs/" + jid, status_code=303)
 

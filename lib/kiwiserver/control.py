@@ -1003,7 +1003,14 @@ class Control:
             meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
             self._write(meta)
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
-            self.audit(meta["user"], meta["action"], hosts=meta["hosts"], job=meta["id"], result=meta["state"])
+            failed = self._failed_hosts(meta) if len(meta["hosts"]) > 1 and meta["state"] == "failed" else None
+            if failed:                          # several at once: each machine's own result
+                for res, names in (("ok", [h for h in meta["hosts"] if h not in failed]),
+                                   ("failed", [h for h in meta["hosts"] if h in failed])):
+                    if names:
+                        self.audit(meta["user"], meta["action"], hosts=names, job=meta["id"], result=res)
+            else:
+                self.audit(meta["user"], meta["action"], hosts=meta["hosts"], job=meta["id"], result=meta["state"])
         try:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):
@@ -1014,6 +1021,19 @@ class Control:
                 os.remove(self.media(row["name"])[0])
         if meta["action"] in ("status", "apply", "save", "update", "setup", "restore", "unlock"):
             self.look()                         # what the pages show is what is true now
+
+    def _failed_hosts(self, meta):
+        """The machines a job of several names as failed (`failed: a, b`, its last words), or None."""
+        try:
+            with open(os.path.join(self.jobs_dir, meta["id"] + ".log")) as fh:
+                tail = fh.read()[-2000:]
+        except OSError:
+            return None
+        m = re.search(r"failed: ([a-z0-9, -]+)\s*$", tail)
+        if not m:
+            return None
+        names = {x.strip() for x in m.group(1).split(",")}
+        return names & set(meta["hosts"]) or None
 
     # ---- linked networks (federation.yaml): what each may reach, and the way out -------
     def federation(self):

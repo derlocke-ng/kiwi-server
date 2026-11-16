@@ -107,6 +107,10 @@ step as a button:
 | Give it its place on the VPN | a machine at home, once the master runs |
 | Set it up | when the machine is installed and on: gives it its role |
 
+A machine's page has tabs: Overview, Services (with the logins), History (what was done to it
+and how it ended), Backups and Settings. "Several at once" under the list checks, previews or
+applies to the machines you tick, one after the other.
+
 "Add a machine at home" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.
 

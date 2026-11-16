@@ -56,7 +56,7 @@ with sync_playwright() as p:
     elif app == "paperless":
         q.goto("https://%s/accounts/login/" % gitname, wait_until="networkidle")
         q.screenshot(path="/shots/sso-1-paperless-login.png")
-        q.locator("a[href*='/accounts/oidc/accounts/login']").first.click()
+        q.get_by_text("accounts", exact=True).first.click()   # "or sign in via: accounts"
         q.wait_for_load_state("networkidle")
         go_on = q.get_by_role("button", name="Continue")   # allauth asks once before it leaves
         if go_on.count() and idname not in q.url:

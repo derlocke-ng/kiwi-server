@@ -42,6 +42,8 @@ services:
            "client_id": accounts_client, "secret": accounts_secret, "settings": {"server_url": accounts_issuer}}]}} | tojson)) | tojson }}
       - PAPERLESS_SOCIAL_AUTO_SIGNUP=true
       - PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS=true
+      # in the group kn-paperless-accounts.service makes: else a new user may do nothing at all
+      - PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS=accounts
 {% if ca_cert_dir %}
       - REQUESTS_CA_BUNDLE=/usr/src/paperless/kiwi-ca-bundle.pem
 {% endif %}

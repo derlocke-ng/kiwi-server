@@ -1,0 +1,24 @@
+#!/usr/bin/bash
+# {{ hostname }}'s Paperless signs people in with the network's accounts (kiwi-server accounts <fleet>
+# connect <host> paperless). A person's first sign-in makes their Paperless user, in the group
+# "accounts": it may use documents, tags, saved views, notes and mail rules (each person sees their
+# own documents, the ones shared with them and the ones that have no owner), not the workflows, which
+# act on every document, and not the system's settings. kn-paperless-accounts.service makes or
+# updates the group after every start of the stack.
+set -euo pipefail
+
+py='
+from django.contrib.auth.models import Group, Permission
+g, _ = Group.objects.get_or_create(name="accounts")
+ps = Permission.objects.filter(content_type__app_label__in=["documents", "paperless_mail"]).exclude(content_type__model__startswith="workflow")
+g.permissions.set(ps)
+print("kiwi: the group accounts may use %d kinds of things" % ps.count())
+'
+for _ in {1..240}; do
+    if {{ runtime }} exec --user paperless -w /usr/src/paperless/src {{ container_prefix }}-paperless python3 manage.py shell -c "$py" 2>/dev/null; then
+        exit 0
+    fi
+    sleep 5
+done
+echo "kiwi: Paperless did not answer: the group accounts is not made" >&2
+exit 1

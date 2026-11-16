@@ -2507,6 +2507,35 @@ class TestSetup(Base):
         self.assertIn("none of these machines answers for the names", err)
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_without_a_master_tor_leaves_through_a_commercial_vpn(self):
+        """The owner's rule: Tor never on the home line, always behind a VPN. Without a master, a
+        commercial VPN is the machine's exit; the home network is not routed into it."""
+        alone = dict(self.ANSWERS, master_where="none", master_address="",
+                     nodes=[{"name": "mango", "preset": "cloud", "address": "192.168.2.30/16"}])
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(alone))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        data = yaml.safe_load(util.read_text(dest))
+        node = data["hosts"]["mango"]["node"]
+        node["modules"] = node["modules"] + ["onion"]
+        node["onion"] = {"services": {"cloud": {}}}
+        write(dest, yaml.safe_dump(data, sort_keys=False))
+        rc, out, err = self.run_cli("onion", dest, "cloud.mango")
+        self.assertIn("a commercial VPN as its exit", err)                        # no Tor on the home line
+        node["modules"] = node["modules"] + ["vpn-client"]
+        node["vpn-client"] = {"vpn_provider": "mullvad", "wireguard_addresses": "10.66.1.2/32",
+                              "wireguard_private_key": "aGVsbG8taGVsbG8taGVsbG8taGVsbG8taGVsbG8tMDA="}
+        write(dest, yaml.safe_dump(data, sort_keys=False))
+        o = os.path.join(self.tmp, "out")
+        rc, out, err = self.run_cli("render", dest, "mango", "-o", o)
+        self.assertEqual(rc, 0, err)
+        with open(os.path.join(o, "mango", "mango.stack", "docker-compose.yml")) as f:
+            svcs = yaml.safe_load(f)["services"]
+        self.assertEqual(svcs["kn-onion"]["network_mode"], "service:kn-vpn-client")
+        self.assertIn("KS_STACK_MESH_VIA=''", util.read_text(os.path.join(o, "mango", "mango.stack", "stack.sh")))
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
     def test_a_network_without_a_master_gets_one(self):
         """docs/design/no-master.md: `add FLEET master` puts the machines at home back on the VPN."""
         alone = dict(self.ANSWERS, master_where="none", master_address="",
@@ -9628,6 +9657,24 @@ class TestFirstRunPage(StoreBase):
         for t in threading.enumerate():         # the login looks for a ring in the background: before the folder goes
             if "arm_auto" in t.name:
                 t.join(20)
+
+    def test_what_a_machine_sets_itself_is_marked_shown_alone_and_reset(self):
+        """After Foreman: each setting says where its value comes from, the page can show only a
+        machine's own, and one tick brings a setting back to what every machine has."""
+        cookie, _csrf = self.made()
+        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        self.change(page, cookie, {"f:timezone": "Europe/Vienna"})
+        body = self.ask(page, cookie=cookie)[1]
+        self.assertIn('<span class="chip">set here</span>', body)
+        self.assertIn('name="reset:timezone"', body)
+        self.assertIn("Only what %s sets itself" % node, body)
+        only = self.ask(page + "?only=set", cookie=cookie)[1]
+        self.assertIn('name="f:timezone"', only)
+        self.assertNotIn('name="f:updates.time"', only)                          # not set here: not shown
+        status, where, _ = self.change(page, cookie, {"reset:timezone": "1"})
+        self.assertEqual((status, where), (303, page + "?saved=1"))
+        self.assertNotIn("timezone", self.data()["hosts"][node])                  # as for every machine again
+        self.assertNotIn('name="reset:timezone"', self.ask(page, cookie=cookie)[1])
 
     def test_an_override_is_set_and_taken_away_again(self):
         cookie, _csrf = self.made()

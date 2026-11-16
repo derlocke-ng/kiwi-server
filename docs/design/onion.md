@@ -11,8 +11,11 @@ your address in anyone's log.
   client's network: everything it sends goes through the mesh to the master and leaves
   there. A master with a commercial VPN exit sends it through that exit; a master without
   one sends it from its own address at the hoster. Either way your internet provider at
-  home sees WireGuard to your master, never Tor. A node without a VPN client cannot run
-  hidden services: the render refuses it.
+  home sees WireGuard to your master, never Tor. In a network without a master a machine
+  can still run hidden services when a commercial VPN is its exit (a `vpn-client` with
+  `vpn_provider: mullvad`, `protonvpn`, … in its modules): Tor leaves there, and your
+  provider sees WireGuard to that VPN. A machine with no VPN client at all cannot run
+  hidden services: `kiwi-server onion` refuses it, and its Tor gets no network.
 - **A hidden service is one site of the machine's reverse proxy**, named as everywhere
   else: `git.papaya`. Tor hands the connection to the proxy on a port that only the stack
   reaches; the proxy answers as that one site and nothing else of the machine.

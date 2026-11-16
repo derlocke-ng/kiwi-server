@@ -142,9 +142,14 @@ def resolve_settings(role, host, modset=None):
         wanted = [str(m) for m in wanted]
         no_vpn = host.role_settings.get("vpn") is False and role.node_type != "master"
         if no_vpn:      # a network without a master (yet): the presets' VPN client is left out
-            if raw.get("modules") is not None and "vpn-client" in wanted:
-                raise KiwiError("%s: vpn is false, so vpn-client cannot be in modules" % where)
-            wanted = [m for m in wanted if m != "vpn-client"]
+            exit_only = raw.get("modules") is not None and "vpn-client" in wanted
+            provider = str(((raw.get("vpn-client") or {}) if isinstance(raw.get("vpn-client"), dict) else {}).get(
+                "vpn_provider") or "custom")
+            if exit_only and provider == "custom":
+                raise KiwiError("%s: vpn is false, so its vpn-client can only be a commercial VPN's (an exit for Tor "
+                                "or downloads: vpn_provider mullvad, protonvpn, …), not the mesh's" % where)
+            if not exit_only:
+                wanted = [m for m in wanted if m != "vpn-client"]
         # a node whose sites strangers reach bans who keeps failing at them: fail2ban comes with it
         if (role.node_type != "master" and "reverse-proxy" in wanted and "fail2ban" not in wanted
                 and isinstance(raw.get("reverse-proxy"), dict) and raw["reverse-proxy"].get("public")

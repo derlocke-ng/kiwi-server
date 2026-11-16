@@ -449,8 +449,10 @@ class Renderer:
             "lan_addresses": dict(spec.lan_addresses), "mesh_only": sorted(spec.mesh_only),
             "master_ip": spec.master_ip, "mesh_subnet": spec.mesh_subnet, "domain": spec.domain,
             "runtime": spec.runtime,
-            # the mesh is behind the WireGuard server on a master, behind the VPN client on a node
-            "mesh_via": ips.get("vpn-server" if spec.node_type == "master" else "vpn-client", ""),
+            # the mesh is behind the WireGuard server on a master, behind the VPN client on a node;
+            # a machine off the mesh (vpn: false) has none, even with a commercial VPN as its exit
+            "mesh_via": "" if "vpn-client" in spec.without else
+                        ips.get("vpn-server" if spec.node_type == "master" else "vpn-client", ""),
         }
         for n in ordered:
             ctx["has_" + n.replace("-", "_")] = True

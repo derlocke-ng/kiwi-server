@@ -76,9 +76,11 @@ address" then listens on the home network. Nothing else in the modules changes.
 
 - Should a node keep answering on its home address after the master comes? That is
   handy at home and is what a gateway does already, but it is one more door.
-- Hidden services without a master: Tor runs on the master only today
-  ([onion.md](onion.md)). Tor on a node would give access from outside without renting
-  anything, but it is a second design.
+- Hidden services without a master: built (2.155.0, kiwi-modules 0.63.0). Tor must never
+  leave on the home line, so the machine needs a commercial VPN as its exit: a `vpn-client`
+  with `vpn_provider: mullvad`, `protonvpn`, … in its modules. The home network is not routed
+  into it; the mesh's own VPN client stays refused while `vpn` is false
+  ([onion.md](onion.md)). It gives access from outside without renting a server.
 - The first-run questions get a third answer under "Where it runs": "No master yet".
 
 ## What to build, in order

@@ -666,7 +666,7 @@ is named first.</span></p>
 {% for o in f.options %}<label class="check"><input type="checkbox" name="f:{{ f.name }}" value="{{ o.value }}"
 {%- if ((o.value in typed[f.name]) if f.name in typed else o.on) %} checked{% endif %}><span>{{ o.label }}
 <span class="muted small">{{ o.help }}{% if o.needs %} (needs {{ o.needs|join(", ") }}){% endif %}</span></span></label>{% endfor %}
-{% else %}<label for="{{ id }}">{{ f.label }}</label>
+{% else %}<label for="{{ id }}">{{ f.label }}{% if host and f.set and not f.secret %} <span class="chip">set here</span>{% endif %}</label>
 {% if f.help %}<p class="muted" style="margin:0 0 4px">{{ f.help }}</p>{% endif %}
 {% if f.secret %}<input id="{{ id }}" type="password" name="f:{{ f.name }}" autocomplete="new-password"
 placeholder="{{ "set; leave empty to keep it" if f.set else "set for every machine; leave empty to keep it" if f.inherited_set else "" }}">
@@ -681,7 +681,9 @@ placeholder="{{ "set; leave empty to keep it" if f.set else "set for every machi
 {{- typed[f.name] if f.name in typed else to_text(f.type, f.value) }}</textarea>
 {% else %}<input id="{{ id }}" name="f:{{ f.name }}" value="{{ typed[f.name] if f.name in typed else to_text(f.type, f.value) }}"
 {%- if f.type == "int" %} inputmode="numeric"{% endif %} placeholder="{{ to_text(f.type, f.inherited) or (f.placeholder and "e.g. " + f.placeholder) }}">
-{% endif %}{% endif %}{% if wrong.get(f.name) %}<p class="bad">{{ wrong[f.name] }}</p>{% endif %}</div>{% endmacro %}
+{% endif %}{% endif %}{% if host and f.set and not f.secret and f.type != "modules" %}<label class="check"><input type="checkbox"
+name="reset:{{ f.name }}" value="1"><span>As for every machine{% if to_text(f.type, f.inherited) %} ({{ to_text(f.type, f.inherited)|truncate(60) }}){% endif %}</span></label>{% endif %}
+{% if wrong.get(f.name) %}<p class="bad">{{ wrong[f.name] }}</p>{% endif %}</div>{% endmacro %}
 <p><a href="{{ "/hosts/" + host if host else "/" }}">← {{ host or "Home" }}</a></p>
 <h1>{{ "Settings of " + host if host else "Settings for every machine" }}</h1>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
@@ -696,12 +698,14 @@ placeholder="{{ "set; leave empty to keep it" if f.set else "set for every machi
 {% elif saved %}<p class="banner warn">Nothing was changed.</p>{% endif %}
 {% if groups %}<p class="muted">{% if host %}What you leave empty is as for every machine; the grey text says what that is.
 {% else %}What a machine does not set for itself, it takes from here.{% endif %} Only what you change is saved.</p>
+{% if host %}<p class="small">{% if only %}<a href="/hosts/{{ host }}/settings">Every setting</a> · <b>Only what {{ host }} sets itself</b>
+{% else %}<b>Every setting</b> · <a href="/hosts/{{ host }}/settings?only=set">Only what {{ host }} sets itself</a>{% endif %}</p>{% endif %}
 <form method="post" action="{{ "/hosts/" + host + "/settings" if host else "/settings" }}" autocomplete="off">{{ tok }}
-{% for g in groups %}{% set more = g.fields|selectattr("more")|list %}
+{% for g in groups if not only or g.fields|selectattr("set")|list %}{% set more = g.fields|selectattr("more")|selectattr("set" if only else "more")|list %}
 {% if g.advanced %}<details class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"{% if g.id in open %} open{% endif %}><summary>{{ g.title }}</summary>
 {% else %}<div class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"><h2 style="margin-top:0">{{ g.title }}</h2>{% endif %}
 {% if g.help %}<p class="muted">{{ g.help }}</p>{% endif %}
-{% for f in g.fields if not f.more %}{{ field(f) }}{% else %}{% if not more %}<p class="muted">Nothing to set: it is on or off.</p>{% endif %}{% endfor %}
+{% for f in g.fields if not f.more and (not only or f.set) %}{{ field(f) }}{% else %}{% if not more %}<p class="muted">{{ "Nothing set here." if only else "Nothing to set: it is on or off." }}</p>{% endif %}{% endfor %}
 {% if more %}<details{% if more|selectattr("name", "in", touched)|list %} open{% endif %}><summary>More settings</summary>
 {% for f in more %}{{ field(f) }}{% endfor %}</details>{% endif %}
 {{ "</details>"|safe if g.advanced else "</div>"|safe }}{% endfor %}
@@ -2200,6 +2204,7 @@ def make_app(control: Control):
         running = [n for n, h in rows.items() if (h.get("phase") or "") not in FRESH and host in (None, n)]
         return page("settings.html", request, "/" if host else "/settings", host=host, groups=groups, typed=typed or {}, wrong=wrong or {},
                     error=error, touched=list(touched), running=running, saved=request.query_params.get("saved"),
+                    only=bool(host) and request.query_params.get("only") == "set",
                     open=[g["id"] for g in groups if any(f["name"] in touched for f in g["fields"])],
                     same="as inherited" if host else "the usual")
 
@@ -2221,6 +2226,8 @@ def make_app(control: Control):
                         secrets[name] = None
                     elif str(sent.get("f:" + name) or "").strip():
                         secrets[name] = str(sent.get("f:" + name))
+                elif sent.get("reset:" + name) and f["set"]:     # back to what every machine has
+                    typed[name] = ""
                 elif "f:" + name in sent:
                     typed[name] = str(sent.get("f:" + name)).replace("\r\n", "\n")
         changes, wrong = formmod.changes(groups, dict(typed, **secrets))

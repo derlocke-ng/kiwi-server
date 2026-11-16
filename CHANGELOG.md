@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.158.0 — Jabber: one page for new accounts; its admin panel from the VPN only
+
+With kiwi-modules 0.66.0.
+
+- **One page, `/join`, for every way to a Jabber address**: an invite code, a request, and (when
+  switched on) the open way, now with a picture test on that page. It works without scripts, so
+  also in Tor Browser at its safest. ejabberd's own `/register` page sends people to `/join`.
+- **Invite codes and requests by default**, open sign-up off, as for the network's accounts.
+- **ejabberd's admin panel answers the VPN only.** It showed its password prompt to the internet
+  and over Tor.
+- New Jabber settings: files deleted after `file_days` (30), `room_creators` (everyone or
+  admins), `admins` (more admins). docs/roles.md says what kiwi-server sets and what the admin
+  does in an app or on the panel.
+- The control image carries Pillow, for the picture test.
+- Dates: what happened on 16 November no longer says the 17th.
+
 ## 2.157.0 — fixes from the review of 15–16 November; Tor without a VPN only by choice
 
 With kiwi-modules 0.65.1.
@@ -85,10 +101,10 @@ With kiwi-modules 0.65.1.
 
 - Is a machine waiting at boot for its disk key? kiwi-server asked its SSH port for every kind of
   key (six connections, some of a kind the server lacks). fail2ban there (aggressive) counts those,
-  and after a few looks banned the computer that asked: in the power-cut drill of 17 November it
+  and after a few looks banned the computer that asked: in the power-cut drill of 16 November it
   banned the operator's computer from papaya. Only the kinds of key on record are asked for now.
 - The power-cut drill logs in first and scans keys only when that fails. Result of its run on
-  17 November: every machine back by itself, papaya, lychee, quince, medlar and lime; the slowest
+  16 November: every machine back by itself, papaya, lychee, quince, medlar and lime; the slowest
   (quince) in 2.2 minutes; the control node unlocked by itself; all 37 names answer afterwards.
 
 ## 2.152.3 — kiwi-modules 0.61.2; the docs know a network without a master

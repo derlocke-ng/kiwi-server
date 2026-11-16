@@ -5023,7 +5023,7 @@ class TestClientAddress(Base):
 class TestRemote(Base):
     def test_a_key_scan_asks_for_the_kinds_on_record_only(self):
         """Every kind of key asked for meant six connections, some of a kind the server lacks; fail2ban
-        (aggressive) banned the operator's computer after a few looks (power-cut drill, 17 Nov)."""
+        (aggressive) banned the operator's computer after a few looks (power-cut drill, 16 Nov)."""
         kh = os.path.join(self.tmp, "known_hosts.initramfs")
         write(kh, "papaya.home ssh-ed25519 AAAAkey1\n192.168.2.30 ssh-ed25519 AAAAkey1\n")
         asked = []

@@ -60,8 +60,9 @@ derived:
   main_host: "{{ xmpp_domain if xmpp_domain and not separate else xmpp_hostname or 'jabber.' ~ hostname }}"
   # whose network the service shares: the machine's door to the VPN
   door: "{{ 'vpn-server' if node_type == 'master' else 'vpn-client' }}"
-  # the sign-up page with invite codes or requests: a small container of its own (kiwi-server signup)
-  join_on: "{{ 'yes' if invites or requests else '' }}"
+  # the sign-up page, the one page for new accounts whatever way is on: a small container of its
+  # own (kiwi-server signup). ejabberd's own /register page is not used
+  join_on: "yes"
   join_ways: "{{ ((['invites'] if invites else []) + (['requests'] if requests else []) + (['captcha'] if registration else [])) | join(',') }}"
   # the proxy reaches that service at 127.0.0.1 when it shares the network too (a master's does)
   local_http: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ ('-vpn-server' if node_type == 'master' else '-vpn-client') }}:5280"
@@ -69,6 +70,8 @@ derived:
   forwarded: "{{ 'yes' if xmpp_domain and node_type != 'master' and via else '' }}"
 
 validate:
+  - when: "admins | reject('match', '^[a-z0-9][a-z0-9._-]{0,30}$') | list"
+    error: "xmpp.admins: names before the @, lowercase letters, digits, dots and dashes"
   - when: "not admin_user is match('^[a-z0-9][a-z0-9._-]{0,30}$')"
     error: "xmpp.admin_user: lowercase letters, digits, dots and dashes"
   - when: "xmpp_domain and (xmpp_domain ~ '.').endswith('.' ~ domain ~ '.')"
@@ -89,15 +92,15 @@ storage:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/hosts", type: dir, required: true }
 
 urls:
-  - "Jabber: {{ admin_user }}@{{ main_host }} in any XMPP app (Conversations, Monal, Dino, Gajim); from the VPN the server is {{ internal_host }}{% if xmpp_domain and not separate %}, from the Internet {{ xmpp_domain }}{% endif %}{% if registration %}; new accounts: https://{{ internal_host }}/register{% endif %}"
-  - "{% if two %}Jabber, the public one: {{ admin_user }}@{{ xmpp_domain }}{% if registration %}; new accounts: https://{{ xmpp_domain }}/register{% endif %}{% endif %}"
+  - "Jabber: {{ admin_user }}@{{ main_host }} in any XMPP app (Conversations, Monal, Dino, Gajim); from the VPN the server is {{ internal_host }}{% if xmpp_domain and not separate %}, from the Internet {{ xmpp_domain }}{% endif %}; new accounts: https://{{ internal_host }}/join; its admin panel (from the VPN): https://{{ internal_host }}/admin"
+  - "{% if two %}Jabber, the public one: {{ admin_user }}@{{ xmpp_domain }}; new accounts: https://{{ xmpp_domain }}/join{% endif %}"
 
 logins:
   - label: Jabber
     site: jabber
     user: "{{ admin_user }}@{{ main_host }}"
     password: admin_password
-    note: "The admin's account, typed into a Jabber app (not a web page). Every start sets this password again. Other people make their own account: in the app, or at /register on the server's page, each after a captcha."
+    note: "The admin's account, in a Jabber app or on the admin panel at /admin (from the VPN). Every start sets this password again. Other people make their own account on the page /join, in the ways switched on."
 
 nginx:
   servers:
@@ -113,11 +116,14 @@ nginx:
       client_max_body_size: "{{ upload_mb }}m"
       proxy_read_timeout: 3600s
       extra_locations:
-        # the page's front door: where a new account is made, a password changed
-        - { path: "= /", config: "return 302 {{ '/join' if join_on else '/register/' }};" }
-        # the sign-up page with invite codes and requests (kiwi-server signup)
+        # the page's front door: where a new account is made
+        - { path: "= /", config: "return 302 /join;" }
+        # ejabberd's own sign-up page: the one page is /join
+        - { path: "^~ /register", config: "return 302 /join;" }
+        # ejabberd's admin panel: from the VPN only, never from the internet or Tor
+        - { path: "^~ /admin", proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
+        # the sign-up page: invite codes, requests, and the open way with a picture test (kiwi-server signup)
         - path: "/join"
-          when: join_on
           config: >-
             set $join http://{{ container_prefix }}-xmpp-join:8080;
             proxy_pass $join;
@@ -136,11 +142,14 @@ nginx:
       client_max_body_size: "{{ upload_mb }}m"
       proxy_read_timeout: 3600s
       extra_locations:
-        # the page's front door: where a new account is made, a password changed
-        - { path: "= /", config: "return 302 {{ '/join' if join_on else '/register/' }};" }
-        # the sign-up page with invite codes and requests (kiwi-server signup)
+        # the page's front door: where a new account is made
+        - { path: "= /", config: "return 302 /join;" }
+        # ejabberd's own sign-up page: the one page is /join
+        - { path: "^~ /register", config: "return 302 /join;" }
+        # ejabberd's admin panel: from the VPN only, never from the internet or Tor
+        - { path: "^~ /admin", proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
+        # the sign-up page: invite codes, requests, and the open way with a picture test (kiwi-server signup)
         - path: "/join"
-          when: join_on
           config: >-
             set $join http://{{ container_prefix }}-xmpp-join:8080;
             proxy_pass $join;
@@ -160,11 +169,14 @@ nginx:
       client_max_body_size: "{{ upload_mb }}m"
       proxy_read_timeout: 3600s
       extra_locations:
-        # the page's front door: where a new account is made, a password changed
-        - { path: "= /", config: "return 302 {{ '/join' if join_on else '/register/' }};" }
-        # the sign-up page with invite codes and requests (kiwi-server signup)
+        # the page's front door: where a new account is made
+        - { path: "= /", config: "return 302 /join;" }
+        # ejabberd's own sign-up page: the one page is /join
+        - { path: "^~ /register", config: "return 302 /join;" }
+        # ejabberd's admin panel: from the VPN only, never from the internet or Tor
+        - { path: "^~ /admin", proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
+        # the sign-up page: invite codes, requests, and the open way with a picture test (kiwi-server signup)
         - path: "/join"
-          when: join_on
           config: >-
             set $join http://{{ container_prefix }}-xmpp-join:8080;
             proxy_pass $join;
@@ -198,13 +210,13 @@ settings:
   - key: invites
     type: bool
     label: Invite codes
-    help: "A page at https://<name>/join where someone with an invite code makes their own address and password. The codes are made on the control page (Accounts, Jabber) or with kiwi-server accounts <fleet> --jabber invite."
-    default: false
+    help: "On the page https://<name>/join someone with an invite code makes their own address and password. The codes are made on the control page (Accounts, Jabber) or with kiwi-server accounts <fleet> --jabber invite."
+    default: true
   - key: requests
     type: bool
     label: Requests
     help: "On the same page people ask for an address with a few words; you accept or deny on the control page. Accepted: they get a password, shown once with their request code."
-    default: false
+    default: true
   - key: terms
     type: text
     label: The rules
@@ -221,9 +233,25 @@ settings:
     default: false
   - key: registration
     type: bool
-    label: People make their own account
-    help: "In a Jabber app, or on the page https://<name>/register, each after a captcha; one new account per address in ten minutes. Off: only the admin makes accounts (the app's server commands)."
-    default: true
+    label: Open sign-up
+    help: "Anyone makes an account without a code: on the page https://<name>/join or in a Jabber app, each after a picture test; one new account per address in ten minutes. Off (the default): only with an invite code, an accepted request, or by the admin."
+    default: false
+  - key: file_days
+    type: int
+    label: Files kept (days)
+    help: "Files people send are deleted from the server after this many days. 0: kept until the account goes."
+    default: 30
+  - key: room_creators
+    type: enum
+    label: Who makes group rooms
+    help: "everyone: every account of this server; admins: the admins only."
+    default: everyone
+    options: [everyone, admins]
+  - key: admins
+    type: list
+    label: More admins
+    help: "Accounts of this server (the part before the @) that are admins as well as the first one."
+    default: []
   - key: admin_user
     label: Admin
     help: "The first account, and the server's admin: <name>@<the server's name>."

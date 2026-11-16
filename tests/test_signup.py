@@ -145,5 +145,41 @@ class TestJabberSignup(unittest.TestCase):
         self.assertNotIn(made["password"], open(self.s.path).read())            # and forgotten
 
 
+    def test_the_open_way_takes_the_picture_tests_letters_once(self):
+        s = signupmod.Signup(tempfile.mkdtemp(), opener=self.e, ejabberd=self.s.ejabberd, invites=False, requests=False,
+                             captcha=True)
+        pid, text = s.picture_test()
+        self.assertEqual(s.picture_text(pid), text)
+        with self.assertRaisesRegex(KiwiError, "did not match"):
+            s.open_join(pid, "wrong!", "dora", "a long password", "203.0.113.20", page="xmpp.example.org")
+        with self.assertRaisesRegex(KiwiError, "did not match"):          # a test counts once, right or wrong
+            s.open_join(pid, text, "dora", "a long password", "203.0.113.20", page="xmpp.example.org")
+        pid, text = s.picture_test()
+        made = s.open_join(pid, " %s " % text.upper(), "dora", "a long password", "203.0.113.20", page="xmpp.example.org")
+        self.assertEqual(made, {"address": "dora@xmpp.example.org", "password": ""})
+        self.assertEqual(self.e.users[("dora", "xmpp.example.org")], "a long password")
+        # one new address per Internet address in ten minutes
+        pid, text = s.picture_test()
+        with self.assertRaisesRegex(KiwiError, "ten minutes"):
+            s.open_join(pid, text, "emil", "a long password", "203.0.113.20", page="xmpp.example.org")
+        pid, text = s.picture_test()
+        s.open_join(pid, text, "emil", "a long password", "203.0.113.21", page="xmpp.example.org")
+        self.assertNotIn("203.0.113.2", open(s.path).read())                    # only digests of the addresses
+
+    def test_the_open_way_is_only_where_it_is_switched_on(self):
+        pid, text = self.s.picture_test()
+        with self.assertRaisesRegex(KiwiError, "not made here"):
+            self.s.open_join(pid, text, "fred", "a long password", "203.0.113.30")
+
+    def test_the_picture_is_a_png(self):
+        try:
+            import PIL      # noqa: F401
+        except ImportError:
+            self.skipTest("no Pillow here (the control image has it)")
+        png = signupmod.draw_picture("ab3k7m")
+        self.assertTrue(png.startswith(b"\x89PNG"))
+        self.assertGreater(len(png), 2000)
+
+
 if __name__ == "__main__":
     unittest.main()

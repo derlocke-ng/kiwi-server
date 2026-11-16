@@ -5,6 +5,8 @@ Two ways in, as the people who run the network decided (docs/design/public-servi
 - an invite code from someone who has one: the account is made at once;
 - a request with a few words: it waits until the people who run the network accept it on the
   control page. The person keeps a request code and comes back with it.
+A Jabber server may also be open (its `registration` setting): then the same page makes an
+address right away after a picture test, one per Internet address in ten minutes.
 Either way the person gets a link that sets their password or passkey at Kanidm's own page: no
 email address is asked, as the network sends no mail.
 
@@ -14,6 +16,8 @@ request is kept until it is shown or a day has passed. Kanidm is asked with the 
 service account that may make people and their links, nothing else.
 """
 import hashlib
+import hmac
+import io
 import json
 import os
 import re
@@ -34,6 +38,10 @@ RESERVED = {"admin", "administrator", "root", "system", "kiwi", "support", "help
 LINK_DAYS = 1           # a link to set the password is good for a day
 ASK_PER_HOUR = 3        # requests from one address in an hour
 PENDING_MAX = 100       # requests waiting at once: more are refused until some are answered
+OPEN_EVERY = 600        # the open way: one new address per Internet address in ten minutes
+PICTURE_SECONDS = 600   # a picture test is good for ten minutes, once
+PICTURES_MAX = 2000     # picture tests kept at once (in memory)
+PICTURE_LETTERS = "abcdefghjkmnpqrstuvwxyz23456789"     # no 0/o, 1/l/i
 
 
 def _now():
@@ -65,6 +73,7 @@ class Signup:
         self.ejabberd = ejabberd or {}
         self.id_onion = id_onion        # the accounts' own hidden service: links stay on Tor for who came over Tor
         self.ways = {"invites": invites, "requests": requests, "captcha": captcha}
+        self.pictures = {}              # picture test id -> [its letters, their digest, good until]; memory only
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
 
     # ---- what is kept ------------------------------------------------------------------
@@ -200,6 +209,47 @@ class Signup:
             self.save(st)
         return made
 
+    # ---- the open way: a picture test ------------------------------------------------------
+    def picture_test(self):
+        """A new picture test: (its id, the letters it shows), kept in memory for ten minutes."""
+        text = "".join(secrets.choice(PICTURE_LETTERS) for _ in range(6))
+        pid, now = secrets.token_urlsafe(16), self.clock()
+        with self.lock:
+            self.pictures = {k: v for k, v in self.pictures.items() if v[2] > now}
+            if len(self.pictures) >= PICTURES_MAX:
+                raise KiwiError("Too many people at once. Try again in a few minutes.")
+            self.pictures[pid] = [text, _digest(text), now + PICTURE_SECONDS]
+        return pid, text
+
+    def picture_text(self, pid):
+        with self.lock:
+            p = self.pictures.get(pid or "")
+        return p[0] if p and p[2] > self.clock() else None
+
+    def open_join(self, pid, answer, name, password, address="", page=""):
+        """The open way (a Jabber server with registration on): the picture test's letters, a name
+        and a password make the address at once. A test counts once, right or wrong."""
+        if not (self.ways["captcha"] and self.ejabberd):
+            raise KiwiError("Addresses without a code are not made here.")
+        with self.lock:
+            p = self.pictures.pop(pid or "", None)
+        if not p or p[2] <= self.clock() or not hmac.compare_digest(p[1], _digest("".join((answer or "").split()))):
+            raise KiwiError("The letters did not match the picture. Here is a new one.")
+        name = self.check_name(name)
+        if len(password or "") < 10:
+            raise KiwiError("A password has 10 characters at least.")
+        now = self.clock()
+        with self.lock:
+            st = self.load()
+            opened = {k: v for k, v in st.get("opened", {}).items() if v > now - OPEN_EVERY}
+            if _digest(address) in opened:
+                raise KiwiError("One new address per Internet address in ten minutes. Try again later.")
+            made = self.make_account(name, name, page, password)
+            opened[_digest(address)] = now
+            st["opened"] = opened
+            self.save(st)
+        return made
+
     # ---- requests --------------------------------------------------------------------------
     def ask(self, name, why, address="", page=""):
         """A request: its code (shown once), with which the person comes back."""
@@ -265,6 +315,35 @@ class Signup:
             return ("expired" if r["state"] == "accepted" else r["state"]), {}
 
 
+def draw_picture(text):
+    """The picture test: its letters turned, moved and crossed out on a noisy ground (PNG).
+    Images only: it works in a browser without scripts, as Tor Browser's safest level."""
+    from PIL import Image, ImageDraw, ImageFont
+    rnd = secrets.SystemRandom()
+    w, h = 300, 90
+    img = Image.new("RGB", (w, h), (246, 245, 240))
+    d = ImageDraw.Draw(img)
+    for _ in range(700):
+        d.point((rnd.randrange(w), rnd.randrange(h)), fill=tuple(rnd.randrange(110, 220) for _ in range(3)))
+    try:
+        font = ImageFont.load_default(size=46)
+    except (TypeError, ValueError, OSError):    # an old Pillow, or one without FreeType
+        font = ImageFont.load_default()
+    x = 12
+    for ch in text:
+        glyph = Image.new("RGBA", (64, 76), (0, 0, 0, 0))
+        ImageDraw.Draw(glyph).text((12, 6), ch, font=font, fill=tuple(rnd.randrange(10, 90) for _ in range(3)) + (255,))
+        glyph = glyph.rotate(rnd.uniform(-16, 16), resample=Image.BICUBIC)
+        img.paste(glyph, (x, rnd.randrange(0, h - 76 + 1)), glyph)
+        x += rnd.randrange(38, 46)
+    for _ in range(5):
+        d.line([(rnd.randrange(w), rnd.randrange(h)), (rnd.randrange(w), rnd.randrange(h))],
+               fill=tuple(rnd.randrange(60, 160) for _ in range(3)), width=2)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 # ---- the page ---------------------------------------------------------------------------------
 JOIN = """{% extends "base.html" %}{% block title %}{{ brand }}: {{ "a Jabber address" if jabber else "an account" }}{% endblock %}{% block main %}
 <style>main{max-width:760px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media (max-width:680px){.two{grid-template-columns:1fr}}
@@ -304,11 +383,19 @@ placeholder="lowercase letters and digits">
 <label for="a-why">Who you are, and why</label><textarea id="a-why" name="why" rows="3" required minlength="10" maxlength="400"></textarea>
 <div class="actions"><button>Ask</button></div>
 <p class="muted small">The people who run this network read it. You get a code to come back with.</p></form>{% endif %}
-{% if ways.captcha %}<div class="card"><h2 style="margin-top:0">Without a code</h2>
-<p>Make your address right away, after a picture test{% if not ways.invites and not ways.requests %}: it is the way here{% endif %}.</p>
-<div class="actions"><a class="btn {{ "primary" if not ways.invites and not ways.requests else "" }}" href="/register/new">Make my address</a></div>
-<p class="muted small">One new address per Internet address in ten minutes. Your app can do this too.</p></div>{% endif %}
+{% if ways.captcha and jabber and picture %}<form class="card" method="post" action="/join/open"><h2 style="margin-top:0">Without a code</h2>
+<p class="small">Your address right away{% if not ways.invites and not ways.requests %}: it is the way here{% endif %}.</p>
+<label for="o-name">Your name (before the @)</label><input id="o-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" required autocomplete="username"
+placeholder="lowercase letters and digits">
+<label for="o-pw">A password</label><input id="o-pw" name="password" type="password" minlength="10" required autocomplete="new-password">
+<label for="o-pic">The letters in the picture</label>
+<img src="/join/picture/{{ picture }}" alt="Letters to type in the box below" width="300" height="90" style="display:block;max-width:100%;height:auto;border-radius:8px;margin:4px 0 6px">
+<input id="o-pic" name="answer" required autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="12">
+<input type="hidden" name="picture" value="{{ picture }}">
+<div class="actions"><button class="{{ "primary" if not ways.invites and not ways.requests else "" }}">Make my address</button></div>
+<p class="muted small">One new address per Internet address in ten minutes. Your app can do this too.</p></form>{% endif %}
 </div>
+{% if jabber %}<p class="muted small">To change your password, use your Jabber app. Lost it? The people who run this network can help.</p>{% endif %}
 {% if ways.requests %}<form method="get" action="/join/status" class="row" style="margin-top:6px;justify-content:flex-start">
 <input name="code" placeholder="ask-xxxx-xxxx-xxxx" style="max-width:260px" aria-label="Request code"><button>See how my request is</button></form>{% endif %}
 {% endif %}
@@ -323,7 +410,7 @@ Nobody can reset your password by email: keep it safe, or add a passkey."""
 def make_app(signup: Signup, brand="", terms=""):
     import jinja2
     from fastapi import FastAPI, Form, Request
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, Response
     from . import web
     env = jinja2.Environment(loader=jinja2.DictLoader({"base.html": web.TEMPLATES["base.html"], "join.html": JOIN}), autoescape=True)
     env.globals.update(icon=web.icon, version="")
@@ -333,11 +420,17 @@ def make_app(signup: Signup, brand="", terms=""):
 
     def page(request=None, **kw):
         host = (request.headers.get("host") or "").split(":")[0] if request is not None else ""
+        picture = ""
+        if signup.ways["captcha"] and signup.ejabberd and not (kw.get("made") or kw.get("asked") or kw.get("state")):
+            try:
+                picture = signup.picture_test()[0]
+            except KiwiError as e:
+                kw.setdefault("error", str(e))
         where = signup.ejabberd.get(host) or (next(iter(signup.ejabberd.values())) if signup.ejabberd else {})
         return HTMLResponse(env.get_template("join.html").render(
             brand=brand, terms=terms, id_host=signup.id_host, nav=None, jabber=bool(signup.ejabberd), host=where.get("host", ""),
             onion=where.get("onion", "") or (signup.id_onion if not signup.ejabberd and host != signup.id_onion else ""),
-            over_tor=bool(signup.id_onion) and host == signup.id_onion, page_host=host, ways=signup.ways, **kw))
+            over_tor=bool(signup.id_onion) and host == signup.id_onion, page_host=host, ways=signup.ways, picture=picture, **kw))
 
     def address(request):
         return util.client_address(request, none="")
@@ -369,6 +462,22 @@ def make_app(signup: Signup, brand="", terms=""):
             return page(request, error="Requests are not taken here.")
         try:
             return page(request, asked=signup.ask(name, why, address(request), page=page_host(request)))
+        except KiwiError as e:
+            return page(request, error=str(e))
+
+    @app.get("/join/picture/{pid}")
+    def join_picture(pid: str):
+        text = signup.picture_text(pid)
+        if not text:
+            return Response(status_code=404)
+        return Response(draw_picture(text), media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @app.post("/join/open")
+    def join_open(request: Request, picture: str = Form(""), answer: str = Form(""), name: str = Form(""),
+                  password: str = Form("")):
+        try:
+            made = signup.open_join(picture, answer, name, password, address(request), page=page_host(request))
+            return page(request, made=made, name=name.strip().lower())
         except KiwiError as e:
             return page(request, error=str(e))
 

@@ -3245,6 +3245,22 @@ class TestOnion(Base):
         self.assertEqual(asked[-1][1]["key"], "ssh-ed25519 AAAAfleetkey kiwi")
         self.assertEqual(adopted, [("fig", "core@192.168.1.40", os.path.join(os.path.realpath(sec), "admin_ed25519"))])
 
+    def test_the_control_node_signs_a_pasted_key_through_ram_only(self):
+        f = self.net()
+        fake = os.path.join(self.tmp, "fake-kiwi")
+        write(fake, "#!/bin/sh\n[ \"$1 $3\" = \"sshca sign\" ] && printf 'ssh-ed25519-cert-v01@openssh.com CERT\\n' > \"${4%.pub}-cert.pub\"\nexit 0\n")
+        os.chmod(fake, 0o755)
+        ram = os.path.join(self.tmp, "ram")
+        os.makedirs(ram)
+        c = controlmod.Control(f.path, kiwi_cmd=[fake], run_dir=ram)
+        with mock.patch.object(c, "locked", lambda: False):
+            with self.assertRaisesRegex(KiwiError, "not a public key"):
+                c.sshca_sign("-----BEGIN OPENSSH PRIVATE KEY-----\nabc")
+            with self.assertRaisesRegex(KiwiError, "not a public key"):
+                c.sshca_sign("ssh-ed25519 AAAAx a\nssh-ed25519 AAAAy b")
+            self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
+        self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
+
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)
@@ -7927,6 +7943,31 @@ class TestWeb(StoreBase):
         code, body = self.ask("/controllers/remove", {"name": "control", "csrf": tok})
         self.assertIn("own key", body)                                            # said on the page, not a crash
         self.assertEqual(self.ask("/api/fleet")[0], 401)                          # the sync API wants a controller
+
+    def test_the_computers_page_lets_a_key_in_for_a_while(self):
+        self.ask("/login", {"password": self.PW})
+        body = self.ask("/controllers")[1]
+        self.assertIn("Let a key in for a while", body)
+        self.assertIn('action="/controllers/sshca-init"', body)                   # no CA yet: it offers to make one
+        tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', body).group(1)
+        made = []
+        self.c.sshca_init = lambda user="admin": made.append(user)
+        self.c.sshca = lambda: {"made": bool(made), "fingerprint": "SHA256:testprint"}
+        code, body = self.ask("/controllers/sshca-init", {"csrf": tok})
+        self.assertEqual((code, made), (200, ["admin"]))
+        self.assertIn("Made. Apply each machine", body)                           # said once it is there
+        signed = []
+        self.c.sshca = lambda: {"made": True, "fingerprint": "SHA256:testprint"}
+        self.c.sshca_sign = lambda key, days, user="admin": signed.append((key, days)) or "ssh-ed25519-cert-v01@openssh.com AAAAcert"
+        body = self.ask("/controllers")[1]
+        self.assertIn("SHA256:testprint", body)
+        self.ask("/controllers/sshca-sign", {"key": "ssh-ed25519 AAAAx helper", "days": "7"})   # forged: nothing
+        self.assertEqual(signed, [])
+        code, body = self.ask("/controllers/sshca-sign", {"key": "ssh-ed25519 AAAAx helper", "days": "7", "csrf": tok})
+        self.assertEqual(code, 200)
+        self.assertEqual(signed, [("ssh-ed25519 AAAAx helper", 7)])
+        self.assertIn("ssh-ed25519-cert-v01@openssh.com AAAAcert", body)
+        self.assertIn("for 7 days", body)
 
 
 @unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")

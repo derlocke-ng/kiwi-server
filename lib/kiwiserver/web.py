@@ -248,6 +248,14 @@ The old password cannot be read anywhere.</p></details>{% endblock %}""",
 <option value="{{ o.value }}"{% if o.value == value %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</select>
 {% else %}<input id="f-{{ name }}" name="{{ name }}" value="{{ value }}"{% if q.secret %} type="password" autocomplete="off"{% endif %}>{% endif %}
 {% if err %}<p class="bad">{{ err }}</p>{% endif %}</div>{% endif %}{% endmacro %}
+{% macro lookup(q) %}<div class="q lookup" data-when="{{ q.when }}" data-names="{{ q.names | tojson | forceescape }}" data-by="{{ q.lookup }}">
+<label>{{ q.label }}</label><p class="muted" style="margin:0 0 4px">{{ q.help }}</p>
+<input type="hidden" name="hoster" value=""><input type="hidden" name="provider_server" value="">
+<div class="hoster-ask"><label for="h-code">Setup code</label><p class="muted" style="margin:0 0 4px">The same as below: it
+proves that this is your machine.</p><input id="h-code" autocomplete="off">
+<div class="actions"><button type="button" class="hoster-go">Sign in and pick it</button></div></div>
+<select class="hoster-list" style="display:none" aria-label="{{ q.label }}"></select>
+<p class="hoster-say muted" aria-live="polite"></p></div>{% endmacro %}
 <h1>A new network</h1>
 <p class="muted">Nothing is set up on this machine yet. Answer the questions; the suggestions are fine for most homes.</p>
 <details class="card"{% if back_error %} open{% endif %}><summary>I already have a network: bring it back from a copy</summary>
@@ -273,8 +281,8 @@ should be yours.</p>
 <form method="post" action="/setup" autocomplete="off">
 {% for step in steps %}<div class="card"><h2 style="margin-top:0">{{ step.step }}</h2>
 <p>{{ step.intro }}</p>{% if step.notes %}<ul>{% for n in step.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
-{% for q in step.questions if not q.advanced and q.type not in ("machines", "lookup") %}
-{{ field(q, q.id, values.get(q.id, q.default or ""), errors.get(q.id)) }}{% endfor %}
+{% for q in step.questions if not q.advanced and q.type != "machines" %}
+{% if q.type == "lookup" %}{{ lookup(q) }}{% else %}{{ field(q, q.id, values.get(q.id, q.default or ""), errors.get(q.id)) }}{% endif %}{% endfor %}
 {% for q in step.questions if q.type == "machines" %}
 <div id="machines">{% for m in machines %}{% set i = loop.index0 %}<div class="card machine"><div class="row"><strong>{{ "This machine" if m.this else "A machine at home" }}</strong>
 {% if not m.this %}<button type="button" class="drop">Leave it out</button>{% endif %}</div>
@@ -343,6 +351,42 @@ your network's keys after every restart of this machine.</p>
     if (e.target.classList.contains("drop")) { e.target.closest(".machine").remove(); number(); shown(); }
   });
   document.addEventListener("change", shown);
+  document.querySelectorAll(".lookup").forEach(function (box) {      // sign in at the hoster, pick the server
+    var go = box.querySelector(".hoster-go"), say = box.querySelector(".hoster-say"), list = box.querySelector(".hoster-list");
+    var code = box.querySelector("#h-code"), main = document.getElementById("code"), names = JSON.parse(box.dataset.names || "{}");
+    var by = function () { return document.querySelector('[name="' + box.dataset.by + '"]').value; };
+    var field = function (n) { return document.querySelector('[name="' + n + '"]'); };
+    code.addEventListener("input", function () { if (main) main.value = code.value; });
+    if (main) main.addEventListener("input", function () { code.value = main.value; });
+    function failed(why) { say.textContent = "That did not work: " + why + ". Type the address below instead."; go.disabled = false; }
+    function take() {
+      var r = JSON.parse(list.value); field("provider_server").value = r.id; field("master_address").value = r.address;
+      say.textContent = "Its address is " + r.address + ".";
+    }
+    list.addEventListener("change", take);
+    function poll(handle, name, opened) {
+      fetch("/setup/hoster/" + encodeURIComponent(handle), {cache: "no-store"}).then(function (r) { return r.json(); }).then(function (s) {
+        if (s.error && !s.state) return failed(s.error);
+        if (s.state === "failed") return failed(s.error || "no answer");
+        if (s.url && !opened) {
+          opened = true; say.innerHTML = "";
+          var a = document.createElement("a"); a.href = s.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Sign in to " + name;
+          say.append(a, " in a new tab and confirm it there. This goes on by itself.");
+        }
+        if (s.state !== "listed") return setTimeout(function () { poll(handle, name, opened); }, 2000);
+        list.innerHTML = "";
+        s.rows.forEach(function (r) { var o = document.createElement("option"); o.value = JSON.stringify({id: r.id, address: r.address}); o.textContent = r.label; list.appendChild(o); });
+        field("hoster").value = handle; list.style.display = ""; box.querySelector(".hoster-ask").style.display = "none"; take();
+      }).catch(function () { setTimeout(function () { poll(handle, name, opened); }, 4000); });
+    }
+    go.addEventListener("click", function () {
+      var p = by(), name = names[p] || p;
+      go.disabled = true; say.textContent = "Asking " + name + "…";
+      fetch("/setup/hoster", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({provider: p, code: code.value})})
+        .then(function (r) { return r.json(); }).then(function (d) { if (d.error) return failed(d.error); poll(d.handle, name, false); })
+        .catch(function () { failed("this page did not answer"); });
+    });
+  });
   if ({{ guess | tojson }}) {       // the machine could not tell (a container): what this browser says
     var f = function (n) { return document.querySelector('[name="' + n + '"]'); }, lang = (navigator.language || "en-US").split("-");
     var tz = Intl.DateTimeFormat().resolvedOptions().timeZone, cc = (lang[1] || "").toUpperCase();
@@ -1593,6 +1637,9 @@ def make_app(control: Control):
                 if q.get("type") in ("machines", "lookup"):
                     continue
                 a[q["id"]] = str(form.get(q["id"], q.get("default") or "")).strip()
+        picked = str(form.get("provider_server") or "").strip()
+        if picked and form.get("hoster"):       # picked from the hoster's list after signing in there
+            a["provider_server"] = picked
         for st in steps:
             for q in st["questions"]:
                 if q.get("when") and q["id"] in a and not setupmod._when(q, a):
@@ -1611,6 +1658,32 @@ def make_app(control: Control):
                 m.pop("download_dir", None)
             a["nodes"].append(m)
         return a
+
+    @app.post("/setup/hoster")
+    async def setup_hoster(request: Request):
+        """The first run's "Sign in and pick it": a device login at the hoster, guarded by the setup code."""
+        if not control.fresh():
+            return JSONResponse({"error": "this machine has a network already"}, status_code=403)
+        if not request.headers.get("content-type", "").startswith("application/json"):
+            return JSONResponse({"error": "JSON only"}, status_code=415)     # a form from another site cannot send it
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        try:
+            handle = await run_in_threadpool(control.hoster_start, str(body.get("provider") or ""),
+                                             str(body.get("code") or ""), address(request))
+        except KiwiError as e:
+            time.sleep(1)
+            return JSONResponse({"error": str(e)}, status_code=403)
+        return JSONResponse({"handle": handle}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/setup/hoster/{handle}")
+    def setup_hoster_state(handle: str):
+        s = control.hoster_state(handle) if control.fresh() else None
+        if s is None:
+            return JSONResponse({"error": "no such sign-in"}, status_code=404)
+        return JSONResponse(s, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/join-me")
     async def api_join_me(request: Request):
@@ -1655,7 +1728,8 @@ def make_app(control: Control):
         if errors:
             return await run_in_threadpool(setup_page, shown, errors, "Something is missing below.", request.headers.get("host", ""))
         try:
-            recovery, token = await run_in_threadpool(control.first_run, str(form.get("code", "")), pw, answers, address(request))
+            recovery, token = await run_in_threadpool(control.first_run, str(form.get("code", "")), pw, answers, address(request),
+                                                      str(form.get("hoster") or ""))
         except KiwiError as e:
             return await run_in_threadpool(setup_page, shown, {}, str(e), request.headers.get("host", ""))
         r = page("recovery.html", recovery=recovery)

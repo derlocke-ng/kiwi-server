@@ -9052,6 +9052,61 @@ class TestFirstRunPage(StoreBase):
         self.c.lock_store()
         self.assertTrue(self.c.login(self.PW))
 
+    def test_the_hoster_is_signed_in_from_the_page_and_its_login_is_sealed(self):
+        """"Sign in and pick it": the device login at netcup runs on the machine, the page lists the
+        account's servers; the picked one goes into the fleet, the login into the sealed secrets."""
+        import urllib.error
+        import urllib.request
+        api = FakeNetcup()
+        self.addCleanup(api.close)
+
+        def post(body, kind="application/json"):
+            req = urllib.request.Request(self.url + "/setup/hoster", data=json.dumps(body).encode(),
+                                         headers={"Content-Type": kind}, method="POST")
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code, json.loads(e.read())
+        body = self.ask("/setup")[1]
+        self.assertIn('class="q lookup" data-when="master_where in netcup"', body)
+        self.assertIn(">Sign in and pick it</button>", body)
+        self.assertEqual(post({"provider": "netcup", "code": self.c.setup_code()}, kind="text/plain")[0], 415)
+        st, out = post({"provider": "netcup", "code": "0000-0000"})
+        self.assertEqual(st, 403)
+        self.assertIn("not the setup code", out["error"])
+        self.assertEqual(post({"provider": "elsewhere", "code": self.c.setup_code()})[0], 403)
+        with mock.patch.dict(os.environ, {"KIWI_NETCUP_API": api.url}):
+            st, out = post({"provider": "netcup", "code": self.c.setup_code()})
+            self.assertEqual(st, 200, out)
+            handle = out["handle"]
+            for _ in range(200):
+                s = json.loads(self.ask("/setup/hoster/" + handle)[1])
+                if s["state"] in ("listed", "failed"):
+                    break
+                time.sleep(0.1)
+        self.assertEqual((s["state"], s["url"], s["error"]), ("listed", "https://login.example/x", ""), s)
+        self.assertEqual(s["rows"], [{"id": 7, "address": "203.0.113.9", "label": "crumble · v2202 · 203.0.113.9"}])
+        self.assertNotIn("token", s)                                            # the login stays on the machine
+        self.assertEqual(self.ask("/setup/hoster/not-a-handle")[0], 404)
+        form = dict(self.FORM, master_where="netcup", master_address="203.0.113.9", password=self.PW, again=self.PW)
+        body = self.ask("/setup", dict(form, provider_server="8", hoster=handle, code=self.c.setup_code()))[1]
+        self.assertIn("not in the hoster&#39;s list", body)                     # only a server of that list
+        body = self.ask("/setup", dict(form, provider_server="7", hoster="made-up", code=self.c.setup_code()))[1]
+        self.assertIn("sign in there again", body)
+        self.assertTrue(self.c.fresh())
+        status, body, cookie = self.ask("/setup", dict(form, provider_server="7", hoster=handle, code=self.c.setup_code()))
+        self.assertIn("AGE-SECRET-KEY-", body)
+        fleet = yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))
+        master = next(h for h in fleet["hosts"].values() if "master" in h)
+        self.assertEqual(master["vps"], {"provider": "netcup", "server": 7})  # the install knows where and which
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "secrets", "netcup.token")))  # sealed with the others
+        self.assertFalse(os.path.exists(os.path.join(self.c.run, "hoster")))   # nothing of it left beside
+        on_disk = sorted(n for n in os.listdir(self.dir) if not os.path.islink(os.path.join(self.dir, n)))
+        self.assertEqual(on_disk, ["control", "fleet.yaml.age", "secrets.age", "secrets.recipients"])
+        self.assertIsNone(self.c.hoster_state(handle))
+
     def test_on_a_starter_this_machine_is_the_first_node(self):
         from kiwiserver import setup as setupmod
         real = setupmod.detect

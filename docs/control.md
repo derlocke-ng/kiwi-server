@@ -82,6 +82,11 @@ password for the page. The page then shows the recovery key once: write it down.
 
 - The code proves that the person at the page is the one who started it. Five wrong
   tries from one address and the page waits ten minutes.
+- A master at netcup: *Sign in and pick it*, with the setup code, opens netcup's sign-in
+  in a new tab. Once you confirm it there, the page lists the account's servers and the
+  one you pick fills in the address. The login is kept with the network's sealed secrets,
+  so the master can later be installed from the page without signing in again. Without
+  it, type the address.
 - The new network is made in memory. On the disk are only the encrypted files
   (`fleet.yaml.age`, `secrets.age`); after a restart the password opens them.
 - Until the machine has its role, the page is plain HTTP in your home network: do the

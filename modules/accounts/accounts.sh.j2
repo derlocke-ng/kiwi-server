@@ -74,8 +74,11 @@ case "${1:-}" in
         printf '{"name": "%s", "jabber": "%s"}\n' "$2" "$on" ;;
     oauth)
         name_ok "$2"
-        c=$2; shift
-        k system oauth2 get "$c" 2>&1 | grep -q "^name: $c" || k system oauth2 create "$c" "$1" "$2" >/dev/null 2>&1
+        c=$2; shift 2                           # now: DISPLAY ORIGIN CALLBACK…
+        if ! k system oauth2 get "$c" 2>&1 | grep -q "^name: $c"; then
+            k system oauth2 create "$c" "$1" "$2" >"$work/out" 2>&1 ||
+                { echo "accounts: Kanidm did not make the client $c: $(tail -1 "$work/out")" >&2; exit 1; }
+        fi
         shift 2
         pkce=off
         for url in "$@"; do

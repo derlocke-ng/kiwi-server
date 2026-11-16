@@ -2204,7 +2204,9 @@ ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
 ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber")
 # the services that can sign people in with the network's accounts, and where Forgejo & co. come back to
 CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." + h.hostname, "/user/oauth2/accounts/callback"),
-               "cloud": ("Nextcloud", lambda s, h: s.get("nc_hostname") or "cloud." + h.hostname, "/apps/user_oidc/code")}
+               "cloud": ("Nextcloud", lambda s, h: s.get("nc_hostname") or "cloud." + h.hostname, "/apps/user_oidc/code"),
+               "paperless": ("Paperless", lambda s, h: s.get("paperless_domain") or "paperless." + h.hostname,
+                             "/accounts/oidc/accounts/login/callback/")}
 
 
 def accounts_file(fleet, host, module):

@@ -75,6 +75,23 @@ class TestSignup(unittest.TestCase):
         s.answer(s.requests(waiting_only=True)[0]["hint"], True)
         self.assertTrue(s.status(code)[1]["link"].startswith("http://abcdefghijklmnopqrstuvwxyz234567"))
 
+    def test_over_tor_the_page_offers_a_password_not_a_passkey(self):
+        try:
+            import jinja2
+            from kiwiserver import web
+        except ImportError:
+            self.skipTest("needs jinja2 and FastAPI (the control image has them)")
+        env = jinja2.Environment(loader=jinja2.DictLoader({"base.html": web.TEMPLATES["base.html"], "join.html": signupmod.JOIN}), autoescape=True)
+        env.globals.update(icon=web.icon, version="")
+        made = {"name": "torb", "link": "http://x.onion/ui/reset?token=t"}
+
+        def render(over_tor):
+            return env.get_template("join.html").render(brand="Kiwi", terms="", id_host="id.example.org", nav=None, jabber=False, host="",
+                                                        onion="", over_tor=over_tor, page_host="", ways=["invites"], made=made)
+        self.assertIn("a passkey belongs to the network", render(True))
+        self.assertNotIn("(or a passkey)", render(True))
+        self.assertIn("(or a passkey)", render(False))
+
     def test_requests_are_limited(self):
         with self.assertRaisesRegex(KiwiError, "few words"):
             self.s.ask("fritz", "hi", "203.0.113.7")

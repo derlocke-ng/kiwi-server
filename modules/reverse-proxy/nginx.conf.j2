@@ -24,6 +24,9 @@
             proxy_set_header Accept-Encoding "";
             sub_filter 'https://{{ s.server_name }}/' '/';
             sub_filter_once off;
+            # a cookie the service gives its usual name holds for the hidden address: else the browser drops it
+            proxy_cookie_domain {{ s.server_name }} $host;
+            proxy_cookie_domain .{{ s.server_name }} $host;
 {% else %}
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

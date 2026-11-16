@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Drill: a person signs in to Forgejo with the network's account, in a real browser.
 
-    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud]
+    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless]
 
-APP_NAME is Forgejo's name (git.<host>), or with --nextcloud Nextcloud's (cloud.<host>).
+APP_NAME is Forgejo's name (git.<host>), with --nextcloud Nextcloud's (cloud.<host>), with --paperless
+Paperless' (paperless.<host>).
 
 The machine with the accounts module (at ACCOUNTS_ADDRESS, its page ID_NAME) makes an account and
 its link; Firefox, told where ID_NAME and GIT_NAME are:
@@ -21,6 +22,7 @@ import sys
 
 fleet, acc_addr, idname, git_addr, gitname = sys.argv[1:6]
 nextcloud = "--nextcloud" in sys.argv
+app = "nextcloud" if nextcloud else "paperless" if "--paperless" in sys.argv else "forgejo"
 fd = os.path.dirname(os.path.abspath(fleet))
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile=" + os.path.join(fd, "secrets", "known_hosts"),
        "-i", os.path.join(fd, "secrets", "admin_ed25519"), "core@" + acc_addr]
@@ -50,6 +52,14 @@ with sync_playwright() as p:
         q.goto("https://%s/login" % gitname, wait_until="networkidle")
         q.screenshot(path="/shots/sso-1-nextcloud-login.png")
         q.locator("a[href*='user_oidc/login']").first.click()
+    elif app == "paperless":
+        q.goto("https://%s/accounts/login/" % gitname, wait_until="networkidle")
+        q.screenshot(path="/shots/sso-1-paperless-login.png")
+        q.locator("a[href*='/accounts/oidc/accounts/login']").first.click()
+        q.wait_for_load_state("networkidle")
+        go_on = q.get_by_role("button", name="Continue")   # allauth asks once before it leaves
+        if go_on.count() and idname not in q.url:
+            go_on.first.click()
     else:
         q.goto("https://%s/user/login" % gitname, wait_until="networkidle")
         q.screenshot(path="/shots/sso-1-forgejo-login.png")
@@ -77,7 +87,7 @@ with open(os.path.join(shots, "sso-inner.py"), "w") as fh:
 r = subprocess.run(["podman", "run", "--rm", "--add-host", "%s:%s" % (idname, acc_addr), "--add-host", "%s:%s" % (gitname, git_addr),
                     "-v", "%s:/shots:z" % shots, "mcr.microsoft.com/playwright/python:v1.49.0-noble", "sh", "-c",
                     "pip install -q playwright==1.49.0 >/dev/null 2>&1; python3 /shots/sso-inner.py \"$@\"", "x",
-                    made["link"], idname, gitname, name, pw, "nextcloud" if nextcloud else "forgejo"], capture_output=True, text=True)
+                    made["link"], idname, gitname, name, pw, app], capture_output=True, text=True)
 bad = 0
 try:
     res = json.loads(r.stdout.strip().splitlines()[-1])
@@ -92,7 +102,7 @@ def say(ok, what):
     print("%s  %s" % ("PASS" if ok else "FAIL", what))
 
 
-label = "Nextcloud" if nextcloud else "Forgejo"
+label = {"nextcloud": "Nextcloud", "paperless": "Paperless", "forgejo": "Forgejo"}[app]
 say(res.get("at_accounts"), "%s's 'with accounts' leads to the accounts' page" % label)
 say(gitname in res.get("url", "") and (name in res.get("text", "") or "SSO-Drill" in res.get("text", "")),
     "back in %s as %s: %s" % (label, name, res.get("url", "")))

@@ -64,6 +64,20 @@ The test, on the test network:
 4. A stranger signs up with an invite code, over the Internet and over Tor.
 5. Memory at rest and while logging in.
 
+### The test (16 November 2026, papaya)
+
+| | Kanidm 1.12.1 | Authentik 2026.8.5 |
+|---|---|---|
+| Memory at rest | 59 MB, one container | about 800 MB: server 414, worker 311, database 70 (and an LDAP container on top) |
+| An account made by the network, a link to set its password, no email | yes (`person create`, `credential create-reset-token`) | yes (invitations API) |
+| Sign-up flows by invite | ours to build: a small page | to be built from flow blueprints (none for invites came with it) |
+| Jabber's password check over LDAP | yes, built in: the right password in, a wrong one out | needs its LDAP outpost container |
+
+**Kanidm it is.** It runs on any node, Jabber can use it over LDAP, and the sign-up rules the
+owner chose (an invite code, or a request accepted on the control page) are kiwi-server's own
+small page either way: it makes the account in Kanidm and hands over the link to set a password.
+The drill: `tests/drills/accounts-spike.sh`.
+
 ## Status: what to build on
 
 kiwi-server already asks every service every ten minutes, from the network and the way a

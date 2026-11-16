@@ -28,6 +28,41 @@ kiwi-server enroll fleet.yaml sh3 --existing          # the config of a client t
 Routers join the mesh with `kiwi-server openwrt` or the steps in
 [Routers](routers.md).
 
+## The way to the Internet
+
+Phones, laptops and the home's machines reach the Internet through the master.
+From there they leave one of two ways:
+
+- **The master's own connection**: they come out at the master's address. This is
+  the simplest; nothing to sign up for.
+- **A VPN provider**: they come out at the provider's servers, and the master's own
+  address stays out of what they do. Every provider gluetun runs with WireGuard
+  works: Mullvad, Proton VPN, NordVPN, Surfshark, AirVPN, Windscribe, IVPN and
+  FastestVPN. Any other provider works through its WireGuard config.
+
+The first run (in the app, on the page or in the terminal) asks for it. Each
+provider is asked only for the lines it needs from a WireGuard config made in your
+account there:
+
+| Provider | From its WireGuard config |
+|---|---|
+| Mullvad, Surfshark, IVPN, FastestVPN | PrivateKey, Address (its IPv4 part) |
+| Proton VPN, NordVPN | PrivateKey |
+| AirVPN, Windscribe | PrivateKey, Address, PresharedKey |
+| Another provider | PrivateKey, Address, the PublicKey and Endpoint of its [Peer] part, PresharedKey when it has one |
+
+In the fleet file it is the master's `vpn-client` block:
+
+```yaml
+    master:
+      vpn-client: { vpn_provider: protonvpn, wireguard_private_key: …, server_countries: Switzerland }
+```
+
+`server_countries`, `server_regions`, `server_cities` and `server_hostnames`
+choose the provider's servers. Without a `vpn-client` block the master is its
+own exit. A second network can be the exit too
+([Leave to the Internet through a partner](#leave-to-the-internet-through-a-partner)).
+
 ## DNS
 
 DNS is one chain for the whole network:

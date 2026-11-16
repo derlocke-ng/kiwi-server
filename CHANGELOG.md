@@ -8,6 +8,13 @@
 
 
 
+
+## 2.130.2 — start pages without doubles
+
+- A VPN name that sends on to a public name is no service of its own: it is no longer checked,
+  listed or shown twice on the start pages.
+- The status page is the button at the top of the start pages, not a tile.
+
 ## 2.130.1 — a sentence with a colon
 
 - kiwi-modules 0.54.1: the network's words on the start pages may hold ": ".

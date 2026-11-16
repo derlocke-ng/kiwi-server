@@ -1,0 +1,11 @@
+#!/usr/bin/with-contenv bash
+# kiwi-server: every file a jail reads exists before fail2ban starts (a jail without its file
+# stops fail2ban as a whole): its own log, which the repeat-offender jail reads, and the
+# apps' wrong logins, which kn-f2b-tap fills
+mkdir -p /config/log/fail2ban
+touch /config/log/fail2ban/fail2ban.log
+{% for j in f2b_jails if f2b_tap %}
+mkdir -p /kiwi-apps
+touch /kiwi-apps/{{ j.name }}.log
+{% endfor %}
+true

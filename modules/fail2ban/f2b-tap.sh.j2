@@ -1,0 +1,20 @@
+#!/bin/sh
+# fail2ban on {{ hostname }}: the wrong logins of the apps, copied out of their logs into
+# {{ docker_dir }}/{{ container_prefix }}-fail2ban/apps/<app>.log, where fail2ban (whose image reads files) finds them. Only the lines
+# that matter are kept. Run by kn-f2b-tap.service, which starts the files anew each day.
+rt={{ runtime }}
+tap() {     # name container file match
+    out={{ docker_dir }}/{{ container_prefix }}-fail2ban/apps/$1.log
+    while :; do
+        if [ -n "$3" ]; then
+            $rt exec "$2" tail -n 0 -F "$3" 2>/dev/null
+        else
+            $rt logs -f --since 5s "$2" 2>&1
+        fi | grep --line-buffered -E "$4" >> "$out"
+        sleep 10       # the container is not there (yet), or was made anew
+    done
+}
+{% for j in f2b_jails %}
+tap {{ j.name | shquote }} {{ j.container | shquote }} {{ (j.file or '') | shquote }} {{ j.match | shquote }} &
+{% endfor %}
+wait

@@ -120,6 +120,9 @@ nginx:                           # server blocks for the reverse proxy (see belo
 logins:                          # what a person signs in to (see below)
   ...
 
+fail2ban:                        # what a wrong login looks like in its log (see below)
+  ...
+
 settings:                        # the user-facing settings (see below)
   ...
 ```
@@ -258,6 +261,30 @@ The entries are checked when the modules are read. An unknown key, a
 server of the module has and a `when` that names nothing are errors.
 `kiwi-server roles --porcelain` publishes the entries with each module, as
 they are written.
+
+### fail2ban
+
+A module that has a login strangers may reach says what a wrong login looks
+like in its log. On a machine with public sites, fail2ban bans an address
+that keeps getting it wrong. It never bans an address for loading a page, and
+never the addresses the network's own machines come from. On a node behind the
+master the ban is nginx's, as only nginx knows the visitor's address there:
+
+```yaml
+fail2ban:
+  - name: git                                  # the jail is kiwi-git (lowercase, digits, dashes)
+    container: "{{ container_prefix }}-git"    # whose log
+    file: /data/app.log                        # a file inside the container; without it: the container's output
+    match: "Failed authentication attempt"     # grep -E: the lines worth keeping
+    failregex: 'Failed authentication attempt.* from <HOST>(?::\d+)?'   # fail2ban's pattern, <HOST> the address
+    maxretry: 5                                # optional: fail2ban's setting otherwise
+    when: some_setting                         # optional: only while it is set
+```
+
+The app must log the visitor's real address: nginx sends it as `X-Real-IP` and
+`X-Forwarded-For`, and the app has to trust them from the stack network (for
+Forgejo `REVERSE_PROXY_TRUSTED_PROXIES`). Prove a new entry with
+`tests/drills/fail2ban.py … --app <name>`.
 
 ## Rendering
 

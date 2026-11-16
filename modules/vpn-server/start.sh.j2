@@ -101,6 +101,11 @@ iptables -t nat -A POSTROUTING -s {{ subnet }} -o eth0 -j MASQUERADE
 {% endif %}
 {% endfor %}
 
+# the nodes this master hands visitors on to ask its port 80 for the addresses the network's own
+# machines come from (fail2ban there never bans them): port 80 has nothing else but redirects
+{% for ip in ((exposed or {}).get('names') or {}).values() | unique %}
+iptables -A INPUT -i wg0 -s {{ ip }} -p tcp --dport 80 -j ACCEPT
+{% endfor %}
 # the admin pages for clients outside every group (the plain mesh, {{ wg_subnet }})
 {% if not admin_from_mesh %}
 iptables -A INPUT -i wg0 -p tcp --dport 51821 -j DROP
@@ -163,7 +168,7 @@ ip route add default via {{ docker_gateway }} dev eth0 table novpn
 ip route flush cache
 iptables -t mangle -A OUTPUT -p udp --sport 51820 -j MARK --set-mark 65
 iptables -t mangle -A OUTPUT -p tcp --sport 51821 -j MARK --set-mark 65
-iptables -t mangle -A OUTPUT -p tcp --sport 80 -j MARK --set-mark 65
+iptables -t mangle -A OUTPUT -p tcp --sport 80 ! -d {{ mesh_subnet }} -j MARK --set-mark 65
 {% if public_names or (exposed or {}).get('names') %}
 # a public site's replies to the internet; its replies to the mesh stay on wg0
 iptables -t mangle -A OUTPUT -p tcp --sport 443 ! -d {{ mesh_subnet }} -j MARK --set-mark 65

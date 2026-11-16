@@ -1,0 +1,8 @@
+[Unit]
+Description=nginx on {{ hostname }}: the list of banned addresses changed
+
+[Path]
+PathChanged={{ docker_dir }}/{{ container_prefix }}-nginx/banned/fail2ban.map
+
+[Install]
+WantedBy=multi-user.target

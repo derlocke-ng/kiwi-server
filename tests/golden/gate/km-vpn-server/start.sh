@@ -78,6 +78,8 @@ iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.6 -j DROP
 iptables -A FORWARD -s 10.8.5.0/24 -d 10.8.0.9 -j DROP
 iptables -t nat -A POSTROUTING -s 10.8.5.0/24 -o eth0 -j MASQUERADE
 
+# the nodes this master hands visitors on to ask its port 80 for the addresses the network's own
+# machines come from (fail2ban there never bans them): port 80 has nothing else but redirects
 # the admin pages for clients outside every group (the plain mesh, 10.8.0.0/24)
 
 # stock wg-easy post-up
@@ -104,4 +106,4 @@ ip route add default via 172.64.0.1 dev eth0 table novpn
 ip route flush cache
 iptables -t mangle -A OUTPUT -p udp --sport 51820 -j MARK --set-mark 65
 iptables -t mangle -A OUTPUT -p tcp --sport 51821 -j MARK --set-mark 65
-iptables -t mangle -A OUTPUT -p tcp --sport 80 -j MARK --set-mark 65
+iptables -t mangle -A OUTPUT -p tcp --sport 80 ! -d 10.8.0.0/16 -j MARK --set-mark 65

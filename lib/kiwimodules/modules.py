@@ -19,6 +19,7 @@ import ipaddress
 import hashlib
 import os
 import re
+import shlex
 
 import yaml
 
@@ -62,12 +63,34 @@ def modules_dir():
     return util.modules_root()
 
 
+JAIL_KEYS = ("name", "container", "file", "match", "failregex", "maxretry", "when")
+
+
+def load_jails(owner, raw):
+    """module.yaml `fail2ban:` — a list of {name, container, file?, match, failregex, maxretry?, when?}."""
+    jails = []
+    for j in raw or []:
+        if not isinstance(j, dict):
+            raise KiwiError("%s: fail2ban: each entry is a mapping" % owner)
+        unknown = sorted(set(j) - set(JAIL_KEYS))
+        if unknown:
+            raise KiwiError("%s: fail2ban: unknown key(s): %s (known: %s)" % (owner, ", ".join(unknown), ", ".join(JAIL_KEYS)))
+        for k in ("name", "container", "match", "failregex"):
+            if not j.get(k):
+                raise KiwiError("%s: fail2ban: %s is required" % (owner, k))
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", str(j["name"])):
+            raise KiwiError("%s: fail2ban: name %r: lowercase letters, digits and dashes" % (owner, j["name"]))
+        jails.append(dict(j))
+    return jails
+
+
 def _jinja():
     if jinja2 is None:
         raise KiwiError("python3 jinja2 is required to render modules — "
                         "pip install --user jinja2  (or rpm-ostree install python3-jinja2)")
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
     env.filters["wg_key"] = wg_key
+    env.filters["shquote"] = lambda value: shlex.quote(str(value))
     # `x is match(pattern)`: for a module's validate: rules on names
     env.tests["match"] = lambda value, pattern: re.match(pattern, str(value)) is not None
     return env
@@ -125,6 +148,9 @@ class Module:
         self.bind_mounts = list(st.get("bind_mounts") or [])
         self.volumes = [str(v) for v in (st.get("volumes") or [])]
         self.backup = meta.get("backup") or None     # what restic keeps of this module
+        # what a wrong login looks like in this module's log: fail2ban bans who keeps doing it
+        # (templated: name, container, file — else the container's output —, match, failregex, maxretry, when)
+        self.fail2ban = load_jails("modules/%s" % self.name, meta.get("fail2ban"))
         self.nginx = meta.get("nginx") or None
         # what a person signs in to (schema.Login); a login points at one of the sites by
         # the name its nginx server gives itself with `site:`
@@ -818,6 +844,27 @@ class Renderer:
                                   "proto": "udp" if flag == "udp" else "tcp"})
         return names, ports
 
+    def login_jails(self, spec, ordered, base):
+        """The wrong logins of this machine's modules, for fail2ban: each module says where its
+        log is and what a failure looks like in it (module.yaml `fail2ban:`)."""
+        out = []
+        for name in ordered:
+            mod = self.ms.get(name)
+            if not mod.fail2ban:
+                continue
+            ctx = self.module_context(spec, ordered, base, name)
+            for j in mod.fail2ban:
+                if j.get("when") and not ctx.get(j["when"]):
+                    continue
+                where = "modules/%s/module.yaml fail2ban.%s" % (name, j["name"])
+                r = {k: self.render_text(str(j[k]), ctx, where).strip() for k in ("container", "file", "match", "failregex") if j.get(k)}
+                r["name"] = j["name"]
+                r["maxretry"] = int(j.get("maxretry") or 0)
+                if "<HOST>" not in r.get("failregex", ""):
+                    raise KiwiError("%s: failregex must name the address with <HOST>" % where)
+                out.append(r)
+        return out
+
     # ---- the bundle --------------------------------------------------------------------
     def render(self, spec):
         ordered = self.ms.resolve(spec.modules, spec.node_type)
@@ -840,6 +887,7 @@ class Renderer:
         # knows which names and ports to hand on (exposed)
         base["via"] = str(rp.get("via") or "")
         base["exposed"] = rp.get("exposed") or {}
+        base["f2b_jails"] = self.login_jails(spec, ordered, base)
         base["module_rules"] = self.vpn_rules(spec, ordered, base)
         base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and any(
             self.ms.get(n).needs_vpn_dnat for n in ordered)

@@ -7,6 +7,11 @@ rt=podman
 machines=" 10.8.0.1 10.8.0.25 10.8.0.6 10.8.0.9 "
 now=$($rt exec km-vpn-server wg show wg0 dump 2>/dev/null | awk 'NR > 1 { split($4, a, "/"); split($3, e, ":"); print a[1], e[1] }' |
       while read -r mesh ip; do case "$machines" in *" $mesh "*) [ "$ip" != "(none)" ] && echo "$ip" ;; esac; done | sort -u | tr '\n' ' ')
+# the nodes it hands visitors on to ask for the list too (port 80, from the mesh only)
+list=/home/user/docker/km-nginx/own/list
+if [ -d "${list%/*}" ] && [ "$now" != "$(cat "$list" 2>/dev/null)" ]; then
+    printf '%s' "$now" > "$list.new" && mv "$list.new" "$list"
+fi
 # a restarted fail2ban forgets what it was told: its start time is part of what is remembered
 now="$now@$($rt inspect -f '{{.State.StartedAt}}' km-fail2ban 2>/dev/null)"
 was=$(cat /run/kiwi-fail2ban-own 2>/dev/null)

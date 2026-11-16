@@ -27,6 +27,8 @@ services:
       - FORGEJO__server__START_SSH_SERVER=false
 {% endif %}
       - FORGEJO__security__INSTALL_LOCK=true
+      # who the visitor is: nginx's X-Real-IP / X-Forwarded-For (its log and fail2ban need the real address)
+      - FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES={{ docker_subnet }}
       - FORGEJO__security__SECRET_KEY={{ secret_key }}
       - FORGEJO__service__DISABLE_REGISTRATION={{ 'false' if registration else 'true' }}
       - FORGEJO__service__REQUIRE_SIGNIN_VIEW={{ 'true' if private else 'false' }}

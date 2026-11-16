@@ -3684,6 +3684,13 @@ class Window(Adw.ApplicationWindow):
             body += ("\n\nFirst remove that computer on the control page (Computers), and change the page's "
                      "password there.")
             dlg.add_response("page", "Open the control page")
+        pending = self.rotation_pending()
+        for kind, label in (("ssh", "keys"), ("seed", "secrets")):
+            if pending[kind]:
+                body += "\n\nUnder way: %s still on the old %s. Switch them on, then press again; or leave out one " \
+                        "that is gone or will be installed anew." % (", ".join(pending[kind]), label)
+                for n in pending[kind]:
+                    dlg.add_response("waive:%s:%s" % (kind, n), "Leave %s out of the %s" % (n, label))
         dlg.set_body(body)
         dlg.add_response("close", "Not now")
         dlg.add_response("seed", "Replace the secrets")
@@ -3693,10 +3700,41 @@ class Window(Adw.ApplicationWindow):
         def answer(_d, r):
             if r == "page":
                 Gtk.UriLauncher.new("https://control.%s/controllers" % name).launch(self, None, None)
+            elif r.startswith("waive:"):
+                _w, kind, host = r.split(":", 2)
+                self.confirm_waive(kind, host)
             elif r in ("go", "seed"):
                 self._after_spawn = lambda: self.sync(False, True)      # the other computers get the result
                 self.spawn(["rotate", self.doc.path, "ssh" if r == "go" else "seed"],
                            "Replacing the keys…" if r == "go" else "Replacing the secrets…")
+        dlg.connect("response", answer)
+        dlg.present(self)
+
+    def rotation_pending(self):
+        """The machines still on the old keys (ssh) or the old secrets (seed), as the control page
+        shows them: from secrets/rotation.json."""
+        try:
+            with open(os.path.join(self.doc.dir, "secrets", "rotation.json")) as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            return {"ssh": [], "seed": []}
+        return {k: [] if (state.get(k) or {}).get("done") is None else
+                [n for n in self.doc.hosts() if n not in state[k]["done"]] for k in ("ssh", "seed")}
+
+    def confirm_waive(self, kind, host):
+        """A machine left out of a replacement under way: gone for good, or about to be installed anew."""
+        body = ("Its old key stops working when the others are done. Only for a machine that is gone or will be "
+                "installed anew." if kind == "ssh" else "It takes the new secrets at its next update.")
+        dlg = Adw.AlertDialog(heading="Leave %s out?" % host, body=body)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("leave", "Leave it out")
+        dlg.set_response_appearance("leave", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_close_response("cancel")
+
+        def answer(_d, r):
+            if r == "leave":
+                self._after_spawn = lambda: self.sync(False, True)
+                self.spawn(["rotate", self.doc.path, kind, "--waive", host], "Leaving %s out…" % host)
         dlg.connect("response", answer)
         dlg.present(self)
 

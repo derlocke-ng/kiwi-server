@@ -7,6 +7,11 @@
 
 
 
+
+## 2.130.1 — a sentence with a colon
+
+- kiwi-modules 0.54.1: the network's words on the start pages may hold ": ".
+
 ## 2.130.0 — start pages, inside and out
 
 - **The network's start page** at `status.<control node>` (kiwi-modules 0.54.0): every service people

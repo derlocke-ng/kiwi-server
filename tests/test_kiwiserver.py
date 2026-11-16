@@ -7376,6 +7376,12 @@ class TestControl(StoreBase):
         self.assertTrue(c.jobs_dir.startswith(os.path.join(self.tmp, "ram")))  # logs in RAM, not in the fleet directory
         self.assertEqual(c.audit_tail(1)[0]["what"], "apply")                 # a change says who
         self.assertEqual(c.job(c.start("plan", ["bad"], wait=True))["state"], "failed")
+        # several at once: each machine's History gets its own result, from the command's last words
+        c.kiwi = [sys.executable, "-c", "print('applied a'); print('failed: b'); raise SystemExit(1)"]
+        jid = c.start("apply", ["a", "b"], wait=True)
+        ends = [e for e in c.audit_tail(5) if e.get("job") == jid and e.get("result")]
+        self.assertEqual(sorted((e["hosts"][0], e["result"]) for e in ends), [("a", "ok"), ("b", "failed")])
+        c.kiwi = [sys.executable, "-c", "import sys; print('ran', *sys.argv[1:]); sys.exit(3 if 'bad' in sys.argv else 0)"]
         self.assertIn("--once", c.argv("watch"))
         self.assertEqual(c.argv("save", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--now"])
         self.assertEqual(c.argv("start-new", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--new"])
@@ -8023,6 +8029,15 @@ class TestWeb(StoreBase):
         self.assertIn("raw words", body)
         self.assertIn("has not answered yet", self.ask("/hosts/sorbet")[1])
         self.assertIn("saved 2 hours ago", self.ask("/backups")[1])
+        body = self.ask("/machines")[1]
+        self.assertIn("<summary>Several at once</summary>", body)                 # one action, several machines
+        self.assertIn('<input type="checkbox" name="host" value="sorbet">', body)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        status, where = self.ask("/run-many", [("csrf", csrf), ("action", "status"), ("host", "papaya"), ("host", "sorbet")])[:2]
+        self.assertEqual(status, 303)
+        self.assertEqual(self.c.job(where.rsplit("/", 1)[1])["hosts"], ["papaya", "sorbet"])
+        self.assertEqual(self.ask("/run-many", [("csrf", csrf), ("action", "remove"), ("host", "papaya")])[:2],
+                         (303, "/machines"))                                     # only check, preview, apply
         # a machine's page in tabs, with its parts' state on top (after Foreman), and its history
         body = self.ask("/hosts/papaya")[1]
         self.assertIn('<a href="/hosts/papaya" class="on">Overview</a>', body)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.156.0 — several machines at once; a machine's History with its tasks
+
+- Machines, "Several at once" (after Foreman): tick machines, then Check them, Preview or Apply,
+  one after the other. A machine that fails does not stop the others, and each machine's History
+  says how it went for that machine.
+- Fixed: a machine's History tab (2.153.0) answered with an error once the machine had a task in
+  this session; its tasks now say how long ago they started.
+
 ## 2.155.0 — Tor behind a commercial VPN without a master; settings say where they come from
 
 - **Hidden services without a master** (kiwi-modules 0.63.0): Tor must never leave on the home line,

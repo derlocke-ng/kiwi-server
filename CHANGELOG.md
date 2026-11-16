@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.141.0 — take in a waiting starter from the app or a terminal
+
+- `kiwi-server take-in FLEET ADDRESS --code CODE --preset P [--name N]`, and in the app's menu
+  "Take in a waiting machine…": a machine started from the starter stick, waiting at home with an
+  address and a setup code on its screen, joins the network and is set up, as the control page's
+  "A machine with the starter stick is waiting" does. The handshake (the code, the network's key,
+  the machine's host keys) and the fleet file's new machine are one code path for all three.
+
 ## 2.140.0 — a test message from the app
 
 - The app's settings, Defaults, "Messages when something is wrong": **Send a test message** sends one

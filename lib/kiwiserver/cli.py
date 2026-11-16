@@ -2022,6 +2022,25 @@ def cmd_adopt(args):
         util.say("%s: the starter's page and key are gone; it is a node of the network" % hosts[0].name)
 
 
+def cmd_take_in(args):
+    """A machine started from the starter stick, waiting on the home network, taken into this
+    network from here, as the control page's "A machine with the starter stick is waiting" does:
+    the code from its screen, the network's key told to it, the machine added to the fleet file with
+    its address, then adopted and set up (`adopt`)."""
+    from . import control as controlmod, setup as setupmod
+    fleet_path = os.path.realpath(args.fleet)
+    fleet_dir = os.path.dirname(fleet_path)
+    fleet, _roles, _ms = load(args)
+    domain = str(fleet.defaults.get("domain") or "")
+    address, name = controlmod.starter_handshake(fleet_path, fleet_dir, args.address, args.code, args.preset, args.name or "", domain)
+    name = setupmod.add_home_machine(fleet_path, args.preset, address, name, target="coreos")
+    util.say("%s: taken in at %s; now it is set up" % (name, address))
+    args.host, args.new_host_key = name, False
+    setattr(args, "as", "core@%s" % address)
+    args.key = os.path.join(fleet_dir, "secrets", "admin_ed25519")
+    cmd_adopt(args)
+
+
 def cmd_control(args):
     """The fleet to the control node or back; or this computer asks to become a controller."""
     from . import controlsync
@@ -3542,6 +3561,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
+  kiwi-server take-in <fleet> <address> --code CODE --preset P [--name N]
+                                                a machine the starter stick runs, waiting at home: taken in and set up
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
   kiwi-server accounts <fleet> invite|requests|accept|deny|create|link|list|delete …
                                                 the network's accounts: invite codes, requests, accounts, password links
@@ -3748,6 +3769,12 @@ def build_parser():
     s.add_argument("--new-host-key", action="store_true",
                    help="the board was flashed again: forget the host key the fleet knows for that address")
     s.add_argument("--key", metavar="FILE", help="target coreos (a machine the starter stick installed): the key that login takes")
+    s = sub("take-in", cmd_take_in); s.add_argument("fleet"); s.add_argument("address", help="the address the waiting machine shows")
+    s.add_argument("--code", required=True, help="the setup code on its screen")
+    from . import setup as _setupmod
+    s.add_argument("--preset", required=True, choices=sorted(_setupmod.PRESETS), help="what it does: %s" %
+                   "; ".join("%s: %s" % kv for kv in sorted(_setupmod.PRESETS.items())))
+    s.add_argument("--name", help="its name in the network (made up when left out)")
     s = sub("watch", cmd_watch); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--once", action="store_true", help="one look, then exit (what the timer runs)")

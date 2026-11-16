@@ -34,6 +34,38 @@ PRESETS = {         # what a machine at home does, in the words the wizard shows
 }
 
 
+def add_home_machine(path, preset, address="", name="", target=""):
+    """A machine at home, added to the fleet file as the first run's questions add one: its name
+    (made up when none is given). `address`: its fixed address at home, with the prefix and gateway
+    of the machines the file has. target coreos: a starter's system as it is (no install)."""
+    import ipaddress
+    import yaml
+    if preset not in PRESETS:
+        raise KiwiError("what should it do?")
+    if target not in ("", "ucore", "debian", "coreos"):
+        raise KiwiError("the system is ucore or debian")
+    data = yaml.safe_load(util.read_text(path)) or {}
+    taken = set(data.get("hosts") or {})
+    name = (name or "").strip().lower() or free_name("node", taken)
+    nets = [h.get("network") or {} for h in (data.get("hosts") or {}).values() if isinstance(h, dict)]
+    gateway = next((str(n["gateway"]) for n in nets if n.get("gateway")), "")     # as the machines it has
+    like = next((str(n["address"]) for n in nets if "/" in str(n.get("address") or "")), "")
+    address = (address or "").strip()
+    net = None
+    if address:
+        try:
+            ip = ipaddress.ip_interface(address)
+        except ValueError:
+            raise KiwiError("An address looks like 192.168.1.30.")
+        prefix = ip.network.prefixlen if "/" in address else int(like.rsplit("/", 1)[1]) if like else 24
+        net = "{ dhcp: false, address: %s/%d%s }" % (ip.ip, prefix, ", gateway: %s" % gateway if gateway else "")
+    add_host(path, name, "node", preset, target or "ucore")
+    disk = "" if target == "coreos" else "\n    disk: auto"        # a starter's system is installed already
+    text = util.read_text(path).rstrip("\n") + disk
+    util.write_text(path, text + ("\n    network: %s\n" % net if net else "\n"), 0o600)
+    return name
+
+
 def remove_host(path, name):
     """A host's block out of the fleet file, as text, so the comments of the others stay."""
     import yaml

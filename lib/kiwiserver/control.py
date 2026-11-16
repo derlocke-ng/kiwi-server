@@ -49,6 +49,40 @@ WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d
 
 
 
+def starter_handshake(fleet_path, fleet_dir, address, code, preset, name, domain, ask=None):
+    """The first half of taking a waiting starter in, the same from the control node and from a
+    computer (`kiwi-server take-in`): the address and the name checked, the starter told the
+    network's key with the code from its screen, its host keys kept for its address. (address, name)."""
+    import ipaddress
+    import yaml
+    from . import setup as setupmod
+    address = (address or "").strip()
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        raise KiwiError("An address looks like 192.168.1.30: the waiting machine shows its own on its screen.")
+    if preset not in setupmod.PRESETS:
+        raise KiwiError("what should it do?")
+    name = (name or "").strip().lower()
+    hosts = (yaml.safe_load(util.read_text(fleet_path)) or {}).get("hosts") or {}
+    if name and name in hosts:
+        raise KiwiError("there is already a machine called %s" % name)
+    if any(str((h or {}).get("network", {}).get("address", "")).split("/")[0] == address for h in hosts.values()):
+        raise KiwiError("a machine of the network has that address already")
+    pub = os.path.join(fleet_dir, "secrets", "admin_ed25519.pub")
+    if not os.path.isfile(pub):
+        raise KiwiError("the network's own SSH key is missing (secrets/admin_ed25519.pub)")
+    answer = (ask or _ask_starter)(address, {"code": code, "key": util.read_text(pub).strip(), "network": domain})
+    known = os.path.join(fleet_dir, "secrets", "known_hosts")
+    subprocess.run(["ssh-keygen", "-R", address, "-f", known], capture_output=True)
+    if os.path.isfile(known + ".old"):
+        os.remove(known + ".old")
+    with open(known, "a") as fh:
+        for k in answer["host_keys"]:
+            fh.write("%s %s\n" % (address, k))
+    return address, name
+
+
 def _ask_starter(address, body, timeout=30):
     """The waiting starter's answer to being taken in (join_as_starter, through its page's API),
     or KiwiError with what it said. Plain HTTP on the home network, as its first-run page is."""
@@ -196,37 +230,11 @@ class Control:
         """A machine that runs the starter stick and waits on the home network: told the network's
         key, with the code from its screen as the proof that the person is at it; added to the fleet
         with the address it has; then taken over and set up by a job (`kiwi-server adopt`). The job's id."""
-        import ipaddress
-        import yaml
-        from . import setup as setupmod
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
-        address = (address or "").strip()
-        try:
-            ipaddress.ip_address(address)
-        except ValueError:
-            raise KiwiError("An address looks like 192.168.1.30: the waiting machine shows its own on its screen.")
-        if preset not in setupmod.PRESETS:
-            raise KiwiError("what should it do?")
-        name = (name or "").strip().lower()
-        hosts = (yaml.safe_load(util.read_text(os.path.realpath(self.fleet_path))) or {}).get("hosts") or {}
-        if name and name in hosts:
-            raise KiwiError("there is already a machine called %s" % name)
-        if any(str((h or {}).get("network", {}).get("address", "")).split("/")[0] == address for h in hosts.values()):
-            raise KiwiError("a machine of the network has that address already")
-        pub = os.path.join(self.fleet_dir, "secrets", "admin_ed25519.pub")
-        if not os.path.isfile(pub):
-            raise KiwiError("the network's own SSH key is missing (secrets/admin_ed25519.pub)")
         info = self.fleet_info() or {}
-        answer = (ask or _ask_starter)(address, {"code": code, "key": util.read_text(pub).strip(),
-                                                 "network": str(info.get("domain") or "")})
-        known = os.path.join(self.fleet_dir, "secrets", "known_hosts")
-        subprocess.run(["ssh-keygen", "-R", address, "-f", known], capture_output=True)
-        if os.path.isfile(known + ".old"):
-            os.remove(known + ".old")
-        with open(known, "a") as fh:
-            for k in answer["host_keys"]:
-                fh.write("%s %s\n" % (address, k))
+        address, name = starter_handshake(os.path.realpath(self.fleet_path), self.fleet_dir, address, code, preset, name,
+                                          str(info.get("domain") or ""), ask=ask)
         made = self.add_machine(preset, address, name, target="coreos", user=user)
         self.audit(user, "a waiting starter taken in", hosts=[made], address=address)
         return self.start("adopt", [made], user=user, at=address)
@@ -1214,38 +1222,10 @@ class Control:
     def add_machine(self, preset, address="", name="", target="", user="admin"):
         """A machine at home, added to the fleet file as the first run's questions add one."""
         from . import setup as setupmod
-        import ipaddress
-        import yaml
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
-        if preset not in setupmod.PRESETS:
-            raise KiwiError("what should it do?")
-        if target not in ("", "ucore", "debian", "coreos"):       # coreos: a starter's system as it is
-            raise KiwiError("the system is ucore or debian")
         with self.lock:
-            path = os.path.realpath(self.fleet_path)
-            data = yaml.safe_load(util.read_text(path)) or {}
-            taken = set(data.get("hosts") or {})
-            name = (name or "").strip().lower() or setupmod.free_name("node", taken)
-            nets = [h.get("network") or {} for h in (data.get("hosts") or {}).values() if isinstance(h, dict)]
-            gateway = next((str(n["gateway"]) for n in nets if n.get("gateway")), "")     # as the machines it has
-            like = next((str(n["address"]) for n in nets if "/" in str(n.get("address") or "")), "")
-            address = (address or "").strip()
-            net = None
-            if address:
-                try:
-                    ip = ipaddress.ip_interface(address)
-                except ValueError:
-                    raise KiwiError("An address looks like 192.168.1.30.")
-                prefix = ip.network.prefixlen if "/" in address else int(like.rsplit("/", 1)[1]) if like else 24
-                net = "{ dhcp: false, address: %s/%d%s }" % (ip.ip, prefix, ", gateway: %s" % gateway if gateway else "")
-            setupmod.add_host(path, name, "node", preset, target or "ucore")
-            disk = "" if target == "coreos" else "\n    disk: auto"        # a starter's system is installed already
-            if net:
-                text = util.read_text(path).rstrip("\n")
-                util.write_text(path, text + disk + "\n    network: %s\n" % net, 0o600)
-            else:
-                util.write_text(path, util.read_text(path).rstrip("\n") + disk + "\n", 0o600)
+            name = setupmod.add_home_machine(os.path.realpath(self.fleet_path), preset, address, name, target)
             self.save_fleet()
         self.audit(user, "machine added", hosts=[name])
         self.fleet_info(fresh=True)

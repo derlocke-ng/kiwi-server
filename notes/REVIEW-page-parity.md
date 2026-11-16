@@ -28,7 +28,7 @@ run included. Compared command by command and setting by setting.
 | Add a computer: the invite link (Computers) | **built** in 2.115.0: menu, Use another computer…, Add a computer (`control invite`); link, copy button and QR code in both |
 | A Services page: every service under its machine, with login, answer and hidden-service address (2.117.0); the menu in groups | the app keeps its own layout (the owner prefers it); hidden-service addresses are on a machine's page since 2.118.0 |
 | Hidden services: only sites marked usable over Tor are offered (2.120.0) | **built** in 2.120.0 in both: the page's list and the app's dialog show the same sites |
-| Take in a waiting starter machine (its address and setup code) (2.123.0) | open: the page has it; the app does not; `kiwi-server adopt … --key` is the command's half |
+| Take in a waiting starter machine (its address and setup code) (2.123.0) | **built** in 2.141.0: the app's menu, "Take in a waiting machine…", and `kiwi-server take-in`; the handshake is one function for the page and the command |
 | Preview (`plan`) | open |
 | Update everything (`apply --update`) | open |
 | Remove a phone or laptop (`enroll --remove`), show its QR code again | open |

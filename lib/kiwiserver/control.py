@@ -248,12 +248,16 @@ class Control:
     # The page's "Sign in and pick it": the device login runs here (the person confirms it at
     # the hoster, in their browser), then the account's servers are listed. The login lands in
     # RAM; first_run puts it into the new network's sealed secrets, as `init` does on a computer.
-    def hoster_start(self, provider, code, address="?"):
-        """A sign-in at the hoster, started: its handle, for hoster_state. The setup code guards it."""
+    def hoster_start(self, provider, code, address="?", user=""):
+        """A sign-in at the hoster, started: its handle, for hoster_state. The setup code guards it on
+        a machine with nothing on it; `user`: someone logged in, adding a master to a network without one."""
         from . import providers
-        if not self.fresh():
+        if user:
+            if self.locked():
+                raise KiwiError("the fleet is locked: log in")
+        elif not self.fresh():
             raise KiwiError("this machine has a network already")
-        if not self.setup_code_ok(code, address):
+        elif not self.setup_code_ok(code, address):
             raise KiwiError("that is not the setup code. After five wrong tries, wait ten minutes")
         who = providers.get(provider)
         handle = pysecrets.token_urlsafe(18)
@@ -1343,13 +1347,22 @@ class Control:
         self.fleet_info(fresh=True)
         return name
 
-    def add_master(self, address, name="", user="admin"):
+    def add_master(self, address, name="", user="admin", hoster="", server=""):
         """A network without a master gets one (docs/design/no-master.md): its block in the fleet
-        file, and every machine at home back onto the VPN. Returns (its name, the machines moved)."""
-        from . import setup as setupmod
+        file, and every machine at home back onto the VPN. Returns (its name, the machines moved).
+        `hoster`, `server`: a server picked after signing in at the hoster (hoster_start): its address,
+        and the login, which goes into the network's secrets as the first run's does."""
+        from . import providers, setup as setupmod, fleettext
         import yaml
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
+        picked = None
+        if server:
+            s = self._hoster.get(hoster or "")
+            login, row = self._hoster_pick(hoster, {"master_where": s["provider"] if s else "",
+                                                    "provider_server": server})
+            picked = (s["provider"], row, login)
+            address = address or row["address"]
         problem = setupmod.master_problem(address)
         if problem:
             raise KiwiError(problem)
@@ -1360,6 +1373,21 @@ class Control:
                 raise KiwiError("this network has a master already")
             name = (name or "").strip().lower() or setupmod.free_name("master", set(data.get("hosts") or {}))
             setupmod.add_host(path, name, "master", address=str(address).strip())
+            if picked:              # the install knows where and which, and has the login
+                provider, row, login = picked
+                vps = {"provider": provider, "server": row["id"]}
+                text = fleettext.put(util.read_text(path), ["hosts", name, "vps"], vps)
+                if text is None:
+                    data = yaml.safe_load(util.read_text(path))
+                    data["hosts"][name]["vps"] = vps
+                    text = yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+                util.write_text(path, text, 0o600)
+                keep = os.path.join(self.fleet_dir, providers.get(provider).token_file())
+                os.makedirs(os.path.dirname(keep), mode=0o700, exist_ok=True)
+                util.write_bytes(keep, util.read_bytes(login), 0o600)
+                self.store.sync()           # sealed with the network's other secrets
+                self._hoster = {}
+                shutil.rmtree(os.path.join(self.run, "hoster"), ignore_errors=True)
             moved = setupmod.onto_the_vpn(path)
             self.save_fleet()
         self.audit(user, "master added", hosts=[name] + moved)

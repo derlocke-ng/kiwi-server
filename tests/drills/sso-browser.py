@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drill: a person signs in to Forgejo with the network's account, in a real browser.
 
-    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless|--vault]
+    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless|--vault|--immich]
 
 APP_NAME is Forgejo's name (git.<host>), with --nextcloud Nextcloud's (cloud.<host>), with --paperless
 Paperless' (paperless.<host>), with --vault Vaultwarden's (vault.<host>): there the person's first
@@ -23,7 +23,7 @@ import sys
 
 fleet, acc_addr, idname, git_addr, gitname = sys.argv[1:6]
 nextcloud = "--nextcloud" in sys.argv
-app = "nextcloud" if nextcloud else "paperless" if "--paperless" in sys.argv else "vault" if "--vault" in sys.argv else "forgejo"
+app = next((a for a in ("paperless", "vault", "immich") if "--" + a in sys.argv), "nextcloud" if nextcloud else "forgejo")
 fd = os.path.dirname(os.path.abspath(fleet))
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile=" + os.path.join(fd, "secrets", "known_hosts"),
        "-i", os.path.join(fd, "secrets", "admin_ed25519"), "core@" + acc_addr]
@@ -34,7 +34,7 @@ pw = "kiwi-%s-%s" % (secrets.token_urlsafe(9), secrets.token_urlsafe(9))
 shots = os.path.expanduser("~/kiwi-dev/browser")
 os.makedirs(shots, exist_ok=True)
 inner = r'''
-import json, sys
+import json, os, sys
 from playwright.sync_api import sync_playwright
 link, idname, gitname, name, pw, app = sys.argv[1:7]
 out = {}
@@ -61,9 +61,16 @@ with sync_playwright() as p:
         go_on = q.get_by_role("button", name="Continue")   # allauth asks once before it leaves
         if go_on.count() and idname not in q.url:
             go_on.first.click()
+    elif app == "immich":
+        q.goto("https://%s/auth/login" % gitname, wait_until="networkidle")
+        q.screenshot(path="/shots/sso-1-immich-login.png")
+        q.get_by_text("Sign in with accounts").first.click()
     elif app == "vault":
         q.goto("https://%s/#/login" % gitname, wait_until="networkidle"); q.wait_for_timeout(2000)
         q.screenshot(path="/shots/sso-1-vault-login.png")
+        # it asks for an email first: only a hint, the account comes from the sign-on
+        # (Vaultwarden's own page styles the field so that Playwright calls it hidden: typed, not filled)
+        q.focus("#email"); q.keyboard.type(os.environ.get("VAULT_EMAIL") or name + "@" + idname)
         q.get_by_text("single sign-on", exact=False).first.click(); q.wait_for_timeout(2500)
         if idname not in q.url:                    # the web vault may ask for an identifier first
             box = q.locator("input[formcontrolname=identifier], #identifier, input[type=text]")
@@ -94,7 +101,7 @@ print(json.dumps(out))
 with open(os.path.join(shots, "sso-inner.py"), "w") as fh:
     fh.write(inner)
 r = subprocess.run(["podman", "run", "--rm", "--add-host", "%s:%s" % (idname, acc_addr), "--add-host", "%s:%s" % (gitname, git_addr),
-                    "-v", "%s:/shots:z" % shots, "mcr.microsoft.com/playwright/python:v1.49.0-noble", "sh", "-c",
+                    "-e", "VAULT_EMAIL=" + os.environ.get("VAULT_EMAIL", ""), "-v", "%s:/shots:z" % shots, "mcr.microsoft.com/playwright/python:v1.49.0-noble", "sh", "-c",
                     "pip install -q playwright==1.49.0 >/dev/null 2>&1; python3 /shots/sso-inner.py \"$@\"", "x",
                     made["link"], idname, gitname, name, pw, app], capture_output=True, text=True)
 bad = 0
@@ -111,7 +118,7 @@ def say(ok, what):
     print("%s  %s" % ("PASS" if ok else "FAIL", what))
 
 
-label = {"nextcloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "forgejo": "Forgejo"}[app]
+label = {"nextcloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "immich": "Immich", "forgejo": "Forgejo"}[app]
 say(res.get("at_accounts"), "%s's 'with accounts' leads to the accounts' page" % label)
 shows_person = name in res.get("text", "") or "SSO-Drill" in res.get("text", "") or (
     app == "vault" and "master password" in res.get("text", "").lower())

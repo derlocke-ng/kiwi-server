@@ -19,6 +19,10 @@ services:
       - IMMICH_MACHINE_LEARNING_ENABLED=false
 {% endif %}
       - TZ={{ timezone }}
+{% if accounts_client and ca_cert_dir %}
+      # the accounts' page has a certificate of the fleet's CA
+      - NODE_EXTRA_CA_CERTS=/kiwi-ca/kiwiCA.crt
+{% endif %}
 {% for k, v in extra_env.items() %}
       - {{ k }}={{ v }}
 {% endfor %}
@@ -32,6 +36,9 @@ services:
         max-size: 10m
     volumes:
       - {{ library_path }}:/data:z
+{% if accounts_client and ca_cert_dir %}
+      - {{ ca_cert_dir }}:/kiwi-ca:ro,z
+{% endif %}
 {% for path in external_dirs %}
       - {{ path }}:{{ path }}:ro,z
 {% endfor %}

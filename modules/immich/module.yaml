@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: immich
   title: Photos (Immich)
-  version: 1.0.0
+  version: 1.1.0
   description: "Immich, photos and videos from your phone, behind the reverse proxy at immich.<hostname>"
   category: productivity
   node_types: [node]
@@ -22,6 +22,15 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  accounts_script: immich-accounts.sh.j2
+  accounts_env: immich-accounts.env.j2
+  accounts_service: kn-immich-accounts.service.j2
+
+outputs:
+  # the network's accounts sign people in here (kiwi-server accounts connect): set in Immich's own settings
+  accounts_script: { path: "kiwi/immich-accounts.sh", mode: 0700, when: accounts_client }
+  accounts_env: { path: "kiwi/immich-accounts.env", mode: 0600, when: accounts_client }
+  accounts_service: { kind: host_unit, name: kn-immich-accounts.service, when: accounts_client }
 
 derived:
   immich_host: "{{ immich_domain or 'immich.' ~ hostname }}"
@@ -92,6 +101,19 @@ settings:
       run: psql -v ON_ERROR_STOP=1 -U immich -d immich -c "ALTER USER immich WITH PASSWORD '$NEW'"
     group: Generated
     help: "The password of Immich's database, used only between its containers. Empty: generated from the fleet's seed."
+  - key: accounts_client
+    group: Generated
+    help: "Set by kiwi-server when the network's accounts sign people in here (kiwi-server accounts <fleet> connect <host> immich): the client's name in Kanidm."
+    default: ""
+  - key: accounts_issuer
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: where Immich asks Kanidm about the person signing in."
+    default: ""
+  - key: accounts_secret
+    type: secret
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: the client's secret, from the fleet's store."
+    default: ""
   - key: extra_env
     type: map
     group: Advanced

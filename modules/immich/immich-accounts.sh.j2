@@ -1,0 +1,40 @@
+#!/usr/bin/bash
+# {{ hostname }}'s Immich signs people in with the network's accounts (the accounts module,
+# kiwi-server accounts <fleet> connect <host> immich): "Sign in with accounts", and a person's first
+# sign-in makes their Immich user. Immich keeps its settings in its database (what its admin page
+# saves); this puts the sign-in part there, so the admin page stays editable. Its other settings stay
+# as the admin set them. kn-immich-accounts.service runs this after every start of the stack;
+# Immich restarts only when something changed.
+set -euo pipefail
+
+# the client's secret, from a file only root reads (the script reads it, not systemd: SELinux)
+set -a; . {{ docker_dir }}/kiwi/immich-accounts.env; set +a
+db() { {{ runtime }} exec -i {{ container_prefix }}-immich-db psql -U immich -d immich -v ON_ERROR_STOP=1 -qAt "$@"; }
+
+# Immich makes its tables at its first start
+for _ in {1..240}; do
+    db -c "select 1 from system_metadata limit 1" >/dev/null 2>&1 && break
+    sleep 5
+done
+
+changed=$(db -v issuer={{ accounts_issuer | shquote }} -v client={{ accounts_client | shquote }} -v secret="$KIWI_SECRET" \
+             -v mobile=https://{{ immich_host }}/api/oauth/mobile-redirect <<'SQL'
+select coalesce((select value->'oauth' from system_metadata where key = 'system-config'), '{}'::jsonb)::text as before \gset
+insert into system_metadata (key, value)
+select 'system-config', jsonb_build_object('oauth', jsonb_build_object(
+    'enabled', true, 'issuerUrl', :'issuer', 'clientId', :'client', 'clientSecret', :'secret',
+    'scope', 'openid email profile', 'signingAlgorithm', 'ES256', 'tokenEndpointAuthMethod', 'client_secret_basic',
+    'buttonText', 'Sign in with accounts', 'autoRegister', true,
+    'mobileOverrideEnabled', true, 'mobileRedirectUri', :'mobile'))
+on conflict (key) do update
+    set value = system_metadata.value || jsonb_build_object('oauth',
+        coalesce(system_metadata.value->'oauth', '{}'::jsonb) || (excluded.value->'oauth'));
+select (value->'oauth')::text <> :'before' from system_metadata where key = 'system-config';
+SQL
+)
+if [[ $changed == t ]]; then
+    {{ runtime }} restart {{ container_prefix }}-immich >/dev/null
+    echo "kiwi: Immich signs people in with the network's accounts (restarted)"
+else
+    echo "kiwi: Immich signs people in with the network's accounts"
+fi

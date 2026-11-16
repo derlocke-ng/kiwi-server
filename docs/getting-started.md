@@ -52,7 +52,10 @@ kiwi-server next ~/kiwi/fleet.yaml   # does the next step and says what it did; 
 `init` first says what you need: a master (the one machine reachable from
 the Internet, usually a small rented server), a machine at home for your
 files, a USB stick. Then it asks three things: where the master runs, its
-address on the Internet, and what the machine at home does. Everything else
+address on the Internet, and what the machine at home does. "No master yet"
+is an answer too: the machines at home then answer at their own addresses,
+at home only, and the first one answers for their names. A master can come
+later ([A network without a master](design/no-master.md)). Everything else
 it finds on this computer or decides for you:
 
 - the time zone, the keyboard and the language come from this computer;
@@ -87,7 +90,9 @@ sudo dd if=output/sh3/sh3.iso of=/dev/sdX bs=4M status=progress oflag=sync
 New machines are named after fruits, masters after fruit dishes:
 
 - `kiwi-server add fleet.yaml node` adds the next free fruit
-- `kiwi-server add fleet.yaml master` adds a master
+- `kiwi-server add fleet.yaml master` adds a master; `--address` gives its
+  public address. In a network without a master this also puts the machines
+  at home onto its VPN
 - `kiwi-server add fleet.yaml node mybox --preset gateway` uses a name of
   your own
 - `kiwi-server names` prints the suggestions

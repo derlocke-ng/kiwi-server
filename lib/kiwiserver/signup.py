@@ -52,7 +52,7 @@ class Signup:
     """`ejabberd`: {page name: {"api": URL of its HTTP API, "host": the Jabber domain}} makes Jabber
     accounts (the person chooses a password, or gets one) instead of the network's accounts."""
     def __init__(self, state_dir, kanidm="", token_file="", id_host="", opener=None, clock=_now, ejabberd=None,
-                 invites=True, requests=True, captcha=False):
+                 invites=True, requests=True, captcha=False, id_onion=""):
         self.dir = state_dir
         self.path = os.path.join(state_dir, "signup.json")
         self.kanidm_url = kanidm.rstrip("/")
@@ -62,6 +62,7 @@ class Signup:
         self.lock = threading.Lock()
         self.opener = opener            # tests: a stand-in for Kanidm (or ejabberd)
         self.ejabberd = ejabberd or {}
+        self.id_onion = id_onion        # the accounts' own hidden service: links stay on Tor for who came over Tor
         self.ways = {"invites": invites, "requests": requests, "captcha": captcha}
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
 
@@ -114,7 +115,7 @@ class Signup:
             return {"address": "%s@%s" % (name, where["host"]), "password": password if given else ""}
         self.kanidm("POST", "/v1/person", {"attrs": {"name": [name], "displayname": [display or name],
                                                      "mail": ["%s@%s" % (name, self.id_host)]}})
-        return {"link": self.link(name)}
+        return {"link": self.link(name, onion=bool(self.id_onion) and page == self.id_onion)}
 
     def jabber(self, where, command, body, exists_is_error=False):
         """One command of ejabberd's HTTP API (only register and check_account are allowed)."""
@@ -140,11 +141,13 @@ class Signup:
             raise KiwiError("that name is taken")
         return answer
 
-    def link(self, name):
+    def link(self, name, onion=False):
         answer = self.kanidm("GET", "/v1/person/%s/_credential/_update_intent/%d" % (name, LINK_DAYS * 86400))
         token = answer.get("token") if isinstance(answer, dict) else answer
         if not token:
             raise KiwiError("the accounts gave no link")
+        if onion and self.id_onion:
+            return "http://%s/ui/reset?token=%s" % (self.id_onion, token)
         return "https://%s/ui/reset?token=%s" % (self.id_host, token)
 
     # ---- checks --------------------------------------------------------------------------
@@ -266,7 +269,7 @@ JOIN = """{% extends "base.html" %}{% block title %}{{ brand }}: {{ "a Jabber ad
 <style>main{max-width:760px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media (max-width:680px){.two{grid-template-columns:1fr}}
 .link{font-size:1.05rem;word-break:break-all}.big{font-size:1.25rem;font-weight:700;letter-spacing:.02em;word-break:break-all}</style>
 <div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ brand }}</h1>
-{% if not jabber %}<a class="small" href="https://{{ id_host }}/ui/login">I have an account: sign in</a>{% endif %}</div>
+{% if not jabber %}<a class="small" href="{{ ("http://" ~ page_host) if over_tor else ("https://" ~ id_host) }}/ui/login">I have an account: sign in</a>{% endif %}</div>
 <p class="sub">{% if jabber %}A Jabber address at {{ host }}: chat with anyone on Jabber (XMPP), in an app like Conversations, Monal, Dino or Gajim.
 {% else %}One account for the services of this network.{% endif %} No email address is asked{% if not jabber %}: write down your name and
 keep the link you get until you have set your password{% endif %}.{% if onion %} Over Tor this page is <code>{{ onion }}</code>.{% endif %}</p>
@@ -332,7 +335,8 @@ def make_app(signup: Signup, brand="", terms=""):
         where = signup.ejabberd.get(host) or (next(iter(signup.ejabberd.values())) if signup.ejabberd else {})
         return HTMLResponse(env.get_template("join.html").render(
             brand=brand, terms=terms, id_host=signup.id_host, nav=None, jabber=bool(signup.ejabberd), host=where.get("host", ""),
-            onion=where.get("onion", ""), ways=signup.ways, **kw))
+            onion=where.get("onion", "") or (signup.id_onion if not signup.ejabberd and host != signup.id_onion else ""),
+            over_tor=bool(signup.id_onion) and host == signup.id_onion, page_host=host, ways=signup.ways, **kw))
 
     def address(request):
         return request.headers.get("x-real-ip") or (request.client.host if request.client else "")

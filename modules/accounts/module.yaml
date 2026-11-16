@@ -112,6 +112,12 @@ settings:
     group: Advanced
     help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
     default: docker.io/kanidm/server:1.12.1
+  - key: onion
+    type: object
+    group: Generated
+    label: Hidden-service addresses
+    help: "Filled in by kiwi-server when the onion module publishes the accounts: site -> its .onion address. Someone who comes over Tor then gets links that stay on Tor."
+    default: {}
   - key: signup_image
     group: Advanced
     help: "The sign-up page runs in kiwi-server's control image."

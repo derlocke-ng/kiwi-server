@@ -64,6 +64,17 @@ class TestSignup(unittest.TestCase):
         self.assertEqual(self.s.status(other), ("denied", {}))
         self.assertNotIn("emil", self.k.people)
 
+    def test_who_comes_over_tor_gets_a_link_on_tor(self):
+        s = signupmod.Signup(tempfile.mkdtemp(), id_host="id.example.org", opener=self.k, clock=lambda: self.t[0],
+                             id_onion="abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion")
+        made = s.join(s.invite(uses=2), "tora", page="abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion")
+        self.assertEqual(made["link"], "http://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion/ui/reset?token=tok-tora")
+        made = s.join(s.invite(), "webby", page="id.example.org")
+        self.assertEqual(made["link"], "https://id.example.org/ui/reset?token=tok-webby")
+        code = s.ask("toro", "asked over Tor, for the club", "203.0.113.4", page="abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion")
+        s.answer(s.requests(waiting_only=True)[0]["hint"], True)
+        self.assertTrue(s.status(code)[1]["link"].startswith("http://abcdefghijklmnopqrstuvwxyz234567"))
+
     def test_requests_are_limited(self):
         with self.assertRaisesRegex(KiwiError, "few words"):
             self.s.ask("fritz", "hi", "203.0.113.7")

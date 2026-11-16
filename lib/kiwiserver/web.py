@@ -1456,7 +1456,8 @@ def make_app(control: Control):
         """The network's start page for everyone on it: what each service is for, where it is, whether it works."""
         now = time.time()
         h = healthmod.public(control.health(), now)
-        h["services"] = sorted(h["services"], key=lambda s: (s["label"], s["site"]))      # a start page: by name, not by state
+        # a start page: by name, not by state; the status page itself is the button at the top
+        h["services"] = sorted((s for s in h["services"] if not s["site"].startswith("status.")), key=lambda s: (s["label"], s["site"]))
         return page("start.html", h=h, now=now)
 
     @app.get("/start/public")
@@ -1465,7 +1466,7 @@ def make_app(control: Control):
         addresses on the web and over Tor, whether they work, and how to get an account."""
         now = time.time()
         h = healthmod.public(control.health(), now, strangers=True)
-        h["services"] = sorted(h["services"], key=lambda s: (s["label"], s["site"]))
+        h["services"] = sorted((s for s in h["services"] if not s["site"].startswith("status.")), key=lambda s: (s["label"], s["site"]))
         h["join_public"] = bool(h.get("join")) and not h["join"].split("/")[2].endswith("." + str((control.fleet_info() or {}).get("domain") or "home"))
         return page("start.html", h=h, now=now)
 

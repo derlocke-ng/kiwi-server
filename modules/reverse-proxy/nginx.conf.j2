@@ -154,6 +154,11 @@ http {
     map $uri $kiwi_limit_key {
         default $binary_remote_addr;
         ~*\.(?:css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|webmanifest|wasm)$ "";
+        # nor what a sync client or a photo app fetches in bulk: files, previews, thumbnails
+        ~^/remote\.php/(?:dav|webdav)/ "";
+        ~^/core/preview "";
+        ~^/index\.php/core/preview "";
+        ~^/api/assets/[^/]+/(?:thumbnail|original|video) "";
     }
     limit_req_zone $kiwi_limit_key zone=kiwi_public:10m rate={{ rate_limit }}r/s;
     limit_conn_zone $kiwi_limit_key zone=kiwi_conn:10m;

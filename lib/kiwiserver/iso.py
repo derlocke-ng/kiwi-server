@@ -68,12 +68,14 @@ if [ -n "$src" ]; then
     live=${parent:+/dev/$parent}
     live=${live:-$src}
 fi
-mapfile -t disks < <(lsblk -dnbpo NAME,TYPE,RM,RO,SIZE | awk -v live="$live" \
-    '$2=="disk" && $3==0 && $4==0 && $5>=8000000000 && $1!=live && $1!~/zram|loop/ {print $1}')
+# a disk on USB is never chosen by itself: a backup disk left plugged in must not be erased
+# when the machine's own disk is not seen (set disk: to install on a USB disk on purpose)
+mapfile -t disks < <(lsblk -dnbpo NAME,TYPE,RM,RO,SIZE,TRAN | awk -v live="$live" \
+    '$2=="disk" && $3==0 && $4==0 && $5>=8000000000 && $1!=live && $1!~/zram|loop/ && $6!="usb" {print $1}')
 if [ "${#disks[@]}" -ne 1 ]; then
     {
         echo
-        echo "kiwi-server: the install stopped. disk: auto needs a machine with one disk; this one has ${#disks[@]}:"
+        echo "kiwi-server: the install stopped. disk: auto needs a machine with one disk (USB disks do not count); this one has ${#disks[@]}:"
         lsblk -d -o NAME,SIZE,MODEL,TRAN
         echo "Set the disk in the machine's settings (like /dev/nvme0n1) and make the install media again."
     } > /dev/console

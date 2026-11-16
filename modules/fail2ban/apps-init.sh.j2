@@ -8,4 +8,9 @@ touch /config/log/fail2ban/fail2ban.log
 mkdir -p /kiwi-apps
 touch /kiwi-apps/{{ j.name }}.log
 {% endfor %}
+{% if f2b_behind %}
+# nginx's list of banned addresses starts empty: fail2ban puts back the bans it keeps (and only
+# those of jails that still exist), so a jail taken away leaves nobody locked out
+: > /kiwi-banned/fail2ban.map 2>/dev/null
+{% endif %}
 true

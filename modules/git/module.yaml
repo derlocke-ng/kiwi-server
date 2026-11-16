@@ -80,6 +80,7 @@ fail2ban:
     container: "{{ container_prefix }}-git"
     match: "Failed authentication attempt|invalid credentials|Attempted access of unknown user"
     failregex: '(?:Failed authentication attempt|invalid credentials|Attempted access of unknown user).* from <HOST>(?::\d+)?'
+    maxretry: 10          # Forgejo's own guide: a git client retries a stale password
 
 settings:
   - key: git_hostname

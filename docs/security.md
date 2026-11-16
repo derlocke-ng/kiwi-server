@@ -111,23 +111,29 @@ A disk can open itself at boot. The `tang` module on one node serves a
   apply without a lockout (both ports until the new one is proven).
 - **fail2ban**: the `fail2ban` module (on every master, and by itself on a
   node whose sites strangers reach) bans an address after five failed logins
-  in ten minutes and drops an address opening more than 20 SSH connections a
-  minute. Who is banned three times in a day is out for a week, on every port.
-  A machine's page says how many addresses are kept out right now.
-  - **At public sites** it reads each app's own log for wrong logins: Forgejo,
-    Vaultwarden, Nextcloud (Jabber counts its own). It also bans scanners,
-    bad requests, an address refused forty times, and a flood (120 refused
-    requests in a minute).
-  - **Never** for loading a page, and never the mesh or the addresses the
-    network's own machines come from: the master sees them at the VPN tunnels
-    and tells its nodes.
+  in ten minutes, and drops an address opening more than 20 SSH connections a
+  minute. Its rules follow what fail2ban itself, Debian, YunoHost and mailcow
+  ship, so that using a service never gets anyone banned:
+  - **A first ban is 10 minutes**; each time the same address comes back it
+    grows, up to a week. Five bans in a day: out for a week, on every port.
+  - **Never banned**: the mesh, the network's own machines (the master sees
+    them at the VPN tunnels and tells its nodes), and private home addresses
+    (`fail2ban: { ignore_home: false }` turns that last one off).
+  - **SSH**: failed logins only (logins are by key), not every connection
+    that closes early.
+  - **At public sites** it reads each app's own log for wrong logins: Forgejo
+    (ten tries), Vaultwarden, Nextcloud (Jabber counts its own). It also bans
+    scanners, an address refused forty times outside the apps' own paths, and
+    a flood (600 refused requests in five minutes). A bad request alone (a
+    400) is never a reason: real apps make them.
   - **On a node behind the master** the ban is nginx's (403), since only nginx
     knows the visitor's address there.
   - `tests/drills/fail2ban.py` proves all of this from a stranger's address.
 - **Rate limits**: a site that strangers reach (a public name, a hidden
   service) answers one address 20 times a second, with 80 at once; more gets
   "429 Too Many Requests". A page's own files (scripts, styles, pictures,
-  fonts) are not counted. A hidden service's visitors all look like one
+  fonts) are not counted, nor what sync clients and photo apps fetch in bulk
+  (WebDAV, previews, thumbnails). A hidden service's visitors all look like one
   address, so there the limit is the site's, three times as high.
   `reverse-proxy: { rate_limit: 50 }` changes it, `0` switches it off. Sites of
   the VPN are not limited.

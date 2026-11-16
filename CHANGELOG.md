@@ -1,10 +1,24 @@
 # Changelog
 
-## 2.152.5 — Nextcloud's apps keep their push channel, and nobody is banned for it
+## 2.153.0 — nobody banned for using a service; a machine's page in tabs; safer install disks
 
-- kiwi-modules 0.61.3: the Nextcloud site passes websockets on. Its push channel (`/push/ws`)
-  answered 400 every two minutes, the app's close frame then reached nginx as a bad request, and
-  fail2ban banned the computer that runs the Nextcloud app (seen on the test network's dev VM).
+- **fail2ban as others ship it** (kiwi-modules 0.62.0, compared with fail2ban, Debian, YunoHost,
+  mailcow, SWAG, Nextcloud's, Vaultwarden's and Forgejo's guides; on the test network every wrong
+  ban came from our own rules): no ban for a bad request (400), SSH counts failed logins only,
+  private home addresses are never banned, bans start at 10 minutes and grow for repeat visitors
+  (up to a week), a week on every port only after five bans a day, the apps' own paths and bulk
+  downloads (WebDAV, previews, thumbnails) are left out of the "refused" jail and the rate limit,
+  Forgejo takes ten tries. docs/security.md says it all.
+- **Nextcloud's push channel** passes the proxy (kiwi-modules 0.61.3): it answered 400 every two
+  minutes, and its apps got their computers banned.
+- **A machine's page in tabs** (after The Foreman): Overview, Services (with the logins), History
+  (what was done to it, kept across restarts, with how each task ended), Backups, and Settings. On
+  top, its parts' state at a glance: set up or not, its last apply, its backup, its fullest disk.
+- **Install media never erase a USB disk by themselves** (an idea from KIWI NG): with `disk: auto`
+  a disk on USB is not a candidate, on CoreOS and Debian alike, so a backup disk left plugged in is
+  safe when the machine's own disk is not seen.
+- **The starter stick's page shows why an install stopped**: the installer's last lines, for a
+  phone that has no console to read them on.
 
 ## 2.152.4 — looking for a waiting disk no longer gets you banned
 

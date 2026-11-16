@@ -240,6 +240,10 @@ keep_saying() {     # the message stays on the screen; nothing restarts
 
 fail() {
     [ -n "${PAGE_DIR:-}" ] && mkdir -p "$PAGE_DIR" && echo info > "$PAGE_DIR/state"
+    # what the installer said, for the page: a phone has no console to read the journal on
+    # (the stick holds no secret: the lines are safe to show)
+    [ -n "${PAGE_DIR:-}" ] && journalctl -u kiwi-starter-install -n 30 --no-pager -o cat > "$PAGE_DIR/details.tmp" 2>/dev/null \
+        && mv -f "$PAGE_DIR/details.tmp" "$PAGE_DIR/details"
     show "kiwi: the install stopped: $*" "Nothing was restarted. Look at the machine's disks, then start it again from the stick."
     keep_saying "kiwi: the install stopped: $*"
 }
@@ -363,6 +367,11 @@ message() {
     local line out=
     if [ -f "$D/message" ]; then
         while IFS= read -r line; do out+="<p>$(esc "${line#kiwi: }")</p>"; done < "$D/message"
+    fi
+    if [ -s "$D/details" ]; then        # a stopped install: what the installer said, word for word
+        out+="<details><summary>What the installer said</summary><pre style=\"white-space:pre-wrap\">"
+        while IFS= read -r line; do out+="$(esc "$line")"$'\n'; done < "$D/details"
+        out+="</pre></details>"
     fi
     printf '%s' "$out"
 }

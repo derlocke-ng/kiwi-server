@@ -86,6 +86,12 @@ a{color:var(--accent)}.muted{color:var(--muted);font-size:.92rem}.small{font-siz
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--off)}
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad,.dot.down,.dot.failed{background:var(--bad)}
 .dot.busy{animation:pulse 1.4s ease-in-out infinite}@keyframes pulse{50%{opacity:.35}}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:14px 0 6px;overflow-x:auto}
+.tabs a{padding:8px 12px;color:var(--muted);text-decoration:none;font-size:.92rem;border-bottom:2px solid transparent;white-space:nowrap}
+.tabs a.on{color:var(--fg);font-weight:600;border-bottom-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:.8rem}
+.chip.ok{border-color:color-mix(in srgb,var(--ok) 40%,transparent)}.chip.warn{border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.chip.bad{border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
 .state{font-weight:600}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad,.down,.failed{color:var(--bad)}
 button,.btn{font:inherit;font-size:.92rem;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);
 color:var(--fg);cursor:pointer;text-decoration:none;display:inline-block}button:hover,.btn:hover{border-color:var(--line2)}
@@ -556,7 +562,7 @@ open to the Internet or to Tor says so.</p>
 {% for t in everything %}<tr><td><b>{{ t.label }}</b><br><a class="sm" href="https://{{ t.site }}" target="_blank" rel="noopener">{{ t.site }}</a>
 <br><span class="sm">{% if t.module %}<a href="/hosts/{{ t.machine }}/settings#s-mod-{{ t.module }}" title="What kiwi-server sets: names, who may sign up, sizes, switches">Settings</a>{% endif %}
 {% if t.admin %} · <a href="https://{{ t.site }}{{ t.admin }}" target="_blank" rel="noopener" title="The app's own admin page: users, rooms, repositories">Admin page</a>{% endif %}
-{% if t.login %} · <a href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}</span></td>
+{% if t.login %} · <a href="/hosts/{{ t.machine }}?tab=services#logins">login</a>{% endif %}</span></td>
 <td class="wide"><a href="/hosts/{{ t.machine }}">{{ t.machine }}</a></td>
 <td>{% if t.down %}<span class="badge bad">Down</span>{% elif t.asked %}<span class="badge ok">Up</span>{% else %}<span class="badge">not asked</span>{% endif %}
 {% if t.since and t.asked %}<br><span class="sm">for {{ age(now - t.since) }}</span>{% endif %}</td>
@@ -577,6 +583,11 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <p><a href="/">← Home</a></p>
 <h1><span class="dot {{ m.state }}"></span>{{ m.name }} <span class="state {{ m.state }}" style="font-size:1rem">{{ words(m.state) }}</span></h1>
 <p class="muted">{{ kind(m.role) }}{% for t in m.tags %} · {{ t }}{% endfor %} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}</p>
+{% if chips %}<div class="chips">{% for c in chips %}<span class="chip {{ c.level }}">{{ c.text }}</span>{% endfor %}</div>{% endif %}
+<nav class="tabs">{% for t, label in (("overview", "Overview"), ("services", "Services"), ("history", "History"), ("backups", "Backups")) %}
+<a href="/hosts/{{ m.name }}{{ '' if t == 'overview' else '?tab=' ~ t }}" class="{{ 'on' if tab == t }}">{{ label }}</a>{% endfor %}
+<a href="/hosts/{{ m.name }}/settings">Settings</a></nav>
+{% if tab == "overview" %}
 {% if m.bars %}<div class="stats">{% if m.facts.uptime is number and m.facts.uptime %}<div class="stat"><span class="lbl">On for</span>
 <b>{{ age(m.facts.uptime) }}</b><span class="cap">since it last started</span></div>{% endif %}
 {% for b in m.bars %}<div class="stat"><span class="lbl">{{ b.label }}</span><b class="{{ b.level }}">{{ b.pct }}<small> %</small></b>
@@ -601,11 +612,31 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <a class="btn" href="/hosts/{{ m.name }}/settings">Settings</a>
 <p>What this machine does and how: its parts, its address, its updates. <span class="muted">Apply brings a change to it.</span></p></div></div>
 
+{% endif %}{% if tab == "services" %}
 {% if tiles %}<h2>Its services</h2><div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
-<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% endif %}
+<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% else %}<p class="muted">No services of its own: its parts are {{ m.modules|join(", ") or "none" }}.</p>{% endif %}
 
 {% include "logins.html" %}
-
+{% endif %}{% if tab == "history" %}
+<p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
+{% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
+<b>{{ verb(j.action) }}</b><span class="state {{ j.state }}">{{ jobword(j.state) }}</span></div>
+<span class="muted small">{{ (j.started or "")[:16]|replace("T", " ") }} · {{ j.user }}</span></a>{% endfor %}{% endif %}
+<h2>Log</h2>{% for e in history %}<div class="card row"><span>{{ e.what }}{% if e.result %} <span class="state {{ e.result }}">{{ jobword(e.result) }}</span>{% endif %}
+{% if e.part %}<span class="muted">· {{ e.part }}</span>{% endif %}</span>
+<span class="muted small">{{ e.time[:16]|replace("T", " ") }} · {{ e.user }}</span></div>
+{% else %}<p class="muted">Nothing yet.</p>{% endfor %}
+{% endif %}{% if tab == "backups" %}{% set b = m.facts.backup %}
+{% if "backup" in m.modules %}<div class="card"><div class="row"><strong>Its data</strong>
+{% if b and b.last %}<span class="state {{ 'ok' if b.age < 129600 else 'bad' }}">saved {{ age(b.age) }} ago</span>{% else %}<span class="state warn">no backup seen yet</span>{% endif %}</div>
+{% if b and b.copies %}<p class="muted">Kept on: {% for c in b.copies %}{{ c.server }}{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="save"><input type="hidden" name="host" value="{{ m.name }}"><button>Save now</button></form>
+<a class="btn" href="/backups/{{ m.name }}">Bring something back</a></div>
+{% else %}<p class="muted">Nothing on {{ m.name }} is set to be saved. A machine with your data should have the <em>backup</em> part (Settings).</p>{% endif %}
+{% if m.facts.backup_store %}<div class="card"><p>It keeps the backups of: {% for r in m.facts.backup_store.repos %}{{ r.client }} ({{ r.snapshots }} versions){{ ", " if not loop.last }}{% endfor %}
+<span class="muted">· {{ size(m.facts.backup_store.free_kib) }} free</span></p></div>{% endif %}
+<p class="muted small">Every machine's backups, and the network's own copy: <a href="/backups">Backups</a>.</p>
+{% endif %}{% if tab == "overview" %}
 {% if m.notes or m.facts %}<h2>Details</h2><div class="card"><dl>
 {% if m.facts.running is defined and m.facts.expected is defined %}<dt>Services</dt><dd>{{ m.facts.running|length if m.facts.running is iterable and m.facts.running is not string else m.facts.running }} running</dd>{% endif %}
 {% if m.facts.backup and m.facts.backup.age is not none %}<dt>Last backup</dt><dd>{{ age(m.facts.backup.age) }} ago</dd>{% endif %}
@@ -625,6 +656,7 @@ is named first.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Remove {{ m.name }} from the network for good?')">{{ tok }}
 <input type="hidden" name="action" value="remove"><input type="hidden" name="host" value="{{ m.name }}">
 <button>Remove {{ m.name }}</button></form></div></details>
+{% endif %}
 {% endblock %}""",
 
     "settings.html": """{% extends "base.html" %}{% block main %}
@@ -2091,7 +2123,40 @@ def make_app(control: Control):
         m = next((x for x in ms if x["name"] == name), None)
         if not m:
             return RedirectResponse("/", status_code=303)
-        return page("host.html", request, "/", m=m, tiles=tiles([m]), logins=logins_of(_info, name))
+        tab = request.query_params.get("tab", "overview")
+        tab = tab if tab in ("overview", "services", "history", "backups") else "overview"
+        mine = [e for e in control.audit_tail(600) if name in (e.get("hosts") or [])]
+        jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
+        return page("host.html", request, "/", m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
+                    chips=chips_of(m, mine), history=mine[:60], jobs=jobs)
+
+    def chips_of(m, mine):
+        """One look at a machine, part by part (after Foreman's sub-statuses): set up or not, how its
+        last apply ended, its backup, its fullest disk."""
+        out = []
+        if m.get("phase") and m["phase"] != "applied":
+            out.append({"text": "not set up yet", "level": "warn"})
+        last = next((e for e in mine if e.get("result") and e.get("what") in ("apply", "update", "setup", "restore")), None)
+        if last:
+            when = ""
+            try:
+                when = " %s ago" % age(time.time() - time.mktime(time.strptime(last["time"][:19], "%Y-%m-%dT%H:%M:%S")))
+            except (ValueError, KeyError):
+                pass
+            out.append({"text": "last %s: %s%s" % ({"update": "apply"}.get(last["what"], last["what"]),
+                                                    JOBWORD.get(last["result"], last["result"]), when),
+                        "level": "ok" if last["result"] == "ok" else "bad"})
+        b = (m.get("facts") or {}).get("backup")
+        if "backup" in (m.get("modules") or []):
+            if b and b.get("last") and b.get("age") is not None:
+                out.append({"text": "backup %s ago" % age(b["age"]), "level": "ok" if b["age"] < 129600 else "bad"})
+            else:
+                out.append({"text": "no backup seen yet", "level": "warn"})
+        disks = [x for x in m.get("bars") or [] if "disk" in str(x.get("label", "")).lower()]
+        if disks:
+            d = max(disks, key=lambda x: x.get("pct") or 0)
+            out.append({"text": "disk %s %%" % d.get("pct"), "level": d.get("level") or "ok"})
+        return out
 
     @app.get("/api/hosts/{name}/logins")
     def api_logins(request: Request, name: str):

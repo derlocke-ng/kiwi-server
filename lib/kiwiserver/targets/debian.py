@@ -86,9 +86,10 @@ def preseed(host, version):
         "d-i clock-setup/ntp boolean true",
         "",
         "### partitioning — THE WHOLE DISK IS WIPED WITHOUT ASKING",
-        # disk: auto. The one disk that holds no mounted file system (the install media does):
-        # with none or several the installer asks at the console instead of guessing
-        ("d-i partman/early_command string D=$(for d in $(list-devices disk); do grep -q \"^$d\" /proc/mounts || echo $d; done); "
+        # disk: auto. The one disk that holds no mounted file system (the install media does) and is not
+        # on USB (a backup disk left plugged in): with none or several the installer asks at the console
+        ("d-i partman/early_command string D=$(for d in $(list-devices disk); do grep -q \"^$d\" /proc/mounts || "
+         "readlink -f /sys/block/${d##*/} | grep -q /usb || echo $d; done); "
          "[ \"$(echo $D | wc -w)\" = 1 ] && debconf-set partman-auto/disk \"$D\" && debconf-set grub-installer/bootdev \"$D\""
          if c.get("disk") == "auto" else "d-i partman-auto/disk string %s" % (c.get("disk") or "/dev/sda")),
         "d-i partman-auto/method string %s" % ("crypto" if d.get("encrypt") else d["partitioning"]),

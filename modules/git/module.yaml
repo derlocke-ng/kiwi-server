@@ -129,6 +129,19 @@ settings:
     label: Extra environment variables
     help: "KEY=value, passed to Forgejo as they are, e.g. FORGEJO__repository__DEFAULT_PRIVATE=private."
     default: {}
+  - key: accounts_client
+    group: Generated
+    help: "Set by kiwi-server when the network's accounts sign people in here (kiwi-server accounts <fleet> connect <host> git): the client's name in Kanidm."
+    default: ""
+  - key: accounts_issuer
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: where Forgejo asks Kanidm about the person signing in."
+    default: ""
+  - key: accounts_secret
+    type: secret
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: the client's secret, from the fleet's store."
+    default: ""
   - key: image
     group: Advanced
     help: "The container image of Forgejo, pinned by its major version, in its rootless form (the start script needs it). 15 is the long-term release, with fixes until July 2027. Forgejo cannot go back to an older version once a newer one has opened its data."

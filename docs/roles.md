@@ -255,6 +255,10 @@ strangers should sign up.
   needs a passkey, or a password and a code from an authenticator app.
 - **Jabber** keeps its own accounts. With `ldap: true` it can take the network's
   accounts too, with the same password, for the people in the group `jabber`.
+- **Forgejo signs people in with these accounts** after `kiwi-server accounts
+  <fleet> connect <host> git` (or Connect under Accounts on the control page) and an
+  apply of that machine: "Sign in with accounts", and a person's first sign-in makes
+  their Forgejo user. Nextcloud and the others come next.
 - **On the control page, Accounts** shows the requests to accept or deny, makes
   invite codes, and makes accounts and new password links; `kiwi-server accounts
   <fleet> …` does the same from a terminal.
@@ -270,8 +274,8 @@ Tried on a test node (16 November 2026):
 - In a real browser: a person set a password with the link and signed in, and a wrong password was refused.
 
 Tried too (16 November 2026): a stranger signed up with an invite code and by
-asking, in a real browser. Not tried yet: signing in to Forgejo or Nextcloud with
-these accounts.
+asking, in a real browser. Signing in to Forgejo with an account
+worked too, in a real browser. Not tried yet: Nextcloud and the others.
 
 ## Authenticator
 

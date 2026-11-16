@@ -41,6 +41,18 @@ services:
       - KIWI_ADMIN_USER={{ admin_user }}
       - KIWI_ADMIN_EMAIL={{ admin_address }}
       - KIWI_ADMIN_PASSWORD={{ admin_password }}
+{% if accounts_client %}
+      # the network's accounts: a person's first sign-in makes their Forgejo user
+      - KIWI_OIDC_CLIENT={{ accounts_client }}
+      - KIWI_OIDC_ISSUER={{ accounts_issuer }}
+      - KIWI_OIDC_SECRET={{ accounts_secret }}
+      - FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION=true
+      - FORGEJO__oauth2_client__USERNAME=nickname
+      - FORGEJO__oauth2_client__ACCOUNT_LINKING=auto
+      - FORGEJO__oauth2_client__UPDATE_AVATAR=false
+      # the accounts' page has a certificate of the fleet's CA
+      - SSL_CERT_DIR=/etc/ssl/certs:/kiwi-ca
+{% endif %}
       - TZ={{ timezone }}
 {% for k, v in extra_env.items() %}
       - {{ k }}={{ v }}
@@ -60,3 +72,6 @@ services:
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-git/start.sh:/kiwi-start.sh:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-git/data:/var/lib/gitea:z
+{% if accounts_client and ca_cert_dir %}
+      - {{ ca_cert_dir }}:/kiwi-ca:ro,z
+{% endif %}

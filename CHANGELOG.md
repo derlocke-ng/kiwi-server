@@ -5,6 +5,17 @@
 
 
 
+
+## 2.129.0 — Forgejo signs people in with the network's accounts
+
+- **`kiwi-server accounts <fleet> connect <host> git`** (and Connect on the control page's
+  Accounts): Forgejo on that machine shows "Sign in with accounts" after its next apply, and a
+  person's first sign-in makes their user there (kiwi-modules 0.53.0). The service's secret is kept
+  in the fleet's store.
+- Drill `sso-browser.py`: in a real browser, a person sets a password with their link, chooses
+  "Sign in with accounts" in Forgejo, signs in at the accounts' page and is back in Forgejo as
+  themself (on the test network: Kanidm on one node, Forgejo on another).
+
 ## 2.128.0 — the network's accounts on the control page
 
 - **Accounts** on the control page: the requests to accept or deny, invite codes to make and

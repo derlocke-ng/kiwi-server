@@ -1060,7 +1060,7 @@ class Control:
                            text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=180)
         if r.returncode:
             raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
-        if argv and argv[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber"):
+        if argv and argv[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect"):
             self.audit(user, "accounts: %s" % argv[0], name=" ".join(str(a) for a in argv[1:2]))
         try:
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None

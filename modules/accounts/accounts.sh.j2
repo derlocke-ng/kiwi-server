@@ -5,6 +5,7 @@
 #   accounts.sh list                         the accounts, one JSON object a line
 #   accounts.sh delete NAME
 #   accounts.sh jabber NAME on|off           whether Jabber takes this account (LDAP)
+#   accounts.sh oauth CLIENT NAME ORIGIN CALLBACK   a service that signs people in here (OpenID Connect); prints its secret
 #   accounts.sh setup                        the rules for everyone, and the sign-up page's token (every apply)
 # Each call takes the admin over afresh (its password is never kept: a new one each time) and
 # runs Kanidm's own command line in a container that is gone afterwards.
@@ -47,6 +48,8 @@ case "${1:-}" in
     create)
         name_ok "$2"
         k person create "$2" "${3:-$2}" >/dev/null 2>&1 || { echo "accounts: $2 exists already" >&2; exit 3; }
+        # an address nobody reads: apps like Forgejo want one, and the network sends no mail
+        k person update "$2" --mail "$2@{{ id_host }}" >/dev/null 2>&1 || true
         t=$(token "$2"); printf '{"name": "%s", "link": "%s%s"}\n' "$2" "$link" "$t" ;;
     reset)
         name_ok "$2"; t=$(token "$2")
@@ -67,6 +70,17 @@ case "${1:-}" in
         else k group remove-members jabber "$2" >/dev/null 2>&1; fi
         k group get jabber 2>/dev/null | grep -q "member: $2@" && on=on || on=off
         printf '{"name": "%s", "jabber": "%s"}\n' "$2" "$on" ;;
+    oauth)
+        name_ok "$2"
+        k system oauth2 get "$2" 2>&1 | grep -q "^name: $2" || k system oauth2 create "$2" "$3" "$4" >/dev/null 2>&1
+        k system oauth2 add-redirect-url "$2" "$5" >/dev/null 2>&1 || true
+        k system oauth2 update-scope-map "$2" idm_all_persons openid email profile groups >/dev/null 2>&1
+        k system oauth2 prefer-short-username "$2" >/dev/null 2>&1 || true
+        # Forgejo sends no PKCE challenge; it signs in with its secret (a confidential client), which is enough
+        k system oauth2 warning-insecure-client-disable-pkce "$2" >/dev/null 2>&1 || true
+        s=$(k system oauth2 show-basic-secret "$2" 2>/dev/null | grep -v '^\s*$' | tail -1 | tr -d ' \n')
+        [ -n "$s" ] || { echo "accounts: Kanidm gave no secret for $2" >&2; exit 1; }
+        printf '{"client": "%s", "secret": "%s", "issuer": "https://{{ id_host }}/oauth2/openid/%s"}\n' "$2" "$s" "$2" ;;
     setup)
         # the sign-up page's own service account: it may make people and their links, nothing else
         tok={{ docker_dir }}/{{ container_prefix }}-accounts/signup/token

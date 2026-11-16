@@ -462,6 +462,13 @@ class Renderer:
                 rp["exposed"] = self._exposed
             elif role.node_type != "master" and rp.get("public") and self._master_ip:
                 rp["via"] = self._master_ip
+        for module in CONNECTABLE:
+            # the network's accounts sign people in here (kiwi-server accounts connect)
+            path = accounts_file(self.fleet, host.name, module)
+            if module in host.modules and os.path.isfile(path):
+                a = json.loads(util.read_text(path))
+                host.module_settings[module].update(accounts_client=a["client"], accounts_issuer=a["issuer"],
+                                                    accounts_secret=a["secret"])
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
@@ -2172,6 +2179,12 @@ def cmd_serve(args):
 
 ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
 ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber")
+# the services that can sign people in with the network's accounts, and where Forgejo & co. come back to
+CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." + h.hostname, "/user/oauth2/accounts/callback")}
+
+
+def accounts_file(fleet, host, module):
+    return fleet.resolve_path("secrets/accounts/%s-%s.json" % (host, module))
 
 
 def cmd_accounts(args):
@@ -2192,6 +2205,30 @@ def cmd_accounts(args):
     h = found[0]
     prefix = "km" if roles[h.role].node_type == "master" else "kn"
     what, rest = args.what, [a for a in (args.arg or [])]
+    if what == "connect":
+        # a service signs people in with these accounts: its client in Kanidm, its secret in the store
+        if not rest:
+            raise KiwiError("accounts connect HOST [MODULE]: which machine's service (%s)" % ", ".join(CONNECTABLE))
+        target = fleet.hosts.get(rest[0])
+        module = rest[1] if len(rest) > 1 else "git"
+        if not target or module not in CONNECTABLE:
+            raise KiwiError("accounts connect: a machine of the fleet and one of %s" % ", ".join(CONNECTABLE))
+        rolesmod.resolve_settings(roles[target.role], target, ms)
+        if module not in target.modules:
+            raise KiwiError("%s does not run %s" % (target.name, module))
+        label, site, callback = CONNECTABLE[module]
+        name = site(target.module_settings.get(module) or {}, target)
+        client = "%s-%s" % (module, target.name)
+        cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); sudo sh \"$S\" oauth %s"
+               % " ".join(shlex.quote(x) for x in (client, "%s on %s" % (label, target.name), "https://" + name, "https://" + name + callback)))
+        answer = json.loads(remote.run(remote.reach(h, args.ssh), cmd).decode(errors="replace").strip().splitlines()[-1])
+        path = accounts_file(fleet, target.name, module)
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        util.write_text(path, json.dumps(answer) + "\n", 0o600)
+        util.say("%s on %s signs people in with the network's accounts after its next apply: kiwi-server apply %s %s"
+                 % (label, target.name, args.fleet, target.name))
+        print(json.dumps({"client": answer["client"], "issuer": answer["issuer"], "host": target.name, "module": module}))
+        return
     if what in ACCOUNT_PAGE_OPS:
         extra = []
         if what == "invite":

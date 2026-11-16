@@ -7,6 +7,7 @@ import asyncio
 import base64
 import hmac
 import math
+import os
 import subprocess
 import threading
 import time
@@ -929,7 +930,14 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 {% for p in people %}<tr><td><b>{{ p.name }}</b></td><td class="wide">{{ p.display }}</td><td class="wide">{{ "yes" if p.jabber else "–" }}</td>
 <td style="white-space:nowrap"><form class="inline" method="post" action="/accounts/link">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>New password link</button></form>
 <form class="inline" method="post" action="/accounts/delete" onsubmit="return confirm('Delete the account {{ p.name }}? Its person can no longer sign in anywhere.')">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>Delete</button></form></td></tr>{% endfor %}</tbody></table></div>
-{% else %}<p class="muted">No accounts yet.</p>{% endif %}{% endif %}
+{% else %}<p class="muted">No accounts yet.</p>{% endif %}
+<h2>Services that sign people in with these accounts</h2>
+{% if connectable %}<div class="scroll"><table class="tbl"><thead><tr><th>Service</th><th>Machine</th><th>Signs people in</th><th></th></tr></thead><tbody>
+{% for c in connectable %}<tr><td><b>{{ c.label }}</b></td><td>{{ c.host }}</td><td>{% if c.connected %}<span class="badge ok">yes</span>{% else %}<span class="badge plain">not yet</span>{% endif %}</td>
+<td>{% if not c.connected %}<form class="inline" method="post" action="/accounts/connect">{{ tok }}<input type="hidden" name="name" value="{{ c.host }}">
+<button>Connect</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+<p class="muted small">Connected: after its next Apply the service shows "Sign in with accounts", and a person's first sign-in makes their user there.</p>
+{% else %}<p class="muted">None of your machines runs a service that can do so yet (Forgejo can).</p>{% endif %}{% endif %}
 {% endblock %}""",
 
     "help.html": """{% extends "base.html" %}{% block main %}
@@ -1966,7 +1974,10 @@ def make_app(control: Control):
         id_host = next((s for s, label in (holder.get("site_labels") or {}).items() if label == "Accounts"),
                        "id.%s" % holder.get("hostname", ""))
         now = time.time()
-        return page("accounts.html", request, "/accounts", available=available, people=sorted(people, key=lambda p: p["name"]),
+        connectable = [{"host": h["name"], "label": "Forgejo (git)",
+                        "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-git.json" % h["name"]))}
+                       for h in info.get("hosts") or [] if "git" in (h.get("modules") or [])]
+        return page("accounts.html", request, "/accounts", available=available, connectable=connectable, people=sorted(people, key=lambda p: p["name"]),
                     invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
                     id_host=id_host, now=now, error=error, **kw)
 
@@ -2001,6 +2012,11 @@ def make_app(control: Control):
             if what == "delete":
                 control.accounts("delete", name.strip().lower(), user=u)
                 return accounts_page(request)
+            if what == "connect":
+                control.accounts("connect", name.strip(), "git", user=u)
+                return accounts_page(request, shown={"title": "Forgejo on %s is connected" % name.strip(), "value": "kiwi-server apply %s" % name.strip(),
+                                                     "text": "Apply that machine now (Machines, %s, Apply): then its Forgejo signs people in with these accounts." % name.strip(),
+                                                     "note": "Nothing changes for people who already have a Forgejo user of the same name: they are linked on their first sign-in."})
         except KiwiError as e:
             return accounts_page(request, error=str(e))
         return accounts_page(request, error="not a thing to do here")

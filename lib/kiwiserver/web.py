@@ -466,7 +466,9 @@ open to the Internet or to Tor says so.</p>
 <div class="stat"><span class="lbl">Hidden services</span><b>{{ tor }}</b></div></div>
 <div class="scroll"><table class="tbl"><thead><tr><th>Service</th><th class="wide">Machine</th><th>Now</th><th class="wide">The last 90 days</th><th>Worked</th><th class="wide wide2">Answers in</th><th class="wide">Open to</th></tr></thead><tbody>
 {% for t in everything %}<tr><td><b>{{ t.label }}</b><br><a class="sm" href="https://{{ t.site }}" target="_blank" rel="noopener">{{ t.site }}</a>
-{% if t.login %} · <a class="sm" href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}</td>
+<br><span class="sm">{% if t.module %}<a href="/hosts/{{ t.machine }}/settings#s-mod-{{ t.module }}" title="What kiwi-server sets: names, who may sign up, sizes, switches">Settings</a>{% endif %}
+{% if t.admin %} · <a href="https://{{ t.site }}{{ t.admin }}" target="_blank" rel="noopener" title="The app's own admin page: users, rooms, repositories">Admin page</a>{% endif %}
+{% if t.login %} · <a href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}</span></td>
 <td class="wide"><a href="/hosts/{{ t.machine }}">{{ t.machine }}</a></td>
 <td>{% if t.down %}<span class="badge bad">Down</span>{% elif t.asked %}<span class="badge ok">Up</span>{% else %}<span class="badge">not asked</span>{% endif %}
 {% if t.since and t.asked %}<br><span class="sm">for {{ age(now - t.since) }}</span>{% endif %}</td>
@@ -477,7 +479,9 @@ open to the Internet or to Tor says so.</p>
 {% if t.onion %} <span class="badge plain" title="http://{{ t.onion.address }}{% if t.onion.clients %} — only {{ t.onion.clients|join(", ") }}{% endif %}" style="cursor:copy"
 onclick="navigator.clipboard.writeText('http://{{ t.onion.address }}');this.textContent='copied'">Tor{% if t.onion.clients %} (named){% endif %}</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 {% else %}<p class="muted">No services yet: they come with the machines.</p>{% endif %}
-<p class="muted small">90 days ago on the left, today on the right. A Tor badge copies the hidden service's address: it opens in Tor Browser,
+<p class="muted small"><b>Settings</b> is what kiwi-server sets for the service (its names, who may sign up, sizes, switches);
+<b>Admin page</b> is the app's own, for what is inside it (users, rooms, repositories): its admin login is under the machine's Logins.<br>
+90 days ago on the left, today on the right. A Tor badge copies the hidden service's address: it opens in Tor Browser,
 without your VPN. <a href="/access#tor">Make a service a hidden service, or say who may open it.</a> · <a href="/status">What everyone sees: the status page.</a></p>
 {% endblock %}""",
 
@@ -572,14 +576,16 @@ placeholder="{{ "set; leave empty to keep it" if f.set else "set for every machi
 {% else %}What a machine does not set for itself, it takes from here.{% endif %} Only what you change is saved.</p>
 <form method="post" action="{{ "/hosts/" + host + "/settings" if host else "/settings" }}" autocomplete="off">{{ tok }}
 {% for g in groups %}{% set more = g.fields|selectattr("more")|list %}
-{% if g.advanced %}<details class="card"{% if g.id in open %} open{% endif %}><summary>{{ g.title }}</summary>
-{% else %}<div class="card"><h2 style="margin-top:0">{{ g.title }}</h2>{% endif %}
+{% if g.advanced %}<details class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"{% if g.id in open %} open{% endif %}><summary>{{ g.title }}</summary>
+{% else %}<div class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"><h2 style="margin-top:0">{{ g.title }}</h2>{% endif %}
 {% if g.help %}<p class="muted">{{ g.help }}</p>{% endif %}
 {% for f in g.fields if not f.more %}{{ field(f) }}{% else %}{% if not more %}<p class="muted">Nothing to set: it is on or off.</p>{% endif %}{% endfor %}
 {% if more %}<details{% if more|selectattr("name", "in", touched)|list %} open{% endif %}><summary>More settings</summary>
 {% for f in more %}{{ field(f) }}{% endfor %}</details>{% endif %}
 {{ "</details>"|safe if g.advanced else "</div>"|safe }}{% endfor %}
 <div class="actions"><button class="primary">Save</button></div></form>{% endif %}
+<script>(function(){var e=location.hash&&document.getElementById(location.hash.slice(1));if(e){if(e.tagName=="DETAILS")e.open=true;
+e.querySelectorAll("details").forEach(function(d){d.open=true});e.scrollIntoView();e.style.outline="2px solid var(--accent)"}})()</script>
 {% if not host %}<div class="card"><h2 style="margin-top:0">Try the messages</h2><p>Sends one test message to every place set under
 "Messages when something is wrong" (save first). <span class="muted">Real ones come when something has been wrong for a
 while, and when it is fine again. What everyone on your network sees without a login is <a href="/status">the status page</a>.</span></p>
@@ -1360,12 +1366,25 @@ def picture(machines, devices=0, per_row=4):
     return markupsafe.Markup('<svg viewBox="0 0 %d %d" style="max-width:%dpx" role="img" aria-label="Your network: the master and '
                              'the machines linked to it">%s%s%s</svg>' % (w, h, w, ground, "".join(lines), "".join(boxes)))
 
+# a service by the first part of its name: the module whose settings it has, and the page in the
+# app where its admin changes what is inside it (users, rooms, repositories)
+SITE_MODULE = {"cloud": "cloud", "vault": "vault", "immich": "immich", "photos": "immich", "paperless": "paperless", "git": "git",
+               "jabber": "xmpp", "xmpp": "xmpp", "paste": "paste", "id": "accounts", "pay": "btcpay", "ffsync": "firefox-sync",
+               "auth": "authenticator", "opencloud": "opencloud", "dl": "downloader", "jd": "downloader", "portainer": "portainer",
+               "pihole": "dns", "wg": "vpn-server", "control": "control", "status": "control", "hub": "hub", "relay": "nostr-relay",
+               "backup": "backup-server", "cache": "cache"}
+ADMIN_PATH = {"cloud": "/settings/admin", "vault": "/admin", "immich": "/admin", "photos": "/admin", "paperless": "/admin/",
+              "git": "/-/admin", "jabber": "/admin/", "xmpp": "/admin/", "pay": "/server/users", "auth": "/admin", "pihole": "/admin/",
+              "portainer": "/", "wg": "/", "opencloud": "/admin-settings"}
+
+
 def tiles(machines):
     out = []
     for m in machines:
         for site in m["sites"]:
             first = site.split(".", 1)[0]
-            out.append({"site": site, "label": SERVICES.get(first, first.capitalize()), "machine": m["name"]})
+            out.append({"site": site, "label": SERVICES.get(first, first.capitalize()), "machine": m["name"],
+                        "module": SITE_MODULE.get(first, ""), "admin": ADMIN_PATH.get(first)})
     return out
 
 

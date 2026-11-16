@@ -9,6 +9,16 @@
 
 
 
+
+## 2.131.0 — Jabber's sign-up page
+
+- **Jabber addresses with invite codes or by asking** (kiwi-modules 0.55.0, `xmpp: { invites: true,
+  requests: true }`), beside the captcha or instead of it. The page is `kiwi-server signup` again,
+  making Jabber addresses over ejabberd's API: with an invite code the person chooses name and
+  password; an accepted request gets a password, shown once.
+- The control page's **Accounts** has a Jabber section: its requests to accept or deny, its invite
+  codes. `kiwi-server accounts <fleet> --jabber invite|requests|accept|deny …` from a terminal.
+
 ## 2.130.2 — start pages without doubles
 
 - A VPN name that sends on to a public name is no service of its own: it is no longer checked,

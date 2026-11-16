@@ -84,6 +84,15 @@ listen:
       /bosh: mod_bosh
       /admin: ejabberd_web_admin
 
+{% if join_on %}
+  # the network's sign-up page (/join) makes accounts here: two commands, from the stack network only
+  - port: 5281
+    ip: "::"
+    module: ejabberd_http
+    request_handlers:
+      /api: mod_http_api
+{% endif %}
+
 s2s_use_starttls: required
 {% if not federates %}
 # a service for the VPN only: it asks no other server and none reaches it
@@ -143,6 +152,15 @@ api_permissions:
     from: mod_adhoc_api
     who: admin
     what: "*"
+{% if join_on %}
+  "kiwi sign-up page":
+    from: mod_http_api
+    who:
+      ip: {{ docker_subnet }}
+    what:
+      - register
+      - check_account
+{% endif %}
 
 shaper:
   normal:
@@ -161,6 +179,9 @@ shaper_rules:
   s2s_shaper: fast
 
 modules:
+{% if join_on %}
+  mod_http_api: {}
+{% endif %}
   mod_adhoc: {}
   mod_adhoc_api: {}
   mod_admin_extra: {}

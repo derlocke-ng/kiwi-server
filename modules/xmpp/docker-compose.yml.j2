@@ -62,3 +62,29 @@ services:
 {% endif %}
 {% endcall %}
 {% endif %}
+{% if join_on %}
+{# the sign-up page: invite codes and requests, Jabber addresses made over ejabberd's API (5281, the stack network only) #}
+{% set pages = {} %}
+{% if two %}
+{% set _ = pages.update({internal_host: {"api": "http://" ~ container_prefix ~ "-" ~ door ~ ":5281/api", "host": internal_host, "onion": (onion or {}).get('jabber', '')},
+                         xmpp_domain: {"api": "http://" ~ container_prefix ~ "-xmpp-public:5281/api", "host": xmpp_domain, "onion": (onion or {}).get('xmpp', '')}}) %}
+{% else %}
+{% for page in [internal_host, xmpp_domain] if page %}
+{% set _ = pages.update({page: {"api": "http://" ~ container_prefix ~ "-" ~ door ~ ":5281/api", "host": main_host, "onion": (onion or {}).get('jabber', '')}}) %}
+{% endfor %}
+{% endif %}
+  {{ container_prefix }}-xmpp-join:
+    image: {{ join_image }}
+    container_name: {{ container_prefix }}-xmpp-join
+    restart: unless-stopped
+    command: ["signup", "serve", "--state", "/state", "--ejabberd", {{ pages | tojson | tojson }},
+              "--ways", "{{ join_ways }}", "--brand", {{ (brand or domain) | tojson }}, "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
+    networks:
+      {{ network_name }}: {}
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-xmpp/join:/state:z
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}

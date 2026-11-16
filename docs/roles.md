@@ -217,6 +217,17 @@ the VPN that asks for the public name is led to the node, where the internal
 service answers on Jabber's ports: for the public one, use it from outside the
 VPN, or through its hidden service.
 
+
+**How people get an address** is chosen per network, any mix of three:
+- `registration: true` (the default): in their app, or at `/register` on the server's page, after a captcha;
+- `invites: true`: at `/join` with an invite code, choosing name and password;
+- `requests: true`: at `/join` by asking with a few words; accepted on the control page
+  (Accounts, Jabber), the person gets a password, shown once with their request code.
+
+Invite codes and requests are made and answered under Accounts on the control page, or with
+`kiwi-server accounts <fleet> --jabber …`. The rules on the page: `terms`. These Jabber addresses
+are not the network's accounts (the accounts module); `ldap` there joins the two where wanted.
+
 ## Pastebin
 
 Add `paste` to a machine's modules: a page to put a text or a file on and pass

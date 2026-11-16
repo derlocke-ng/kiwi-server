@@ -29,7 +29,8 @@
 #              makes it the node off the VPN: nginx, Pi-hole and the control part, no VPN client;
 #              the names answer with its home address, the control page opens from the home network;
 #              then a hard reset. Touches no server
-#   up         the VM of `install`, still running: the page and screen checks again (after `code`)
+#   up         the VM of `install`, still running: the page and screen checks again (after `code`;
+#              LOG=serial-again.log for the VM of `again`)
 #   handshake  the VM of `install`, still running: taken in as a network would, with a wrong code,
 #              the right one and once more; the answer's proof and host keys checked
 #   stop       kill the VM this script started (by its pid)
@@ -361,10 +362,10 @@ code)
     [[ $out == "$(sed -n 's/^VERSION=//p' "$here/kiwi.manifest") /opt/kiwi-server/"* ]]; check $? "the VM's control part runs this checkout's code"
     ;;
 up)     # the VM of `install`, still running (after `code`, say): its page and screen checked again
-    up_checks "${2:-serial-install.log}"
+    up_checks "${LOG:-serial-install.log}"
     ;;
 handshake)  # the VM of `install`, still running: taken in as a network would (Control.join_as_starter)
-    log=${2:-serial-install.log}
+    log=${LOG:-serial-install.log}
     code=$(grep -aoE 'Setup code: [0-9a-f]{4}-[0-9a-f]{4}' "$log" | tail -1 | cut -d' ' -f3)
     rm -f hs-key hs-key.pub; ssh-keygen -q -t ed25519 -N '' -C kiwi-drill -f hs-key
     ours=$(sh_vm 'cat /etc/ssh/ssh_host_*_key.pub' | awk '/^(ssh-|ecdsa-)/ { print $1" "$2 }' | LC_ALL=C sort)

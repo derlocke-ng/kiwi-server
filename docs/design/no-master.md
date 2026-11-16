@@ -39,7 +39,7 @@ address, and the master's Pi-hole answers for them.
   then: build and install the master, enroll and apply each machine.
 - A drill: `tests/drills/starter-vm.sh alone` (the starter in a local VM, "No master yet",
   "Set it up", the names and the control page from the home network, a hard reset). Run on
-  17 November 2026 with the released 2.150.0: the machine became the node in 45 s with Pi-hole,
+  16 November 2026 with the released 2.150.0: the machine became the node in 45 s with Pi-hole,
   nginx and the control part and no VPN client; its Pi-hole answers its names with the home
   address; the control page opens from the home network; all of it again after a hard reset.
 

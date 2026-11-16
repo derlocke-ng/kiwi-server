@@ -194,14 +194,16 @@ service to itself (accounts `@jabber.<machine>`, nobody outside reaches it) and
 runs a second one for the public name. Their accounts are apart and the two
 exchange no messages. The public one's hidden service is `xmpp`, not `jabber`.
 
-**Accounts.** `kiwi-server logins` shows the admin's. Everyone else makes their
-own: in the app ("create a new account" on the server), or on the page
-`https://<name>/register`, each after a captcha. One new account per address in
-ten minutes; an address that keeps typing wrong passwords is shut out for an
-hour. `registration: false` leaves accounts to the admin (the app's server
-commands, or `/admin` on the page).
+**Accounts.** `kiwi-server logins` shows the admin's. Everyone else gets theirs
+on one page, `https://<name>/join`, in the ways switched on (below). An address
+that keeps typing wrong passwords is shut out for an hour. The admin manages
+people and rooms in a Jabber app (its server commands) or on the admin panel
+`https://<name>/admin`, which answers the VPN only. Server settings changed
+there are gone at the next start: kiwi-server writes ejabberd's configuration.
 
-Rooms are at `rooms.<name>`. A file may be up to `upload_mb` (100) MB.
+Rooms are at `rooms.<name>`; `room_creators: admins` lets only the admins make
+them (`admins: [anna, …]` names more admins than the first one). A file may be
+up to `upload_mb` (100) MB and is deleted after `file_days` (30) days.
 
 Tried on a test node behind the master (15 November 2026, `tests/drills/jabber-doors.py`):
 with one service, logins from the Internet (5222 and 5223), from the VPN and
@@ -218,11 +220,13 @@ service answers on Jabber's ports: for the public one, use it from outside the
 VPN, or through its hidden service.
 
 
-**How people get an address** is chosen per network, any mix of three:
-- `registration: true` (the default): in their app, or at `/register` on the server's page, after a captcha;
-- `invites: true`: at `/join` with an invite code, choosing name and password;
-- `requests: true`: at `/join` by asking with a few words; accepted on the control page
-  (Accounts, Jabber), the person gets a password, shown once with their request code.
+**How people get an address** is chosen per network, any mix of three, all on `/join`:
+- `invites: true` (the default): with an invite code, choosing name and password;
+- `requests: true` (the default): by asking with a few words; accepted on the control page
+  (Accounts, Jabber), the person gets a password, shown once with their request code;
+- `registration: true` (off by default): anyone, after a picture test on the page, or in their
+  app after ejabberd's own. One new address per Internet address in ten minutes (over Tor that
+  is one for all of Tor).
 
 Invite codes and requests are made and answered under Accounts on the control page, or with
 `kiwi-server accounts <fleet> --jabber …`. The rules on the page: `terms`. These Jabber addresses

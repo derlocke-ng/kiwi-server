@@ -77,7 +77,6 @@ listen:
     ip: "{{ '::' if public else '127.0.0.1' if local_http.startswith('127.') else '::' }}"
     module: ejabberd_http
     request_handlers:
-      /register: mod_register_web
       /captcha: ejabberd_captcha
       /upload: mod_http_upload
       /websocket: ejabberd_http_ws
@@ -115,6 +114,9 @@ acl:
   admin:
     user:
       - {{ admin_user }}@{{ host }}
+{% for name in admins %}
+      - {{ name }}@{{ host }}
+{% endfor %}
 
 access_rules:
   local:
@@ -133,7 +135,7 @@ access_rules:
   configure:
     allow: admin
   muc_create:
-    allow: local
+    allow: {{ 'admin' if room_creators == 'admins' else 'local' }}
   pubsub_createnode:
     allow: local
   trusted_network:
@@ -206,6 +208,11 @@ modules:
       "Access-Control-Allow-Origin": "https://@HOST@"
       "Access-Control-Allow-Methods": "GET,HEAD,PUT,OPTIONS"
       "Access-Control-Allow-Headers": "Content-Type"
+{% if file_days %}
+  # what people send is deleted after {{ file_days }} days
+  mod_http_upload_quota:
+    max_days: {{ file_days }}
+{% endif %}
   mod_last: {}
   mod_mam:
     assume_mam_usage: true
@@ -243,7 +250,6 @@ modules:
     captcha_protected: true
     ip_access: all
     password_strength: 32
-  mod_register_web: {}
   mod_roster:
     versioning: true
 {% if federates %}

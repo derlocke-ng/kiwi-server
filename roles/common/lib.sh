@@ -95,6 +95,13 @@ ks_has_file() { # KEY
     [[ -n ${KS_FILES[$1]:-} ]] && return 0
     [[ -n ${KS_BUNDLE_DIR:-} && -f $(ks_bundle_path "$1") ]]
 }
+ks_replace() { # TMP DEST   — TMP takes DEST's place, on the disk first: a power cut in the middle of
+    # an apply leaves the old file or the new one, never an empty one (XFS keeps no data back for a rename)
+    sync -- "$1" 2>/dev/null || true
+    mv -f -- "$1" "$2"
+    sync -- "$(dirname -- "$2")" 2>/dev/null || true
+}
+
 ks_file() { # KEY DEST [MODE] [OWNER]   — write a file the generator provided
     local key=$1 dest=$2 mode=${3:-0600} owner=${4:-root:root} src
     ks_parent_dir "$dest"
@@ -108,7 +115,7 @@ ks_file() { # KEY DEST [MODE] [OWNER]   — write a file the generator provided
     fi
     chmod "$mode" "$dest.tmp"
     chown "$owner" "$dest.tmp"
-    mv -f "$dest.tmp" "$dest"
+    ks_replace "$dest.tmp" "$dest"
 }
 
 ks_write() { # DEST [MODE] [OWNER]   — content on stdin
@@ -117,7 +124,7 @@ ks_write() { # DEST [MODE] [OWNER]   — content on stdin
     cat > "$dest.tmp"
     chmod "$mode" "$dest.tmp"
     chown "$owner" "$dest.tmp"
-    mv -f "$dest.tmp" "$dest"
+    ks_replace "$dest.tmp" "$dest"
 }
 
 ks_subst() { # SRC DEST VAR...   — ${VAR} and $VAR from the current shell, nothing else
@@ -129,7 +136,7 @@ ks_subst() { # SRC DEST VAR...   — ${VAR} and $VAR from the current shell, not
         val=${val//\\/\\\\}; val=${val//|/\\|}; val=${val//&/\\&}
         expr+="s|\\\${$v}|${val}|g;s|\\\$$v\\b|${val}|g;"
     done
-    sed -e "$expr" "$src" > "$dest.tmp" && mv -f "$dest.tmp" "$dest"
+    sed -e "$expr" "$src" > "$dest.tmp" && ks_replace "$dest.tmp" "$dest"
 }
 
 # ---- users -------------------------------------------------------------------------
@@ -239,7 +246,7 @@ ks_compose_plugin() {
     curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" \
         -o "$dir/docker-compose.tmp"
     chmod 0755 "$dir/docker-compose.tmp"
-    mv -f "$dir/docker-compose.tmp" "$dir/docker-compose"
+    ks_replace "$dir/docker-compose.tmp" "$dir/docker-compose"
     docker compose version >/dev/null
 }
 

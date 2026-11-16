@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.139.2 — whole files after a power cut during an apply
+
+- kiwi-stack 0.9.9: each file an apply replaces on a machine is on the disk before it takes the
+  old one's place. A power cut in the middle of an apply leaves the old file or the new one, never
+  an empty one.
+
 ## 2.139.1 — connecting a service works; a silent stop is called one
 
 - `accounts connect` (kiwi-modules 0.60.2): the accounts script lost Kanidm's address after the first

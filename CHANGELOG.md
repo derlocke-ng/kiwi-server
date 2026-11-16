@@ -2,6 +2,18 @@
 
 
 
+
+## 2.126.0 — a status page like the others, every VPN provider
+
+- **The status page shows each service's last 90 days**: a bar a day, green when it worked all
+  day, yellow with gaps, red when it was down most of it, and how much of the time it worked,
+  as status pages show it. It says how fast each service answers and how long it has worked;
+  what was wrong is a list of cards. On a phone it shows 30 days.
+- **Every VPN provider gluetun runs with WireGuard as the master's exit** (kiwi-modules 0.51.0):
+  Mullvad, Proton VPN, NordVPN, Surfshark, AirVPN, Windscribe, IVPN, FastestVPN, and any other
+  provider's WireGuard config. The first run on the page and in the app offers them all and asks
+  each for the lines it needs. Proton VPN and NordVPN were refused before: they give no address.
+
 ## 2.125.0 — fail2ban done the way the apps document it
 
 - **Wrong logins, per app** (kiwi-modules 0.50.0): fail2ban reads Forgejo's, Vaultwarden's and

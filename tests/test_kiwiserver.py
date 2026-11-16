@@ -5191,7 +5191,7 @@ class TestManage(Base):
                             "vpn_provider": "mullvad", "wireguard_private_key": "k"}})}}})
         rc, out, err = self.run_cli("validate", g.path)
         self.assertEqual(rc, cli.EXIT_INVALID)
-        self.assertIn("provider mullvad needs wireguard_private_key and wireguard_addresses", err)
+        self.assertIn("provider mullvad needs wireguard_addresses", err)
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
@@ -7518,7 +7518,7 @@ class TestHealth(Base):
             return real(argv)
         answers = {"cloud.a.home": (False, 502), "control.a.home": (True, 403)}
         out = io.StringIO()
-        with mock.patch.object(cli, "main", fake_main), mock.patch.object(health, "probe", lambda sites: {s: answers[s] for s in sites}), \
+        with mock.patch.object(cli, "main", fake_main), mock.patch.object(health, "probe", lambda sites, **kw: {s: answers[s] for s in sites}), \
                 contextlib.redirect_stdout(out):
             cli.cmd_notify(argparse.Namespace(fleet=f.path, test=False, status=status, events=None, state=state, no_send=False,
                                               porcelain=True, output=None, media=None))

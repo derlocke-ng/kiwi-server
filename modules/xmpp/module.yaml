@@ -43,10 +43,12 @@ templates:
   config: ejabberd.yml.j2
   config_public: ejabberd.yml.j2
   start: start.sh.j2
+  terms: terms.txt.j2
 
 outputs:
   config: { path: "{{ container_prefix }}-xmpp/ejabberd.yml", mode: 0644 }
   config_public: { path: "{{ container_prefix }}-xmpp/ejabberd-public.yml", mode: 0644, when: two }
+  terms: { path: "{{ container_prefix }}-xmpp/join/terms.txt", mode: 0644, when: join_on }
   start: { path: "{{ container_prefix }}-xmpp/start.sh", mode: 0755 }
 
 derived:
@@ -58,6 +60,9 @@ derived:
   main_host: "{{ xmpp_domain if xmpp_domain and not separate else xmpp_hostname or 'jabber.' ~ hostname }}"
   # whose network the service shares: the machine's door to the VPN
   door: "{{ 'vpn-server' if node_type == 'master' else 'vpn-client' }}"
+  # the sign-up page with invite codes or requests: a small container of its own (kiwi-server signup)
+  join_on: "{{ 'yes' if invites or requests else '' }}"
+  join_ways: "{{ ((['invites'] if invites else []) + (['requests'] if requests else []) + (['captcha'] if registration else [])) | join(',') }}"
   # the proxy reaches that service at 127.0.0.1 when it shares the network too (a master's does)
   local_http: "{{ '127.0.0.1' if module_config.get('reverse-proxy', {}).get('network_mode') == 'vpn-server' else container_prefix ~ ('-vpn-server' if node_type == 'master' else '-vpn-client') }}:5280"
   # on a node the public name's connections come from the master, each with its visitor's address in front
@@ -79,6 +84,7 @@ validate:
 
 storage:
   bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/join", type: dir, required: true, when: join_on }
     # one folder per name under hosts/: start.sh makes it (from an older layout's data/ or public/)
     - { host: "${DOCKERDIR}/{{ container_prefix }}-xmpp/hosts", type: dir, required: true }
 
@@ -108,7 +114,16 @@ nginx:
       proxy_read_timeout: 3600s
       extra_locations:
         # the page's front door: where a new account is made, a password changed
-        - { path: "= /", config: "return 302 /register/;" }
+        - { path: "= /", config: "return 302 {{ '/join' if join_on else '/register/' }};" }
+        # the sign-up page with invite codes and requests (kiwi-server signup)
+        - path: "/join"
+          when: join_on
+          config: >-
+            set $join http://{{ container_prefix }}-xmpp-join:8080;
+            proxy_pass $join;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto https;
       comment: Jabber (new accounts, files, chat for web apps)
     # the same service under its public name
     - server_name: "{{ xmpp_domain }}"
@@ -122,7 +137,16 @@ nginx:
       proxy_read_timeout: 3600s
       extra_locations:
         # the page's front door: where a new account is made, a password changed
-        - { path: "= /", config: "return 302 /register/;" }
+        - { path: "= /", config: "return 302 {{ '/join' if join_on else '/register/' }};" }
+        # the sign-up page with invite codes and requests (kiwi-server signup)
+        - path: "/join"
+          when: join_on
+          config: >-
+            set $join http://{{ container_prefix }}-xmpp-join:8080;
+            proxy_pass $join;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto https;
       when: one_public
       comment: Jabber under its public name
     # two instances: the public one has a container of its own
@@ -137,7 +161,16 @@ nginx:
       proxy_read_timeout: 3600s
       extra_locations:
         # the page's front door: where a new account is made, a password changed
-        - { path: "= /", config: "return 302 /register/;" }
+        - { path: "= /", config: "return 302 {{ '/join' if join_on else '/register/' }};" }
+        # the sign-up page with invite codes and requests (kiwi-server signup)
+        - path: "/join"
+          when: join_on
+          config: >-
+            set $join http://{{ container_prefix }}-xmpp-join:8080;
+            proxy_pass $join;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto https;
       when: two
       comment: Jabber, the public instance
 
@@ -162,6 +195,25 @@ settings:
     help: "A name that points at the master in DNS, like chat.example.org (a plain record: no proxy in front, Jabber is not web traffic). It opens the service to the Internet: this name comes after the @, people log in from anywhere and write with people on other servers. Apps on the VPN can still use the name above as the server to connect to."
     default: ""
     pattern: '[a-z0-9.-]*'
+  - key: invites
+    type: bool
+    label: Invite codes
+    help: "A page at https://<name>/join where someone with an invite code makes their own address and password. The codes are made on the control page (Accounts, Jabber) or with kiwi-server accounts <fleet> --jabber invite."
+    default: false
+  - key: requests
+    type: bool
+    label: Requests
+    help: "On the same page people ask for an address with a few words; you accept or deny on the control page. Accepted: they get a password, shown once with their request code."
+    default: false
+  - key: terms
+    type: text
+    label: The rules
+    help: "What the sign-up page says the rules are, a paragraph a line. Empty: no spam, no malware, no harassment, nothing against the law."
+    default: ""
+  - key: join_image
+    group: Advanced
+    help: "The sign-up page runs in kiwi-server's control image."
+    default: ghcr.io/derlocke-ng/kiwi-server-control:2
   - key: separate
     type: bool
     label: Two separate services

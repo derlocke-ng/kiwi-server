@@ -37,6 +37,7 @@ def main():
     # two hidden services, made up: the Services page shows their addresses
     case.c.onion = lambda: {"%s.%s" % (x["service"], x["host"]): x for x in madeup.hidden()["services"]}
     case.c.accounts = madeup.accounts                         # a made-up sign-up: people, requests, codes
+    case.c.has_jabber_join = lambda: True
     case.ask("/login", {"password": case.PW})               # the store opens: the devices go into it, not beside it
     case.c.refresh_status()
     with open(case.c.health_file, "w") as fh:                # for /status, and for Home's services that do not answer

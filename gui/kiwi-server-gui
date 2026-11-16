@@ -1504,6 +1504,10 @@ class AccountsDialog(Adw.Dialog):
     deny, invite codes, the accounts and their password links. Through `kiwi-server accounts`, as
     the control page's Accounts does."""
 
+    # the services the network's accounts can sign people in to (kiwi-server accounts connect)
+    CONNECTABLE = (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"),
+                   ("vault", "Vaultwarden (passwords)"), ("immich", "Immich (photos)"))
+
     def __init__(self, win):
         super().__init__(title="Accounts", content_width=660, content_height=720)
         self.win = win
@@ -1523,6 +1527,11 @@ class AccountsDialog(Adw.Dialog):
         def work():
             got = {k: ask(*a) for k, a in (("people", ("list",)), ("requests", ("requests",)), ("invites", ("invites",)),
                                             ("jrequests", ("requests", "--jabber")), ("jinvites", ("invites", "--jabber")))}
+            rc, out, _err = run_cli(self.win.cli, ["list", path, "--porcelain"])
+            try:
+                got["hosts"] = (json.loads(out).get("hosts") or []) if rc == 0 else []
+            except ValueError:
+                got["hosts"] = []
             GLib.idle_add(lambda: self.build(got) and False)
         threading.Thread(target=work, daemon=True).start()
 
@@ -1556,8 +1565,8 @@ class AccountsDialog(Adw.Dialog):
             "Who may sign in to the network's services, and who asked to. People sign up at the accounts' /join page, with an "
             "invite code or by asking. No email: a new account comes with a link that sets its password."
             if people is not None else "The accounts could not be asked: %s" % (perr or "no machine runs the accounts module")))
-        intro.set_header_suffix(help_button("The accounts module (Kanidm) keeps the people. Forgejo and Nextcloud sign them in "
-                                            "after kiwi-server accounts <fleet> connect <host> git|cloud and an apply.",
+        intro.set_header_suffix(help_button("The accounts module (Kanidm) keeps the people. Forgejo, Nextcloud, Paperless, "
+                                            "Vaultwarden and Immich sign them in once connected (below) and applied.",
                                             DOCS + "docs/roles.md#accounts"))
         page.add(intro)
         for kind, label, extra in (("", "an account", []), ("j", "a Jabber address", ["--jabber"])):
@@ -1610,6 +1619,23 @@ class AccountsDialog(Adw.Dialog):
                 gone.connect("clicked", lambda _b, n=name: self.confirm_delete(n))
                 row.add_suffix(link)
                 row.add_suffix(gone)
+                g.add(row)
+            page.add(g)
+        connectable = [(h["name"], m, label) for h in got.get("hosts") or [] for m, label in self.CONNECTABLE
+                       if m in (h.get("modules") or [])]
+        if people is not None and connectable:
+            g = Adw.PreferencesGroup(title="Services that sign people in with these accounts",
+                                     description="Connect one, then apply its machine: it offers \u201cSign in with accounts\u201d.")
+            secrets_dir = os.path.join(self.win.doc.dir, "secrets", "accounts")
+            for host, m, label in connectable:
+                row = Adw.ActionRow(title=label, subtitle=host)
+                if os.path.isfile(os.path.join(secrets_dir, "%s-%s.json" % (host, m))):
+                    row.add_suffix(Gtk.Label(label="signs people in", css_classes=["dim-label"]))
+                else:
+                    b = Gtk.Button(label="Connect", valign=Gtk.Align.CENTER)
+                    b.connect("clicked", lambda _b, h=host, mod=m, l=label: self.act(
+                        ["connect", h, mod], "%s on %s is connected: apply %s now" % (l, h, h)))
+                    row.add_suffix(b)
                 g.add(row)
             page.add(g)
         head = Adw.HeaderBar()

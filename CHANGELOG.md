@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.139.0 — Connect in the app; connecting works again
+
+- The app's Accounts… has "Services that sign people in with these accounts", with Connect, as the
+  control page has. A test keeps the app, the page and `accounts connect` offering the same services.
+- `accounts connect` failed for every service since 2.138.0 (kiwi-modules 0.60.1: the accounts
+  script read its words one place off); a client Kanidm refuses is now said, not swallowed.
+- README: which services the accounts sign people in to.
+
 ## 2.138.0 — Immich signs people in with the network's accounts
 
 - `kiwi-server accounts FLEET connect HOST immich`, and Connect on the Accounts page: Immich

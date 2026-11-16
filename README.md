@@ -14,7 +14,8 @@ chose.
   in a container when they are missing
 - **Services for others too**: a start page for everyone on the network, a
   front page for strangers, accounts with invite codes or requests you accept
-  (no email), Jabber sign-up, and Tor
+  (no email) that sign people in to Forgejo, Nextcloud, Paperless, Vaultwarden
+  and Immich, Jabber sign-up, and Tor
 
 ```
 fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash script

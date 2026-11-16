@@ -25,6 +25,9 @@ templates:
   compose: docker-compose.yml.j2
   kiwi_config: kiwi.config.php.j2
   folders_script: cloud-folders.sh.j2
+  accounts_script: cloud-accounts.sh.j2
+  accounts_env: cloud-accounts.env.j2
+  accounts_service: kn-cloud-accounts.service.j2
   folders_service: kn-cloud-folders.service.j2
   db_start: db-start.sh.j2
 
@@ -36,6 +39,10 @@ outputs:
   db_start: { path: "nextcloud-aio-database/kiwi-start.sh", mode: 0755 }
   folders_script: { path: "kiwi/cloud-folders.sh", mode: 0755, when: has_folders }
   folders_service: { kind: host_unit, name: kn-cloud-folders.service, when: has_folders }
+  # the network's accounts sign people in here (kiwi-server accounts connect)
+  accounts_script: { path: "kiwi/cloud-accounts.sh", mode: 0700, when: accounts_client }
+  accounts_env: { path: "kiwi/cloud-accounts.env", mode: 0600, when: accounts_client }
+  accounts_service: { kind: host_unit, name: kn-cloud-accounts.service, when: accounts_client }
 
 storage:
   volumes: [nextcloud_aio_nextcloud, nextcloud_aio_apache, nextcloud_aio_database, nextcloud_aio_database_dump, nextcloud_aio_redis]
@@ -336,6 +343,19 @@ settings:
     label: Extra environment variables
     help: KEY=value, passed to the Nextcloud container as they are.
     default: {}
+  - key: accounts_client
+    group: Generated
+    help: "Set by kiwi-server when the network's accounts sign people in here (kiwi-server accounts <fleet> connect <host> cloud): the client's name in Kanidm."
+    default: ""
+  - key: accounts_issuer
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: where Nextcloud asks Kanidm about the person signing in."
+    default: ""
+  - key: accounts_secret
+    type: secret
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: the client's secret, from the fleet's store."
+    default: ""
   - key: image_prefix
     group: Advanced
     help: Where the AIO containers come from; the tag applies to all of them.

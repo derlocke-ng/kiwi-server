@@ -269,7 +269,8 @@ strangers should sign up.
 - **Forgejo signs people in with these accounts** after `kiwi-server accounts
   <fleet> connect <host> git` (or Connect under Accounts on the control page) and an
   apply of that machine: "Sign in with accounts", and a person's first sign-in makes
-  their Forgejo user. Nextcloud and the others come next.
+  their Forgejo user. The same for Nextcloud with `connect <host> cloud`: "Log in with
+  accounts", next to the admin's own password.
 - **On the control page, Accounts** shows the requests to accept or deny, makes
   invite codes, and makes accounts and new password links; `kiwi-server accounts
   <fleet> …` does the same from a terminal.
@@ -286,7 +287,7 @@ Tried on a test node (16 November 2026):
 
 Tried too (16 November 2026): a stranger signed up with an invite code and by
 asking, in a real browser. Signing in to Forgejo with an account
-worked too, in a real browser. Not tried yet: Nextcloud and the others.
+worked too, in a real browser, and so did Nextcloud (16 November).
 
 ## Authenticator
 

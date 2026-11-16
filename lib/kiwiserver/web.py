@@ -941,10 +941,10 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <h2>Services that sign people in with these accounts</h2>
 {% if connectable %}<div class="scroll"><table class="tbl"><thead><tr><th>Service</th><th>Machine</th><th>Signs people in</th><th></th></tr></thead><tbody>
 {% for c in connectable %}<tr><td><b>{{ c.label }}</b></td><td>{{ c.host }}</td><td>{% if c.connected %}<span class="badge ok">yes</span>{% else %}<span class="badge plain">not yet</span>{% endif %}</td>
-<td>{% if not c.connected %}<form class="inline" method="post" action="/accounts/connect">{{ tok }}<input type="hidden" name="name" value="{{ c.host }}">
+<td>{% if not c.connected %}<form class="inline" method="post" action="/accounts/connect">{{ tok }}<input type="hidden" name="name" value="{{ c.host }}"><input type="hidden" name="note" value="{{ c.module }}">
 <button>Connect</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 <p class="muted small">Connected: after its next Apply the service shows "Sign in with accounts", and a person's first sign-in makes their user there.</p>
-{% else %}<p class="muted">None of your machines runs a service that can do so yet (Forgejo can).</p>{% endif %}{% endif %}
+{% else %}<p class="muted">None of your machines runs a service that can do so yet (Forgejo and Nextcloud can).</p>{% endif %}{% endif %}
 {% if jabber %}<h2>Jabber's sign-up page</h2>
 <p class="muted small">Jabber addresses are kept apart from these accounts. People sign up at <code>/join</code> on Jabber's names.</p>
 {% if jabber.waiting %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Who, and why</th><th class="wide">When</th><th></th></tr></thead><tbody>
@@ -2083,9 +2083,10 @@ def make_app(control: Control):
                 jabber = {"waiting": [r for r in jr if r.get("state") == "waiting"], "invites": control.accounts("invites", "--jabber") or []}
             except KiwiError as e:
                 error = error or str(e)
-        connectable = [{"host": h["name"], "label": "Forgejo (git)",
-                        "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-git.json" % h["name"]))}
-                       for h in info.get("hosts") or [] if "git" in (h.get("modules") or [])]
+        connectable = [{"host": h["name"], "module": m, "label": label,
+                        "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-%s.json" % (h["name"], m)))}
+                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"))
+                       if m in (h.get("modules") or [])]
         return page("accounts.html", request, "/accounts", available=available, connectable=connectable, jabber=jabber, people=sorted(people, key=lambda p: p["name"]),
                     invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
                     id_host=id_host, now=now, error=error, **kw)
@@ -2134,9 +2135,11 @@ def make_app(control: Control):
                 control.accounts("delete", name.strip().lower(), user=u)
                 return accounts_page(request)
             if what == "connect":
-                control.accounts("connect", name.strip(), "git", user=u)
-                return accounts_page(request, shown={"title": "Forgejo on %s is connected" % name.strip(), "value": "kiwi-server apply %s" % name.strip(),
-                                                     "text": "Apply that machine now (Machines, %s, Apply): then its Forgejo signs people in with these accounts." % name.strip(),
+                module = note.strip() if note.strip() in ("git", "cloud") else "git"
+                label = {"git": "Forgejo", "cloud": "Nextcloud"}[module]
+                control.accounts("connect", name.strip(), module, user=u)
+                return accounts_page(request, shown={"title": "%s on %s is connected" % (label, name.strip()), "value": "kiwi-server apply %s" % name.strip(),
+                                                     "text": "Apply that machine now (Machines, %s, Apply): then its %s signs people in with these accounts." % (name.strip(), label),
                                                      "note": "Nothing changes for people who already have a Forgejo user of the same name: they are linked on their first sign-in."})
         except KiwiError as e:
             return accounts_page(request, error=str(e))

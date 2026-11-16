@@ -11,15 +11,16 @@ that booted. The page:
 |---|---|
 | **Home** | how the network is, in one line and four numbers (machines on, services running, the oldest last backup, devices); what wants a look and what that means; a picture of the network: who is linked to the master |
 | **Machines** | every machine with its load, memory and disk; add a machine; update everything |
-| **Services** | every service under its machine: open it, its login, whether it answered, whether it is open to the Internet, and its hidden-service address with a button that copies it |
+| **Services** | every service in one table: whether it works and its last 90 days, how fast it answers, where it is open (VPN, Internet, Tor: the badge copies the address), and under its name **Settings** (what kiwi-server sets for it) and **Admin page** (the app's own, for what is inside it) |
 | **A machine** | what it is, how busy and how full it is, what runs on it; Check now, Preview, Apply, each with what it does |
 | **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
+| **Accounts** | with the accounts module: requests to accept or deny, invite codes, the accounts and their password links, which services sign people in with them; Jabber's sign-up page too |
 | **Linked networks** | from Home: what other networks may reach here, and whether this network leaves to the Internet through one of them |
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
-| **The status page** | for everyone on the network, without a login, at `https://status.<host>`: which services work, since when one does not, the last week's incidents |
-| **The public status page** | the same for strangers, under a public name (`control: { public_status_hostname: status.example.org }`, with `reverse-proxy: { public: true }` on the control node): only the services that are open to the Internet, asked at the master's address the way a stranger reaches them; nothing about the machines or the VPN's services |
+| **The start page** | for everyone on the network, without a login, at `https://status.<host>`: every service with what it is for, its addresses and whether it works; the status page is at `/status` |
+| **The front page for strangers** | under a public name (`control: { public_status_hostname: … }`): the services open to the Internet, how to get an account, and their status at `/status` |
 
 The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
 what, Linked networks); *Safety* (Backups, If something breaks, Computers); *More*.

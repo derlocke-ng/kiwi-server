@@ -9216,7 +9216,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(status, 200)
         self.assertIn("Not saved: SSH port: a whole number is needed", body)
         self.assertIn('name="f:admin.ssh_port" value="abc"', body)
-        self.assertRegex(body, r'<details class="card" open><summary>Admin user</summary>')      # where the mistake is
+        self.assertRegex(body, r'<details class="card"[^>]* open><summary>Admin user</summary>')      # where the mistake is
         self.assertEqual(util.read_text(path), text)                                        # the file, to the letter
         self.assertEqual(util.sha256_file(os.path.join(self.dir, "fleet.yaml.age")), age)
         self.assertNotIn("settings changed", str(self.c.audit_tail(5)))

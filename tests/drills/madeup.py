@@ -52,7 +52,7 @@ def answers():
     return {"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts}, {"hosts": said}
 
 
-LABELS = {"wg": "VPN devices (wg-easy)", "pihole": "Ad blocker (Pi-hole)", "portainer": "Containers (Portainer)",
+LABELS = {"id": "Accounts", "wg": "VPN devices (wg-easy)", "pihole": "Ad blocker (Pi-hole)", "portainer": "Containers (Portainer)",
           "git": "Git (Forgejo)", "control": "This page", "cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "photos": "Photos", "paperless": "Documents (Paperless)",
           "git": "Git (Forgejo)"}
 
@@ -68,6 +68,7 @@ def health(now):
             first = site.split(".", 1)[0]
             ok = h["name"] not in down and site != "paperless.papaya.home"
             rows.append({"site": site, "label": LABELS.get(first, first.capitalize()), "host": h["name"], "ok": ok,
+                         "public": first in ("cloud", "id"),
                          "admin": first in ("control", "portainer", "pihole", "wg"), "since": now - (2400 if not ok else 400000)})
     # 90 days of looks, every ten minutes: most days fine, a few with a gap, one long outage
     days = {}
@@ -83,6 +84,8 @@ def health(now):
             days.setdefault(r["site"], {})[day] = [asked, asked - missed, (asked - missed) * (90 + n * 13), asked - missed]
     return {"checked": now - 180, "machines": {"on": len(status["hosts"]) - len(down), "of": len(status["hosts"])},
             "window": "Sun 03:30", "services": rows, "items": {}, "did": {}, "days": days,
+            "onion": {"cloud.papaya.home": "c3l5ahmvbn2jdqhzw3sc6t3obkzexkojcxy7sqz6bzvwrn7ebtxwqqid.onion"},
+            "join": "https://id.papaya.home/join",
             "incidents": [{"key": "service:cloud.papaya.home", "text": "Files (Nextcloud) does not answer (cloud.papaya.home)",
                            "from": now - 190000, "to": now - 187700},
                           {"key": "machine:medlar", "text": "medlar does not answer", "from": now - 5000, "to": None},

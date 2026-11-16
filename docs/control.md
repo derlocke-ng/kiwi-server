@@ -333,14 +333,35 @@ device on the network does. A machine can say that all its containers run while
 a service answers nobody (a database that lost its settings in a power cut does
 that); the question finds it. What is wrong is kept with its time.
 
-**The status page** shows it to everyone who may reach this machine's web pages,
-without a login: `https://status.<host>`. Each service by the name people know,
+**The start page** is what everyone on the network opens first, without a login:
+`https://status.<host>`. Every service people use is a tile:
+- what the service is for, and its address;
+- its Tor address, when it has one anyone may open;
+- whether it works, with its last 30 days.
+
+"Get an account" leads to the sign-up page when the network has the
+[accounts module](roles.md#accounts).
+
+**The status page** is the detailed view, at `https://status.<host>/status`. Each service by the name people know,
 "works" or "does not answer" and for how long, how many machines answer, when
 machines restart for updates, and what was wrong in the last seven days. It shows
 no admin page, no address and no setting. Who may open it is set like for any
 service ([Who may reach what](network.md#who-may-reach-what)); `status_page: false`
 in the node's `control:` block switches it off. Home shows the same to the people
 who run the network, with the machine to open.
+
+**For strangers**, `control: { public_status_hostname: status.example.org }` puts a
+front page under a public name. It shows the services that are open to the
+Internet, their web and Tor addresses, whether they work, and how to get an
+account. The status of those services is at `/status`, and nothing about the
+machines or the VPN appears.
+
+The network's own name, colour, a few words about it, and how to reach its
+people go on these pages:
+
+```yaml
+    control: { brand_name: dlhost, brand_accent: "#2f7d4a", about: "Services for our club and friends.", contact: admin@xmpp.example.org }
+```
 
 **Messages** go out when something has been wrong for ten minutes, and once more
 when it is fine again: a machine or a service that does not answer, a problem a

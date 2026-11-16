@@ -26,6 +26,21 @@ SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "p
             "wg": "VPN devices (wg-easy)", "control": "This page", "backup": "Backup store", "cache": "Local cache",
             "hub": "Hub page", "relay": "Relay", "office": "Office (Collabora)", "git": "Git (Forgejo)", "jabber": "Jabber", "auth": "Authenticator (2FAuth)", "paste": "Pastebin", "ffsync": "Firefox Sync", "xmpp": "Jabber (public)", "pay": "Payments (BTCPay Server)",
             "status": "Status page", "id": "Accounts"}
+# what each service is for, in a few words (the start pages)
+ABOUT = {"cloud": "Your files, calendars and contacts, on every device", "vault": "Passwords, kept and shared safely",
+         "immich": "Photos and videos from your phones", "photos": "Photos and videos from your phones",
+         "paperless": "Letters and documents, scanned and searchable", "opencloud": "Your files, on every device",
+         "git": "Code and its history (Forgejo)", "jabber": "Chat with anyone on Jabber (XMPP)",
+         "xmpp": "Chat with anyone on Jabber (XMPP)", "paste": "Share a text for a while, encrypted in your browser",
+         "id": "Your account for the services here", "pay": "Payments in Bitcoin", "ffsync": "Your Firefox bookmarks and tabs, synced",
+         "auth": "The codes of your two-factor logins", "hub": "The hub: apps and spaces", "relay": "A Nostr relay",
+         "dl": "Downloads", "jd": "Downloads", "status": "Whether everything works"}
+
+
+def about(site):
+    return ABOUT.get(site.split(".", 1)[0], "")
+
+
 KEEP_DAYS = 30
 HISTORY_DAYS = 90       # the bars of the status page: one a day, as status pages show it
 KEEP_INCIDENTS = 200
@@ -232,7 +247,8 @@ def public(state, now=None, strangers=False):
     for s in rows:
         bars, uptime = history(state, s["site"], now)
         last = next((b["ms"] for b in reversed(bars) if b["ms"] is not None), None)
-        shown.append(dict(s, bars=bars, uptime=uptime, ms=last))
+        shown.append(dict(s, bars=bars, uptime=uptime, ms=last, about=about(s["site"]),
+                          onion=(state.get("onion") or {}).get(s["site"], "")))
     rows = shown
     names = ["(%s)" % s["site"] for s in rows]
     return {
@@ -244,4 +260,6 @@ def public(state, now=None, strangers=False):
                       if (i["to"] or now) > now - 7 * 86400 and (not strangers or any(n in i["text"] for n in names))][:20],
         "window": "" if strangers else state.get("window") or "",
         "strangers": strangers,
+        "onion": state.get("onion") or {},
+        "join": state.get("join") or "",
     }

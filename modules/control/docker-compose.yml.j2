@@ -7,6 +7,10 @@ services:
     environment:
       # an apply of this machine restarts this container: the role then runs detached from it
       - KIWI_CONTROL_HOST={{ hostname.split('.')[0] }}
+{% if proxy_ip %}
+      # the reverse proxy in front: the only one whose X-Real-IP the page believes
+      - KIWI_PROXY={{ proxy_ip }}
+{% endif %}
       # the opened store, job logs and renders: in RAM, gone with the container
       - XDG_RUNTIME_DIR=/run/kiwi
       # the network's name, colour, words and contact on the pages for everyone

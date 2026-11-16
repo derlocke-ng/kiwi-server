@@ -79,6 +79,12 @@ backup:
   paths: ["{{ store_path }}/data", "{{ store_path }}/media"]
   exclude: ["{{ store_path }}/data/log"]
 
+fail2ban:
+  - name: paperless
+    container: "{{ container_prefix }}-paperless"
+    match: "Login failed for user"
+    failregex: 'Login failed for user .* from IP `<HOST>`'
+
 settings:
   - key: paperless_domain
     label: Name

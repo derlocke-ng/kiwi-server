@@ -8,9 +8,9 @@ bantime.maxtime = {{ bantime_max }}
 findtime = {{ findtime }}
 maxretry = {{ maxretry }}
 banaction = iptables-multiport
-# never: this machine, the mesh, the docker network, {% if ignore_home %}home networks (private addresses: who
-# is inside a home is a person of it, as mailcow, SWAG and YunoHost treat them), {% endif %}and what the fleet names
-ignoreip = 127.0.0.1/8 ::1 {{ mesh_subnet }} {{ docker_subnet }}{% if ignore_home %} 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7{% endif %} {{ ignore | join(' ') }}
+# never: this machine, the mesh, the docker network, {% if ignore_home and node_type != 'master' %}home networks (private
+# addresses on a machine at home: who is inside a home is a person of it), {% endif %}and what the fleet names
+ignoreip = 127.0.0.1/8 ::1 {{ mesh_subnet }} {{ docker_subnet }}{% if ignore_home and node_type != 'master' %} 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7{% endif %} {{ ignore | join(' ') }}
 
 [sshd]
 enabled  = true

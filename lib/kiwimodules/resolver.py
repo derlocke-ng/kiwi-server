@@ -230,7 +230,7 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_add
         docker_subnet=rs.get("docker_subnet") or None,
         wg_mtu=rs.get("wg_mtu") or None, bridge_mtu=rs.get("bridge_mtu") or None,
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
-        pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {},
+        pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {}, at_home=bool(rs.get("at_home")),
         module_config=host.module_settings, files=host.module_files,
         dns_records=dns_records or [], lan_addresses=lan_addresses or {}, mesh_only=mesh_only or [],
         service_user=service_user(host),

@@ -44,6 +44,11 @@ settings:
     label: Share a container's network
     help: "vpn-server: listen on the WireGuard server's mesh address (the master). Empty: own address."
     default: ""
+  - key: without_vpn
+    type: bool
+    label: Tor without a VPN
+    help: "Off (the default): Tor only through a VPN (a node's VPN client, a master's VPN exit, or a master at a hoster), so your internet provider at home never sees Tor. On: also from a machine's own connection at home; your provider can see that you use Tor."
+    default: false
   - key: socks_bind
     label: SOCKS listen address
     help: "Empty: the mesh address (with network_mode vpn-server) or 0.0.0.0."

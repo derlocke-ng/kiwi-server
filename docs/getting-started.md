@@ -3,6 +3,19 @@
 To see first what a network can look like and what each machine in it does:
 [Example setups](examples.md).
 
+## What the machines need
+
+Measured on the test network (November 2026), with a margin:
+
+| Machine | Cores | Memory | Disk | Measured |
+|---|---|---|---|---|
+| Master (a rented server) | 1–2 | 2 GB | 20 GB | 0.5 GB memory and 4 GB disk in use |
+| At home, for files, photos and passwords (Nextcloud, Immich, Paperless, Vaultwarden) | 4 | 8 GB, 16 GB for Immich's face search with room | 256 GB or more, or a second disk for the data | 4.3 GB memory and 28 GB for the system with 34 services |
+| At home, smaller (Jabber, git, paste, a game) | 2 | 4 GB | 64 GB | 1.5 GB memory, 5 GB disk |
+| Gateway (DNS, the way into the VPN) | 2 | 2 GB | 32 GB | 0.4 GB memory, 3 GB disk |
+
+The big games want more: Enshrouded about 16 GB of memory ([roles.md](roles.md)).
+
 ## Without a Linux computer: the starter stick
 
 A network can also start from one USB stick and a phone or a Windows PC. The
@@ -38,7 +51,7 @@ a network cable, it does this by itself:
 - A machine that is installed already: it starts that system and says to take
   the stick out.
 
-The installed machine shows where to open its page: `http://kiwi.local`, its
+The installed machine shows where to open its page: `https://kiwi.local`, its
 address, a setup code and a QR code, on its screen. The page asks the questions
 of this chapter and makes the network ([control.md](control.md), "Start a
 network from the page").

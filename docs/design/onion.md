@@ -14,8 +14,10 @@ your address in anyone's log.
   home sees WireGuard to your master, never Tor. In a network without a master a machine
   can still run hidden services when a commercial VPN is its exit (a `vpn-client` with
   `vpn_provider: mullvad`, `protonvpn`, … in its modules): Tor leaves there, and your
-  provider sees WireGuard to that VPN. A machine with no VPN client at all cannot run
-  hidden services: `kiwi-server onion` refuses it, and its Tor gets no network.
+  provider sees WireGuard to that VPN. A machine with no VPN client runs no hidden service,
+  unless its owner chooses Tor without a VPN (`onion: { without_vpn: true }`): then Tor
+  leaves through the machine's own connection, and the provider can see that it is Tor.
+  Behind a VPN is the default; without one is the owner's choice, said with a warning.
 - **A hidden service is one site of the machine's reverse proxy**, named as everywhere
   else: `git.papaya`. Tor hands the connection to the proxy on a port that only the stack
   reaches; the proxy answers as that one site and nothing else of the machine.

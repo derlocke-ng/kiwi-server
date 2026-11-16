@@ -3,8 +3,14 @@ services:
   {{ container_prefix }}-tor:
     image: {{ image }}
     container_name: {{ container_prefix }}-tor
-{% if network_mode %}
-    network_mode: "service:{{ container_prefix }}-{{ network_mode }}"
+{# Tor never leaves on a home line unless the owner chose it: a node, or a master at home, without a VPN client #}
+{% set home_line = (node_type != 'master' or at_home) and not has_vpn_client %}
+{% set via = network_mode or ('vpn-client' if node_type != 'master' and has_vpn_client else '') %}
+{% if home_line and not without_vpn %}
+    # no VPN here, and Tor without one was not chosen: no network at all
+    network_mode: none
+{% elif via %}
+    network_mode: "service:{{ container_prefix }}-{{ via }}"
 {% else %}
     networks:
       {{ network_name }}:

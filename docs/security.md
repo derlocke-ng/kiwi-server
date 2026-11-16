@@ -117,16 +117,16 @@ A disk can open itself at boot. The `tang` module on one node serves a
   - **A first ban is 10 minutes**; each time the same address comes back it
     grows, up to a week. Five bans in a day: out for a week, on every port.
   - **Never banned**: the mesh, the network's own machines (the master sees
-    them at the VPN tunnels and tells its nodes), and private home addresses
+    them at the VPN tunnels and tells its nodes), and, on machines at home, private addresses
     (`fail2ban: { ignore_home: false }` turns that last one off).
   - **SSH**: failed logins only (logins are by key), not every connection
     that closes early.
   - **At public sites** it reads each app's own log for wrong logins: Forgejo
-    (ten tries), Vaultwarden, Nextcloud (Jabber counts its own). It also bans
+    (ten tries), Vaultwarden, Nextcloud, Immich, Paperless (Jabber counts its own). It also bans
     scanners, an address refused forty times outside the apps' own paths, and
     a flood (600 refused requests in five minutes). A bad request alone (a
     400) is never a reason: real apps make them.
-  - **On a node behind the master** the ban is nginx's (403), since only nginx
+  - **On a node behind the master** the ban is nginx's (it closes the connection), since only nginx
     knows the visitor's address there.
   - `tests/drills/fail2ban.py` proves all of this from a stranger's address.
 - **Rate limits**: a site that strangers reach (a public name, a hidden

@@ -1,6 +1,8 @@
 [Unit]
 Description=nginx on {{ hostname }}: read the list of banned addresses again
 Documentation=https://github.com/derlocke-ng/kiwi-server
+# many bans in a row must not hit systemd's start limit: that would stop the path unit watching
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

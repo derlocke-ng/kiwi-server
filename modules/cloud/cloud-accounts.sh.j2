@@ -21,6 +21,9 @@ occ app:list --output=json 2>/dev/null | grep -q '"user_oidc"' || occ app:instal
 occ app:enable user_oidc >/dev/null
 # the admin and people made in Nextcloud itself still sign in with their own passwords
 occ config:app:set --value=1 user_oidc allow_multiple_user_backends >/dev/null
+# and nobody becomes one of them by having the same name: a sign-in whose name a local user has is
+# refused instead of joined to that user (user_oidc's "soft auto provisioning", on by default)
+occ config:system:set user_oidc soft_auto_provision --type=boolean --value=false >/dev/null
 occ user_oidc:provider accounts --clientid={{ accounts_client }} --clientsecret="$KIWI_SECRET" \
     --discoveryuri={{ accounts_issuer }}/.well-known/openid-configuration --scope="openid email profile" \
     --mapping-uid=preferred_username --mapping-display-name=name --mapping-email=email --unique-uid=0 >/dev/null

@@ -72,6 +72,12 @@ backup:
   # made again from the originals
   exclude: ["{{ library_path }}/thumbs", "{{ library_path }}/encoded-video"]
 
+fail2ban:
+  - name: immich
+    container: "{{ container_prefix }}-immich"
+    match: "Failed login attempt for user"
+    failregex: 'Failed login attempt for user .* from ip address <HOST>'
+
 settings:
   - key: immich_domain
     label: Name

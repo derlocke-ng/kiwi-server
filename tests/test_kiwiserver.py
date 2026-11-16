@@ -555,7 +555,7 @@ class TestStarter(Base):
         for line in ("Image=ghcr.io/derlocke-ng/kiwi-server-control:2", "ContainerName=kn-control", "Network=host",
                      "Volume=/var/home/user/docker/kn-control:/fleet:Z", "Volume=/var/lib/kiwi-starter:/starter:ro,Z",
                      "Tmpfs=/run/kiwi:size=2g,mode=0700", "Environment=XDG_RUNTIME_DIR=/run/kiwi",
-                     "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --wait", "Restart=always",
+                     "Exec=serve /fleet/fleet.yaml --listen 0.0.0.0:8740 --https 0.0.0.0:8743 --wait", "Restart=always",
                      "Requires=kiwi-starter-key.service"):
             self.assertIn(line + "\n", q)
         self.assertIn("tcp dport 80 redirect to :8740", files["/etc/kiwi-starter/port80.nft"])
@@ -829,6 +829,41 @@ print("\n".join(d.get("sigs", [])))
         status, body, yes, _ = self.page("GET / HTTP/1.1\r\n\r\n", state="info")
         self.assertNotIn("<button>", body)                              # several disks: nothing to press
         self.assertIn("refresh", self.page("GET / HTTP/1.1\r\n\r\n", state="installing")[1])
+
+    @unittest.skipUnless(have("openssl"), "openssl not installed")
+    def test_the_first_run_is_https_with_a_certificate_of_its_own(self):
+        """Nothing typed into the starter's page (the setup code, the password, the hoster's sign-in)
+        crosses the home network unencrypted: plain HTTP only sends the browser on."""
+        try:
+            from kiwiserver import web
+            import uvicorn
+        except ImportError:
+            self.skipTest("fastapi or uvicorn not installed")
+        key, cert, fp = web.self_signed(os.path.join(self.tmp, "tls"))
+        self.assertRegex(fp, r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
+        self.assertEqual(oct(os.stat(key).st_mode & 0o777), "0o600")
+        port = remote.free_port()
+        server = uvicorn.Server(uvicorn.Config(web.redirect_app(8743), host="127.0.0.1", port=port, log_level="error"))
+        t = threading.Thread(target=server.run, daemon=True)
+        t.start()
+        self.addCleanup(lambda: (setattr(server, "should_exit", True), t.join(5)))
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        import http.client
+        for host, want in (("kiwi.local", "https://kiwi.local/setup"), ("192.168.1.57:8740", "https://192.168.1.57:8743/setup")):
+            for method in ("GET", "POST"):
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                c.request(method, "/setup", body=b"code=secret" if method == "POST" else None, headers={"Host": host})
+                r = c.getresponse()
+                self.assertEqual((r.status, r.getheader("location")), (308, want), (host, method))
+                c.close()
+        screen = open(starter.__file__).read()       # the stick's units and its screen, as written into its image
+        self.assertIn("--listen 0.0.0.0:8740 --https 0.0.0.0:8743", screen)
+        self.assertIn("tcp dport 443 redirect to :8743", starter.PORT80_NFT)
+        self.assertIn("Open https://kiwi.local or https://$addr", screen)
+        self.assertIn("It is the right one when it begins $fp", screen)
 
     def test_several_disks_the_page_chooses_one(self):
         d = os.path.join(self.tmp, "page")
@@ -2507,6 +2542,17 @@ class TestSetup(Base):
         self.assertIn("none of these machines answers for the names", err)
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_master_at_home_runs_tor_only_through_a_vpn_exit(self):
+        """A master at home: its own connection is the home line. Tor runs there only through its VPN
+        exit, or where the owner chose Tor without a VPN."""
+        from kiwiserver import setup as setupmod
+        data, _made = setupmod.make(dict(self.ANSWERS, master_where="home", master_address="myhome.example.org",
+                                         admin_key="~/.ssh/x.pub"), self.tmp)
+        self.assertIs(data["hosts"]["trifle"]["master"]["at_home"], True)
+        data, _made = setupmod.make(dict(self.ANSWERS, admin_key="~/.ssh/x.pub"), self.tmp)
+        self.assertNotIn("at_home", data["hosts"]["trifle"]["master"])           # a rented one is not
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
     def test_without_a_master_tor_leaves_through_a_commercial_vpn(self):
         """The owner's rule: Tor never on the home line, always behind a VPN. Without a master, a
         commercial VPN is the machine's exit; the home network is not routed into it."""
@@ -2522,7 +2568,13 @@ class TestSetup(Base):
         node["onion"] = {"services": {"cloud": {}}}
         write(dest, yaml.safe_dump(data, sort_keys=False))
         rc, out, err = self.run_cli("onion", dest, "cloud.mango")
-        self.assertIn("a commercial VPN as its exit", err)                        # no Tor on the home line
+        self.assertIn("a commercial VPN", err)                                    # not on the home line by itself
+        self.assertIn("onion: { without_vpn: true }", err)                        # unless the owner chooses it
+        node["onion"]["without_vpn"] = True
+        write(dest, yaml.safe_dump(data, sort_keys=False))
+        rc, out, err = self.run_cli("onion", dest, "cloud.mango")
+        self.assertIn("your internet provider can see", err)
+        del node["onion"]["without_vpn"]
         node["modules"] = node["modules"] + ["vpn-client"]
         node["vpn-client"] = {"vpn_provider": "mullvad", "wireguard_addresses": "10.66.1.2/32",
                               "wireguard_private_key": "aGVsbG8taGVsbG8taGVsbG8taGVsbG8taGVsbG8tMDA="}
@@ -3356,11 +3408,14 @@ class TestOnion(Base):
         write(os.path.join(sec, "admin_ed25519.pub"), "ssh-ed25519 AAAAfleetkey kiwi\n")
         asked, started = [], []
 
-        def ask(address, body):
+        def ask(address, body):         # a starter whose screen shows abcd-1234: the code itself never comes
             asked.append((address, body))
-            if body["code"] != "abcd-1234":
+            self.assertNotIn("code", body)
+            if body["mac"] != controlmod.join_mac("abcd-1234", "kiwi-join-1", body["nonce"], body["network"], body["key"]):
                 raise KiwiError("that is not the code on this machine's screen")
-            return {"host_keys": ["ssh-ed25519 AAAAstarterhost"], "hostname": "kiwi"}
+            keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGs4vbpNsh2Aj9dKc6cTz1lMvqyhSTQh7aY0n8b2qJ3M"]
+            return {"host_keys": keys, "hostname": "kiwi",
+                    "mac": controlmod.join_mac("abcd-1234", "kiwi-join-2", body["nonce"], "\n".join(keys), "kiwi")}
         with mock.patch.object(c, "locked", lambda: False), mock.patch.object(c, "save_fleet", lambda *a, **k: None), \
                 mock.patch.object(c, "start", lambda action, hosts, user="admin", at="", **k: started.append((action, hosts, at)) or "job1"):
             with self.assertRaisesRegex(KiwiError, "An address looks like"):
@@ -3373,7 +3428,7 @@ class TestOnion(Base):
         host = yaml.safe_load(util.read_text(f.path))["hosts"]["fig"]
         self.assertEqual((host["target"], host["network"]["address"], host["network"]["dhcp"]), ("coreos", "192.168.1.40/24", False))
         self.assertNotIn("disk", host)                                                   # installed already
-        self.assertIn("192.168.1.40 ssh-ed25519 AAAAstarterhost", util.read_text(os.path.join(sec, "known_hosts")))
+        self.assertIn("192.168.1.40 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGs4vbpNsh2Aj9dKc6cTz1lMvqyhSTQh7aY0n8b2qJ3M", util.read_text(os.path.join(sec, "known_hosts")))
         self.assertEqual(started, [("adopt", ["fig"], "192.168.1.40")])
         argv = c.argv("adopt", ["fig"], "192.168.1.40")
         self.assertEqual(argv[1:], ["adopt", c.fleet_path, "fig", "--as", "core@192.168.1.40", "--key",
@@ -3381,6 +3436,20 @@ class TestOnion(Base):
         with self.assertRaisesRegex(KiwiError, "already a machine called fig"):
             with mock.patch.object(c, "locked", lambda: False):
                 c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=ask)
+        # another device answering at the address: it never saw the code, so its answer is refused,
+        # and a line that is not a key (a wildcard, a CA) is never written, even with the right proof
+        def impostor(address, body):
+            return {"host_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGs4vbpNsh2Aj9dKc6cTz1lMvqyhSTQh7aY0n8b2qJ3M"], "hostname": "kiwi", "mac": "0" * 64}
+
+        def forged(address, body):
+            keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGs4vbpNsh2Aj9dKc6cTz1lMvqyhSTQh7aY0n8b2qJ3M", "@cert-authority * ssh-ed25519 AAAAx"]
+            return {"host_keys": keys, "hostname": "kiwi",
+                    "mac": controlmod.join_mac("abcd-1234", "kiwi-join-2", body["nonce"], "\n".join(keys), "kiwi")}
+        before = util.read_text(os.path.join(sec, "known_hosts"))
+        for liar, said in ((impostor, "not from the machine whose code you typed"), (forged, "not its SSH host keys")):
+            with mock.patch.object(c, "locked", lambda: False), self.assertRaisesRegex(KiwiError, said):
+                c.take_in("192.168.1.42", "abcd-1234", "cloud", "plum", ask=liar)
+        self.assertEqual(util.read_text(os.path.join(sec, "known_hosts")), before)
 
     def test_a_waiting_starter_is_taken_in_from_a_computer(self):
         """kiwi-server take-in: the same handshake as the control node's, then adopt with the
@@ -3391,11 +3460,14 @@ class TestOnion(Base):
         write(os.path.join(sec, "admin_ed25519.pub"), "ssh-ed25519 AAAAfleetkey kiwi\n")
         asked, adopted = [], []
 
-        def ask(address, body):
+        def ask(address, body):         # a starter whose screen shows abcd-1234: the code itself never comes
             asked.append((address, body))
-            if body["code"] != "abcd-1234":
+            self.assertNotIn("code", body)
+            if body["mac"] != controlmod.join_mac("abcd-1234", "kiwi-join-1", body["nonce"], body["network"], body["key"]):
                 raise KiwiError("that is not the code on this machine's screen")
-            return {"host_keys": ["ssh-ed25519 AAAAstarterhost"], "hostname": "kiwi"}
+            keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGs4vbpNsh2Aj9dKc6cTz1lMvqyhSTQh7aY0n8b2qJ3M"]
+            return {"host_keys": keys, "hostname": "kiwi",
+                    "mac": controlmod.join_mac("abcd-1234", "kiwi-join-2", body["nonce"], "\n".join(keys), "kiwi")}
 
         def adopt(args):
             adopted.append((args.host, getattr(args, "as"), args.key))
@@ -3409,7 +3481,7 @@ class TestOnion(Base):
             self.assertEqual(rc, 0, out + err)
         host = yaml.safe_load(util.read_text(f.path))["hosts"]["fig"]
         self.assertEqual((host["target"], host["network"]["address"]), ("coreos", "192.168.1.40/24"))
-        self.assertIn("192.168.1.40 ssh-ed25519 AAAAstarterhost", util.read_text(os.path.join(sec, "known_hosts")))
+        self.assertIn("192.168.1.40 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGs4vbpNsh2Aj9dKc6cTz1lMvqyhSTQh7aY0n8b2qJ3M", util.read_text(os.path.join(sec, "known_hosts")))
         self.assertEqual(asked[-1][1]["key"], "ssh-ed25519 AAAAfleetkey kiwi")
         self.assertEqual(adopted, [("fig", "core@192.168.1.40", os.path.join(os.path.realpath(sec), "admin_ed25519"))])
 
@@ -4929,6 +5001,23 @@ class TestKeepWireguard(Base):
         sent, runner = self.run_with(b"")
         self.assertFalse(backup.put_back_wireguard(h, "core@m", runner=runner))
         self.assertEqual(sent, [])
+
+
+class TestClientAddress(Base):
+    def test_a_forwarded_address_is_believed_from_the_proxy_only(self):
+        """Who sends X-Real-IP himself (the starter has no proxy in front) must not pick the address
+        a limit per address counts: five wrong setup codes, then another 'address', and so on."""
+        class Req:
+            def __init__(self, peer, real=None):
+                self.client = type("C", (), {"host": peer})()
+                self.headers = {"x-real-ip": real} if real else {}
+        with mock.patch.dict(os.environ, {"KIWI_PROXY": ""}):
+            self.assertEqual(util.client_address(Req("192.168.1.50", "203.0.113.9")), "192.168.1.50")
+            self.assertEqual(util.forwarded_allow(), "127.0.0.1")
+        with mock.patch.dict(os.environ, {"KIWI_PROXY": "172.64.0.3"}):
+            self.assertEqual(util.client_address(Req("172.64.0.3", "203.0.113.9")), "203.0.113.9")   # the proxy's word
+            self.assertEqual(util.client_address(Req("172.64.0.7", "203.0.113.9")), "172.64.0.7")    # anyone else's: no
+            self.assertEqual(util.forwarded_allow(), "172.64.0.3")
 
 
 class TestRemote(Base):
@@ -9278,22 +9367,30 @@ class TestFirstRunPage(StoreBase):
                     return e.code, js.loads(e.read())
         import urllib.error
         code = self.c.setup_code()
-        self.assertEqual(post({"code": code, "key": key, "network": "home"})[0], 403)        # no starter here
+
+        def proven(code, key, network="home", nonce="ab" * 16):     # what a control node sends: no code, its proof
+            return {"nonce": nonce, "key": key, "network": network,
+                    "mac": controlmod.join_mac(code, "kiwi-join-1", nonce, network, key)}
+        self.assertEqual(post(proven(code, key))[0], 403)                                   # no starter here
         with mock.patch.dict(os.environ, {"KIWI_STARTER": "1"}), mock.patch.object(controlmod.subprocess, "run", fake):
-            st, out = post({"code": "0000-0000", "key": key, "network": "home"})
+            st, out = post(proven("0000-0000", key))
             self.assertEqual((st, out["error"]), (403, "that is not the code on this machine's screen"))
-            st, out = post({"code": code, "key": key + "\nssh-ed25519 AAAAother x", "network": "home"})
+            st, out = post({"code": code, "key": key, "network": "home"})                 # the code itself: no longer
+            self.assertEqual((st, out["error"]), (403, "that is not the code on this machine's screen"))
+            st, out = post(proven(code, key + "\nssh-ed25519 AAAAother x"))
             self.assertEqual((st, out["error"]), (403, "that is not a public SSH key"))              # one key, nothing more
             self.assertEqual(ran, [])
-            st, out = post({"code": code, "key": key, "network": "home"})
+            st, out = post(proven(code, key))
             self.assertEqual(st, 200, out)
             self.assertEqual(out["host_keys"], ["ssh-ed25519 AAAAhostkey", "ecdsa-sha2-nistp256 AAAAecdsa"])
             self.assertEqual(out["hostname"], "kiwi")
+            self.assertEqual(out["mac"], controlmod.join_mac(code, "kiwi-join-2", "ab" * 16,
+                                                             "ssh-ed25519 AAAAhostkey\necdsa-sha2-nistp256 AAAAecdsa", "kiwi"))
             argv, given = ran[0]
             self.assertIn("/starter/id_ed25519", argv)
             self.assertIn("core@127.0.0.1", argv)
             self.assertEqual(given, key + "\n")                                          # the key on the input, not in the command
-            st, out = post({"code": code, "key": key, "network": "home"})
+            st, out = post(proven(code, key))
             self.assertEqual((st, out["error"]), (403, "this machine is being taken into home already"))     # once
         status, body, _ = self.ask("/setup")
         self.assertIn("This machine joins home", body)                                  # no new network made here

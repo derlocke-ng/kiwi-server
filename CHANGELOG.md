@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.157.0 — fixes from the review of 15–16 November; Tor without a VPN only by choice
+
+With kiwi-modules 0.65.1.
+
+- **No account takeover through the network's accounts.** Forgejo no longer hands an existing
+  account to a network account of the same name (it asks for that account's password once), and
+  Nextcloud no longer joins a network account to a local user of the same name.
+- **Tor never leaves on the home line unasked.** A master at home now counts as at home (the first
+  run's "at home" marks it): its hidden services need a VPN exit like any machine at home.
+  Without one, `kiwi-server onion` refuses, unless the owner chooses `onion: { without_vpn: true }`;
+  then it warns that the internet provider can see Tor.
+- **Taking in a starter stick checks who answers.** The stick and kiwi-server prove to each other
+  that they know the setup code (it never crosses the network), and only well-formed host keys
+  are written down. A device that pretends to be the stick gets nothing and gives nothing.
+- **The starter's first run is HTTPS.** The stick makes its own certificate at every start, shows
+  the start of its fingerprint on its screen, and sends plain HTTP on to HTTPS. The setup code,
+  the page password and the hoster sign-in no longer cross the home network in the clear.
+- **The setup code's limit holds.** The control page and the sign-up page believe a forwarded
+  address only from the machine's own proxy (`KIWI_PROXY`); a wrong code waits a second without
+  stopping the page, and after 50 wrong codes from anywhere the stick stops taking them.
+- **fail2ban corrected** (kiwi-modules 0.65.0): wrong logins at Immich and Paperless count again;
+  "never ban home addresses" only on machines at home; each jail has its own ban list, so one ban
+  ending does not end the others; bans keep reaching nginx after many in a row; nginx closes the
+  connection of a banned address; images and other bulk files have a larger allowance instead of
+  none.
+- A master whose public names are all other machines' keeps its admin pages to the VPN.
+- docs/getting-started.md: "What the machines need", measured on the test network.
+
 ## 2.156.0 — several machines at once; a machine's History with its tasks
 
 - Machines, "Several at once" (after Foreman): tick machines, then Check them, Preview or Apply,

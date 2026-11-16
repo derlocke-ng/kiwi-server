@@ -2,9 +2,11 @@
 # its public sites come through the master, and only nginx knows their address (the PROXY protocol).
 # kn-nginx-banned.path sees the list change and has nginx read it again.
 [Definition]
-actionstart = touch /kiwi-banned/fail2ban.map
-actionflush = : > /kiwi-banned/fail2ban.map
+# One list per jail (<name>): a jail that lets an address out must not lift another jail's ban of it.
+# nginx reads them all (/etc/nginx/banned/*.map); an address in two lists is only a warning there.
+actionstart = touch /kiwi-banned/<name>.map
+actionflush = : > /kiwi-banned/<name>.map
 actionstop  =
 actioncheck =
-actionban   = grep -qxF '<ip> 1;' /kiwi-banned/fail2ban.map || echo '<ip> 1;' >> /kiwi-banned/fail2ban.map
-actionunban = grep -vxF '<ip> 1;' /kiwi-banned/fail2ban.map > /kiwi-banned/fail2ban.map.new; cat /kiwi-banned/fail2ban.map.new > /kiwi-banned/fail2ban.map; rm -f /kiwi-banned/fail2ban.map.new
+actionban   = grep -qxF '<ip> 1;' /kiwi-banned/<name>.map || echo '<ip> 1;' >> /kiwi-banned/<name>.map
+actionunban = grep -vxF '<ip> 1;' /kiwi-banned/<name>.map > /kiwi-banned/<name>.map.new; cat /kiwi-banned/<name>.map.new > /kiwi-banned/<name>.map; rm -f /kiwi-banned/<name>.map.new

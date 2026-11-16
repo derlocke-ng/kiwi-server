@@ -28,6 +28,11 @@ services:
               "--token-file", "/state/token", "--id-host", "{{ id_host }}", "--id-onion", "{{ (onion or {}).values() | first | default('') }}",
               "--brand", "{{ brand or domain }}",
               "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
+{% if proxy_ip %}
+    environment:
+      # the reverse proxy in front: the only one whose X-Real-IP the sign-up believes (its limits are per address)
+      - KIWI_PROXY={{ proxy_ip }}
+{% endif %}
     networks:
       {{ network_name }}: {}
     volumes:

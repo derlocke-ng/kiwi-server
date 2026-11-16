@@ -95,10 +95,16 @@ try:
         if code == "403":
             break
     say(code == "403", "a scanner is banned, by the node's nginx (%s)" % code)
-    jails = run(o.node, "%s banned %s 2>/dev/null" % (f2b, shlex.quote(ip)))
+    # Tor may have taken another exit since the first request: the address banned is the one the
+    # scanner's requests came from, as the node logged them
+    scanner = run(o.node, "grep -h 'wp-login.php' /var/home/*/docker/kn-nginx/log/access.log /home/*/docker/kn-nginx/log/access.log "
+                          "2>/dev/null | tail -n 1 | cut -d' ' -f1") or ip
+    if scanner != ip:
+        print("  (Tor changed its exit for the scanner: %s.x.x.x)" % scanner.split(".")[0], flush=True)
+    jails = run(o.node, "%s banned %s 2>/dev/null" % (f2b, shlex.quote(scanner)))
     say("kiwi-nginx-probe" in jails, "the jail that banned it: kiwi-nginx-probe")
     # 3. let out
-    run(o.node, "%s unban %s >/dev/null" % (f2b, shlex.quote(ip)))
+    run(o.node, "%s unban %s >/dev/null" % (f2b, shlex.quote(scanner)))
     time.sleep(3)
     code = run(o.master, C + " -o /dev/null -w '%%{http_code}' %s/" % shlex.quote(url))
     say(code == first, "let out, the page answers again (%s)" % code)
@@ -110,8 +116,15 @@ try:
         "the node never bans the network's own addresses (%d from the master)" % len(master_list))
     # 5. an app's wrong logins reach its jail
     if o.app:
-        line = run(o.node, "tail -n 1 /var/home/*/docker/kn-fail2ban/apps/%s.log /home/*/docker/kn-fail2ban/apps/%s.log 2>/dev/null | tail -n 1"
-                   % (o.app, o.app))
+        # one wrong login, made from the node itself (an address fail2ban ignores): Forgejo's API with a
+        # name that does not exist. The file starts anew each day and with each start of kn-f2b-tap
+        if o.app == "git":      # its login form: Forgejo writes no failed login for its API
+            run(o.node, "h=git.$(hostname); j=$(mktemp); r=\"--resolve $h:443:127.0.0.1\"; "
+                        "t=$(curl -sk -c $j $r https://$h/user/login | grep -o 'name=\"_csrf\" value=\"[^\"]*\"' | head -1 | cut -d'\"' -f4); "
+                        "curl -sk -b $j -o /dev/null $r --data-urlencode \"_csrf=$t\" --data-urlencode user_name=kiwi-drill-nobody "
+                        "--data-urlencode password=wrong-drill https://$h/user/login; rm -f $j; sleep 5")
+        line = run(o.node, "f=$(ls -d /var/home/*/docker/kn-fail2ban/apps/%s.log /home/*/docker/kn-fail2ban/apps/%s.log 2>/dev/null "
+                           "| head -n 1); [ -n \"$f\" ] && tail -n 1 \"$f\"" % (o.app, o.app))
         say(bool(line), "a wrong login at %s is in its jail's file" % o.app)
         hit = run(o.node, "podman exec kn-fail2ban sh -c %s" % shlex.quote(
             "tail -n 1 /kiwi-apps/%s.log > /tmp/l; re=$(awk '/^\\[kiwi-%s\\]/{f=1} f&&/^failregex = /{sub(/^failregex = /,\"\"); print; exit}' "

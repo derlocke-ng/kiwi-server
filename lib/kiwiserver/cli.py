@@ -2174,8 +2174,16 @@ def cmd_signup(args):
     """The sign-up page of the network's accounts (the accounts module runs it), and what the
     control node asks of it: invite codes, the requests, accepting or denying one."""
     from . import signup as signupmod
-    s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "")
     what = args.what
+    # the page remembers where Kanidm is, so that the control node's calls need only the folder
+    conf = os.path.join(args.state, "config.json")
+    if what == "serve":
+        os.makedirs(args.state, mode=0o700, exist_ok=True)
+        util.write_text(conf, json.dumps({"kanidm": args.kanidm, "token_file": args.token_file, "id_host": args.id_host}) + "\n", 0o600)
+    elif not args.kanidm and os.path.isfile(conf):
+        c = json.loads(util.read_text(conf))
+        args.kanidm, args.token_file, args.id_host = c.get("kanidm", ""), c.get("token_file", ""), c.get("id_host", "")
+    s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "")
     if what == "serve":
         import uvicorn
         host, _, port = args.listen.rpartition(":")

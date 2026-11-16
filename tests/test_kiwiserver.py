@@ -830,6 +830,42 @@ print("\n".join(d.get("sigs", [])))
         self.assertNotIn("<button>", body)                              # several disks: nothing to press
         self.assertIn("refresh", self.page("GET / HTTP/1.1\r\n\r\n", state="installing")[1])
 
+    def test_several_disks_the_page_chooses_one(self):
+        d = os.path.join(self.tmp, "page")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        live = os.path.join(self.tmp, "live.sh")
+        write(live, starter.install_script())
+        # the install script: the page's choice by number, never by name
+        stub = 'describe() { printf "  sda  500.1 GB  Samsung SSD\\n  nvme0n1  256.0 GB  WD Black\\n"; }'
+        p = subprocess.Popen(["bash", "-c", '. "$0"; %s; choose_disk /dev/sda /dev/nvme0n1' % stub, live],
+                             stdout=subprocess.PIPE, text=True, env=dict(os.environ, KIWI_PAGE_DIR=d))
+        for _ in range(100):
+            if os.path.exists(os.path.join(d, "choices")):
+                break
+            time.sleep(0.05)
+        self.assertEqual(util.read_text(os.path.join(d, "state")).strip(), "choose")
+        self.assertIn("2|nvme0n1  256.0 GB  WD Black", util.read_text(os.path.join(d, "choices")))
+        nonce = util.read_text(os.path.join(d, "nonce")).strip()
+        path = os.path.join(self.tmp, "page.sh")
+        write(path, starter.page_script())
+
+        def ask(request):
+            r = subprocess.run(["bash", path], input=request.encode(), capture_output=True, timeout=30,
+                               env=dict(os.environ, KIWI_PAGE_DIR=d))
+            return r.stdout.decode()
+        body = ask("GET / HTTP/1.1\r\n\r\n")
+        self.assertIn("<button>Erase nvme0n1 and install</button>", body)
+        self.assertIn("<input type=hidden name=d value=2>", body)
+        post = "POST /erase HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s"
+        for bad in ("n=%s&d=3" % nonce, "n=1&d=2", "n=%s" % nonce, "n=%s&d=x" % nonce):
+            self.assertIn("403 Forbidden", ask(post % (len(bad), bad)), bad)         # no such disk, not this page's number
+        self.assertFalse(os.path.exists(os.path.join(d, "yes")))
+        good = "n=%s&d=2" % nonce
+        self.assertIn("200 OK", ask(post % (len(good), good)))
+        out, _ = p.communicate(timeout=20)
+        self.assertEqual(out.strip(), "/dev/nvme0n1")
+
     def test_a_stopped_install_shows_what_the_installer_said(self):
         orig = self.page
 

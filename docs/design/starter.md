@@ -29,9 +29,11 @@ file. It carries no secret and no fleet: every copy is the same.
 **The live system (the stick)** installs, and is careful about where:
 
 - It lists the disks and leaves out the stick it started from and every removable or USB
-  disk. With exactly one disk left it installs there. With none or several it does not
-  install: it says so on the screen and on a small page at the machine's address
-  ("two disks found: unplug the one that should stay as it is, or choose"), and waits.
+  disk. With exactly one disk left it installs there. With none it does not install: it says
+  so on the screen and on a small page at the machine's address, and waits. With several, the
+  page shows them with one button each (an idea from KIWI NG's disk dialog); the one pressed is
+  erased and installed on, the others stay as they are (built in 2.154.0). A stopped install
+  shows the installer's last lines on that page.
 - A disk that already holds a Kiwi system is not installed over. The live system says
   "this machine is installed already: take the stick out", and waits. A stick left in a
   machine whose firmware starts from USB first does not reinstall it every boot.
@@ -144,7 +146,7 @@ back from a copy" on its first-run page with the recovery key ([recovery.md](rec
 | The machine steps on the page, install media in memory | exists |
 | Bring a network back from a copy on the first-run page | exists |
 | `adopt`: a machine someone else installed | exists, from a terminal |
-| The starter image: build, disk choice, console message, mDNS, the starter key | built: `kiwi-server build --starter`, tried in a VM |
+| The starter image: build, disk choice, console message, mDNS, the starter key | built: `kiwi-server build --starter`, tried in a VM; published with every release since 2.154.0 (`.github/workflows/starter.yml`: SHA256SUMS and a Sigstore signature) |
 | A yes before a disk that holds something is erased (keyboard, or a page) | built (2.104.0), tried in a VM |
 | "This machine" as the first node in the page's questionnaire, and its "Set it up" | built (2.107.0), tried in a VM with a rented master and a hard reset after (2.107.1, `starter-vm.sh first-node`) |
 | The hoster's sign-in on the page | built (2.146.0): "Sign in and pick it" in the first-run questions; the login is sealed with the network, so the master's step installs it |

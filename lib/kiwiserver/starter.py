@@ -234,6 +234,29 @@ wait_for_yes() {    # DISK: say what is on it, then wait for ERASE at a console 
     show "kiwi: yes given: erasing ${disk#/dev/} and installing." "Installing. This page changes when the machine has started again."
 }
 
+choose_disk() {     # DISKS…: several disks; the page offers one button each. Prints the one chosen
+    local n i=0 d line pick
+    mkdir -p "$PAGE_DIR"
+    rm -f "$PAGE_DIR/yes"
+    n=$(od -An -N8 -tu8 /dev/urandom | tr -dc 0-9)
+    printf '%s\n' "$n" > "$PAGE_DIR/nonce"
+    : > "$PAGE_DIR/choices.tmp"
+    for d in "$@"; do
+        i=$((i + 1))
+        line=$(describe | grep -m1 "^  ${d#/dev/} ")
+        printf '%s|%s\n' "$i" "${line#  }" >> "$PAGE_DIR/choices.tmp"
+    done
+    mv -f "$PAGE_DIR/choices.tmp" "$PAGE_DIR/choices"
+    printf '%s\n' "kiwi: $# disks here. Choose the one to install Kiwi on: it is ERASED, with everything on it." \
+        "The others stay as they are." > "$PAGE_DIR/message"
+    echo choose > "$PAGE_DIR/state"
+    until [ -s "$PAGE_DIR/yes" ]; do sleep 1; done
+    pick=$(tr -dc 0-9 < "$PAGE_DIR/yes")
+    rm -f "$PAGE_DIR/nonce" "$PAGE_DIR/choices"
+    [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le $# ] || return 1
+    echo "${!pick}"
+}
+
 keep_saying() {     # the message stays on the screen; nothing restarts
     while sleep 30; do say "$@"; done
 }
@@ -317,9 +340,21 @@ main() {
         several)
             n=$(wc -w <<< "$disks")
             mapfile -t lines < <(describe)
-            show "kiwi: $n disks found, so nothing was installed. The disks:" "${lines[@]}" \
-                "Unplug the disks that should stay as they are, keep one, and start the machine again."
-            keep_saying "kiwi: $n disks found, so nothing was installed:" "${lines[@]}"
+            show "kiwi: $n disks found, so nothing was installed yet. The disks:" "${lines[@]}" \
+                "Choose one on a phone or computer in this home network: http://kiwi.local$(a=$(address); echo "${a:+ or http://$a}")" \
+                "Or unplug the disks that should stay as they are, keep one, and start the machine again."
+            # the page's message comes after show's: choose_disk writes it
+            local chosen
+            ( keep_saying "kiwi: $n disks found, so nothing was installed yet: choose one at http://kiwi.local" ) & local talker=$!
+            chosen=$(choose_disk $disks) || { kill "$talker" 2>/dev/null; fail "no disk was chosen"; return 1; }
+            kill "$talker" 2>/dev/null
+            echo installing > "$PAGE_DIR/state"
+            show "kiwi: ${chosen#/dev/} chosen: erasing it and installing." "Installing. This page changes when the machine has started again."
+            install_to "$chosen" || return 1
+            show "kiwi: installed: take the stick out" "The installed system starts now." \
+                "Installing. This page changes when the machine has started again."
+            sleep 5
+            start_installed "$chosen" || fail "installed, but the installed system did not start: take the stick out and restart the machine"
             ;;
         small)
             mapfile -t lines < <(describe)
@@ -400,14 +435,29 @@ case "$method $path" in
             body+="<form method=post action=/erase><input type=hidden name=n value=$nonce>"
             body+="<button>Erase this disk and install</button></form>"
         fi
+        if [ "$state" = choose ] && [[ $nonce =~ ^[0-9]+$ ]] && [ -f "$D/choices" ]; then
+            while IFS='|' read -r i label; do       # one button a disk: its number, never its name, comes back
+                [[ $i =~ ^[0-9]{1,2}$ ]] || continue
+                body+="<form method=post action=/erase><input type=hidden name=n value=$nonce><input type=hidden name=d value=$i>"
+                body+="<p><button>Erase $(esc "${label%% *}") and install</button> <small>$(esc "$label")</small></p></form>"
+            done < "$D/choices"
+        fi
         reply 200 OK "$body" "$refresh"
         ;;
     "POST /erase")
-        given=
+        given='' pick=''
         if [ "$len" -gt 0 ] && [ "$len" -le 256 ] && IFS= read -r -N "$len" -t 10 form; then
             [[ $form =~ (^|&)n=([0-9]{1,24})(&|$) ]] && given=${BASH_REMATCH[2]}
+            [[ $form =~ (^|&)d=([0-9]{1,2})(&|$) ]] && pick=${BASH_REMATCH[2]}
         fi
-        if [ "$state" = ask ] && [[ $nonce =~ ^[0-9]+$ ]] && [ "$given" = "$nonce" ]; then
+        count=$(grep -c . "$D/choices" 2>/dev/null)
+        if [ "$state" = choose ] && [[ $nonce =~ ^[0-9]+$ ]] && [ "$given" = "$nonce" ] && [ -n "$pick" ] \
+                && [ "$((10#$pick))" -ge 1 ] && [ "$((10#$pick))" -le "${count:-0}" ]; then
+            printf '%s\n' "$((10#$pick))" > "$D/yes"
+            echo installing > "$D/state"
+            reply 200 OK "<p>Installing. This page changes when the machine has started again.</p>" \
+                "<meta http-equiv=refresh content=15>"
+        elif [ "$state" = ask ] && [[ $nonce =~ ^[0-9]+$ ]] && [ "$given" = "$nonce" ]; then
             : > "$D/yes"
             echo installing > "$D/state"
             reply 200 OK "<p>Installing. This page changes when the machine has started again.</p>" \

@@ -53,6 +53,8 @@ nginx:
     name: vaultwarden
     server: "{{ container_prefix }}-vault:80"
   server_name: "{{ (vault_domain or 'https://vault.' ~ hostname) | replace('https://', '') | replace('http://', '') }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'vault.' ~ hostname if vault_domain else '' }}"
   proxy_pass: "http://vaultwarden"
   websocket: true
   comment: Vaultwarden

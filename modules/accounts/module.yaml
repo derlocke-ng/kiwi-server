@@ -1,0 +1,122 @@
+schema_version: "1.0"
+
+module:
+  name: accounts
+  title: Accounts (Kanidm)
+  version: 1.0.0
+  description: "One account for the network's services: Kanidm keeps the people, their passwords and passkeys, and lets Forgejo, Nextcloud and the others sign them in (OpenID Connect); Jabber can check its passwords too (LDAP). People get an account with an invite code or by asking, as the network's sign-up page says, and set their password with a link: no email. At id.<hostname>"
+  category: security
+  node_types: [master, node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client]
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+  config: server.toml.j2
+  script: accounts.sh.j2
+  setup: setup.service.j2
+  terms: terms.txt.j2
+
+outputs:
+  config: { path: "{{ container_prefix }}-accounts/server.toml", mode: 0644 }
+  # what kiwi-server runs over SSH to make accounts and their links
+  script: { path: "kiwi/accounts.sh", mode: 0700 }
+  # after every apply: the rules for everyone, and the sign-up page's token in Kanidm
+  setup: { kind: host_unit, name: kn-accounts-setup.service }
+  terms: { path: "{{ container_prefix }}-accounts/signup/terms.txt", mode: 0644, when: signup }
+
+derived:
+  id_host: "{{ accounts_hostname or 'id.' ~ hostname }}"
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-accounts/data", type: dir, required: true }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-accounts/signup", type: dir, required: true }
+
+urls:
+  - "Accounts: https://{{ id_host }} — people set their password there with the link they were given; kiwi-server accounts makes the accounts"
+
+nginx:
+  server_name: "{{ id_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'id.' ~ hostname if accounts_hostname else '' }}"
+  site: id
+  # Kanidm speaks TLS only, with the machine's own certificate
+  proxy_pass: "https://{{ container_prefix }}-accounts:8443"
+  extra_locations:
+    # strangers come to the sign-up page first; people with an account go on to /ui/login
+    - { path: "= /", config: "return 302 /join;", when: signup }
+    - path: "/join"
+      when: signup
+      config: >-
+        set $signup http://{{ container_prefix }}-signup:8080;
+        proxy_pass $signup;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+  comment: Accounts (Kanidm)
+
+backup:
+  # its database is one file: saved while the service stands still
+  frozen:
+    containers: ["{{ container_prefix }}-accounts"]
+    paths: ["${DOCKERDIR}/{{ container_prefix }}-accounts/data"]
+
+settings:
+  - key: accounts_hostname
+    label: Name
+    help: "Empty: id.<hostname>. A name outside the fleet's domain opens it to the Internet (a public proxy), so that strangers can sign up and sign in. Do not change it once people have passkeys: they belong to the name."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: ldap
+    type: bool
+    label: Jabber checks passwords here
+    help: "Kanidm answers LDAP on the stack network, so that Jabber can take the network's accounts (who is in the group jabber). Off: Jabber keeps its own accounts."
+    default: false
+  - key: signup
+    type: bool
+    label: Sign-up page
+    help: "At https://<name>/join: people get an account with an invite code, or ask for one and wait until it is accepted on the control page. Off: only the people who run the network make accounts (kiwi-server accounts)."
+    default: true
+  - key: brand
+    label: The network's name
+    help: "On the sign-up page. Empty: the fleet's domain."
+    default: ""
+  - key: terms
+    type: text
+    label: The rules
+    help: "What the sign-up page says the rules are, a paragraph a line. Empty: no spam, no malware, no harassment, nothing against the law; accounts that break them may be closed; no password reset by email."
+    default: ""
+  - key: second_factor
+    type: bool
+    label: A second factor for everyone
+    help: "On: every account needs a passkey, or a password and a code from an authenticator app. Off: a password alone will do, and people may add a passkey or a code themselves."
+    default: false
+  - key: password_min_length
+    type: int
+    label: Shortest password
+    help: "How many characters a password has at least. A passkey needs none."
+    default: 12
+  - key: image
+    group: Advanced
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
+    default: docker.io/kanidm/server:1.12.1
+  - key: signup_image
+    group: Advanced
+    help: "The sign-up page runs in kiwi-server's control image."
+    default: ghcr.io/derlocke-ng/kiwi-server-control:2
+  - key: tools_image
+    group: Advanced
+    help: "Kanidm's command line, which kiwi/accounts.sh runs to make accounts: the same version as the server."
+    default: docker.io/kanidm/tools:1.12.1

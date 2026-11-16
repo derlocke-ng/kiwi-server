@@ -1,0 +1,13 @@
+[Unit]
+Description=Accounts on {{ hostname }}: the rules for everyone, and the sign-up page's token
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=kiwi-stack.service
+
+[Service]
+Type=oneshot
+# Kanidm takes a few seconds to start after an apply
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do {{ runtime }} exec {{ container_prefix }}-accounts kanidmd healthcheck -c /config/server.toml >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
+ExecStart=/bin/sh {{ docker_dir }}/kiwi/accounts.sh setup
+
+[Install]
+WantedBy=multi-user.target

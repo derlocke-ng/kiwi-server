@@ -1248,7 +1248,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 31)
+        self.assertEqual(len(ms.names()), 32)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -6487,7 +6487,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 31)
+        self.assertEqual(len(json.loads(out)["modules"]), 32)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -7716,7 +7716,7 @@ class TestWeb(StoreBase):
         there = self.ask("/services")[1]                                          # and so have the services
         self.assertIn("Files (Nextcloud)", there)
         self.assertIn('href="https://vault.papaya.home"', there)
-        self.assertIn("<h2><a href=\"/hosts/papaya\"", there)
+        self.assertIn("<a href=\"/hosts/papaya\">papaya</a>", there)
         code, body = self.ask("/hosts/papaya")
         self.assertIn("Home server (node)", body)
         self.assertIn("Changes nothing.", body)                                   # each button says what it does
@@ -7794,17 +7794,17 @@ class TestWeb(StoreBase):
         code, body = self.ask("/status")                                           # the store is locked, nobody is logged in
         self.assertEqual(code, 200)
         for words in ("1 service does not answer", "Files (Nextcloud)", "does not answer", "for 40 minutes", "Passwords (Vaultwarden)",
-                      "2 of 2 machines answer", "Sun 03:30", "and still", "This page needs no login"):
+                      "<b>2<small> of 2</small></b>", "Sun 03:30", "so far", "This page needs no login"):
             self.assertIn(words, body)
         for words in ("control.papaya.home", "csrf", '<aside class="side">', "Log out"):
             self.assertNotIn(words, body)                                          # no admin page, no menu, nothing to post
         # the page for the Internet: the services open to it, and nothing of the rest
         code, body = self.ask("/status/public")
         self.assertEqual(code, 200)
-        for words in ("Everything works", "How the services are", "chat.example.org", "Chat does not answer", "for 10 minutes",
-                      'class="bars"', "90 days ago", "not checked yet"):
+        for words in ("Everything works", "The services that are open to the Internet", "chat.example.org", "Chat does not answer", "for 10 minutes",
+                      'class="spark"', "The last 90 days", "not yet"):
             self.assertIn(words, body)
-        for words in ("papaya", "Nextcloud", "Vaultwarden", "machines answer", "Sun 03:30", "csrf", "Log out"):
+        for words in ("papaya", "Nextcloud", "Vaultwarden", ">Machines<", "Sun 03:30", "csrf", "Log out"):
             self.assertNotIn(words, body)
         stale = json.loads(util.read_text(self.c.health_file))
         stale["checked"] = now - 7200

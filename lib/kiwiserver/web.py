@@ -30,28 +30,29 @@ BASE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>{% block title %}Kiwi{% endblock %}</title>
 <script>(function(){var t=document.cookie.match(/(?:^|; )kiwi_theme=(light|dark)/);if(t)document.documentElement.dataset.theme=t[1]})()</script>
 <style>
-:root{--bg:#f3f5f2;--fg:#17201b;--card:#fff;--line:#dde3dc;--line2:#b9c3bb;--muted:#5b6761;--accent:#2f7d4a;--onaccent:#fff;
---tint:#e4f1e7;--hover:#edf1ec;--off:#8a9590;
---ok:#2f7d4a;--warn:#a86b00;--bad:#b3261e;--okbg:#e6f3ea;--warnbg:#fbf1dc;--badbg:#fbe6e4}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0e1311;--fg:#e6ece8;--card:#161c19;--line:#27302b;--line2:#3d4a43;
---muted:#93a09a;--accent:#74cc8b;--onaccent:#0e1311;--tint:#1a2b20;--hover:#1c2420;--off:#66716c;
---ok:#74cc8b;--warn:#e5ad45;--bad:#ff7b72;--okbg:#15261b;--warnbg:#2b2413;--badbg:#301a18}}
-:root[data-theme=dark]{--bg:#0e1311;--fg:#e6ece8;--card:#161c19;--line:#27302b;--line2:#3d4a43;
---muted:#93a09a;--accent:#74cc8b;--onaccent:#0e1311;--tint:#1a2b20;--hover:#1c2420;--off:#66716c;
---ok:#74cc8b;--warn:#e5ad45;--bad:#ff7b72;--okbg:#15261b;--warnbg:#2b2413;--badbg:#301a18}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+:root{--bg:#f5f6f7;--fg:#16191b;--card:#fff;--line:#e4e7ea;--line2:#c9ced3;--muted:#667078;--accent:#13805c;--onaccent:#fff;
+--tint:#e7f4ee;--hover:#f0f2f4;--off:#9aa2a8;
+--ok:#13805c;--warn:#b26b00;--bad:#c4332b;--okbg:#e5f5ed;--warnbg:#fcf1de;--badbg:#fdeceb}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0c0e0f;--fg:#e7e9ea;--card:#141719;--line:#23282b;--line2:#353b3f;--muted:#8a9297;--accent:#38c793;--onaccent:#06150e;
+--tint:#16251f;--hover:#1a1e21;--off:#5e666b;
+--ok:#38c793;--warn:#f0a945;--bad:#f2665c;--okbg:#10241c;--warnbg:#2a2114;--badbg:#2c1715}}
+:root[data-theme=dark]{--bg:#0c0e0f;--fg:#e7e9ea;--card:#141719;--line:#23282b;--line2:#353b3f;--muted:#8a9297;--accent:#38c793;--onaccent:#06150e;
+--tint:#16251f;--hover:#1a1e21;--off:#5e666b;
+--ok:#38c793;--warn:#f0a945;--bad:#f2665c;--okbg:#10241c;--warnbg:#2a2114;--badbg:#2c1715}
+{% if brand_accent %}:root{--accent:{{ brand_accent }}}{% endif %}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
 main{max-width:860px;margin:0 auto;padding:12px 16px 48px}
 .shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
-.shell main{max-width:960px;width:100%;padding:20px 28px 64px}
+.shell main{max-width:1180px;width:100%;padding:22px 32px 64px}
 .side{position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding:14px 10px;
 border-right:1px solid var(--line);background:var(--card)}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 14px;font-weight:700;font-size:1.05rem;color:var(--fg);text-decoration:none}
 .brand svg{width:26px;height:26px;flex:none}.brand small{font-weight:400;color:var(--muted);font-size:.8rem}
-.nav{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--fg);text-decoration:none;font-size:.95rem}
-.nav:hover{background:var(--hover)}.nav.on{background:var(--tint);color:var(--accent);font-weight:600}
+.nav{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:.9rem}
+.nav:hover{background:var(--hover)}.nav.on{background:var(--hover);color:var(--fg);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
 .ico{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.grp{display:block;margin:14px 10px 4px;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.nav .ico{color:var(--muted)}.nav.on .ico{color:var(--accent)}.nav .count{margin-left:auto;font-size:.78rem;color:var(--muted);font-weight:400}
+.grp{display:block;margin:16px 10px 4px;font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.nav .ico{color:var(--muted)}.nav.on .ico{color:var(--accent)}.ico{width:17px;height:17px}.nav .count{margin-left:auto;font-size:.78rem;color:var(--muted);font-weight:400}
 .side .foot{margin-top:auto;padding-top:14px;display:flex;flex-direction:column;gap:8px}
 .health{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:.85rem;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
 .health b{text-align:right}.health .t{grid-column:1/3;color:var(--muted);font-size:.78rem}
@@ -71,18 +72,20 @@ border-radius:12px;padding:8px;box-shadow:0 8px 30px rgba(0,0,0,.25);max-height:
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:.82rem;font-weight:600;border:1px solid var(--line)}
 .pill.ok{color:var(--ok);background:var(--okbg);border-color:transparent}.pill.warn{color:var(--warn);background:var(--warnbg);border-color:transparent}
 .pill.bad{color:var(--bad);background:var(--badbg);border-color:transparent}
-h1{font-size:1.45rem;margin:14px 0 4px;letter-spacing:-.01em}h2{font-size:1.05rem;margin:30px 0 8px}p{margin:8px 0}
+h1{font-size:1.4rem;font-weight:650;margin:14px 0 2px;letter-spacing:-.015em}h2{font-size:.98rem;font-weight:650;margin:28px 0 8px}
+.sub{color:var(--muted);font-size:.9rem;margin:0 0 14px}p{margin:8px 0}
 a{color:var(--accent)}.muted{color:var(--muted);font-size:.92rem}.small{font-size:.85rem}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:10px 0}
 .row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.banner{border-radius:10px;padding:14px 16px;margin:12px 0;font-size:1.05rem;font-weight:600}
+.banner{border-radius:8px;padding:12px 16px;margin:12px 0;font-size:1rem;font-weight:600;border:1px solid transparent}
+.banner.ok{border-color:color-mix(in srgb,var(--ok) 35%,transparent)}.banner.bad{border-color:color-mix(in srgb,var(--bad) 35%,transparent)}.banner.warn{border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
 .banner.ok{background:var(--okbg);color:var(--ok)}.banner.warn{background:var(--warnbg);color:var(--warn)}
 .banner.bad{background:var(--badbg);color:var(--bad)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--off)}
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad,.dot.down,.dot.failed{background:var(--bad)}
 .dot.busy{animation:pulse 1.4s ease-in-out infinite}@keyframes pulse{50%{opacity:.35}}
 .state{font-weight:600}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad,.down,.failed{color:var(--bad)}
-button,.btn{font:inherit;padding:9px 16px;border-radius:8px;border:1px solid var(--line);background:var(--card);
+button,.btn{font:inherit;font-size:.92rem;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);
 color:var(--fg);cursor:pointer;text-decoration:none;display:inline-block}button:hover,.btn:hover{border-color:var(--line2)}
 button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--onaccent);font-weight:600}
 form.inline{display:inline}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
@@ -91,8 +94,9 @@ form.inline{display:inline}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-t
 .tile:hover,.mach:hover,a.stat:hover{border-color:var(--line2)}
 .tile b{display:block}.tile span{color:var(--muted);font-size:.82rem;overflow-wrap:anywhere}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0}
-.stat{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
-text-decoration:none;color:var(--fg);min-width:0}.stat .lbl{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.82rem}
+.stat{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+text-decoration:none;color:var(--fg);min-width:0}.stat .lbl{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.stat.ok b{color:var(--ok)}.stat.bad b{color:var(--bad)}.stat.warn b{color:var(--warn)}
 .stat .lbl .ico{width:15px;height:15px}.stat b{font-size:1.75rem;line-height:1.2;font-weight:600;letter-spacing:-.02em}
 .stat b small{font-size:1rem;font-weight:500;color:var(--muted)}.stat .cap{color:var(--muted);font-size:.82rem;overflow-wrap:anywhere}
 .stat .track{margin-top:6px}
@@ -125,6 +129,20 @@ details.card>summary{font-weight:600}
 label{display:block;margin:10px 0 4px;font-weight:600}details{margin:8px 0}summary{cursor:pointer;color:var(--accent)}
 .qr{background:#fff;padding:10px;border-radius:10px;display:inline-block}.qr svg{display:block;width:260px;height:260px}
 dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{color:var(--muted)}dd{margin:0}
+.scroll{overflow-x:auto;border-radius:8px}.tbl{width:100%;border:1px solid var(--line);border-radius:8px;background:var(--card);border-collapse:separate;border-spacing:0;overflow:hidden}
+.tbl th{font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:10px 14px;border-bottom:1px solid var(--line)}
+.tbl td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:.9rem}.tbl tr:last-child td{border-bottom:0}
+.tbl tbody tr:hover td{background:var(--hover)}.tbl .sm{color:var(--muted);font-size:.8rem}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:6px;font-size:.78rem;font-weight:600;border:1px solid var(--line);white-space:nowrap}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.badge.plain::before{display:none}
+.badge.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:var(--okbg)}
+.badge.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);background:var(--badbg)}
+.badge.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:var(--warnbg)}
+.spark{display:flex;align-items:flex-end;gap:2px;height:28px;min-width:120px}.spark span{flex:1;min-width:2px;border-radius:1px;background:var(--ok);opacity:.85}
+.spark span.none{background:var(--line);height:30%!important}.spark span.dip{background:color-mix(in srgb,var(--ok) 55%,var(--warn))}
+.spark span.part{background:var(--warn)}.spark span.down{background:var(--bad)}
+@media (max-width:1250px){.shell .tbl .wide2{display:none}}
+@media (max-width:700px){.tbl .wide{display:none}.tbl td,.tbl th{padding:10px}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
 {% if nav %}{% set h = shell %}{% macro links(items, cls) %}{% set seen = namespace(group="") %}{% for href, label, pic, group in items %}
@@ -438,21 +456,27 @@ moment. Do it now and then, and after changing the settings for every machine.</
 <p class="muted"><a href="/settings">Settings for every machine</a>: time zone, updates and what else they share.</p>
 {% endblock %}""",
     "services.html": """{% extends "base.html" %}{% block main %}
-<h1>Services</h1><p class="muted">What runs on your machines. A service opens from a device that is on your VPN; one that is
-open to the Internet says so.</p>
-{% for name, rows in by_machine %}<h2><a href="/hosts/{{ name }}" style="color:inherit;text-decoration:none">{{ name }}</a></h2>
-<div class="card" style="padding:4px 14px">{% for t in rows %}<div class="svc">
-<span class="what"><span class="dot {{ "bad" if t.down else "ok" if t.asked else "down" }}"></span><b>{{ t.label }}</b>
-{% if t.public %}<span class="chip">open to the Internet</span>{% endif %}</span>
-<a href="https://{{ t.site }}" target="_blank" rel="noopener">{{ t.site }}</a>
-{% if t.login %}<a class="small" href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}
-{% if t.onion %}<span class="tor small">Tor{% if t.onion.clients %} (only {{ t.onion.clients|join(", ") }}){% endif %}:
-<code>http://{{ t.onion.address }}</code>
-<button type="button" class="small" onclick="navigator.clipboard.writeText('http://{{ t.onion.address }}');this.textContent='Copied'">Copy</button></span>{% endif %}
-</div>{% endfor %}</div>
-{% endfor %}{% if not by_machine %}<p class="muted">No services yet: they come with the machines.</p>{% endif %}
-<p class="muted">A green dot: the service answered when it was last asked. <a href="/status">What everyone sees: the status page.</a><br>
-An address after <em>Tor</em> opens in Tor Browser, without your VPN. <a href="/access#tor">Make a service a hidden service, or say who may open it.</a></p>
+<h1>Services</h1><p class="sub">What runs on your machines. A service opens from a device on your VPN; one that is
+open to the Internet or to Tor says so.</p>
+{% if everything %}<div class="stats"><div class="stat ok"><span class="lbl">Up</span><b>{{ up }}</b></div>
+<div class="stat {{ "bad" if down else "" }}"><span class="lbl">Down</span><b>{{ down }}</b></div>
+<div class="stat"><span class="lbl">Open to the Internet</span><b>{{ public }}</b></div>
+<div class="stat"><span class="lbl">Hidden services</span><b>{{ tor }}</b></div></div>
+<div class="scroll"><table class="tbl"><thead><tr><th>Service</th><th class="wide">Machine</th><th>Now</th><th class="wide">The last 90 days</th><th>Worked</th><th class="wide wide2">Answers in</th><th class="wide">Open to</th></tr></thead><tbody>
+{% for t in everything %}<tr><td><b>{{ t.label }}</b><br><a class="sm" href="https://{{ t.site }}" target="_blank" rel="noopener">{{ t.site }}</a>
+{% if t.login %} · <a class="sm" href="/hosts/{{ t.machine }}#logins">login</a>{% endif %}</td>
+<td class="wide"><a href="/hosts/{{ t.machine }}">{{ t.machine }}</a></td>
+<td>{% if t.down %}<span class="badge bad">Down</span>{% elif t.asked %}<span class="badge ok">Up</span>{% else %}<span class="badge">not asked</span>{% endif %}
+{% if t.since and t.asked %}<br><span class="sm">for {{ age(now - t.since) }}</span>{% endif %}</td>
+<td class="wide"><div class="spark">{% for b in t.bars %}<span class="{% if b.pct is none %}none{% elif b.pct >= 99.9 %}up{% elif b.pct >= 99 %}dip{% elif b.pct >= 90 %}part{% else %}down{% endif %}" style="height:{{ 100 if b.pct is none or b.pct >= 99.9 else [b.pct, 25]|max|int }}%" title="{{ b.day }}: {% if b.pct is none %}not checked{% else %}{{ "%.1f"|format(b.pct) }} % worked{% endif %}"></span>{% endfor %}</div></td>
+<td>{% if t.uptime is none %}<span class="sm">–</span>{% else %}<span class="badge plain {{ "ok" if t.uptime >= 99 else "warn" if t.uptime >= 90 else "bad" }}">{{ "%.2f"|format(t.uptime) if t.uptime < 100 else "100" }} %</span>{% endif %}</td>
+<td class="wide wide2">{% if t.ms is not none %}{{ t.ms }} <span class="sm">ms</span>{% else %}<span class="sm">–</span>{% endif %}</td>
+<td class="wide"><span class="badge plain">VPN</span>{% if t.public %} <span class="badge plain warn">Internet</span>{% endif %}
+{% if t.onion %} <span class="badge plain" title="http://{{ t.onion.address }}{% if t.onion.clients %} — only {{ t.onion.clients|join(", ") }}{% endif %}" style="cursor:copy"
+onclick="navigator.clipboard.writeText('http://{{ t.onion.address }}');this.textContent='copied'">Tor{% if t.onion.clients %} (named){% endif %}</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">No services yet: they come with the machines.</p>{% endif %}
+<p class="muted small">90 days ago on the left, today on the right. A Tor badge copies the hidden service's address: it opens in Tor Browser,
+without your VPN. <a href="/access#tor">Make a service a hidden service, or say who may open it.</a> · <a href="/status">What everyone sees: the status page.</a></p>
 {% endblock %}""",
 
     "host.html": """{% extends "base.html" %}{% block main %}
@@ -833,9 +857,11 @@ onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done 
 <p>Nothing more to do here. In a few minutes this page goes away, and the machine shows up on the control page of
 your network, under Machines.</p>
 {% endblock %}""",
-    "status.html": """{% extends "base.html" %}{% block title %}Status{% endblock %}{% block main %}
-<meta http-equiv="refresh" content="120">
-<h1 style="display:flex;align-items:center;gap:10px"><span style="width:28px;height:28px;display:inline-flex">{{ icon("kiwi") }}</span>{{ "How the services are" if h.strangers else "How the network is" }}</h1>
+    "status.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}: status{% endblock %}{% block main %}
+<meta http-equiv="refresh" content="120"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}</style>
+<div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ brand_name or "Kiwi" }}</h1>
+{% if h.checked %}<span class="muted small">checked {{ age(now - h.checked) }} ago · every ten minutes</span>{% endif %}</div>
+<p class="sub">{{ "The services that are open to the Internet, asked the way you reach them." if h.strangers else "How the network is: every service, asked from the network itself." }}</p>
 {% set down = h.services|rejectattr("ok")|list %}{% set off = (h.machines.of or 0) - (h.machines.on or 0) %}
 {% if not h.checked %}<div class="banner warn">Nothing has been checked yet.</div>
 {% elif stale %}<div class="banner warn">Not checked for {{ age(now - h.checked) }}. The machine that checks is off, or waits for
@@ -843,36 +869,23 @@ the people who run this network to unlock it.</div>
 {% elif down %}<div class="banner bad">{{ down|length }} {{ "service does" if down|length == 1 else "services do" }} not answer</div>
 {% elif off > 0 %}<div class="banner warn">The services answer. {{ off }} {{ "machine does" if off == 1 else "machines do" }} not.</div>
 {% else %}<div class="banner ok">Everything works</div>{% endif %}
-{% if h.checked %}<p class="muted">Checked {{ age(now - h.checked) }} ago; it checks every ten minutes.
-{% if h.machines.of %}{{ h.machines.on }} of {{ h.machines.of }} machines answer.{% endif %}
-{% if h.window %}When updates need it, the machines restart: {{ h.window }}.{% endif %}</p>{% endif %}
-{% if h.services %}<style>
-.svc,.inc{flex-direction:column;align-items:stretch;gap:2px}
-.svc .bars{display:flex;gap:2px;height:30px;margin:12px 0 6px}
-.svc .bars span{flex:1;min-width:2px;border-radius:2px;background:var(--line)}
-.svc .bars span.up{background:var(--ok)}.svc .bars span.dip{background:color-mix(in srgb,var(--ok) 55%,var(--warn))}
-.svc .bars span.part{background:var(--warn)}.svc .bars span.down{background:var(--bad)}
-.svc .bars span:hover{opacity:.7}
-.svc .scale{display:flex;justify-content:space-between;gap:12px;font-size:.78rem;color:var(--muted)}
-.svc .scale b{color:var(--fg);font-weight:600}
-.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin:4px 0 14px}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.svc .scale .near{display:none}
-@media (max-width:640px){.svc .bars span:nth-child(-n+60){display:none}.svc .scale .far{display:none}.svc .scale .near{display:inline}}
-</style>
-<h2>Services</h2>
-<div class="legend"><span><i style="background:var(--ok)"></i>worked all day</span><span><i style="background:color-mix(in srgb,var(--ok) 55%,var(--warn))"></i>a short gap</span>
-<span><i style="background:var(--warn)"></i>gaps</span><span><i style="background:var(--bad)"></i>down most of the day</span><span><i style="background:var(--line)"></i>not checked</span></div>
-{% for s in h.services %}<div class="card svc"><div class="row"><strong><span class="dot {{ "ok" if s.ok else "bad" }}"></span>{{ s.label }}</strong>
-<span class="state {{ "ok" if s.ok else "bad" }}">{{ "works" if s.ok else "does not answer" }}</span></div>
-<span class="muted"><a href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a>{% if not s.ok %} · for {{ age(now - s.since) }}{% else %} · works for {{ age(now - s.since) }}{% endif %}{% if s.ok and s.ms is not none %} · answers in {{ s.ms }} ms{% endif %}</span>
-<div class="bars" role="img" aria-label="{{ s.label }}: each of the last 90 days">{% for b in s.bars %}<span class="{% if b.pct is none %}{% elif b.pct >= 99.9 %}up{% elif b.pct >= 99 %}dip{% elif b.pct >= 90 %}part{% else %}down{% endif %}" title="{{ b.day }}: {% if b.pct is none %}not checked{% else %}{{ "%.1f"|format(b.pct) }} % worked{% if b.ms is not none %}, {{ b.ms }} ms{% endif %}{% endif %}"></span>{% endfor %}</div>
-<div class="scale"><span class="far">90 days ago</span><span class="near">30 days ago</span><span>{% if s.uptime is none %}not checked yet{% else %}<b>{{ "%.2f"|format(s.uptime) if s.uptime < 100 else "100" }} %</b> worked{% endif %}</span><span>today</span></div></div>{% endfor %}{% endif %}
-{% if h.checked %}<h2>The last seven days</h2>
-{% for i in h.incidents %}<div class="card inc"><div class="row"><strong><span class="dot {{ "ok" if i.to else "bad" }}"></span>{{ i.text }}</strong>
-<span class="state {{ "ok" if i.to else "bad" }}">{{ "fine again" if i.to else "still" }}</span></div>
-<span class="muted">{{ i.when }}{% if i.to %}, for {{ age(i.to - i.from) }}{% else %}, for {{ age(now - i.from) }} and still{% endif %} · {{ age(now - i.from) }} ago</span></div>
+{% if h.services %}{% set known = h.services|selectattr("uptime", "ne", none)|map(attribute="uptime")|list %}
+<div class="stats"><div class="stat ok"><span class="lbl">Up</span><b>{{ h.services|selectattr("ok")|list|length }}</b></div>
+<div class="stat {{ "bad" if down else "" }}"><span class="lbl">Down</span><b>{{ down|length }}</b></div>
+<div class="stat"><span class="lbl">Worked, 90 days</span><b>{% if known %}{{ "%.2f"|format(known|sum / known|length) }}<small> %</small>{% else %}–{% endif %}</b></div>
+{% if h.machines.of %}<div class="stat {{ "warn" if off > 0 else "" }}"><span class="lbl">Machines</span><b>{{ h.machines.on }}<small> of {{ h.machines.of }}</small></b></div>{% endif %}</div>
+<table class="tbl"><thead><tr><th>Service</th><th>Now</th><th class="wide">The last 90 days</th><th>Worked</th><th class="wide">Answers in</th></tr></thead><tbody>
+{% for s in h.services %}<tr><td><b>{{ s.label }}</b><br><a class="sm" href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a></td>
+<td><span class="badge {{ "ok" if s.ok else "bad" }}">{{ "Up" if s.ok else "Down" }}</span><br><span class="sm">for {{ age(now - s.since) }}</span></td>
+<td class="wide"><div class="spark" role="img" aria-label="{{ s.label }}: each of the last 90 days">{% for b in s.bars %}<span class="{% if b.pct is none %}none{% elif b.pct >= 99.9 %}up{% elif b.pct >= 99 %}dip{% elif b.pct >= 90 %}part{% else %}down{% endif %}" style="height:{{ 100 if b.pct is none or b.pct >= 99.9 else [b.pct, 25]|max|int }}%" title="{{ b.day }}: {% if b.pct is none %}not checked{% else %}{{ "%.1f"|format(b.pct) }} % worked{% if b.ms is not none %}, {{ b.ms }} ms{% endif %}{% endif %}"></span>{% endfor %}</div></td>
+<td>{% if s.uptime is none %}<span class="sm">not yet</span>{% else %}<span class="badge plain {{ "ok" if s.uptime >= 99 else "warn" if s.uptime >= 90 else "bad" }}">{{ "%.2f"|format(s.uptime) if s.uptime < 100 else "100" }} %</span>{% endif %}</td>
+<td class="wide">{% if s.ms is not none %}{{ s.ms }} <span class="sm">ms</span>{% else %}<span class="sm">–</span>{% endif %}</td></tr>{% endfor %}</tbody></table>
+<p class="muted small">90 days ago on the left, today on the right: green worked all day, yellow had gaps, red was down most of the day.</p>{% endif %}
+{% if h.checked %}<h2>What was wrong, the last seven days</h2>
+{% for i in h.incidents %}<div class="card"><div class="row"><b>{{ i.text }}</b><span class="badge {{ "ok" if i.to else "bad" }}">{{ "fine again" if i.to else "still" }}</span></div>
+<span class="muted small">{{ i.when }} · {% if i.to %}for {{ age(i.to - i.from) }}{% else %}for {{ age(now - i.from) }} so far{% endif %}</span></div>
 {% else %}<p class="muted">Nothing was wrong.</p>{% endfor %}{% endif %}
+{% if h.window %}<p class="muted small">When updates need it, the machines restart: {{ h.window }}.</p>{% endif %}
 <p class="muted small" style="margin-top:28px">{% if h.strangers %}This page shows the services that are open to the Internet,
 asked the way you reach them, and nothing else.{% else %}This page needs no login. It shows which services work, and no addresses or
 settings. The people who run this network see more on their control page.{% endif %}</p>
@@ -1647,7 +1660,10 @@ def make_app(control: Control):
             return login_page()
         ms, _st, info = machines()
         domain = "." + str((control.fleet_info() or {}).get("domain") or "home")
-        asked = {s["site"]: s["ok"] for s in control.health().get("services") or []}
+        state = control.health()
+        rows = {s["site"]: s for s in state.get("services") or []}
+        asked = {k: s["ok"] for k, s in rows.items()}
+        now = time.time()
         try:
             hidden = control.onion()
         except KiwiError:               # the services are listed all the same
@@ -1657,8 +1673,14 @@ def make_app(control: Control):
             t["public"] = not t["site"].endswith(domain)
             t["asked"], t["down"] = t["site"] in asked, asked.get(t["site"]) is False
             t["onion"] = hidden.get("%s.%s" % (t["site"].split(".", 1)[0], t["machine"]))
+            t["bars"], t["uptime"] = healthmod.history(state, t["site"], now)
+            t["ms"] = next((b["ms"] for b in reversed(t["bars"]) if b["ms"] is not None), None)
+            t["since"] = (rows.get(t["site"]) or {}).get("since")
             by.setdefault(t["machine"], []).append(t)
-        return page("services.html", request, "/services", by_machine=list(by.items()))
+        everything = [t for _m, ts in by.items() for t in ts]
+        return page("services.html", request, "/services", by_machine=list(by.items()), everything=everything, now=now,
+                    up=sum(1 for t in everything if t["asked"] and not t["down"]), down=sum(1 for t in everything if t["down"]),
+                    public=sum(1 for t in everything if t["public"]), tor=sum(1 for t in everything if t["onion"]))
 
     @app.post("/machines/take-in")
     def machines_take_in(request: Request, address: str = Form(""), code: str = Form(""), preset: str = Form("cloud"),

@@ -234,6 +234,41 @@ keeps what it cannot read, and the link carries the key.
 `title`, `default_expire` (a week), `size_mb` (10) and `file_upload` are its
 settings. The pastes are in the machine's backup.
 
+## Accounts
+
+Add `accounts` to a machine's modules: one account for the network's services,
+kept by [Kanidm](https://kanidm.github.io/kanidm/stable/) at `https://id.<machine>`,
+or at a public name (`accounts: { accounts_hostname: id.example.org }`) when
+strangers should sign up.
+
+- **The sign-up page** is `https://<name>/join`. A person gets an account in one
+  of two ways:
+  - with an invite code: the account is made at once;
+  - by asking, with a few words: the people who run the network accept or deny the request.
+
+  The person keeps a request code and comes back with it. `accounts: { signup: false }` leaves only the people who run the network to
+  make accounts.
+- **No email.** A new account comes with a link that sets its password or a
+  passkey, good for a day. A lost password: the people who run the network make
+  a new link. The page says so.
+- **A password alone will do** unless `second_factor: true`: then every account
+  needs a passkey, or a password and a code from an authenticator app.
+- **Jabber** keeps its own accounts. With `ldap: true` it can take the network's
+  accounts too, with the same password, for the people in the group `jabber`.
+- On the machine, `sudo sh ~/docker/kiwi/accounts.sh` makes accounts and their
+  links (`create`, `reset`, `list`, `delete`, `jabber NAME on|off`). The sign-up
+  page does it with a token of its own, which may make people and nothing else.
+- The rules on the sign-up page are `accounts: { terms: "…" }`, a paragraph a
+  line.
+
+Tried on a test node (16 November 2026):
+- Kanidm behind the machine's proxy.
+- Accounts made, listed, joined to Jabber, deleted.
+- In a real browser: a person set a password with the link and signed in, and a wrong password was refused.
+
+Not tried yet: the sign-up page on a machine (it comes with the control image of
+this release), signing in to Forgejo or Nextcloud with these accounts.
+
 ## Authenticator
 
 Add `authenticator` to a machine's modules: the six-digit codes of your

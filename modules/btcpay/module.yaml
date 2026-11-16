@@ -59,6 +59,8 @@ logins:
 
 nginx:
   server_name: "{{ pay_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'pay.' ~ hostname if pay_hostname else '' }}"
   # usable as a hidden service: its pages, its login and a payment were tried through Tor
   onion: true
   site: pay

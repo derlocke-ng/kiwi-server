@@ -67,6 +67,8 @@ logins:
 nginx:
   servers:
     - server_name: "{{ nc_hostname or 'cloud.' ~ hostname }}"
+      # its name on the VPN stays, and sends the browser on to the name it was given
+      alias: "{{ 'cloud.' ~ hostname if nc_hostname else '' }}"
       # usable as a hidden service: its page, its files and a login (WebDAV) were tried through Tor
       onion: true
       proxy_pass: "http://nextcloud-aio-apache:{{ apache_port }}"

@@ -38,6 +38,8 @@ nginx:
     name: ffsync
     server: "{{ container_prefix }}-ffsync:8000"
   server_name: "{{ sync_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'ffsync.' ~ hostname if sync_hostname else '' }}"
   site: ffsync
   proxy_pass: "http://ffsync"
   client_max_body_size: "10m"

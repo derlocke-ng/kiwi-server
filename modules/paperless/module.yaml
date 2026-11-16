@@ -50,6 +50,8 @@ nginx:
     name: paperless
     server: "{{ container_prefix }}-paperless:8000"
   server_name: "{{ paperless_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'paperless.' ~ hostname if paperless_domain else '' }}"
   # usable as a hidden service: its page and its login form were tried through Tor (it is told its address)
   onion: true
   proxy_pass: "http://paperless"

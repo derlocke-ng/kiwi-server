@@ -45,6 +45,8 @@ nginx:
     name: immich
     server: "{{ container_prefix }}-immich:2283"
   server_name: "{{ immich_host }}"
+  # its name on the VPN stays, and sends the browser on to the name it was given
+  alias: "{{ 'immich.' ~ hostname if immich_domain else '' }}"
   # usable as a hidden service: its page, its files, what its app is told and its login's answer were tried through Tor
   onion: true
   proxy_pass: "http://immich"

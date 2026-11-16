@@ -1,0 +1,17 @@
+# Kanidm on {{ hostname }}: written by kiwi-server
+bindaddress = "0.0.0.0:8443"
+{% if ldap %}
+ldapbindaddress = "0.0.0.0:3636"
+{% endif %}
+db_path = "/data/kanidm.db"
+# the machine's own certificate (the reverse proxy's): nginx in front does not judge it
+tls_chain = "/certs/fullchain.pem"
+tls_key = "/certs/privkey.pem"
+domain = "{{ id_host }}"
+origin = "https://{{ id_host }}"
+log_level = "info"
+
+[online_backup]
+path = "/data/backups"
+schedule = "00 03 * * *"
+versions = 3

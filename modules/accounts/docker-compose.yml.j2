@@ -1,0 +1,38 @@
+# accounts — Kanidm: the network's people, passwords and passkeys
+services:
+  {{ container_prefix }}-accounts:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-accounts
+    restart: unless-stopped
+    command: ["/sbin/kanidmd", "server", "-c", "/config/server.toml"]
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-accounts/data:/data:z
+      - {{ docker_dir }}/{{ container_prefix }}-accounts/server.toml:/config/server.toml:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/fullchain.pem:/certs/fullchain.pem:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/privkey.pem:/certs/privkey.pem:ro,z
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% if signup %}
+
+  # the sign-up page: invite codes and requests (kiwi-server signup), at https://{{ id_host }}/join
+  {{ container_prefix }}-signup:
+    image: {{ signup_image }}
+    container_name: {{ container_prefix }}-signup
+    restart: unless-stopped
+    command: ["signup", "serve", "--state", "/state", "--kanidm", "https://{{ container_prefix }}-accounts:8443",
+              "--token-file", "/state/token", "--id-host", "{{ id_host }}", "--brand", "{{ brand or domain }}",
+              "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
+    networks:
+      {{ network_name }}: {}
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-accounts/signup:/state:z
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}

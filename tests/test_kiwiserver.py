@@ -7139,6 +7139,11 @@ class TestControl(StoreBase):
         self.assertEqual(c.job(c.start("plan", ["bad"], wait=True))["state"], "failed")
         self.assertIn("--once", c.argv("watch"))
         self.assertEqual(c.argv("save", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--now"])
+        self.assertEqual(c.argv("start-new", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--new"])
+        self.assertEqual(c.argv("prune", ["lychee"])[-3:], ["prune", c.fleet_path, "lychee"])
+        self.assertEqual(c.argv("doctor")[-1:], ["doctor"])                   # this node, no fleet
+        with self.assertRaises(KiwiError):
+            c.argv("prune", [])
         with self.assertRaises(KiwiError):
             c.argv("save", [])
         with self.assertRaisesRegex(KiwiError, "no machines"):
@@ -7779,6 +7784,17 @@ class TestWeb(StoreBase):
         self.assertIn("raw words", body)
         self.assertIn("has not answered yet", self.ask("/hosts/sorbet")[1])
         self.assertIn("saved 2 hours ago", self.ask("/backups")[1])
+        self.assertNotIn("Start new", self.ask("/backups")[1])                       # nothing waits
+        self.assertNotIn("Prune now", self.ask("/backups")[1])                       # nor keeps backups
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "papaya", "state": "warn", "facts": {
+                "backup": {"last": 1, "age": 7200, "held": "rebuilt, 2 snapshots wait"},
+                "backup_store": {"mount": "/var", "free_kib": 52428800, "repos": [{"client": "papaya.home", "snapshots": 9}]}}}]}))
+        body = self.ask("/backups")[1]
+        self.assertIn("Rebuilt: its backups wait. rebuilt, 2 snapshots wait", body)
+        self.assertIn('value="start-new"', body)
+        self.assertIn('value="prune"', body)
+        self.assertIn("50 GB free", body)
         self.assertIn('<option value="devices" selected>', self.ask("/devices")[1])
 
     def test_the_frame_the_numbers_and_the_picture(self):

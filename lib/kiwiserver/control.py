@@ -1060,8 +1060,9 @@ class Control:
                            text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=180)
         if r.returncode:
             raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
-        if argv and argv[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect"):
-            self.audit(user, "accounts: %s" % argv[0], name=" ".join(str(a) for a in argv[1:2]))
+        words = [str(a) for a in argv if not str(a).startswith("--")]
+        if words and words[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect"):
+            self.audit(user, "accounts: %s%s" % ("jabber " if "--jabber" in argv else "", words[0]), name=" ".join(words[1:2]))
         try:
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
         except (ValueError, IndexError):
@@ -1069,6 +1070,17 @@ class Control:
 
     def has_accounts(self):
         return any("accounts" in (h.get("modules") or []) for h in (self.fleet_info() or {}).get("hosts") or [])
+
+    def has_jabber_join(self):
+        """Jabber's sign-up page runs somewhere (xmpp: invites or requests). The list does not say
+        the settings, so this asks once and remembers the answer until the next look."""
+        if not any("xmpp" in (h.get("modules") or []) for h in (self.fleet_info() or {}).get("hosts") or []):
+            return False
+        try:
+            self.accounts("invites", "--jabber")
+            return True
+        except KiwiError:
+            return False
 
     def onion(self):
         """The hidden services (`onion --porcelain`): {"<service>.<machine>": {address, clients, site}}."""

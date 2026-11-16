@@ -2216,18 +2216,31 @@ def cmd_accounts(args):
     JSON: the control page reads it."""
     fleet, roles, ms = load(args)
     found = []
+    module = "xmpp" if args.jabber else "accounts"
     for h in fleet.hosts.values():
         if h.role in roles and not h.validate(roles):
             rolesmod.resolve_settings(roles[h.role], h, ms)
-            if "accounts" in (h.modules or []) and (not args.to or h.name == args.to):
+            if module not in (h.modules or []) or (args.to and h.name != args.to):
+                continue
+            x = h.module_settings.get("xmpp") or {}
+            if module == "accounts" or x.get("invites") or x.get("requests"):
                 found.append(h)
     if not found:
-        raise KiwiError("no machine runs the accounts module%s" % (" called %s" % args.to if args.to else ""))
+        raise KiwiError("no machine runs %s%s" % ("Jabber with invite codes or requests (xmpp: invites, requests)" if args.jabber
+                                                  else "the accounts module", " called %s" % args.to if args.to else ""))
     if len(found) > 1:
         raise KiwiError("several machines run the accounts module (%s): say which with --to" % ", ".join(h.name for h in found))
     h = found[0]
     prefix = "km" if roles[h.role].node_type == "master" else "kn"
     what, rest = args.what, [a for a in (args.arg or [])]
+    if args.jabber:
+        if what not in ACCOUNT_PAGE_OPS:
+            raise KiwiError("accounts --jabber: %s (the Jabber accounts themselves are in its admin page)" % ", ".join(ACCOUNT_PAGE_OPS))
+        extra = ["--uses", str(args.uses), "--days", str(args.days), "--note", args.note or ""] if what == "invite" else []
+        cmd = "sudo podman exec %s-xmpp-join kiwi-server signup %s --state /state" % (
+            prefix, " ".join(shlex.quote(x) for x in [what] + rest[:1] + extra))
+        print(remote.run(remote.reach(h, args.ssh), cmd).decode(errors="replace").strip())
+        return
     if what == "connect":
         # a service signs people in with these accounts: its client in Kanidm, its secret in the store
         if not rest:
@@ -2275,13 +2288,18 @@ def cmd_signup(args):
     what = args.what
     # the page remembers where Kanidm is, so that the control node's calls need only the folder
     conf = os.path.join(args.state, "config.json")
+    ejabberd = json.loads(args.ejabberd) if args.ejabberd else None
+    ways = [w for w in (args.ways or "invites,requests").split(",") if w]
     if what == "serve":
         os.makedirs(args.state, mode=0o700, exist_ok=True)
-        util.write_text(conf, json.dumps({"kanidm": args.kanidm, "token_file": args.token_file, "id_host": args.id_host}) + "\n", 0o600)
-    elif not args.kanidm and os.path.isfile(conf):
+        util.write_text(conf, json.dumps({"kanidm": args.kanidm, "token_file": args.token_file, "id_host": args.id_host,
+                                          "ejabberd": ejabberd, "ways": ways}) + "\n", 0o600)
+    elif not args.kanidm and not ejabberd and os.path.isfile(conf):
         c = json.loads(util.read_text(conf))
         args.kanidm, args.token_file, args.id_host = c.get("kanidm", ""), c.get("token_file", ""), c.get("id_host", "")
-    s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "")
+        ejabberd, ways = c.get("ejabberd"), c.get("ways") or ways
+    s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "",
+                         ejabberd=ejabberd, invites="invites" in ways, requests="requests" in ways, captcha="captcha" in ways)
     if what == "serve":
         import uvicorn
         host, _, port = args.listen.rpartition(":")
@@ -3683,6 +3701,7 @@ def build_parser():
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the control node")
     s = sub("accounts", cmd_accounts); s.add_argument("fleet"); s.add_argument("what"); s.add_argument("arg", nargs="*")
     s.add_argument("--to", metavar="HOST", help="the machine with the accounts module, when there are several")
+    s.add_argument("--jabber", action="store_true", help="Jabber's sign-up page instead: its invite codes and requests")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach it")
     s.add_argument("--uses", type=int, default=1, help="invite: how many accounts the code makes")
     s.add_argument("--days", type=int, default=14, help="invite: how long the code is good")
@@ -3695,6 +3714,9 @@ def build_parser():
     s.add_argument("--brand", default="", help="the network's name on the page")
     s.add_argument("--terms-file", default="", metavar="FILE", help="the rules shown on the page, a paragraph a line")
     s.add_argument("--listen", default="0.0.0.0:8080", metavar="ADDR:PORT")
+    s.add_argument("--ejabberd", default="", metavar="JSON",
+                   help='Jabber addresses instead: {"<page name>": {"api": "http://…:5281/api", "host": "<Jabber domain>", "onion": "…"}}')
+    s.add_argument("--ways", default="", help="invites,requests,captcha: the ways to an account the page offers")
     s.add_argument("--uses", type=int, default=1, help="invite: how many accounts the code makes")
     s.add_argument("--days", type=int, default=14, help="invite: how long the code is good")
     s.add_argument("--note", default="", help="invite: for whom (shown on the control page)")

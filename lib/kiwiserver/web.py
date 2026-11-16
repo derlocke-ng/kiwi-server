@@ -939,6 +939,21 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <button>Connect</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 <p class="muted small">Connected: after its next Apply the service shows "Sign in with accounts", and a person's first sign-in makes their user there.</p>
 {% else %}<p class="muted">None of your machines runs a service that can do so yet (Forgejo can).</p>{% endif %}{% endif %}
+{% if jabber %}<h2>Jabber's sign-up page</h2>
+<p class="muted small">Jabber addresses are kept apart from these accounts. People sign up at <code>/join</code> on Jabber's names.</p>
+{% if jabber.waiting %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Who, and why</th><th class="wide">When</th><th></th></tr></thead><tbody>
+{% for r in jabber.waiting %}<tr><td><b>{{ r.name }}</b></td><td>{{ r.why }}</td><td class="wide sm">{{ age(now - r.at) }} ago</td>
+<td style="white-space:nowrap"><form class="inline" method="post" action="/accounts/jabber-accept">{{ tok }}<input type="hidden" name="hint" value="{{ r.hint }}"><button class="primary">Accept</button></form>
+<form class="inline" method="post" action="/accounts/jabber-deny" onsubmit="return confirm('Deny {{ r.name }}?')">{{ tok }}<input type="hidden" name="hint" value="{{ r.hint }}"><button>Deny</button></form></td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">Nobody is waiting for a Jabber address.</p>{% endif %}
+<form class="card row" method="post" action="/accounts/jabber-invite" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
+<div><label for="jinv-note">For whom</label><input id="jinv-note" name="note" maxlength="80"></div>
+<div style="max-width:120px"><label for="jinv-uses">Addresses</label><input id="jinv-uses" name="uses" type="number" min="1" max="50" value="1"></div>
+<div style="max-width:120px"><label for="jinv-days">Good for (days)</label><input id="jinv-days" name="days" type="number" min="1" max="90" value="14"></div>
+<button class="primary">Make a Jabber invite code</button></form>
+{% if jabber.invites %}<div class="scroll"><table class="tbl"><thead><tr><th>Code</th><th>For whom</th><th>Used</th><th></th></tr></thead><tbody>
+{% for i in jabber.invites|reverse %}<tr><td>…{{ i.hint }}</td><td>{{ i.note or "–" }}</td><td>{{ i.used }} of {{ i.uses }}</td>
+<td>{% if i.live %}<form class="inline" method="post" action="/accounts/jabber-revoke">{{ tok }}<input type="hidden" name="hint" value="{{ i.hint }}"><button>Withdraw</button></form>{% else %}<span class="badge plain">over</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}{% endif %}
 {% endblock %}""",
 
     "start.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}{% endblock %}{% block main %}
@@ -2042,10 +2057,17 @@ def make_app(control: Control):
         id_host = next((s for s, label in (holder.get("site_labels") or {}).items() if label == "Accounts"),
                        "id.%s" % holder.get("hostname", ""))
         now = time.time()
+        jabber = None
+        if control.has_jabber_join():
+            try:
+                jr = control.accounts("requests", "--jabber") or []
+                jabber = {"waiting": [r for r in jr if r.get("state") == "waiting"], "invites": control.accounts("invites", "--jabber") or []}
+            except KiwiError as e:
+                error = error or str(e)
         connectable = [{"host": h["name"], "label": "Forgejo (git)",
                         "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-git.json" % h["name"]))}
                        for h in info.get("hosts") or [] if "git" in (h.get("modules") or [])]
-        return page("accounts.html", request, "/accounts", available=available, connectable=connectable, people=sorted(people, key=lambda p: p["name"]),
+        return page("accounts.html", request, "/accounts", available=available, connectable=connectable, jabber=jabber, people=sorted(people, key=lambda p: p["name"]),
                     invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
                     id_host=id_host, now=now, error=error, **kw)
 
@@ -2062,6 +2084,18 @@ def make_app(control: Control):
         if not u:
             return login_page()
         try:
+            if what.startswith("jabber-"):
+                op = what[7:]
+                if op == "invite":
+                    code = control.accounts("invite", "--jabber", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
+                                            "--note", note.strip()[:80], user=u)["code"]
+                    return accounts_page(request, shown={"title": "A Jabber invite code", "value": code,
+                                                         "text": "Give it to %s. It makes %d Jabber address%s, for %d days:" % (
+                                                             note.strip() or "the person", uses, "" if uses == 1 else "es", days),
+                                                         "note": "Shown this once. They enter it at /join on Jabber's page, with a name and a password."})
+                if op in ("accept", "deny", "revoke"):
+                    control.accounts(op, hint.strip(), "--jabber", user=u)
+                    return accounts_page(request)
             if what == "invite":
                 code = control.accounts("invite", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
                                         "--note", note.strip()[:80], user=u)["code"]

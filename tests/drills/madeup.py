@@ -118,6 +118,10 @@ def accounts(*argv, user="admin"):
     """What `kiwi-server accounts` would say about a made-up sign-up: three people, two waiting, codes."""
     now = time.time()
     what = argv[0] if argv else ""
+    if "--jabber" in argv and what == "requests":
+        return [{"hint": "1c2d", "name": "gustav", "why": "Gustav from the band, to chat on Jabber", "at": now - 600, "state": "waiting"}]
+    if "--jabber" in argv and what == "invites":
+        return [{"hint": "77aa", "uses": 5, "used": 2, "until": now + 5 * 86400, "note": "the band", "live": True}]
     if what == "list":
         return [{"name": [n], "displayname": [d], "memberof": (["jabber@id.papaya.home"] if j else [])}
                 for n, d, j in (("anna", "Anna Berg", True), ("bert", "Bert", False), ("carla", "Carla from the club", False))]

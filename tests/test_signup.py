@@ -34,8 +34,8 @@ class TestSignup(unittest.TestCase):
 
     def test_an_invite_makes_an_account_once(self):
         code = self.s.invite(uses=1, days=7, note="for anna")
-        link = self.s.join(code, "anna", "Anna")
-        self.assertEqual(link, "https://id.example.org/ui/reset?token=tok-anna")
+        made = self.s.join(code, "anna", "Anna")
+        self.assertEqual(made, {"link": "https://id.example.org/ui/reset?token=tok-anna"})
         with self.assertRaisesRegex(KiwiError, "not good"):
             self.s.join(code, "bert")                               # used up
         self.assertEqual([i["used"] for i in self.s.invites()], [1])
@@ -51,17 +51,17 @@ class TestSignup(unittest.TestCase):
 
     def test_a_request_waits_for_an_answer_and_then_shows_its_link_for_a_day(self):
         code = self.s.ask("dora", "Dora from the climbing club, for the shared files", "203.0.113.5")
-        self.assertEqual(self.s.status(code), ("waiting", ""))
+        self.assertEqual(self.s.status(code), ("waiting", {}))
         hint = self.s.requests()[0]["hint"]
         self.assertEqual(self.s.answer(hint, True), "accepted")
-        self.assertEqual(self.s.status(code), ("accepted", "https://id.example.org/ui/reset?token=tok-dora"))
+        self.assertEqual(self.s.status(code), ("accepted", {"link": "https://id.example.org/ui/reset?token=tok-dora"}))
         self.assertIn("dora", self.k.people)
         self.t[0] += 2 * 86400
-        self.assertEqual(self.s.status(code), ("expired", ""))
-        self.assertEqual(self.s.status("ask-0000-0000-0000"), ("unknown", ""))
+        self.assertEqual(self.s.status(code), ("expired", {}))
+        self.assertEqual(self.s.status("ask-0000-0000-0000"), ("unknown", {}))
         other = self.s.ask("emil", "Emil, a friend of Dora's", "203.0.113.6")
         self.s.answer(self.s.requests(waiting_only=True)[0]["hint"], False)
-        self.assertEqual(self.s.status(other), ("denied", ""))
+        self.assertEqual(self.s.status(other), ("denied", {}))
         self.assertNotIn("emil", self.k.people)
 
     def test_requests_are_limited(self):
@@ -75,6 +75,46 @@ class TestSignup(unittest.TestCase):
         self.s.ask("fritzy", "a person who would like an account", "203.0.113.7")
         with self.assertRaisesRegex(KiwiError, "asked for that name"):
             self.s.ask("fritzy", "the same name again, please", "203.0.113.8")
+
+
+class FakeEjabberd:
+    def __init__(self):
+        self.users, self.calls = {}, []
+
+    def __call__(self, method, path, body):
+        self.calls.append(path.rsplit("/", 1)[1])
+        if path.endswith("/check_account"):
+            return 0 if (body["user"], body["host"]) in self.users else 1
+        if path.endswith("/register"):
+            self.users[(body["user"], body["host"])] = body["password"]
+            return "registered"
+        raise AssertionError(path)
+
+
+class TestJabberSignup(unittest.TestCase):
+    def setUp(self):
+        self.e = FakeEjabberd()
+        self.s = signupmod.Signup(tempfile.mkdtemp(), opener=self.e, ejabberd={
+            "jabber.medlar.home": {"api": "http://kn-xmpp:5281/api", "host": "medlar.home"},
+            "xmpp.example.org": {"api": "http://kn-xmpp-public:5281/api", "host": "xmpp.example.org"}})
+
+    def test_an_invite_makes_a_jabber_address_with_the_persons_password(self):
+        made = self.s.join(self.s.invite(uses=2), "anna", page="xmpp.example.org", password="a long password")
+        self.assertEqual(made, {"address": "anna@xmpp.example.org", "password": ""})
+        self.assertEqual(self.e.users[("anna", "xmpp.example.org")], "a long password")
+        with self.assertRaisesRegex(KiwiError, "10 characters"):
+            self.s.join(self.s.invite(), "bert", page="xmpp.example.org", password="short")
+        with self.assertRaisesRegex(KiwiError, "taken"):
+            self.s.join(self.s.invite(), "anna", page="xmpp.example.org", password="another long one")
+
+    def test_an_accepted_request_shows_its_made_password_once(self):
+        code = self.s.ask("carl", "Carl, a neighbour, for chatting", "203.0.113.9", page="jabber.medlar.home")
+        self.s.answer(self.s.requests()[0]["hint"], True)
+        state, made = self.s.status(code)
+        self.assertEqual((state, made["address"]), ("accepted", "carl@medlar.home"))
+        self.assertEqual(self.e.users[("carl", "medlar.home")], made["password"])
+        self.assertEqual(self.s.status(code)[1]["password"], "")                # shown once
+        self.assertNotIn(made["password"], open(self.s.path).read())            # and forgotten
 
 
 if __name__ == "__main__":

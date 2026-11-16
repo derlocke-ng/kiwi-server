@@ -49,7 +49,10 @@ def _digest(code):
 
 
 class Signup:
-    def __init__(self, state_dir, kanidm="", token_file="", id_host="", opener=None, clock=_now):
+    """`ejabberd`: {page name: {"api": URL of its HTTP API, "host": the Jabber domain}} makes Jabber
+    accounts (the person chooses a password, or gets one) instead of the network's accounts."""
+    def __init__(self, state_dir, kanidm="", token_file="", id_host="", opener=None, clock=_now, ejabberd=None,
+                 invites=True, requests=True, captcha=False):
         self.dir = state_dir
         self.path = os.path.join(state_dir, "signup.json")
         self.kanidm_url = kanidm.rstrip("/")
@@ -57,7 +60,9 @@ class Signup:
         self.id_host = id_host
         self.clock = clock
         self.lock = threading.Lock()
-        self.opener = opener            # tests: a stand-in for Kanidm
+        self.opener = opener            # tests: a stand-in for Kanidm (or ejabberd)
+        self.ejabberd = ejabberd or {}
+        self.ways = {"invites": invites, "requests": requests, "captcha": captcha}
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
 
     # ---- what is kept ------------------------------------------------------------------
@@ -96,10 +101,43 @@ class Signup:
         except (urllib.error.URLError, OSError) as e:
             raise KiwiError("the accounts do not answer just now (%s)" % getattr(e, "reason", e))
 
-    def make_account(self, name, display):
-        """The account in Kanidm, and the link its person sets a password with."""
-        self.kanidm("POST", "/v1/person", {"attrs": {"name": [name], "displayname": [display or name]}})
-        return self.link(name)
+    def make_account(self, name, display, page="", password=None):
+        """The account, and what its person needs: Kanidm's link that sets the password, or a
+        Jabber address (with the password made for it when the person chose none)."""
+        if self.ejabberd:
+            where = self.ejabberd.get(page) or next(iter(self.ejabberd.values()))
+            given = password is None
+            password = password or "-".join(secrets.token_urlsafe(6) for _ in range(3))
+            self.jabber(where, "check_account", {"user": name, "host": where["host"]}, exists_is_error=True)
+            self.jabber(where, "register", {"user": name, "host": where["host"], "password": password})
+            return {"address": "%s@%s" % (name, where["host"]), "password": password if given else ""}
+        self.kanidm("POST", "/v1/person", {"attrs": {"name": [name], "displayname": [display or name],
+                                                     "mail": ["%s@%s" % (name, self.id_host)]}})
+        return {"link": self.link(name)}
+
+    def jabber(self, where, command, body, exists_is_error=False):
+        """One command of ejabberd's HTTP API (only register and check_account are allowed)."""
+        if self.opener:
+            answer = self.opener("POST", "%s/%s" % (where["api"], command), body)
+            if exists_is_error and answer == 0:
+                raise KiwiError("that name is taken")
+            return answer
+        req = urllib.request.Request("%s/%s" % (where["api"], command), method="POST", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                answer = json.loads(r.read().decode() or "null")
+        except urllib.error.HTTPError as e:
+            with e:
+                said = e.read().decode(errors="replace")[:200]
+            if "exist" in said.lower() or e.code == 409:
+                raise KiwiError("that name is taken")
+            raise KiwiError("Jabber did not take it (%s %s)" % (e.code, said))
+        except (urllib.error.URLError, OSError) as e:
+            raise KiwiError("Jabber does not answer just now (%s)" % getattr(e, "reason", e))
+        if exists_is_error and answer == 0:        # check_account: 0 is "it exists"
+            raise KiwiError("that name is taken")
+        return answer
 
     def link(self, name):
         answer = self.kanidm("GET", "/v1/person/%s/_credential/_update_intent/%d" % (name, LINK_DAYS * 86400))
@@ -141,22 +179,24 @@ class Signup:
             self.save(st)
         return before - len(st["invites"])
 
-    def join(self, code, name, display=""):
-        """An invite code and a name: the account, and the link. The code counts only when the
-        account was made."""
+    def join(self, code, name, display="", page="", password=None):
+        """An invite code and a name: the account, and what its person needs (see make_account).
+        The code counts only when the account was made."""
         name = self.check_name(name)
+        if password is not None and len(password) < 10:
+            raise KiwiError("A password has 10 characters at least.")
         with self.lock:
             st = self.load()
             inv = next((i for i in st["invites"] if i["digest"] == _digest(code or "")), None)
             if not inv or inv["used"] >= inv["uses"] or inv["until"] <= self.clock():
                 raise KiwiError("That invite code is not good (any more). Ask the person who gave it to you for a new one.")
-            link = self.make_account(name, display)
+            made = self.make_account(name, display, page, password)
             inv["used"] += 1
             self.save(st)
-        return link
+        return made
 
     # ---- requests --------------------------------------------------------------------------
-    def ask(self, name, why, address=""):
+    def ask(self, name, why, address="", page=""):
         """A request: its code (shown once), with which the person comes back."""
         name = self.check_name(name)
         why = " ".join(str(why or "").split())[:400]
@@ -175,7 +215,7 @@ class Signup:
                 raise KiwiError("Someone asked for that name already. Choose another one.")
             code = _code("ask")
             st["requests"].append({"digest": _digest(code), "hint": code[-4:], "name": name, "why": why, "at": now,
-                                   "state": "waiting", "link": "", "link_until": 0})
+                                   "state": "waiting", "link": "", "link_until": 0, "page": page})
             st["asked"][_digest(address)] = hour + [now]
             st["asked"] = {k: v for k, v in st["asked"].items() if v and max(v) > now - 3600}
             self.save(st)
@@ -194,7 +234,8 @@ class Signup:
             if not r:
                 raise KiwiError("no waiting request %s" % hint)
             if accept:
-                r["link"], r["link_until"] = self.make_account(r["name"], r["name"]), self.clock() + LINK_DAYS * 86400
+                # what the person needs, kept until they come for it or a day has passed
+                r["link"], r["link_until"] = json.dumps(self.make_account(r["name"], r["name"], r.get("page", ""))), self.clock() + LINK_DAYS * 86400
                 r["state"] = "accepted"
             else:
                 r["state"] = "denied"
@@ -203,53 +244,68 @@ class Signup:
         return r["state"]
 
     def status(self, code):
-        """What became of a request: (state, link or ""). An accepted request's link is shown
-        until it expires; then the people who run the network make a new one."""
-        st = self.load()
-        r = next((x for x in st["requests"] if x["digest"] == _digest(code or "")), None)
-        if not r:
-            return "unknown", ""
-        if r["state"] == "accepted" and r["link"] and r["link_until"] > self.clock():
-            return "accepted", r["link"]
-        return ("expired" if r["state"] == "accepted" else r["state"]), ""
+        """What became of a request: (state, what its person needs or {}). Kanidm's link is shown
+        until it expires; a Jabber password made for the person is shown once, then forgotten."""
+        with self.lock:
+            st = self.load()
+            r = next((x for x in st["requests"] if x["digest"] == _digest(code or "")), None)
+            if not r:
+                return "unknown", {}
+            if r["state"] == "accepted" and r["link"] and r["link_until"] > self.clock():
+                made = json.loads(r["link"]) if r["link"].startswith("{") else {"link": r["link"]}
+                if made.get("password"):
+                    r["link"] = json.dumps(dict(made, password=""))      # once
+                    self.save(st)
+                return "accepted", made
+            return ("expired" if r["state"] == "accepted" else r["state"]), {}
 
 
 # ---- the page ---------------------------------------------------------------------------------
-JOIN = """{% extends "base.html" %}{% block title %}{{ brand }}: an account{% endblock %}{% block main %}
-<style>main{max-width:720px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media (max-width:680px){.two{grid-template-columns:1fr}}
-.link{font-size:1.05rem;word-break:break-all}</style>
+JOIN = """{% extends "base.html" %}{% block title %}{{ brand }}: {{ "a Jabber address" if jabber else "an account" }}{% endblock %}{% block main %}
+<style>main{max-width:760px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media (max-width:680px){.two{grid-template-columns:1fr}}
+.link{font-size:1.05rem;word-break:break-all}.big{font-size:1.25rem;font-weight:700;letter-spacing:.02em;word-break:break-all}</style>
 <div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ brand }}</h1>
-<a class="small" href="https://{{ id_host }}/ui/login">I have an account: sign in</a></div>
-<p class="sub">One account for the services of this network. No email address is asked: write down your name and
-keep the link you get until you have set your password.</p>
+{% if not jabber %}<a class="small" href="https://{{ id_host }}/ui/login">I have an account: sign in</a>{% endif %}</div>
+<p class="sub">{% if jabber %}A Jabber address at {{ host }}: chat with anyone on Jabber (XMPP), in an app like Conversations, Monal, Dino or Gajim.
+{% else %}One account for the services of this network.{% endif %} No email address is asked{% if not jabber %}: write down your name and
+keep the link you get until you have set your password{% endif %}.{% if onion %} Over Tor this page is <code>{{ onion }}</code>.{% endif %}</p>
 {% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
-{% if link %}<div class="card"><h2 style="margin-top:0">Your account {{ name }} is made</h2>
-<p>Set its password (or a passkey) now. The link works for a day, once:</p>
-<p><a class="btn primary link" href="{{ link }}">Set my password</a></p>
-<p class="muted small">Lost it? The people who run this network can make you a new one.</p></div>
+{% if made %}<div class="card"><h2 style="margin-top:0">{{ "Your Jabber address is ready" if made.address else "Your account " ~ name ~ " is made" }}</h2>
+{% if made.address %}<p class="big">{{ made.address }}</p>
+{% if made.password %}<p>Its password, shown this once: <b class="big">{{ made.password }}</b><br><span class="muted small">Sign in with it in your app, then change it there.</span></p>
+{% else %}<p>Sign in with it and your password in your app.</p>{% endif %}
+{% else %}<p>Set its password (or a passkey) now. The link works for a day, once:</p>
+<p><a class="btn primary link" href="{{ made.link }}">Set my password</a></p>{% endif %}
+<p class="muted small">Lost {{ "the password" if made.address else "it" }}? The people who run this network can help.</p></div>
 {% elif asked %}<div class="card"><h2 style="margin-top:0">Your request is waiting</h2>
-<p>Keep this code. Come back with it to see whether your account is ready:</p>
-<p><b style="font-size:1.3rem;letter-spacing:.04em">{{ asked }}</b></p>
+<p>Keep this code. Come back with it to see whether your {{ "address" if jabber else "account" }} is ready:</p>
+<p><b class="big">{{ asked }}</b></p>
 <p><a class="btn" href="/join/status?code={{ asked }}">See how it is</a></p></div>
 {% elif state %}<div class="card"><h2 style="margin-top:0">{{ {"waiting": "Still waiting", "denied": "Not this time",
-"expired": "The link has expired", "unknown": "No request with that code"}[state] }}</h2>
+"expired": "That was shown already, or has expired", "unknown": "No request with that code"}[state] }}</h2>
 <p>{{ {"waiting": "The people who run this network have not answered yet. Come back later.",
-"denied": "Your request was not accepted.", "expired": "Ask the people who run this network for a new link to set your password.",
+"denied": "Your request was not accepted.", "expired": "Ask the people who run this network for help.",
 "unknown": "Check the code, or ask again."}[state] }}</p></div>
 {% else %}<div class="two">
-<form class="card" method="post" action="/join/invite"><h2 style="margin-top:0">I have an invite code</h2>
+{% if ways.invites %}<form class="card" method="post" action="/join/invite"><h2 style="margin-top:0">I have an invite code</h2>
 <label for="i-code">Invite code</label><input id="i-code" name="code" placeholder="kiwi-xxxx-xxxx-xxxx" required autocomplete="off">
-<label for="i-name">Your name here</label><input id="i-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" required autocomplete="username"
+<label for="i-name">{{ "Your name (before the @)" if jabber else "Your name here" }}</label><input id="i-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" required autocomplete="username"
 placeholder="lowercase letters and digits">
-<div class="actions"><button class="primary">Make my account</button></div></form>
-<form class="card" method="post" action="/join/ask"><h2 style="margin-top:0">Ask for an account</h2>
-<label for="a-name">Your name here</label><input id="a-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" required autocomplete="username"
+{% if jabber %}<label for="i-pw">A password</label><input id="i-pw" name="password" type="password" minlength="10" required autocomplete="new-password">{% endif %}
+<div class="actions"><button class="primary">{{ "Make my address" if jabber else "Make my account" }}</button></div></form>{% endif %}
+{% if ways.requests %}<form class="card" method="post" action="/join/ask"><h2 style="margin-top:0">{{ "Ask for an address" if jabber else "Ask for an account" }}</h2>
+<label for="a-name">{{ "Your name (before the @)" if jabber else "Your name here" }}</label><input id="a-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" required autocomplete="username"
 placeholder="lowercase letters and digits">
 <label for="a-why">Who you are, and why</label><textarea id="a-why" name="why" rows="3" required minlength="10" maxlength="400"></textarea>
 <div class="actions"><button>Ask</button></div>
-<p class="muted small">The people who run this network read it. You get a code to come back with.</p></form></div>
-<form method="get" action="/join/status" class="row" style="margin-top:6px;justify-content:flex-start">
-<input name="code" placeholder="ask-xxxx-xxxx-xxxx" style="max-width:260px" aria-label="Request code"><button>See how my request is</button></form>
+<p class="muted small">The people who run this network read it. You get a code to come back with.</p></form>{% endif %}
+{% if ways.captcha %}<div class="card"><h2 style="margin-top:0">Without a code</h2>
+<p>Make your address right away, after a picture test{% if not ways.invites and not ways.requests %}: it is the way here{% endif %}.</p>
+<div class="actions"><a class="btn {{ "primary" if not ways.invites and not ways.requests else "" }}" href="/register/new">Make my address</a></div>
+<p class="muted small">One new address per Internet address in ten minutes. Your app can do this too.</p></div>{% endif %}
+</div>
+{% if ways.requests %}<form method="get" action="/join/status" class="row" style="margin-top:6px;justify-content:flex-start">
+<input name="code" placeholder="ask-xxxx-xxxx-xxxx" style="max-width:260px" aria-label="Request code"><button>See how my request is</button></form>{% endif %}
 {% endif %}
 {% if terms %}<h2>The rules</h2><div class="card">{% for line in terms.splitlines() if line.strip() %}<p>{{ line }}</p>{% endfor %}</div>{% endif %}
 {% endblock %}"""
@@ -270,8 +326,12 @@ def make_app(signup: Signup, brand="", terms=""):
     brand = brand or "Kiwi"
     terms = TERMS if terms is None or terms == "" else terms
 
-    def page(**kw):
-        return HTMLResponse(env.get_template("join.html").render(brand=brand, terms=terms, id_host=signup.id_host, nav=None, **kw))
+    def page(request=None, **kw):
+        host = (request.headers.get("host") or "").split(":")[0] if request is not None else ""
+        where = signup.ejabberd.get(host) or (next(iter(signup.ejabberd.values())) if signup.ejabberd else {})
+        return HTMLResponse(env.get_template("join.html").render(
+            brand=brand, terms=terms, id_host=signup.id_host, nav=None, jabber=bool(signup.ejabberd), host=where.get("host", ""),
+            onion=where.get("onion", ""), ways=signup.ways, **kw))
 
     def address(request):
         return request.headers.get("x-real-ip") or (request.client.host if request.client else "")
@@ -280,28 +340,36 @@ def make_app(signup: Signup, brand="", terms=""):
     def root():
         return RedirectResponse("/join", 302)
 
+    def page_host(request):
+        return (request.headers.get("host") or "").split(":")[0]
+
     @app.get("/join")
-    def join_page():
-        return page()
+    def join_page(request: Request):
+        return page(request)
 
     @app.post("/join/invite")
-    def join_invite(code: str = Form(""), name: str = Form("")):
+    def join_invite(request: Request, code: str = Form(""), name: str = Form(""), password: str = Form(None)):
+        if not signup.ways["invites"]:
+            return page(request, error="Invite codes are not taken here.")
         try:
-            return page(link=signup.join(code, name), name=name.strip().lower())
+            made = signup.join(code, name, page=page_host(request), password=password if signup.ejabberd else None)
+            return page(request, made=made, name=name.strip().lower())
         except KiwiError as e:
-            return page(error=str(e))
+            return page(request, error=str(e))
 
     @app.post("/join/ask")
     def join_ask(request: Request, name: str = Form(""), why: str = Form("")):
+        if not signup.ways["requests"]:
+            return page(request, error="Requests are not taken here.")
         try:
-            return page(asked=signup.ask(name, why, address(request)))
+            return page(request, asked=signup.ask(name, why, address(request), page=page_host(request)))
         except KiwiError as e:
-            return page(error=str(e))
+            return page(request, error=str(e))
 
     @app.get("/join/status")
-    def join_status(code: str = ""):
-        state, link = signup.status(code)
-        return page(link=link, name="", state="" if link else state)
+    def join_status(request: Request, code: str = ""):
+        state, made = signup.status(code)
+        return page(request, made=made, name="", state="" if made else state)
 
     @app.get("/join/healthz")
     def healthz():

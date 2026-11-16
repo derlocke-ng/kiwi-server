@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.146.0 — sign in at the hoster from the control page's first run
+
+- A machine with nothing on it: its questions now offer "Sign in and pick it" for a master at netcup,
+  as the app's wizard does. The setup code guards it; the sign-in at netcup runs on the machine (you
+  confirm it in a new tab), the account's servers are listed, and the one picked fills in the
+  address. Its login goes into the new network's sealed secrets (`secrets/netcup.token`), so the
+  master can be installed from the page without signing in again; nothing of it stays beside them.
+
 ## 2.145.0 — the role script on the control page
 
 - A machine's page links to "The role script": what Apply sends to it and runs there, made on

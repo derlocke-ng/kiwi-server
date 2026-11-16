@@ -15,7 +15,7 @@ run included. Compared command by command and setting by setting.
 | 6 | A copy of the network (`backup --local`), restore a network from a copy, a synced folder | "Save it now" only | **built** (not released yet): "Fetch a copy" on Backups downloads the network's copy, which the recovery key opens; a machine with nothing on it takes a copy on its first page ("I already have a network"); "Save it now" needs no passphrase and goes to every machine that is set up. Left: a copy is not signed (ROADMAP 21), the passphrase kind (`.tar.enc`) is restored with `kiwi-server restore` only, a synced folder |
 | 7 | Federation; SSH certificates | SSH certificates since 2.143.0 (Computers, "Let a key in for a while"); federation under Linked networks | **built** |
 | 8 | Prune now, full status, role script, doctor | prune and doctor since 2.144.0 (Backups, Help); a machine's status is on its page | role script since 2.145.0 (a machine's page) |
-| 9 | Sign in at the hoster and pick the server (wizard) | the address is typed | open |
+| 9 | Sign in at the hoster and pick the server (wizard) | "Sign in and pick it" since 2.146.0 | **built** |
 
 `check` and `watch` are allowed actions of the page without a button.
 
@@ -53,8 +53,8 @@ run included. Compared command by command and setting by setting.
 Since 2.91.2 the page has "Linked networks": what each partner may reach, who of it may come, and the two
 switches for leaving to the Internet through a partner. Linking a new network stays on a computer that holds both.
 
-Still open on the page: the
-hoster's sign-in in the wizard (prune, doctor and "start new": 2.144.0; the role script: 2.145.0). Still open in the app:
+Nothing is open on the page any more (prune, doctor and "start new": 2.144.0; the role script: 2.145.0;
+the hoster's sign-in in the first run: 2.146.0). Still open in the app:
 activity. (Preview, "update everything" and removing a phone: built in 2.92.0.)
 
 Since 2.93.0 and 2.94.0, in all three: what is done about a machine that does not answer (Settings, "When a

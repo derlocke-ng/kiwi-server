@@ -137,6 +137,7 @@ class Control:
         self._join = None                     # the join code that is out, if one is
         self._setup_code = None               # the first run's code, while there is no network here yet
         self._joined = ""                     # a starter: the network whose control node is taking it in
+        self._hoster = {}                     # the first run: a sign-in at a hoster, by its handle (hoster_start)
         self._tokens = {}                     # token -> (controller, expires): who may sync
 
     # ---- the password and the store ----------------------------------------------------
@@ -243,9 +244,57 @@ class Control:
         self.audit(user, "a waiting starter taken in", hosts=[made], address=address)
         return self.start("adopt", [made], user=user, at=address)
 
-    def first_run(self, code, password, answers, address="?"):
-        """The new network from the questionnaire's answers. Returns (recovery key, session token)."""
-        from . import setup as setupmod
+    # ---- the first run: a hoster's servers, after signing in there ------------------------
+    # The page's "Sign in and pick it": the device login runs here (the person confirms it at
+    # the hoster, in their browser), then the account's servers are listed. The login lands in
+    # RAM; first_run puts it into the new network's sealed secrets, as `init` does on a computer.
+    def hoster_start(self, provider, code, address="?"):
+        """A sign-in at the hoster, started: its handle, for hoster_state. The setup code guards it."""
+        from . import providers
+        if not self.fresh():
+            raise KiwiError("this machine has a network already")
+        if not self.setup_code_ok(code, address):
+            raise KiwiError("that is not the setup code. After five wrong tries, wait ten minutes")
+        who = providers.get(provider)
+        handle = pysecrets.token_urlsafe(18)
+        d = os.path.join(self.run, "hoster")
+        shutil.rmtree(d, ignore_errors=True)            # one sign-in at a time: an older one is dropped
+        os.makedirs(d, mode=0o700)
+        state = {"provider": who.id, "name": who.name, "state": "starting", "url": "", "rows": [], "error": "",
+                 "token": os.path.join(d, "%s.token" % who.id)}
+        self._hoster = {handle: state}
+
+        def work():
+            try:
+                who.login(state["token"], lambda url: state.update(state="signing-in", url=url))
+                rows = who.servers(state["token"])
+                state.update(rows=rows, state="listed" if rows else "failed",
+                             error="" if rows else "%s lists no server for this account" % who.name)
+            except Exception as e:      # noqa: BLE001 - said on the page, whatever it was
+                state.update(state="failed", error=str(e).replace("error: ", "")[:200])
+        threading.Thread(target=work, daemon=True).start()
+        return handle
+
+    def hoster_state(self, handle):
+        """{provider, name, state (starting, signing-in, listed, failed), url, rows, error}, or None."""
+        s = self._hoster.get(handle or "")
+        return None if s is None else {k: s[k] for k in ("provider", "name", "state", "url", "rows", "error")}
+
+    def _hoster_pick(self, handle, answers):
+        """The picked server, checked against the list the sign-in gave: (token path, its row)."""
+        s = self._hoster.get(handle or "")
+        if not s or s["state"] != "listed" or s["provider"] != answers.get("master_where"):
+            raise KiwiError("the sign-in at the hoster is gone (this machine restarted?): sign in there again, "
+                            "or type the address")
+        row = next((r for r in s["rows"] if str(r["id"]) == str(answers["provider_server"])), None)
+        if row is None or not os.path.isfile(s["token"]):
+            raise KiwiError("that server is not in the hoster's list: sign in there again")
+        return s["token"], row
+
+    def first_run(self, code, password, answers, address="?", hoster=""):
+        """The new network from the questionnaire's answers. Returns (recovery key, session token).
+        `hoster`: the handle of a sign-in at the hoster whose server was picked (hoster_start)."""
+        from . import providers, setup as setupmod
         with self.lock:
             if not self.fresh():
                 raise KiwiError("this machine has a network already")
@@ -259,12 +308,20 @@ class Control:
             bad = setupmod.check(answers)
             if bad:
                 raise KiwiError("; ".join(bad.values()))
+            login = None
+            if answers.get("provider_server"):
+                login, row = self._hoster_pick(hoster, answers)
+                answers = dict(answers, provider_server=row["id"])
             tmp = os.path.join(self.run, "first-run")       # in RAM
             shutil.rmtree(tmp, ignore_errors=True)
             os.makedirs(tmp, mode=0o700)
             try:
                 data, _made = setupmod.make(answers, tmp)
                 setupmod.write(os.path.join(tmp, "fleet.yaml"), data)
+                if login:                       # the hoster's login is the network's now, sealed with its secrets
+                    keep = os.path.join(tmp, providers.get(answers["master_where"]).token_file())
+                    os.makedirs(os.path.dirname(keep), mode=0o700, exist_ok=True)
+                    util.write_bytes(keep, util.read_bytes(login), 0o600)
                 st = storemod.Store(tmp)
                 recovery, _saved = st.init()
                 made = Control(os.path.join(tmp, "fleet.yaml"), run_dir=os.path.join(tmp, "run"))
@@ -282,6 +339,8 @@ class Control:
                 shutil.rmtree(tmp, ignore_errors=True)
             self.store = storemod.Store(self.fleet_dir)
             self._setup_code = None
+            self._hoster = {}
+            shutil.rmtree(os.path.join(self.run, "hoster"), ignore_errors=True)
         self.audit("admin", "first run: the network was made on this machine's page", address=address)
         return recovery, self.login(password, address)
 

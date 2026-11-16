@@ -2170,6 +2170,44 @@ def cmd_serve(args):
     web.serve(c, args.listen)
 
 
+ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
+ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber")
+
+
+def cmd_accounts(args):
+    """The network's accounts (the accounts module), from here: invite codes and requests (the
+    sign-up page's), and the accounts themselves with the links that set their passwords. Prints
+    JSON: the control page reads it."""
+    fleet, roles, ms = load(args)
+    found = []
+    for h in fleet.hosts.values():
+        if h.role in roles and not h.validate(roles):
+            rolesmod.resolve_settings(roles[h.role], h, ms)
+            if "accounts" in (h.modules or []) and (not args.to or h.name == args.to):
+                found.append(h)
+    if not found:
+        raise KiwiError("no machine runs the accounts module%s" % (" called %s" % args.to if args.to else ""))
+    if len(found) > 1:
+        raise KiwiError("several machines run the accounts module (%s): say which with --to" % ", ".join(h.name for h in found))
+    h = found[0]
+    prefix = "km" if roles[h.role].node_type == "master" else "kn"
+    what, rest = args.what, [a for a in (args.arg or [])]
+    if what in ACCOUNT_PAGE_OPS:
+        extra = []
+        if what == "invite":
+            extra = ["--uses", str(args.uses), "--days", str(args.days), "--note", args.note or ""]
+        cmd = "sudo podman exec %s-signup kiwi-server signup %s --state /state" % (
+            prefix, " ".join(shlex.quote(x) for x in [what] + rest[:1] + extra))
+    elif what in ACCOUNT_OPS:
+        name = {"create": "create", "link": "reset", "list": "list", "delete": "delete", "jabber": "jabber"}[what]
+        cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); "
+               "sudo sh \"$S\" %s" % " ".join(shlex.quote(x) for x in [name] + rest[:3]))
+    else:
+        raise KiwiError("accounts: %s" % ", ".join(ACCOUNT_PAGE_OPS + ACCOUNT_OPS))
+    out = remote.run(remote.reach(h, args.ssh), cmd).decode(errors="replace").strip()
+    print(out)
+
+
 def cmd_signup(args):
     """The sign-up page of the network's accounts (the accounts module runs it), and what the
     control node asks of it: invite codes, the requests, accepting or denying one."""
@@ -3412,6 +3450,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
+  kiwi-server accounts <fleet> invite|requests|accept|deny|create|link|list|delete …
+                                                the network's accounts: invite codes, requests, accounts, password links
   kiwi-server signup serve|invite|requests|…   the accounts' sign-up page, in the accounts module's container
   kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
@@ -3581,6 +3621,12 @@ def build_parser():
     s.add_argument("--identity", metavar="FILE",
                    help="a file with this computer's age secret key, instead of the keyring (join writes it)")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the control node")
+    s = sub("accounts", cmd_accounts); s.add_argument("fleet"); s.add_argument("what"); s.add_argument("arg", nargs="*")
+    s.add_argument("--to", metavar="HOST", help="the machine with the accounts module, when there are several")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach it")
+    s.add_argument("--uses", type=int, default=1, help="invite: how many accounts the code makes")
+    s.add_argument("--days", type=int, default=14, help="invite: how long the code is good")
+    s.add_argument("--note", default="", help="invite: for whom")
     s = sub("signup", cmd_signup); s.add_argument("what"); s.add_argument("arg", nargs="?")
     s.add_argument("--state", default="/state", metavar="DIR", help="where the invites and requests are kept")
     s.add_argument("--kanidm", default="", metavar="URL", help="Kanidm's address on the stack network")

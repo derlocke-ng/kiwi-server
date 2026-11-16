@@ -255,6 +255,9 @@ strangers should sign up.
   needs a passkey, or a password and a code from an authenticator app.
 - **Jabber** keeps its own accounts. With `ldap: true` it can take the network's
   accounts too, with the same password, for the people in the group `jabber`.
+- **On the control page, Accounts** shows the requests to accept or deny, makes
+  invite codes, and makes accounts and new password links; `kiwi-server accounts
+  <fleet> …` does the same from a terminal.
 - On the machine, `sudo sh ~/docker/kiwi/accounts.sh` makes accounts and their
   links (`create`, `reset`, `list`, `delete`, `jabber NAME on|off`). The sign-up
   page does it with a token of its own, which may make people and nothing else.
@@ -266,8 +269,9 @@ Tried on a test node (16 November 2026):
 - Accounts made, listed, joined to Jabber, deleted.
 - In a real browser: a person set a password with the link and signed in, and a wrong password was refused.
 
-Not tried yet: the sign-up page on a machine (it comes with the control image of
-this release), signing in to Forgejo or Nextcloud with these accounts.
+Tried too (16 November 2026): a stranger signed up with an invite code and by
+asking, in a real browser. Not tried yet: signing in to Forgejo or Nextcloud with
+these accounts.
 
 ## Authenticator
 

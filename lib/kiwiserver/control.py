@@ -1050,6 +1050,26 @@ class Control:
             raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
         return r.stdout
 
+    def accounts(self, *argv, user="admin"):
+        """The network's accounts (`kiwi-server accounts`): JSON as it answers. What changes
+        something (a code made, a request answered, an account made, a link, one deleted) is in
+        the activity list."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        r = subprocess.run(list(self.kiwi) + ["accounts", self.fleet_path] + [str(a) for a in argv], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=180)
+        if r.returncode:
+            raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
+        if argv and argv[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber"):
+            self.audit(user, "accounts: %s" % argv[0], name=" ".join(str(a) for a in argv[1:2]))
+        try:
+            return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+        except (ValueError, IndexError):
+            raise KiwiError("the accounts' answer could not be read")
+
+    def has_accounts(self):
+        return any("accounts" in (h.get("modules") or []) for h in (self.fleet_info() or {}).get("hosts") or [])
+
     def onion(self):
         """The hidden services (`onion --porcelain`): {"<service>.<machine>": {address, clients, site}}."""
         if self.locked():

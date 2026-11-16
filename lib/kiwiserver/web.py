@@ -891,6 +891,47 @@ asked the way you reach them, and nothing else.{% else %}This page needs no logi
 settings. The people who run this network see more on their control page.{% endif %}</p>
 {% endblock %}""",
 
+    "accounts.html": """{% extends "base.html" %}{% block main %}
+<h1>Accounts</h1><p class="sub">The network's accounts (Kanidm): who may sign in to its services, and who asked to.
+People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noopener">{{ id_host }}/join</a>, with an invite code or by asking.</p>
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+{% if not available %}<div class="card"><p>No machine runs the accounts module yet. Add <code>accounts</code> to a machine's modules
+(its Settings), then Apply it.</p></div>{% else %}
+{% if shown %}<div class="banner ok">{{ shown.title }}</div><div class="card"><p>{{ shown.text }}</p>
+<p><code style="font-size:1rem;word-break:break-all">{{ shown.value }}</code>
+<button type="button" onclick="navigator.clipboard.writeText('{{ shown.value }}');this.textContent='Copied'">Copy</button></p>
+<p class="muted small">{{ shown.note }}</p></div>{% endif %}
+<div class="stats"><div class="stat"><span class="lbl">Accounts</span><b>{{ people|length }}</b></div>
+<div class="stat {{ "warn" if waiting else "" }}"><span class="lbl">Waiting requests</span><b>{{ waiting|length }}</b></div>
+<div class="stat"><span class="lbl">Invite codes</span><b>{{ live|length }}</b></div></div>
+<h2>Asked for an account</h2>
+{% if waiting %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Who, and why</th><th class="wide">When</th><th></th></tr></thead><tbody>
+{% for r in waiting %}<tr><td><b>{{ r.name }}</b></td><td>{{ r.why }}</td><td class="wide sm">{{ age(now - r.at) }} ago</td>
+<td style="white-space:nowrap"><form class="inline" method="post" action="/accounts/accept">{{ tok }}<input type="hidden" name="hint" value="{{ r.hint }}"><button class="primary">Accept</button></form>
+<form class="inline" method="post" action="/accounts/deny" onsubmit="return confirm('Deny {{ r.name }}?')">{{ tok }}<input type="hidden" name="hint" value="{{ r.hint }}"><button>Deny</button></form></td></tr>{% endfor %}</tbody></table></div>
+<p class="muted small">Accepted: the account is made, and the person sees the link that sets their password when they come back with their request code.</p>
+{% else %}<p class="muted">Nobody is waiting.</p>{% endif %}
+<h2>Invite codes</h2>
+<form class="card row" method="post" action="/accounts/invite" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
+<div><label for="inv-note">For whom</label><input id="inv-note" name="note" placeholder="Anna, the climbing club" maxlength="80"></div>
+<div style="max-width:120px"><label for="inv-uses">Accounts</label><input id="inv-uses" name="uses" type="number" min="1" max="50" value="1"></div>
+<div style="max-width:120px"><label for="inv-days">Good for (days)</label><input id="inv-days" name="days" type="number" min="1" max="90" value="14"></div>
+<button class="primary">Make an invite code</button></form>
+{% if invites %}<div class="scroll"><table class="tbl"><thead><tr><th>Code</th><th>For whom</th><th>Used</th><th class="wide">Good until</th><th></th></tr></thead><tbody>
+{% for i in invites|reverse %}<tr><td>…{{ i.hint }}</td><td>{{ i.note or "–" }}</td><td>{{ i.used }} of {{ i.uses }}</td>
+<td class="wide sm">{% if i.live %}{{ age(i.until - now) }} more{% else %}<span class="badge plain">over</span>{% endif %}</td>
+<td>{% if i.live %}<form class="inline" method="post" action="/accounts/revoke">{{ tok }}<input type="hidden" name="hint" value="{{ i.hint }}"><button>Withdraw</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+<h2>The accounts</h2>
+<form class="card row" method="post" action="/accounts/create" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
+<div><label for="acc-name">Make one yourself</label><input id="acc-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" placeholder="lowercase letters and digits" required></div>
+<button>Make the account</button></form>
+{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th><th></th></tr></thead><tbody>
+{% for p in people %}<tr><td><b>{{ p.name }}</b></td><td class="wide">{{ p.display }}</td><td class="wide">{{ "yes" if p.jabber else "–" }}</td>
+<td style="white-space:nowrap"><form class="inline" method="post" action="/accounts/link">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>New password link</button></form>
+<form class="inline" method="post" action="/accounts/delete" onsubmit="return confirm('Delete the account {{ p.name }}? Its person can no longer sign in anywhere.')">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>Delete</button></form></td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">No accounts yet.</p>{% endif %}{% endif %}
+{% endblock %}""",
+
     "help.html": """{% extends "base.html" %}{% block main %}
 <h1>Help</h1>
 <h2>What is this page?</h2><p>This machine looks after your network. It checks every machine every ten minutes, and from
@@ -1074,7 +1115,8 @@ def ago(t):
 # (address, label, picture, group): the first three stand alone and are the phone's bar; the
 # rest come under the word of their group
 NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/services", "Services", "grid", ""),
-       ("/devices", "Devices", "phone", "Access"), ("/access", "Who may reach what", "shield", "Access"),
+       ("/devices", "Devices", "phone", "Access"), ("/accounts", "Accounts", "people", "Access"),
+       ("/access", "Who may reach what", "shield", "Access"),
        ("/federation", "Linked networks", "link", "Access"),
        ("/backups", "Backups", "box", "Safety"), ("/recovery", "If something breaks", "buoy", "Safety"),
        ("/controllers", "Computers", "screen", "Safety"),
@@ -1082,6 +1124,7 @@ NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/se
 # line drawings, 24 by 24, drawn here: nothing is fetched from anywhere
 ICONS = {
     "home": '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+    "people": '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.4.2 4.2 1.9 4.8 4.8"/>',
     "phone": '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 17.5h2"/>',
     "box": '<path d="M3 5h18v4H3z"/><path d="M5 9v10h14V9"/><path d="M10 13h4"/>',
     "shield": '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/>',
@@ -1905,6 +1948,62 @@ def make_app(control: Control):
         if not user(request):
             return login_page()
         return devices_page(request)
+
+    def accounts_page(request, **kw):
+        available, people, invites, requests, id_host, error = control.has_accounts(), [], [], [], "", kw.pop("error", None)
+        if available:
+            try:
+                for p in control.accounts("list") or []:
+                    name = (p.get("name") or [""])[0]
+                    people.append({"name": name, "display": (p.get("displayname") or [name])[0],
+                                   "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or [])})
+                invites = control.accounts("invites") or []
+                requests = control.accounts("requests") or []
+            except KiwiError as e:
+                error = error or str(e)
+        info = control.fleet_info() or {}
+        holder = next((h for h in info.get("hosts") or [] if "accounts" in (h.get("modules") or [])), None) or {}
+        id_host = next((s for s, label in (holder.get("site_labels") or {}).items() if label == "Accounts"),
+                       "id.%s" % holder.get("hostname", ""))
+        now = time.time()
+        return page("accounts.html", request, "/accounts", available=available, people=sorted(people, key=lambda p: p["name"]),
+                    invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
+                    id_host=id_host, now=now, error=error, **kw)
+
+    @app.get("/accounts")
+    def accounts_get(request: Request):
+        if not user(request):
+            return login_page()
+        return accounts_page(request)
+
+    @app.post("/accounts/{what}")
+    def accounts_do(request: Request, what: str, hint: str = Form(""), name: str = Form(""), note: str = Form(""),
+                    uses: int = Form(1), days: int = Form(14), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            if what == "invite":
+                code = control.accounts("invite", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
+                                        "--note", note.strip()[:80], user=u)["code"]
+                return accounts_page(request, shown={"title": "An invite code", "value": code,
+                                                     "text": "Give it to %s. It makes %d account%s, for %d days:" % (
+                                                         note.strip() or "the person", uses, "" if uses == 1 else "s", days),
+                                                     "note": "It is shown this once. They enter it at the sign-up page with a name of their choice."})
+            if what in ("accept", "deny", "revoke"):
+                control.accounts(what, hint.strip(), user=u)
+                return accounts_page(request)
+            if what in ("create", "link"):
+                answer = control.accounts(what, name.strip().lower(), user=u)
+                return accounts_page(request, shown={"title": "The account %s" % answer["name"] if what == "create" else "A new password link for %s" % answer["name"],
+                                                     "value": answer["link"], "text": "Hand this link to its person: it sets the password or a passkey.",
+                                                     "note": "It works for a day, once. Nobody else should see it."})
+            if what == "delete":
+                control.accounts("delete", name.strip().lower(), user=u)
+                return accounts_page(request)
+        except KiwiError as e:
+            return accounts_page(request, error=str(e))
+        return accounts_page(request, error="not a thing to do here")
 
     @app.post("/devices/{what}")
     def devices_do(request: Request, what: str, name: str = Form(""), group: str = Form(""), csrf: str = Form("")):

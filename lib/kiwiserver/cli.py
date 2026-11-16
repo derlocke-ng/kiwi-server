@@ -271,6 +271,7 @@ class Renderer:
         self._groups = {}
         self._partners = {}
         self._admin = {}        # hostname -> the full names of its admin pages
+        self.aliases = set()     # VPN names that send on to a public name (no service of their own)
         self._told = set()      # (machine, service): what was said once about a hidden service
 
     def prepare(self, host):
@@ -317,6 +318,11 @@ class Renderer:
                         self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt"))))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
+                # a VPN name that sends on to a public one: in the DNS and the certificate, but no service of its own
+                rr = modmod.Renderer(self.ms)
+                ordered = self.ms.resolve(spec.modules, spec.node_type)
+                _up, blocks = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
+                self.aliases.update(b["alias"] for b in blocks if b.get("alias") and b["alias"] != b["server_name"])
                 mesh_only += modmod.Renderer(self.ms).mesh_only_names(spec)
                 if role.node_type != "master":      # its public names (with a public proxy) and the ports its modules ask for
                     public, ports = modmod.Renderer(self.ms).exposure(spec)
@@ -902,9 +908,9 @@ def cmd_list(args):
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
-                     "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname],
+                     "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname and n not in r.aliases],
                      # what each site is, in words: the app and the page say the same
-                     "site_labels": {n: healthmod.label(n) for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname},
+                     "site_labels": {n: healthmod.label(n) for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname and n not in r.aliases},
                      "admin_sites": sorted(r._admin.get(h.hostname) or []),
                      "logins": [] if errs else loginsmod.listed(h, roles, ms),     # without the passwords
                      "status": o.status(), "dir": o.dir, "iso": o.iso,

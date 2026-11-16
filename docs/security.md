@@ -138,5 +138,8 @@ A disk can open itself at boot. The `tang` module on one node serves a
   - `sshca fleet.yaml sign ~/.ssh/id_ed25519.pub --days 30` lets a key in on
     every machine for that long.
   - `sshca fleet.yaml trust` puts the CA in your `~/.ssh/known_hosts`.
+  - On the control page: Computers, "Let a key in for a while" makes the CA
+    and signs a pasted public key; the certificate is shown once, to save next
+    to the key. In the app: SSH certificates… in the menu.
   - `admin.ssh_keys` keep working beside it; the unlock at boot keeps its own
     key.

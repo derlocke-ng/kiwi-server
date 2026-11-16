@@ -1076,6 +1076,47 @@ class Control:
         except (ValueError, IndexError):
             raise KiwiError("the accounts' answer could not be read")
 
+    # ---- the fleet's SSH CA: keys let in for a while (kiwi-server sshca) --------------------
+    def sshca(self):
+        """Is there a CA, and its fingerprint (what `sshca` shows)."""
+        pub = os.path.join(self.fleet_dir, "secrets", "ssh_ca.pub")
+        if self.locked() or not os.path.isfile(pub):
+            return {"made": False, "fingerprint": ""}
+        r = subprocess.run(["ssh-keygen", "-l", "-f", pub], capture_output=True, text=True)
+        return {"made": True, "fingerprint": (r.stdout.split() or ["", ""])[1] if r.returncode == 0 else ""}
+
+    def sshca_do(self, *argv, user="admin"):
+        """`kiwi-server sshca FLEET …`, its last words."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        r = subprocess.run(list(self.kiwi) + ["sshca", self.fleet_path] + [str(a) for a in argv], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
+        if r.returncode:
+            raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
+        return (r.stdout + r.stderr).strip()
+
+    def sshca_init(self, user="admin"):
+        self.sshca_do("init", user=user)
+        self.save_fleet()
+        self.audit(user, "SSH CA made")
+
+    def sshca_sign(self, pubkey, days=30, user="admin"):
+        """A certificate (text) that lets this public key in on every machine for `days` days, as the
+        fleet's admin user. The key goes through RAM only."""
+        import re
+        import tempfile
+        pubkey = (pubkey or "").strip()
+        if "\n" in pubkey or not re.match(r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/=]+( .*)?$", pubkey):
+            raise KiwiError("that is not a public key: one line like ssh-ed25519 AAAA… name (the .pub file's contents)")
+        days = max(1, min(int(days or 30), 365))
+        with tempfile.TemporaryDirectory(dir=self.run if os.path.isdir(self.run) else None) as d:
+            key = os.path.join(d, "key.pub")
+            util.write_text(key, pubkey + "\n", 0o600)
+            self.sshca_do("sign", key, "--days", str(days), user=user)
+            cert = util.read_text(os.path.join(d, "key-cert.pub")).strip()
+        self.audit(user, "a key let in for %d days" % days, name=(pubkey.split(" ", 2) + [""])[2][:60])
+        return cert
+
     def has_accounts(self):
         return any("accounts" in (h.get("modules") or []) for h in (self.fleet_info() or {}).get("hosts") or [])
 

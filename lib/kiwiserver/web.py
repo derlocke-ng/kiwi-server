@@ -845,6 +845,22 @@ onsubmit="return confirm('Leave {{ n }} out? It takes the new secrets at its nex
 services, and the VPN keys of the machines. That comes in a later version.</p></div>
 <details><summary>What happens when I remove one?</summary><p class="muted">It can no longer open the network or get
 anything new. It still knows what it saw before; if that computer was lost or stolen, replace the keys above.</p></details>
+<h2 id="ssh">Let a key in for a while</h2>
+<div class="card">{% if not ca.made %}<p>With the network's SSH certificate authority, each machine shows a certificate for its
+SSH key, and a key you let in here opens every machine for as long as you said, then no more. Someone who helps
+you for a week gets a key for a week.</p>
+<form method="post" action="/controllers/sshca-init">{{ tok }}<button class="primary">Make it</button></form>
+{% else %}{% if ca_made %}<p class="banner ok">Made. Apply each machine (Machines) so that it takes it.</p>{% endif %}<p class="muted small">The network's SSH certificate authority: <code>{{ ca.fingerprint }}</code></p>
+{% if cert %}<p class="banner ok">This lets the key in on every machine for {{ cert_days }} days. Save it next to the key, with
+<code>-cert.pub</code> at the end of the key's name (<code>id_ed25519-cert.pub</code> beside <code>id_ed25519.pub</code>): ssh finds it there.</p>
+<pre class="mono" id="cert" style="white-space:pre-wrap;word-break:break-all">{{ cert }}</pre>
+<button class="primary" onclick="navigator.clipboard.writeText(document.getElementById('cert').textContent);this.textContent='Copied'">Copy it</button>
+{% endif %}
+<form method="post" action="/controllers/sshca-sign">{{ tok }}
+<label for="k">The public key (the contents of its .pub file)</label>
+<textarea id="k" name="key" rows="3" placeholder="ssh-ed25519 AAAA… name@computer" required></textarea>
+<label for="d">For how many days</label><input id="d" name="days" type="number" min="1" max="365" value="30">
+<button>Let it in</button></form>{% endif %}</div>
 {% endblock %}""",
 
     "activity.html": """{% extends "base.html" %}{% block main %}
@@ -2335,7 +2351,8 @@ def make_app(control: Control):
         return "%s://%s" % (proto, request.headers.get("host") or request.url.netloc)
 
     def controllers_page(request, **kw):
-        return page("controllers.html", request, "/controllers", ways=control.controllers(), rot=control.rotation(), **kw)
+        return page("controllers.html", request, "/controllers", ways=control.controllers(), rot=control.rotation(),
+                    ca=control.sshca(), **kw)
 
     @app.get("/controllers")
     def controllers(request: Request):
@@ -2345,7 +2362,8 @@ def make_app(control: Control):
 
     @app.post("/controllers/{what}")
     def controllers_do(request: Request, what: str, name: str = Form(""), csrf: str = Form(""),
-                       old: str = Form(""), new: str = Form(""), again: str = Form("")):
+                       old: str = Form(""), new: str = Form(""), again: str = Form(""), key: str = Form(""),
+                       days: int = Form(30)):
         u = posted(request, csrf)
         if not u:
             return login_page()
@@ -2355,6 +2373,12 @@ def make_app(control: Control):
                 return controllers_page(request, invite=link, invite_qr=markupsafe.Markup(control.qr_svg(link)))
             if what == "remove":
                 control.remove(name, u)
+            if what == "sshca-init":
+                control.sshca_init(u)
+                return controllers_page(request, ca_made=True)
+            if what == "sshca-sign":
+                cert = control.sshca_sign(key, days, u)
+                return controllers_page(request, cert=cert, cert_days=max(1, min(days, 365)))
             if what == "password":
                 if new != again:
                     raise KiwiError("the two new passwords are not the same")

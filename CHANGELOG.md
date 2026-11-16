@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.143.0 — let a key in from the control page
+
+- Computers, "Let a key in for a while": the control page makes the network's SSH certificate
+  authority and signs a pasted public key for 1 to 365 days; the certificate is shown once, to save
+  next to the key (`id_ed25519-cert.pub`). The key passes through RAM only; each one let in is in
+  the activity list. The app (SSH certificates…) and `kiwi-server sshca` did this already.
+
 ## 2.142.0 — leave a machine out of a replacement, in the app
 
 - The app's "A computer was lost or stolen…" says which machines still wait on the old keys or secrets

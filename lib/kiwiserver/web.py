@@ -458,7 +458,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 <a class="tile" href="/machines"><b>Machines</b><span>How each one is, add one, update them all</span></a>
 <a class="tile" href="/services"><b>Services</b><span>Open what runs on them, with its login</span></a>
 <a class="tile" href="/devices"><b>Add a phone or laptop</b><span>{% if alone %}Without a master: your services at home{% else %}Put a device on your VPN with a QR code{% endif %}</span></a>
-<a class="tile" href="/access"><b>Say who may reach what</b><span>Which devices and linked networks open which machine or service</span></a></div>
+{% if not alone %}<a class="tile" href="/access"><b>Say who may reach what</b><span>Which devices and linked networks open which machine or service</span></a>{% endif %}</div>
 {% endblock %}""",
     "machines.html": """{% extends "base.html" %}{% block main %}
 {% set running = machines|rejectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}

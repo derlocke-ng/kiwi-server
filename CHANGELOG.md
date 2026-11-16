@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.151.0 — check and access without a master
+
+- `kiwi-server check` in a network without a master asks from the machine that answers for the
+  names (its Pi-hole) instead of stopping; `access` says that who may reach what comes with a master,
+  and the control page's Home leaves its tile out.
+
 ## 2.150.0 — add a master, from the page and the app
 
 - A network without a master: the control page's Machines has "Add a master" (its address on the

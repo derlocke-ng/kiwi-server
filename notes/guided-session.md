@@ -11,7 +11,7 @@ They are fixed afterwards in small releases, not during the session.
 | crumble (netcup VPS, 188.68.38.110) | the master | runs ~/kiwi2's RAM master | wiping it is allowed (`KIWI_NEVER` keeps the live master and sorbet safe) |
 | a new VM on sh3 | the first node | made from the starter stick | `virsh` on sh3, own VMs only; the `id-*` VMs stay untouched |
 | starter-test (VM on sh3, 192.168.2.177) | a second node | the starter stick, waiting | its stick is from 2.123.0: make a new one first |
-| this computer or the other | the operator | kiwi-server 2.135.0 | a fresh folder, e.g. ~/kiwi3 |
+| this computer or the other | the operator | kiwi-server 2.151.0 or later | a fresh folder, e.g. ~/kiwi3 |
 
 Never: the live master 94.16.108.143 (netcup 578583), the v1 network (gate, sh3's own services, m1, 192.168.2.20).
 
@@ -24,6 +24,13 @@ Never: the live master 94.16.108.143 (netcup 578583), the v1 network (gate, sh3'
 5. docs/network.md: devices on the VPN, the way to the Internet, who may reach what
 6. docs/roles.md: what a machine runs (Jabber, accounts)
 7. docs/gui.md: the app
+
+## A second way, since 2.149.0
+
+Start with "No master yet" on the starter's first page (the machine at home alone, services at
+home only), then "Add a master" on Machines with crumble's address. It tries the path a newcomer
+without a rented server takes, and the move onto the VPN afterwards. The drill
+`tests/drills/starter-vm.sh alone` does the first half in a local VM.
 
 ## Remarks
 

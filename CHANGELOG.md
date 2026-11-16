@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.152.4 — looking for a waiting disk no longer gets you banned
+
+- Is a machine waiting at boot for its disk key? kiwi-server asked its SSH port for every kind of
+  key (six connections, some of a kind the server lacks). fail2ban there (aggressive) counts those,
+  and after a few looks banned the computer that asked: in the power-cut drill of 17 November it
+  banned the operator's computer from papaya. Only the kinds of key on record are asked for now.
+- The power-cut drill logs in first and scans keys only when that fails. Result of its run on
+  17 November: every machine back by itself, papaya, lychee, quince, medlar and lime; the slowest
+  (quince) in 2.2 minutes; the control node unlocked by itself; all 37 names answer afterwards.
+
 ## 2.152.3 — kiwi-modules 0.61.2; the docs know a network without a master
 
 - kiwi-modules 0.61.2: its file writers have a temporary file per writer too.

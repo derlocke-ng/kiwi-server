@@ -162,6 +162,10 @@ def _certified(tgt):
         return False
 
 
+_KIND = {"ssh-ed25519": "ed25519", "ssh-rsa": "rsa", "ecdsa-sha2-nistp256": "ecdsa", "ecdsa-sha2-nistp384": "ecdsa",
+         "ecdsa-sha2-nistp521": "ecdsa"}       # a known_hosts key type: what ssh-keyscan -t calls it
+
+
 def _key_blobs(lines):
     return {f[2] for f in (line.split() for line in lines) if len(f) >= 3 and not f[0].startswith("#")}
 
@@ -171,9 +175,14 @@ def shows_key_from(address, port, known_hosts, runner=subprocess.run):
     if not os.path.isfile(known_hosts):
         return False
     with open(known_hosts) as f:
-        pinned = _key_blobs(f)
+        lines = f.read().splitlines()
+    pinned = _key_blobs(lines)
+    # only the kinds of key on record: one connection each. Every kind asked for meant six, some of
+    # them a kind the server does not have, and fail2ban there (aggressive) banned whoever asked often
+    kinds = sorted({_KIND.get(f[1], "") for f in (x.split() for x in lines) if len(f) >= 3 and not f[0].startswith("#")} - {""})
     try:
-        r = runner(["ssh-keyscan", "-T", "4", "-p", str(port), address], capture_output=True) if pinned else None
+        r = runner(["ssh-keyscan", "-T", "4"] + (["-t", ",".join(kinds)] if kinds else []) + ["-p", str(port), address],
+                   capture_output=True) if pinned else None
     except FileNotFoundError:
         return False
     return bool(r and pinned & _key_blobs((r.stdout or b"").decode(errors="replace").splitlines()))

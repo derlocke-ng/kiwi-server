@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Drill: a person signs in to Forgejo with the network's account, in a real browser.
 
-    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless]
+    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless|--vault]
 
 APP_NAME is Forgejo's name (git.<host>), with --nextcloud Nextcloud's (cloud.<host>), with --paperless
-Paperless' (paperless.<host>).
+Paperless' (paperless.<host>), with --vault Vaultwarden's (vault.<host>): there the person's first
+sign-on ends at "set a master password", which the network never sees.
 
 The machine with the accounts module (at ACCOUNTS_ADDRESS, its page ID_NAME) makes an account and
 its link; Firefox, told where ID_NAME and GIT_NAME are:
@@ -22,7 +23,7 @@ import sys
 
 fleet, acc_addr, idname, git_addr, gitname = sys.argv[1:6]
 nextcloud = "--nextcloud" in sys.argv
-app = "nextcloud" if nextcloud else "paperless" if "--paperless" in sys.argv else "forgejo"
+app = "nextcloud" if nextcloud else "paperless" if "--paperless" in sys.argv else "vault" if "--vault" in sys.argv else "forgejo"
 fd = os.path.dirname(os.path.abspath(fleet))
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile=" + os.path.join(fd, "secrets", "known_hosts"),
        "-i", os.path.join(fd, "secrets", "admin_ed25519"), "core@" + acc_addr]
@@ -55,11 +56,19 @@ with sync_playwright() as p:
     elif app == "paperless":
         q.goto("https://%s/accounts/login/" % gitname, wait_until="networkidle")
         q.screenshot(path="/shots/sso-1-paperless-login.png")
-        q.locator("a[href*='/accounts/oidc/accounts/login']").first.click()
+        q.get_by_text("accounts", exact=True).first.click()   # "or sign in via: accounts"
         q.wait_for_load_state("networkidle")
         go_on = q.get_by_role("button", name="Continue")   # allauth asks once before it leaves
         if go_on.count() and idname not in q.url:
             go_on.first.click()
+    elif app == "vault":
+        q.goto("https://%s/#/login" % gitname, wait_until="networkidle"); q.wait_for_timeout(2000)
+        q.screenshot(path="/shots/sso-1-vault-login.png")
+        q.get_by_text("single sign-on", exact=False).first.click(); q.wait_for_timeout(2500)
+        if idname not in q.url:                    # the web vault may ask for an identifier first
+            box = q.locator("input[formcontrolname=identifier], #identifier, input[type=text]")
+            if box.count():
+                box.first.fill("kiwi"); q.keyboard.press("Enter")
     else:
         q.goto("https://%s/user/login" % gitname, wait_until="networkidle")
         q.screenshot(path="/shots/sso-1-forgejo-login.png")
@@ -102,9 +111,11 @@ def say(ok, what):
     print("%s  %s" % ("PASS" if ok else "FAIL", what))
 
 
-label = {"nextcloud": "Nextcloud", "paperless": "Paperless", "forgejo": "Forgejo"}[app]
+label = {"nextcloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "forgejo": "Forgejo"}[app]
 say(res.get("at_accounts"), "%s's 'with accounts' leads to the accounts' page" % label)
-say(gitname in res.get("url", "") and (name in res.get("text", "") or "SSO-Drill" in res.get("text", "")),
+shows_person = name in res.get("text", "") or "SSO-Drill" in res.get("text", "") or (
+    app == "vault" and "master password" in res.get("text", "").lower())
+say(gitname in res.get("url", "") and shows_person,
     "back in %s as %s: %s" % (label, name, res.get("url", "")))
 subprocess.run(SSH + [SCRIPT + "delete %s" % name], capture_output=True)
 print("%d wrong" % bad)

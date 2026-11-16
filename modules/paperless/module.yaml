@@ -23,10 +23,15 @@ firewall:
 templates:
   compose: docker-compose.yml.j2
   ca_bundle: ca-bundle.sh.j2
+  accounts_script: paperless-accounts.sh.j2
+  accounts_service: kn-paperless-accounts.service.j2
 
 outputs:
   # the network's accounts sign people in here (kiwi-server accounts connect): Paperless trusts the fleet's CA for it
   ca_bundle: { path: "{{ container_prefix }}-paperless/init/10-kiwi-ca.sh", mode: 0755, when: accounts_client }
+  # and puts the people who come that way in the group "accounts", which it makes
+  accounts_script: { path: "kiwi/paperless-accounts.sh", mode: 0700, when: accounts_client }
+  accounts_service: { kind: host_unit, name: kn-paperless-accounts.service, when: accounts_client }
 
 derived:
   paperless_host: "{{ paperless_domain or 'paperless.' ~ hostname }}"

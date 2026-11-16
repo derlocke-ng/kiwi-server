@@ -3,6 +3,9 @@ services:
   {{ container_prefix }}-vault:
     image: {{ image }}
     container_name: {{ container_prefix }}-vault
+{% if accounts_client and ca_cert_dir %}
+    entrypoint: ["/kiwi-start.sh"]
+{% endif %}
     environment:
       - DOMAIN={{ vault_domain or 'https://vault.' ~ hostname }}
       - SIGNUPS_ALLOWED={{ 'true' if signups_allowed else 'false' }}
@@ -10,6 +13,21 @@ services:
       - SHOW_PASSWORD_HINT={{ 'true' if show_password_hint else 'false' }}
       - LOG_LEVEL={{ log_level }}
       - TZ={{ timezone }}
+{% if accounts_client %}
+      # the network's accounts: "Use single sign-on"; the person still keeps a master password for the vault
+      - SSO_ENABLED=true
+      - SSO_ONLY={{ 'true' if sso_only else 'false' }}
+      - SSO_AUTHORITY={{ accounts_issuer }}
+      - SSO_CLIENT_ID={{ accounts_client }}
+      - SSO_CLIENT_SECRET={{ accounts_secret }}
+      # the network's accounts take the client's secret, no PKCE (as for Forgejo)
+      - SSO_PKCE=false
+      - SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=true
+      # an account's first sign-on makes its vault user, signups off or not; it never takes over a
+      # user made here with an email and master password, even with the same address
+      - SSO_SIGNUPS_ALLOWED=true
+      - SSO_SIGNUPS_MATCH_EMAIL=false
+{% endif %}
 {% if admin_token %}
       - ADMIN_TOKEN={{ admin_token }}
 {% endif %}
@@ -26,3 +44,7 @@ services:
         max-size: 10m
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-vault:/data:z
+{% if accounts_client and ca_cert_dir %}
+      - {{ ca_cert_dir }}:/kiwi-ca:ro,z
+      - {{ docker_dir }}/{{ container_prefix }}-vault-kiwi/kiwi-start.sh:/kiwi-start.sh:ro,z
+{% endif %}

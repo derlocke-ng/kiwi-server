@@ -1,0 +1,6 @@
+#!/bin/sh
+# kiwi-server: the accounts' page has a certificate of the fleet's CA. Vaultwarden asks it over TLS
+# with the system's list: this list is the system's and the fleet's CA together, then Vaultwarden starts.
+cat /etc/ssl/certs/ca-certificates.crt /kiwi-ca/kiwiCA.crt > /tmp/kiwi-ca-bundle.pem
+export SSL_CERT_FILE=/tmp/kiwi-ca-bundle.pem
+exec /start.sh "$@"

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: vault
   title: Passwords (Vaultwarden)
-  version: 1.1.0
+  version: 1.2.0
   description: "Vaultwarden — the Bitwarden-compatible password manager, behind the reverse proxy"
   category: security
   node_types: [node]
@@ -22,6 +22,11 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  ca_start: ca-start.sh.j2
+
+outputs:
+  # the network's accounts sign people in here (kiwi-server accounts connect): Vaultwarden trusts the fleet's CA for it
+  ca_start: { path: "{{ container_prefix }}-vault-kiwi/kiwi-start.sh", mode: 0755, when: accounts_client }
 
 derived:
   # Vaultwarden takes ADMIN_TOKEN as the token itself or as an Argon2 hash of it ($argon2…)
@@ -98,6 +103,23 @@ settings:
     type: secret
     label: Admin panel token
     help: "Empty: the /admin panel stays off."
+    default: ""
+  - key: sso_only
+    type: bool
+    help: "With the network's accounts connected (kiwi-server accounts <fleet> connect <host> vault): only single sign-on, no sign-in with email and master password. The master password still unlocks the vault."
+    default: false
+  - key: accounts_client
+    group: Generated
+    help: "Set by kiwi-server when the network's accounts sign people in here (kiwi-server accounts <fleet> connect <host> vault): the client's name in Kanidm."
+    default: ""
+  - key: accounts_issuer
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: where Vaultwarden asks Kanidm about the person signing in."
+    default: ""
+  - key: accounts_secret
+    type: secret
+    group: Generated
+    help: "Set by kiwi-server with accounts_client: the client's secret, from the fleet's store."
     default: ""
   - key: extra_env
     type: map

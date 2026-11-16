@@ -2085,7 +2085,7 @@ def make_app(control: Control):
                 error = error or str(e)
         connectable = [{"host": h["name"], "module": m, "label": label,
                         "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-%s.json" % (h["name"], m)))}
-                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"))
+                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"), ("vault", "Vaultwarden (passwords)"))
                        if m in (h.get("modules") or [])]
         return page("accounts.html", request, "/accounts", available=available, connectable=connectable, jabber=jabber, people=sorted(people, key=lambda p: p["name"]),
                     invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
@@ -2135,7 +2135,7 @@ def make_app(control: Control):
                 control.accounts("delete", name.strip().lower(), user=u)
                 return accounts_page(request)
             if what == "connect":
-                labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless"}
+                labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden"}
                 module = note.strip() if note.strip() in labels else "git"
                 label = labels[module]
                 control.accounts("connect", name.strip(), module, user=u)

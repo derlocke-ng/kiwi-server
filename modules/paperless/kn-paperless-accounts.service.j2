@@ -1,0 +1,14 @@
+[Unit]
+Description=Paperless on {{ hostname }}: the group of people who sign in with the network's accounts
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=kiwi-stack.service
+Wants=kiwi-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/paperless-accounts.sh
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

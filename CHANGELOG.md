@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.137.0 — Vaultwarden signs people in with the network's accounts
+
+- `kiwi-server accounts FLEET connect HOST vault`, and Connect on the Accounts page: Vaultwarden
+  (kiwi-modules 0.59.0) offers "Use single sign-on". The person still sets a master password; a vault
+  user made earlier with an email and password is never taken over by a sign-on.
+- Paperless: a person from the network's accounts lands in the group `accounts` and can use it;
+  before, the new user could do nothing (kiwi-modules 0.59.1).
+- Drills: `sso-browser.py --vault`; `--paperless` clicks Paperless' "accounts" button.
+
 ## 2.136.0 — Paperless signs people in with the network's accounts; passwords over Tor work
 
 - `kiwi-server accounts FLEET connect HOST paperless`, and Connect on the Accounts page: Paperless

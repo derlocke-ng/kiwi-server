@@ -60,7 +60,7 @@ if [[ ${1:-} == address ]]; then
         for d in "$@"; do printf 'DNS=%s\n' "$d"; done
     } > "$file.new"
     chmod 0644 "$file.new"
-    mv -f "$file.new" "$file"
+    ks_replace "$file.new" "$file"
     networkctl reload
     networkctl reconfigure "$ifc"
     # it works when the card has the address and the router is there (seen on the wire: some do not answer pings)

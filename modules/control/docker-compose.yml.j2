@@ -10,10 +10,11 @@ services:
       # the opened store, job logs and renders: in RAM, gone with the container
       - XDG_RUNTIME_DIR=/run/kiwi
       # the network's name, colour, words and contact on the pages for everyone
-      - KIWI_BRAND={{ brand_name }}
-      - KIWI_ACCENT={{ brand_accent }}
-      - KIWI_ABOUT={{ about | replace('\n', ' ') }}
-      - KIWI_CONTACT={{ contact }}
+      # quoted: a sentence with ": " in it is no YAML map
+      - {{ ("KIWI_BRAND=" ~ brand_name) | tojson }}
+      - {{ ("KIWI_ACCENT=" ~ brand_accent) | tojson }}
+      - {{ ("KIWI_ABOUT=" ~ (about | replace('\n', ' '))) | tojson }}
+      - {{ ("KIWI_CONTACT=" ~ contact) | tojson }}
     tmpfs:
       - /run/kiwi:size={{ ram_mb }}m,mode=0700
     volumes:

@@ -1,0 +1,98 @@
+# Services for the public: accounts, sign-up, landing page, status
+
+Status: proposal, 16 November 2026. Nothing of it is built yet except the look of the pages.
+
+A network may open Jabber, Forgejo, Nextcloud, a pastebin and more to strangers, the way
+Disroot, systemli, Riseup, tchncs.de, envs.net and nixnet do. Then it needs what they have:
+a front page that lists the services, one account for all of them, sign-up rules, and a status
+page. This page says what they do, what software exists for it, and what kiwi-server should
+build on.
+
+## What community hosters do
+
+| | Accounts | Sign-up | Onion | Front page |
+|---|---|---|---|---|
+| Riseup | one account service | invite codes, not to be traded | every service | grouped service list, donate, status page |
+| systemli | own user app (userli) | invite codes, three per user after a week | ten services, the user portal too | service grid, news, terms |
+| tchncs.de | one account for most services | review with a reason, a small payment, or a tracked invite | none found | intro, status, donate, recommended services with activity, a "playground" |
+| envs.net | Linux accounts | request form, answered by hand | none found | service table, code of conduct, terms |
+| nixnet | one per service | open, captcha, one sign-up an hour, no email | the site | service list, donate |
+
+What they share:
+
+- **One account** for the services that have logins, not one per service.
+- **Sign-up is never wide open** for the bigger ones: invites that record who invited whom,
+  review by a person, or a small payment. Open sign-up only with a captcha and a rate limit.
+- **Terms** forbid spam, malware, harassment and illegal content, and keep the right to close
+  an account. Without an email address a lost password is lost: they say so.
+- **Onion addresses** for most services, the account page included. No hoster found refuses
+  sign-up over Tor.
+
+## Accounts: what to build on
+
+The apps and what they speak:
+
+| App | Login with an account provider |
+|---|---|
+| Forgejo, Nextcloud, Immich, Paperless | OpenID Connect |
+| Vaultwarden | OpenID Connect since 1.35 |
+| ejabberd (Jabber) | LDAP, or an external script; no OpenID Connect |
+| PrivateBin, Nostr relay | no accounts: nothing to do |
+
+The candidates:
+
+| | Weight | Sign-up rules | Speaks | Set up from files |
+|---|---|---|---|---|
+| Authentik | 2 GB with its database | invites, captcha, approval: the richest | OpenID Connect, LDAP | blueprints (YAML) |
+| Kanidm | about 80 MB | self-service portal; no open sign-up found | OpenID Connect, LDAP (read only) | config file, users by command |
+| Rauthy | about 50 MB | open sign-up, by email domain | OpenID Connect | config file, environment |
+| Pocket ID | about 130 MB | passkeys only, sign-up tokens | OpenID Connect | environment |
+| Keycloak | 1 GB and more | flows | OpenID Connect, LDAP | import files |
+
+**Proposal: an `accounts` module, with Kanidm or Authentik behind it, chosen by a test.**
+Kanidm is light enough for any node and covers Jabber through its LDAP. Its gap is sign-up
+rules, which kiwi-server could add as its own small page: an invite code, or a request that
+the people who run the network accept on the control page (as joining machines are accepted
+today). Authentik has the rules built in but needs 2 GB and a database. It belongs on a node
+with room, never on a small master.
+
+The test, on the test network:
+
+1. Kanidm and Authentik side by side on papaya.
+2. Forgejo and Nextcloud log in with each.
+3. ejabberd checks passwords over LDAP.
+4. A stranger signs up with an invite code, over the Internet and over Tor.
+5. Memory at rest and while logging in.
+
+## Status: what to build on
+
+kiwi-server already asks every service every ten minutes, from the network and the way a
+stranger reaches it, and keeps 90 days of it. The status page and the messages come from that.
+
+- **Gatus** (Go, Apache-2.0, configured by a YAML file) fits kiwi-server's way best, if a
+  public status page with more than ours is wanted: maintenance windows, its own alerts.
+- **Uptime Kuma** has the nicer status pages, but is configured by clicking only.
+
+**Proposal: keep our own checks and page.** Adopting Gatus would ask every service twice. Look
+at it again if people want maintenance notices or alerts that ours do not send.
+
+## The front page for strangers
+
+A page for each public name of the network, made from what kiwi-server knows:
+
+- each service with one line on what it is for;
+- its addresses: on the Internet, and as a hidden service;
+- whether it works now (from the status page);
+- how to get an account (from the `accounts` module);
+- the terms;
+- the operator's name, logo and colour (settings, so that other people who run kiwi-server
+  make it theirs).
+
+The Jabber sign-up page becomes part of it: it carries the terms, and the same rules as every
+other account.
+
+## Open questions for the owner
+
+1. Sign-up: invite codes, approval on the control page, or both?
+2. Should Jabber accounts be the same accounts as Forgejo and Nextcloud, or stay separate?
+3. Is an email address asked at sign-up (password reset), or never (more private)?

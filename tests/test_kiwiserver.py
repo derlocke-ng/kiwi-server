@@ -5429,8 +5429,12 @@ class TestStore(StoreBase):
                 t.start()
             for t in threads:
                 t.join()
-            opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))
-            self.assertIn(b"t7", opened)                                      # what was written is in it
+            opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))   # never broken
+            self.assertTrue(opened)
+        store.Store.for_fleet(self.f.path).sync()       # a refused one is saved by the next: all of it is there
+        opened = store.decrypt_file(recovery, os.path.join(self.tmp, "secrets.age"))
+        for i in range(8):
+            self.assertIn(b"t%d" % i, opened)
         self.assertEqual([n for n in os.listdir(self.tmp) if n.endswith(".tmp")], [])
 
     def test_init_moves_secrets_into_the_store(self):

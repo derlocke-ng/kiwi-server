@@ -91,8 +91,12 @@ A page for each public name of the network, made from what kiwi-server knows:
 The Jabber sign-up page becomes part of it: it carries the terms, and the same rules as every
 other account.
 
-## Open questions for the owner
+## Decided (owner, 16 November 2026)
 
-1. Sign-up: invite codes, approval on the control page, or both?
-2. Should Jabber accounts be the same accounts as Forgejo and Nextcloud, or stay separate?
-3. Is an email address asked at sign-up (password reset), or never (more private)?
+1. **Sign-up: both.** An invite code from someone who has an account, or a request that the
+   people who run the network accept on the control page.
+2. **Jabber accounts stay separate**, and can be joined to the network's accounts where the
+   operator wants it (ejabberd checks passwords over LDAP then).
+3. **No email address** at sign-up for now: the network runs no mail server. A lost password
+   is reset by the people who run the network (a reset link they hand over), and the sign-up
+   page says so.

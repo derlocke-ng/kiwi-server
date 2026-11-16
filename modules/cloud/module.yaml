@@ -98,6 +98,14 @@ backup:
   volumes: [nextcloud_aio_nextcloud]
   exclude: ["appdata_*/preview"]
 
+# wrong logins, as Nextcloud writes them into its log: fail2ban bans who keeps on
+fail2ban:
+  - name: cloud
+    container: nextcloud-aio-nextcloud
+    file: /mnt/ncdata/nextcloud.log
+    match: "Login failed"
+    failregex: '"remoteAddr":"<HOST>".*"message":"Login failed'
+
 settings:
   - key: nc_hostname
     label: Nextcloud hostname

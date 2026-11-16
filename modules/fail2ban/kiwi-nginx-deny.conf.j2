@@ -1,0 +1,10 @@
+# kiwi-server: a ban on {{ hostname }} is a line in nginx's list of banned addresses: the visitors of
+# its public sites come through the master, and only nginx knows their address (the PROXY protocol).
+# kn-nginx-banned.path sees the list change and has nginx read it again.
+[Definition]
+actionstart = touch /kiwi-banned/fail2ban.map
+actionflush = : > /kiwi-banned/fail2ban.map
+actionstop  =
+actioncheck =
+actionban   = grep -qxF '<ip> 1;' /kiwi-banned/fail2ban.map || echo '<ip> 1;' >> /kiwi-banned/fail2ban.map
+actionunban = grep -vxF '<ip> 1;' /kiwi-banned/fail2ban.map > /kiwi-banned/fail2ban.map.new; cat /kiwi-banned/fail2ban.map.new > /kiwi-banned/fail2ban.map; rm -f /kiwi-banned/fail2ban.map.new

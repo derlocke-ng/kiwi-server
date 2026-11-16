@@ -1,0 +1,16 @@
+[Unit]
+Description=fail2ban on {{ hostname }}: the apps' wrong logins, out of their logs
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Service]
+ExecStartPre=/usr/bin/install -d -m 0755 {{ docker_dir }}/{{ container_prefix }}-fail2ban/apps
+ExecStartPre=/bin/sh -c 'for f in{% for j in f2b_jails %} {{ docker_dir }}/{{ container_prefix }}-fail2ban/apps/{{ j.name }}.log{% endfor %}; do : > "$f"; done'
+ExecStart=/bin/sh {{ docker_dir }}/kiwi/f2b-tap.sh
+KillMode=control-group
+# a day's worth: then it starts again on empty files
+RuntimeMaxSec=1d
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

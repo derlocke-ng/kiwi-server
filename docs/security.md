@@ -109,20 +109,28 @@ A disk can open itself at boot. The `tang` module on one node serves a
   until you drop the old line (`ssh-keygen -R <host> -f secrets/known_hosts`).
 - **SSH off port 22**: `admin: { ssh_port: 41022 }` moves sshd at the next
   apply without a lockout (both ports until the new one is proven).
-- **fail2ban**: the `fail2ban` module (on every master by default) bans an
-  address after five failed logins in ten minutes and drops an address
-  opening more than 20 SSH connections a minute. The mesh is never banned.
-  On a master with public sites it also reads the proxy's logs: scanners, bad
-  requests, an address that is refused twenty times (wrong passwords, closed
-  pages), and one that keeps asking faster than the proxy allows. Who is banned
-  three times in a day is out for a week, on every port. A machine's page says
-  how many addresses are kept out right now.
+- **fail2ban**: the `fail2ban` module (on every master, and by itself on a
+  node whose sites strangers reach) bans an address after five failed logins
+  in ten minutes and drops an address opening more than 20 SSH connections a
+  minute. Who is banned three times in a day is out for a week, on every port.
+  A machine's page says how many addresses are kept out right now.
+  - **At public sites** it reads each app's own log for wrong logins: Forgejo,
+    Vaultwarden, Nextcloud (Jabber counts its own). It also bans scanners,
+    bad requests, an address refused forty times, and a flood (120 refused
+    requests in a minute).
+  - **Never** for loading a page, and never the mesh or the addresses the
+    network's own machines come from: the master sees them at the VPN tunnels
+    and tells its nodes.
+  - **On a node behind the master** the ban is nginx's (403), since only nginx
+    knows the visitor's address there.
+  - `tests/drills/fail2ban.py` proves all of this from a stranger's address.
 - **Rate limits**: a site that strangers reach (a public name, a hidden
-  service) answers one address 20 times a second, with 80 at once for a page
-  that loads many files; more gets "429 Too Many Requests". A hidden service's
-  visitors all look like one address, so there the limit is the site's, three
-  times as high. `reverse-proxy: { rate_limit: 50 }` changes it, `0` switches
-  it off. Sites of the VPN are not limited.
+  service) answers one address 20 times a second, with 80 at once; more gets
+  "429 Too Many Requests". A page's own files (scripts, styles, pictures,
+  fonts) are not counted. A hidden service's visitors all look like one
+  address, so there the limit is the site's, three times as high.
+  `reverse-proxy: { rate_limit: 50 }` changes it, `0` switches it off. Sites of
+  the VPN are not limited.
 - **An SSH CA** (`kiwi-server sshca fleet.yaml init`, kept as
   `secrets/ssh_ca`): every apply then gives the machine a host certificate
   for its names and addresses, so it is known at a new address without

@@ -145,10 +145,15 @@ http {
 {% endif %}
 
 {% if rate_limit and (public_names or onion) %}
-    # how fast one address may ask a site that strangers reach. A page that loads many files at
-    # once fits into the burst; who keeps asking faster gets 429, and fail2ban reads who it was
-    limit_req_zone $binary_remote_addr zone=kiwi_public:10m rate={{ rate_limit }}r/s;
-    limit_conn_zone $binary_remote_addr zone=kiwi_conn:10m;
+    # how fast one address may ask a site that strangers reach; who keeps asking faster gets 429.
+    # A page's own files (scripts, styles, pictures, fonts) are not counted: a web app loads a
+    # hundred of them at once, and that is someone using it, not an attack (an empty key is not limited)
+    map $uri $kiwi_limit_key {
+        default $binary_remote_addr;
+        ~*\.(?:css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|webmanifest|wasm)$ "";
+    }
+    limit_req_zone $kiwi_limit_key zone=kiwi_public:10m rate={{ rate_limit }}r/s;
+    limit_conn_zone $kiwi_limit_key zone=kiwi_conn:10m;
     # a hidden service's visitors all come from Tor, as one address: the limit is the site's
     limit_req_zone $server_name zone=kiwi_onion:1m rate={{ rate_limit * 3 }}r/s;
     limit_req_status 429;
@@ -174,6 +179,14 @@ http {
     # the stream block above hands every connection over with the address it came from
     set_real_ip_from 127.0.0.1;
     real_ip_header proxy_protocol;
+{% endif %}
+{% if via and public_names %}
+    # whom fail2ban banned here (its action kiwi-nginx-deny): the visitors come through the master, so
+    # only nginx knows their address. The list is empty until someone is banned
+    geo $kiwi_banned {
+        default 0;
+        include /etc/nginx/banned/*.map;
+    }
 {% endif %}
 {% if ex.names or (via and public_names) or onion %}
     # sites answer on a port of their own behind the door people use (443, or Tor's 80): a redirect must not name it
@@ -218,12 +231,25 @@ http {
     server {
         listen 80 default_server;
         server_name _;
+{% if public_names or ex.names %}
+{% if ex.names %}
+
+        # the addresses this network's own machines come from (fail2ban here writes them down): the
+        # nodes this machine hands visitors on to ask for them, so that they never ban them either
+        location = /.well-known/kiwi-own {
+            allow {{ mesh_subnet }};
+            deny all;
+            default_type text/plain;
+            alias /etc/nginx/kiwi-own/list;
+        }
+{% endif %}
 {% if public_names %}
 
         # Let's Encrypt asks for its challenge here
         location /.well-known/acme-challenge/ {
             root /var/www/acme;
         }
+{% endif %}
 
         location / {
             return 301 https://$host$request_uri;
@@ -274,6 +300,9 @@ http {
         listen 8443 ssl proxy_protocol;
         set_real_ip_from {{ via }};
         real_ip_header proxy_protocol;
+        if ($kiwi_banned) {
+            return 403;
+        }
 {% else %}
         listen {{ tls_listen }};
 {% endif %}

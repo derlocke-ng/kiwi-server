@@ -4,9 +4,21 @@
 # devices behind that one address, would otherwise lock the whole home out of the public names. Run
 # every minute by kn-fail2ban-own.timer; it changes something only when the addresses change.
 rt={{ runtime }}
+{% if has_vpn_server %}
 machines=" {{ mesh_ips | join(' ') }} "
 now=$($rt exec {{ container_prefix }}-vpn-server wg show wg0 dump 2>/dev/null | awk 'NR > 1 { split($4, a, "/"); split($3, e, ":"); print a[1], e[1] }' |
       while read -r mesh ip; do case "$machines" in *" $mesh "*) [ "$ip" != "(none)" ] && echo "$ip" ;; esac; done | sort -u | tr '\n' ' ')
+# the nodes it hands visitors on to ask for the list too (port 80, from the mesh only)
+list={{ docker_dir }}/{{ container_prefix }}-nginx/own/list
+if [ -d "${list%/*}" ] && [ "$now" != "$(cat "$list" 2>/dev/null)" ]; then
+    printf '%s' "$now" > "$list.new" && mv "$list.new" "$list"
+fi
+{% else %}
+# behind the master: it knows the addresses (it sees the tunnels) and tells them on port 80
+now=$($rt exec {{ container_prefix }}-vpn-client wget -q -T 10 -O - http://{{ module_config['reverse-proxy'].via }}/.well-known/kiwi-own 2>/dev/null |
+      tr -c '0-9a-f.: \n' ' ' | tr -s ' ')
+[ -n "$now" ] || exit 0         # the master does not answer now: what fail2ban was told stays
+{% endif %}
 # a restarted fail2ban forgets what it was told: its start time is part of what is remembered
 now="$now@$($rt inspect -f '{% raw %}{{.State.StartedAt}}{% endraw %}' {{ container_prefix }}-fail2ban 2>/dev/null)"
 was=$(cat /run/kiwi-fail2ban-own 2>/dev/null)

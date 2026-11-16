@@ -62,6 +62,13 @@ backup:
     containers: ["{{ container_prefix }}-vault"]
     paths: ["${DOCKERDIR}/{{ container_prefix }}-vault"]
 
+# wrong passwords and wrong admin tokens, as Vaultwarden logs them: fail2ban bans who keeps on
+fail2ban:
+  - name: vault
+    container: "{{ container_prefix }}-vault"
+    match: "Username or password is incorrect|Invalid admin token"
+    failregex: '(?:Username or password is incorrect\. Try again|Invalid admin token)\. IP: <HOST>\.'
+
 settings:
   - key: vault_domain
     label: URL

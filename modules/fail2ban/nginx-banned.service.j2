@@ -1,0 +1,7 @@
+[Unit]
+Description=nginx on {{ hostname }}: read the list of banned addresses again
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Service]
+Type=oneshot
+ExecStart=-{{ '/usr/bin/podman' if runtime == 'podman' else '/usr/bin/docker' }} exec {{ container_prefix }}-nginx nginx -s reload

@@ -1,5 +1,6 @@
 # kiwi-server: requests the proxy or a site behind it refused (401, 403), as wrong passwords
-# and tries at closed pages leave them. Twenty in the jail's time are not a typing mistake.
+# and tries at closed pages leave them. Forty in the jail's time are not a typing mistake. WebDAV's
+# PROPFIND is left out: sync clients ask it unauthenticated first, every time.
 [Definition]
-failregex = ^<HOST> -[^"]*"(?:GET|POST|PUT|PATCH|DELETE|PROPFIND) [^"]* HTTP/[0-9.]+" (?:401|403) 
+failregex = ^<HOST> -[^"]*"(?:GET|POST|PUT|PATCH|DELETE) [^"]* HTTP/[0-9.]+" (?:401|403) 
 ignoreregex =

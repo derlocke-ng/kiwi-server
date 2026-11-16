@@ -63,6 +63,8 @@ storage:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/www", type: dir, required: true, when: public_names }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/log", type: dir, required: true, when: public_names }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/letsencrypt", type: dir, required: true, when: public_names }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/banned", type: dir, required: true, when: via }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-nginx/own", type: dir, required: true, when: exposed }
 
 nginx:
   aggregator: true

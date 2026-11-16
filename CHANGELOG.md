@@ -1,6 +1,22 @@
 # Changelog
 
 
+
+## 2.125.0 — fail2ban done the way the apps document it
+
+- **Wrong logins, per app** (kiwi-modules 0.50.0): fail2ban reads Forgejo's, Vaultwarden's and
+  Nextcloud's own logs for wrong logins and bans who keeps on (Jabber counts its own). A module
+  says what a wrong login looks like: module.yaml `fail2ban:` ([Modules](docs/modules.md#fail2ban)).
+- **Never for loading a page**: a page's own files no longer count against the rate limit, and
+  only a flood is banned. One load of a busy page had locked a home out for an hour.
+- **Bans that work on a node behind the master**: there a ban is nginx's (403); a firewall rule
+  never saw the visitor. A node whose sites strangers reach gets fail2ban by itself, and the
+  master tells it the network's own addresses, which it never bans.
+- A master's port 80 answers the mesh again (they left by its internet interface).
+- `tests/drills/fail2ban.py`: from a stranger's address (a Tor exit, through a Tor on the master
+  for the drill only), a page with 150 files is neither refused nor banned, a scanner is banned
+  and let out again, and an app's wrong logins reach its jail.
+
 ## 2.124.1 — a master never bans its own network
 
 - **fail2ban on a master leaves the network's own addresses alone** (kiwi-modules 0.49.1): every

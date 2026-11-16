@@ -14,21 +14,27 @@ logpath  = /var/log/kiwi/sshd.log
 backend  = polling
 # aggressive: also preauth disconnects and timeouts, which is most of what bots do
 mode     = aggressive
-{% if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') %}
+{% if f2b_web %}
 
-# the public sites: nginx is reached through the host's port forwarding, so a ban goes into
+# the public sites.{% if f2b_behind %} They come through the master, which hands each connection on with
+# the visitor's address in front: only nginx knows that address here, so a ban is a line in
+# nginx's list of banned addresses (kiwi-nginx-deny), not a firewall rule
+{% set ban = 'action   = kiwi-nginx-deny' %}
+{% else %} nginx is reached through the host's port forwarding, so a ban goes into
 # FORWARD (where those packets pass), not INPUT
+{% set ban = 'chain    = FORWARD' %}
+{% endif %}
 [nginx-bad-request]
 enabled  = true
 port     = http,https
-chain    = FORWARD
+{{ ban }}
 logpath  = /var/log/nginx/access.log
 backend  = polling
 
 [nginx-http-auth]
 enabled  = true
 port     = http,https
-chain    = FORWARD
+{{ ban }}
 logpath  = /var/log/nginx/error.log
 backend  = polling
 
@@ -36,30 +42,48 @@ backend  = polling
 [kiwi-nginx-probe]
 enabled  = true
 port     = http,https
-chain    = FORWARD
+{{ ban }}
 filter   = kiwi-nginx-probe
 logpath  = /var/log/nginx/access.log
 backend  = polling
 maxretry = 3
 
-# who keeps asking faster than the proxy allows (its rate limit says so in its error log)
+# a flood, not a visitor: the rate limit already answers who asks too fast with 429 (and a
+# page's own files are not counted); only who keeps on at two refusals a second for a minute is banned
 [nginx-limit-req]
 enabled  = true
 port     = http,https
-chain    = FORWARD
+{{ ban }}
 logpath  = /var/log/nginx/error.log
 backend  = polling
-maxretry = 10
+findtime = 1m
+maxretry = 120
 
-# who is refused again and again: wrong passwords at a login, a page they may not see
+# who is refused again and again where no app counts the wrong logins itself: a page they may
+# not see, a password tried at the proxy. Generous: an app or a sync client gets 401s too
 [kiwi-nginx-refused]
 enabled  = true
 port     = http,https
-chain    = FORWARD
+{{ ban }}
 filter   = kiwi-nginx-refused
 logpath  = /var/log/nginx/access.log
 backend  = polling
-maxretry = 20
+maxretry = 40
+{% for j in f2b_jails %}
+
+# {{ j.name }}: wrong logins, as its own log tells them (kn-f2b-tap copies those lines out)
+[kiwi-{{ j.name }}]
+enabled  = true
+port     = http,https
+{{ ban }}
+filter   = kiwi-app
+failregex = {{ j.failregex }}
+logpath  = /kiwi-apps/{{ j.name }}.log
+backend  = polling
+{% if j.maxretry %}
+maxretry = {{ j.maxretry }}
+{% endif %}
+{% endfor %}
 
 {% endif %}
 
@@ -69,7 +93,10 @@ enabled  = true
 logpath  = /config/log/fail2ban/fail2ban.log
 backend  = polling
 banaction = iptables-allports
-{% if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') %}
+{% if f2b_behind %}
+action   = %(banaction)s[name=recidive, chain=INPUT]
+           kiwi-nginx-deny
+{% elif f2b_web %}
 action   = %(banaction)s[name=recidive, chain=INPUT]
            %(banaction)s[name=recidive-forward, chain=FORWARD]
 {% endif %}

@@ -30,6 +30,13 @@ templates:
   own_script: own.sh.j2
   own_service: own.service.j2
   own_timer: own.timer.j2
+  app_filter: kiwi-app.conf.j2
+  apps_init: apps-init.sh.j2
+  tap_script: f2b-tap.sh.j2
+  tap_unit: f2b-tap.service.j2
+  deny_action: kiwi-nginx-deny.conf.j2
+  banned_path: nginx-banned.path.j2
+  banned_service: nginx-banned.service.j2
 
 outputs:
   jail: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/jail.d/kiwi.local", mode: 0644 }
@@ -37,14 +44,31 @@ outputs:
   log_unit: { kind: host_unit, name: kn-sshd-log.service }
   probe_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-probe.conf", mode: 0644 }
   refused_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-nginx-refused.conf", mode: 0644 }
-  # on a master: the addresses the network's own machines come from are never banned
-  own_script: { path: "kiwi/fail2ban-own.sh", mode: 0755, when: has_vpn_server }
-  own_service: { kind: host_unit, name: kn-fail2ban-own.service, when: has_vpn_server }
-  own_timer: { kind: host_unit, name: kn-fail2ban-own.timer, when: has_vpn_server }
+  # on a master, and on the nodes it hands visitors on to: the addresses the network's own machines come from are never banned
+  own_script: { path: "kiwi/fail2ban-own.sh", mode: 0755, when: f2b_own }
+  own_service: { kind: host_unit, name: kn-fail2ban-own.service, when: f2b_own }
+  own_timer: { kind: host_unit, name: kn-fail2ban-own.timer, when: f2b_own }
+  # the apps' wrong logins (module.yaml fail2ban: of every module here), on a machine with public sites
+  app_filter: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/filter.d/kiwi-app.conf", mode: 0644, when: f2b_tap }
+  apps_init: { path: "{{ container_prefix }}-fail2ban/init/51-kiwi-files", mode: 0755 }
+  tap_script: { path: "kiwi/f2b-tap.sh", mode: 0755, when: f2b_tap }
+  tap_unit: { kind: host_unit, name: kn-f2b-tap.service, when: f2b_tap }
+  # behind the master: a ban is a line in nginx's list, which nginx reads again when it changes
+  deny_action: { path: "{{ container_prefix }}-fail2ban/config/fail2ban/action.d/kiwi-nginx-deny.conf", mode: 0644, when: f2b_behind }
+  banned_path: { kind: host_unit, name: kn-nginx-banned.path, when: f2b_behind }
+  banned_service: { kind: host_unit, name: kn-nginx-banned.service, when: f2b_behind }
+
+derived:
+  # public sites here, and whether they come through the master (only nginx knows the visitor then)
+  f2b_web: "{{ 'yes' if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') else '' }}"
+  f2b_behind: "{{ 'yes' if has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') and (module_config.get('reverse-proxy') or {}).get('via') else '' }}"
+  f2b_own: "{{ 'yes' if has_vpn_server or f2b_behind else '' }}"
+  f2b_tap: "{{ 'yes' if f2b_jails and has_reverse_proxy and (module_config.get('reverse-proxy') or {}).get('public') else '' }}"
 
 storage:
   bind_mounts:
     - { host: "${DOCKERDIR}/{{ container_prefix }}-fail2ban/config", type: dir }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-fail2ban/apps", type: dir }
     - { host: "/var/log/kiwi", type: dir }
 
 settings:

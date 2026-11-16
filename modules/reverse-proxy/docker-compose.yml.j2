@@ -26,11 +26,19 @@ services:
       - {{ docker_dir }}/{{ container_prefix }}-nginx/onion-fullchain.pem:/etc/nginx/onion-fullchain.pem:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/onion-privkey.pem:/etc/nginx/onion-privkey.pem:ro,z
 {% endif %}
+{% if exposed.names %}
+      # the network's own addresses, for the nodes (fail2ban's kn-fail2ban-own writes them)
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/own:/etc/nginx/kiwi-own:ro,z
+{% endif %}
 {% if public_names %}
       - {{ docker_dir }}/{{ container_prefix }}-nginx/start.sh:/etc/nginx/start.sh:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/acme:/etc/nginx/acme:z
       # real files where the official image has links to stdout: fail2ban reads them
       - {{ docker_dir }}/{{ container_prefix }}-nginx/log:/var/log/nginx:z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/www:/var/www/acme:z
+{% if via %}
+      # fail2ban's list of banned addresses
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/banned:/etc/nginx/banned:ro,z
+{% endif %}
     command: /bin/sh /etc/nginx/start.sh
 {% endif %}

@@ -139,7 +139,13 @@ def resolve_settings(role, host, modset=None):
             wanted = wanted.split()
         elif not isinstance(wanted, list):
             raise KiwiError("%s.modules must be a list of module names" % where)
-        ordered = ms.resolve([str(m) for m in wanted], role.node_type)
+        wanted = [str(m) for m in wanted]
+        # a node whose sites strangers reach bans who keeps failing at them: fail2ban comes with it
+        if (role.node_type != "master" and "reverse-proxy" in wanted and "fail2ban" not in wanted
+                and isinstance(raw.get("reverse-proxy"), dict) and raw["reverse-proxy"].get("public")
+                and "fail2ban" in ms.modules):
+            wanted.append("fail2ban")
+        ordered = ms.resolve(wanted, role.node_type)
         host.modules = ordered
         for name in ordered:
             mod = ms.get(name)

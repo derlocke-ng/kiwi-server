@@ -5,6 +5,8 @@
 - The fleet's CA and the machines' certificates are made by one command at a time per CA folder
   (a lock there). Two renders at once (the control node's look, an apply, the page) could make two
   CAs, keep one certificate's key with another's certificate, or stop with "No such file".
+- Every file kiwi-server writes whole (the fleet file, a machine's known host keys, a sync's
+  files) goes through a temporary file of its own per writer, as the store's do since 2.152.1.
 
 ## 2.152.1 — two writers never break the store
 

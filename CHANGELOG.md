@@ -13,6 +13,15 @@
 
 
 
+
+## 2.134.0 — Accounts in the app
+
+- **The app has Accounts…** in its menu, as the control page has: the requests to accept or deny, invite
+  codes to make and withdraw, the accounts with a new password link or deletion; for the network's
+  accounts and for Jabber's sign-up page.
+- Jabber's sign-up page passed its drill on the test network: an invite code on the public name with a
+  chosen password, a request on the VPN's name accepted with a password shown once, both taken by ejabberd.
+
 ## 2.133.0 — Nextcloud signs people in with the network's accounts
 
 - **`kiwi-server accounts <fleet> connect <host> cloud`** (and Connect under Accounts on the control

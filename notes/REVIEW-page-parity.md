@@ -69,3 +69,9 @@ The app does not show a person's key yet (`onion … --show NAME` in a terminal,
 
 Since 2.98.0, in all three: admin pages as a class of their own and the level "every app" (`access … apps`).
 
+
+Since 2.127.0 to 2.133.0 (16 November 2026): **Accounts** (the accounts module and Jabber's sign-up page:
+requests, invite codes, accounts and their password links) on the page, in the app (menu, "Accounts…") and
+in the terminal (`kiwi-server accounts`). Page only for now: Connect a service to the accounts (`accounts
+connect` in a terminal), and the Settings / Admin page links under each service. The start pages and the
+front page for strangers are for everyone, not for the people who run the network: neither app nor control page.

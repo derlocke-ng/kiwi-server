@@ -23,7 +23,7 @@ run included. Compared command by command and setting by setting.
 
 | The page has | State |
 |---|---|
-| "Send a test message" for the notifications (2.108.0); the status page's link | **built** in 2.140.0: a "Send a test message" row under the app's message settings (Defaults); the status page's link is still open |
+| "Send a test message" for the notifications (2.108.0); the status page's link | **built** in 2.140.0: a "Send a test message" row under the app's message settings (Defaults); the status page's link: 2.148.0, "Open the status page" there |
 | The picture of the network, the processor's load and the oldest last backup on Home (2.105.0) | **built** in 2.106.0: "How they are linked" on the overview, a CPU line on every card, a tile for the oldest backup |
 | Add a computer: the invite link (Computers) | **built** in 2.115.0: menu, Use another computer…, Add a computer (`control invite`); link, copy button and QR code in both |
 | A Services page: every service under its machine, with login, answer and hidden-service address (2.117.0); the menu in groups | the app keeps its own layout (the owner prefers it); hidden-service addresses are on a machine's page since 2.118.0 |
@@ -33,7 +33,7 @@ run included. Compared command by command and setting by setting.
 | Update everything (`apply --update`) | open |
 | Remove a phone or laptop (`enroll --remove`), show its QR code again | open |
 | "Leave NAME out" while keys are replaced (`rotate --waive`) | **built** in 2.142.0: "A computer was lost or stolen…" says which machines still wait and offers "Leave NAME out" for the keys and the secrets |
-| Activity: tasks and who did what | open |
+| Activity: tasks and who did what | **built** in 2.147.0: the app's menu, "Activity…", and `kiwi-server control activity` |
 
 ## Neither has
 

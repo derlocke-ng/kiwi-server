@@ -8076,6 +8076,21 @@ class TestControllers(StoreBase):
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(e.exception.code, 401)
         e.exception.close()
+        # the control page's Activity, for the app: the tasks and who did what, names and times only
+        rc, out = self.laptop_does("activity", "--porcelain")
+        self.assertEqual(rc, 0, out)
+        seen = json.loads(out.strip().splitlines()[-1])
+        self.assertEqual(sorted(seen), ["entries", "jobs"])
+        self.assertIn("fetched the fleet", [e["what"] for e in seen["entries"]])
+        rc, out = self.laptop_does("activity")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Log\n", out)
+        self.assertIn("fetched the fleet", out)
+        req = urllib.request.Request(self.url + "/api/activity")
+        with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets nothing
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 401)
+        e.exception.close()
         # the laptop changes the fleet and pushes: the open node takes it
         with open(self.laptop, "a") as fh:
             fh.write("# from the laptop\n")

@@ -2540,6 +2540,15 @@ def make_app(control: Control):
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=409)
 
+    @app.get("/api/activity")
+    def api_activity(request: Request):
+        """The Activity page for a computer that manages the network (`control activity`, the app's
+        Activity…): the newest tasks and the log of who did what. Names and times; no output, no secret."""
+        if not bearer(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        keep = ("id", "action", "hosts", "user", "state", "started", "ended", "rc")
+        return {"jobs": [{k: j.get(k) for k in keep} for j in control.jobs(15)], "entries": control.audit_tail(40)}
+
     @app.get("/api/fleet/revision")
     def api_revision(request: Request):
         if not bearer(request):

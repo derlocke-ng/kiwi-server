@@ -301,6 +301,17 @@ stop, and `pull --force` or `push --force` says which copy counts. The node
 takes a push while it is open. A new password
 (`--set-password`, then push) locks it until that password logs in.
 
+## What the control node did
+
+The page's *Activity* lists the newest tasks and who did what. A computer that
+joined sees the same list in the app (menu, *Activity…*) or in a terminal:
+
+```bash
+kiwi-server control activity ~/kiwi/fleet.yaml
+```
+
+It holds names and times, no output and no secret.
+
 ## When a machine does not answer
 
 The control node looks at every machine every ten minutes. One that does not
@@ -400,7 +411,8 @@ defaults:
 ```
 
 One, two or all three; a place that fails says why in Activity and does not stop
-the others. "Send a test message" on the settings page tries them, as does:
+the others. "Send a test message" on the settings page tries them (in the app:
+Defaults, under the messages, beside "Open the status page"), as does:
 
 ```bash
 kiwi-server notify ~/kiwi/fleet.yaml --test

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.148.0 — the status page from the app
+
+- Under the message settings (Defaults), next to "Send a test message": "Open the status page", the
+  control node's page of what everyone on the network sees without a login, as the control page
+  links it there.
+
+## 2.147.0 — the control node's Activity in the app
+
+- The app's menu has "Activity…": the control node's newest tasks and who did what, as on its
+  page. In a terminal: `kiwi-server control activity FLEET`. A computer that joined asks with its
+  own key (`/api/activity`); the answer holds names and times, no output and no secret.
+
 ## 2.146.0 — sign in at the hoster from the control page's first run
 
 - A machine with nothing on it: its questions now offer "Sign in and pick it" for a master at netcup,

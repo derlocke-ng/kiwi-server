@@ -491,6 +491,18 @@ def older_node(fleet_dir, version, key=None, api=None):
     return theirs if theirs and _numbers(theirs) < _numbers(version) else None
 
 
+def activity_api(fleet_dir, key=None):
+    """The control node's Activity: {jobs, entries}."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("GET", "/api/activity")
+    if status == 404:
+        raise KiwiError("the control node is too old to tell its activity: update it (kiwi-server apply <fleet> "
+                        "<its machine> --update)")
+    if status != 200:
+        raise KiwiError("the control node refused (%d)" % status)
+    return out
+
+
 def push_api(fleet_dir, fleet_name, force=False, key=None):
     st = _store(fleet_dir)
     api, _key = api_for(fleet_dir, key)

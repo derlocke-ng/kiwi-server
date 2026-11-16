@@ -739,6 +739,13 @@ class Form:
                 test = Adw.ButtonRow(title="Send a test message", start_icon_name="mail-send-symbolic")
                 test.connect("activated", lambda *_: self.test_message())
                 g.add(test)
+                control = self.win.control_host()
+                if control:     # what everyone on the network sees without a login, as the page says there
+                    host = (self.win.status.get(control) or {}).get("hostname") or control
+                    status = Adw.ButtonRow(title="Open the status page", end_icon_name="adw-external-link-symbolic")
+                    status.connect("activated", lambda *_, h=host: Gtk.UriLauncher.new(
+                        "https://control.%s/status" % h).launch(self.win, None, None))
+                    g.add(status)
             if title in ADVANCED_SECTIONS:
                 advanced.append(g)
                 continue
@@ -1516,6 +1523,75 @@ class AccessDialog(Adw.Dialog):
         self.close()
         self.win.open_path(path, sync=False)        # the fleet file changed under the app
         self.win.toast("Saved — apply the master, and the machines whose services are named")
+
+
+class ActivityDialog(Adw.Dialog):
+    """The control node's Activity: its newest tasks and who did what, as on the control page.
+    Through `kiwi-server control activity`, with this computer's key."""
+    VERBS = {"status": "Checked", "plan": "Previewed", "apply": "Applied to", "check": "Checked the names",
+             "backup": "Saved the network", "watch": "Looked for restarted masters", "save": "Saved the data of",
+             "update": "Updated every machine", "rotate": "Replaced the SSH keys", "setup": "Set up",
+             "build": "Made the install media of", "restore": "Brought back on", "unlock": "Unlocked", "remove": "Removed",
+             "rotate-seed": "Replaced the secrets inside the services", "tell-test": "Sent a test message",
+             "start-new": "Started a new backup history of", "prune": "Removed old snapshots on",
+             "doctor": "Checked the tools of the control node", "adopt": "Took in"}
+    STATE = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
+
+    def __init__(self, win):
+        super().__init__(title="Activity", content_width=640, content_height=700)
+        self.win = win
+        self.load()
+
+    def load(self):
+        self.set_child(Adw.StatusPage(title="Asking the control node…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
+        path = self.win.doc.path
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["control", "activity", path, "--porcelain"], timeout=60)
+            try:
+                got = json.loads(out.strip().splitlines()[-1]) if rc == 0 and out.strip() else None
+            except (ValueError, IndexError):
+                got = None
+            why = (err.strip().replace("error: ", "").splitlines() or ["no answer"])[-1]
+            GLib.idle_add(self.show, got, why)
+        threading.Thread(target=work, daemon=True).start()
+
+    def show(self, got, why):
+        tb = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        again = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Ask again")
+        again.connect("clicked", lambda *_: self.load())
+        hb.pack_start(again)
+        tb.add_top_bar(hb)
+        if got is None:
+            tb.set_content(Adw.StatusPage(title="The control node did not tell", description=why,
+                                          icon_name="dialog-information-symbolic"))
+            self.set_child(tb)
+            return False
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup(title="Tasks", description="What the control node did or does, newest first.")
+        for j in got.get("jobs") or []:
+            when = (j.get("started") or j.get("id") or "")[:16].replace("T", " ")
+            title = ("%s %s" % (self.VERBS.get(j.get("action"), j.get("action") or ""), " ".join(j.get("hosts") or []))).strip()
+            row = plain_row(title, "%s · %s" % (when, j.get("user") or ""))
+            row.add_suffix(Gtk.Label(label=self.STATE.get(j.get("state"), j.get("state") or ""),
+                                     css_classes=["error" if j.get("state") == "failed" else "dim-label"]))
+            g.add(row)
+        if not got.get("jobs"):
+            g.add(plain_row("None since its page was last unlocked."))
+        page.add(g)
+        g = Adw.PreferencesGroup(title="Log", description="Who did what there: on its page, or from a computer.")
+        for e in got.get("entries") or []:
+            sub = "%s · %s" % ((e.get("time") or "")[:16].replace("T", " "), e.get("user") or "")
+            if e.get("address"):
+                sub += " · %s" % e["address"]
+            g.add(plain_row(("%s %s" % (e.get("what") or "", " ".join(e.get("hosts") or []))).strip(), sub))
+        if not got.get("entries"):
+            g.add(plain_row("Empty."))
+        page.add(g)
+        tb.set_content(page)
+        self.set_child(tb)
+        return False
 
 
 class AccountsDialog(Adw.Dialog):
@@ -3326,6 +3402,7 @@ class Window(Adw.ApplicationWindow):
                          ("remove-host", self.remove_host_dialog),
                          ("access", self.access_dialog), ("take-in", self.take_in_dialog),
                          ("accounts", lambda: self.doc.path and AccountsDialog(self).present(self)),
+                         ("activity", lambda: self.doc.path and ActivityDialog(self).present(self)),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
                          ("rotate", self.rotate_dialog), ("connect", self.connect_dialog),
@@ -3367,6 +3444,7 @@ class Window(Adw.ApplicationWindow):
         section = Gio.Menu()
         section.append("Who may reach what…", "win.access")
         section.append("Accounts…", "win.accounts")
+        section.append("Activity…", "win.activity")
         section.append("Federation…", "win.federation")
         section.append("SSH certificates…", "win.sshca")
         menu.append_section(None, section)

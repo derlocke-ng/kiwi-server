@@ -846,13 +846,32 @@ the people who run this network to unlock it.</div>
 {% if h.checked %}<p class="muted">Checked {{ age(now - h.checked) }} ago; it checks every ten minutes.
 {% if h.machines.of %}{{ h.machines.on }} of {{ h.machines.of }} machines answer.{% endif %}
 {% if h.window %}When updates need it, the machines restart: {{ h.window }}.{% endif %}</p>{% endif %}
-{% if h.services %}<h2>Services</h2>
-{% for s in h.services %}<div class="card"><div class="row"><strong><span class="dot {{ "ok" if s.ok else "bad" }}"></span>{{ s.label }}</strong>
+{% if h.services %}<style>
+.svc,.inc{flex-direction:column;align-items:stretch;gap:2px}
+.svc .bars{display:flex;gap:2px;height:30px;margin:12px 0 6px}
+.svc .bars span{flex:1;min-width:2px;border-radius:2px;background:var(--line)}
+.svc .bars span.up{background:var(--ok)}.svc .bars span.dip{background:color-mix(in srgb,var(--ok) 55%,var(--warn))}
+.svc .bars span.part{background:var(--warn)}.svc .bars span.down{background:var(--bad)}
+.svc .bars span:hover{opacity:.7}
+.svc .scale{display:flex;justify-content:space-between;gap:12px;font-size:.78rem;color:var(--muted)}
+.svc .scale b{color:var(--fg);font-weight:600}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin:4px 0 14px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.svc .scale .near{display:none}
+@media (max-width:640px){.svc .bars span:nth-child(-n+60){display:none}.svc .scale .far{display:none}.svc .scale .near{display:inline}}
+</style>
+<h2>Services</h2>
+<div class="legend"><span><i style="background:var(--ok)"></i>worked all day</span><span><i style="background:color-mix(in srgb,var(--ok) 55%,var(--warn))"></i>a short gap</span>
+<span><i style="background:var(--warn)"></i>gaps</span><span><i style="background:var(--bad)"></i>down most of the day</span><span><i style="background:var(--line)"></i>not checked</span></div>
+{% for s in h.services %}<div class="card svc"><div class="row"><strong><span class="dot {{ "ok" if s.ok else "bad" }}"></span>{{ s.label }}</strong>
 <span class="state {{ "ok" if s.ok else "bad" }}">{{ "works" if s.ok else "does not answer" }}</span></div>
-<span class="muted"><a href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a>{% if not s.ok %} · for {{ age(now - s.since) }}{% endif %}</span></div>{% endfor %}{% endif %}
+<span class="muted"><a href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a>{% if not s.ok %} · for {{ age(now - s.since) }}{% else %} · works for {{ age(now - s.since) }}{% endif %}{% if s.ok and s.ms is not none %} · answers in {{ s.ms }} ms{% endif %}</span>
+<div class="bars" role="img" aria-label="{{ s.label }}: each of the last 90 days">{% for b in s.bars %}<span class="{% if b.pct is none %}{% elif b.pct >= 99.9 %}up{% elif b.pct >= 99 %}dip{% elif b.pct >= 90 %}part{% else %}down{% endif %}" title="{{ b.day }}: {% if b.pct is none %}not checked{% else %}{{ "%.1f"|format(b.pct) }} % worked{% if b.ms is not none %}, {{ b.ms }} ms{% endif %}{% endif %}"></span>{% endfor %}</div>
+<div class="scale"><span class="far">90 days ago</span><span class="near">30 days ago</span><span>{% if s.uptime is none %}not checked yet{% else %}<b>{{ "%.2f"|format(s.uptime) if s.uptime < 100 else "100" }} %</b> worked{% endif %}</span><span>today</span></div></div>{% endfor %}{% endif %}
 {% if h.checked %}<h2>The last seven days</h2>
-{% for i in h.incidents %}<p><span class="dot {{ "ok" if i.to else "bad" }}"></span>{{ age(now - i.from) }} ago: {{ i.text }}{% if i.to %},
-for {{ age(i.to - i.from) }}{% else %}, and still{% endif %}</p>
+{% for i in h.incidents %}<div class="card inc"><div class="row"><strong><span class="dot {{ "ok" if i.to else "bad" }}"></span>{{ i.text }}</strong>
+<span class="state {{ "ok" if i.to else "bad" }}">{{ "fine again" if i.to else "still" }}</span></div>
+<span class="muted">{{ i.when }}{% if i.to %}, for {{ age(i.to - i.from) }}{% else %}, for {{ age(now - i.from) }} and still{% endif %} · {{ age(now - i.from) }} ago</span></div>
 {% else %}<p class="muted">Nothing was wrong.</p>{% endfor %}{% endif %}
 <p class="muted small" style="margin-top:28px">{% if h.strangers %}This page shows the services that are open to the Internet,
 asked the way you reach them, and nothing else.{% else %}This page needs no login. It shows which services work, and no addresses or

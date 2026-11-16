@@ -1,6 +1,7 @@
 """A made-up network for looking at the control page and the app: five machines that are fine,
 one that wants a look, one that does not answer. What `kiwi-server list` and `status` would say
 about them (`--porcelain`), and a fleet file with the same machines."""
+import time
 import json
 import sys
 
@@ -68,8 +69,20 @@ def health(now):
             ok = h["name"] not in down and site != "paperless.papaya.home"
             rows.append({"site": site, "label": LABELS.get(first, first.capitalize()), "host": h["name"], "ok": ok,
                          "admin": first in ("control", "portainer", "pihole", "wg"), "since": now - (2400 if not ok else 400000)})
+    # 90 days of looks, every ten minutes: most days fine, a few with a gap, one long outage
+    days = {}
+    for n, r in enumerate(rows):
+        for i in range(90 if n % 3 else 40):          # some services are newer
+            day = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+            asked = 144 if i else 60
+            missed = 0 if (i * 7 + n) % 23 else (2 if i % 2 else 30)
+            if r["site"] == "cloud.papaya.home" and i == 2:
+                missed = 17
+            if not r["ok"] and i == 0:
+                missed = 14
+            days.setdefault(r["site"], {})[day] = [asked, asked - missed, (asked - missed) * (90 + n * 13), asked - missed]
     return {"checked": now - 180, "machines": {"on": len(status["hosts"]) - len(down), "of": len(status["hosts"])},
-            "window": "Sun 03:30", "services": rows, "items": {}, "did": {},
+            "window": "Sun 03:30", "services": rows, "items": {}, "did": {}, "days": days,
             "incidents": [{"key": "service:cloud.papaya.home", "text": "Files (Nextcloud) does not answer (cloud.papaya.home)",
                            "from": now - 190000, "to": now - 187700},
                           {"key": "machine:medlar", "text": "medlar does not answer", "from": now - 5000, "to": None},

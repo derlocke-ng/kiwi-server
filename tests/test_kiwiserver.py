@@ -2549,8 +2549,24 @@ class TestSetup(Base):
         self.assertEqual(setupmod.check(dict(self.ANSWERS)), {})
         bad = setupmod.check(dict(self.ANSWERS, master_address="10.1.2.3", exit="mullvad",
                                   nodes=[{"name": "trifle"}, {"name": "mango", "address": "192.168.2.1", "disk": "sda"}]))
-        self.assertEqual(sorted(bad), ["master_address", "mullvad_address", "mullvad_key", "nodes.0.name",
+        self.assertEqual(sorted(bad), ["exit_address", "exit_key", "master_address", "nodes.0.name",
                                        "nodes.1.address", "nodes.1.disk"])
+        # every VPN provider gluetun runs with WireGuard, each with the lines it needs
+        self.assertEqual(sorted(setupmod.check(dict(self.ANSWERS, exit="protonvpn"))), ["exit_key"])     # no address there
+        self.assertEqual(sorted(setupmod.check(dict(self.ANSWERS, exit="airvpn", exit_key="k", exit_address="10.1.0.2/32"))),
+                         ["exit_psk"])
+        self.assertEqual(sorted(setupmod.check(dict(self.ANSWERS, exit="custom", exit_key="k", exit_address="10.2.0.2/32",
+                                                    exit_peer="nope", exit_endpoint="vpn.example.org:51820"))),
+                         ["exit_endpoint", "exit_peer"])
+        made, _ = setupmod.make(dict(self.ANSWERS, exit="windscribe", exit_key="k", exit_address="10.3.0.2/32", exit_psk="p",
+                                     exit_country="Sweden"), os.path.join(self.tmp, "ws"))
+        vc = next(h for h in made["hosts"].values() if h["role"] == "master")["master"]["vpn-client"]
+        self.assertEqual((vc["vpn_provider"], vc["server_regions"], vc["wireguard_preshared_key"]), ("windscribe", "Sweden", "p"))
+        made, _ = setupmod.make(dict(self.ANSWERS, exit="custom", exit_key="k", exit_address="10.2.0.2/32",
+                                     exit_peer="A" * 43 + "=", exit_endpoint="203.0.113.9:51820"), os.path.join(self.tmp, "cu"))
+        vc = next(h for h in made["hosts"].values() if h["role"] == "master")["master"]["vpn-client"]
+        self.assertEqual((vc["wireguard_endpoint_ip"], vc["vpn_endpoint_port"]), ("203.0.113.9", 51820))
+        self.assertEqual(setupmod.check(dict(self.ANSWERS, exit="mullvad", mullvad_key="k", mullvad_address="10.66.1.2/32")), {})
         answers = os.path.join(self.tmp, "a.json")
         write(answers, json.dumps(dict(self.ANSWERS, master_address="")))
         rc, out, err = self.run_cli("init", "--check", answers)              # what the app asks at every Next
@@ -5175,7 +5191,7 @@ class TestManage(Base):
                             "vpn_provider": "mullvad", "wireguard_private_key": "k"}})}}})
         rc, out, err = self.run_cli("validate", g.path)
         self.assertEqual(rc, cli.EXIT_INVALID)
-        self.assertIn("provider mullvad needs wireguard_private_key and wireguard_addresses", err)
+        self.assertIn("provider mullvad needs wireguard_addresses", err)
 
 
 @unittest.skipUnless(have("openssl"), "openssl not installed")
@@ -6169,6 +6185,28 @@ peers=4 3
         f, (_s, _p, notes) = self.assessed("luks=1")
         self.assertEqual(f["encryption"], "bound")
         self.assertFalse([n for n in notes if "disk" in n])
+
+    def test_the_status_page_keeps_ninety_days_of_each_service(self):
+        from kiwiserver import health
+        now = time.mktime((2026, 11, 16, 12, 0, 0, 0, 0, -1))
+        state = {}
+        rows = [{"site": "paste.example.org", "host": "medlar", "admin": False, "ok": True, "public": True, "ms": 120}]
+        health.update(state, [{"name": "medlar", "ok": True, "problems": []}], rows, [], now - 100 * 86400)  # too old to keep, later
+        for k in range(3):                                   # three looks today, one of them without an answer
+            health.update(state, [{"name": "medlar", "ok": True, "problems": []}], [dict(rows[0], ok=(k != 1))], [], now + k * 600)
+        health.update(state, [{"name": "medlar", "ok": True, "problems": []}], rows, [], now - 86400)      # yesterday
+        bars, uptime = health.history(state, "paste.example.org", now + 1800)
+        self.assertEqual(len(bars), 90)
+        self.assertEqual(bars[-1]["day"], "2026-11-16")
+        self.assertAlmostEqual(bars[-1]["pct"], 200 / 3)
+        self.assertEqual(bars[-2]["pct"], 100.0)
+        self.assertIsNone(bars[0]["pct"])                                       # not asked: no colour
+        self.assertAlmostEqual(uptime, 75.0)                                    # 3 of 4 looks over the days kept
+        self.assertEqual(bars[-1]["ms"], 120)
+        self.assertNotIn(time.strftime("%Y-%m-%d", time.localtime(now - 100 * 86400)), state["days"]["paste.example.org"])
+        shown = health.public(state, now + 1800, strangers=True)["services"][0]
+        self.assertEqual(len(shown["bars"]), 90)
+        self.assertEqual(shown["ms"], 120)
 
     def test_status_text_and_probe_come_apart(self):
         human, data = facts.split("applied: x\n%s\nuptime=1\n" % facts.MARK)
@@ -7480,7 +7518,7 @@ class TestHealth(Base):
             return real(argv)
         answers = {"cloud.a.home": (False, 502), "control.a.home": (True, 403)}
         out = io.StringIO()
-        with mock.patch.object(cli, "main", fake_main), mock.patch.object(health, "probe", lambda sites: {s: answers[s] for s in sites}), \
+        with mock.patch.object(cli, "main", fake_main), mock.patch.object(health, "probe", lambda sites, **kw: {s: answers[s] for s in sites}), \
                 contextlib.redirect_stdout(out):
             cli.cmd_notify(argparse.Namespace(fleet=f.path, test=False, status=status, events=None, state=state, no_send=False,
                                               porcelain=True, output=None, media=None))
@@ -7763,7 +7801,8 @@ class TestWeb(StoreBase):
         # the page for the Internet: the services open to it, and nothing of the rest
         code, body = self.ask("/status/public")
         self.assertEqual(code, 200)
-        for words in ("Everything works", "How the services are", "chat.example.org", "Chat does not answer", "for 10 minutes"):
+        for words in ("Everything works", "How the services are", "chat.example.org", "Chat does not answer", "for 10 minutes",
+                      'class="bars"', "90 days ago", "not checked yet"):
             self.assertIn(words, body)
         for words in ("papaya", "Nextcloud", "Vaultwarden", "machines answer", "Sun 03:30", "csrf", "Log out"):
             self.assertNotIn(words, body)

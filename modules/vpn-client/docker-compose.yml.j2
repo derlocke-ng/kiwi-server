@@ -12,16 +12,24 @@ services:
       - VPN_TYPE={{ vpn_type }}
 {% if not wireguard_config_present %}
       - WIREGUARD_PRIVATE_KEY={{ wireguard_private_key }}
+{% if wireguard_addresses %}
       - WIREGUARD_ADDRESSES={{ wireguard_addresses }}
 {% endif %}
-{% if server_countries %}
-      - SERVER_COUNTRIES={{ server_countries }}
+{% if wireguard_preshared_key %}
+      - WIREGUARD_PRESHARED_KEY={{ wireguard_preshared_key }}
 {% endif %}
-{% if server_cities %}
-      - SERVER_CITIES={{ server_cities }}
+{% if vpn_provider == 'custom' %}
+      # another provider's WireGuard config, by its lines
+      - WIREGUARD_PUBLIC_KEY={{ wireguard_public_key }}
+      - WIREGUARD_ENDPOINT_IP={{ wireguard_endpoint_ip }}
 {% endif %}
+{% endif %}
+{% for key, value in [('SERVER_COUNTRIES', server_countries), ('SERVER_REGIONS', server_regions), ('SERVER_CITIES', server_cities), ('SERVER_HOSTNAMES', server_hostnames)] if value %}
+      - {{ key }}={{ value }}
+{% endfor %}
 {% if vpn_endpoint_port %}
       - VPN_ENDPOINT_PORT={{ vpn_endpoint_port }}
+      - WIREGUARD_ENDPOINT_PORT={{ vpn_endpoint_port }}
 {% endif %}
       - TZ={{ timezone }}
       - WIREGUARD_MTU={{ wg_mtu }}

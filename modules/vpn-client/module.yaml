@@ -27,10 +27,14 @@ env:
     DOT_PROVIDERS: "quad9"
 
 validate:
-  - when: "vpn_provider == 'custom' and not wireguard_config_present"
-    error: "provider custom needs wireguard_config, the client config the master's wg-easy issued — `kiwi-server enroll <host>` fetches it into secrets/<hostname>.conf, where it is picked up by itself"
-  - when: "vpn_provider != 'custom' and not (wireguard_private_key and wireguard_addresses)"
-    error: "provider {{ vpn_provider }} needs wireguard_private_key and wireguard_addresses from the provider's account page"
+  - when: "vpn_type == 'wireguard' and vpn_provider == 'custom' and not wireguard_config_present and not (wireguard_private_key and wireguard_addresses and wireguard_public_key and wireguard_endpoint_ip and vpn_endpoint_port)"
+    error: "provider custom needs wireguard_config (the client config the master's wg-easy issued — `kiwi-server enroll <host>` fetches it into secrets/<hostname>.conf, where it is picked up by itself), or for another provider's WireGuard: wireguard_private_key, wireguard_addresses, wireguard_public_key, wireguard_endpoint_ip and vpn_endpoint_port from its config"
+  - when: "vpn_type == 'wireguard' and vpn_provider != 'custom' and not wireguard_private_key"
+    error: "provider {{ vpn_provider }} needs wireguard_private_key: the PrivateKey line of a WireGuard config from the provider's account page"
+  - when: "vpn_type == 'wireguard' and vpn_provider in ['mullvad', 'surfshark', 'airvpn', 'windscribe', 'ivpn', 'fastestvpn'] and not wireguard_addresses"
+    error: "provider {{ vpn_provider }} needs wireguard_addresses: the Address line (its IPv4 part) of the same WireGuard config"
+  - when: "vpn_type == 'wireguard' and vpn_provider in ['airvpn', 'windscribe'] and not wireguard_preshared_key"
+    error: "provider {{ vpn_provider }} needs wireguard_preshared_key: the PresharedKey line of the same WireGuard config"
 
 templates:
   compose: docker-compose.yml.j2
@@ -71,21 +75,40 @@ settings:
   - key: wireguard_private_key
     type: secret
     label: WireGuard private key
-    help: For commercial providers (mullvad, …) instead of a config file.
+    help: "For a VPN provider: the PrivateKey line of a WireGuard config from its account page. Every provider gluetun knows with WireGuard: mullvad, protonvpn, nordvpn, surfshark, airvpn, windscribe, ivpn, fastestvpn; any other through custom."
   - key: wireguard_addresses
     label: WireGuard addresses
-    help: "For commercial providers: the tunnel address the provider assigned, e.g. 10.66.1.2/32."
+    help: "The Address line of the same config, its IPv4 part, e.g. 10.66.1.2/32. Not needed for protonvpn and nordvpn."
+  - key: wireguard_preshared_key
+    type: secret
+    label: WireGuard preshared key
+    help: "The PresharedKey line of the same config: airvpn and windscribe need it; custom when its config has one."
+  - key: wireguard_public_key
+    group: Advanced
+    label: Server public key
+    help: "Provider custom with another provider's config: the PublicKey line of its [Peer] part."
+  - key: wireguard_endpoint_ip
+    group: Advanced
+    label: Server address
+    help: "Provider custom with another provider's config: the address of its Endpoint line (an IP address, not a name), e.g. 185.65.135.1. Its port goes in Endpoint port."
   - key: server_countries
     label: Server countries
-    help: "Commercial providers: which country the exit is in, e.g. Germany. Comma separated."
+    help: "VPN providers: which country the exit is in, e.g. Germany. Comma separated."
+  - key: server_regions
+    label: Server regions
+    help: "VPN providers that sort their servers by region (windscribe, protonvpn, nordvpn, surfshark, airvpn): e.g. Sweden. Comma separated."
   - key: server_cities
     label: Server cities
-    help: "Commercial providers: narrow it to cities, e.g. Frankfurt. Comma separated."
+    help: "VPN providers: narrow it to cities, e.g. Frankfurt. Comma separated."
+  - key: server_hostnames
+    group: Advanced
+    label: Server names
+    help: "VPN providers: exactly these servers, e.g. de-fra-wg-001. Comma separated."
   - key: vpn_endpoint_port
     group: Advanced
     type: int
     label: Endpoint port
-    help: "Commercial providers: the WireGuard endpoint port if the provider needs one (0 = provider default)."
+    help: "VPN providers: the WireGuard endpoint port if the provider needs one (0 = provider default). Provider custom with another provider's config: the port of its Endpoint line."
     default: 0
   - key: dot_providers
     label: DNS-over-TLS provider

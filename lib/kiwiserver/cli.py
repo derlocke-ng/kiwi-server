@@ -2170,6 +2170,39 @@ def cmd_serve(args):
     web.serve(c, args.listen)
 
 
+def cmd_signup(args):
+    """The sign-up page of the network's accounts (the accounts module runs it), and what the
+    control node asks of it: invite codes, the requests, accepting or denying one."""
+    from . import signup as signupmod
+    s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "")
+    what = args.what
+    if what == "serve":
+        import uvicorn
+        host, _, port = args.listen.rpartition(":")
+        util.say("sign-up page on http://%s, accounts at https://%s" % (args.listen, args.id_host))
+        sys.stdout.flush()
+        terms = None
+        if args.terms_file and os.path.isfile(args.terms_file):
+            terms = util.read_text(args.terms_file)
+        uvicorn.run(signupmod.make_app(s, brand=args.brand or "", terms=terms), host=host.strip("[]"), port=int(port),
+                    log_level="warning", proxy_headers=True, forwarded_allow_ips="*")
+        return
+    if what == "invite":
+        print(json.dumps({"code": s.invite(uses=args.uses, days=args.days, note=args.note or "")}))
+    elif what == "invites":
+        print(json.dumps(s.invites()))
+    elif what == "revoke":
+        print(json.dumps({"revoked": s.revoke(args.arg or "")}))
+    elif what == "requests":
+        print(json.dumps(s.requests()))
+    elif what in ("accept", "deny"):
+        print(json.dumps({"state": s.answer(args.arg or "", what == "accept")}))
+    elif what == "link":
+        print(json.dumps({"link": s.link(args.arg or "")}))
+    else:
+        raise KiwiError("signup: serve, invite, invites, revoke HINT, requests, accept HINT, deny HINT, link NAME")
+
+
 def cmd_watch(args):
     """Home pushes: a RAM master that booted waits blank until its role comes; this sends it,
     and keeps the fleet's copies of a running one fresh."""
@@ -3371,6 +3404,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
+  kiwi-server signup serve|invite|requests|…   the accounts' sign-up page, in the accounts module's container
   kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
   kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
@@ -3539,6 +3573,17 @@ def build_parser():
     s.add_argument("--identity", metavar="FILE",
                    help="a file with this computer's age secret key, instead of the keyring (join writes it)")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the control node")
+    s = sub("signup", cmd_signup); s.add_argument("what"); s.add_argument("arg", nargs="?")
+    s.add_argument("--state", default="/state", metavar="DIR", help="where the invites and requests are kept")
+    s.add_argument("--kanidm", default="", metavar="URL", help="Kanidm's address on the stack network")
+    s.add_argument("--token-file", default="", metavar="FILE", help="the sign-up's token for Kanidm")
+    s.add_argument("--id-host", default="", metavar="NAME", help="the accounts' public name (the links point there)")
+    s.add_argument("--brand", default="", help="the network's name on the page")
+    s.add_argument("--terms-file", default="", metavar="FILE", help="the rules shown on the page, a paragraph a line")
+    s.add_argument("--listen", default="0.0.0.0:8080", metavar="ADDR:PORT")
+    s.add_argument("--uses", type=int, default=1, help="invite: how many accounts the code makes")
+    s.add_argument("--days", type=int, default=14, help="invite: how long the code is good")
+    s.add_argument("--note", default="", help="invite: for whom (shown on the control page)")
     s = sub("serve", cmd_serve); s.add_argument("fleet")
     s.add_argument("--listen", default="127.0.0.1:8740", metavar="ADDR:PORT")
     s.add_argument("--status-minutes", type=int, default=10, metavar="N", help="how often it looks at every host")

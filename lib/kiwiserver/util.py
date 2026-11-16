@@ -11,6 +11,15 @@ import warnings
 from kiwimodules.util import KiwiError, b64, deep_merge, read_bytes, read_text  # noqa: E402,F401
 
 
+def tmp_name(path):
+    """A temporary name beside `path` that no other process or thread writing `path` at the same
+    moment uses: two writers on one shared ".tmp" interleave, and the one renamed last may be
+    half of each (seen: a store that the recovery key no longer opened, after a backup and the
+    control node's own look ran together)."""
+    import threading
+    return "%s.%d-%d.tmp" % (path, os.getpid(), threading.get_ident())
+
+
 def settle(tmp, path):
     """`tmp` becomes `path`, and stays so through a power cut: its bytes are forced to the
     disk before the name changes, and the folder after. Without this a file written and

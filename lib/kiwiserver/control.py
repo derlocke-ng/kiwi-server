@@ -467,9 +467,10 @@ class Control:
             if hashlib.sha256(data).hexdigest() == was:
                 continue
             blob = storemod.encrypt_bytes(self.store.recipients, data)
-            with open(os.open(path + ".age.tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:
+            tmp = util.tmp_name(path + ".age")
+            with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:
                 fh.write(blob)
-            util.settle(path + ".age.tmp", path + ".age")
+            util.settle(tmp, path + ".age")
             self._saved[name] = hashlib.sha256(data).hexdigest()
             self._age[name] = util.sha256_file(path + ".age")
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.152.5 — Nextcloud's apps keep their push channel, and nobody is banned for it
+
+- kiwi-modules 0.61.3: the Nextcloud site passes websockets on. Its push channel (`/push/ws`)
+  answered 400 every two minutes, the app's close frame then reached nginx as a bad request, and
+  fail2ban banned the computer that runs the Nextcloud app (seen on the test network's dev VM).
+
 ## 2.152.4 — looking for a waiting disk no longer gets you banned
 
 - Is a machine waiting at boot for its disk key? kiwi-server asked its SSH port for every kind of

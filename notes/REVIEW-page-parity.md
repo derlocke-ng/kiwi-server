@@ -32,7 +32,7 @@ run included. Compared command by command and setting by setting.
 | Preview (`plan`) | open |
 | Update everything (`apply --update`) | open |
 | Remove a phone or laptop (`enroll --remove`), show its QR code again | open |
-| "Leave NAME out" while keys are replaced (`rotate --waive`) | open |
+| "Leave NAME out" while keys are replaced (`rotate --waive`) | **built** in 2.142.0: "A computer was lost or stolen…" says which machines still wait and offers "Leave NAME out" for the keys and the secrets |
 | Activity: tasks and who did what | open |
 
 ## Neither has
@@ -55,7 +55,7 @@ switches for leaving to the Internet through a partner. Linking a new network st
 
 Still open on the page: SSH certificates, prune, the role script, doctor, the
 hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in the app:
-"leave NAME out", activity. (Preview, "update everything" and removing a phone: built in 2.92.0.)
+activity. (Preview, "update everything" and removing a phone: built in 2.92.0.)
 
 Since 2.93.0 and 2.94.0, in all three: what is done about a machine that does not answer (Settings, "When a
 machine is gone"; `recover`), and who may reach what (`access`; "Who may reach what" on the page and in the app's

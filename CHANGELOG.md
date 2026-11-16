@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.142.0 — leave a machine out of a replacement, in the app
+
+- The app's "A computer was lost or stolen…" says which machines still wait on the old keys or secrets
+  and offers "Leave NAME out" for each (`rotate --waive`), with the control page's warning first.
+
 ## 2.141.0 — take in a waiting starter from the app or a terminal
 
 - `kiwi-server take-in FLEET ADDRESS --code CODE --preset P [--name N]`, and in the app's menu

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.152.0 — add a master at netcup from the page
+
+- "Add a master" on Machines (a network without a master) offers "Sign in at netcup and pick it",
+  as the first run does: the server picked fills in the address, the fleet knows which server it
+  is, and the login is sealed with the network's secrets, so "Install it at netcup" needs no
+  second sign-in.
+
 ## 2.151.0 — check and access without a master
 
 - `kiwi-server check` in a network without a master asks from the machine that answers for the

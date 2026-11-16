@@ -9190,6 +9190,54 @@ class TestFirstRunPage(StoreBase):
         self.assertIn("this network has a master already", self.ask(
             "/machines/add-master", {"address": "203.0.113.8", "csrf": csrf}, cookie=cookie)[1].replace("+", " "))
 
+
+    def test_add_a_master_at_netcup_from_the_page(self):
+        """"Add a master" in a network without one: sign in at netcup, pick the server; the fleet
+        knows it, and the login is sealed with the network's secrets."""
+        import urllib.request
+        api = FakeNetcup()
+        self.addCleanup(api.close)
+        form = {"master_where": "none", "lan_subnet": "192.168.1.0/24", "lan_gateway": "192.168.1.1",
+                "nodes.0.preset": "cloud", "nodes.0.address": "192.168.1.30", "nodes.0.name": "mango"}
+        _s, _b, cookie = self.ask("/setup", dict(form, password=self.PW, again=self.PW, code=self.c.setup_code()))
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": "mango", "hostname": "mango.home", "role": "node", "phase": "build", "modules": ["dns"], "sites": []}]}))
+        body = self.ask("/machines", cookie=cookie)[1]
+        self.assertIn("Sign in at netcup and pick it", body)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+
+        def post(data):
+            req = urllib.request.Request(self.url + "/machines/hoster", data=json.dumps(data).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "Cookie": cookie})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code, json.loads(e.read())
+        import urllib.error
+        self.assertEqual(post({"provider": "netcup", "csrf": "wrong"})[0], 401)
+        with mock.patch.dict(os.environ, {"KIWI_NETCUP_API": api.url}):
+            st, out = post({"provider": "netcup", "csrf": csrf})
+            self.assertEqual(st, 200, out)
+            for _ in range(200):
+                s = json.loads(self.ask("/machines/hoster/" + out["handle"], cookie=cookie)[1])
+                if s["state"] in ("listed", "failed"):
+                    break
+                time.sleep(0.1)
+        self.assertEqual(s["state"], "listed", s)
+        status, where, _c = self.ask("/machines/add-master", {"hoster": out["handle"], "provider_server": "7", "name": "trifle",
+                                                               "csrf": csrf}, cookie=cookie)
+        self.assertEqual((status, where), (303, "/hosts/trifle"))
+        hosts = yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))["hosts"]
+        self.assertEqual(hosts["trifle"]["vps"], {"provider": "netcup", "server": 7})
+        self.assertEqual(hosts["trifle"]["master"]["vpn-server"]["wg_host"], "203.0.113.9")     # the server's address
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "secrets", "netcup.token")))
+        self.assertFalse(os.path.exists(os.path.join(self.c.run, "hoster")))
+        self.c.lock_store()                                  # sealed: it is there after the next unlock too
+        self.assertTrue(self.c.login(self.PW))
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "secrets", "netcup.token")))
+
     def test_the_hoster_is_signed_in_from_the_page_and_its_login_is_sealed(self):
         """"Sign in and pick it": the device login at netcup runs on the machine, the page lists the
         account's servers; the picked one goes into the fleet, the login into the sealed secrets."""

@@ -20,7 +20,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import VERSION, form as formmod, health as healthmod
+from . import VERSION, form as formmod, health as healthmod, providers as providersmod
 from .control import ACTIONS, Control
 from .util import KiwiError
 
@@ -496,12 +496,46 @@ named after a fruit.</p><input id="mname" name="name">
 <p>A master makes your services open from anywhere, through your own VPN, and gives your phones a place on it. It is
 a small rented server (or a machine at home whose port your router passes on). Your machines at home go onto its VPN:
 after it is set up, each one gets its place there and is set up again (Home lists the steps).</p>
+{% for p, pname in hosters.items() %}<div class="lookup-m" data-provider="{{ p }}" data-name="{{ pname }}">
+<label>A server at {{ pname }}</label><p class="muted" style="margin:0 0 4px">Sign in at {{ pname }} in your browser:
+the page lists your servers, and the one you pick is installed for you later (everything on it is erased then).</p>
+<input type="hidden" name="hoster" value=""><input type="hidden" name="provider_server" value="">
+<div class="actions"><button type="button" class="hoster-go">Sign in at {{ pname }} and pick it</button></div>
+<select class="hoster-list" style="display:none" aria-label="Your server at {{ pname }}"></select>
+<p class="hoster-say muted" aria-live="polite"></p></div>{% endfor %}
 <label for="maddr">Its address on the Internet</label><p class="muted" style="margin:0 0 4px">The IPv4 address your
-hoster shows, like 203.0.113.7, or a dynamic DNS name for a master at home.</p><input id="maddr" name="address" required>
+hoster shows, like 203.0.113.7, or a dynamic DNS name for a master at home. Picked above: filled in.</p><input id="maddr" name="address">
 <details><summary>More settings</summary><label for="mmname">Name</label><p class="muted" style="margin:0 0 4px">Empty: it is
 named after a fruit dish.</p><input id="mmname" name="name"></details>
 {% if master_error %}<p class="bad">{{ master_error }}</p>{% endif %}
-<div class="actions"><button class="primary">Add the master</button></div></form></details>{% endif %}
+<div class="actions"><button class="primary">Add the master</button></div></form></details>
+<script>
+document.querySelectorAll(".lookup-m").forEach(function (box) {
+  var go = box.querySelector(".hoster-go"), say = box.querySelector(".hoster-say"), list = box.querySelector(".hoster-list");
+  var csrf = box.closest("form").querySelector('[name="csrf"]').value, name = box.dataset.name;
+  function failed(why) { say.textContent = "That did not work: " + why + ". Type the address instead."; go.disabled = false; }
+  function take() { var r = JSON.parse(list.value); box.querySelector('[name="provider_server"]').value = r.id;
+    document.getElementById("maddr").value = r.address; say.textContent = "Its address is " + r.address + "."; }
+  list.addEventListener("change", take);
+  function poll(handle, opened) {
+    fetch("/machines/hoster/" + encodeURIComponent(handle), {cache: "no-store"}).then(function (r) { return r.json(); }).then(function (s) {
+      if (s.state === "failed" || (s.error && !s.state)) return failed(s.error || "no answer");
+      if (s.url && !opened) { opened = true; say.innerHTML = ""; var a = document.createElement("a"); a.href = s.url;
+        a.target = "_blank"; a.rel = "noopener"; a.textContent = "Sign in to " + name; say.append(a, " in a new tab and confirm it there."); }
+      if (s.state !== "listed") return setTimeout(function () { poll(handle, opened); }, 2000);
+      list.innerHTML = ""; s.rows.forEach(function (r) { var o = document.createElement("option");
+        o.value = JSON.stringify({id: r.id, address: r.address}); o.textContent = r.label; list.appendChild(o); });
+      box.querySelector('[name="hoster"]').value = handle; list.style.display = ""; go.style.display = "none"; take();
+    }).catch(function () { setTimeout(function () { poll(handle, opened); }, 4000); });
+  }
+  go.addEventListener("click", function () {
+    go.disabled = true; say.textContent = "Asking " + name + "…";
+    fetch("/machines/hoster", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({provider: box.dataset.provider, csrf: csrf})}).then(function (r) { return r.json(); })
+      .then(function (d) { if (d.error) return failed(d.error); poll(d.handle, false); }).catch(function () { failed("this page did not answer"); });
+  });
+});
+</script>{% endif %}
 
 {% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
@@ -1934,7 +1968,8 @@ def make_app(control: Control):
         from . import setup as setupmod
         return page("machines.html", request, "/machines", machines=ms, looked=st.get("time"), looking=control.looking,
                     presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"),
-                    take_error=request.query_params.get("take_error"), master_error=request.query_params.get("master_error"))
+                    take_error=request.query_params.get("take_error"), master_error=request.query_params.get("master_error"),
+                    hosters={p.id: p.name for p in providersmod.PROVIDERS.values()})
 
     @app.get("/services")
     def services_page(request: Request):
@@ -1989,13 +2024,37 @@ def make_app(control: Control):
             return RedirectResponse("/machines?" + urllib.parse.urlencode({"add_error": str(e)}), status_code=303)
         return RedirectResponse("/hosts/" + made, status_code=303)
 
+    @app.post("/machines/hoster")
+    async def machines_hoster(request: Request):
+        """"Add a master" at a hoster: the device login, for someone logged in (hoster_start)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        u = posted(request, str(body.get("csrf") or ""))
+        if not u:
+            return JSONResponse({"error": "log in"}, status_code=401)
+        try:
+            handle = await run_in_threadpool(control.hoster_start, str(body.get("provider") or ""), "", address(request), u)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        return JSONResponse({"handle": handle}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/machines/hoster/{handle}")
+    def machines_hoster_state(request: Request, handle: str):
+        s = control.hoster_state(handle) if user(request) else None
+        if s is None:
+            return JSONResponse({"error": "no such sign-in"}, status_code=404)
+        return JSONResponse(s, headers={"Cache-Control": "no-store"})
+
     @app.post("/machines/add-master")
-    def machines_add_master(request: Request, address: str = Form(""), name: str = Form(""), csrf: str = Form("")):
+    def machines_add_master(request: Request, address: str = Form(""), name: str = Form(""), csrf: str = Form(""),
+                            hoster: str = Form(""), provider_server: str = Form("")):
         u = posted(request, csrf)
         if not u:
             return login_page()
         try:
-            made, _moved = control.add_master(address, name, user=u)
+            made, _moved = control.add_master(address, name, user=u, hoster=hoster, server=provider_server)
         except KiwiError as e:
             return RedirectResponse("/machines?" + urllib.parse.urlencode({"master_error": str(e)}), status_code=303)
         return RedirectResponse("/hosts/" + made, status_code=303)

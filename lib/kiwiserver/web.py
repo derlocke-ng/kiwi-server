@@ -650,9 +650,17 @@ passwords), every night, and the <strong>network's own settings and keys</strong
 {% if "backup" in m.modules %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="save">
 <input type="hidden" name="host" value="{{ m.name }}"><button>Save now</button></form>{% endif %}
 {% if "backup" in m.modules %}<a class="btn" href="/backups/{{ m.name }}">Bring something back</a>{% endif %}
+{% if b and b.held %}<p class="banner warn">Rebuilt: its backups wait. {{ b.held }}</p>
+<p class="muted small">"Bring something back" fetches its data from the backups; "Start new" keeps what it has now and
+backs that up instead (the old snapshots stay until they are pruned).</p>
+<form class="inline" method="post" action="/run" onsubmit="return confirm('Start a new history for {{ m.name }}? It keeps what it has now and backs that up; the old snapshots stay until pruned.')">{{ tok }}
+<input type="hidden" name="action" value="start-new"><input type="hidden" name="host" value="{{ m.name }}"><button>Start new</button></form>{% endif %}
 {% if b and b.copies %}<p class="muted">Kept on: {% for c in b.copies %}{{ c.server }}{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
 {% if "backup" not in m.modules %}<p class="muted small">Nothing on this machine is set to be saved. Machines with your data should have the <em>backup</em> part.</p>{% endif %}
-{% if m.facts.backup_store %}<p class="muted">It keeps the backups of: {% for r in m.facts.backup_store.repos %}{{ r.client }} ({{ r.snapshots }} versions){{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
+{% if m.facts.backup_store %}<p class="muted">It keeps the backups of: {% for r in m.facts.backup_store.repos %}{{ r.client }} ({{ r.snapshots }} versions){{ ", " if not loop.last }}{% endfor %}
+<span class="muted">· {{ size(m.facts.backup_store.free_kib) }} free</span></p>
+<form class="inline" method="post" action="/run" onsubmit="return confirm('Remove the old snapshots on {{ m.name }}? It keeps as many days, weeks and months as its settings say.')">{{ tok }}
+<input type="hidden" name="action" value="prune"><input type="hidden" name="host" value="{{ m.name }}"><button>Prune now</button></form>{% endif %}
 </div>{% else %}<p class="muted">No machines yet.</p>{% endfor %}
 <h2>The network itself</h2><div class="card"><p>Its settings and keys, as one encrypted file: a copy.
 <strong>A copy and your recovery key are the whole network</strong>, so keep a copy somewhere else than on this machine:
@@ -1048,6 +1056,9 @@ switches a master that has been gone for 15 minutes off and on at its provider, 
 {{ auto.server }} (the ring “{{ auto.ring }}”). If that machine is off, log in here once.{% else %}Log in here once. That
 unlocks the keys again. It can also unlock by itself with the help of another of your machines: in the app, give this
 machine's settings <code>unlock: { control: &lt;a ring on another machine&gt; }</code>.{% endif %}</dd></dl></div>
+<h2>This machine's own tools</h2><div class="card"><p>To make install media and check settings, this machine
+needs a few programs of its own. The check lists each one; "!!" marks one that is missing (some are optional).</p>
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="doctor"><button>Check them</button></form></div>
 <h2>The words</h2><div class="card"><dl>
 <dt>Machine</dt><dd>A computer of your network: a small server at home, or a rented one.</dd>
 <dt>Master</dt><dd>The machine in the middle, usually a rented server. Everything connects to it; it holds none of your data.</dd>
@@ -1173,7 +1184,9 @@ FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's pha
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "remove": "Removing",
-        "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message"}
+        "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
+        "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
+        "doctor": "Checking the tools of this machine"}
 SERVICES = healthmod.SERVICES        # a service by the first part of its name, in plain words
 HINTS = (
     ("unreachable", "It did not answer. Is it switched on and online? After a restart, give it a minute, then check again."),
@@ -1424,7 +1437,7 @@ def make_app(control: Control):
                        about_text=os.environ.get("KIWI_ABOUT", ""), contact=os.environ.get("KIWI_CONTACT", ""))
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
                        kind=lambda r: KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
-                       to_text=formmod.to_text, icon=icon, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
+                       to_text=formmod.to_text, icon=icon, size=size, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
 
     def page(template, request=None, nav=None, **kw):
@@ -2031,7 +2044,7 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "remove") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "remove", "start-new", "prune") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":
@@ -2043,7 +2056,8 @@ def make_app(control: Control):
         if j["action"] in ("rotate", "rotate-seed"):      # a machine that is off is no failure: it waits
             say["failed"] = ("Not every machine could be changed. The ones that wait are listed under Computers; "
                              "the lines below say why.")
-        back = ("/" if j["action"] == "remove" else "/backups" if j["action"] in ("save", "backup", "restore") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
+        back = ("/" if j["action"] == "remove" else "/backups" if j["action"] in ("save", "backup", "restore", "start-new", "prune") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
+                else "/help" if j["action"] == "doctor"
                 else "/hosts/" + j["hosts"][0] if j["hosts"] else "/")
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
 

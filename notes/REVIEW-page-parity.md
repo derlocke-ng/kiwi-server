@@ -10,11 +10,11 @@ run included. Compared command by command and setting by setting.
 | 1 | The first run: the questionnaire, the recovery key | nothing; a node waits for `control push` | **built** in 2.81.0: a machine with nothing on it shows the questionnaire, guarded by a setup code; 2.82.0: a new password by recovery key |
 | 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | **built** in 2.83.0 from one shared list of fields (`form.py`). Left: the VPN groups are a text box and not the app's list editor, a file setting is a typed path, `unlock.control`, removing a machine |
 | 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | **built** in 2.82.0: "Still to set up" with one button per step, media made in memory and fetched from the page, "Add a machine at home" |
-| 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | **built** in 2.85.0: "Bring something back" per machine (a part to a snapshot, or everything to the newest). "Start new" for a rebuilt machine is left |
+| 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | **built** in 2.85.0: "Bring something back" per machine (a part to a snapshot, or everything to the newest). "Start new" for a rebuilt machine: 2.144.0, under Backups |
 | 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | **built** in 2.85.0: "Unlock it" on the machine's page (forwards its ring; handing over the key by hand stays in the terminal) |
 | 6 | A copy of the network (`backup --local`), restore a network from a copy, a synced folder | "Save it now" only | **built** (not released yet): "Fetch a copy" on Backups downloads the network's copy, which the recovery key opens; a machine with nothing on it takes a copy on its first page ("I already have a network"); "Save it now" needs no passphrase and goes to every machine that is set up. Left: a copy is not signed (ROADMAP 21), the passphrase kind (`.tar.enc`) is restored with `kiwi-server restore` only, a synced folder |
 | 7 | Federation; SSH certificates | SSH certificates since 2.143.0 (Computers, "Let a key in for a while"); federation under Linked networks | **built** |
-| 8 | Prune now, full status, role script, doctor | nothing | open |
+| 8 | Prune now, full status, role script, doctor | prune and doctor since 2.144.0 (Backups, Help); a machine's status is on its page | role script open |
 | 9 | Sign in at the hoster and pick the server (wizard) | the address is typed | open |
 
 `check` and `watch` are allowed actions of the page without a button.
@@ -53,8 +53,8 @@ run included. Compared command by command and setting by setting.
 Since 2.91.2 the page has "Linked networks": what each partner may reach, who of it may come, and the two
 switches for leaving to the Internet through a partner. Linking a new network stays on a computer that holds both.
 
-Still open on the page: prune, the role script, doctor, the
-hoster's sign-in in the wizard, "start new" for a rebuilt machine. Still open in the app:
+Still open on the page: the role script, the
+hoster's sign-in in the wizard (prune, doctor and "start new": 2.144.0). Still open in the app:
 activity. (Preview, "update everything" and removing a phone: built in 2.92.0.)
 
 Since 2.93.0 and 2.94.0, in all three: what is done about a machine that does not answer (Settings, "When a

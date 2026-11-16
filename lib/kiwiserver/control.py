@@ -41,9 +41,13 @@ ACTIONS = {
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
     "tell-test": ("notify", False),
+    "start-new": ("backups", True),     # a rebuilt machine whose backups wait: a new history instead
+    "prune": ("prune", True),           # old snapshots off a backup machine, by its keep_* settings
+    "doctor": ("doctor", False),        # are this node's own tools here (install media, checks)
     "adopt": ("adopt", True),           # a waiting starter, taken in (take_in)
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock", "remove"}
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock", "remove",
+           "start-new", "prune"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
 
@@ -814,12 +818,20 @@ class Control:
             if not names:
                 raise KiwiError("no machine is set up yet, so there is nowhere to copy it to. \"Fetch a copy\" gives you the file")
             return argv + names
+        if action == "doctor":              # about this node, not the fleet
+            return list(self.kiwi) + ["doctor"]
         if action == "tell-test":           # one test message on every channel that is set
             return list(self.kiwi) + ["notify", self.fleet_path, "--test"]
         if action == "save":                # one machine's data, to its backup machines, now
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
             return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--now"]
+        if action in ("start-new", "prune"):
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            if action == "prune":
+                return list(self.kiwi) + ["prune", self.fleet_path, hosts[0]]
+            return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--new"]
         # new SSH keys, or a new seed, on every machine that still has the old ones
         if action in ("rotate", "rotate-seed"):
             argv = list(self.kiwi) + ["rotate", self.fleet_path, "ssh" if action == "rotate" else "seed"]

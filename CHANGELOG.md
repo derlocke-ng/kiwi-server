@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.144.0 — prune, start new and the tools check on the control page
+
+- Backups: "Prune now" on each machine that keeps backups (with its free space), and "Start new"
+  on a rebuilt machine whose backups wait, next to "Bring something back". The app had both.
+- Help: "Check them" runs `kiwi-server doctor` on the control node itself, as the app's Doctor does.
+
 ## 2.143.0 — let a key in from the control page
 
 - Computers, "Let a key in for a while": the control page makes the network's SSH certificate

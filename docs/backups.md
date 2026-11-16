@@ -175,7 +175,9 @@ The passwords derive from the seed, so the seed brings the backups back.
 
 From your computer, `kiwi-server backups <fleet> <host>` lists what the
 servers keep of a machine; `--now` backs it up, `--restore MODULE... [--at
-TIME]` brings modules back. The GUI has the same on each host's page.
+TIME]` brings modules back, and `--new` starts the new history of a rebuilt
+machine. The app has the same on each host's page; the control page has it
+under Backups ("Bring something back", "Start new").
 
 ## Pruning
 
@@ -188,6 +190,8 @@ over cannot destroy them.
   and six months unless set.
 - `kiwi-server prune <fleet> --every week` sets up a timer on that machine
   that does it.
+- "Prune now" does the same for one backup node: on the app's host page,
+  and under Backups on the control page.
 - `kiwi-server status` says on each backup node when it was last pruned and
   how long its free space lasts.
 

@@ -12,6 +12,9 @@ chose.
   backups
 - **No root on your computer**: installed into `~/.local`; the ISO tools run
   in a container when they are missing
+- **Services for others too**: a start page for everyone on the network, a
+  front page for strangers, accounts with invite codes or requests you accept
+  (no email), Jabber sign-up, and Tor
 
 ```
 fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash script
@@ -56,10 +59,10 @@ Step by step: [docs/getting-started.md](docs/getting-started.md).
 | [Getting started](docs/getting-started.md) | a new fleet, the first ISO, apply, offline media, netcup servers |
 | [Example setups](docs/examples.md) | pictures of possible networks and what each part does |
 | [The fleet file](docs/fleet.md) | the settings, the role block, names and the domain |
-| [Roles and modules](docs/roles.md) | master and node, presets, a public hub, the LAN cache, writing a role |
+| [Roles and modules](docs/roles.md) | master and node, presets, a public hub, Jabber, [accounts](docs/roles.md#accounts), the LAN cache, writing a role |
 | [The network](docs/network.md) | joining the mesh, DNS, the MTU, federation, [routers](docs/routers.md) |
 | [Machines](docs/machines.md) | targets, the output, first boot, updates, a master in RAM |
-| [The control node](docs/control.md) | kiwi-server on a home node, with a page for the phone |
+| [The control node](docs/control.md) | kiwi-server on a home node, with a page for the phone; the start page, the status page and the front page for strangers |
 | [Boards](docs/boards.md) | Odroid and other arm64 boards: `kiwi-server adopt` |
 | [Backups](docs/backups.md) | the fleet directory, each machine's data, restore |
 | [Security](docs/security.md) | the secret store, encrypted disks, unlock at boot, SSH |

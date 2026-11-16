@@ -110,7 +110,12 @@ home network, and its screen shows its address and a setup code. On Machines, "A
 with the starter stick is waiting": type both, say what it does, and "Take it in". The
 code shows that you are at that machine; the control page hands it the network's key
 and sets it up, and the starter's own page goes away. It keeps the address it has, as a
-fixed one, and its disk is not encrypted (the starter installed it already).
+fixed one, and its disk is not encrypted (the starter installed it already). The app
+does the same (menu, "Take in a waiting machine…"), and so does a terminal:
+
+```bash
+kiwi-server take-in ~/kiwi/fleet.yaml 192.168.1.40 --code abcd-1234 --preset cloud
+```
 
 Install media hold the machine's keys, so they are made in memory and never on this
 machine's disk: they are gone after a restart and after the machine is set up, and

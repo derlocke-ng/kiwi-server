@@ -3324,7 +3324,7 @@ class Window(Adw.ApplicationWindow):
                          ("plan-host", self.preview_host), ("update-all", self.update_all),
                          ("stack-host", self.show_stack), ("folder-host", self.open_folder),
                          ("remove-host", self.remove_host_dialog),
-                         ("access", self.access_dialog),
+                         ("access", self.access_dialog), ("take-in", self.take_in_dialog),
                          ("accounts", lambda: self.doc.path and AccountsDialog(self).present(self)),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
@@ -3349,6 +3349,7 @@ class Window(Adw.ApplicationWindow):
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
+        section.append("Take in a waiting machine…", "win.take-in")
         section.append("Connect this computer…", "win.connect")
         section.append("Add a phone or laptop…", "win.device")
         section.append("Back up the network now", "win.backup-now")
@@ -4784,6 +4785,48 @@ class Window(Adw.ApplicationWindow):
         return False
 
     # ---- hosts ----
+    # what a machine at home does, as the first run asks it (kiwi-server's setup.PRESETS)
+    PRESETS = (("cloud", "Keep my files, photos and passwords"),
+               ("gateway", "Be my home's ad blocker, VPN gateway and download station"),
+               ("minimal", "Nothing yet: only its place on the VPN"))
+
+    def take_in_dialog(self):
+        """A machine started from the starter stick waits at home with an address and a setup code on its
+        screen: taken in and set up (`kiwi-server take-in`), as the control page does."""
+        if not self.doc.path:
+            self.toast("Open or create a fleet first")
+            return
+        if self.doc.dirty and not self.save():
+            return
+        dlg = Adw.AlertDialog(heading="A machine with the starter stick is waiting",
+                              body="It shows an address and a setup code on its screen. Type both here: the code shows "
+                                   "that you are at that machine. Then it joins this network and is set up.")
+        address = Gtk.Entry(placeholder_text="Its address, like 192.168.1.40")
+        code = Gtk.Entry(placeholder_text="Its setup code, like abcd-1234")
+        does = Gtk.DropDown.new_from_strings([label for _k, label in self.PRESETS])
+        name = Gtk.Entry(placeholder_text="Its name (made up when left empty)")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for w in (address, code, does, name):
+            box.append(w)
+        dlg.set_extra_child(box)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("take", "Take it in")
+        dlg.set_response_appearance("take", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_close_response("cancel")
+
+        def resp(_d, r):
+            if r != "take":
+                return
+            args = ["take-in", self.doc.path, address.get_text().strip(), "--code", code.get_text().strip(),
+                    "--preset", self.PRESETS[does.get_selected()][0]]
+            if name.get_text().strip():
+                args += ["--name", name.get_text().strip().lower()]
+            path = self.doc.path
+            self._after_spawn = lambda: self.open_path(path, sync=False)        # the fleet file has the new machine
+            self.spawn(args, "Taking in the machine at %s…" % address.get_text().strip())
+        dlg.connect("response", resp)
+        dlg.present(self)
+
     def add_host_dialog(self):
         if not self.doc.path:
             self.toast("Open or create a fleet first")

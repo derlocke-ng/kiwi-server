@@ -3214,6 +3214,37 @@ class TestOnion(Base):
             with mock.patch.object(c, "locked", lambda: False):
                 c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=ask)
 
+    def test_a_waiting_starter_is_taken_in_from_a_computer(self):
+        """kiwi-server take-in: the same handshake as the control node's, then adopt with the
+        network's key at the address the starter showed."""
+        f = self.net()
+        sec = os.path.join(os.path.dirname(f.path), "secrets")
+        os.makedirs(sec, exist_ok=True)
+        write(os.path.join(sec, "admin_ed25519.pub"), "ssh-ed25519 AAAAfleetkey kiwi\n")
+        asked, adopted = [], []
+
+        def ask(address, body):
+            asked.append((address, body))
+            if body["code"] != "abcd-1234":
+                raise KiwiError("that is not the code on this machine's screen")
+            return {"host_keys": ["ssh-ed25519 AAAAstarterhost"], "hostname": "kiwi"}
+
+        def adopt(args):
+            adopted.append((args.host, getattr(args, "as"), args.key))
+        with mock.patch.object(controlmod, "_ask_starter", ask), mock.patch.object(cli, "cmd_adopt", adopt):
+            rc, out, err = TestManage.run_cli(self, "take-in", f.path, "192.168.1.40", "--code", "0000-0000", "--preset", "cloud")
+            self.assertNotEqual(rc, 0)
+            self.assertIn("not the code", out + err)
+            self.assertNotIn("192.168.1.40", util.read_text(f.path))                      # nothing added for a wrong code
+            rc, out, err = TestManage.run_cli(self, "take-in", f.path, "192.168.1.40", "--code", "abcd-1234",
+                                              "--preset", "cloud", "--name", "fig")
+            self.assertEqual(rc, 0, out + err)
+        host = yaml.safe_load(util.read_text(f.path))["hosts"]["fig"]
+        self.assertEqual((host["target"], host["network"]["address"]), ("coreos", "192.168.1.40/24"))
+        self.assertIn("192.168.1.40 ssh-ed25519 AAAAstarterhost", util.read_text(os.path.join(sec, "known_hosts")))
+        self.assertEqual(asked[-1][1]["key"], "ssh-ed25519 AAAAfleetkey kiwi")
+        self.assertEqual(adopted, [("fig", "core@192.168.1.40", os.path.join(os.path.realpath(sec), "admin_ed25519"))])
+
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)

@@ -42,5 +42,15 @@ class TestConnectable(unittest.TestCase):
         self.assertEqual(re.findall(r'\("(\w+)", "', offered), list(cli.CONNECTABLE))
 
 
+    def test_the_app_offers_the_presets_the_first_run_knows(self):
+        from kiwiserver import setup as setupmod
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "gui", "kiwi-server-gui")) as f:
+            tree = ast.parse(f.read())
+        found = [n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "PRESETS"]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(sorted(k for k, _ in ast.literal_eval(found[0])), sorted(setupmod.PRESETS))
+
+
 if __name__ == "__main__":
     unittest.main()

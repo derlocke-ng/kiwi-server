@@ -83,13 +83,15 @@ class M:
         return int(out) if rc == 0 and out.isdigit() else -1
 
     def state(self):
-        if unlockmod.waiting_at(self.host):
-            return "locked"
+        # a login first: it is what fail2ban there does not hold against us. Only when there is
+        # none, is the machine waiting for its disk key (a key scan), or merely on?
         if remote._answers(self.addr, self.port):
             n = self.count()
-            if n < 0:
-                return "starting"
-            return "running" if n >= self.before else "up (%d of %d services)" % (n, self.before)
+            if n >= 0:
+                return "running" if n >= self.before else "up (%d of %d services)" % (n, self.before)
+            if unlockmod.waiting_at(self.host):
+                return "locked"
+            return "starting"
         return "starting" if subprocess.run(["ping", "-c", "1", "-W", "1", self.addr], capture_output=True).returncode == 0 else "off"
 
     def look(self, t0):

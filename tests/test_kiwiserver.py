@@ -4847,6 +4847,22 @@ class TestKeepWireguard(Base):
 
 
 class TestRemote(Base):
+    def test_a_key_scan_asks_for_the_kinds_on_record_only(self):
+        """Every kind of key asked for meant six connections, some of a kind the server lacks; fail2ban
+        (aggressive) banned the operator's computer after a few looks (power-cut drill, 17 Nov)."""
+        kh = os.path.join(self.tmp, "known_hosts.initramfs")
+        write(kh, "papaya.home ssh-ed25519 AAAAkey1\n192.168.2.30 ssh-ed25519 AAAAkey1\n")
+        asked = []
+
+        def runner(argv, **kw):
+            asked.append(argv)
+            return subprocess.CompletedProcess(argv, 0, b"192.168.2.30 ssh-ed25519 AAAAkey1\n", b"")
+        self.assertTrue(remote.shows_key_from("192.168.2.30", 22, kh, runner))
+        self.assertEqual(asked[0][asked[0].index("-t") + 1], "ed25519")
+        write(kh, "x ecdsa-sha2-nistp256 AAAAk2\nx ssh-ed25519 AAAAk3\n")
+        remote.shows_key_from("192.168.2.30", 22, kh, runner)
+        self.assertEqual(asked[1][asked[1].index("-t") + 1], "ecdsa,ed25519")
+
     class R:
         def __init__(self, rc=0, out=b"", err=b""):
             self.returncode, self.stdout, self.stderr = rc, out, err

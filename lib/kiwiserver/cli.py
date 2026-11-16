@@ -2150,6 +2150,22 @@ def cmd_control(args):
         print(json.dumps({"ring": ring, "server": server.name, "url": where,
                           "adv": json.loads(unlock.advertisement(server, ring))}))
         return
+    if args.action == "activity":       # the control page's Activity: tasks, and who did what
+        out = controlsync.activity_api(fleet_dir, key)
+        if args.porcelain:
+            print(json.dumps(out))
+            return
+        print("Tasks")
+        for j in out.get("jobs") or []:
+            print("  %-16s %-8s %s %s  (%s)" % ((j.get("started") or j.get("id") or "")[:16].replace("T", " "),
+                                                j.get("state") or "", j.get("action") or "", " ".join(j.get("hosts") or []),
+                                                j.get("user") or ""))
+        print("Log")
+        for e in out.get("entries") or []:
+            print("  %-16s %s %s  (%s%s)" % ((e.get("time") or "")[:16].replace("T", " "), e.get("what") or "",
+                                             " ".join(e.get("hosts") or []), e.get("user") or "",
+                                             ", " + e["address"] if e.get("address") else ""))
+        return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
             try:
@@ -3725,7 +3741,7 @@ def build_parser():
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
-    s.add_argument("action", choices=["push", "pull", "join", "invite", "requests", "accept", "deny", "ring"]); s.add_argument("fleet")
+    s.add_argument("action", choices=["push", "pull", "join", "invite", "requests", "accept", "deny", "ring", "activity"]); s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")

@@ -33,7 +33,7 @@ run included. Compared command by command and setting by setting.
 | Update everything (`apply --update`) | open |
 | Remove a phone or laptop (`enroll --remove`), show its QR code again | open |
 | "Leave NAME out" while keys are replaced (`rotate --waive`) | **built** in 2.142.0: "A computer was lost or stolen…" says which machines still wait and offers "Leave NAME out" for the keys and the secrets |
-| Activity: tasks and who did what | open |
+| Activity: tasks and who did what | **built** in 2.147.0: the app's menu, "Activity…", and `kiwi-server control activity` |
 
 ## Neither has
 

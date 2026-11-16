@@ -7,6 +7,8 @@ pw=$KIWI_ADMIN_PASSWORD
 user=$KIWI_ADMIN_USER
 email=$KIWI_ADMIN_EMAIL
 unset KIWI_ADMIN_PASSWORD
+oidc_secret=$KIWI_OIDC_SECRET
+unset KIWI_OIDC_SECRET
 
 say() { echo "kiwi: $*"; }
 
@@ -48,6 +50,19 @@ admin() {
     fi
 }
 
+# the network's accounts (the accounts module) as a way to sign in: "Sign in with accounts"
+accounts() {
+    [ -n "$KIWI_OIDC_CLIENT" ] && [ -n "$oidc_secret" ] || return 0
+    id=$(forgejo admin auth list 2>/dev/null | awk '$2 == "accounts" { print $1 }')
+    set -- --name accounts --provider openidConnect --key "$KIWI_OIDC_CLIENT" --secret "$oidc_secret" \
+        --auto-discover-url "$KIWI_OIDC_ISSUER/.well-known/openid-configuration" --scopes openid --scopes email --scopes profile
+    if [ -z "$id" ]; then
+        forgejo admin auth add-oauth "$@" >/dev/null && say "people sign in with the network's accounts now"
+    else
+        forgejo admin auth update-oauth --id "$id" "$@" >/dev/null
+    fi
+}
+
 # in the background, so that Forgejo runs whatever happens there
-admin &
+{ admin; accounts; } &
 exec /usr/bin/dumb-init -- /usr/local/bin/docker-entrypoint.sh

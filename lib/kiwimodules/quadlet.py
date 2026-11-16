@@ -177,7 +177,8 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
         container.append("PodmanArgs=--entrypoint=%s" % entrypoint)
     if body.get("command"):
         cmd = body["command"]
-        container.append("Exec=%s" % (" ".join(cmd) if isinstance(cmd, list) else cmd))
+        # each word quoted as systemd reads it: a word with spaces or quotes (JSON) stays one word
+        container.append("Exec=%s" % (" ".join(_esc(c) for c in cmd) if isinstance(cmd, list) else cmd))
     hc = body.get("healthcheck")
     if hc and not hc.get("disable"):
         test = hc.get("test")

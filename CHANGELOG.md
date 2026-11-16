@@ -10,6 +10,12 @@
 
 
 
+
+## 2.131.1 — a command word with spaces
+
+- kiwi-modules 0.55.1: each word of a container's command is quoted in its systemd unit; Jabber's
+  sign-up container did not start without it. Drill `jabber-join-browser.py`.
+
 ## 2.131.0 — Jabber's sign-up page
 
 - **Jabber addresses with invite codes or by asking** (kiwi-modules 0.55.0, `xmpp: { invites: true,

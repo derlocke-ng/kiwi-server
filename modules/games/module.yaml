@@ -81,7 +81,7 @@ settings:
       The games this module knows, YAML: game -> {title, image, ports, data, files, env, command}. Add your own here.
       ports: the ports it listens on, like 25565/tcp; the first is the one players type. data: folders it keeps its worlds in (name -> path in the container), backed up.
       files: folders for what it downloads (the game itself), not backed up. env: the image's settings; {name}, {password}, {memory} and {server} stand for the server's own. command: its command line.
-      Run here and seen working: minecraft, zandronum; started and listening (kiwi-server's tests/drills/game-images.py): terraria, factorio, minecraft-bedrock. The others are set up as their images document it.
+      Run on a machine of the fleet and played: minecraft, zandronum. Started from this catalog and listening (kiwi-server's tests/drills/game-images.py, 17 Nov 2026): all the others. The Steam games download the game at their first start (gigabytes); a failed download ends the container and it starts again by itself.
     default:
       minecraft:
         title: Minecraft (Java)

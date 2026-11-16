@@ -8,6 +8,7 @@ import base64
 import hmac
 import math
 import os
+import re
 import subprocess
 import threading
 import time
@@ -861,7 +862,7 @@ your network, under Machines.</p>
     "status.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}: status{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}</style>
 <div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ brand_name or "Kiwi" }}</h1>
-{% if h.checked %}<span class="muted small">checked {{ age(now - h.checked) }} ago · every ten minutes</span>{% endif %}</div>
+<span class="muted small"><a href="/">← all services</a>{% if h.checked %} · checked {{ age(now - h.checked) }} ago · every ten minutes{% endif %}</span></div>
 <p class="sub">{{ "The services that are open to the Internet, asked the way you reach them." if h.strangers else "How the network is: every service, asked from the network itself." }}</p>
 {% set down = h.services|rejectattr("ok")|list %}{% set off = (h.machines.of or 0) - (h.machines.on or 0) %}
 {% if not h.checked %}<div class="banner warn">Nothing has been checked yet.</div>
@@ -938,6 +939,51 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <button>Connect</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 <p class="muted small">Connected: after its next Apply the service shows "Sign in with accounts", and a person's first sign-in makes their user there.</p>
 {% else %}<p class="muted">None of your machines runs a service that can do so yet (Forgejo can).</p>{% endif %}{% endif %}
+{% endblock %}""",
+
+    "start.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}{% endblock %}{% block main %}
+<meta http-equiv="refresh" content="300">
+<style>main{max-width:1120px}
+.hero{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between;padding:26px 0 8px}
+.hero h1{font-size:2rem;margin:0;display:flex;align-items:center;gap:12px}.hero .logo{width:40px;height:40px;display:inline-flex}
+.hero p{max-width:640px;color:var(--muted);margin:8px 0 0;font-size:1.02rem}
+.cta{display:flex;gap:10px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:10px}
+.svc2{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.svc2 .top{display:flex;gap:12px;align-items:center}.svc2 .mono{width:40px;height:40px;border-radius:9px;display:inline-flex;align-items:center;
+justify-content:center;font-weight:700;font-size:1.1rem;color:var(--onaccent);background:var(--accent);flex:none}
+.svc2 .mono.off{background:var(--bad)}.svc2 h3{margin:0;font-size:1.02rem}.svc2 .about{color:var(--muted);font-size:.9rem;margin:0}
+.svc2 .addr{font-size:.82rem;color:var(--muted);overflow-wrap:anywhere}.svc2 .addr code{font-size:.8rem}
+.svc2 .foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:auto}
+.mini{display:flex;align-items:flex-end;gap:1px;height:16px;width:110px}.mini span{flex:1;background:var(--ok);border-radius:1px;opacity:.85}
+.mini span.none{background:var(--line)}.mini span.part{background:var(--warn)}.mini span.down{background:var(--bad)}
+.note{border:1px dashed var(--line2);border-radius:10px;padding:14px 16px;margin-top:18px;color:var(--muted);font-size:.92rem}
+</style>
+{% set down = h.services|rejectattr("ok")|list %}
+<div class="hero"><div><h1><span class="logo">{{ icon("kiwi") }}</span>{{ brand_name or ("Your network" if not h.strangers else "Kiwi") }}</h1>
+<p>{% if about_text %}{{ about_text }}{% elif h.strangers %}Services run by people, not by a company: no tracking, no ads. Use them in your browser, or over Tor.
+{% else %}The services of your network. They open from every device on your VPN.{% endif %}</p></div>
+<div class="cta">{% if h.join and (not h.strangers or h.join_public) %}<a class="btn primary" href="{{ h.join }}">Get an account</a>{% endif %}
+<a class="btn" href="/status">{% if not h.checked %}Status{% elif down %}<span class="dot bad"></span>{{ down|length }} not answering{% else %}<span class="dot ok"></span>Everything works{% endif %}</a></div></div>
+{% if h.services %}<div class="grid">
+{% for s in h.services %}<div class="svc2"><div class="top"><span class="mono {{ "" if s.ok else "off" }}">{{ s.label[:1] }}</span>
+<div><h3>{{ s.label }}</h3>{% if s.about %}<p class="about">{{ s.about }}</p>{% endif %}</div></div>
+<div class="addr"><a href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a>{% if s.onion %}<br>Tor: <code>{{ s.onion }}</code>
+<a href="#" class="small" onclick="navigator.clipboard.writeText('http://{{ s.onion }}');this.textContent='copied';return false">copy</a>{% endif %}</div>
+<div class="foot"><div class="mini" title="the last 30 days">{% for b in s.bars[-30:] %}<span class="{% if b.pct is none %}none{% elif b.pct >= 99 %}up{% elif b.pct >= 90 %}part{% else %}down{% endif %}" style="height:{{ 100 if b.pct is none or b.pct >= 99 else [b.pct, 30]|max|int }}%"></span>{% endfor %}</div>
+<span class="small">{% if not s.ok %}<span class="bad">not answering</span>{% elif s.uptime is not none %}{{ "%.1f"|format(s.uptime) if s.uptime < 99.95 else "100" }} % worked{% else %}<span class="ok">works</span>{% endif %}</span>
+<a class="btn primary" href="https://{{ s.site }}" rel="noopener">Open</a></div></div>{% endfor %}</div>
+{% else %}<div class="card"><p class="muted">{{ "Nothing is open to the Internet here yet." if h.strangers else "No services have been checked yet." }}</p></div>{% endif %}
+{% if h.strangers and h.services %}<div class="grid" style="margin-top:22px">
+<div class="card" style="margin:0"><b>Run by people, not by a company</b><p class="muted small">No tracking, no ads, no selling of what you do here.
+The services are free software.</p></div>
+{% if h.onion %}<div class="card" style="margin:0"><b>Over Tor too</b><p class="muted small">Every service with a Tor address opens in Tor Browser,
+without anyone seeing who you are or where you are.</p></div>{% endif %}
+{% if h.join and h.join_public %}<div class="card" style="margin:0"><b>One account for everything</b><p class="muted small">With an invite code,
+or by asking. No email address is needed. <a href="{{ h.join }}">Get one</a>.</p></div>{% endif %}</div>{% endif %}
+{% if not h.strangers %}<div class="note">On a phone or laptop that is not on the VPN yet, these addresses do not open: ask the people who run this network to add
+it{% if h.onion %}, or use the Tor addresses with Tor Browser{% endif %}.</div>{% endif %}
+<p class="muted small" style="margin-top:26px">{% if contact %}Contact: {{ contact }} · {% endif %}{{ brand_name or "This network" }} runs on kiwi-server. <a href="/status">Status</a>{% if h.join and (not h.strangers or h.join_public) %} · <a href="{{ h.join }}">Get an account</a>{% endif %}</p>
 {% endblock %}""",
 
     "help.html": """{% extends "base.html" %}{% block main %}
@@ -1323,6 +1369,9 @@ def with_logins(tiles, info):
 
 def make_app(control: Control):
     env = jinja2.Environment(loader=jinja2.DictLoader(TEMPLATES), autoescape=True)
+    # the network's own name, colour and words on the pages for everyone (the control module's settings)
+    env.globals.update(brand_name=os.environ.get("KIWI_BRAND", ""), brand_accent=re.sub(r"[^#0-9a-fA-F]", "", os.environ.get("KIWI_ACCENT", ""))[:7],
+                       about_text=os.environ.get("KIWI_ABOUT", ""), contact=os.environ.get("KIWI_CONTACT", ""))
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
                        kind=lambda r: KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
                        to_text=formmod.to_text, icon=icon, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
@@ -1401,6 +1450,24 @@ def make_app(control: Control):
         now = time.time()
         h = healthmod.public(control.health(), now)
         return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+
+    @app.get("/start")
+    def start_page():
+        """The network's start page for everyone on it: what each service is for, where it is, whether it works."""
+        now = time.time()
+        h = healthmod.public(control.health(), now)
+        h["services"] = sorted(h["services"], key=lambda s: (s["label"], s["site"]))      # a start page: by name, not by state
+        return page("start.html", h=h, now=now)
+
+    @app.get("/start/public")
+    def start_public():
+        """The front page for strangers, under the public name: the services open to the Internet, their
+        addresses on the web and over Tor, whether they work, and how to get an account."""
+        now = time.time()
+        h = healthmod.public(control.health(), now, strangers=True)
+        h["services"] = sorted(h["services"], key=lambda s: (s["label"], s["site"]))
+        h["join_public"] = bool(h.get("join")) and not h["join"].split("/")[2].endswith("." + str((control.fleet_info() or {}).get("domain") or "home"))
+        return page("start.html", h=h, now=now)
 
     @app.get("/status/public")
     def status_public():

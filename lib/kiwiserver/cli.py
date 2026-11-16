@@ -1518,6 +1518,7 @@ def cmd_notify(args):
     import io
     from . import health, notify
     fleet, _roles, _ms = load(args)
+    roles, ms = _roles, _ms
     cfg = fleet.defaults.get("notify") or {}
     network = str(fleet.defaults.get("domain") or "")
     if args.test:
@@ -1573,6 +1574,22 @@ def cmd_notify(args):
         state = {}
     u = fleet.defaults.get("updates") or {}
     state["window"] = "%s %s" % (", ".join(str(d) for d in u.get("days") or []), u.get("time") or "") if u.get("enabled") else ""
+    # what the start pages show while the fleet is locked: the hidden services anyone may open
+    # (a named person's stays a secret), and where people get an account
+    try:
+        state["onion"] = {site: a for _h, _s, a, c, site in _hidden(fleet, roles, ms) if not c}
+    except KiwiError:
+        pass
+    state["join"] = ""
+    for h in fleet.hosts.values():
+        try:
+            if h.role in roles and not h.validate(roles):
+                rolesmod.resolve_settings(roles[h.role], h, ms)
+                acc = h.module_settings.get("accounts") if "accounts" in (h.modules or []) else None
+                if acc is not None and acc.get("signup", True):
+                    state["join"] = "https://%s/join" % (acc.get("accounts_hostname") or "id." + h.hostname)
+        except KiwiError:
+            continue
     after = cfg.get("after")
     events = health.update(state, machines, services, happened, time.time(), after=60 * (10 if after is None else int(after)))
     sent = []

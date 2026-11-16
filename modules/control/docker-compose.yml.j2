@@ -9,6 +9,11 @@ services:
       - KIWI_CONTROL_HOST={{ hostname.split('.')[0] }}
       # the opened store, job logs and renders: in RAM, gone with the container
       - XDG_RUNTIME_DIR=/run/kiwi
+      # the network's name, colour, words and contact on the pages for everyone
+      - KIWI_BRAND={{ brand_name }}
+      - KIWI_ACCENT={{ brand_accent }}
+      - KIWI_ABOUT={{ about | replace('\n', ' ') }}
+      - KIWI_CONTACT={{ contact }}
     tmpfs:
       - /run/kiwi:size={{ ram_mb }}m,mode=0700
     volumes:

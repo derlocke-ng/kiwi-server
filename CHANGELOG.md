@@ -6,6 +6,19 @@
 
 
 
+
+## 2.130.0 — start pages, inside and out
+
+- **The network's start page** at `status.<control node>` (kiwi-modules 0.54.0): every service people
+  use, as a tile with what it is for, its address, its Tor address, whether it works and its last
+  30 days. "Get an account" when the network has the accounts module. The status page moved to
+  `/status` on the same name.
+- **A front page for strangers** at the public status name: the services open to the Internet,
+  their web and Tor addresses, whether they work, how to get an account, and the network's own
+  name, colour, words and contact (`control: { brand_name, brand_accent, about, contact }`).
+- Both pages read only what the control node writes down at every check, so they work while the
+  fleet is locked.
+
 ## 2.129.0 — Forgejo signs people in with the network's accounts
 
 - **`kiwi-server accounts <fleet> connect <host> git`** (and Connect on the control page's

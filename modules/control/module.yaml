@@ -55,21 +55,35 @@ nginx:
     # for at this name, the control part is asked for /status and nothing else. It is no admin
     # page: who may reach this machine's web pages may open it.
     - server_name: "{{ status_hostname or 'status.' ~ hostname }}"
-      # usable as a hidden service: the status page reads only; tried through Tor
+      # usable as a hidden service: the start and status pages read only; tried through Tor
       onion: true
       site: status
-      proxy_pass: "http://control/status"
+      # the network's start page: every service, what it is for, whether it works
+      proxy_pass: "http://control/start"
+      extra_locations:
+        - path: "= /status"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/status;
+            proxy_pass $page;
+            proxy_set_header Host $host;
       when: status_page
-      comment: Kiwi status (no login; the control part's /status only)
+      comment: Kiwi start and status pages (no login; the control part's /start and /status only)
     # the same for strangers, under a public name: only what is open to the Internet, and whether it
     # works. Whatever is asked for at this name, the control part is asked for /status/public.
     - server_name: "{{ public_status_hostname }}"
       # usable as a hidden service: the status page reads only; tried through Tor
       onion: true
       site: status-public
-      proxy_pass: "http://control/status/public"
+      # the front page for strangers, and at /status whether the services work
+      proxy_pass: "http://control/start/public"
+      extra_locations:
+        - path: "= /status"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/status/public;
+            proxy_pass $page;
+            proxy_set_header Host $host;
       when: public_status_hostname
-      comment: Kiwi status for the Internet (the services with a public name only)
+      comment: Kiwi front page and status for the Internet (the services with a public name only)
 
 backup:
   # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
@@ -97,6 +111,24 @@ settings:
   - key: status_hostname
     label: Status page's hostname
     help: "Empty: status.<hostname>."
+    default: ""
+  - key: brand_name
+    label: The network's name
+    help: "On the start page, the front page for strangers and the status pages, e.g. dlhost. Empty: Kiwi."
+    default: ""
+  - key: brand_accent
+    label: Its colour
+    help: "A colour for buttons and links, like #2f7d4a. Empty: Kiwi's green."
+    default: ""
+    pattern: '(#[0-9a-fA-F]{6})?'
+  - key: about
+    type: text
+    label: A few words about it
+    help: "On the front page for strangers: who runs these services and for whom, in a sentence or two."
+    default: ""
+  - key: contact
+    label: How to reach you
+    help: "On the front page for strangers, e.g. a Jabber address or an email address. Empty: none."
     default: ""
   - key: public_status_hostname
     label: Public status page's name

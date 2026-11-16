@@ -7806,6 +7806,23 @@ class TestWeb(StoreBase):
             self.assertIn(words, body)
         for words in ("papaya", "Nextcloud", "Vaultwarden", ">Machines<", "Sun 03:30", "csrf", "Log out"):
             self.assertNotIn(words, body)
+        # the start pages: inside every service people use, outside only what is open to the Internet
+        withjoin = json.loads(util.read_text(self.c.health_file))
+        withjoin.update(onion={"vault.papaya.home": "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"},
+                        join="https://id.example.org/join")
+        util.write_text(self.c.health_file, json.dumps(withjoin))
+        code, body = self.ask("/start")
+        self.assertEqual(code, 200)
+        for words in ("Passwords (Vaultwarden)", "Passwords, kept and shared safely", "abcdefghijklmnopqrstuvwxyz234567", "Get an account",
+                      "https://id.example.org/join", "1 not answering", "not on the VPN yet"):
+            self.assertIn(words, body)
+        self.assertNotIn("control.papaya.home", body)                              # no admin page
+        code, body = self.ask("/start/public")
+        self.assertEqual(code, 200)
+        for words in ("chat.example.org", "Run by people, not by a company", "Get an account"):
+            self.assertIn(words, body)
+        for words in ("Vaultwarden", "Nextcloud", "papaya", "not on the VPN yet"):
+            self.assertNotIn(words, body)
         stale = json.loads(util.read_text(self.c.health_file))
         stale["checked"] = now - 7200
         util.write_text(self.c.health_file, json.dumps(stale))

@@ -25,7 +25,13 @@ concurrency:
 
 jobs:
   starter:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # only after a push to this repository's main: the control image workflow also runs for pull
+    # requests, from forks too, and their code must never run here with the right to write and sign
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -33,10 +39,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: main
+          fetch-depth: 0
       - id: v
+        name: the version, checked before anything uses it
         run: |
           v=$(sed -n 's/^VERSION=//p' kiwi.manifest | head -1)
+          if ! [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::VERSION is not a version: refusing"; exit 1; fi
+          git rev-parse -q --verify "refs/tags/v$v" >/dev/null || { echo "::error::no tag v$v on main"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "tag=v$v" >> "$GITHUB_OUTPUT"
       - id: has

@@ -107,7 +107,8 @@ class Signup:
         if self.ejabberd:
             where = self.ejabberd.get(page) or next(iter(self.ejabberd.values()))
             given = password is None
-            password = password or "-".join(secrets.token_urlsafe(6) for _ in range(3))
+            # easy to read out and type: no 0/O, 1/l
+            password = password or "-".join("".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(5)) for _ in range(4))
             self.jabber(where, "check_account", {"user": name, "host": where["host"]}, exists_is_error=True)
             self.jabber(where, "register", {"user": name, "host": where["host"], "password": password})
             return {"address": "%s@%s" % (name, where["host"]), "password": password if given else ""}

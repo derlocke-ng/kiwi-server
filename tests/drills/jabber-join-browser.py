@@ -32,7 +32,7 @@ def kiwi(*args):
 
 
 def ejabberd(container, *args):
-    return subprocess.run(SSH + ["sudo podman exec %s ejabberdctl %s" % (container, " ".join(shlex.quote(a) for a in args))],
+    return subprocess.run(SSH + ["sudo podman exec -u ejabberd %s ejabberdctl %s" % (container, " ".join(shlex.quote(a) for a in args))],
                           capture_output=True, text=True).returncode
 
 
@@ -104,7 +104,8 @@ try:
     if waiting:
         kiwi("accept", waiting[0]["hint"])
         s = browser("status", internal, r["code"], b)
-        made = next((w for w in s.get("text1", "").split() if w.count("-") == 2 and len(w) > 20 and not w.startswith("ask-")), "")
+        after = s.get("text1", "").split("shown this once:", 1)
+        made = after[1].split()[0] if len(after) > 1 and after[1].split() else ""
         say("%s@%s" % (b, internal) in s.get("text1", "") and bool(made), "accepted: the address and a password, shown once")
         say(made and made not in s.get("text2", ""), "and not a second time")
         say(made and ejabberd("kn-xmpp", "check_password", b, internal, made) == 0, "ejabberd takes that password")

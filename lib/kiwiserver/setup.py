@@ -275,14 +275,22 @@ def questions(found=None):
                      "from a dynamic DNS service that points at your router, like myhome.example.org. Your phones and "
                      "machines connect to it."},
             {"id": "exit", "label": "How your devices reach the Internet on the VPN", "type": "choice", "default": "direct",
-             "options": [
-                {"value": "direct", "label": "Through the master's own connection (simplest)"},
-                {"value": "mullvad", "label": "Through Mullvad (more private; needs a Mullvad account)"}]},
-            {"id": "mullvad_key", "label": "Mullvad private key", "secret": True, "when": "exit == 'mullvad'", "required": True,
-             "help": "PrivateKey from a WireGuard config made on mullvad.net. It is kept encrypted with your other keys."},
-            {"id": "mullvad_address", "label": "Mullvad address", "when": "exit == 'mullvad'", "required": True,
-             "help": "Address from the same config, like 10.66.1.2/32."},
-            {"id": "mullvad_country", "label": "Exit country", "default": "Germany", "when": "exit == 'mullvad'"},
+             "options": [{"value": "direct", "label": "Through the master's own connection (simplest)"}] + [
+                {"value": k, "label": ("Through " + v[0] + " (more private; needs an account there)") if k != "custom" else
+                 "Through another VPN provider (its WireGuard config)"} for k, v in EXITS.items()]},
+            {"id": "exit_key", "label": "WireGuard private key", "secret": True, "required": True, "when": "exit in mullvad,protonvpn,nordvpn,surfshark,airvpn,windscribe,ivpn,fastestvpn,custom",
+             "help": "The PrivateKey line of a WireGuard config from your provider: Mullvad at mullvad.net, Proton at "
+                     "account.proton.me, NordVPN in your Nord Account, the others on their account's WireGuard or manual "
+                     "setup page. It is kept encrypted with your other keys."},
+            {"id": "exit_address", "label": "Tunnel address", "required": True, "when": "exit in mullvad,surfshark,airvpn,windscribe,ivpn,fastestvpn,custom",
+             "help": "The Address line of the same config, its IPv4 part, like 10.66.1.2/32."},
+            {"id": "exit_psk", "label": "Preshared key", "secret": True, "when": "exit in airvpn,windscribe,custom",
+             "help": "The PresharedKey line of the same config. AirVPN and Windscribe have one; another provider's config may."},
+            {"id": "exit_peer", "label": "Server public key", "required": True, "when": "exit == 'custom'",
+             "help": "The PublicKey line under [Peer] in the same config."},
+            {"id": "exit_endpoint", "label": "Server address and port", "required": True, "when": "exit == 'custom'",
+             "help": "The Endpoint line under [Peer], like 185.65.135.1:51820. An address, not a name."},
+            {"id": "exit_country", "label": "Exit country", "default": "Germany", "when": "exit in mullvad,protonvpn,nordvpn,surfshark,airvpn,windscribe,ivpn,fastestvpn"},
             {"id": "master_name", "label": "Its name", "default": random.choice(MASTERS), "advanced": True},
             {"id": "master_disk", "label": "Its disk", "default": "auto", "advanced": True,
              "help": "auto: the install finds the machine's one disk. A device like /dev/vda when it has several. "
@@ -350,13 +358,28 @@ def check(a):
         except ValueError:
             if not re.fullmatch(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", addr.lower()):
                 bad["master_address"] = "That is neither an address like 203.0.113.7 nor a name like vpn.example.org."
-    if a.get("exit") == "mullvad":
-        if not a.get("mullvad_key"):
-            bad["mullvad_key"] = "The PrivateKey line of a WireGuard config made on mullvad.net is needed."
-        try:
-            ipaddress.ip_interface(str(a.get("mullvad_address") or ""))
-        except ValueError:
-            bad["mullvad_address"] = "The Address line of the same config is needed, like 10.66.1.2/32."
+    if a.get("exit") in EXITS:
+        _exit_answers(a)
+        name, needs_addr, needs_psk, where = EXITS[a["exit"]]
+        if not a.get("exit_key"):
+            bad["exit_key"] = "The PrivateKey line of a WireGuard config is needed: %s." % where
+        if needs_addr:
+            try:
+                ipaddress.ip_interface(str(a.get("exit_address") or ""))
+            except ValueError:
+                bad["exit_address"] = "The Address line of the same config is needed, like 10.66.1.2/32."
+        if needs_psk and not a.get("exit_psk"):
+            bad["exit_psk"] = "%s needs the PresharedKey line of the same config." % name
+        if a["exit"] == "custom":
+            if not re.fullmatch(r"[A-Za-z0-9+/]{42,43}=?", str(a.get("exit_peer") or "").strip()):
+                bad["exit_peer"] = "The PublicKey line under [Peer] is needed: 44 letters and digits ending in =."
+            host, _, port = str(a.get("exit_endpoint") or "").strip().rpartition(":")
+            try:
+                ipaddress.ip_address(host.strip("[]"))
+                if not 0 < int(port) < 65536:
+                    raise ValueError
+            except ValueError:
+                bad["exit_endpoint"] = "The Endpoint line under [Peer] is needed as an address and port, like 185.65.135.1:51820."
     names = [a.get("master_name") or ""]
     if not _name_ok(names[0]):
         bad["master_name"] = "A name is made of lowercase letters, digits and dashes."
@@ -454,11 +477,21 @@ def make(answers, fleet_dir):
     addr = str(a["master_address"]).strip()
     master = {"modules": ["vpn-server", "dns", "tor", "reverse-proxy"], "dns": {"mullvad_socks": False},
               "vpn-server": {"wg_host": addr}}
-    if a.get("exit") == "mullvad":
-        master = {"vpn-client": {"vpn_provider": "mullvad", "wireguard_private_key": a["mullvad_key"],
-                                 "wireguard_addresses": a["mullvad_address"],
-                                 "server_countries": a.get("mullvad_country") or "Germany"},
-                  "vpn-server": {"wg_host": addr}}
+    if a.get("exit") in EXITS:
+        _exit_answers(a)
+        name, needs_addr, _psk, _where = EXITS[a["exit"]]
+        vc = {"vpn_provider": a["exit"], "wireguard_private_key": str(a["exit_key"]).strip()}
+        if needs_addr:
+            vc["wireguard_addresses"] = str(a["exit_address"]).strip()
+        if a.get("exit_psk"):
+            vc["wireguard_preshared_key"] = str(a["exit_psk"]).strip()
+        if a["exit"] == "custom":
+            host, _, port = str(a["exit_endpoint"]).strip().rpartition(":")
+            vc.update(wireguard_public_key=str(a["exit_peer"]).strip(), wireguard_endpoint_ip=host.strip("[]"),
+                      vpn_endpoint_port=int(port))
+        else:   # Windscribe sorts its servers by region, which are countries there
+            vc["server_regions" if a["exit"] == "windscribe" else "server_countries"] = a.get("exit_country") or "Germany"
+        master = {"vpn-client": vc, "vpn-server": {"wg_host": addr}}
     hosts = {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master}}
     if a.get("master_where") in providers.PROVIDERS:
         hosts[m]["vps"] = {"provider": a["master_where"]}
@@ -513,6 +546,29 @@ def next_steps(fleet_path):
 def _wrap(text, indent=""):
     import textwrap
     return "\n".join(textwrap.wrap(text, 78, initial_indent=indent, subsequent_indent=indent))
+
+
+# The exits a master can take: every VPN provider gluetun runs with WireGuard, and any other
+# provider's WireGuard config ("custom"). (name, needs the Address line, needs a PresharedKey, where the config is made)
+EXITS = {
+    "mullvad": ("Mullvad", True, False, "mullvad.net: Account, WireGuard configuration"),
+    "protonvpn": ("Proton VPN", False, False, "account.proton.me: VPN, WireGuard configuration"),
+    "nordvpn": ("NordVPN", False, False, "your Nord Account: NordVPN, Manual setup"),
+    "surfshark": ("Surfshark", True, False, "your Surfshark account: VPN, Manual setup, WireGuard"),
+    "airvpn": ("AirVPN", True, True, "the AirVPN Client Area: Config Generator"),
+    "windscribe": ("Windscribe", True, True, "windscribe.com: Config Generator, WireGuard"),
+    "ivpn": ("IVPN", True, False, "ivpn.net: Account, WireGuard"),
+    "fastestvpn": ("FastestVPN", True, False, "a WireGuard config FastestVPN's support sends you"),
+    "custom": ("Another provider", True, False, "your provider's website: a WireGuard config file"),
+}
+
+
+def _exit_answers(a):
+    """The answers of an earlier release (exit: mullvad, mullvad_key, …) as today's."""
+    for old, new in (("mullvad_key", "exit_key"), ("mullvad_address", "exit_address"), ("mullvad_country", "exit_country")):
+        if a.get(old) and not a.get(new):
+            a[new] = a[old]
+    return a
 
 
 def _when(q, values):

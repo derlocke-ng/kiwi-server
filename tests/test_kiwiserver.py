@@ -2549,8 +2549,24 @@ class TestSetup(Base):
         self.assertEqual(setupmod.check(dict(self.ANSWERS)), {})
         bad = setupmod.check(dict(self.ANSWERS, master_address="10.1.2.3", exit="mullvad",
                                   nodes=[{"name": "trifle"}, {"name": "mango", "address": "192.168.2.1", "disk": "sda"}]))
-        self.assertEqual(sorted(bad), ["master_address", "mullvad_address", "mullvad_key", "nodes.0.name",
+        self.assertEqual(sorted(bad), ["exit_address", "exit_key", "master_address", "nodes.0.name",
                                        "nodes.1.address", "nodes.1.disk"])
+        # every VPN provider gluetun runs with WireGuard, each with the lines it needs
+        self.assertEqual(sorted(setupmod.check(dict(self.ANSWERS, exit="protonvpn"))), ["exit_key"])     # no address there
+        self.assertEqual(sorted(setupmod.check(dict(self.ANSWERS, exit="airvpn", exit_key="k", exit_address="10.1.0.2/32"))),
+                         ["exit_psk"])
+        self.assertEqual(sorted(setupmod.check(dict(self.ANSWERS, exit="custom", exit_key="k", exit_address="10.2.0.2/32",
+                                                    exit_peer="nope", exit_endpoint="vpn.example.org:51820"))),
+                         ["exit_endpoint", "exit_peer"])
+        made, _ = setupmod.make(dict(self.ANSWERS, exit="windscribe", exit_key="k", exit_address="10.3.0.2/32", exit_psk="p",
+                                     exit_country="Sweden"), os.path.join(self.tmp, "ws"))
+        vc = next(h for h in made["hosts"].values() if h["role"] == "master")["master"]["vpn-client"]
+        self.assertEqual((vc["vpn_provider"], vc["server_regions"], vc["wireguard_preshared_key"]), ("windscribe", "Sweden", "p"))
+        made, _ = setupmod.make(dict(self.ANSWERS, exit="custom", exit_key="k", exit_address="10.2.0.2/32",
+                                     exit_peer="A" * 43 + "=", exit_endpoint="203.0.113.9:51820"), os.path.join(self.tmp, "cu"))
+        vc = next(h for h in made["hosts"].values() if h["role"] == "master")["master"]["vpn-client"]
+        self.assertEqual((vc["wireguard_endpoint_ip"], vc["vpn_endpoint_port"]), ("203.0.113.9", 51820))
+        self.assertEqual(setupmod.check(dict(self.ANSWERS, exit="mullvad", mullvad_key="k", mullvad_address="10.66.1.2/32")), {})
         answers = os.path.join(self.tmp, "a.json")
         write(answers, json.dumps(dict(self.ANSWERS, master_address="")))
         rc, out, err = self.run_cli("init", "--check", answers)              # what the app asks at every Next

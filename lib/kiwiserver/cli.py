@@ -3198,9 +3198,14 @@ def cmd_onion(args):
     if service not in sites:
         raise KiwiError("%s has no site called %s (it has: %s)" % (host.name, service, ", ".join(sites) or "none on the VPN yet"))
     if role.node_type != "master" and "vpn-client" not in host.modules:
-        raise KiwiError("%s has no VPN client: Tor would leave through its own connection. Hidden services need one: the "
-                        "mesh's, or, without a master, a commercial VPN as its exit (vpn-client with vpn_provider mullvad, "
-                        "protonvpn, …, in its modules)" % host.name)
+        direct = bool(((host.role_settings_raw or {}).get("onion") or {}).get("without_vpn"))
+        if not direct:
+            raise KiwiError("%s has no VPN client, so its Tor would leave through its own connection, where your internet "
+                            "provider sees it. Give it one (the mesh's, or, without a master, a commercial VPN: a vpn-client "
+                            "with vpn_provider mullvad, protonvpn, …), or choose Tor without a VPN: onion: { without_vpn: true }"
+                            % host.name)
+        util.warn("%s: Tor leaves through its own connection (onion.without_vpn): your internet provider can see that "
+                  "it uses Tor" % host.name)
     have = onionmod.services(host) if "onion" in host.modules else {}
     address = onionmod.address(onionmod.service_key(fleet.seed(), host.name, service)[1])
     base = os.path.basename(fleet.path)

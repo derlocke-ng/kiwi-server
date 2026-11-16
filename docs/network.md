@@ -307,11 +307,17 @@ may vouch for such a name; a CA limited to your network's names
 own. A stranger's browser warns in both cases: it knows neither. This is for
 programs that insist on https.
 
-Tor never leaves through your connection at home. The Tor process of a node
-shares its VPN client's network: what it sends goes to the master and leaves
-there, through the master's VPN exit or, when it has none, from the master's own
-address. Your internet provider at home sees the VPN to your master and nothing
-else.
+By default Tor never leaves through your connection at home. The Tor process of
+a node shares its VPN client's network: what it sends goes to the master and
+leaves there, through the master's VPN exit or, when it has none, from the
+master's own address. Your internet provider at home sees the VPN to your master
+and nothing else. Without a master, a commercial VPN (Mullvad, Proton, …) can be
+the machine's exit instead.
+
+A machine without any VPN can still run hidden services when you choose it:
+`onion: { without_vpn: true }`. Tor then leaves through the machine's own
+connection, and your internet provider can see that you use Tor; kiwi-server
+says so whenever it sets one up.
 
 The address and the keys come from the fleet's seed. They are known before the
 machine is set up, and a machine installed anew keeps its addresses.

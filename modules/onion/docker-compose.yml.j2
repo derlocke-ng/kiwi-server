@@ -9,8 +9,9 @@ services:
     network_mode: "service:{{ container_prefix }}-vpn-client"
     depends_on:
       - {{ container_prefix }}-vpn-client
-{% elif node_type == 'master' %}
-    # a master without a VPN exit: from its own address at the hoster
+{% elif node_type == 'master' or without_vpn %}
+    # a master without a VPN exit: from its own address at the hoster; a machine whose owner chose
+    # Tor without a VPN (without_vpn): from its own connection, which its provider can see
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}

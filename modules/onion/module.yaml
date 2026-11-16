@@ -50,6 +50,11 @@ settings:
     label: Answer https too
     help: "On: each hidden service also answers at https://<address>, with a certificate of the fleet's CA for the address. Tor encrypts the way to this machine by itself, so this adds little for a stranger, whose browser does not know your CA and warns. It is for programs that insist on https, and for your own people, who have the CA."
     default: false
+  - key: without_vpn
+    type: bool
+    label: Tor without a VPN
+    help: "Off (the default): Tor only through a VPN, the mesh's or a commercial VPN's, so your internet provider never sees Tor traffic; a machine without a VPN client then runs no hidden service. On: on a machine without a VPN client, Tor leaves through the machine's own connection: it works without any VPN, and your internet provider can see that you use Tor."
+    default: false
   - key: keys
     type: object
     group: Generated

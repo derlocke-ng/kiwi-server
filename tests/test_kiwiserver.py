@@ -2522,7 +2522,13 @@ class TestSetup(Base):
         node["onion"] = {"services": {"cloud": {}}}
         write(dest, yaml.safe_dump(data, sort_keys=False))
         rc, out, err = self.run_cli("onion", dest, "cloud.mango")
-        self.assertIn("a commercial VPN as its exit", err)                        # no Tor on the home line
+        self.assertIn("a commercial VPN", err)                                    # not on the home line by itself
+        self.assertIn("onion: { without_vpn: true }", err)                        # unless the owner chooses it
+        node["onion"]["without_vpn"] = True
+        write(dest, yaml.safe_dump(data, sort_keys=False))
+        rc, out, err = self.run_cli("onion", dest, "cloud.mango")
+        self.assertIn("your internet provider can see", err)
+        del node["onion"]["without_vpn"]
         node["modules"] = node["modules"] + ["vpn-client"]
         node["vpn-client"] = {"vpn_provider": "mullvad", "wireguard_addresses": "10.66.1.2/32",
                               "wireguard_private_key": "aGVsbG8taGVsbG8taGVsbG8taGVsbG8taGVsbG8tMDA="}

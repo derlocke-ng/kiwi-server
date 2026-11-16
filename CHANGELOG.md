@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.157.0 — Tor without a VPN when you choose it; what the machines need
+
+- Hidden services: behind a VPN by default, as before. A machine without a VPN client can now run
+  them when its owner chooses it (`onion: { without_vpn: true }`, kiwi-modules 0.64.0): Tor then
+  leaves through the machine's own connection, and `kiwi-server onion` warns that the internet
+  provider can see Tor. Without that choice it says both ways out.
+- Fixed (kiwi-modules 0.64.0): a machine with the onion part and no VPN client did not install at all.
+- docs/getting-started.md: "What the machines need", measured on the test network.
+
 ## 2.156.0 — several machines at once; a machine's History with its tasks
 
 - Machines, "Several at once" (after Foreman): tick machines, then Check them, Preview or Apply,

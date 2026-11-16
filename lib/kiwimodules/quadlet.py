@@ -84,8 +84,8 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
     requires = []
     net_mode = body.get("network_mode")
     if net_mode:
-        if net_mode == "host":
-            container.append("Network=host")
+        if net_mode in ("host", "none"):       # none: no network at all (Tor that may not leave on the home line)
+            container.append("Network=%s" % net_mode)
         elif net_mode.startswith("service:"):
             other = net_mode.split(":", 1)[1]
             if other not in services:

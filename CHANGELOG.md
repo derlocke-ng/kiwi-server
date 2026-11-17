@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.164.0 — a standby master; federation by group and by card
+
+- **A standby master** (docs/design/standby.md, step 1): a `standby:` block under the master
+  names a second machine that runs the same master (same name on the mesh, stack, secrets and
+  WireGuard identity) with its own disk, address and unlock. An apply of the master applies it
+  too and gives it the master's peers. The master's nodes move their tunnel to it when the master
+  is gone for three minutes, and back once the master's machine answers again (kiwi-modules
+  0.72.0). A standby at home runs no Tor; no standby runs the federation link.
+- **Federation: `from` takes the partner's groups by name** (`from: [devices]`) as well as
+  addresses; `federate` writes each side's groups into the other's file. An entry that is neither
+  is refused with what is known, not passed on to the master's firewall.
+- **Federation between two operators**: `federate FLEET --invite CARD` writes this network's card
+  (nothing secret), `--accept CARD` takes the other's and writes this side's card beside it.
+- `federate` keeps a partner's entry when its folder was renamed, instead of linking it twice.
+- `control pull` with nothing new on the control node sets the node's stamp right, so the next
+  `push` is not refused for a change that is not there.
+- A RAM master is no longer reported as "the disk is not encrypted": it has no disk.
+- The app shows a computer asking to join also when the sync with the control node failed.
+- tests/drills/federation-styles.py (each way of sharing) and tests/drills/standby.py (a node
+  follows its master to the standby and back).
+
 ## 2.163.0 — Riseup, a free exit
 
 - **`vpn-client: { vpn_provider: riseup }`**: the VPN's way out through Riseup, free and with

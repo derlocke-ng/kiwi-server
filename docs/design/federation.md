@@ -24,6 +24,7 @@ federation:
     domain: internal
     share: [cloud.papaya, lychee]   # a service (its name on a node) or a whole node
     from: [devices]              # their groups or addresses that may use it; empty: their whole mesh
+    groups: {devices: 10.10.3.0/24}   # their groups, as federate or their card says
 ```
 
 The sharing master's firewall lets the partner's `from` reach only the shared nodes, and only
@@ -45,8 +46,10 @@ identities (a person, not a device) come with the control plane's users, later.
 
 `kiwi-server federate A/fleet.yaml B/fleet.yaml` when one operator holds both (the test case:
 sorbet and crumble): the pair's keys into both stores, the blocks into both fleets, nothing
-shared yet. Between operators: `federate A/fleet.yaml --invite` writes a file for the other
-side, `--accept FILE` answers it.
+shared yet. Between operators: `federate A/fleet.yaml --invite CARD` writes a card for the
+other side (built in 2.164.0), `--accept CARD` takes theirs and writes this side's card beside
+it. A group name in `from` becomes its range through `groups`, which `federate` and the cards
+fill in.
 
 ## Tests
 

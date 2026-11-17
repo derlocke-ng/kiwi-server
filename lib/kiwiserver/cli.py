@@ -85,7 +85,7 @@ def static_lan(host):
 
 
 def has_master(fleet, roles):
-    return any(h.role in roles and roles[h.role].node_type == "master" for h in fleet.hosts.values())
+    return any(h.role in roles and roles[h.role].node_type == "master" and not h.standby_of for h in fleet.hosts.values())
 
 
 class Outputs:
@@ -278,6 +278,22 @@ class Renderer:
         self.aliases = set()     # VPN names that send on to a public name (no service of their own)
         self._told = set()      # (machine, service): what was said once about a hidden service
 
+    def standby_endpoints(self):
+        """address:WireGuard port:SSH port of the master, then of each of its standbys; [] without one."""
+        master = next((h for h in self.fleet.hosts.values() if h.role in self.roles and not h.standby_of
+                       and self.roles[h.role].node_type == "master"), None)
+        standbys = self.fleet.standbys(master.name) if master else []
+        if not standbys:
+            return []
+        self.prepare(master)
+        vs = master.module_settings.get("vpn-server") or {}
+        port = int(vs.get("wg_port") or 51820)
+        ends = ["%s:%d:%d" % (vs.get("wg_host"), port, int(master.admin.get("ssh_port") or 22))]
+        for s in standbys:
+            if s.standby_endpoint:
+                ends.append("%s:%d:%d" % (s.standby_endpoint, port, int(s.admin.get("ssh_port") or 22)))
+        return ends if len(ends) > 1 else []
+
     def prepare(self, host):
         role = self.roles[host.role]
         rolesmod.resolve_settings(role, host, self.ms)
@@ -301,7 +317,7 @@ class Renderer:
         mesh_only = []          # names whose service answers at the mesh address only: never a home address for them
         for h in self.fleet.hosts.values():
             try:
-                if h.role not in self.roles or h.validate(self.roles):
+                if h.standby_of or h.role not in self.roles or h.validate(self.roles):     # a standby is its master's twin
                     continue
                 role = self.prepare(h)
                 if not role.stack:
@@ -493,6 +509,13 @@ class Renderer:
                 rp = host.module_settings["reverse-proxy"]
                 rp["federation"] = fedmod.admin_rules(rp.get("federation"), self._partners, host.name, pages,
                                                      str(self.fleet.defaults.get("domain") or "home"))
+        if role.node_type != "master" and "vpn-client" in host.modules and self._master_ip:
+            # its master has a standby: the tunnel moves there when the master is gone (docs/design/standby.md)
+            vc = host.module_settings["vpn-client"]
+            if vc.get("vpn_provider") == "custom" and vc.get("wireguard_config") and vc.get("vpn_type", "wireguard") == "wireguard":
+                ends = self.standby_endpoints()
+                if ends:
+                    vc.update(standby_endpoints=ends, standby_ping=self._master_ip)
         spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
                                    lan_addresses=self.lan_addresses(host, role), mesh_only=self._mesh_only)
         b = modmod.Renderer(self.ms).render(spec)
@@ -857,7 +880,7 @@ def cmd_remove(args):
                 util.say("%s is off the VPN: its key no longer works" % name)
                 if not args.api:
                     try:
-                        backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+                        keep_identity(fleet, master, args.ssh)
                     except KiwiError as e:
                         util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
         except KiwiError as e:
@@ -1211,7 +1234,7 @@ def next_step(fleet, roles, host, errors, out):
     if real:
         return "invalid", "fix the fleet file: %s" % real[0]
     if errors:
-        masters = [h.name for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"]
+        masters = [h.name for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of]
         return "enroll", "once %s runs: kiwi-server enroll %s %s" % (" or ".join(masters) or "its master", fname, host.name)
     if (fleet_state(fleet).get("applied") or {}).get(host.name):
         return "applied", "kiwi-server status %s %s says how it is" % (fname, host.name)
@@ -1672,7 +1695,7 @@ def cmd_mtu(args):
     """How big a packet really gets through one tunnel, and what to set."""
     fleet, roles, ms = load(args)
     _domain, master_ip, _mesh, master_mtu = fleet_facts(fleet, roles, ms)
-    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"]
+    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of]
     if args.master:
         masters = [h for h in masters if h.name == args.master]
     if not masters:
@@ -1984,6 +2007,8 @@ def cmd_apply(args):
     hosts = fleet.select(args.hosts)
     if not hosts:
         raise KiwiError("which host? kiwi-server apply <fleet> <host...>")
+    if args.hosts and not args.ssh:     # a master's standbys come with it: the same master on their machines
+        hosts += [s for h in list(hosts) for s in fleet.standbys(h.name) if s not in hosts]
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
     check(fleet, roles, ms, hosts)
@@ -2581,12 +2606,25 @@ def _master_of(fleet, roles, ms, name=None):
     for h in fleet.hosts.values():
         if name and h.name != name:
             continue
-        if h.role in roles and roles[h.role].node_type == "master":
+        if h.role in roles and roles[h.role].node_type == "master" and (name or not h.standby_of):
             errs = h.validate(roles) or settings_errors(roles, ms, h)
             if errs:
                 raise KiwiError("%s: the master is not valid: %s" % (h.name, "; ".join(errs)))
             return h
     raise KiwiError("no master in the fleet%s" % (" named %s" % name if name else ""))
+
+
+def keep_identity(fleet, master, ssh=None):
+    """The master's WireGuard state into the fleet's copy, and on to its standbys: a device added
+    or removed there is added or removed on them too (a removed key must not keep working)."""
+    backupmod.keep_wireguard(master, remote.reach(master, ssh))
+    for s in fleet.standbys(master.name):
+        try:
+            if backupmod.put_back_wireguard(s, remote.reach(s)):
+                util.say("%s: the master's devices are there too now" % s.name)
+        except KiwiError as e:
+            util.warn("%s (standby) not reached: it has the master's devices as of before (%s); "
+                      "the next apply of %s brings them" % (s.name, e, master.name))
 
 
 def cmd_enroll(args):
@@ -2650,7 +2688,7 @@ def cmd_enroll(args):
         if not was and not had:
             raise KiwiError("there is no device called %s" % name)
         try:
-            backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+            keep_identity(fleet, master, args.ssh)
         except KiwiError as e:
             util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
         util.say("%s is off the VPN: its key no longer works" % name)
@@ -2673,7 +2711,7 @@ def cmd_enroll(args):
     util.write_text(dest, text if text.endswith("\n") else text + "\n", 0o600)
     util.say("%s" % dest)
     try:                                 # the new peer is part of what a rebuilt master needs
-        backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+        keep_identity(fleet, master, args.ssh)
     except KiwiError as e:
         util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
     if host:
@@ -2746,7 +2784,7 @@ def cmd_connect(args):
         con = connectmod.up(conf, domain)
         util.say("connected: %s in this computer's network settings. It carries your network only, comes up by "
                  "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
-        master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"), None)
+        master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of), None)
         if master:
             if connectmod.resolves(master.hostname, 15):
                 util.say("%s answers: this computer reaches the network" % master.hostname)
@@ -3068,7 +3106,7 @@ def _access_facts(args):
     fleet, roles, ms = load(args)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms)
     domain, _master_ip, mesh, _mtu = fleet_facts(fleet, roles, ms, r)
-    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"
+    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of
                and "vpn-server" in (h.modules or [])]
     if len(masters) != 1:
         if not masters and not has_master(fleet, roles):
@@ -3355,32 +3393,62 @@ def cmd_disks(args):
                  "or in the fleet file:\n    mounts: [\"%s\"]" % (r["NAME"], r.get("SIZE", "?"), r["FSTYPE"], host.name, r["mounts"]))
 
 
+def _federation_side(args, path):
+    """(fleet, its name, what a partner needs to know of it) for one fleet file."""
+    a = argparse.Namespace(**dict(vars(args), fleet=path))
+    fleet, roles, ms = load(a)
+    masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of]
+    if len(masters) != 1:
+        raise KiwiError("%s: federation needs exactly one master, found %d" % (path, len(masters)))
+    h = masters[0]
+    rolesmod.resolve_settings(roles[h.role], h, ms)
+    vs = h.module_settings.get("vpn-server") or {}
+    if not vs.get("wg_host") or not vs.get("federation_secret"):
+        raise KiwiError("%s: its master %s has no wg_host or no federation key" % (path, h.name))
+    groups = {str(n): str(g["subnet"]) for n, g in (vs.get("groups") or {}).items() if isinstance(g, dict) and g.get("subnet")}
+    return fleet, os.path.basename(fleet.dir.rstrip("/")) or h.name, {
+        "endpoint": str(vs["wg_host"]), "public_key": fedmod.public_key(vs["federation_secret"]),
+        "mesh": h.role_settings.get("mesh_subnet") or h.role_settings_raw.get("mesh_subnet") or "10.8.0.0/16",
+        "domain": h.domain, "dns": vs.get("server_ip") or "", "groups": groups}
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
-    mesh and DNS into the other's federation.yaml. What each shares stays empty until written."""
-    sides = []
-    for path in (args.fleet, args.other):
-        a = argparse.Namespace(**dict(vars(args), fleet=path))
-        fleet, roles, ms = load(a)
-        masters = [h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master"]
-        if len(masters) != 1:
-            raise KiwiError("%s: federation needs exactly one master, found %d" % (path, len(masters)))
-        h = masters[0]
-        rolesmod.resolve_settings(roles[h.role], h, ms)
-        vs = h.module_settings.get("vpn-server") or {}
-        if not vs.get("wg_host") or not vs.get("federation_secret"):
-            raise KiwiError("%s: its master %s has no wg_host or no federation key" % (path, h.name))
-        sides.append((fleet, os.path.basename(fleet.dir.rstrip("/")) or h.name, {
-            "endpoint": str(vs["wg_host"]), "public_key": fedmod.public_key(vs["federation_secret"]),
-            "mesh": h.role_settings.get("mesh_subnet") or h.role_settings_raw.get("mesh_subnet") or "10.8.0.0/16",
-            "domain": h.domain, "dns": vs.get("server_ip") or ""}))
+    mesh and DNS into the other's federation.yaml. What each shares stays empty until written.
+    Between two operators: --invite writes this network's card for the other one, --accept
+    takes theirs (and writes this network's card for them, when there is none yet)."""
+    if args.invite or args.accept:
+        import yaml
+        if args.other:
+            raise KiwiError("--invite and --accept take one fleet file: the other network is the card")
+        fleet, name, entry = _federation_side(args, args.fleet)
+        if args.accept:
+            them, theirs = fedmod.read_card(args.accept)
+            if them == name:
+                raise KiwiError("%s: the card is of a network called %s, as this one: one of them renames its folder" % (args.accept, them))
+            if theirs["mesh"] == entry["mesh"]:
+                raise KiwiError("the two meshes are the same (%s): every network has its own /16" % entry["mesh"])
+            fedmod.write(fleet.dir, them, theirs)
+            fedmod.partners(fleet.dir)
+            util.say("%s is a partner of %s now; nothing is shared yet: share and from in %s, then apply the master"
+                     % (them, name, os.path.join(fleet.dir, fedmod.FILE)))
+        out = args.invite or os.path.join(os.path.dirname(os.path.abspath(args.accept)), "%s.card.yaml" % name)
+        if args.invite or not os.path.isfile(out):
+            util.write_text(out, "# %s's card for a partner network (kiwi-server federate FLEET --accept THIS). Nothing secret.\n"
+                            % name + yaml.safe_dump(fedmod.card(name, entry), sort_keys=False, default_flow_style=None), 0o644)
+            util.say("%s's card: %s. The other network's operator takes it with: kiwi-server federate THEIR-FLEET --accept %s"
+                     % (name, out, os.path.basename(out)))
+        return
+    if not args.other:
+        raise KiwiError("federate FLEET OTHER-FLEET, or FLEET --invite CARD / FLEET --accept CARD")
+    sides = [_federation_side(args, path) for path in (args.fleet, args.other)]
     (fa, na, ea), (fb, nb, eb) = sides
     if na == nb:
         raise KiwiError("both fleets are called %s: rename one folder" % na)
     if not ea["mesh"] or not eb["mesh"] or ea["mesh"] == eb["mesh"]:
         raise KiwiError("the two meshes must be set and differ (%s, %s): every network has its own /16" % (ea["mesh"], eb["mesh"]))
-    fedmod.write(fa.dir, nb, eb)
-    fedmod.write(fb.dir, na, ea)
+    nb = fedmod.write(fa.dir, nb, eb)        # the names each side knows the other by
+    na = fedmod.write(fb.dir, na, ea)
     if args.exit or args.no_exit:
         # the first network leaves to the internet through the second, over the link: the
         # first says so (exit), the second allows it (internet)
@@ -3942,7 +4010,9 @@ def build_parser():
     s.add_argument("hosts", nargs="*", help="only these machines (default: all that still wait)")
     s.add_argument("--waive", action="append", metavar="HOST", help="leave this machine out (off for good, or about to be installed anew)")
     s.add_argument("--why", help="a note for the record, e.g. laptop lost")
-    s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", help="the partner network's fleet file")
+    s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", nargs="?", help="the partner network's fleet file")
+    s.add_argument("--invite", metavar="CARD", help="write this network's card for a partner run by someone else")
+    s.add_argument("--accept", metavar="CARD", help="take a partner's card (and write this network's for them)")
     s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
     s = sub("disks", cmd_disks); s.add_argument("fleet"); s.add_argument("host")

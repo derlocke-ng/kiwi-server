@@ -46,6 +46,7 @@ DEFAULTS = {
     # the disk encrypted (docs/design/encryption.md): its rings or, until they answer, the machine's
     # TPM open it at boot. false: installed plain, by choice, and said so on every page
     "encryption": True,
+    "standby": {},        # a master's standby machines (docs/design/standby.md)
     "admin": {
         "user": "core",
         "password": None,
@@ -347,6 +348,8 @@ class Host:
         self.role_files = {}      # key -> bytes, embedded into the role script
         self.secrets = fleet      # what the resolver asks for derived secrets, file paths and the seed
         self.modules = []         # module roles: the resolved module list
+        self.standby_of = None    # the master this machine stands by for (docs/design/standby.md)
+        self.standby_endpoint = ""  # a standby's address its master's nodes reach
         self.module_settings = {}  # module -> {key: value}
         self.module_files = {}    # "module/key" -> bytes
         self.warnings = []
@@ -558,6 +561,9 @@ class Fleet:
             if not _LABEL.match(str(name)):
                 raise KiwiError("host name %r must be a plain DNS label (letters, digits, dashes)" % name)
             self.hosts[str(name)] = Host(self, str(name), over or {})
+        for primary in list(self.hosts.values()):
+            for sname, sover in (primary.overrides.get("standby") or {}).items():
+                self._add_standby(primary, str(sname), sover)
         self._assign_addresses()
         # fleet-wide findings: the domain choice, the backup block
         self.errors, self.warnings = [], []
@@ -578,6 +584,46 @@ class Fleet:
                 raise ValueError
         except (TypeError, ValueError):
             self.errors.append("backup.keep must be a positive integer")
+
+    # what a standby does not take from its master: it is a machine of its own there
+    STANDBY_OWN = ("standby", "vps", "disk", "mac", "network", "install", "unlock")
+
+    def _add_standby(self, primary, name, over):
+        """A machine that renders as `primary` (same name on the mesh, stack, secrets and WireGuard
+        identity) with its own disk, address and unlock. At home (a private address) it runs no
+        Tor, and never the federation link: the partner would see the link's key at two places."""
+        if not _LABEL.match(name):
+            raise KiwiError("%s.standby: %r must be a plain DNS label" % (primary.name, name))
+        if name in self.hosts:
+            raise KiwiError("%s.standby: %s is a machine of the fleet already" % (primary.name, name))
+        if not isinstance(over, dict):
+            raise KiwiError("%s.standby.%s must be a mapping" % (primary.name, name))
+        base = {k: v for k, v in primary.overrides.items() if k not in self.STANDBY_OWN}
+        over = dict(over)
+        endpoint = str(over.pop("endpoint", "") or "")     # where nodes reach it, when not its network.address
+        merged = deep_merge(deep_merge(base, over), {"hostname": primary.hostname})
+        addr = endpoint or str(((merged.get("network") or {}).get("address")) or "").split("/")[0]
+        try:
+            home = bool(addr) and ipaddress.ip_address(addr).is_private
+        except ValueError:
+            home = False
+        h = Host(self, name, merged)
+        h.standby_of = primary.name
+        h.standby_endpoint = addr
+        raw = dict(h.role_settings_raw or {})       # its master's settings, the fleet's defaults in them
+        if isinstance(raw.get("vpn-server"), dict):
+            raw["vpn-server"] = {k: v for k, v in raw["vpn-server"].items() if k != "federation"}
+        if home and h.role:
+            if isinstance(raw.get("modules"), list):
+                raw["modules"] = [m for m in raw["modules"] if m not in ("tor", "onion")]
+            for m in ("tor", "onion"):
+                raw.pop(m, None)
+            raw["at_home"] = True
+        h.role_settings_raw = raw
+        self.hosts[name] = h
+
+    def standbys(self, name):
+        return [h for h in self.hosts.values() if h.standby_of == name]
 
     @classmethod
     def load(cls, path):

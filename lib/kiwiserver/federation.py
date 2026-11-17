@@ -9,7 +9,8 @@
       domain: internal
       dns: 10.10.0.1
       share: [cloud.papaya, lychee, papaya:22]
-      from: [10.10.3.0/24]           # empty: the partner's whole mesh
+      from: [devices, 10.10.0.3]     # its groups (by name) or addresses; empty: the partner's whole mesh
+      groups: {devices: 10.10.3.0/24}   # the partner's groups (kiwi-server federate fills them in)
       exit: true                     # this network leaves to the internet through that partner …
       internet: true                 # … which that partner allows with this, in its own file
 
@@ -28,7 +29,7 @@ from . import util
 from .util import KiwiError
 
 FILE = "federation.yaml"
-KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet")
+KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet", "groups")
 
 _P = 2 ** 255 - 19
 
@@ -82,7 +83,8 @@ def partners(fleet_dir):
         if missing:
             raise KiwiError("%s: %s lacks %s" % (p, name, ", ".join(missing)))
         spec["share"] = [str(x) for x in spec.get("share") or []]
-        spec["from"] = [str(x) for x in spec.get("from") or []]
+        spec["groups"] = {str(k): str(v) for k, v in (spec.get("groups") or {}).items()}
+        spec["from"] = [_source(p, name, spec, x) for x in spec.get("from") or []]
         for k in ("exit", "internet"):
             if spec.get(k) not in (None, True, False):
                 raise KiwiError("%s: %s: %s is true or false" % (p, name, k))
@@ -96,6 +98,50 @@ def partners(fleet_dir):
         raise KiwiError("%s: only one partner can be this network's way to the internet (exit: true for %s)"
                         % (p, ", ".join(exits)))
     return out
+
+
+def _source(p, name, spec, x):
+    """One `from` entry as the address range the master's firewall takes: a group of the
+    partner by its name, or an address or range in its mesh."""
+    x = str(x).strip()
+    if x in spec["groups"]:
+        x = spec["groups"][x]
+    try:
+        net = ipaddress.ip_network(x, strict=False)
+    except ValueError:
+        raise KiwiError("%s: %s: from: %s is neither an address nor a group of %s (its groups: %s; kiwi-server "
+                        "federate fills them in)" % (p, name, x, name, ", ".join(sorted(spec["groups"])) or "none known"))
+    try:
+        inside = net.subnet_of(ipaddress.ip_network(str(spec["mesh"]), strict=False))
+    except (TypeError, ValueError):
+        inside = False
+    if not inside:
+        raise KiwiError("%s: %s: from: %s is not in its mesh %s: nothing else comes over the link"
+                        % (p, name, x, spec["mesh"]))
+    return str(net)
+
+
+def card(name, entry):
+    """What a network tells a partner about itself (`federate --invite`): its link key's public
+    half, its master's address, mesh, domain, DNS and groups. Nothing secret."""
+    return {"federation": 1, "name": name, **{k: entry[k] for k in ("endpoint", "public_key", "mesh", "domain", "dns", "groups")
+                                               if entry.get(k) not in (None, "")}}
+
+
+def read_card(path):
+    try:
+        data = yaml.safe_load(util.read_text(path)) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise KiwiError("%s: not a network's card: %s" % (path, e))
+    if not isinstance(data, dict) or data.get("federation") != 1 or not data.get("name"):
+        raise KiwiError("%s: not a network's card (kiwi-server federate FLEET --invite writes one)" % path)
+    missing = [k for k in ("endpoint", "public_key", "mesh") if not data.get(k)]
+    if missing:
+        raise KiwiError("%s: the card lacks %s" % (path, ", ".join(missing)))
+    if len(base64.b64decode(str(data["public_key"]) + "==")) != 32:
+        raise KiwiError("%s: its public_key is not a WireGuard key" % path)
+    ipaddress.ip_network(str(data["mesh"]), strict=False)
+    return str(data["name"]), {k: data[k] for k in ("endpoint", "public_key", "mesh", "domain", "dns", "groups") if k in data}
 
 
 def exit_through(fleet_dir):
@@ -174,9 +220,12 @@ def inject(fleet_dir, data):
 
 
 def write(fleet_dir, partner, entry):
-    """One partner's entry, its share and from kept when it is there already."""
+    """One partner's entry, its share and from kept when it is there already (by its name, or by
+    its mesh when its folder was renamed). The name it is written under."""
     p = os.path.join(fleet_dir, FILE)
     data = (yaml.safe_load(util.read_text(p)) or {}) if os.path.isfile(p) else {}
+    if partner not in data:     # the same network under the name it had (its folder renamed): that entry
+        partner = next((n for n, x in data.items() if (x or {}).get("mesh") == entry.get("mesh")), partner)
     old = data.get(partner) or {}
     entry = dict(entry, share=old.get("share") or [], **{"from": old.get("from") or []})
     for k in ("exit", "internet"):          # the owner's, like share and from
@@ -186,6 +235,7 @@ def write(fleet_dir, partner, entry):
     head = ("# federation.yaml — the partner networks and what each may reach here "
             "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
     util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+    return partner
 
 
 def set_share(fleet_dir, partner, share):

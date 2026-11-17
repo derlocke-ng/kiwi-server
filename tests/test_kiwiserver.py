@@ -3995,6 +3995,118 @@ class TestFederation(Base):
         self.assertIsNone(fedmod.exit_through(self.tmp))
         self.assertFalse(fedmod.partners(other)[mine_name]["internet"])
 
+    def two_fleets(self):
+        a = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}),
+                        "hosts": {"gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        with open(a.path) as fh:
+            data = yaml.safe_load(fh)
+        data["defaults"]["domain"] = "internal"
+        data["defaults"]["master"] = {"mesh_subnet": "10.10.0.0/16"}
+        data["hosts"]["gate"]["master"]["vpn-server"]["wg_host"] = "198.51.100.9"
+        data["hosts"]["gate"]["master"]["vpn-server"]["groups"] = {"devices": {"subnet": "10.10.3.0/24"}}
+        write(os.path.join(other, "fleet.yaml"), yaml.safe_dump(data))
+        if os.path.isdir(os.path.join(self.tmp, "secrets")):
+            shutil.copytree(os.path.join(self.tmp, "secrets"), os.path.join(other, "secrets"), dirs_exist_ok=True)
+        return a.path, os.path.join(other, "fleet.yaml"), other
+
+    def test_from_takes_the_partners_groups_by_name_or_its_addresses(self):
+        a, b, other = self.two_fleets()
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["groups"], {"devices": "10.10.3.0/24"})
+        with open(os.path.join(self.tmp, "federation.yaml")) as fh:
+            data = yaml.safe_load(fh)
+        data["other"]["from"] = ["devices", "10.10.0.3"]
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(data))
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["from"], ["10.10.3.0/24", "10.10.0.3/32"])
+        for bad, said in (("family", "neither an address nor a group of other (its groups: devices"),
+                          ("10.9.0.5", "is not in its mesh 10.10.0.0/16")):
+            data["other"]["from"] = [bad]
+            write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(data))
+            with self.assertRaises(KiwiError) as e:
+                fedmod.partners(self.tmp)
+            self.assertIn(said, str(e.exception))
+
+    def test_a_renamed_folder_keeps_its_entry(self):
+        a, b, other = self.two_fleets()
+        fedmod.write(self.tmp, "old-name", {"endpoint": "198.51.100.9", "public_key": "k", "mesh": "10.10.0.0/16"})
+        fedmod.set_share(self.tmp, "old-name", ["cloud.gate"])
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        found = fedmod.partners(self.tmp)
+        self.assertEqual(list(found), ["old-name"])                 # not a second entry for the same network
+        self.assertEqual(found["old-name"]["share"], ["cloud.gate"])
+
+    def test_two_operators_link_their_networks_with_cards(self):
+        a, b, other = self.two_fleets()
+        card = os.path.join(self.tmp, "mine.card.yaml")
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--invite", card)
+        self.assertEqual(rc, 0, err)
+        text = util.read_text(card)
+        self.assertNotIn("secret", text.split("\n", 1)[1].lower())     # the link key's public half only
+        mine_name = os.path.basename(self.tmp)
+        self.assertEqual(yaml.safe_load(text)["name"], mine_name)
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", card)          # the other operator
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fedmod.partners(other)[mine_name]["mesh"], "10.9.0.0/16")
+        answer = os.path.join(self.tmp, "other.card.yaml")                                 # their answer, beside it
+        self.assertTrue(os.path.isfile(answer), out + err)
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--accept", answer)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["groups"], {"devices": "10.10.3.0/24"})
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["endpoint"], "198.51.100.9")
+        write(card, "name: x\n")
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", card)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not a network's card", err)
+
+
+class TestStandby(Base):
+    def fleet_with_standby(self, **standby):
+        sb = {"target": "debian", "network": {"dhcp": False, "address": "192.168.7.70/24", "gateway": "192.168.7.1"}}
+        sb.update(standby)
+        master = self.master()
+        master["modules"] = ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"]
+        master["tor"] = {}                                  # its settings go with it on a standby at home
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "admin": {"ssh_port": 41022}, "master": master,
+                     "standby": {"gate-b": sb}},
+            "store": {"role": "node", "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.9",
+                                               "preset": "minimal"}}}})
+
+    def test_a_standby_is_its_master_on_another_machine(self):
+        f = self.fleet_with_standby()
+        b, gate = f.hosts["gate-b"], f.hosts["gate"]
+        self.assertEqual((b.standby_of, b.hostname, b.standby_endpoint), ("gate", gate.hostname, "192.168.7.70"))
+        self.assertEqual(f.standbys("gate"), [b])
+        self.assertEqual(b.admin["ssh_port"], 41022)                       # its master's, unless its own
+        self.assertNotIn("standby", b.overrides)
+        role_g, role_b = self.prepare(gate), self.prepare(b)
+        self.assertEqual(role_b.node_type, "master")
+        self.assertNotIn("tor", b.modules)                                  # at home: no Tor
+        self.assertIn("tor", gate.modules)
+        self.assertEqual(b.module_settings["dns"]["pihole_password"], gate.module_settings["dns"]["pihole_password"])
+        self.assertEqual(b.module_settings["vpn-server"]["wg_host"], gate.module_settings["vpn-server"]["wg_host"])
+        self.assertEqual(backup._wireguard_copy(b), backup._wireguard_copy(gate))     # the master's identity
+        self.assertFalse(backup.keep_wireguard(b, None, runner=lambda *a, **k: self.fail("a standby's peers are not kept")))
+        self.assertTrue(cli.has_master(f, self.roles))
+
+    def test_its_masters_nodes_know_where_it_is(self):
+        f = self.fleet_with_standby()
+        r = cli.Renderer(f, self.roles, self.tmp, None, self.ms)
+        self.assertEqual(r.standby_endpoints(), ["vpn.example.org:51820:41022", "192.168.7.70:51820:41022"])
+        bare = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        self.assertEqual(cli.Renderer(bare, self.roles, self.tmp, None, self.ms).standby_endpoints(), [])
+
+    def test_a_standby_of_another_name_is_refused(self):
+        with self.assertRaises(KiwiError):
+            self.fleet({"defaults": self.base_defaults(), "hosts": {
+                "gate": {"role": "master", "target": "debian", "master": self.master(), "standby": {"store": {}}},
+                "store": {"role": "bare"}}})
+
 
 class TestPlan(unittest.TestCase):
     def test_a_container_restarts_when_its_quadlet_or_a_file_it_mounts_changed(self):
@@ -6702,6 +6814,9 @@ peers=4 3
         f, (_s, _p, notes) = self.assessed("luks=1")
         self.assertEqual(f["encryption"], "bound")
         self.assertFalse([n for n in notes if "disk" in n])
+        f, (state, problems, notes) = self.assessed("luks=ram")          # a RAM master: no disk to encrypt
+        self.assertEqual((f["encryption"], problems), ("ram", []))
+        self.assertIn("in RAM only: nothing stays on a disk", notes)
 
     def test_the_status_page_keeps_ninety_days_of_each_service(self):
         from kiwiserver import health

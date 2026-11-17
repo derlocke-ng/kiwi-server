@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """A standby master (docs/design/standby.md): a node follows its master to the standby and back.
 
-The master's VPN server is stopped (its machine stays up). The node's tunnel must move to the
+The master's WireGuard port is cut off at its firewall (its machine and stack stay up). The node's tunnel must move to the
 standby within five minutes and the mesh answer there: the master's mesh address, a name through
 its DNS. Then the master's VPN starts again; the node must move back once the master's machine has
 answered for ten minutes. One PASS or FAIL line per check. Leaves everything as it found it,
-the master's VPN server running also after a failure.
+the cut lifted also after a failure (and by a timer on the master after 15 minutes).
 
     tests/drills/standby.py ~/kiwi-2/fleet.yaml crumble damson
 
-Touches the master's VPN server (its devices lose the network for some minutes) and nothing else.
+Touches the master's firewall (its devices lose the VPN for some minutes) and nothing else.
 """
 import os
 import re
@@ -88,9 +88,14 @@ check(k[0] and k[0] == k[1] and not k[0].startswith("error"), "the standby carri
 check(on(node, "systemctl is-active kn-master-switch.service").strip() == "active", "the node's switch runs")
 check(endpoint() == first, "the node's tunnel goes to the master (%s)" % endpoint())
 check(through("ping"), "the node reaches %s through it" % mesh_ip)
+port = int(vs.get("wg_port") or 51820)
+BLOCK = "iptables -t raw %s PREROUTING -p udp --dport " + str(port) + " -j DROP"
 try:
-    say("the master's VPN server stops (its machine stays up)")
-    on(master, "sudo systemctl stop km-vpn-server.service")
+    # cut off, not stopped: the containers sharing its namespace keep its WireGuard alive (and a
+    # stray one there kept it from starting again, 17 Nov). A timer lifts the cut should this die
+    say("the master's WireGuard is cut off at its firewall (its machine stays up)")
+    on(master, "sudo %s && sudo systemd-run --on-active=900 --unit kiwi-drill-uncut %s"
+       % (BLOCK % "-I", BLOCK % "-D"))
     t0 = time.time()
     moved = wait_for(lambda: endpoint() == second, 330)
     check(moved, "the node moves to the standby %s (%d s)" % (second, time.time() - t0))
@@ -98,8 +103,8 @@ try:
         check(wait_for(lambda: through("ping"), 90), "the node reaches %s at the standby" % mesh_ip)
         check(through("dns"), "%s resolves through the standby's DNS" % master.hostname)
 finally:
-    on(master, "sudo systemctl start km-vpn-server.service")
-    say("the master's VPN server runs again")
+    on(master, "while sudo %s 2>/dev/null; do :; done; sudo systemctl stop kiwi-drill-uncut.timer 2>/dev/null; true" % (BLOCK % "-D"))
+    say("the master's WireGuard answers again")
 t1 = time.time()
 back = wait_for(lambda: endpoint() == first, 900)
 check(back, "the node is back at the master (%d s after its VPN came back)" % (time.time() - t1))

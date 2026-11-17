@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.180.0 — the first steps, tried as a newcomer
+
+A dry run of `init` and `next` from nothing, as the getting-started guide says, found:
+
+- A yes-or-no question took anything that was not a yes for a no (an address typed one line too
+  early declined the sign-in at netcup). It now asks again: "y or n, please".
+- A connection netcup dropped ended `next` in a Python traceback; netcup's login being down
+  said "answered 503 with something that is not JSON". Both are a sentence now, and when the
+  sign-in fails `next` says the way on: try again later, or upload the install media at the
+  hoster yourself.
+- `next` for a machine at home before the master was set up ended in an SSH error about the
+  master's name. It now says that the place on the VPN comes from the master, and to set that
+  up first.
+- The app shows at each hidden service of a machine whether it answered through Tor when last
+  asked (the status page has had it since 2.179.0).
+
 ## 2.179.2 — the hidden services' self-check keeps going
 
 - kiwi-modules 0.79.1: the onion part's self-check ended quietly at the first address that did

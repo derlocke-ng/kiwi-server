@@ -7,6 +7,7 @@ device flow, so no password ever passes through here; the refresh token is kept
 in secrets/netcup.token and lives while it is used once in 30 days.
 """
 import ipaddress
+import http.client
 import json
 import os
 import time
@@ -51,6 +52,9 @@ class Netcup:
             return e.code, e.read()
         except urllib.error.URLError as e:
             raise KiwiError("netcup is not reachable: %s" % e.reason)
+        except (OSError, http.client.HTTPException) as e:
+            # a connection netcup dropped (seen as a traceback in `next`, 17 Nov 2026), or a time-out
+            raise KiwiError("netcup did not answer (%s): try again in a minute" % (e.__class__.__name__,))
 
     def _form(self, path, **fields):
         status, payload = self._http("POST", self.base + AUTH + path, urllib.parse.urlencode(fields).encode(),
@@ -58,6 +62,8 @@ class Netcup:
         try:
             return status, json.loads(payload.decode() or "{}")
         except ValueError:
+            if status >= 500:
+                raise KiwiError("netcup's login is not available just now (%d)" % status)
             raise KiwiError("netcup's login answered %d with something that is not JSON" % status)
 
     def api(self, method, path, body=None, query=None, content_type="application/json"):

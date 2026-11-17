@@ -84,3 +84,13 @@ Since 2.170.0 to 2.174.0 (17 November 2026):
 - **Locking** (idle, screen, password of this computer's key): the app's Locking… and the terminal. Not on the
   page on purpose: it is about this computer's keyring. The page's own sessions end after 30 minutes unused.
 - **Hidden services, New address**: in all three.
+
+## Since then (17 November 2026, 2.176.0 to 2.179.2)
+
+| What | CLI | App | Page |
+|---|---|---|---|
+| One container: restart, stop, start, its log | `service` | the menu at each row of a machine's Services | "Its containers" on a machine's Services tab |
+| Who may use the game page | `accounts member games NAME` | a switch at each account | "Let in" at each account |
+| Connect the game page to the accounts | `accounts connect HOST control` | "Game page (play)", Connect | "Game page (play)", Connect |
+| The hidden services through Tor | (the status) | "answers" or "no answer" at each hidden service of a machine | "Over Tor" on the status page |
+| A hidden service's new address | `onion --new-address` | "New address" | "New address" |

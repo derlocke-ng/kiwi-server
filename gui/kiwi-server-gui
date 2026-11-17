@@ -4727,7 +4727,7 @@ class Window(Adw.ApplicationWindow):
             parts.append(g)
         if live and live.get("locked"):
             parts.append(self.locked_group(name))
-        web = self.web_group(name, st)       # what a person came for, before the machine's inner life
+        web = self.web_group(name, st, f)    # what a person came for, before the machine's inner life
         if web:
             parts.append(web)
         backups = self.backup_group(name, f)
@@ -4901,7 +4901,7 @@ class Window(Adw.ApplicationWindow):
             threading.Thread(target=work, daemon=True).start()
         return getattr(self, "hidden", {})
 
-    def web_group(self, name, st):
+    def web_group(self, name, st, f=None):
         """What runs on the machine for people: each service by what it is, opened with a click,
         and the way to its user names and passwords (LoginsDialog)."""
         sites, found = st.get("sites") or [], st.get("logins") or []
@@ -4914,6 +4914,8 @@ class Window(Adw.ApplicationWindow):
             named.setdefault(host, x["label"])
         labels = st.get("site_labels") or {}
         hidden = self.hidden_services()
+        # how the machine last found each of its hidden services through Tor (its onion part's self-check)
+        asked = {o["address"]: o for o in (f or {}).get("onion") or []}
         for site in sites:
             what = labels.get(site) or named.get(site)
             row = plain_row(what or site, site if what else "", activatable=True)
@@ -4926,6 +4928,11 @@ class Window(Adw.ApplicationWindow):
                 who = "only " + ", ".join(tor["clients"]) if tor.get("clients") else "anyone with the address"
                 trow = Adw.ActionRow(use_markup=False, title="%s as a hidden service (Tor Browser, %s)" % (what or site, who),
                                      subtitle=address, subtitle_selectable=True, css_classes=["property"])
+                check = asked.get(tor["address"])
+                if check:
+                    ago = duration(max(0, int(time.time()) - int(check.get("at") or 0)))
+                    trow.add_suffix(pill("answers" if check["ok"] else "no answer", "dim" if check["ok"] else "bad",
+                                         "Asked through Tor %s ago, by the machine itself" % ago))
                 copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
                                   tooltip_text="Copy the address")
                 copy.connect("clicked", lambda _b, a=address: (self.get_clipboard().set(a), self.toast("Address copied")))

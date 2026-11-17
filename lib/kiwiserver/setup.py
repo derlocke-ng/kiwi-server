@@ -761,6 +761,19 @@ def ask(found=None, read=input, show=print, everything=False, lookup=None):
     found = found or detect()
     answers = {}
 
+    def yes(prompt, default):
+        """A yes or a no; Enter takes the default. Anything else is asked again: an address typed
+        one line too early is not a no (seen in a dry run of the first steps, 17 Nov 2026)."""
+        while True:
+            got = read(prompt).strip().lower()
+            if not got:
+                return default
+            if got in ("y", "yes", "j", "ja"):
+                return True
+            if got in ("n", "no", "nein"):
+                return False
+            show("   y or n, please.")
+
     def one(q, values, key, problems):
         """Ask until the answer passes. `problems()` is check() for the answers as they would be."""
         kind = q.get("type", "string")
@@ -778,8 +791,7 @@ def ask(found=None, read=input, show=print, everything=False, lookup=None):
                     continue
                 value = opts[int(got) - 1]["value"]
             elif kind == "bool":
-                got = read("%s [%s]: " % (q["label"], "Y/n" if q.get("default") else "y/N")).strip().lower()
-                value = q.get("default", False) if not got else got.startswith(("y", "j"))
+                value = yes("%s [%s]: " % (q["label"], "Y/n" if q.get("default") else "y/N"), bool(q.get("default", False)))
             else:
                 prompt = "%s%s: " % (q["label"], " [%s]" % q["default"] if q.get("default") else "")
                 got = (__import__("getpass").getpass(prompt) if q.get("secret") else read(prompt)).strip()
@@ -805,8 +817,7 @@ def ask(found=None, read=input, show=print, everything=False, lookup=None):
             if kind == "machines":
                 nodes = answers[q["id"]] = []
                 taken = {answers.get("master_name")}
-                while (read("\n%s? [%s]: " % (q.get("add", "Add a machine"), "Y/n" if not nodes else "y/N")).strip().lower()
-                       or ("y" if not nodes else "n")).startswith(("y", "j")):
+                while yes("\n%s? [%s]: " % (q.get("add", "Add a machine"), "Y/n" if not nodes else "y/N"), not nodes):
                     node = {}
                     nodes.append(node)
                     free = [x for x in found.get("addresses") or [] if x not in [m.get("address") for m in nodes]]
@@ -835,8 +846,7 @@ def ask(found=None, read=input, show=print, everything=False, lookup=None):
                 if q.get("help"):
                     show(_wrap(q["help"], "   "))
                 who = providers.get(answers[q["lookup"]])
-                if not (read("Sign in to %s now and pick your server from a list? [Y/n]: " % who.name).strip().lower()
-                        or "y").startswith(("y", "j")):
+                if not yes("Sign in to %s now and pick your server from a list? [Y/n]: " % who.name, True):
                     continue
                 try:
                     rows, token = lookup(who.id, show)

@@ -2741,6 +2741,28 @@ class TestSetup(Base):
         # not by its name, which resolves on the VPN only; and a key on record for that address is an older install's
         self.assertEqual(calls, [["apply", dest, "mango", "--ssh", "core@192.168.2.30", "--new-host-key"]])
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_next_sends_a_machine_at_home_to_the_master_first(self):
+        """Its place on the VPN comes from the master: before it is set up, `next` says so instead of
+        an SSH error about the master's name (a dry run of the first steps, 17 Nov 2026)."""
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)      # trifle is the master
+        calls = []
+
+        def phases(fleet, roles, host, errors, out):
+            return ("build", "x") if host.name == "trifle" else ("enroll", "y")
+        real_main, err = cli.main, io.StringIO()
+        with mock.patch.object(cli, "next_step", phases), mock.patch.object(cli, "main", lambda argv: calls.append(argv) or 0), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = real_main(["next", dest, "mango", "--yes"])
+        err = err.getvalue()
+        self.assertNotEqual(rc, 0)
+        self.assertIn("mango gets its place on your VPN from the master, and trifle is not set up yet", err)
+        self.assertIn("kiwi-server next %s" % dest, err)
+        self.assertEqual(calls, [])                              # no enroll was tried
+
     def test_a_backup_server_with_a_new_client_is_named_until_it_is_applied(self):
         answers = os.path.join(self.tmp, "answers.json")
         write(answers, json.dumps(self.ANSWERS))
@@ -2821,6 +2843,10 @@ class TestSetup(Base):
         self.assertEqual(a["master_address"], "198.51.100.4")
         a, said = self.ask(["", "n", "198.51.100.4", "", "n"], lookup=fails)     # or the sign-in is declined
         self.assertEqual((a["master_address"], a.get("provider_server")), ("198.51.100.4", None))
+        # the address typed one line too early, at the yes or no: asked again, not taken for a no
+        a, said = self.ask(["", "198.51.100.4", "n", "198.51.100.4", "", "n"], lookup=fails)
+        self.assertIn("y or n, please", said)
+        self.assertEqual(a["master_address"], "198.51.100.4")
 
     def test_the_app_signs_in_to_netcup_and_lists_the_servers(self):
         api = FakeNetcup()
@@ -6423,6 +6449,29 @@ class TestMtu(Base):
         write(path, "#!/bin/sh\n" + mtu._SCRIPT % {"container": "km-vpn-server", "addr": "10.8.0.1", "payload": 1000})
         r = subprocess.run(["shellcheck", "-S", "warning", path], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout)
+
+
+class TestNetcupDropped(unittest.TestCase):
+    def test_a_dropped_connection_is_said_not_a_traceback(self):
+        """netcup's login closed the connection without an answer (17 Nov 2026): `next` showed a
+        Python traceback. Now it says so in a sentence."""
+        import socket as sk
+        from kiwiserver import netcup as netcupmod
+        srv = sk.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def drop():
+            c, _ = srv.accept()
+            c.recv(65536)
+            c.close()                       # no answer at all
+        t = threading.Thread(target=drop, daemon=True)
+        t.start()
+        self.addCleanup(srv.close)
+        api = netcupmod.Netcup(os.path.join(tempfile.mkdtemp(), "t"), base="http://127.0.0.1:%d" % port)
+        with self.assertRaisesRegex(KiwiError, "netcup did not answer .*try again in a minute"):
+            api._form("/token", grant_type="x")
 
 
 class FakeNetcup:

@@ -1041,6 +1041,7 @@ def cmd_next(args):
         phase, text = next_step(fleet, roles, h, errs, o)
         if phase != "applied":
             todo.append((h, phase, text, errs, o))
+    masters_pending = [t[0].name for t in todo if is_master(t[0]) and not t[0].standby_of]   # (a standby waits for nobody)
     if args.host:               # this one, whatever is on record: it was installed anew
         if args.host not in fleet.hosts:
             raise KiwiError("no such machine: %s" % args.host)
@@ -1078,6 +1079,11 @@ def cmd_next(args):
                  % (h.name, path))
         return
     if phase == "enroll":
+        if masters_pending and not is_master(h):
+            # the master hands out the places: without it the step ended in an SSH error about a
+            # name nobody can resolve yet (a dry run of the first steps, 17 Nov 2026)
+            raise KiwiError("%s gets its place on your VPN from the master, and %s is not set up yet. "
+                            "Set it up first: kiwi-server next %s" % (h.name, masters_pending[0], path))
         if go("Give %s its place on your VPN (the master has to be running)?" % h.name):
             run("enroll", path, h.name)
             util.say("done. Run this again for the next step")
@@ -1135,10 +1141,17 @@ def cmd_next(args):
     where = (h.cfg.get("vps") or {}).get("provider")
     if where in providers.PROVIDERS:        # a hoster kiwi-server can install at by itself
         who = providers.get(where)
+        by_hand = "upload the file as an ISO at %s and start the server from it, then run this again" % who.name
         if not os.path.isfile(fleet.resolve_path(who.token_file())):
             if not go("Sign in to %s (it opens a page in your browser)?" % who.name):
+                util.say("without it: " + by_hand)
                 return
-            run("vps", "login", path)
+            try:
+                run("vps", "login", path)
+            except SystemExit:
+                # the error alone left a newcomer without a way on (a dry run of the first steps, 17 Nov 2026)
+                util.say("the sign-in at %s did not work just now. Run this again in a while, or %s" % (who.name, by_hand))
+                raise
         if not args.yes and not sys.stdin.isatty():     # erasing a server is never taken for granted
             raise KiwiError("installing %s erases the server at %s: run this in a terminal, or with --yes" % (h.name, who.name))
         if go("Install %s at %s now? EVERYTHING ON THAT SERVER IS ERASED." % (h.name, who.name)):

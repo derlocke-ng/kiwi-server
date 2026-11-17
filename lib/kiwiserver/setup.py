@@ -205,6 +205,8 @@ def add_host(path, name, role, preset="", target="", address="", network=True):
     if target:
         lines.append("    target: %s" % target)
     if role == "master":
+        if target in ("", "debian"):        # encrypted, its key given over SSH in its initramfs (docs/design/encryption.md)
+            lines += ["    debian: { encrypt: true }", "    unlock: { ssh: true }"]
         lines += ["" if target else "    target: debian", "    master:",
                   "      modules: [vpn-server, dns, tor, reverse-proxy]",
                   "      vpn-server: { wg_host: %s }" % (address or "<its public address or name>")]
@@ -631,7 +633,11 @@ def make(answers, fleet_dir):
     alone = a.get("master_where") == "none"
     if a.get("master_where") == "home":     # its own connection is the home line: Tor only through a VPN exit there
         master["at_home"] = True
-    hosts = {} if alone else {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master}}
+    # encrypted, as every machine (docs/design/encryption.md): its first start waits for the one-time
+    # key of its media, which `next` gives it over SSH in its initramfs; the first apply puts its own
+    # key in place, and the control node gives it that key after a restart
+    hosts = {} if alone else {m: {"role": "master", "target": "debian", "disk": a.get("master_disk") or "auto", "master": master,
+                                  "debian": {"encrypt": True}, "unlock": {"ssh": True}}}
     if a.get("master_where") in providers.PROVIDERS:
         hosts[m]["vps"] = {"provider": a["master_where"]}
         if a.get("provider_server"):    # picked from the hoster's list: the install knows which one

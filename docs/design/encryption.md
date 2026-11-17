@@ -91,9 +91,16 @@ first); the first run and `add` choose rings (the first machine at home with a f
 serves `home`, the others bind it); `encryption: false` keeps a machine plain by choice. Tried in
 a local VM (`tests/drills/iso-encrypt-vm.sh`).
 
-**Then:** the encrypted master (its first start waits for its one-time key, which `kiwi-server
-next` and the page's "Add a master" do not give yet), a ring for the first machine too (the
-master's, answering only the home's address), and Debian machines at home.
+**Third (2.162.0):** the master is encrypted (Debian, as before on sorbet): the first run and
+"Add a master" write `debian.encrypt` with SSH in its initramfs; its first start waits for the
+one-time key of its media, and `kiwi-server next` sees that (its initramfs answers, its system
+not) and gives it; the first apply puts its own key in place. After a restart the control node
+types that key (the watchdog), as it forwards a ring to a machine that has one. Rings that do
+not answer yet at an apply are bound at a later one; until then the disk opens with its key.
+Tried in a local VM (`tests/drills/master-encrypt-vm.sh`).
+
+**Then:** a ring for the first machine too (the master's, answering only the home's address),
+and Debian machines at home.
 
 ## How it is tried
 

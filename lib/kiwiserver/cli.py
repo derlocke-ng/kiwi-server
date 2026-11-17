@@ -1072,6 +1072,14 @@ def cmd_next(args):
     addr = (str(net["address"]).split("/")[0] if not net.get("dhcp", True) and net.get("address")
             else (h.role_settings_raw.get("vpn-server") or {}).get("wg_host") if is_master(h) else None)
     tgt = "%s@%s" % (h.admin["user"], addr) if addr else None
+    if addr and luks.at_first_boot(h) and h.cfg["unlock"].get("ssh") and remote.speaks_ssh(addr, unlock.ssh_port(h)) \
+            and not remote.speaks_ssh(addr, remote.ssh_port(h)):
+        # installed encrypted, its first start waits for the one-time key of its media (its initramfs
+        # answers, its system not yet; that initramfs's key is on record only after the first apply)
+        if go("%s waits for its disk's key at %s. Give it the one-time key of its install media?" % (h.name, addr)):
+            run("unlock", path, h.name, "--manual")
+            util.say("%s starts now. Run this again in a minute to set it up" % h.name)
+        return
     if addr and (remote._answers(addr, 22) or remote._answers(addr, remote.ssh_port(h))):
         if go("%s answers at %s. Set it up now (a few minutes; it downloads what it runs)?" % (h.name, addr)):
             # never set up from here: a key on record for its address is from an older install
@@ -1517,7 +1525,8 @@ def cmd_recover(args):
 
     def open_it(name):
         h = fleet.hosts[name]
-        if not unlock._forwarded_rings(h):
+        key_only = not h.cfg["unlock"].get("rings") and h.cfg["unlock"].get("ssh")
+        if not unlock._forwarded_rings(h) and not key_only:
             # a ring at home it reaches by itself: it opens when a machine that serves it is back
             raise KiwiError(unlock.locked_advice(h, args.fleet))
         if args.dry_run:
@@ -2029,9 +2038,21 @@ def cmd_apply(args):
                 if remote.run_stream(tgt, UPDATE_IMAGES) != 0:
                     util.warn("%s: the images were not updated — sudo kiwi-stack update on the machine" % h.name)
             if unlock.wanted(h):
-                unlock.bind(h, tgt, servers)
+                try:
+                    unlock.bind(h, tgt, servers)
+                except KiwiError as e:
+                    # its rings are not there yet (the machine that serves them comes later): the disk
+                    # keeps the key for its screen until an apply after they answer
+                    util.warn("%s: its disk is not bound to its rings yet: %s. It opens with its key until an apply after "
+                              "they answer" % (h.name, e))
+                    if h.target in ("coreos", "ucore"):
+                        unlock.drop_standin(h, tgt)
+                    else:
+                        remote.run(tgt, unlock.INSTALL_KEY_ONLY)
             elif h.target in ("coreos", "ucore"):      # the starter's TPM, on a machine with no rings: the console key instead
                 unlock.drop_standin(h, tgt)
+            elif h.target == "debian" and luks.uses_one_time_key(h):    # encrypted, no ring: its key only
+                remote.run(tgt, unlock.INSTALL_KEY_ONLY)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
@@ -3382,7 +3403,7 @@ def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
     hosts = fleet.select([args.host])
-    if args.manual:
+    if args.manual or not hosts[0].cfg["unlock"].get("rings"):     # no ring: its key opens it
         unlock.type_key(hosts[0], address=args.address, port=args.port, timeout=args.timeout)
         return
     servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))

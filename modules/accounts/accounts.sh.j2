@@ -5,9 +5,12 @@
 #   accounts.sh list                         the accounts, one JSON object a line
 #   accounts.sh delete NAME
 #   accounts.sh jabber NAME on|off           whether Jabber takes this account (LDAP)
-#   accounts.sh oauth CLIENT NAME ORIGIN CALLBACK [CALLBACK…] [--pkce]
+#   accounts.sh member GROUP NAME on|off     whether the account is in a group (made when missing), e.g. games
+#   accounts.sh members GROUP                who is in it, as JSON
+#   accounts.sh oauth CLIENT NAME ORIGIN CALLBACK [CALLBACK…] [--pkce] [--group GROUP]
 #                                            a service that signs people in here (OpenID Connect); prints its secret.
 #                                            --pkce: the service sends a PKCE challenge (else Kanidm wants none)
+#                                            --group: only the group's members may sign in there (else everyone)
 #   accounts.sh setup                        the rules for everyone, and the sign-up page's token (every apply)
 # Each call takes the admin over afresh (its password is never kept: a new one each time) and
 # runs Kanidm's own command line in a container that is gone afterwards.
@@ -72,6 +75,17 @@ case "${1:-}" in
         else k group remove-members jabber "$2" >/dev/null 2>&1; fi
         k group get jabber 2>/dev/null | grep -q "member: $2@" && on=on || on=off
         printf '{"name": "%s", "jabber": "%s"}\n' "$2" "$on" ;;
+    member)
+        name_ok "$2"; name_ok "$3"
+        k group get "$2" 2>&1 | grep -q "name: $2" || k group create "$2" >/dev/null 2>&1
+        if [ "${4:-on}" = on ]; then k group add-members "$2" "$3" >/dev/null 2>&1
+        else k group remove-members "$2" "$3" >/dev/null 2>&1; fi
+        k group get "$2" 2>/dev/null | grep -q "member: $3@" && on=on || on=off
+        printf '{"name": "%s", "group": "%s", "member": "%s"}\n' "$3" "$2" "$on" ;;
+    members)
+        name_ok "$2"
+        printf '{"group": "%s", "members": [%s]}\n' "$2" "$(k group list-members "$2" 2>/dev/null |
+            sed -n 's/^\([a-z][a-z0-9_-]*\)@.*/"\1"/p' | paste -sd, -)" ;;
     oauth)
         name_ok "$2"
         c=$2; shift 2                           # now: DISPLAY ORIGIN CALLBACK…
@@ -80,12 +94,21 @@ case "${1:-}" in
                 { echo "accounts: Kanidm did not make the client $c: $(tail -1 "$work/out")" >&2; exit 1; }
         fi
         shift 2
-        pkce=off
+        pkce=off group=""
         for cb in "$@"; do                      # (not $url: that is Kanidm's own address)
             if [ "$cb" = --pkce ]; then pkce=on
+            elif [ "$cb" = --group ]; then group=next
+            elif [ "$group" = next ]; then name_ok "$cb"; group=$cb
             else k system oauth2 add-redirect-url "$c" "$cb" >/dev/null 2>&1 || true; fi
         done
-        k system oauth2 update-scope-map "$c" idm_all_persons openid email profile groups >/dev/null 2>&1
+        if [ -n "$group" ]; then
+            # only the group's members: Kanidm turns everyone else away at its own page
+            k group get "$group" 2>&1 | grep -q "name: $group" || k group create "$group" >/dev/null 2>&1
+            k system oauth2 delete-scope-map "$c" idm_all_persons >/dev/null 2>&1 || true
+            k system oauth2 update-scope-map "$c" "$group" openid email profile groups >/dev/null 2>&1
+        else
+            k system oauth2 update-scope-map "$c" idm_all_persons openid email profile groups >/dev/null 2>&1
+        fi
         k system oauth2 prefer-short-username "$c" >/dev/null 2>&1 || true
         # Forgejo, Paperless and Vaultwarden send no PKCE challenge; they sign in with their secret (a
         # confidential client), which is enough. A service that sends one (Immich) keeps Kanidm's check.
@@ -107,5 +130,5 @@ case "${1:-}" in
         fi
         echo '{"setup": "done"}' ;;
     *)
-        sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+        sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

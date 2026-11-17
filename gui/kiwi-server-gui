@@ -1635,7 +1635,7 @@ class AccountsDialog(Adw.Dialog):
 
     # the services the network's accounts can sign people in to (kiwi-server accounts connect)
     CONNECTABLE = (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"),
-                   ("vault", "Vaultwarden (passwords)"), ("immich", "Immich (photos)"))
+                   ("vault", "Vaultwarden (passwords)"), ("immich", "Immich (photos)"), ("control", "Game page (play)"))
 
     def __init__(self, win):
         super().__init__(title="Accounts", content_width=660, content_height=720)
@@ -1658,9 +1658,10 @@ class AccountsDialog(Adw.Dialog):
                                             ("jrequests", ("requests", "--jabber")), ("jinvites", ("invites", "--jabber")))}
             rc, out, _err = run_cli(self.win.cli, ["list", path, "--porcelain"])
             try:
-                got["hosts"] = (json.loads(out).get("hosts") or []) if rc == 0 else []
+                listed = json.loads(out) if rc == 0 else {}
             except ValueError:
-                got["hosts"] = []
+                listed = {}
+            got["hosts"], got["play"] = listed.get("hosts") or [], listed.get("play")
             GLib.idle_add(lambda: self.build(got) and False)
         threading.Thread(target=work, daemon=True).start()
 
@@ -1746,6 +1747,15 @@ class AccountsDialog(Adw.Dialog):
                 gone = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete the account", valign=Gtk.Align.CENTER,
                                   css_classes=["flat"])
                 gone.connect("clicked", lambda _b, n=name: self.confirm_delete(n))
+                play = got.get("play") or {}
+                if play.get("group"):           # who may use the game page: its group, by a switch
+                    inside = any(str(x).startswith(play["group"] + "@") for x in p_.get("memberof") or [])
+                    sw = Gtk.Switch(active=inside, valign=Gtk.Align.CENTER, tooltip_text="May use the game page (%s)" % play["site"])
+                    sw.connect("notify::active", lambda s, _p, n=name, grp=play["group"]: self.act(
+                        ["member", grp, n, "on" if s.get_active() else "off"],
+                        "%s %s the game page" % (n, "may use" if s.get_active() else "no longer uses")))
+                    row.add_suffix(Gtk.Label(label="Game page", css_classes=["dim-label"]))
+                    row.add_suffix(sw)
                 row.add_suffix(link)
                 row.add_suffix(gone)
                 g.add(row)

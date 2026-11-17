@@ -20,8 +20,10 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import VERSION, access as accessmod, form as formmod, health as healthmod, providers as providersmod, util
+from . import VERSION, access as accessmod, form as formmod, health as healthmod, play as playmod, providers as providersmod, util
 from .control import ACTIONS, Control
+
+controlmod_job = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")      # a job's id, as Control.start makes it
 from .util import KiwiError
 
 COOKIE = "kiwi_session"
@@ -1111,8 +1113,10 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <form class="card row" method="post" action="/accounts/create" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
 <div><label for="acc-name">Make one yourself</label><input id="acc-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" placeholder="lowercase letters and digits" required></div>
 <button>Make the account</button></form>
-{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th><th></th></tr></thead><tbody>
+{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th></th></tr></thead><tbody>
 {% for p in people %}<tr><td><b>{{ p.name }}</b></td><td class="wide">{{ p.display }}</td><td class="wide">{{ "yes" if p.jabber else "–" }}</td>
+{% if play_group %}<td><form class="inline" method="post" action="/accounts/games">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}">
+<input type="hidden" name="note" value="{{ 'off' if p.games else 'on' }}"><button title="Members of {{ play_group }} start and stop the game servers at the game page">{{ "In · leave out" if p.games else "Let in" }}</button></form></td>{% endif %}
 <td style="white-space:nowrap"><form class="inline" method="post" action="/accounts/link">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>New password link</button></form>
 <form class="inline" method="post" action="/accounts/delete" onsubmit="return confirm('Delete the account {{ p.name }}? Its person can no longer sign in anywhere.')">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>Delete</button></form></td></tr>{% endfor %}</tbody></table></div>
 {% else %}<p class="muted">No accounts yet.</p>{% endif %}
@@ -1139,6 +1143,34 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 {% for i in jabber.invites|reverse %}<tr><td>…{{ i.hint }}</td><td>{{ i.note or "–" }}</td><td>{{ i.used }} of {{ i.uses }}</td>
 <td>{% if i.live %}<form class="inline" method="post" action="/accounts/jabber-revoke">{{ tok }}<input type="hidden" name="hint" value="{{ i.hint }}"><button>Withdraw</button></form>{% else %}<span class="badge plain">over</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}{% endif %}
 {% endblock %}""",
+
+    "play.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}: game servers{% endblock %}{% block main %}
+<style>main{max-width:980px}.who{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.who form{display:inline}.acts form{display:inline}.acts button{margin:2px 4px 2px 0}pre{white-space:pre-wrap;max-height:70vh;overflow:auto}</style>
+{% if refresh %}<meta http-equiv="refresh" content="{{ refresh }}">{% endif %}
+<div class="who"><h1>Game servers</h1>{% if person %}<span class="muted">{{ person }} ·
+<form method="post" action="out">{{ tok }}<button>Sign out</button></form></span>{% endif %}</div>
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+{% if not ready %}<p>{{ why }}</p>
+{% elif not person %}<p>Start a game server when you want to play, stop it when you are done, and read what it says. With your
+account of the network{% if group %}, for the people in the group <b>{{ group }}</b>{% endif %}.</p>
+<p><a class="btn primary" href="signin">Sign in</a></p>
+{% elif log is not none %}<p><a href="./">← Game servers</a></p>
+<h2>{{ title }}</h2><p class="muted small">{{ "still running" if running else "done" }}</p><pre>{{ log }}</pre>
+{% else %}<p class="muted">An asleep server wakes for the first player who knocks, or with <em>Start</em>; one stopped here stays
+stopped until someone starts it. Your clicks are written down with your name.</p>
+{% if rows %}<div class="scroll"><table class="tbl"><thead><tr><th>Server</th><th>Where to connect</th><th>Now</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td><b>{{ r.name }}</b>{% if r.title %}<br><span class="sm">{{ r.title }} · {{ r.machine }}</span>{% else %}<br><span class="sm">{{ r.machine }}</span>{% endif %}</td>
+<td>{% if r.address %}<code>{{ r.address }}</code>{% else %}<span class="sm">–</span>{% endif %}</td>
+<td><span class="badge {{ {'running': 'ok', 'stopped': 'bad'}.get(r.state, '') }}">{{ r.state }}</span></td>
+<td class="acts">{% for act, label in (("start", "Start"), ("stop", "Stop"), ("restart", "Restart"), ("logs", "Log")) %}
+{% if (act == "start" and r.state != "running") or (act in ("stop", "restart") and r.state == "running") or act == "logs" %}
+<form method="post" action="do"{% if act == "stop" %} onsubmit="return confirm('Stop {{ r.name }}? Whoever plays on it is thrown out.')"{% endif %}>{{ tok }}
+<input type="hidden" name="machine" value="{{ r.machine }}"><input type="hidden" name="container" value="{{ r.container }}">
+<input type="hidden" name="action" value="{{ act }}"><button{% if act == "start" %} class="primary"{% endif %}>{{ label }}</button></form>{% endif %}{% endfor %}</td></tr>
+{% endfor %}</tbody></table></div>{% else %}<p class="muted">No game servers yet: they come with the games part of a machine.</p>{% endif %}
+{% if did %}<p class="muted small">Asked. <a href="log?job={{ did }}">What it said</a>. The state here follows within a few minutes.</p>{% endif %}
+{% endif %}{% endblock %}""",
 
     "start.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="300;url=?auto=1">
@@ -1720,6 +1752,112 @@ def make_app(control: Control):
         now = time.time()
         h = healthmod.public(control.health(), now, strangers=True)
         return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+
+    # ---- the game page (play.py): at play.<this node>, where nothing but /play/ answers ----------
+    PLAY_HOST, PLAY_GROUP, PLAY_EXTRA = playmod.settings()
+
+    @app.middleware("http")
+    async def play_only(request: Request, call_next):
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        path = request.url.path
+        if PLAY_HOST and host == PLAY_HOST.lower() and (not path.startswith("/play/") or "/.." in path or "//" in path):
+            return Response("Not here.", status_code=404, media_type="text/plain")
+        return await call_next(request)
+
+    def play_person(request):
+        return playmod.who(control._session_key, request.cookies.get(playmod.COOKIE))
+
+    def play_page(request, **kw):
+        tok = request.cookies.get(playmod.COOKIE) or ""
+        kw.setdefault("person", play_person(request))
+        kw.setdefault("group", PLAY_GROUP)
+        ready, why = True, ""
+        if not PLAY_HOST:
+            ready, why = False, "The game page is off (the control part's setting play_page)."
+        elif control.locked():
+            ready, why = False, "The network's control node waits for its admin after a restart. Try again later."
+        elif not control.play_client():
+            ready, why = False, ("The game page is not connected to the network's accounts yet: kiwi-server accounts "
+                                 "<fleet> connect %s control" % (os.environ.get("KIWI_CONTROL_HOST") or "<this node>"))
+        kw.update(ready=ready, why=why, log=kw.get("log"))
+        if ready and kw["person"] and "rows" not in kw and kw["log"] is None:
+            kw["rows"] = playmod.servers(control.fleet_info(), control.status(), PLAY_EXTRA)
+        form = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">' % playmod.csrf(control._session_key, tok))
+        r = HTMLResponse(env.get_template("play.html").render(tok=form, nav=None, shell=None, alone="", **kw))
+        r.headers["Cache-Control"] = "no-store"
+        return r
+
+    def play_back():
+        return "https://%s/back" % PLAY_HOST
+
+    def play_secure(request):
+        return request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
+
+    @app.get("/play/")
+    def play_home(request: Request, did: str = ""):
+        return play_page(request, did=did if controlmod_job.match(did or "") else "")
+
+    @app.get("/play/signin")
+    def play_signin(request: Request):
+        c = control.play_client()
+        if not PLAY_HOST or not c:
+            return play_page(request)
+        try:
+            where, state = playmod.begin(control._session_key, c["client"], control.play_conf(c["issuer"]), play_back())
+        except KiwiError as e:
+            return play_page(request, error=str(e))
+        r = RedirectResponse(where, status_code=303)
+        r.set_cookie(playmod.STATE_COOKIE, state, httponly=True, samesite="lax", secure=play_secure(request), max_age=600)
+        return r
+
+    @app.get("/play/back")
+    def play_return(request: Request, code: str = "", state: str = "", error: str = ""):
+        c = control.play_client()
+        if not PLAY_HOST or not c:
+            return play_page(request)
+        verifier = playmod.verifier_of(control._session_key, request.cookies.get(playmod.STATE_COOKIE), state)
+        if error or not code or not verifier:
+            return play_page(request, error="The sign-in did not finish%s. Try again." % (" (%s)" % error[:80] if error else ""))
+        try:
+            person = playmod.finish(control.play_conf(c["issuer"]), c["client"], c["secret"], code, verifier, play_back(),
+                                    control.play_ca(), PLAY_GROUP)
+        except KiwiError as e:
+            return play_page(request, error=str(e))
+        control.audit("play:" + person, "signed in on the game page", address=address(request))
+        r = RedirectResponse("./", status_code=303)
+        r.set_cookie(playmod.COOKIE, playmod.token(control._session_key, person), httponly=True, samesite="lax",
+                     secure=play_secure(request), max_age=playmod.HOURS * 3600)
+        r.delete_cookie(playmod.STATE_COOKIE)
+        return r
+
+    @app.post("/play/do")
+    def play_do(request: Request, machine: str = Form(""), container: str = Form(""), action: str = Form(""), csrf: str = Form("")):
+        person = play_person(request)
+        tok = request.cookies.get(playmod.COOKIE) or ""
+        if not person or not hmac.compare_digest(playmod.csrf(control._session_key, tok), csrf or ""):
+            return RedirectResponse("./", status_code=303)
+        try:
+            jid = control.play_start(person, machine, container, action, PLAY_EXTRA)
+        except KiwiError as e:
+            return play_page(request, error=str(e))
+        return RedirectResponse(("log?job=" if action == "logs" else "./?did=") + jid, status_code=303)
+
+    @app.get("/play/log")
+    def play_log(request: Request, job: str = ""):
+        person = play_person(request)
+        j = control.job(job) if person and controlmod_job.match(job or "") else None
+        if not j or j.get("action") != "service" or not str(j.get("user") or "").startswith("play:"):
+            return RedirectResponse("./", status_code=303)
+        text, _off = control.log(job)
+        running = j.get("state") in ("waiting", "running")
+        return play_page(request, log=text, running=running, refresh=2 if running else 0,
+                         title="%s, asked by %s" % ((j.get("hosts") or ["?"])[0], j["user"][5:]))
+
+    @app.post("/play/out")
+    def play_out(request: Request, csrf: str = Form("")):
+        r = RedirectResponse("./", status_code=303)
+        r.delete_cookie(playmod.COOKIE)
+        return r
 
     @app.get("/healthz")
     def healthz():
@@ -2413,7 +2551,8 @@ def make_app(control: Control):
                 for p in control.accounts_read("list") or []:
                     name = (p.get("name") or [""])[0]
                     people.append({"name": name, "display": (p.get("displayname") or [name])[0],
-                                   "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or [])})
+                                   "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or []),
+                                   "games": bool(PLAY_HOST) and any(g.startswith(PLAY_GROUP + "@") for g in p.get("memberof") or [])})
                 invites = control.accounts_read("invites") or []
                 requests = control.accounts_read("requests") or []
             except KiwiError as e:
@@ -2432,9 +2571,10 @@ def make_app(control: Control):
                 error = error or str(e)
         connectable = [{"host": h["name"], "module": m, "label": label,
                         "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-%s.json" % (h["name"], m)))}
-                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"), ("vault", "Vaultwarden (passwords)"), ("immich", "Immich (photos)"))
+                       for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"), ("vault", "Vaultwarden (passwords)"), ("immich", "Immich (photos)"), ("control", "Game page (play)"))
                        if m in (h.get("modules") or [])]
         return page("accounts.html", request, "/accounts", available=available, connectable=connectable, jabber=jabber, people=sorted(people, key=lambda p: p["name"]),
+                    play_group=PLAY_GROUP if PLAY_HOST else "",
                     invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
                     id_host=id_host, now=now, error=error, **kw)
 
@@ -2481,8 +2621,12 @@ def make_app(control: Control):
             if what == "delete":
                 control.accounts("delete", name.strip().lower(), user=u)
                 return accounts_page(request)
+            if what == "games" and PLAY_HOST:          # who may use the game page: its group
+                control.accounts("member", PLAY_GROUP, name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
+                return accounts_page(request)
             if what == "connect":
-                labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "immich": "Immich"}
+                labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "immich": "Immich",
+                          "control": "the game page"}
                 module = note.strip() if note.strip() in labels else "git"
                 label = labels[module]
                 control.accounts("connect", name.strip(), module, user=u)

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: control
   title: Control page
-  version: 1.0.0
+  version: 1.1.0
   description: "The control node (design/control-plane.md in kiwi-server): kiwi-server with web pages at control.<hostname>, for the mesh only. It keeps the fleet file and the secrets as the encrypted store, which its password opens into RAM; then it looks at every machine by itself, sends the role to RAM masters, and applies from a phone."
   category: system
   node_types: [node]
@@ -31,6 +31,7 @@ storage:
 urls:
   - "Control: https://{{ control_hostname or 'control.' ~ hostname }} (from the mesh)"
   - "{% if status_page %}Status: https://{{ status_hostname or 'status.' ~ hostname }} (no login){% endif %}"
+  - "{% if play_page %}Game page: https://{{ play_hostname or 'play.' ~ hostname }} (the network's accounts, group {{ play_group }}){% endif %}"
 
 logins:
   - label: Control page
@@ -84,6 +85,15 @@ nginx:
             proxy_set_header Host $host;
       when: public_status_hostname
       comment: Kiwi front page and status for the Internet (the services with a public name only)
+    # the game page: people of the network's accounts in one group start, stop and wake the game
+    # servers and read their logs. Whatever is asked for at this name, the control part is asked
+    # for /play/… and nothing else. No admin page: who may reach this machine's web pages gets the
+    # sign-in, and only the group's members get past it.
+    - server_name: "{{ play_hostname or 'play.' ~ hostname }}"
+      site: play
+      proxy_pass: "http://control/play$request_uri"
+      when: play_page
+      comment: Kiwi game page (the network's accounts; the control part's /play/ only)
 
 backup:
   # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
@@ -145,6 +155,25 @@ settings:
     label: RAM for the open store (MiB)
     help: "The most the folder in memory may grow to: the opened secrets, job logs, rendered stacks, and the install media made on the page (about 1 GB each, until they are fetched). Memory is only used by what is in it."
     default: 2048
+  - key: play_page
+    type: bool
+    label: Game page
+    help: "A page at play.<hostname> where people with an account of the network (the accounts module) start, stop and wake the game servers and read their logs, without being admins. Only members of the group below get in. Then: kiwi-server accounts <fleet> connect <this machine> control, and add people with kiwi-server accounts <fleet> member games <name>."
+    default: false
+  - key: play_hostname
+    label: Game page's hostname
+    help: "Empty: play.<hostname>. On the VPN only, unless it is a public name with reverse-proxy: public: true."
+    default: ""
+  - key: play_group
+    label: Who may use the game page
+    help: "The group of the network's accounts whose members get in. Made when missing."
+    default: games
+    pattern: '[a-z][a-z0-9_-]{1,31}'
+  - key: play_extra
+    type: list
+    label: More containers on the game page
+    help: "Containers besides the game servers that the game page lists, as machine/container, e.g. papaya/kn-jellyfin. Only containers of a machine's stack (kn-…, km-…)."
+    default: []
   - key: allow_from
     label: Also allow
     help: "One more address or network that may open the page besides the mesh, e.g. the operator's LAN 192.168.0.0/16. Empty: the mesh only."

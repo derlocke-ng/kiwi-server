@@ -440,6 +440,38 @@ When the control node itself is off, it cannot say so. That is what `heartbeat`
 is for: a service outside (healthchecks.io, or your own) that is asked after
 every look and tells you when the asking stops.
 
+## The game page
+
+People who are not admins can start and stop the game servers and read their
+logs at `https://play.<control node>`, so a server runs only while someone plays.
+They sign in with their account of the network ([accounts](roles.md#accounts));
+only the members of one group get in, `games` unless you name another.
+
+1. In the control node's settings (`control:` block): `play_page: true`. Apply it.
+2. Connect the page to the accounts, once: on the Accounts page, **Game page
+   (play)**, **Connect**; or
+
+   ```bash
+   kiwi-server accounts ~/kiwi/fleet.yaml connect papaya control
+   ```
+
+3. Let people in: the Accounts page has **Let in** at each account, the app a
+   switch; or `kiwi-server accounts ~/kiwi/fleet.yaml member games alice`
+   (`off` at the end takes them out).
+
+The page lists every game server of the network with where players connect and
+whether it runs, sleeps ([`sleep`](roles.md#game-servers)) or is stopped, with
+**Start**, **Stop**, **Restart** and **Log**. `play_extra` adds other containers,
+as `machine/container` (`papaya/kn-jellyfin`). Each click is a task of the control
+node, in the machine's History with the person's name; one server takes a click
+every 15 seconds.
+
+It is on the VPN only, like every page here. Who of the VPN may reach it is set
+as for any service ([Who may reach what](network.md#who-may-reach-what)). A public
+name (`play_hostname: play.example.org` with `reverse-proxy: public: true`) opens
+it to the Internet; the sign-in still decides who gets in. After the control
+node restarts, the page waits until an admin opens the store.
+
 ## Mind
 
 - Never put the module on a rented master: while it is unlocked, the machine

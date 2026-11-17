@@ -6,6 +6,7 @@ all of them. No test touches the network.
 """
 import contextlib
 import http.server
+import hashlib
 import io
 import ipaddress
 import argparse
@@ -8503,8 +8504,7 @@ class TestMadeUpNetwork(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout), status)
 
 
-@unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
-class TestWeb(StoreBase):
+class WebBase(StoreBase):
     """The pages over a real socket, asked the way a browser asks: a form posted under the
     proxy's no-referrer policy carries `Origin: null`."""
     PW = "a long enough password"
@@ -8553,6 +8553,12 @@ class TestWeb(StoreBase):
                 self.cookie = set_cookie.split(";")[0]
             with e:
                 return e.code, e.headers.get("location") or e.read().decode()
+
+
+
+@unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
+class TestWeb(WebBase):
+    """The control page's own pages."""
 
     def test_the_page_changes_its_password_and_replaces_the_keys(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
@@ -8700,14 +8706,23 @@ class TestWeb(StoreBase):
         self.assertIn('value="start-new"', body)
         self.assertIn('value="prune"', body)
         self.assertIn("50 GB free", body)
-        # its containers, each with Restart, Stop or Start, and Log: one job on the machine
-        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
-            {"host": "papaya", "state": "ok", "facts": {"services": [
-                {"name": "kn-nginx", "state": "active", "running": True, "status": "Up 2 hours", "image": "docker.io/library/nginx:1",
-                 "health": "", "stack": True},
-                {"name": "kn-vault", "state": "inactive", "running": False, "status": "", "image": "", "health": "", "stack": True},
-                {"name": "mine", "state": "running", "running": True, "status": "Up", "image": "", "health": "", "stack": False}]}}]}))
-        body = self.ask("/hosts/papaya?tab=services")[1]
+        # its containers, each with Restart, Stop or Start, and Log: one job on the machine.
+        # (The jobs above end first: a look that ends writes what it saw over this.)
+        for _ in range(200):
+            if all(j["state"] not in ("waiting", "running") for j in self.c.jobs(50)):
+                break
+            time.sleep(0.05)
+        for _ in range(50):       # (a look that was still running may write over it: again then)
+            util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+                {"host": "papaya", "state": "ok", "facts": {"services": [
+                    {"name": "kn-nginx", "state": "active", "running": True, "status": "Up 2 hours", "image": "docker.io/library/nginx:1",
+                     "health": "", "stack": True},
+                    {"name": "kn-vault", "state": "inactive", "running": False, "status": "", "image": "", "health": "", "stack": True},
+                    {"name": "mine", "state": "running", "running": True, "status": "Up", "image": "", "health": "", "stack": False}]}}]}))
+            body = self.ask("/hosts/papaya?tab=services")[1]
+            if "Its containers" in body:
+                break
+            time.sleep(0.1)
         self.assertIn("Its containers", body)
         row = body[body.index("<b>kn-nginx</b>"):body.index("<b>kn-vault</b>")]
         self.assertIn('value="restart"', row)
@@ -8918,6 +8933,199 @@ class TestWeb(StoreBase):
         self.assertEqual(signed, [("ssh-ed25519 AAAAx helper", 7)])
         self.assertIn("ssh-ed25519-cert-v01@openssh.com AAAAcert", body)
         self.assertIn("for 7 days", body)
+
+
+class TestGamePlay(unittest.TestCase):
+    """The game page's own parts: its sign-in, who may, and what it lists."""
+
+    def test_its_sign_in_is_never_an_admins_session(self):
+        from kiwiserver import play
+        key = b"k" * 32
+        t = play.token(key, "alice", now=1000)
+        self.assertEqual(play.who(key, t, now=2000), "alice")
+        self.assertIsNone(play.who(key, t, now=1000 + play.HOURS * 3600 + 1))       # it ends
+        self.assertIsNone(play.who(b"x" * 32, t, now=2000))                          # another node's key
+        self.assertIsNone(play.who(key, t.replace("alice", "admin"), now=2000))
+        self.assertIsNone(play.who(key, "admin|1|99999999999|" + "0" * 64, now=2000))
+        c = controlmod.Control.__new__(controlmod.Control)                          # an admin's check of the same token
+        c._session_key, c.clock, c.locked = key, lambda: 2000, lambda: False
+        self.assertIsNone(c.session(t))
+        self.assertNotEqual(play.csrf(key, t), play.csrf(key, play.token(key, "bob", now=1000)))
+
+    def test_the_way_back_checks_the_state_and_the_group(self):
+        from kiwiserver import play
+        key = b"k" * 32
+        conf = {"authorization_endpoint": "https://id.p.home/ui/oauth2", "token_endpoint": "https://id.p.home/oauth2/token",
+                "userinfo_endpoint": "https://id.p.home/oauth2/openid/control-p/userinfo"}
+        where, cookie = play.begin(key, "control-p", conf, "https://play.p.home/back")
+        q = dict(urllib.parse.parse_qsl(where.split("?", 1)[1]))
+        self.assertEqual((q["client_id"], q["redirect_uri"], q["code_challenge_method"]), ("control-p", "https://play.p.home/back", "S256"))
+        verifier = play.verifier_of(key, cookie, q["state"])
+        self.assertTrue(verifier)
+        import base64 as b64
+        self.assertEqual(q["code_challenge"], b64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("="))
+        self.assertIsNone(play.verifier_of(key, cookie, "another-state"))
+        self.assertIsNone(play.verifier_of(b"x" * 32, cookie, q["state"]))
+        asked = []
+
+        class Answer(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def opener(groups):
+            def open_(req, timeout=None, context=None):
+                asked.append((req.full_url, dict(req.header_items()), req.data))
+                if req.full_url.endswith("/token"):
+                    return Answer(json.dumps({"access_token": "at", "id_token": "x"}).encode())
+                return Answer(json.dumps({"preferred_username": "alice@id.p.home", "groups": groups}).encode())
+            return open_
+        name = play.finish(conf, "control-p", "s3cret", "the-code", verifier, "https://play.p.home/back", None, "games",
+                           opener=opener(["games@id.p.home", "idm_all_persons@id.p.home"]))
+        self.assertEqual(name, "alice")
+        form = dict(urllib.parse.parse_qsl(asked[0][2].decode()))
+        self.assertEqual((form["code"], form["code_verifier"], form["grant_type"]), ("the-code", verifier, "authorization_code"))
+        self.assertTrue(asked[0][1]["Authorization"].startswith("Basic "))
+        self.assertEqual(asked[1][1]["Authorization"], "Bearer at")
+        with self.assertRaisesRegex(KiwiError, "not in the group games"):
+            play.finish(conf, "control-p", "s3cret", "c", verifier, "https://play.p.home/back", None, "games",
+                        opener=opener(["idm_all_persons@id.p.home"]))
+
+    def test_it_lists_the_game_servers_and_the_containers_named_for_it(self):
+        from kiwiserver import play
+        info = {"hosts": [{"name": "medlar", "games": [
+            {"server": "survival", "title": "Minecraft (Java)", "container": "kn-game-survival", "address": "medlar.home:25565"},
+            {"server": "doom", "title": "Zandronum (Doom)", "container": "kn-game-doom", "address": "medlar.home:10666"}]},
+            {"name": "papaya", "games": []}]}
+        status = {"hosts": [{"host": "medlar", "facts": {"services": [
+            {"name": "kn-game-survival", "running": False, "asleep": True},
+            {"name": "kn-game-doom", "running": True, "asleep": False}]}},
+            {"host": "papaya", "facts": {"services": [{"name": "kn-jellyfin", "running": False}]}}]}
+        rows = play.servers(info, status, [("papaya", "kn-jellyfin"), ("papaya", "bad name")])
+        self.assertEqual([(r["machine"], r["name"], r["state"]) for r in rows],
+                         [("medlar", "survival", "asleep"), ("medlar", "doom", "running"), ("papaya", "kn-jellyfin", "stopped")])
+        self.assertTrue(play.allowed(info, [("papaya", "kn-jellyfin")], "papaya", "kn-jellyfin"))
+        self.assertFalse(play.allowed(info, [], "papaya", "kn-nginx"))                 # not named: not on the page
+        self.assertFalse(play.allowed(info, [], "papaya", "kn-game-survival"))         # another machine's
+        with mock.patch.dict(os.environ, {"KIWI_PLAY_HOST": "play.papaya.home", "KIWI_PLAY_GROUP": "Bad!",
+                                          "KIWI_PLAY_EXTRA": "papaya/kn-jellyfin papaya/sshd x"}):
+            self.assertEqual(play.settings(), ("play.papaya.home", "games", [("papaya", "kn-jellyfin")]))
+
+
+@unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
+class TestGamePage(WebBase):
+    """The game page over a real socket, at its own name: the sign-in through the accounts (their
+    answers stood in for), the servers, a click, a log."""
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {"KIWI_PLAY_HOST": "play.papaya.home", "KIWI_PLAY_GROUP": "games",
+                                           "KIWI_PLAY_EXTRA": "papaya/kn-jellyfin", "KIWI_CONTROL_HOST": "papaya"})
+        env.start()
+        self.addCleanup(env.stop)
+        super().setUp()
+
+    def play(self, path, form=None, cookie=""):
+        """(status, Location or body, cookies set) of a request at the game page's name."""
+        class Stay(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **kw):
+                return None
+        headers = {"Host": "play.papaya.home"}
+        if cookie:
+            headers["Cookie"] = cookie
+        data = urllib.parse.urlencode(form).encode() if form is not None else None
+        req = urllib.request.Request(self.url + path, data=data, headers=headers)
+        try:
+            with urllib.request.build_opener(Stay).open(req) as r:
+                return r.status, r.read().decode(), {}
+        except urllib.error.HTTPError as e:
+            got = {}
+            for c in e.headers.get_all("set-cookie") or []:
+                k, _, v = c.split(";")[0].partition("=")
+                got[k] = v
+            with e:
+                return e.code, e.headers.get("location") or e.read().decode(), got
+
+    def test_people_of_the_group_start_stop_and_read_the_game_servers(self):
+        from kiwiserver import play
+        self.assertEqual(self.play("/play/")[0], 200)
+        self.assertIn("waits for its admin", self.play("/play/")[1])                    # locked: nothing to do yet
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)              # the admin opens the store
+        self.assertIn("not connected to the network", self.play("/play/")[1])
+        os.makedirs(os.path.join(self.c.fleet_dir, "secrets", "accounts"), exist_ok=True)
+        util.write_text(os.path.join(self.c.fleet_dir, "secrets", "accounts", "papaya-control.json"),
+                        json.dumps({"client": "control-papaya", "secret": "s3cret", "issuer": "https://id.papaya.home/oauth2/openid/control-papaya"}))
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": "medlar", "games": [{"server": "survival", "title": "Minecraft (Java)", "container": "kn-game-survival",
+                                          "address": "medlar.home:25565"}]},
+            {"name": "papaya", "games": []}]}))
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "medlar", "state": "ok", "facts": {"services": [{"name": "kn-game-survival", "running": False, "asleep": True}]}},
+            {"host": "papaya", "state": "ok", "facts": {"services": [{"name": "kn-jellyfin", "running": True}]}}]}))
+        # at its name, only /play/ answers: never an admin page
+        for path in ("/", "/machines", "/hosts/medlar", "/play/../machines", "/login", "/api/hosts/medlar/logins"):
+            self.assertEqual(self.play(path)[0], 404, path)
+        code, body, _ = self.play("/play/")
+        self.assertIn('href="signin"', body)
+        conf = {"authorization_endpoint": "https://id.papaya.home/ui/oauth2", "token_endpoint": "https://id.papaya.home/oauth2/token",
+                "userinfo_endpoint": "https://id.papaya.home/oauth2/openid/control-papaya/userinfo"}
+        with mock.patch.object(self.c, "play_conf", lambda issuer, opener=None: conf):
+            code, where, cookies = self.play("/play/signin")
+            self.assertEqual(code, 303)
+            self.assertTrue(where.startswith("https://id.papaya.home/ui/oauth2?"))
+            q = dict(urllib.parse.parse_qsl(where.split("?", 1)[1]))
+            self.assertEqual(q["redirect_uri"], "https://play.papaya.home/back")
+            state = "%s=%s" % (play.STATE_COOKIE, cookies[play.STATE_COOKIE])
+            # someone not in the group: Kanidm would not even let them through; said if it did
+            with mock.patch.object(play, "finish", side_effect=KiwiError("bob is not in the group games")):
+                code, body, cookies = self.play("/play/back?code=c&state=" + q["state"], cookie=state)
+            self.assertIn("bob is not in the group games", body)
+            self.assertNotIn(play.COOKIE, cookies)
+            self.assertIn("did not finish", self.play("/play/back?code=c&state=forged", cookie=state)[1])
+            seen = []
+            with mock.patch.object(play, "finish", lambda *a, **kw: seen.append(a) or "alice"):
+                code, where, cookies = self.play("/play/back?code=c&state=" + q["state"], cookie=state)
+        self.assertEqual((code, where), (303, "./"))
+        self.assertEqual(seen[0][3:5], ("c", play.verifier_of(self.c._session_key, state.split("=", 1)[1], q["state"])))
+        me = "%s=%s" % (play.COOKIE, cookies[play.COOKIE])
+        body = self.play("/play/", cookie=me)[1]
+        self.assertIn("alice", body)
+        self.assertIn("<b>survival</b>", body)
+        self.assertIn("medlar.home:25565", body)
+        self.assertIn("asleep", body)
+        self.assertIn("<b>kn-jellyfin</b>", body)
+        # the game page's sign-in is no admin's: the control page sends it to its login
+        self.assertEqual(self.play("/machines", cookie="kiwi_session=" + cookies[play.COOKIE])[0], 404)
+        self.cookie = "kiwi_session=" + cookies[play.COOKIE]
+        self.assertEqual(self.ask("/machines")[:2], (303, "/login"))
+        csrf = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        code, where, _ = self.play("/play/do", {"machine": "medlar", "container": "kn-game-survival", "action": "start", "csrf": csrf}, cookie=me)
+        self.assertEqual(code, 303)
+        jid = where.split("did=")[1]
+        for _ in range(100):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.c.job(jid)["user"], "play:alice")
+        self.assertIn("service %s medlar kn-game-survival start" % self.c.fleet_path, self.c.log(jid)[0])
+        self.assertIn("one moment", self.play("/play/do", {"machine": "medlar", "container": "kn-game-survival", "action": "stop",
+                                                           "csrf": csrf}, cookie=me)[1])
+        for machine, container in (("papaya", "kn-nginx"), ("medlar", "kn-game-gone"), ("medlar", "kn-x;id")):
+            self.assertIn("not on the game page", self.play("/play/do", {"machine": machine, "container": container,
+                                                                          "action": "restart", "csrf": csrf}, cookie=me)[1])
+        self.assertEqual(self.play("/play/do", {"machine": "papaya", "container": "kn-jellyfin", "action": "logs", "csrf": "forged"},
+                                   cookie=me)[:2], (303, "./"))                       # a form from elsewhere: nothing happens
+        code, where, _ = self.play("/play/do", {"machine": "papaya", "container": "kn-jellyfin", "action": "logs", "csrf": csrf}, cookie=me)
+        self.assertTrue(where.startswith("log?job="))
+        jid = where.split("=", 1)[1]
+        for _ in range(100):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertIn("service %s papaya kn-jellyfin logs" % self.c.fleet_path, self.play("/play/" + where, cookie=me)[1])
+        self.assertEqual(self.play("/play/" + where)[:2], (303, "./"))                  # not signed in: no log
+        self.assertTrue(any(e.get("user") == "play:alice" and e.get("part") == "kn-game-survival: start" for e in self.c.audit_tail(10)))
 
 
 @unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")

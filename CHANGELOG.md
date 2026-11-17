@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.178.0 — the game page
+
+- **The game page** at `play.<control node>`: people with an account of the network, in one
+  group (`games`), start, stop, restart and read the logs of the game servers without being
+  admins. [control.md](docs/control.md#the-game-page). VPN only unless it gets a public name;
+  the sign-in is the accounts' (OpenID Connect with PKCE), only for the group's members; only
+  `/play/` answers at its name. Each click is a task, in the machine's History with the name.
+- `kiwi-server accounts FLEET connect HOST control` and `accounts FLEET member GROUP NAME
+  [on|off]` / `members GROUP`; the Accounts page has **Let in** at each account, the app a switch.
+- `play_extra` (`machine/container`) puts other containers on it.
+- `list --porcelain` names each machine's game servers and the game page.
+- kiwi-modules 0.78.0: the control module's `play_page`, `play_hostname`, `play_group`,
+  `play_extra`; the accounts' group-only sign-in.
+
 ## 2.177.0 — game servers that sleep while nobody plays
 
 - **`sleep: N` for a game server** (kiwi-modules 0.77.0): stopped after N minutes without

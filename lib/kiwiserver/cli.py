@@ -975,6 +975,7 @@ def cmd_list(args):
                      "site_labels": {n: healthmod.label(n) for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname and n not in r.aliases},
                      "admin_sites": sorted(r._admin.get(h.hostname) or []),
                      "logins": [] if errs else loginsmod.listed(h, roles, ms),     # without the passwords
+                     "games": [] if errs else game_servers(h),      # the game page lists them
                      "status": o.status(), "dir": o.dir, "iso": o.iso,
                      "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
@@ -985,8 +986,13 @@ def cmd_list(args):
                 full = ((h.module_settings or {}).get("vpn-server") or {}).get("groups") or {}
                 groups = {g: (v or {}).get("subnet") for g, v in full.items()}
                 default_group = accessmod.default_group(full)
+        play = None             # the game page, where a control node has it: its name and who may use it
+        for h in fleet.hosts.values():
+            c = (h.module_settings or {}).get("control") or {}
+            if "control" in (h.modules or []) and c.get("play_page") and not play:
+                play = {"host": h.name, "site": c.get("play_hostname") or "play." + h.hostname, "group": c.get("play_group") or "games"}
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
-                          "default_group": default_group,
+                          "default_group": default_group, "play": play,
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
@@ -2461,7 +2467,7 @@ def cmd_serve(args):
 
 
 ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
-ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber")
+ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber", "member", "members")
 # the services that can sign people in with the network's accounts, and where Forgejo & co. come back to
 CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." + h.hostname, "/user/oauth2/accounts/callback"),
                "cloud": ("Nextcloud", lambda s, h: s.get("nc_hostname") or "cloud." + h.hostname, "/apps/user_oidc/code"),
@@ -2471,9 +2477,13 @@ CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." +
                          "/identity/connect/oidc-signin"),
                # Immich: its web page twice, and the page that hands the phone app its answer
                "immich": ("Immich", lambda s, h: s.get("immich_domain") or "immich." + h.hostname,
-                          ("/auth/login", "/user-settings", "/api/oauth/mobile-redirect"))}
+                          ("/auth/login", "/user-settings", "/api/oauth/mobile-redirect")),
+               # the game page of the control node: only its group's members (play_group) get in
+               "control": ("Game page", lambda s, h: s.get("play_hostname") or "play." + h.hostname, "/back")}
 # the services that send a PKCE challenge themselves: Kanidm keeps checking it for them
-PKCE = {"immich"}
+PKCE = {"immich", "control"}
+# the services only one group of the accounts may use: the setting that names it, and its default
+GROUPED = {"control": ("play_group", "games")}
 
 
 def accounts_file(fleet, host, module):
@@ -2528,6 +2538,9 @@ def cmd_accounts(args):
         words = [client, "%s on %s" % (label, target.name), "https://" + name]
         words += ["https://" + name + c for c in ((callbacks,) if isinstance(callbacks, str) else callbacks)]
         words += ["--pkce"] if module in PKCE else []
+        if module in GROUPED:
+            key, default = GROUPED[module]
+            words += ["--group", str((target.module_settings.get(module) or {}).get(key) or default)]
         cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); sudo sh \"$S\" oauth %s"
                % " ".join(shlex.quote(x) for x in words))
         answer = json.loads(remote.run(remote.reach(h, args.ssh), cmd).decode(errors="replace").strip().splitlines()[-1])
@@ -2545,7 +2558,8 @@ def cmd_accounts(args):
         cmd = "sudo podman exec %s-signup kiwi-server signup %s --state /state" % (
             prefix, " ".join(shlex.quote(x) for x in [what] + rest[:1] + extra))
     elif what in ACCOUNT_OPS:
-        name = {"create": "create", "link": "reset", "list": "list", "delete": "delete", "jabber": "jabber"}[what]
+        name = {"create": "create", "link": "reset", "list": "list", "delete": "delete", "jabber": "jabber",
+                "member": "member", "members": "members"}[what]
         cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); "
                "sudo sh \"$S\" %s" % " ".join(shlex.quote(x) for x in [name] + rest[:3]))
     else:
@@ -3516,6 +3530,23 @@ def service_script(name, action, lines=200):
             'elif command -v docker >/dev/null && docker inspect "$n" >/dev/null 2>&1; then %s\n'
             'else echo "this machine has no service $n" >&2; exit 3; fi\n' % (shlex.quote(name), unit, dock)
             + ('echo "$n: %s"\n' % done if done else ""))
+
+
+def game_servers(h):
+    """The game servers of a machine (games module): server, game, its container and where players connect."""
+    if "games" not in (h.modules or []):
+        return []
+    g = (h.module_settings or {}).get("games") or {}
+    catalog, out = g.get("catalog") or {}, []
+    for name, s in sorted((g.get("servers") or {}).items()):
+        game = catalog.get((s or {}).get("game")) or {}
+        if not game.get("ports"):
+            continue
+        port = int(s.get("port") or str(game["ports"][0]).split("/")[0])
+        out.append({"server": name, "game": s.get("game"), "title": game.get("title") or s.get("game"),
+                    "container": "kn-game-%s" % name, "address": "%s:%d" % (h.hostname, port),
+                    "sleep": int(s.get("sleep") or 0)})
+    return out
 
 
 def cmd_service(args):

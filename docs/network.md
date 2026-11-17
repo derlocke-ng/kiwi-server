@@ -291,6 +291,16 @@ it asks. Without a key the service cannot even be found.
 - `--remove --client anna` takes anna's key away; `--remove` alone takes the
   hidden service away.
 
+**A new address.** An address was given out too widely, or should simply change:
+
+```bash
+kiwi-server onion ~/kiwi/fleet.yaml git.medlar --new-address
+```
+
+or **New address** next to it on the page and in the app. The old address stops
+answering with the machine's next apply; who should keep reaching the service
+needs the new one. Its people and their keys stay.
+
 ### Which services
 
 Not every service works at a `.onion` address: some send a visitor on to their

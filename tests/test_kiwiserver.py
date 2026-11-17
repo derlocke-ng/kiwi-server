@@ -6946,6 +6946,14 @@ peers=4 3
         self.assertFalse(any("kn-gone" in p["text"] for p in problems))
         self.assertIn("kn-gone sleeps until a player comes", notes)
 
+    def test_the_hidden_services_as_tor_last_found_them(self):
+        f = facts.parse(self.SAMPLE + "onion_check=git abc.onion 200 900\nonion_check=jabber def.onion 000 900\nonion_check=bad line\n",
+                        local_now=990)
+        self.assertEqual([(o["service"], o["ok"], o["at"]) for o in f["onion"]], [("git", True, 900), ("jabber", False, 900)])
+        notes = facts.assess(f)[2]
+        self.assertIn("the hidden service jabber did not answer through Tor when last asked", notes)
+        self.assertFalse(any("hidden service git" in n for n in notes))
+
     def test_a_healthcheck_that_is_starting_is_not_a_failed_unit(self):
         self.assertEqual(facts.parse(self.SAMPLE)["failed_units"], ["kiwi-backup.service"])
 
@@ -8843,6 +8851,19 @@ class TestWeb(WebBase):
             self.assertIn(words, body)
         for words in ("Vaultwarden", "Nextcloud", "papaya", "not on the VPN yet"):
             self.assertNotIn(words, body)
+        # over Tor: each hidden service as its machine last asked it through Tor
+        addr = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
+        body = self.ask("/status")[1]
+        self.assertIn("Over Tor", body)
+        self.assertIn("not asked yet", body)
+        for code_, word in (("200", "Answers"), ("000", "No answer")):
+            util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": now, "hosts": [
+                {"host": "papaya", "state": "ok", "facts": {"onion": [{"service": "vault", "address": addr, "code": code_,
+                                                                       "ok": code_ != "000", "at": now - 300}]}}]}))
+            body = self.ask("/status")[1]
+            self.assertIn(word, body[body.index("Over Tor"):])
+            self.assertIn("5 minutes ago", body[body.index("Over Tor"):])
+        self.assertNotIn("Over Tor", self.ask("/status/public")[1])           # no hidden service is shown to the Internet here
         stale = json.loads(util.read_text(self.c.health_file))
         stale["checked"] = now - 7200
         util.write_text(self.c.health_file, json.dumps(stale))

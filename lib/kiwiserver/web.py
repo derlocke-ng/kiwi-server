@@ -1069,6 +1069,14 @@ the people who run this network to unlock it.</div>
 <td>{% if s.uptime is none %}<span class="sm">not yet</span>{% else %}<span class="badge plain {{ "ok" if s.uptime >= 99 else "warn" if s.uptime >= 90 else "bad" }}">{{ "%.2f"|format(s.uptime) if s.uptime < 100 else "100" }} %</span>{% endif %}</td>
 <td class="wide">{% if s.ms is not none %}{{ s.ms }} <span class="sm">ms</span>{% else %}<span class="sm">–</span>{% endif %}</td></tr>{% endfor %}</tbody></table>
 <p class="muted small">90 days ago on the left, today on the right: green worked all day, yellow had gaps, red was down most of the day.</p>{% endif %}
+{% set hidden = h.services|selectattr("onion")|list %}{% if hidden %}<h2 id="tor">Over Tor</h2>
+<p class="muted small">Each hidden service is asked through Tor every ten minutes, by the machine it runs on: the way Tor Browser
+finds it.{% for site, a in h.onion.items() if site.startswith("status.") %} This page itself: <code>{{ a }}</code>.{% endfor %}</p>
+<div class="scroll"><table class="tbl"><thead><tr><th>Service</th><th class="wide">Its Tor address</th><th>Through Tor</th></tr></thead><tbody>
+{% for s in hidden %}{% set t = tor.get(s.onion) %}<tr><td><b>{{ s.label }}</b><br><code class="sm" style="overflow-wrap:anywhere">{{ s.onion }}</code></td>
+<td class="wide"><a class="sm" href="#" onclick="navigator.clipboard.writeText('http://{{ s.onion }}');this.textContent='copied';return false">copy the address</a></td>
+<td>{% if not t %}<span class="badge plain">not asked yet</span>{% elif t.ok %}<span class="badge ok">Answers</span>{% else %}<span class="badge bad">No answer</span>{% endif %}
+{% if t and t.at %}<br><span class="sm">{{ age(now - t.at) }} ago</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 {% if h.checked %}<h2>What was wrong, the last seven days</h2>
 {% for i in h.incidents %}<div class="card"><div class="row"><b>{{ i.text }}</b><span class="badge {{ "ok" if i.to else "bad" }}">{{ "fine again" if i.to else "still" }}</span></div>
 <span class="muted small">{{ i.when }} · {% if i.to %}for {{ age(i.to - i.from) }}{% else %}for {{ age(now - i.from) }} so far{% endif %}</span></div>
@@ -1719,12 +1727,20 @@ def make_app(control: Control):
                             "facts": s.get("facts") or {}, "output": s.get("output") or ""})
         return out, st, info
 
+    def tor_checks():
+        """The hidden services as each machine's onion part last asked them through Tor: address -> answer."""
+        out = {}
+        for h in (control.status() or {}).get("hosts") or []:
+            for o in (h.get("facts") or {}).get("onion") or []:
+                out[o["address"]] = o
+        return out
+
     @app.get("/status")
     def status_page():
         """How the network is, for everyone on it: no login, nothing but names people use and whether they work."""
         now = time.time()
         h = healthmod.public(control.health(), now)
-        return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+        return page("status.html", h=h, now=now, tor=tor_checks(), stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
     @app.get("/start")
     def start_page():
@@ -1751,7 +1767,7 @@ def make_app(control: Control):
         that are open to it, whether they work, and what was wrong with them. Nothing else."""
         now = time.time()
         h = healthmod.public(control.health(), now, strangers=True)
-        return page("status.html", h=h, now=now, stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+        return page("status.html", h=h, now=now, tor=tor_checks(), stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
     # ---- the game page (play.py): at play.<this node>, where nothing but /play/ answers ----------
     PLAY_HOST, PLAY_GROUP, PLAY_EXTRA = playmod.settings()

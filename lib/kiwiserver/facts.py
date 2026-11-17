@@ -70,6 +70,10 @@ if [ -f /etc/kiwi-server/stack.env ]; then
         [ -f "$c" ] || continue
         kv certificate "$(basename "$(dirname "$c")") $(date -d "$(openssl x509 -enddate -noout -in "$c" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null)"
     done
+    # the hidden services, as the onion part's self-check last asked them through Tor
+    if [ -f "${STACK_DIR:-}/${STACK_PREFIX:-km}-onion/var/kiwi-check" ]; then
+        while read -r line; do kv onion_check "$line"; done < "${STACK_DIR}/${STACK_PREFIX:-km}-onion/var/kiwi-check"
+    fi
     "$rt" ps -a --format 'container={{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null
     for s in ${STACK_SERVICES:-}; do
         if [ -e "/run/kiwi-stack/sleeping/$s" ]; then
@@ -138,7 +142,7 @@ def _int(value, default=0):
 
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
-    raw, disks, containers, units, certificates, repos, copies = {}, {}, {}, [], [], [], []
+    raw, disks, containers, units, certificates, repos, copies, onion = {}, {}, {}, [], [], [], [], []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -161,6 +165,11 @@ def parse(data, local_now=None):
             parts = value.split()
             if len(parts) == 4:
                 repos.append({"client": parts[0], "kib": _int(parts[1]), "snapshots": _int(parts[2]), "week_kib": _int(parts[3])})
+        elif key == "onion_check":
+            parts = value.split()
+            if len(parts) == 4 and parts[1].endswith(".onion"):
+                onion.append({"service": parts[0], "address": parts[1], "code": parts[2], "ok": parts[2] != "000",
+                              "at": _int(parts[3])})
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
@@ -209,6 +218,8 @@ def parse(data, local_now=None):
     store = raw.get("backup_store", "").split()
     if len(store) == 2:
         out["backup_store"] = {"mount": store[0], "free_kib": _int(store[1]), "repos": repos}
+    if onion:
+        out["onion"] = onion
     if certificates:
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if raw.get("banned", "").isdigit():
@@ -312,6 +323,9 @@ def assess(f):
             problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %d days" % days)))
         elif c["left"] < CERTIFICATE_LATE:
             problems.append(warn("the certificate of %s expires in %d days: it should have been renewed" % (c["name"], days)))
+    for o in f.get("onion") or []:
+        if not o["ok"]:
+            notes.append("the hidden service %s did not answer through Tor when last asked" % o["service"])
     if f.get("certificates"):
         notes.append("certificates good for %d days" % int(min(c["left"] for c in f["certificates"]) / 86400))
     encryption = f.get("encryption")

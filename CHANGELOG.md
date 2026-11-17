@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.179.0 — the hidden services on the status page; Jabber's sign-up page names its own service
+
+- **Over Tor** on the status page: each hidden service, its Tor address, and whether it answered
+  when its machine last asked it through Tor (kiwi-modules 0.79.0: the onion part's self-check
+  writes that down; `kiwi-server status` notes one that did not). The status page as a hidden
+  service itself: [control.md](docs/control.md#the-status-page-and-messages).
+- **Jabber with `separate: true`**: the internal sign-up page was headed with the public name
+  (xmpp.example.org); each page now says its own service's name, the one its addresses end in.
+
 ## 2.178.0 — the game page
 
 - **The game page** at `play.<control node>`: people with an account of the network, in one

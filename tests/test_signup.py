@@ -166,6 +166,37 @@ class TestJabberSignup(unittest.TestCase):
         s.open_join(pid, text, "emil", "a long password", "203.0.113.21", page="xmpp.example.org")
         self.assertNotIn("203.0.113.2", open(s.path).read())                    # only digests of the addresses
 
+    def test_each_page_is_called_after_its_own_service(self):
+        """Two separate Jabber services (xmpp: separate): the internal page says the internal name,
+        not the public one (seen on medlar, 17 Nov 2026)."""
+        try:
+            import uvicorn
+        except ImportError:
+            self.skipTest("uvicorn not installed")
+        import threading
+        import time
+        import urllib.request
+        from kiwiserver import remote
+        pages = {"jabber.medlar.home": dict(self.s.ejabberd["jabber.medlar.home"], brand="jabber.medlar.home"),
+                 "xmpp.example.org": dict(self.s.ejabberd["xmpp.example.org"], brand="xmpp.example.org")}
+        s = signupmod.Signup(tempfile.mkdtemp(), opener=self.e, ejabberd=pages)
+        port = remote.free_port()
+        server = uvicorn.Server(uvicorn.Config(signupmod.make_app(s, brand="xmpp.example.org"), host="127.0.0.1", port=port,
+                                               log_level="error"))
+        t = threading.Thread(target=server.run, daemon=True)
+        t.start()
+        self.addCleanup(lambda: (setattr(server, "should_exit", True), t.join(5)))
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        for host in ("jabber.medlar.home", "xmpp.example.org"):
+            req = urllib.request.Request("http://127.0.0.1:%d/" % port, headers={"Host": host})
+            with urllib.request.urlopen(req) as r:
+                body = r.read().decode()
+            title = body.split("<title>", 1)[1].split("</title>", 1)[0]
+            self.assertTrue(title.startswith(host), (host, title))
+
     def test_the_open_way_is_only_where_it_is_switched_on(self):
         pid, text = self.s.picture_test()
         with self.assertRaisesRegex(KiwiError, "not made here"):

@@ -399,6 +399,13 @@ service ([Who may reach what](network.md#who-may-reach-what)); `status_page: fal
 in the node's `control:` block switches it off. Home shows the same to the people
 who run the network, with the machine to open.
 
+**Over Tor**, at the end of the status page: each hidden service with its Tor
+address, and whether it answered when its machine last asked it through Tor
+(every ten minutes, the way Tor Browser finds it). The status page can be a
+hidden service itself: give the control node's machine the `onion` part with
+`services: {status: {}}` and apply it; the page then shows its own Tor address.
+A hidden service only for named keys is not asked (it needs one of them).
+
 **For strangers**, `control: { public_status_hostname: status.example.org }` puts a
 front page under a public name. It shows the services that are open to the
 Internet, their web and Tor addresses, whether they work, and how to get an

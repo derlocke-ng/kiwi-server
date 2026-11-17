@@ -211,6 +211,10 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
     if restart != "no":
         svc.append("RestartSec=15")
     svc.append("TimeoutStartSec=900")
+    if any(str((b or {}).get("network_mode") or "") == "service:%s" % service for b in services.values()):
+        # others live in its network namespace: a container left there (one started by hand, say)
+        # keeps the old one from being replaced, and the unit would fail to start over and over
+        svc.append("ExecStartPre=-/usr/bin/podman rm -f -i --depend %s" % (body.get("container_name") or service))
     # a cold image pull or a dependency that is not up yet must not exhaust the
     # start limit and leave the unit dead until the next boot
     unit.append("StartLimitIntervalSec=0")

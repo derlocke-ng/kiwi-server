@@ -895,8 +895,16 @@ class Control:
         path = os.path.join(self.dir, "audit.jsonl")
         if not os.path.isfile(path):
             return []
-        with open(path) as fh:
-            return [json.loads(x) for x in fh.readlines()[-n:]][::-1]
+        out = []
+        with open(path, errors="replace") as fh:
+            for x in fh.readlines()[-n:]:
+                try:            # a line cut off by a power cut is left out, not the whole history
+                    d = json.loads(x)
+                except ValueError:
+                    continue
+                if isinstance(d, dict):
+                    out.append(d)
+        return out[::-1]
 
     # ---- jobs -----------------------------------------------------------------------
     def argv(self, action, hosts=(), at="", module=""):
@@ -1003,7 +1011,11 @@ class Control:
         for h in hosts:
             if not HOST.match(h):
                 raise KiwiError("not a host name: %r" % h)
+        me = os.environ.get("KIWI_CONTROL_HOST")    # this node last: its own apply may restart this page
+        hosts = [h for h in hosts if h != me] + [h for h in hosts if h == me]
         argv = self.argv(action, hosts, at.strip(), module.strip())
+        if action == "update" and not hosts:    # every machine: each one's History says so, and how it went for it
+            hosts = argv[argv.index("--update") + 1:]
         jid = time.strftime("%Y%m%d-%H%M%S-") + pysecrets.token_hex(3)
         meta = {"id": jid, "action": action, "hosts": list(hosts), "user": user,
                 "state": "waiting", "started": None, "ended": None, "rc": None}

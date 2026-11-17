@@ -1777,7 +1777,7 @@ def make_app(control: Control):
             handle = await run_in_threadpool(control.hoster_start, str(body.get("provider") or ""),
                                              str(body.get("code") or ""), address(request))
         except KiwiError as e:
-            time.sleep(1)
+            await asyncio.sleep(1)
             return JSONResponse({"error": str(e)}, status_code=403)
         return JSONResponse({"handle": handle}, headers={"Cache-Control": "no-store"})
 
@@ -1828,7 +1828,7 @@ def make_app(control: Control):
         elif pw != str(form.get("again", "")).strip():
             errors["password"] = "The two passwords are not the same."
         if not errors and not control.setup_code_ok(str(form.get("code", "")), address(request)):
-            time.sleep(1)
+            await asyncio.sleep(1)
             errors["code"] = "That is not the setup code. After five wrong tries, wait ten minutes."
         if errors:
             return await run_in_threadpool(setup_page, shown, errors, "Something is missing below.", request.headers.get("host", ""))

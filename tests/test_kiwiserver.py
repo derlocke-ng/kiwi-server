@@ -2666,6 +2666,12 @@ class TestSetup(Base):
         self.assertIs(hosts["quince"]["node"]["vpn"], False)
         self.assertNotIn("vpn-client", hosts["quince"]["node"])
         self.assertIn("fixed address", err + out)
+        # quince left through a commercial VPN of its own (Tor, downloads)
+        data = yaml.safe_load(util.read_text(dest))
+        data["hosts"]["quince"]["node"]["vpn-client"] = {"vpn_provider": "mullvad", "wireguard_addresses": "10.66.1.2/32",
+                                                        "wireguard_private_key": "test-key-only"}
+        data["hosts"]["quince"]["node"]["modules"] = ["vpn-client", "reverse-proxy"]
+        write(dest, yaml.safe_dump(data, sort_keys=False))
         # a master comes: every machine at home goes onto the VPN
         rc, out, err = self.run_cli("add", dest, "master", "trifle", "--address", "203.0.113.7")
         self.assertEqual(rc, 0, err)
@@ -2675,7 +2681,10 @@ class TestSetup(Base):
             self.assertIs(hosts[n]["node"]["vpn"], True)
             self.assertEqual(hosts[n]["node"]["vpn-client"], {"wireguard_config": "secrets/%s.home.conf" % n})
         self.assertEqual(hosts["mango"]["node"]["modules"][:2], ["vpn-client", "dns"])
-        self.assertIn("a comment kept by hand", util.read_text(dest))
+        # quince's provider is not thrown away: the new master leaves through it, for everyone
+        self.assertEqual(hosts["trifle"]["master"]["vpn-client"]["vpn_provider"], "mullvad")
+        self.assertEqual(hosts["trifle"]["master"]["modules"][0], "vpn-client")
+        self.assertIn("exit of trifle", err + out)
         self.assertIn("enroll", err + out)
         rc, out, err = self.run_cli("list", dest, "--porcelain")
         listed = {h["name"]: h for h in json.loads(out)["hosts"]}

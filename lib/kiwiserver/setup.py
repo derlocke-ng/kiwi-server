@@ -133,11 +133,31 @@ def onto_the_vpn(path):
     data = yaml.safe_load(text) or {}
     domain = (data.get("defaults") or {}).get("domain") or "home"
     edits, changed = [], []
-    for name, h in (data.get("hosts") or {}).items():
+    hosts = data.get("hosts") or {}
+    masters = [n for n, h in hosts.items() if (h or {}).get("role") == "master"]
+    exit_taken = any(isinstance((hosts[m] or {}).get("master"), dict) and hosts[m]["master"].get("vpn-client")
+                     for m in masters)
+    for name, h in hosts.items():
         node = (h or {}).get("node")
         if not isinstance(node, dict) or node.get("vpn") is not False:
             continue
         changed.append(name)
+        # a commercial VPN as this machine's exit: its one VPN client now goes to the network, so the
+        # provider moves to the new master and is the whole network's exit there (once: a WireGuard
+        # key of a provider is good for one device)
+        own = node.get("vpn-client") if isinstance(node.get("vpn-client"), dict) else {}
+        if own.get("vpn_provider") and own["vpn_provider"] != "custom" and masters:
+            if not exit_taken:
+                m = masters[0]
+                edits.append((["hosts", m, "master", "vpn-client"], dict(own)))
+                mods = (hosts[m].get("master") or {}).get("modules")
+                if isinstance(mods, list) and "vpn-client" not in mods:
+                    edits.append((["hosts", m, "master", "modules"], ["vpn-client"] + list(mods)))
+                exit_taken = True
+                util.say("%s's VPN provider (%s) is the exit of %s now, for the whole network" % (name, own["vpn_provider"], m))
+            else:
+                util.warn("%s's VPN provider (%s) is not used any more: the network leaves through its master's exit; "
+                          "its key may go back to the provider" % (name, own["vpn_provider"]))
         edits += [(["hosts", name, "node", "vpn"], True),
                   (["hosts", name, "node", "vpn-client"], {"wireguard_config": "secrets/%s.%s.conf" % (name, domain)})]
         if isinstance(node.get("modules"), list) and "vpn-client" not in node["modules"]:

@@ -85,10 +85,15 @@ network has no ring yet; every machine whose disk is not encrypted shows a warni
 the control page's overview and the machine's page). The starter stick is the way getting-started.md gives new
 people, so a new network from it is encrypted.
 
-**Then:** the rings chosen by the first run and `add` for machines installed from kiwi-server's
-own media (a computer with kiwi-server), and the encrypted master: its first start waits for its
-one-time key, which `kiwi-server next` and the page's "Add a master" do not give yet. A ring
-that does not answer yet is skipped at install and bound at a later apply.
+**Second (2.161.0):** kiwi-server's own media for CoreOS and uCore encrypt too (rings when they
+answer at build time, else the TPM until the first apply; the install checks for a TPM and 4 GB
+first); the first run and `add` choose rings (the first machine at home with a fixed address
+serves `home`, the others bind it); `encryption: false` keeps a machine plain by choice. Tried in
+a local VM (`tests/drills/iso-encrypt-vm.sh`).
+
+**Then:** the encrypted master (its first start waits for its one-time key, which `kiwi-server
+next` and the page's "Add a master" do not give yet), a ring for the first machine too (the
+master's, answering only the home's address), and Debian machines at home.
 
 ## How it is tried
 

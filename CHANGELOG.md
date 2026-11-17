@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.161.0 — every machine kiwi-server installs is encrypted
+
+The second step of encryption by default (docs/design/encryption.md).
+
+- **kiwi-server's own media for CoreOS and uCore encrypt the disk.** With the machine's rings when
+  they answer at build time; else its TPM 2.0 stands in until the first apply binds the rings or
+  leaves the key for its screen (as the starter stick since 2.159.0). The install checks for a
+  TPM and 4 GB of memory first and, without, stops and says what to do.
+- **`encryption: false`** on a machine installs it plain: a choice, and every page says so.
+- **The first run picks the rings:** the first machine at home with a fixed address serves the
+  ring `home`; the others open with it at boot by themselves. That first machine opens with the
+  key for its screen (its Logins tab shows it): after a power cut one key is typed, the rest
+  follow. A machine added later with a fixed address binds `home` too.
+- Tried in a local VM with an emulated TPM (`tests/drills/iso-encrypt-vm.sh`): installed
+  encrypted by itself; without a TPM no install, and the screen says why.
+
 ## 2.160.0 — the rest of the review of 15–16 November
 
 With kiwi-modules 0.69.0 (0.68.0's fixes inside).

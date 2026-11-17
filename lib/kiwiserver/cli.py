@@ -1901,7 +1901,8 @@ def secrets_store(args):
     else:
         names = [n for n, _k in st.ways()]
         if args.porcelain:
-            print(json.dumps({"store": True, "open": st.is_open(), "locks_at": st.locks_at(), "opens_with": names}))
+            print(json.dumps({"store": True, "open": st.is_open(), "locks_at": st.locks_at(), "opens_with": names,
+                              "password": store.is_wrapped(store.keyring_get(st.store_id())), "autolock": store.autolock()}))
             return
         print("%s; opens with: %s" % ("open" if st.is_open() else "locked", ", ".join(names)))
 

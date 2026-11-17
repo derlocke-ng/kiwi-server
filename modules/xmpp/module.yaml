@@ -121,7 +121,7 @@ nginx:
         # ejabberd's own sign-up page: the one page is /join
         - { path: "^~ /register", config: "return 302 /join;" }
         # ejabberd's admin panel: from the VPN only, never from the internet or Tor
-        - { path: "^~ /admin", proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
+        - { path: "^~ /admin", admin: true, proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
         # the sign-up page: invite codes, requests, and the open way with a picture test (kiwi-server signup)
         - path: "/join"
           config: >-
@@ -147,7 +147,7 @@ nginx:
         # ejabberd's own sign-up page: the one page is /join
         - { path: "^~ /register", config: "return 302 /join;" }
         # ejabberd's admin panel: from the VPN only, never from the internet or Tor
-        - { path: "^~ /admin", proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
+        - { path: "^~ /admin", admin: true, proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
         # the sign-up page: invite codes, requests, and the open way with a picture test (kiwi-server signup)
         - path: "/join"
           config: >-
@@ -174,7 +174,7 @@ nginx:
         # ejabberd's own sign-up page: the one page is /join
         - { path: "^~ /register", config: "return 302 /join;" }
         # ejabberd's admin panel: from the VPN only, never from the internet or Tor
-        - { path: "^~ /admin", proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
+        - { path: "^~ /admin", admin: true, proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
         # the sign-up page: invite codes, requests, and the open way with a picture test (kiwi-server signup)
         - path: "/join"
           config: >-

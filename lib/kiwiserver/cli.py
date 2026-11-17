@@ -479,12 +479,16 @@ class Renderer:
                 a = json.loads(util.read_text(path))
                 host.module_settings[module].update(accounts_client=a["client"], accounts_issuer=a["issuer"],
                                                     accounts_secret=a["secret"])
+        if "reverse-proxy" in host.modules and accessmod.admin_ranges(self._groups):
+            # the admin areas inside a site (a master's too): not for the groups without the admin pages
+            host.module_settings["reverse-proxy"].setdefault("access", {})["admin"] = accessmod.admin_ranges(self._groups)
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
             rules = accessmod.node_rules(self._groups, host.name, host.hostname, pages)
             if rules:
-                host.module_settings["reverse-proxy"]["access"] = rules
+                host.module_settings["reverse-proxy"]["access"] = dict(rules, **{
+                    k: v for k, v in (host.module_settings["reverse-proxy"].get("access") or {}).items() if k == "admin"})
             if pages and self._partners:        # a linked network opens an admin page only when it is named for it
                 rp = host.module_settings["reverse-proxy"]
                 rp["federation"] = fedmod.admin_rules(rp.get("federation"), self._partners, host.name, pages,
@@ -932,12 +936,14 @@ def cmd_list(args):
                      "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
     if args.porcelain:
-        groups = {}         # the master's client groups: where a new device may go
+        groups, default_group = {}, None     # the master's client groups: where a new device may go
         for h in fleet.hosts.values():
             if h.role in roles and roles[h.role].node_type == "master" and not groups:
-                groups = {g: (v or {}).get("subnet") for g, v in
-                          (((h.module_settings or {}).get("vpn-server") or {}).get("groups") or {}).items()}
+                full = ((h.module_settings or {}).get("vpn-server") or {}).get("groups") or {}
+                groups = {g: (v or {}).get("subnet") for g, v in full.items()}
+                default_group = accessmod.default_group(full)
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
+                          "default_group": default_group,
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
@@ -1983,6 +1989,12 @@ def cmd_apply(args):
                 util.say("%s: in place at /var/lib/kiwi-server/role.sh — run it with: sudo bash /var/lib/kiwi-server/role.sh --force" % h.name)
                 continue
             if os.environ.get("KIWI_CONTROL_HOST") == h.name:
+                # its disk first (over SSH, nothing restarts): the starter's TPM gives way to the rings or the console key
+                if unlock.wanted(h):
+                    unlock.bind(h, tgt, servers)
+                elif h.target in ("coreos", "ucore"):
+                    unlock.drop_standin(h, tgt)
+                save_store(args)    # the disk's key sealed now: the role below restarts this container
                 # the control node applies itself: the role may restart the container this runs in,
                 # so it runs as a unit of its own on the machine and outlives the connection
                 # a machine the starter stick installed takes away what the starter needed, when the role is in
@@ -2003,6 +2015,8 @@ def cmd_apply(args):
                     util.warn("%s: the images were not updated — sudo kiwi-stack update on the machine" % h.name)
             if unlock.wanted(h):
                 unlock.bind(h, tgt, servers)
+            elif h.target in ("coreos", "ucore"):      # the starter's TPM, on a machine with no rings: the console key instead
+                unlock.drop_standin(h, tgt)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
@@ -2553,6 +2567,10 @@ def cmd_enroll(args):
     groups = vs.get("groups") or {}
     if args.group and args.group not in groups:
         raise KiwiError("no client group %r on %s (have: %s)" % (args.group, master.name, ", ".join(groups) or "none"))
+    if host is None and not args.group and not args.address and not args.existing and accessmod.default_group(groups):
+        # a new device: in a group without the admin pages, unless one is chosen
+        args.group = accessmod.default_group(groups)
+        util.say("%s: group %s (the default for a new device; --group chooses another)" % (name, args.group))
     mesh = (master.role_settings or {}).get("mesh_subnet") or "10.8.0.0/16"
     wg_mtu = int(vs.get("wg_mtu") or 1420)
     if args.mtu and not 1280 <= args.mtu <= wg_mtu:     # said before the master is touched

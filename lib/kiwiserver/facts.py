@@ -302,8 +302,8 @@ def assess(f):
     if f.get("certificates"):
         notes.append("certificates good for %d days" % int(min(c["left"] for c in f["certificates"]) / 86400))
     encryption = f.get("encryption")
-    if encryption == "none":
-        notes.append("the disk is not encrypted")
+    if encryption == "none":    # encrypted is the default: a machine without it says so, every time
+        problems.append(warn("the disk is not encrypted: whoever takes it can read everything on it"))
     elif encryption == "key":
         notes.append("the disk opens only with a typed key")
     levels = {p["level"] for p in problems}

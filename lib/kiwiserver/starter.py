@@ -68,6 +68,9 @@ set -u
 MIN_BYTES=${KIWI_MIN_BYTES:-@MIN_BYTES@}
 MARKER=@MARKER@
 IGNITION=${KIWI_IGNITION:-/etc/kiwi-starter/installed.ign}
+IGNITION_PLAIN=${KIWI_IGNITION_PLAIN:-/etc/kiwi-starter/installed-plain.ign}
+TPM_DIR=${KIWI_TPM_DIR:-/sys/class/tpm/tpm0}
+MIN_MEM_KB=${KIWI_MIN_MEM_KB:-3500000}   # CoreOS encrypts its root at the first start in memory: 4 GB
 ISSUE=${KIWI_ISSUE:-@ISSUE@}
 PAGE_DIR=${KIWI_PAGE_DIR:-@PAGE_DIR@}
 INSTALL_ARGS=(@INSTALL_ARGS@)
@@ -143,7 +146,7 @@ contents() {    # what is on the disk, in a person's words, as far as it can be 
     echo "$out"
 }
 
-console_yes() { [ "${1%$'\r'}" = ERASE ]; }     # the word in full, in capitals; anything else is no
+console_yes() { [ "${1%$'\r'}" = "${2:-ERASE}" ]; }     # the word in full, in capitals; anything else is no
 
 address() {
     ip -4 -o route get 192.0.2.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p'
@@ -187,15 +190,60 @@ decide() {  # one line: install DISK | ask DISK | installed DISK | none | small 
     fi
 }
 
-ask_console() {     # TTY: read lines until one is ERASE
-    local t=$1 fd ans
+ask_console() {     # TTY [WORD]: read lines until one is the word (ERASE)
+    local t=$1 word=${2:-ERASE} fd ans
     [ -c "$t" ] || return 0
     stty -F "$t" sane clocal 2>/dev/null
     exec {fd}<"$t" || return 0
     while IFS= read -r -u "$fd" ans; do
-        if console_yes "$ans"; then : > "$PAGE_DIR/yes"; return 0; fi
-        [ -n "${ans//[[:space:]]/}" ] && say "kiwi: that was not ERASE, nothing was erased. To erase this disk and install, type ERASE and press Enter."
+        if console_yes "$ans" "$word"; then : > "$PAGE_DIR/yes"; return 0; fi
+        if [ -n "${ans//[[:space:]]/}" ]; then
+            if [ "$word" = ERASE ]; then
+                say "kiwi: that was not ERASE, nothing was erased. To erase this disk and install, type ERASE and press Enter."
+            else
+                say "kiwi: that was not $word, nothing was installed. To install without encryption, type $word and press Enter."
+            fi
+        fi
     done
+}
+
+cannot_encrypt() {  # why this machine's disk cannot be encrypted here; nothing when it can
+    local mem
+    mem=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo 2>/dev/null)
+    if [ "$(cat "$TPM_DIR/tpm_version_major" 2>/dev/null)" != 2 ]; then
+        echo "it has no TPM 2.0 chip that is switched on (in the firmware settings: TPM, fTPM or PTT)"
+    elif [ "${mem:-0}" -lt "$MIN_MEM_KB" ]; then
+        echo "it has less than 4 GB of memory, which encrypting the disk needs at the first start"
+    fi
+}
+
+choose_encryption() {   # the disk is encrypted, or the person typed PLAIN (or pressed the page's button)
+    local why n t pids=() i=0 lines
+    why=$(cannot_encrypt)
+    [ -n "$why" ] || return 0
+    lines=("kiwi: this machine's disk cannot be encrypted: $why." \
+           "Encrypted is how Kiwi installs. Switch the TPM on and start the machine again from the stick," \
+           "or type PLAIN and press Enter to install WITHOUT encryption: everything on this disk could then be read by whoever takes it.")
+    mkdir -p "$PAGE_DIR"
+    rm -f "$PAGE_DIR/yes"
+    n=$(od -An -N8 -tu8 /dev/urandom | tr -dc 0-9)
+    printf '%s\n' "$n" > "$PAGE_DIR/nonce"
+    show "${lines[@]}"
+    printf '%s\n' "${lines[@]:0:2}" "Or press the button to install WITHOUT encryption: everything on this disk could then be read by whoever takes it." \
+        > "$PAGE_DIR/message"
+    echo plain > "$PAGE_DIR/state"
+    systemctl stop getty@tty1.service serial-getty@ttyS0.service 2>/dev/null
+    for t in $CONSOLES; do ask_console "$t" PLAIN & pids+=($!); done
+    until [ -e "$PAGE_DIR/yes" ]; do
+        sleep 1
+        i=$((i + 1))
+        [ $((i % 30)) = 0 ] && say "${lines[@]}"
+    done
+    kill "${pids[@]}" 2>/dev/null
+    rm -f "$PAGE_DIR/nonce"
+    echo installing > "$PAGE_DIR/state"
+    IGNITION=$IGNITION_PLAIN
+    show "kiwi: PLAIN given: installing without encryption." "Installing. This page changes when the machine has started again."
 }
 
 wait_for_yes() {    # DISK: say what is on it, then wait for ERASE at a console or the page's button
@@ -273,7 +321,8 @@ fail() {
 
 install_to() {
     local disk=$1 part m
-    say "kiwi: installing on ${disk#/dev/}: everything on it is erased"
+    choose_encryption
+    say "kiwi: installing on ${disk#/dev/}: everything on it is erased$([ "$IGNITION" = "$IGNITION_PLAIN" ] && echo ", NOT encrypted" || echo ", encrypted")"
     coreos-installer install "$disk" --offline -i "$IGNITION" --console tty0 --console ttyS0,115200n8 \
         "${INSTALL_ARGS[@]}" || { fail "coreos-installer install $disk failed (journalctl -u kiwi-starter-install says why)"; return 1; }
     udevadm settle
@@ -435,6 +484,10 @@ case "$method $path" in
             body+="<form method=post action=/erase><input type=hidden name=n value=$nonce>"
             body+="<button>Erase this disk and install</button></form>"
         fi
+        if [ "$state" = plain ] && [[ $nonce =~ ^[0-9]+$ ]]; then
+            body+="<form method=post action=/erase><input type=hidden name=n value=$nonce>"
+            body+="<button>Install WITHOUT encryption</button></form>"
+        fi
         if [ "$state" = choose ] && [[ $nonce =~ ^[0-9]+$ ]] && [ -f "$D/choices" ]; then
             while IFS='|' read -r i label; do       # one button a disk: its number, never its name, comes back
                 [[ $i =~ ^[0-9]{1,2}$ ]] || continue
@@ -457,7 +510,7 @@ case "$method $path" in
             echo installing > "$D/state"
             reply 200 OK "<p>Installing. This page changes when the machine has started again.</p>" \
                 "<meta http-equiv=refresh content=15>"
-        elif [ "$state" = ask ] && [[ $nonce =~ ^[0-9]+$ ]] && [ "$given" = "$nonce" ]; then
+        elif { [ "$state" = ask ] || [ "$state" = plain ]; } && [[ $nonce =~ ^[0-9]+$ ]] && [ "$given" = "$nonce" ]; then
             : > "$D/yes"
             echo installing > "$D/state"
             reply 200 OK "<p>Installing. This page changes when the machine has started again.</p>" \
@@ -546,6 +599,11 @@ while :; do
             lines+=("Open https://kiwi.local or https://$addr" "on a phone or computer in this home network.")
             [ -n "$fp" ] && lines+=("The browser warns once: this machine made its own certificate." \
                                     "It is the right one when it begins $fp")
+        fi
+        if cryptsetup status root >/dev/null 2>&1; then
+            lines+=("This machine's disk is encrypted. Its TPM opens it until a network takes it in.")
+        else
+            lines+=("This machine's disk is NOT encrypted: whoever takes the disk can read it.")
         fi
         if [ -n "$code" ]; then
             lines+=("Setup code: $code")
@@ -706,9 +764,10 @@ def name_files():
     ]
 
 
-def installed_butane():
+def installed_butane(encrypted=True):
     """The installed system: a control node that waits to be set up. No password, no key but
-    the starter key made at its first boot."""
+    the starter key made at its first boot. `encrypted`: its root in LUKS, opened by the
+    machine's TPM until a network takes it in and binds its rings instead (docs/design/encryption.md)."""
     f = coreos_t._file
     files = name_files() + [
         f("/etc/containers/systemd/kn-control.container", control_quadlet()),
@@ -729,11 +788,14 @@ def installed_butane():
               "ExecStart=/usr/local/bin/kiwi-starter-screen\nRestart=always\nRestartSec=5\n",
               after="systemd-user-sessions.service"),
     ]
-    return {"variant": coreos_t.BUTANE_VARIANT, "version": coreos_t.BUTANE_VERSION,
-            "storage": {"directories": dirs, "files": files}, "systemd": {"units": units}}
+    bu = {"variant": coreos_t.BUTANE_VARIANT, "version": coreos_t.BUTANE_VERSION,
+          "storage": {"directories": dirs, "files": files}, "systemd": {"units": units}}
+    if encrypted:
+        bu["boot_device"] = {"luks": {"tpm2": True, "discard": True}}
+    return bu
 
 
-def live_butane(installed_ign, debug_shell=False):
+def live_butane(installed_ign, debug_shell=False, plain_ign=None):
     """The stick: the install script, the installed system's Ignition, the unit that runs the
     script, and the page on port 80. No user, no password: there is nothing to log in to."""
     f = coreos_t._file
@@ -754,7 +816,7 @@ def live_butane(installed_ign, debug_shell=False):
                 f("/usr/local/bin/kiwi-starter-install", install_script(debug_shell), mode=0o755),
                 f("/usr/local/bin/kiwi-starter-page", page_script(), mode=0o755),
                 f("/etc/kiwi-starter/installed.ign", installed_ign, mode=0o600),
-            ]},
+            ] + ([f("/etc/kiwi-starter/installed-plain.ign", plain_ign, mode=0o600)] if plain_ign else [])},
             "systemd": {"units": [unit, socket, page]}}
 
 
@@ -765,13 +827,15 @@ def build_iso(tc, out_iso, cache_dir, stream="stable", base=None, debug_shell=Fa
     os.makedirs(util.parent(out_iso), exist_ok=True)
     work = tempfile.mkdtemp(prefix=".kiwi-starter-", dir=util.parent(out_iso))
     try:
-        inst_bu, inst_ign = os.path.join(work, "installed.bu"), os.path.join(work, "installed.ign")
-        util.write_text(inst_bu, coreos_t.to_yaml(installed_butane()))
-        coreos_t.to_ignition(tc, inst_bu, inst_ign)
-        ign = util.read_text(inst_ign)
-        json.loads(ign)     # butane made something: an empty or broken file is an error here, not on the stick
+        igns = {}
+        for kind, encrypted in (("installed", True), ("installed-plain", False)):
+            inst_bu, inst_ign = os.path.join(work, kind + ".bu"), os.path.join(work, kind + ".ign")
+            util.write_text(inst_bu, coreos_t.to_yaml(installed_butane(encrypted)))
+            coreos_t.to_ignition(tc, inst_bu, inst_ign)
+            igns[kind] = util.read_text(inst_ign)
+            json.loads(igns[kind])     # butane made something: an empty or broken file is an error here, not on the stick
         live_bu, live_ign = os.path.join(work, "live.bu"), os.path.join(work, "live.ign")
-        util.write_text(live_bu, coreos_t.to_yaml(live_butane(ign, debug_shell)))
+        util.write_text(live_bu, coreos_t.to_yaml(live_butane(igns["installed"], debug_shell, igns["installed-plain"])))
         coreos_t.to_ignition(tc, live_bu, live_ign)
         base = os.path.abspath(base) if base else isomod.fcos_base_iso(tc, stream, cache_dir)
         tmp_iso = os.path.join(work, "starter.iso")

@@ -62,6 +62,9 @@ nginx:
   alias: "{{ 'vault.' ~ hostname if vault_domain else '' }}"
   proxy_pass: "http://vaultwarden"
   websocket: true
+  extra_locations:
+    # Vaultwarden's admin page (with admin_token): from the VPN only, for the groups with the admin pages
+    - { path: "^~ /admin", admin: true, proxy: true, config: "allow {{ mesh_subnet }}; deny all;" }
   comment: Vaultwarden
 
 backup:

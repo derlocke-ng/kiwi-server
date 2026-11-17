@@ -20,7 +20,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import VERSION, form as formmod, health as healthmod, providers as providersmod, util
+from . import VERSION, access as accessmod, form as formmod, health as healthmod, providers as providersmod, util
 from .control import ACTIONS, Control
 from .util import KiwiError
 
@@ -763,8 +763,8 @@ Away from home they do not open: a master gives your devices the VPN.</p></div>{
 <label for="n">Name</label><input id="n" name="name" placeholder="annas-phone" pattern="[a-z0-9][a-z0-9-]*" required>
 <p class="muted small">Lowercase letters, digits and dashes.</p>
 {% if groups %}<label for="g">Who is it for?</label><select id="g" name="group">
-{% for g in groups %}<option value="{{ g }}" {% if g == "devices" %}selected{% endif %}>{{ g }}</option>{% endfor %}</select>
-<p class="muted small">The group decides what the device may reach.</p>{% endif %}
+{% for g in groups %}<option value="{{ g }}" {% if g == default_group %}selected{% endif %}>{{ g }}</option>{% endfor %}</select>
+<p class="muted small">The group decides what the device may reach. The admin pages only for a group that has them.</p>{% endif %}
 <div class="actions"><button class="primary">Add it</button></div></form>
 <h2>Devices on your VPN</h2>
 {% for d in devices %}<div class="card row"><strong>{{ d }}</strong>
@@ -2365,7 +2365,7 @@ def make_app(control: Control):
     def devices_page(request, **kw):
         info = control.fleet_info() or {}
         return page("devices.html", request, "/devices", devices=control.devices(),
-                    groups=sorted(info.get("groups") or {}), **kw)
+                    groups=sorted(info.get("groups") or {}), default_group=info.get("default_group"), **kw)
 
     @app.get("/devices")
     def devices(request: Request):

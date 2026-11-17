@@ -195,6 +195,24 @@ def node_rules(groups, name, hostname, admin=()):
     return {"names": names, "others": sorted(limited)}
 
 
+def default_group(groups):
+    """The group a new device lands in unless someone chooses another: `family` (the apps), or else
+    the first group without the admin pages. A device outside every group reaches everything,
+    admin pages included, so that is never the default."""
+    groups = groups or {}
+    if "family" in groups and not (groups["family"] or {}).get("admin", FLAG_DEFAULT["admin"]):
+        return "family"
+    return next((n for n in sorted(groups) if not (groups[n] or {}).get("admin", FLAG_DEFAULT["admin"])), None)
+
+
+def admin_ranges(groups):
+    """The client ranges of the VPN groups without the admin switch: refused the admin areas
+    inside a site (ejabberd's /admin, Vaultwarden's /admin), whatever else they reach there.
+    A site that is an admin page as a whole goes by node_rules (it may be named for a group)."""
+    return sorted(str(g["subnet"]) for g in (groups or {}).values()
+                  if g and g.get("subnet") and not g.get("admin", FLAG_DEFAULT["admin"]))
+
+
 def next_range(groups, mesh):
     """A free /24 of the mesh for a new group: after the highest one in use."""
     net = ipaddress.ip_network(mesh, strict=False)

@@ -463,15 +463,93 @@ def _ip_setting(host):
 
 
 def _bound(listing):
-    """[(slot, t, urls)] of what `clevis luks list` shows as an sss tree of tang pins."""
+    """[(slot, t, urls)] of what `clevis luks list` shows as an sss tree of tang pins. A TPM's
+    binding (the starter's stand-in) is there as urls ["tpm2"], so a rebind removes it."""
     out = []
-    for m in re.finditer(r"^(\d+): sss '(\{.*\})'\s*$", listing, re.M):
+    for m in re.finditer(r"^(\d+): (sss|tpm2) '(\{.*\})'\s*$", listing, re.M):
         try:
-            cfg = json.loads(m.group(2))
-            out.append((m.group(1), int(cfg["t"]), sorted(p["url"] for p in cfg["pins"]["tang"])))
-        except (ValueError, KeyError, TypeError):
+            cfg = json.loads(m.group(3))
+            if m.group(2) == "tpm2" or "tpm2" in cfg.get("pins", {}):
+                out.append((m.group(1), int(cfg.get("t", 1)), ["tpm2"]))
+            else:
+                out.append((m.group(1), int(cfg["t"]), sorted(p["url"] for p in cfg["pins"]["tang"])))
+        except (ValueError, KeyError, TypeError, AttributeError):
             continue
     return out
+
+
+# stdin: nothing. The slots the machine's TPM opens (the starter's stand-in) are removed; the
+# key for the console must be in another slot before (ADD_KEY_SCRIPT)
+DROP_TPM_SCRIPT = luks._PRELUDE + r'''
+for dev in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
+    for slot in $(clevis luks list -d "$dev" 2>/dev/null | sed -n 's/^\([0-9]*\): \(sss\|tpm2\) .*tpm2.*/\1/p'); do
+        clevis luks unbind -f -d "$dev" -s "$slot" </dev/null || exit 1
+        echo "dropped $dev $slot"
+    done
+done
+'''
+
+
+# A disk that opens only with a key typed at its screen (no ring, no TPM): the machine must not
+# restart by itself for updates, or it waits at boot until someone comes. Updates are fetched and
+# staged; they start with the next restart, which is someone's (with the key at the screen).
+KEY_ONLY_PATH = "/usr/local/sbin/kiwi-key-only"
+INSTALL_KEY_ONLY = r'''
+set -eu
+install -d /usr/local/sbin
+printf '#!/bin/sh\necho "kiwi-server: this disk opens only with its key at the screen: no restart for updates by itself"\nexit 1\n' \
+    > %(path)s.new
+chmod 0755 %(path)s.new
+mv %(path)s.new %(path)s
+changed=
+for unit in kiwi-staged-reboot kiwi-reboot-if-required; do
+    d=/etc/systemd/system/$unit.service.d
+    [ -f $d/key-only.conf ] && continue
+    mkdir -p $d
+    printf '[Service]\nExecCondition=%(path)s\n' > $d/key-only.conf
+    changed=1
+done
+systemctl daemon-reload
+# CoreOS: Zincati would restart for updates by itself. rpm-ostree stages them instead; the next
+# restart (someone's, with the key) starts the new system
+if systemctl is-enabled -q zincati.service 2>/dev/null; then systemctl disable --now zincati.service; changed=1; fi
+if [ -f /etc/rpm-ostreed.conf ] && ! grep -q '^AutomaticUpdatePolicy=stage' /etc/rpm-ostreed.conf; then
+    if grep -q '^#\?AutomaticUpdatePolicy=' /etc/rpm-ostreed.conf; then
+        sed -i 's/^#\?AutomaticUpdatePolicy=.*/AutomaticUpdatePolicy=stage/' /etc/rpm-ostreed.conf
+    else
+        printf '[Daemon]\nAutomaticUpdatePolicy=stage\n' >> /etc/rpm-ostreed.conf
+    fi
+    systemctl reload rpm-ostreed.service 2>/dev/null || true
+    systemctl enable --now rpm-ostreed-automatic.timer
+    changed=1
+fi
+[ -z "$changed" ] || echo guarded
+''' % {"path": KEY_ONLY_PATH}
+
+
+def drop_standin(host, tgt, servers=None):
+    """A CoreOS disk the starter stick bound to the machine's TPM, on a machine with no rings:
+    the key for the console goes in (shown nowhere, kept in secrets/luks), then the TPM's slot
+    goes. From then on the disk opens with that key only, so the machine no longer restarts by
+    itself for updates. True when something changed."""
+    listing = remote.run(tgt, "d=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device | head -n1); "
+                              "[ -n \"$d\" ] && { echo \"dev $d\"; clevis luks list -d \"$d\" 2>/dev/null; }; true"
+                         ).decode(errors="replace")
+    if "dev /" not in listing:
+        return False
+    changed = False
+    if [b for b in _bound(listing) if b[2] == ["tpm2"]]:
+        _coreos_key(host, tgt, servers or {})
+        out = remote.run(tgt, DROP_TPM_SCRIPT).decode(errors="replace")
+        if "dropped" in out:
+            changed = True
+            util.say("%s: the disk no longer opens by its TPM; it opens with the key in %s (typed at its screen)"
+                     % (host.name, luks.key_file(host)))
+    if b"guarded" in remote.run(tgt, INSTALL_KEY_ONLY):
+        changed = True
+        util.say("%s: it fetches its updates and starts them at the next restart, which it no longer does by itself: "
+                 "after a restart its disk waits for its key at the screen" % host.name)
+    return changed
 
 
 def _unlock_key(fleet):

@@ -391,6 +391,12 @@ http {
 {% for loc in s.extra_locations %}
 
         location {{ loc.path }} {
+{% if loc.admin %}
+            # an admin area inside this site: not for the VPN groups without the admin pages
+{% for c in (access or {}).admin or [] %}
+            deny {{ c }};
+{% endfor %}
+{% endif %}
             {{ loc.config }}
 {% if loc.proxy %}
             {{ proxy(s) | trim }}
@@ -441,6 +447,12 @@ http {
 {% for loc in s.extra_locations %}
 
         location {{ loc.path }} {
+{% if loc.admin %}
+            # an admin area inside this site: not for the VPN groups without the admin pages
+{% for c in (access or {}).admin or [] %}
+            deny {{ c }};
+{% endfor %}
+{% endif %}
             {{ loc.config }}
 {% if loc.proxy %}
             {{ proxy(s, true) | trim }}

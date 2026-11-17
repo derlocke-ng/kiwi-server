@@ -94,8 +94,20 @@ vm() {
     stop
     [ -f vars.fd ] || cp "$OVMF/OVMF_VARS.fd" vars.fd
     rm -f "$log" debug.sock serial0.sock
+    # a TPM 2.0 (swtpm), as most PCs have one: the stick encrypts with it. TPM=0: a machine without
+    local tpm=()
+    if [ "${TPM:-1}" = 1 ]; then
+        mkdir -p tpm
+        if ! { [ -S tpm/sock ] && pgrep -f "swtpm socket --tpmstate dir=$w/tp[m]" >/dev/null; }; then
+            rm -f tpm/sock
+            swtpm socket --tpmstate dir="$w/tpm" --ctrl type=unixio,path="$w/tpm/sock" --tpm2 --daemon
+            for _ in $(seq 20); do [ -S tpm/sock ] && break; sleep 0.2; done
+        fi
+        tpm=(-chardev socket,id=chrtpm,path="$w/tpm/sock" -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0)
+    fi
     qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 4096 \
         -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.fd" -drive if=pflash,format=raw,file=vars.fd \
+        "${tpm[@]}" \
         -device qemu-xhci,id=xhci \
         -drive if=none,id=stick,format=raw,readonly=on,file="$iso" -device usb-storage,bus=xhci.0,drive=stick,bootindex=$stick_idx \
         -drive if=none,id=usbdisk,format=raw,file=usb-blank.img -device usb-storage,bus=xhci.0,drive=usbdisk \
@@ -225,7 +237,7 @@ jar=$w/cookies.txt
 csrf() { curl -sk -b "$jar" --max-time 20 "$base/" | grep -o 'name="csrf" value="[^"]*"' | head -1 | cut -d'"' -f4; }
 job() {     # job ACTION HOST SECONDS: start it as the page's button does, wait for its end, say how it ended
     local loc id n=$3 state=running off=0 r
-    loc=$(curl -s -b "$jar" -o /dev/null -w '%{redirect_url}' --max-time 30 --data-urlencode "csrf=$(csrf)" \
+    loc=$(curl -sk -b "$jar" -o /dev/null -w '%{redirect_url}' --max-time 30 --data-urlencode "csrf=$(csrf)" \
         --data-urlencode "action=$1" --data-urlencode "host=$2" "$base/run")
     id=${loc##*/jobs/}
     [ -n "$id" ] && [ "$id" != "$loc" ] || { say "    no task was started for $1 $2 ($loc)"; return 1; }
@@ -266,12 +278,16 @@ build)
     "$here/bin/kiwi-server" build --starter --debug-shell --base "$base" --output "$iso"; check $? "starter image built from $(basename "$base")"
     ;;
 install)
-    blank disk.qcow2 20G; rm -f vars.fd
+    blank disk.qcow2 20G; rm -f vars.fd; pkill -f "swtpm socket --tpmstate dir=$w/tp[m]"; rm -rf tpm     # a new machine, its TPM new too
     t0=$(date +%s)
     vm serial-install.log disk disk.qcow2
     wait_log serial-install.log 'kiwi: installing on vda' 300; check $? "the live system installs on vda, not on the stick or the USB disk"
     wait_log serial-install.log 'kiwi: installed: take the stick out' 600; check $? "it says: installed: take the stick out ($(( $(date +%s) - t0 )) s)"
     up_checks serial-install.log
+    if [ "${TPM:-1}" = 1 ]; then
+        grep -aq 'everything on it is erased, encrypted' serial-install.log; check $? "it installs encrypted: the machine has a TPM 2.0"
+        grep -aq "This machine's disk is encrypted" serial-install.log; check $? "its screen says the disk is encrypted"
+    fi
     say "up after $(( $(date +%s) - t0 )) s"
     out=$(sh_vm 'cat /home/core/.ssh/authorized_keys; ls -lZ /var/lib/kiwi-starter/id_ed25519')
     printf '%s\n' "$out" | sed 's/^/    /'
@@ -418,7 +434,7 @@ first-node)
     curl -sk -o page-setup.html --max-time 30 "$base/setup"
     this=$(grep -o 'name="nodes.0.address" value="[0-9.]*"' page-setup.html | cut -d'"' -f4)
     grep -q '<strong>This machine</strong>' page-setup.html && [ "$this" = 10.0.2.15 ]; check $? "the questions list this machine as the first at home, at its address ($this)"
-    made=$(curl -s -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
+    made=$(curl -sk -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
         --data-urlencode "again@page-password" --data-urlencode "master_where=vps" --data-urlencode "master_address=$addr" \
         --data-urlencode "master_name=$master" --data-urlencode "exit=direct" --data-urlencode "lan_subnet=10.0.2.0/24" \
         --data-urlencode "lan_gateway=10.0.2.2" --data-urlencode "nodes.0.preset=minimal" --data-urlencode "nodes.0.address=$this" \
@@ -517,7 +533,7 @@ alone)
     curl -sk -o page-setup.html --max-time 30 "$base/setup"
     this=$(grep -o 'name="nodes.0.address" value="[0-9.]*"' page-setup.html | cut -d'"' -f4)
     grep -q 'value="none"' page-setup.html && [ "$this" = 10.0.2.15 ]; check $? "the questions offer 'No master yet' and list this machine ($this)"
-    made=$(curl -s -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
+    made=$(curl -sk -c "$jar" --max-time 120 --data-urlencode "code=$code" --data-urlencode "password@page-password" \
         --data-urlencode "again@page-password" --data-urlencode "master_where=none" --data-urlencode "lan_subnet=10.0.2.0/24" \
         --data-urlencode "lan_gateway=10.0.2.2" --data-urlencode "nodes.0.preset=minimal" --data-urlencode "nodes.0.address=$this" \
         --data-urlencode "nodes.0.name=$node" "$base/setup" | grep -c 'AGE-SECRET-KEY-')
@@ -558,11 +574,53 @@ alone)
         [ "$out" = 200 ]; check $? "the control page opens from the home network ($out)"
     }
     alone_checks
+    # the disk: the stick's TPM gave way to the key for the console (no ring in a network of one),
+    # and the page shows that key among the machine's logins, after the page password
+    out=$(sh_vm 'd=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device | head -n1); echo "dev $d"; clevis luks list -d "$d"')
+    printf '%s\n' "$out" | sed 's/^/    /'
+    grep -q '^dev /dev/' <<< "$out" && ! grep -q tpm2 <<< "$out"; check $? "the disk is encrypted, and its TPM opens it no more"
+    # its key only opens it: updates are staged, never a restart by itself (it would wait at the prompt)
+    out=$(sh_vm 'systemctl is-enabled zincati.service 2>&1 | tail -1; grep -h "^AutomaticUpdatePolicy" /etc/rpm-ostreed.conf; \
+        ls /etc/systemd/system/kiwi-staged-reboot.service.d/key-only.conf /etc/systemd/system/kiwi-reboot-if-required.service.d/key-only.conf 2>/dev/null | wc -l; \
+        systemctl is-active rpm-ostreed-automatic.timer; /usr/local/sbin/kiwi-key-only; echo "rc $?"')
+    printf '%s\n' "$out" | sed 's/^/    /'
+    grep -qx disabled <<< "$out" && grep -qx 'AutomaticUpdatePolicy=stage' <<< "$out" && grep -qx 2 <<< "$out" \
+        && grep -qx active <<< "$out" && grep -qx 'rc 1' <<< "$out"
+    check $? "no restart for updates by itself: Zincati off, updates staged for the next restart"
+    disk_key=""
+    if [ "${TPM:-1}" = 1 ]; then
+        pw=$(cat page-password)
+        sh_vm "c=/run/drill-jar; rm -f \$c; r='--resolve control.$node.home:443:10.0.2.15'; \
+            curl -sk -c \$c -b \$c -o /dev/null -w 'login %{http_code}\n' \$r --data-urlencode 'password=$pw' https://control.$node.home/login; \
+            curl -sk -b \$c \$r https://control.$node.home/api/hosts/$node/logins; echo; rm -f \$c" > logins.out
+        disk_key=$(python3 -c 'import json, sys
+for line in open(sys.argv[1]):
+    if line.startswith("{"):
+        print(next((x["password"] for x in json.loads(line).get("logins", []) if x.get("module") == "disk"), ""))' logins.out)
+        # what came back, without a password in it
+        python3 -c 'import json, sys
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if line.startswith("{"):
+        d = json.loads(line)
+        print("    logins:", d.get("error") or [(x.get("module"), x.get("has_password")) for x in d.get("logins", [])])
+    elif line:
+        print("    " + line[:160])' logins.out
+        rm -f logins.out
+        [ -n "$disk_key" ]; check $? "the page shows the disk's key among the machine's logins"
+        [ -n "$disk_key" ] || { say "no key to type: the VM is left as it is, not reset (stop ends it)"; exit 1; }
+    fi
     before=$(grep -ac 'login:' "$log")
     python3 - "$w/monitor.sock" <<'EOF2'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.5); s.sendall(b"system_reset\n"); time.sleep(1)
 EOF2
+    if [ -n "$disk_key" ]; then     # alone, it waits for its key at the screen: typed as a person would
+        asked=$(grep -ac 'passphrase for disk' "$log")
+        n=60; while [ "$n" -gt 0 ] && [ "$(grep -ac 'passphrase for disk' "$log")" -le "$asked" ]; do sleep 5; n=$((n - 1)); done
+        [ "$(grep -ac 'passphrase for disk' "$log")" -gt "$asked" ]; check $? "after a hard reset it waits for the disk's key at its screen"
+        type_serial "$disk_key"
+    fi
     n=60; while [ "$n" -gt 0 ] && [ "$(grep -ac 'login:' "$log")" -le "$before" ]; do sleep 5; n=$((n - 1)); done
     tail -c 400 "$log" | grep -aq "^$node login:"; check $? "after a hard reset its console shows the node's login"
     alone_checks

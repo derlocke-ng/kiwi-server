@@ -10,7 +10,9 @@ role. Its disk, partitions and network stay as they are.
 A machine that runs Fedora CoreOS already (the one the starter stick installed) is taken over
 the same way: what Ignition would have written at an install (files, units, the admin user's
 keys) is put in place over SSH, with a key instead of a password. What only an install can do
-(an encrypted disk, kernel arguments) is refused.
+(encrypting the disk, kernel arguments) is refused. A disk the stick encrypted already (opened by
+the machine's TPM until now) is kept: `apply` binds it to the network's rings and the key for the
+console, and removes the TPM (docs/design/encryption.md).
 """
 import io
 import shlex
@@ -131,21 +133,29 @@ hostnamectl set-hostname "$(cat /etc/hostname)" 2>/dev/null || true
 """
 
 
-def coreos_files(host, role_script):
+def coreos_files(host, role_script, root_encrypted=False):
     """What Ignition gives a CoreOS machine at its install, for one that runs already: a script
-    and the files it puts in place, name -> (text, mode)."""
+    and the files it puts in place, name -> (text, mode). `root_encrypted`: its root is in LUKS
+    already (the starter stick's, with a TPM)."""
     if host.target != "coreos":
         raise KiwiError("%s: a machine that runs CoreOS is taken over as target: coreos (its target is %s)"
                         % (host.name, host.target))
-    encrypted = unlock.wanted(host)
-    bu = None if encrypted else coreos.build_butane(host, role_script)
-    storage = (bu or {}).get("storage") or {}
-    if encrypted or bu.get("boot_device") or storage.get("luks") or storage.get("disks") or storage.get("filesystems"):
-        raise KiwiError("%s: a disk that is in use cannot be encrypted. Take `unlock` out of its settings, or install the "
-                        "machine from its own install media" % host.name)
+    rings = unlock.wanted(host)
+    if rings and not root_encrypted:
+        raise KiwiError("%s: its disk is not encrypted, and a disk in use cannot be encrypted. Take `unlock` out of its "
+                        "settings, or install the machine anew: the starter stick encrypts it on a machine with a TPM 2.0"
+                        % host.name)
+    bu = coreos.build_butane(host, role_script)
+    storage = bu.get("storage") or {}
+    if bu.get("boot_device") or storage.get("luks") or storage.get("disks") or storage.get("filesystems"):
+        raise KiwiError("%s: a disk that is in use cannot be changed. Install the machine from its own install media"
+                        % host.name)
     if bu.get("kernel_arguments"):
         raise KiwiError("%s: kernel arguments come with an install, not with a machine that runs" % host.name)
     out, lines = {}, [_COREOS_HEAD]
+    if rings:       # what Ignition would set for rings: the network before the root, at the next start
+        lines.append("rpm-ostree kargs %s >/dev/null" % " ".join(
+            shlex.quote("--append-if-missing=%s" % k) for k in coreos._unlock_kargs(host, [True])))
     for d in storage.get("directories") or []:
         lines.append("install -d -m %04o %s" % (int(d.get("mode", 0o755)), shlex.quote(d["path"])))
     for i, f in enumerate(storage.get("files") or []):
@@ -191,14 +201,6 @@ def coreos_files(host, role_script):
 def run_coreos(host, login, role_script, key=None, runner=subprocess.run):
     """Take over a machine that runs CoreOS: copy the files and run the script, as `login`
     (the user the starter made, with sudo) with `key`. Returns the admin target."""
-    files = coreos_files(host, role_script)
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, (text, mode) in files.items():
-            data = text.encode()
-            info = tarfile.TarInfo(name)
-            info.size, info.mode = len(data), mode
-            tar.addfile(info, io.BytesIO(data))
     opts = ["-o", "ConnectTimeout=15", "-o", "BatchMode=yes"]
     if key:
         opts += ["-i", key, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none"]
@@ -209,6 +211,17 @@ def run_coreos(host, login, role_script, key=None, runner=subprocess.run):
     if len(who) != 2:
         raise KiwiError("--as wants the machine's login, user@address (as in: core@192.168.1.30)")
     ssh = ["ssh"] + opts + ["-p", str(remote.port_of(url)), "%s@%s" % (who[0], remote.address_of(url))]
+    r = runner(ssh + ["sudo cryptsetup status root >/dev/null 2>&1 && echo encrypted || echo plain"],
+               capture_output=True, text=True)
+    root_encrypted = r.returncode == 0 and (r.stdout or "").strip() == "encrypted"
+    files = coreos_files(host, role_script, root_encrypted)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, (text, mode) in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), mode
+            tar.addfile(info, io.BytesIO(data))
     dest = "/var/tmp/kiwi-adopt"       # not /tmp: the files hold the role script, and /tmp is everyone's
     r = runner(ssh + ["sudo rm -rf %s && sudo install -d -m 0700 %s && sudo tar -xz -C %s" % (dest, dest, dest)],
                input=buf.getvalue())

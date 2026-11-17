@@ -778,6 +778,38 @@ print("\n".join(d.get("sigs", [])))
         self.assertEqual(holds({"SIZE": 1, "parts": [{"NAME": "/dev/vda1", "FSTYPE": "exfat"}]}), "data")
         self.assertEqual(holds({"SIZE": 1, "FSTYPE": "xfs"}), "Linux")          # a file system on the whole disk
 
+    def test_the_disk_is_encrypted_with_a_tpm_and_4_gb_else_plain_only_when_typed(self):
+        # what the installed system's two configs say
+        self.assertEqual(starter.installed_butane()["boot_device"], {"luks": {"tpm2": True, "discard": True}})
+        self.assertNotIn("boot_device", starter.installed_butane(encrypted=False))
+        live = starter.live_butane("{}", plain_ign="{}")
+        self.assertEqual(sorted(f["path"] for f in live["storage"]["files"] if f["path"].endswith(".ign")),
+                         ["/etc/kiwi-starter/installed-plain.ign", "/etc/kiwi-starter/installed.ign"])
+        tpm, meminfo = os.path.join(self.tmp, "tpm"), os.path.join(self.tmp, "meminfo")
+        os.makedirs(tpm, exist_ok=True)
+        write(os.path.join(self.tmp, "live.sh"), starter.install_script())
+
+        def why(version, low_memory=False):
+            if version is None:
+                if os.path.exists(os.path.join(tpm, "tpm_version_major")):
+                    os.unlink(os.path.join(tpm, "tpm_version_major"))
+            else:
+                write(os.path.join(tpm, "tpm_version_major"), "%s\n" % version)
+            r = subprocess.run(["bash", "-c", '. "$0"; cannot_encrypt', os.path.join(self.tmp, "live.sh")], capture_output=True,
+                               text=True, env=dict(os.environ, KIWI_PAGE_DIR=os.path.join(self.tmp, "page"), KIWI_TPM_DIR=tpm,
+                                                   KIWI_MIN_MEM_KB="999999999999" if low_memory else "1"))
+            return r.stdout.strip()
+        self.assertEqual(why(2), "")
+        self.assertIn("no TPM 2.0", why(None))
+        self.assertIn("no TPM 2.0", why(1))                         # a TPM 1.2 cannot hold the key
+        self.assertIn("less than 4 GB", why(2, low_memory=True))
+        # PLAIN is its own word: ERASE does not install without encryption, nor does plain
+        for typed, word, yes in (("PLAIN", "PLAIN", True), ("plain", "PLAIN", False), ("ERASE", "PLAIN", False),
+                                 ("PLAIN", "ERASE", False)):
+            r = subprocess.run(["bash", "-c", '. "$0"; console_yes "$1" "$2"', os.path.join(self.tmp, "live.sh"), typed, word],
+                               capture_output=True, text=True, env=dict(os.environ, KIWI_PAGE_DIR=os.path.join(self.tmp, "page")))
+            self.assertEqual(r.returncode == 0, yes, (typed, word))
+
     def test_the_yes_at_the_console(self):
         for typed, yes in (("ERASE", True), ("ERASE\r", True), ("erase", False), ("Erase", False), ("ERASE ", False),
                            ("yes", False), ("", False), ("ERAS", False), ("ERASE ERASE", False)):
@@ -826,6 +858,13 @@ print("\n".join(d.get("sigs", [])))
             status, body, yes, _ = self.page(request, **kw)
             self.assertFalse(yes, request)
             self.assertNotEqual(status, "HTTP/1.0 200 OK", request)
+        # no TPM: the page's button installs without encryption, with the page's number only
+        status, body, yes, _ = self.page("GET / HTTP/1.1\r\n\r\n", state="plain")
+        self.assertIn("<button>Install WITHOUT encryption</button>", body)
+        self.assertNotIn("Erase this disk", body)
+        status, body, yes, state = self.page(post % (len(form), form), state="plain")
+        self.assertEqual((status, yes, state), ("HTTP/1.0 200 OK", True, "installing"))
+        self.assertFalse(self.page(post % (len("n=1"), "n=1"), state="plain")[2])
         status, body, yes, _ = self.page("GET / HTTP/1.1\r\n\r\n", state="info")
         self.assertNotIn("<button>", body)                              # several disks: nothing to press
         self.assertIn("refresh", self.page("GET / HTTP/1.1\r\n\r\n", state="installing")[1])
@@ -955,10 +994,11 @@ print("\n".join(d.get("sigs", [])))
         self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o644)     # no secret in it
         self.assertEqual(os.listdir(os.path.dirname(out)), ["kiwi-starter.iso"])   # the work folder is gone
         names = [c[0][:3] for c in calls]
-        self.assertEqual(names, [["butane", "--strict", "--pretty"], ["butane", "--strict", "--pretty"],
-                                 ["coreos-installer", "download", "-s"], ["coreos-installer", "iso", "customize"]])
-        self.assertEqual(calls[2][0][3], "stable")
-        cust, mounts, relabel = calls[3]
+        # the installed system twice (encrypted, and plain for a machine without a TPM), then the stick
+        self.assertEqual(names, [["butane", "--strict", "--pretty"]] * 3
+                         + [["coreos-installer", "download", "-s"], ["coreos-installer", "iso", "customize"]])
+        self.assertEqual(calls[3][0][3], "stable")
+        cust, mounts, relabel = calls[4]
         self.assertTrue(cust[cust.index("--live-ignition") + 1].endswith("/live.ign"))
         self.assertEqual([cust[i + 1] for i, x in enumerate(cust) if x == "--live-karg-append"],
                          ["console=tty0", "console=ttyS0,115200n8"])
@@ -972,8 +1012,8 @@ print("\n".join(d.get("sigs", [])))
         with mock.patch.object(cli, "make_tc", lambda a: self.fake_tc(calls, base)), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.main(["build", "--starter", "--output", out, "--base", base, "--debug-shell"]), 0)
-        self.assertEqual([c[0][0] for c in calls], ["butane", "butane", "coreos-installer"])
-        self.assertIn("systemd.debug_shell=ttyS1", calls[2][0])
+        self.assertEqual([c[0][0] for c in calls], ["butane", "butane", "butane", "coreos-installer"])
+        self.assertIn("systemd.debug_shell=ttyS1", calls[3][0])
 
 
 class TestAdopt(Base):
@@ -1041,23 +1081,44 @@ class TestAdopt(Base):
         h.cfg["unlock"] = {"rings": ["house"], "threshold": 1}
         with self.assertRaisesRegex(KiwiError, "cannot be encrypted"):
             adoptmod.coreos_files(h, "")
+        # the starter encrypted it already (its TPM opens it): kept, and the network comes before the root
+        script = adoptmod.coreos_files(h, "", root_encrypted=True)["adopt.sh"][0]
+        self.assertIn("rpm-ostree kargs --append-if-missing=rd.neednet=1", script)
         calls = []
 
         def runner(argv, **kw):
             calls.append((argv, kw.get("input")))
+            if kw.get("capture_output"):        # asked whether the root is encrypted
+                return subprocess.CompletedProcess(argv, 0, "plain\n", "")
             return subprocess.CompletedProcess(argv, 0)
         was = remote.run_ok
         remote.run_ok = lambda tgt: True
         self.addCleanup(setattr, remote, "run_ok", was)
         tgt = adoptmod.run_coreos(self.coreos_host(), "core@192.168.1.30", "echo role\n", key="/starter/id_ed25519", runner=runner)
         self.assertEqual(tgt, "core@192.168.1.30")
-        self.assertEqual(len(calls), 2)
-        self.assertIn("/starter/id_ed25519", calls[0][0])
-        self.assertIn("BatchMode=yes", calls[0][0])
+        self.assertEqual(len(calls), 3)
+        self.assertIn("cryptsetup status root", calls[0][0][-1])
+        self.assertIn("/starter/id_ed25519", calls[1][0])
+        self.assertIn("BatchMode=yes", calls[1][0])
         import tarfile, io as _io
-        names = tarfile.open(fileobj=_io.BytesIO(calls[0][1]), mode="r:gz").getnames()
+        names = tarfile.open(fileobj=_io.BytesIO(calls[1][1]), mode="r:gz").getnames()
         self.assertIn("adopt.sh", names)
-        self.assertIn("sudo bash /var/tmp/kiwi-adopt/adopt.sh", calls[1][0][-1])
+        self.assertIn("sudo bash /var/tmp/kiwi-adopt/adopt.sh", calls[2][0][-1])
+
+    def test_a_tpm_binding_counts_as_bound_so_a_rebind_removes_it(self):
+        listing = ("1: sss '{\"t\":1,\"pins\":{\"tpm2\":[{\"hash\":\"sha256\",\"key\":\"ecc\"}]}}'\n"
+                   "2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://10.0.2.2:18000\"}]}}'\n"
+                   "3: tpm2 '{\"hash\":\"sha256\",\"key\":\"ecc\"}'\n")
+        self.assertEqual(unlock._bound(listing), [("1", 1, ["tpm2"]), ("2", 1, ["http://10.0.2.2:18000"]), ("3", 1, ["tpm2"])])
+        # a disk that opens only with its key: no restart for updates by itself, they are staged
+        path = os.path.join(self.tmp, "key-only.sh")
+        write(path, unlock.INSTALL_KEY_ONLY)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        self.assertIn("ExecCondition=/usr/local/sbin/kiwi-key-only", unlock.INSTALL_KEY_ONLY)
+        self.assertIn("AutomaticUpdatePolicy=stage", unlock.INSTALL_KEY_ONLY)
+        self.assertIn("disable --now zincati.service", unlock.INSTALL_KEY_ONLY)
+        self.assertIn("clevis luks unbind -f", unlock.DROP_TPM_SCRIPT)
+        self.assertIn("</dev/null", unlock.DROP_TPM_SCRIPT)        # unbind reads stdin: it must not read the script's
 
     def test_new_host_key_forgets_the_address(self):
         calls = []
@@ -3117,6 +3178,22 @@ class TestAccess(Base):
             accessmod.canon("apps", self.FOUND, "home", group=False)
         self.assertEqual(accessmod.words(["apps", "papaya:22"]), "every app, papaya:22")
 
+    def test_admin_areas_inside_a_site_are_refused_to_every_group_without_the_switch(self):
+        """ejabberd's and Vaultwarden's /admin: a group that has the site has not its admin area. The
+        access drill found a family device on both (16 Nov)."""
+        groups = {"devices": {"subnet": "10.8.3.0/24", "reach": ["all"], "admin": True},
+                  "family": {"subnet": "10.8.5.0/24", "reach": ["apps"]},
+                  "ops": {"subnet": "10.8.7.0/24", "reach": ["apps", "portainer.papaya"]},
+                  "plain": {}}
+        self.assertEqual(accessmod.admin_ranges(groups), ["10.8.5.0/24", "10.8.7.0/24"])
+        self.assertEqual(accessmod.admin_ranges({"devices": groups["devices"]}), [])
+        self.assertEqual(accessmod.admin_ranges(None), [])
+        # a new device lands in a group without the admin pages: family, or the first such group
+        self.assertEqual(accessmod.default_group(groups), "family")
+        self.assertEqual(accessmod.default_group({"devices": groups["devices"], "ops": groups["ops"]}), "ops")
+        self.assertIsNone(accessmod.default_group({"devices": groups["devices"]}))
+        self.assertIsNone(accessmod.default_group(None))
+
     def test_a_linked_network_opens_an_admin_page_only_by_name(self):
         found = fedmod.with_addresses({
             "b": {"mesh": "10.10.0.0/16", "share": ["papaya"], "from": []},
@@ -3144,7 +3221,8 @@ class TestAccess(Base):
         site = lambda n: nginx.split("server_name %s.papaya.home;" % n, 1)[1].split("server {", 1)[0]      # noqa: E731
         self.assertIn("deny 10.8.5.0/24;", site("portainer"))                       # an admin page
         self.assertNotIn("deny 10.8.5.0/24;", site("cloud"))
-        self.assertNotIn("deny 10.8.5.0/24;", site("vault"))
+        self.assertNotIn("deny 10.8.5.0/24;", site("vault").split("location ^~ /admin", 1)[0])
+        self.assertIn("deny 10.8.5.0/24;", site("vault").split("location ^~ /admin", 1)[1])      # its admin page: not theirs
         rc, out, err = TestManage.run_cli(self, "access", f.path)
         self.assertRegex(out, r"family +10\.8\.5\.0/24 +every app")
         self.assertIn("portainer.papaya", out.split("admin pages (only", 1)[1].splitlines()[0])
@@ -5470,8 +5548,10 @@ class TestManage(Base):
             self.assertIn("sudo bash /var/lib/kiwi-server/role.sh --force", out)
             rc, out, err = self.run_cli("apply", f.path, "sh3", "--ssh", "admin@192.168.1.7")
             self.assertEqual(rc, 0, err)
-            self.assertEqual(calls[-1], ("stream", "admin@192.168.1.7", "bash /var/lib/kiwi-server/role.sh --force"))
-            self.assertEqual(calls[-2][1], "admin@192.168.1.7")
+            # the role, then a look whether the starter's TPM still opens the disk (a CoreOS machine without rings)
+            self.assertEqual(calls[-2], ("stream", "admin@192.168.1.7", "bash /var/lib/kiwi-server/role.sh --force"))
+            self.assertIn("clevis luks list", calls[-1][2])
+            self.assertEqual(calls[-3][1], "admin@192.168.1.7")
             self.assertIn("sh3: applied", out)
             rc, out, err = self.run_cli("apply", f.path, "--ssh", "x@y")
             self.assertEqual(rc, 1)
@@ -6563,7 +6643,9 @@ peers=4 3
         self.assertFalse([x for x in problems + notes if "backup" in str(x)])
 
     def test_the_disk_is_reported_as_it_is(self):
-        self.assertIn("the disk is not encrypted", self.assessed("luks=none")[1][2])
+        state, problems, _n = self.assessed("luks=none")[1]
+        self.assertIn({"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it"}, problems)
+        self.assertEqual(state, "warn")
         self.assertIn("the disk opens only with a typed key", self.assessed("luks=0")[1][2])
         f, (_s, _p, notes) = self.assessed("luks=1")
         self.assertEqual(f["encryption"], "bound")
@@ -8153,7 +8235,8 @@ class TestWeb(StoreBase):
         self.assertIn('value="start-new"', body)
         self.assertIn('value="prune"', body)
         self.assertIn("50 GB free", body)
-        self.assertIn('<option value="devices" selected>', self.ask("/devices")[1])
+        # a group with the admin pages is never preselected for a new device (here it is the only one)
+        self.assertIn('<option value="devices" >', self.ask("/devices")[1])
 
     def test_the_frame_the_numbers_and_the_picture(self):
         from kiwiserver import web

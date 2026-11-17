@@ -4194,6 +4194,9 @@ class TestAwayRing(Base):
         gate = f.hosts["gate"]
         b = r.bundle(gate, r.prepare(gate))
         self.assertEqual(gate.module_settings["vpn-server"]["local_rings"], {"away": "7501"})
+        self.assertEqual((unlock._inner_port(server, "away"), unlock._on_master(server)), (7501, True))   # in km-tang-away, at 7501
+        store_ring = types.SimpleNamespace(modules=["tang"], module_settings={"tang": {"rings": {"home": "7500"}}})
+        self.assertEqual((unlock._inner_port(store_ring, "home"), unlock._on_master(store_ring)), (7500, False))
         compose = yaml.safe_load(b.files["docker-compose.yml"][0]) if "docker-compose.yml" in b.files else None
         if compose:
             self.assertEqual(compose["services"]["km-tang-away"]["network_mode"], "service:km-vpn-server")

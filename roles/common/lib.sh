@@ -559,6 +559,23 @@ ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or diffe
     return 0
 }
 
+# What changed and has not restarted yet, kept across a failed apply: the files of a run that
+# ended before its restarts (an image that did not pull) are the same at the next run, which
+# then saw nothing to restart and left the old container serving the old settings.
+KS_PENDING=${KS_PENDING:-/etc/kiwi-server/restart-pending}
+ks_stack_note_pending() {
+    local svc all=()
+    mapfile -t all < <( { ks_stack_changed_services; cat "$KS_PENDING" 2>/dev/null; } | sort -u | sed '/^$/d')
+    install -d -m 0755 "$(dirname "$KS_PENDING")"
+    if (( ${#all[@]} )); then
+        printf '%s\n' "${all[@]}" > "$KS_PENDING.tmp" && ks_replace "$KS_PENDING.tmp" "$KS_PENDING"
+    fi
+    return 0
+}
+ks_stack_restart_due() {        # what changed now, and what an earlier run did not get to
+    { ks_stack_changed_services; cat "$KS_PENDING" 2>/dev/null; } | sort -u | sed '/^$/d'
+}
+
 ks_stack_changed_services() {   # the containers whose quadlet, or a file they mount or read, changed
     local svc q line src p hit
     for svc in "${KS_STACK_SERVICES[@]}"; do
@@ -706,6 +723,7 @@ ks_stack_unpack() {
         done
     fi
     ks_stack_compare
+    ks_stack_note_pending
     local files=() entry
     for entry in "${KS_STACK_FILES[@]}"; do files+=("${entry%:*}"); done
     install -d -m 0755 /etc/kiwi-server
@@ -902,15 +920,18 @@ ks_stack_apply() {
         # inode, so a changed file needs it), and the rest goes on serving (problem 55). What
         # lives in another's network follows it by BindsTo.
         local changed=() svc
-        mapfile -t changed < <(ks_stack_changed_services)
+        mapfile -t changed < <(ks_stack_restart_due)
         ks_say "the stack is running: restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
+        local failed=0
         for svc in "${changed[@]}"; do
-            systemctl restart "$svc.service" || ks_warn "$svc did not restart — kiwi-stack logs $svc"
+            systemctl restart "$svc.service" || { ks_warn "$svc did not restart — kiwi-stack logs $svc"; failed=1; }
         done
+        (( failed )) || rm -f "$KS_PENDING"
     else
         # the first apply, a stopped stack or a recreated network: everything from the start
         systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
+        rm -f "$KS_PENDING"
     fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"

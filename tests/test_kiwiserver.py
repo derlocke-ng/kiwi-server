@@ -593,7 +593,16 @@ class TestStarter(Base):
         mango, quince = data["hosts"]["mango"], data["hosts"]["quince"]
         self.assertEqual(mango["target"], "coreos")                           # the starter's system, as it is
         self.assertNotIn("disk", mango)
-        self.assertEqual(mango["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "control"])
+        self.assertEqual(mango["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "control", "tang"])
+        # encrypted, as every machine: the first one serves the ring at home, the others open with it
+        self.assertEqual(mango["node"]["tang"], {"rings": {"home": "7500"}})
+        self.assertNotIn("unlock", mango)                                     # its own: the key for its screen
+        self.assertNotIn("unlock", quince)          # no fixed address: no ring on the LAN reaches it; its key
+        # a machine added later with a fixed address opens with the ring at home
+        fleet = os.path.join(self.tmp, "ring-fleet.yaml")
+        setupmod.write(fleet, data)
+        added = setupmod.add_home_machine(fleet, "cloud", "192.168.2.58", "plum")
+        self.assertEqual(yaml.safe_load(util.read_text(fleet))["hosts"][added]["unlock"], {"rings": ["home"]})
         self.assertEqual(mango["network"], {"dhcp": False, "address": "192.168.2.57/16", "gateway": "192.168.2.1",
                                             "dns": ["192.168.2.1"]})
         self.assertEqual((quince["target"], "modules" in quince["node"]), ("ucore", False))
@@ -1300,6 +1309,20 @@ class TestIso(Base):
         self.assertIn("dest-device: %s", script)
         self.assertIn("disk: auto needs a machine with one disk", script)
         self.assertEqual(subprocess.run(["bash", "-n", pre]).returncode, 0)
+        # encrypted with the TPM standing in (no ring answers yet): the install checks for a TPM first,
+        # before it chooses the disk, and its Ignition binds the root to the TPM
+        h = f3.hosts["a"]
+        h.unlock_standin = True
+        calls.clear()
+        iso.coreos_iso(FakeTC(), h, ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
+        script = util.read_text(calls[2][calls[2].index("--pre-install") + 1])
+        self.assertLess(script.index("tpm_version_major"), script.index("dest-device: %s"))
+        self.assertIn("set encryption: false for a", script)
+        self.assertEqual(script.count("#!/bin/bash"), 1)
+        self.assertEqual(subprocess.run(["bash", "-n", calls[2][calls[2].index("--pre-install") + 1]]).returncode, 0)
+        self.assertEqual(coreos_t.build_butane(h, "echo role\n")["boot_device"], {"luks": {"tpm2": True, "discard": True}})
+        h.unlock_standin = False
+        self.assertNotIn("boot_device", coreos_t.build_butane(h, "echo role\n"))
 
     def test_an_apply_waits_until_a_fresh_ucore_machine_has_switched(self):
         answers = iter([b"switching\n", KiwiError("no route to host"), b"switching\n", b""])
@@ -9691,8 +9714,8 @@ class TestFirstRunPage(StoreBase):
             _s, body, cookie = self.ask("/setup", dict(form, password=self.PW, again=self.PW, code=self.c.setup_code()))
             self.assertIn("AGE-SECRET-KEY-", body)
         raw = yaml.safe_load(util.read_text(os.path.join(self.dir, "fleet.yaml")))["hosts"]["mango"]
-        self.assertEqual((raw["target"], raw["node"]["modules"][-1], raw["network"]["address"]),
-                         ("coreos", "control", "192.168.1.57/24"))
+        self.assertEqual((raw["target"], raw["node"]["modules"][-2:], raw["network"]["address"]),
+                         ("coreos", ["control", "tang"], "192.168.1.57/24"))
         # its step on Home: no install media, and where the page goes
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
             {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "phase": "applied", "modules": [], "sites": []},
@@ -9911,12 +9934,13 @@ class TestFirstRunPage(StoreBase):
         node, page = self.node(), "/hosts/%s/settings" % self.node()
         body = self.ask(page, cookie=cookie)[1]
         on = [v for n, v in self.shown(body) if n == "f:node.modules"]
-        self.assertEqual(sorted(on), ["cloud", "portainer", "reverse-proxy", "vault", "vpn-client"])    # the preset's
+        self.assertEqual(sorted(on), ["cloud", "portainer", "reverse-proxy", "tang", "vault", "vpn-client"])    # the preset's, and the ring
+
         self.assertIn('name="f:node.modules" value="immich">', body)                       # offered, not ticked
         self.assertNotIn("f:node.immich.library_dir", body)
         self.assertIn('<option value="cloud" selected>Cloud (cloud)</option>', body)
         self.assertEqual(self.change(page, cookie, {"f:node.modules": on + ["immich"]})[:2], (303, page + "?saved=1"))
-        self.assertEqual(self.data()["hosts"][node]["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "immich"])
+        self.assertEqual(self.data()["hosts"][node]["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "tang", "immich"])
         body = self.ask(page, cookie=cookie)[1]
         self.assertIn('name="f:node.modules" value="immich" checked>', body)
         self.assertIn("<summary>Photos (Immich)</summary>", body)
@@ -9926,9 +9950,10 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(own["immich"], {"library_dir": "/mnt/photos", "machine_learning": False})
         self.assertEqual(own["preset"], "cloud")
         self.assertIn("immich", next(h for h in self.c.fleet_info()["hosts"] if h["name"] == node)["modules"])
-        # the preset's parts again: no list of its own any more
+        # the preset's parts again, and the ring at home it serves
         self.assertEqual(self.change(page, cookie, {"f:node.modules": on})[0], 303)
-        self.assertNotIn("modules", self.data()["hosts"][node]["node"])
+        self.assertEqual(sorted(self.data()["hosts"][node]["node"]["modules"]),
+                         ["cloud", "portainer", "reverse-proxy", "tang", "vault", "vpn-client"])
         self.at_rest()
 
     def test_a_value_that_cannot_be_is_refused_and_nothing_is_written(self):

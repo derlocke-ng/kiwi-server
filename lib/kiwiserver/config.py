@@ -43,6 +43,9 @@ DEFAULTS = {
     "keyboard": "us",
     "motd": "",
     "disk": None,
+    # the disk encrypted (docs/design/encryption.md): its rings or, until they answer, the machine's
+    # TPM open it at boot. false: installed plain, by choice, and said so on every page
+    "encryption": True,
     "admin": {
         "user": "core",
         "password": None,
@@ -481,6 +484,8 @@ class Host:
             mounts_of(self.cfg)
         except KiwiError as e:
             errs.append(str(e))
+        if not isinstance(self.cfg.get("encryption", True), bool):
+            errs.append("encryption must be true or false")
         if self.cfg.get("disk") and str(self.cfg["disk"]) != "auto" and not str(self.cfg["disk"]).startswith("/dev/"):
             errs.append("disk must be auto (the machine's one disk) or a device path like /dev/sda or /dev/nvme0n1")
         if self.target == "armbian":

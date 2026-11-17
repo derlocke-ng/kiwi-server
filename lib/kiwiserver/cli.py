@@ -668,6 +668,8 @@ def load(args, need_roles=True):
         raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % args.fleet)
     fleet = config.Fleet.load(args.fleet)
     remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
+    if st.exists() and st.is_open() and not getattr(args, "porcelain", False):
+        store.touch(st, args.fleet)     # in use: it locks itself the idle time from now (the app's looks do not count)
     roles = rolesmod.discover() if need_roles else None
     ms = modmod.discover() if need_roles else None
     return fleet, roles, ms
@@ -1764,6 +1766,21 @@ def cmd_mtu(args):
 
 
 def secrets_store(args):
+    if args.action == "autolock":     # this computer's, for every network on it
+        screen = {"on": True, "off": False}.get(args.screen) if args.screen else None
+        if args.screen and screen is None:
+            raise KiwiError("--screen on or off")
+        now = store.set_autolock(idle=args.idle, screen=screen) if (args.idle or args.screen) else store.autolock()
+        if screen is not None:
+            store.screen_watcher(screen)
+        idle = str(now["idle"])
+        print("this computer locks the secret stores %s, %s" % (
+            "never when unused" if re.fullmatch(r"0+[smhd]?", idle) else "after %s unused" % idle,
+            "and with the screen" if now["screen"] else "not with the screen"))
+        return
+    if args.action == "screen-watch":
+        store.watch_screen()
+        return
     st = store.Store.for_fleet(args.fleet)
     if args.action == "init":
         recovery, saved = st.init()
@@ -1781,10 +1798,20 @@ def secrets_store(args):
             return
         raise KiwiError("this fleet has no secret store: kiwi-server secrets init %s" % args.fleet)
     elif args.action == "unlock":
+        if args.password_stdin:
+            store.Store.password_given = sys.stdin.readline().rstrip("\n")
         if not st.is_open():
-            st.unlock(st.identity(args.identity))
-        timed = store.schedule_lock(st, args.fleet, getattr(args, "for"))
-        util.say("the secret store is open%s" % (" for %s" % getattr(args, "for") if timed else ""))
+            key = st.identity(args.identity)
+            st.unlock(key)
+            if not args.identity and store.is_wrapped(store.keyring_get(st.store_id())):
+                store.remember_key(st.store_id(), key)      # its password once per unlock: gone when it locks
+        auto = store.autolock()
+        after = getattr(args, "for") or str(auto["idle"])      # unused that long: locked again
+        timed = store.schedule_lock(st, args.fleet, after)
+        if auto["screen"]:
+            store.screen_watcher(True)      # and with the screen
+        util.say("the secret store is open%s%s" % (" until it is unused for %s" % after if timed else "",
+                                                    ", and locks with the screen" if auto["screen"] else ""))
     elif args.action == "lock":
         st.lock()
         util.say("the secret store is locked")
@@ -1816,6 +1843,32 @@ def secrets_store(args):
         st.new_recovery(keep)
         util.say("the store opens with the new recovery key, and copies are signed with it from now on; "
                  "the old one opens only the copies made before today")
+    elif args.action == "password":
+        # optional: this computer's key in the keyring only together with a password
+        sid = st.store_id()
+        held = store.keyring_get(sid)
+        if not held:
+            raise KiwiError("this computer has no key for this store in its keyring (kiwi-server secrets join)")
+        lines = sys.stdin.read().splitlines() if args.password_stdin else None
+        ask = (lambda prompt: lines.pop(0) if lines else "") if lines is not None else getpass.getpass
+        if not sys.stdin.isatty() and lines is None:
+            raise KiwiError("give the passwords on stdin (--password-stdin), or run this in a terminal")
+        key = store.unwrap(held, ask("Its password now: ")) if store.is_wrapped(held) else held
+        if args.off:
+            if not store.keyring_put(sid, key):
+                raise KiwiError("the keyring did not take the key")
+            util.say("this computer opens the store with its keyring alone again")
+            return
+        new = ask("New password (8 characters or more): ")
+        if ask("The same again: ") != new:
+            raise KiwiError("the two were not the same: nothing changed")
+        wrapped = store.wrap(key, new)
+        if store.unwrap(wrapped, new) != key or not store.keyring_put(sid, wrapped):
+            raise KiwiError("the keyring did not take it: nothing changed")
+        if st.is_open():
+            store.remember_key(sid, key)
+        util.say("this computer's key opens the store only with its password from now on: it is asked once per "
+                 "unlock (the app asks too). Forgotten: the recovery key opens it, or remove this computer and join again")
     elif args.action == "copy-key":
         # once, for a store made before 2.170.0: the key its copies are signed with, from the recovery key
         if not args.identity:
@@ -3920,9 +3973,13 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
-    s.add_argument("--for", default="8h", metavar="TIME", help="unlock: lock again after this long (default 8h; 0: stay open)")
+    s.add_argument("--for", default=None, metavar="TIME", help="unlock: lock again after this long unused (default: autolock's idle, 30m; 0: stay open)")
+    s.add_argument("--idle", metavar="TIME", help="autolock: lock after this long unused, e.g. 15m, 1h; 0: never")
+    s.add_argument("--screen", metavar="on|off", help="autolock: lock with the screen")
+    s.add_argument("--password-stdin", action="store_true", help="unlock, password: the password(s) on stdin, one per line")
+    s.add_argument("--off", action="store_true", help="password: the keyring alone opens it again")
     s.add_argument("--identity", metavar="FILE", help="unlock: a file with the age secret key, instead of the keyring")
     s.add_argument("--out", metavar="FILE", help="recovery: the new key into this new file (0600), not on the screen")
     s = sub("mtu", cmd_mtu); s.add_argument("fleet"); s.add_argument("target", help="a node, a device in secrets/devices/, or a mesh address")

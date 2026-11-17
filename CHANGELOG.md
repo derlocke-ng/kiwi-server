@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.172.0 — the store locks by itself
+
+- **After a while unused**: 30 minutes after the last command or action in the app (its own
+  looks do not count), instead of 8 hours after it was opened. `secrets autolock --idle`.
+- **With the screen**: a user service locks every open store when the screen locks (GNOME and
+  others that say so on D-Bus), what changed in it saved first. `secrets autolock --screen`.
+- **An extra password, if wanted** (not by default): `secrets password` keeps this computer's key
+  in the keyring only together with a password, asked once per unlock; the app asks for it.
+- **Hidden services that stop being found start anew** (kiwi-modules 0.76.0): each checks its
+  own addresses through Tor every ten minutes. Two of medlar's three had answered nothing for
+  hours while Tor ran on.
+
 ## 2.171.0 — a new recovery key when the old one is lost
 
 - **`kiwi-server secrets recovery FLEET`**: a new recovery key in place of the old one, while a

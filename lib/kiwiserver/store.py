@@ -9,9 +9,13 @@ with the next power cut. Nothing but age and tar is needed to open it by hand.
 
 Design: docs/design/control-plane.md, Secrets.
 """
+import base64
 import getpass
+import glob
 import hashlib
+import hmac
 import io
+import json
 import os
 import re
 import shutil
@@ -425,6 +429,8 @@ class Store:
         extract(data, self._tree())
         with open(self._digest_file(), "w") as f:
             f.write(hashlib.sha256(snapshot(self._tree())).hexdigest())
+        with open(os.path.join(self.runtime(), "fleet-dir"), "w") as f:    # whose it is: lock_all saves it first
+            f.write(self.dir)
 
     def init(self):
         """secrets/ into the store. Returns (recovery key, whether the keyring took the desktop key).
@@ -496,6 +502,15 @@ class Store:
             os.remove(self.link)
         shutil.rmtree(self.runtime(), ignore_errors=True)
 
+    password_given = None       # from --password-stdin (the app), else asked at the terminal
+
+    def password(self):
+        if Store.password_given is not None:
+            return Store.password_given
+        if not sys.stdin.isatty():
+            raise KiwiError("this computer's key has a password: give it (the app asks; in a terminal it is asked)")
+        return getpass.getpass("Password for this computer's key: ")
+
     def identity(self, path=None):
         """The key to open it with: a file named, the keyring, or typed."""
         if path:
@@ -505,6 +520,8 @@ class Store:
                 raise KiwiError("%s holds no age secret key" % path)
             return keys[0]
         key = keyring_get(self.store_id())
+        if key and is_wrapped(key):         # this computer's key wants its password too
+            return unwrap(key, self.password())
         if key:
             return key
         if not sys.stdin.isatty():
@@ -513,6 +530,179 @@ class Store:
         if not key:
             raise KiwiError("no key given")
         return key
+
+
+# ---- locking by itself (docs/security.md): after a while unused, and with the screen -------
+
+AUTOLOCK_DEFAULT = {"idle": "30m", "screen": True}
+
+
+def _autolock_file():
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "kiwi-server", "autolock.json")
+
+
+def autolock():
+    """This computer's choice: {idle: a time like 30m, or 0 for never; screen: lock with the screen}."""
+    try:
+        data = json.loads(util.read_text(_autolock_file()))
+    except (OSError, ValueError):
+        data = {}
+    return dict(AUTOLOCK_DEFAULT, **{k: v for k, v in (data if isinstance(data, dict) else {}).items() if k in AUTOLOCK_DEFAULT})
+
+
+def set_autolock(**changes):
+    now = autolock()
+    if changes.get("idle") is not None and not re.fullmatch(r"\d+[smhd]?", str(changes["idle"])):
+        raise KiwiError("--idle takes a time like 30m, 1h or 0 (never)")
+    now.update({k: v for k, v in changes.items() if v is not None})
+    os.makedirs(os.path.dirname(_autolock_file()), mode=0o700, exist_ok=True)
+    util.write_text(_autolock_file(), json.dumps(now, indent=1) + "\n", 0o600)
+    return now
+
+
+def touch(store, fleet_path):
+    """It is in use: it locks itself the idle time from now (not from when it was opened)."""
+    idle = str(autolock()["idle"])
+    try:            # the timer never stands in a command's way
+        if store.is_open() and not re.fullmatch(r"0+[smhd]?", idle):
+            schedule_lock(store, fleet_path, idle)
+    except (KiwiError, OSError, AttributeError):
+        pass
+
+
+def open_stores():
+    """The folders of the networks whose store is open on this computer now."""
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"
+    out = []
+    for d in sorted(glob.glob(os.path.join(base, "kiwi-server-*"))):
+        try:
+            out.append(util.read_text(os.path.join(d, "fleet-dir")).strip())
+        except OSError:
+            continue
+    return [d for d in out if d]
+
+
+def lock_all():
+    """Every open store locked, what changed in it saved first. The names of those it locked."""
+    done = []
+    for d in open_stores():
+        try:
+            Store(d).lock()
+            done.append(d)
+        except (KiwiError, OSError) as e:
+            util.warn("%s: not locked: %s" % (d, e))
+    return done
+
+
+SCREEN_SIGNALS = ("org.gnome.ScreenSaver", "org.freedesktop.ScreenSaver")
+
+
+def screen_locked_lines(lines):
+    """From dbus-monitor's lines: one True for each time a screen saver says it went on."""
+    waiting = False
+    for line in lines:
+        if "member=ActiveChanged" in line and any(("interface=%s;" % i) in line for i in SCREEN_SIGNALS):
+            waiting = True
+        elif waiting and line.strip().startswith("boolean"):
+            waiting = False
+            if line.strip() == "boolean true":
+                yield True
+
+
+def watch_screen(on_lock=lock_all):
+    """Lock every open store whenever the screen locks (GNOME, KDE and others that say so on D-Bus)."""
+    rules = ["type='signal',interface='%s',member='ActiveChanged'" % i for i in SCREEN_SIGNALS]
+    p = subprocess.Popen(["dbus-monitor", "--session"] + rules, stdout=subprocess.PIPE, text=True)
+    for _ in screen_locked_lines(p.stdout):
+        names = on_lock()
+        if names:
+            util.say("the screen locked: so are the secret stores of %s" % ", ".join(names))
+
+
+SCREEN_UNIT = "kiwi-server-screenlock.service"
+
+
+def screen_watcher(on=True, runner=subprocess.run):
+    """The user service that runs watch_screen, on or off. False where there is no systemd here."""
+    if not shutil.which("systemctl"):
+        return False
+    path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "systemd", "user", SCREEN_UNIT)
+    if not on:
+        runner(["systemctl", "--user", "disable", "--now", SCREEN_UNIT], capture_output=True)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return True
+    me = shutil.which("kiwi-server") or os.path.abspath(sys.argv[0])
+    text = ("[Unit]\nDescription=kiwi-server: lock the secret stores when the screen locks\n\n"
+            "[Service]\nExecStart=%s secrets screen-watch -\nRestart=on-failure\nRestartSec=10\n\n"
+            "[Install]\nWantedBy=default.target\n" % me)
+    try:
+        same = util.read_text(path) == text
+    except OSError:
+        same = False
+    if not same:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        util.write_text(path, text, 0o644)
+        runner(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    r = runner(["systemctl", "--user", "enable", "--now", SCREEN_UNIT], capture_output=True)
+    return r.returncode == 0
+
+
+# ---- an extra password for this computer's key (optional; docs/security.md) ----------------
+
+WRAPPED = "kiwipw1:"
+
+
+def wrap(secret, password):
+    """This computer's key, kept in the keyring only together with a password: the keyring
+    alone (an unlocked session) no longer opens the store."""
+    if len(password or "") < 8:
+        raise KiwiError("a password of 8 characters or more")
+    salt, data = os.urandom(16), secret.encode()
+    k = hashlib.scrypt(password.encode(), salt=salt, n=2 ** 15, r=8, p=1, dklen=len(data) + 32, maxmem=2 ** 26)
+    enc = bytes(a ^ b for a, b in zip(data, k))
+    mac = hmac.new(k[len(data):], salt + enc, hashlib.sha256).digest()
+    return WRAPPED + base64.b64encode(salt + enc + mac).decode()
+
+
+def unwrap(value, password):
+    raw = base64.b64decode(value[len(WRAPPED):])
+    salt, enc, mac = raw[:16], raw[16:-32], raw[-32:]
+    k = hashlib.scrypt(str(password).encode(), salt=salt, n=2 ** 15, r=8, p=1, dklen=len(enc) + 32, maxmem=2 ** 26)
+    if not hmac.compare_digest(mac, hmac.new(k[len(enc):], salt + enc, hashlib.sha256).digest()):
+        raise KiwiError("that password does not open this computer's key")
+    return bytes(a ^ b for a, b in zip(enc, k)).decode()
+
+
+def is_wrapped(value):
+    return str(value or "").startswith(WRAPPED)
+
+
+def _cached_key(store_id):
+    """While a store is open: this computer's key, unwrapped once at the unlock, in its RAM folder."""
+    return os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm", "kiwi-server-%s" % store_id, "this-key")
+
+
+def keyring_key(store_id):
+    """This computer's key for a store, as age takes it: from the keyring, its password asked
+    once per unlock when it has one (kept in the open store's RAM folder until it locks)."""
+    value = keyring_get(store_id)
+    if not is_wrapped(value):
+        return value
+    try:
+        return util.read_text(_cached_key(store_id)).strip()
+    except OSError:
+        pass
+    probe = Store.__new__(Store)
+    return unwrap(value, probe.password())
+
+
+def remember_key(store_id, key):
+    path = _cached_key(store_id)
+    if os.path.isdir(os.path.dirname(path)):
+        util.write_text(path, key + "\n", 0o600)
 
 
 def _lock_unit(store):

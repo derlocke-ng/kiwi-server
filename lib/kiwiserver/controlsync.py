@@ -155,7 +155,7 @@ def pull(fleet, host, tgt, force=False, identity=None):
         if their_stamp != there:
             remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
         return 0
-    key = identity or storemod.keyring_get(st.store_id())
+    key = identity or storemod.keyring_key(st.store_id())
     if not key:
         raise KiwiError("pull opens what comes with this computer's key, and the keyring has none: "
                         "kiwi-server control pull <fleet> --identity FILE (the recovery key)")
@@ -271,7 +271,7 @@ def api_for(fleet_dir, key=None):
     r = remote_of(fleet_dir)
     if not r:
         raise KiwiError("this fleet directory is joined to no control node: kiwi-server control join")
-    key = key or storemod.keyring_get(r["store"])
+    key = key or storemod.keyring_key(r["store"])
     if not key:
         raise KiwiError("this computer's key for the fleet is not in the keyring: --identity FILE")
     ca = os.path.join(fleet_dir, CA)
@@ -615,7 +615,7 @@ def push_dir(fleet_dir, fleet_name, folder, force=False):
     there = folder_state(folder)
     _here, then = _stamp(fleet_dir, FOLDER_STAMP)
     if there and there != then and not force:       # another computer saved there: the two become one here
-        key = storemod.keyring_get(st.store_id())
+        key = storemod.keyring_key(st.store_id())
         if not key:
             raise KiwiError("the folder's copy changed since this computer last synced, and this computer's key "
                             "is not in the keyring: kiwi-server control pull first, or push --force")
@@ -666,7 +666,7 @@ def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None):
         return push_dir(fleet_dir, fleet_name, folder)
     if not st.exists():                     # a new computer: the list of keys first, to find its own
         util.write_bytes(st.recipients, got["secrets.recipients"], 0o644)
-    key = key or storemod.keyring_get(st.store_id())
+    key = key or storemod.keyring_key(st.store_id())
     if not key:
         raise KiwiError("this computer has no key for the fleet in its keyring: --identity FILE, or join first "
                         "(kiwi-server control join <fleet> --dir %s)" % folder)

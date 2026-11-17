@@ -5905,6 +5905,95 @@ class StoreBase(Base):
 
 
 @unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
+class TestAutolock(StoreBase):
+    """The store locks itself: after a while unused, and with the screen."""
+    def setUp(self):
+        super().setUp()
+        cfg = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": os.path.join(self.tmp, "config")})
+        cfg.start()
+        self.addCleanup(cfg.stop)
+        self.addCleanup(setattr, store.Store, "password_given", None)
+
+    def test_the_screen_saver_says_it_went_on(self):
+        lines = ["signal time=1 sender=:1.9 -> destination=(null destination) serial=7 path=/org/gnome/ScreenSaver; "
+                 "interface=org.gnome.ScreenSaver; member=ActiveChanged", "   boolean true",
+                 "signal time=2 sender=:1.9 -> destination=(null destination) serial=8 path=/org/gnome/ScreenSaver; "
+                 "interface=org.gnome.ScreenSaver; member=ActiveChanged", "   boolean false",
+                 "signal time=3 sender=:1.4 path=/ScreenSaver; interface=org.freedesktop.ScreenSaver; member=ActiveChanged",
+                 "   boolean true", "signal time=4 interface=org.other.Thing; member=ActiveChanged", "   boolean true"]
+        self.assertEqual(list(store.screen_locked_lines(lines)), [True, True])   # GNOME's and KDE's, on only
+
+    def test_this_computers_choice_and_its_defaults(self):
+        self.assertEqual(store.autolock(), {"idle": "30m", "screen": True})
+        rc, out, err = self.run_cli("secrets", "autolock", "-", "--idle", "15m")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("after 15m unused, and with the screen", out)
+        with mock.patch.object(store, "screen_watcher", lambda on=True, runner=None: True):
+            rc, out, err = self.run_cli("secrets", "autolock", "-", "--screen", "off")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("not with the screen", out)
+        self.assertEqual(store.autolock(), {"idle": "15m", "screen": False})
+        rc, out, err = self.run_cli("secrets", "autolock", "-", "--idle", "soon")
+        self.assertEqual(rc, 1)
+        self.assertIn("a time like 30m", err)
+
+    def test_every_open_store_locks_with_the_screen_its_changes_kept(self):
+        self.init()
+        st = store.Store.for_fleet(self.f.path)
+        self.assertEqual(store.open_stores(), [self.tmp])
+        write(os.path.join(self.secrets, "new"), "written while open")          # saved before it locks
+        self.assertEqual(store.lock_all(), [self.tmp])
+        self.assertTrue(st.locked())
+        self.assertEqual(store.open_stores(), [])
+        st.unlock(store.keyring_get(st.store_id()))
+        self.assertEqual(util.read_text(os.path.join(self.secrets, "new")), "written while open")
+
+    def run_in(self, text, *args):
+        with mock.patch.object(sys, "stdin", io.StringIO(text)):
+            return self.run_cli(*args)
+
+    def test_an_extra_password_for_this_computers_key(self):
+        self.init()
+        sid = store.Store.for_fleet(self.f.path).store_id()
+        plain = store.keyring_get(sid)
+        rc, out, err = self.run_in("long enough 1\nnot the same\n", "secrets", "password", self.f.path, "--password-stdin")
+        self.assertEqual(rc, 1)
+        self.assertIn("were not the same", err)
+        self.assertEqual(store.keyring_get(sid), plain)                          # nothing changed
+        rc, out, err = self.run_in("long enough 1\nlong enough 1\n", "secrets", "password", self.f.path, "--password-stdin")
+        self.assertEqual(rc, 0, err)
+        held = store.keyring_get(sid)
+        self.assertTrue(store.is_wrapped(held))
+        self.assertNotIn(plain, held)                                             # the key is not in the keyring as it is
+        self.run_cli("secrets", "lock", self.f.path)
+        rc, out, err = self.run_in("", "secrets", "unlock", self.f.path)         # the keyring alone: not enough
+        self.assertEqual(rc, 1)
+        self.assertIn("has a password", err)
+        rc, out, err = self.run_in("wrong one!!\n", "secrets", "unlock", self.f.path, "--password-stdin")
+        self.assertEqual(rc, 1)
+        self.assertIn("does not open", err)
+        store.Store.password_given = None
+        rc, out, err = self.run_in("long enough 1\n", "secrets", "unlock", self.f.path, "--password-stdin")
+        self.assertEqual(rc, 0, err)
+        store.Store.password_given = None
+        self.assertEqual(store.keyring_key(sid), plain)                          # asked once per unlock: kept while open
+        rc, out, err = self.run_in("long enough 1\n", "secrets", "password", self.f.path, "--password-stdin", "--off")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(store.keyring_get(sid), plain)
+        self.assertEqual(store.unwrap(store.wrap("AGE-SECRET-KEY-1X", "eight chars"), "eight chars"), "AGE-SECRET-KEY-1X")
+        with self.assertRaisesRegex(KiwiError, "8 characters"):
+            store.wrap("k", "short")
+
+    def test_use_moves_the_lock_and_the_apps_looks_do_not(self):
+        self.init()
+        moved = []
+        with mock.patch.object(store, "schedule_lock", lambda st, fleet, after: moved.append(after) or True):
+            self.run_cli("list", self.f.path)
+            self.run_cli("list", self.f.path, "--porcelain")
+        self.assertEqual(moved, ["30m"])                                          # once: the person's, not the poll
+
+
+@unittest.skipUnless(have("age") and have("age-keygen"), "age not installed")
 class TestStore(StoreBase):
     def read_secret(self, *path):
         with open(os.path.join(self.secrets, *path)) as fh:

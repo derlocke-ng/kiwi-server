@@ -18,12 +18,36 @@ The store keeps `secrets/` encrypted when you are not using it.
 - `kiwi-server secrets init fleet.yaml` turns it into `secrets.age`, puts one
   key in the GNOME Keyring and shows you a recovery key once: save that one
   somewhere safe.
-- `secrets unlock` opens it into memory for 8 hours (`--for`, `--identity
-  FILE` for the recovery key); `secrets lock` closes it.
+- `secrets unlock` opens it into memory (`--identity FILE` for the recovery
+  key); `secrets lock` closes it.
 - A command run while it is locked refuses and says so.
 - It needs `age` (`brew install age`); `age` and `tar` alone can open it by
   hand.
 - While it is open, anything running as you can read it.
+
+### It locks by itself
+
+So that a computer left unlocked gives away as little as possible:
+
+- **After a while unused**: 30 minutes after your last command or action in
+  the app (the app's own looks do not count).
+- **With the screen**: when your screen locks, every open store locks too,
+  what changed in it saved first. Nothing opens again by itself.
+- **With a password, if you want one**: the keyring opens with your login,
+  so anyone at your unlocked session could open the store. With a password
+  this computer's key opens it only together with that password, asked once
+  per unlock (the app asks too).
+
+```bash
+kiwi-server secrets autolock ~/kiwi/fleet.yaml --idle 15m      # or 1h, 8h, 0 for never
+kiwi-server secrets autolock ~/kiwi/fleet.yaml --screen off
+kiwi-server secrets password ~/kiwi/fleet.yaml                 # set or change; --off removes it
+```
+
+The first two are this computer's choice for every network on it. A
+forgotten password: the recovery key still opens the store, or remove this
+computer and join again. None of it helps against something already running
+as you when you unlock next.
 
 ### The same fleet on another computer
 

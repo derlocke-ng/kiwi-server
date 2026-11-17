@@ -15,7 +15,10 @@ kiwi-server enroll fleet.yaml fritzbox --group routers        # for a router —
 kiwi-server enroll fleet.yaml sh3 --existing          # the config of a client that exists, again
 ```
 
-- `--group` moves the client into that group's range (`vpn-server.groups`).
+- `--group` moves the client into that group's range (`vpn-server.groups`). Without it a new
+  device goes into `family`, or the first group without the admin pages: a device outside every
+  group reaches everything, admin pages included. The control page and the app preselect the
+  same group.
   By default: 10.8.1.0/24 guests, 10.8.2.0/24 pentest, 10.8.3.0/24 devices,
   10.8.4.0/24 routers. The master's firewall rules go by these.
 - `--address` sets one by hand.

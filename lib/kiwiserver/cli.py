@@ -936,12 +936,14 @@ def cmd_list(args):
                      "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
     if args.porcelain:
-        groups = {}         # the master's client groups: where a new device may go
+        groups, default_group = {}, None     # the master's client groups: where a new device may go
         for h in fleet.hosts.values():
             if h.role in roles and roles[h.role].node_type == "master" and not groups:
-                groups = {g: (v or {}).get("subnet") for g, v in
-                          (((h.module_settings or {}).get("vpn-server") or {}).get("groups") or {}).items()}
+                full = ((h.module_settings or {}).get("vpn-server") or {}).get("groups") or {}
+                groups = {g: (v or {}).get("subnet") for g, v in full.items()}
+                default_group = accessmod.default_group(full)
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
+                          "default_group": default_group,
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
@@ -2564,6 +2566,10 @@ def cmd_enroll(args):
     groups = vs.get("groups") or {}
     if args.group and args.group not in groups:
         raise KiwiError("no client group %r on %s (have: %s)" % (args.group, master.name, ", ".join(groups) or "none"))
+    if host is None and not args.group and not args.address and not args.existing and accessmod.default_group(groups):
+        # a new device: in a group without the admin pages, unless one is chosen
+        args.group = accessmod.default_group(groups)
+        util.say("%s: group %s (the default for a new device; --group chooses another)" % (name, args.group))
     mesh = (master.role_settings or {}).get("mesh_subnet") or "10.8.0.0/16"
     wg_mtu = int(vs.get("wg_mtu") or 1420)
     if args.mtu and not 1280 <= args.mtu <= wg_mtu:     # said before the master is touched

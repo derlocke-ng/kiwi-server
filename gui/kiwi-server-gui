@@ -2990,8 +2990,10 @@ class DeviceDialog(Adw.Dialog):
         if self.groups:
             self.group = Adw.ComboRow(title="Who is it for?", subtitle="The group decides what it may reach",
                                       model=Gtk.StringList.new(self.groups))
-            if "devices" in self.groups:
-                self.group.set_selected(self.groups.index("devices"))
+            # a group without the admin pages, unless someone chooses another (kiwiserver.access.default_group)
+            pick = win.fleet_info.get("default_group")
+            if pick in self.groups:
+                self.group.set_selected(self.groups.index(pick))
             g.add(self.group)
         box.append(g)
         self.note = Gtk.Label(wrap=True, xalign=0, visible=False, css_classes=["error"])

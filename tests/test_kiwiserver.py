@@ -3181,6 +3181,11 @@ class TestAccess(Base):
         self.assertEqual(accessmod.admin_ranges(groups), ["10.8.5.0/24", "10.8.7.0/24"])
         self.assertEqual(accessmod.admin_ranges({"devices": groups["devices"]}), [])
         self.assertEqual(accessmod.admin_ranges(None), [])
+        # a new device lands in a group without the admin pages: family, or the first such group
+        self.assertEqual(accessmod.default_group(groups), "family")
+        self.assertEqual(accessmod.default_group({"devices": groups["devices"], "ops": groups["ops"]}), "ops")
+        self.assertIsNone(accessmod.default_group({"devices": groups["devices"]}))
+        self.assertIsNone(accessmod.default_group(None))
 
     def test_a_linked_network_opens_an_admin_page_only_by_name(self):
         found = fedmod.with_addresses({
@@ -8223,7 +8228,8 @@ class TestWeb(StoreBase):
         self.assertIn('value="start-new"', body)
         self.assertIn('value="prune"', body)
         self.assertIn("50 GB free", body)
-        self.assertIn('<option value="devices" selected>', self.ask("/devices")[1])
+        # a group with the admin pages is never preselected for a new device (here it is the only one)
+        self.assertIn('<option value="devices" >', self.ask("/devices")[1])
 
     def test_the_frame_the_numbers_and_the_picture(self):
         from kiwiserver import web

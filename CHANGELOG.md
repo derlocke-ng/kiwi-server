@@ -9,6 +9,10 @@ With kiwi-modules 0.67.0. The first step of encryption by default (docs/design/e
   Vaultwarden's `/admin` and ejabberd's `/admin` on the test network. Such a location is now
   refused to every group without the admin switch, on nodes and masters; Vaultwarden's `/admin`
   answers the VPN only. The drill tries these areas too (`tests/drills/access.py`).
+- **A new device lands in a group without the admin pages** (`family`, or the first such group),
+  on the control page, in the app and with `kiwi-server enroll`, unless another is chosen. Before,
+  the page preselected `devices`, which has them, and `enroll` without `--group` put a device
+  outside every group, where it reaches everything.
 
 - **The starter stick installs encrypted.** There is no ring before there is a network, so the
   machine's TPM 2.0 opens the disk until a network takes the machine in. Then `apply` adds the

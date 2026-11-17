@@ -16,7 +16,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import health as healthmod, recovery as recoverymod, riseup, starter as startermod
+from . import health as healthmod, recovery as recoverymod, starter as startermod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -280,7 +280,6 @@ class Renderer:
 
     def prepare(self, host):
         role = self.roles[host.role]
-        riseup.settle(host)        # Riseup as its exit: a certificate fetched or renewed, a custom OpenVPN config
         rolesmod.resolve_settings(role, host, self.ms)
         p = tls_problem(host)
         if p:

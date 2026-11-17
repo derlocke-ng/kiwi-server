@@ -31,7 +31,8 @@ from .util import KiwiError
 
 HOST = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 FLEET_FILES = ("fleet.yaml", "federation.yaml")     # at rest on the node: <name>.age
-SESSION_HOURS = 12
+SESSION_HOURS = 12             # a login lasts this long at most
+SESSION_IDLE_MINUTES = 30      # and ends this long after its last use (the page's own looks do not count)
 MIN_PASSWORD = 12
 MEDIA_ROOM = 1000 * 1024 * 1024     # what one machine's install media may take
 # what a page may start: the command and whether it takes hosts
@@ -729,25 +730,51 @@ class Control:
         self._identity = identity
         self.audit("admin", "login", address=address)
         threading.Thread(target=self.arm_auto, daemon=True).start()     # the ring, if one is named
-        expires = int(now + SESSION_HOURS * 3600)
-        body = "admin|%d" % expires
+        return self._token("admin", int(now))
+
+    def _token(self, user, issued):
+        """user|issued|expires|mac: it ends SESSION_IDLE_MINUTES after its last use, and
+        SESSION_HOURS after the login whatever happens."""
+        expires = min(int(self.clock()) + SESSION_IDLE_MINUTES * 60, issued + SESSION_HOURS * 3600)
+        body = "%s|%d|%d" % (user, issued, expires)
         return "%s|%s" % (body, hmac.new(self._session_key, body.encode(), hashlib.sha256).hexdigest())
+
+    def _parts(self, token):
+        """(user, issued, expires) of a token whose mark is ours, else None."""
+        parts = (token or "").split("|")
+        if len(parts) == 4:
+            user, issued, expires, mac = parts
+        elif len(parts) == 3:               # one made before 2.174.0: no idle end
+            (user, expires, mac), issued = parts, None
+        else:
+            return None
+        body = "|".join(parts[:-1])
+        good = hmac.new(self._session_key, body.encode(), hashlib.sha256).hexdigest()
+        try:
+            return (user, int(issued) if issued is not None else None, int(expires)) if hmac.compare_digest(good, mac) else None
+        except ValueError:
+            return None
 
     def session(self, token):
         """The user a token belongs to, or None. A locked store has no sessions: the password opens it."""
-        try:
-            user, expires, mac = (token or "").split("|")
-        except ValueError:
+        got = self._parts(token)
+        if not got or got[2] < self.clock() or self.locked():
             return None
-        body = "%s|%s" % (user, expires)
-        good = hmac.new(self._session_key, body.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(good, mac) or int(expires) < self.clock() or self.locked():
+        return got[0]
+
+    def refresh(self, token):
+        """The token of a session that was just used, its idle end moved on; None when it has none."""
+        got = self._parts(token)
+        if not got or got[1] is None or got[2] < self.clock() or self.locked():
             return None
-        return user
+        return self._token(got[0], got[1])
 
     def csrf(self, token):
-        """What a form of this session carries, so that only a page of ours can post for it."""
-        return hmac.new(self._session_key, ("csrf|%s" % (token or "")).encode(), hashlib.sha256).hexdigest()
+        """What a form of this session carries, so that only a page of ours can post for it: of the
+        login (who and when), so a form stays good while the token's idle end moves on."""
+        got = self._parts(token)
+        stable = "%s|%s" % (got[0], got[1]) if got and got[1] is not None else (token or "")
+        return hmac.new(self._session_key, ("csrf|%s" % stable).encode(), hashlib.sha256).hexdigest()
 
     def lock_store(self, user="admin"):
         with self.lock:                       # after the running job

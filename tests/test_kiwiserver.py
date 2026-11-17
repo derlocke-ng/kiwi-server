@@ -7882,6 +7882,23 @@ class TestControl(StoreBase):
         self.assertTrue(c.locked())
         self.assertIsNone(c.session(token))                                   # a locked fleet has no sessions
         token = c.login(self.PW, "10.9.3.2")
+        csrf = c.csrf(token)
+        now[0] += 20 * 60
+        used = c.refresh(token)                                               # used after 20 minutes
+        self.assertEqual(c.session(used), "admin")
+        self.assertEqual(c.csrf(used), csrf)                                  # a form already on the page stays good
+        now[0] += 25 * 60
+        self.assertIsNone(c.session(token))                                   # the old one: 30 minutes unused
+        self.assertEqual(c.session(used), "admin")                            # the used one: 25 minutes since its use
+        now[0] += 31 * 60
+        self.assertIsNone(c.session(used))                                    # nothing for 31 minutes: over
+        self.assertIsNone(c.refresh(used))
+        token = c.login(self.PW, "10.9.3.2")
+        for _ in range(26):                                                   # used every 29 minutes for 12½ hours
+            now[0] += 29 * 60
+            token = c.refresh(token) or token
+        self.assertIsNone(c.session(token))                                   # 12 hours after the login: over whatever
+        token = c.login(self.PW, "10.9.3.2")
         now[0] += 13 * 3600
         self.assertIsNone(c.session(token))                                   # expired
         for _ in range(5):

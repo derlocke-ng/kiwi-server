@@ -55,5 +55,8 @@ share the load are two networks with a federation link.
    Built in 2.164.0.
 2. A drill: master off, nodes on the standby; master back, nodes back
    (`tests/drills/standby.py`; first run on kiwi2: crumble, crumble-b on sh3, damson).
-3. The control node and the page: the standby in the machine list, its state.
-4. Phones and laptops: a dynamic DNS name the control node points at the standby.
+3. The control node and the page: the standby in the machine list, its state. Built in 2.166.0
+   (list, the page, the app's Network rows say "standby").
+4. Phones and laptops: a dynamic DNS name the control node points at the standby. Built in
+   2.166.0 (`ddns.py`, `secrets/ddns.url`): proven by tests; a live test waits for a provider
+   account.

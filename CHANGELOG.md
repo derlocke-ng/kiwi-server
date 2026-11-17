@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.166.0 — phones follow the master to its standby
+
+- **Phones and laptops are sent to the standby** (docs/design/standby.md, step 4): when the
+  master's address is a name at a dynamic DNS provider and `secrets/ddns.url` holds the
+  provider's update address, the control node points the name at the standby once the master
+  is gone for its `recovery.master.after` minutes, and back when it answers again. The
+  provider's token never appears in a message.
+- **A standby shows as one** (step 3): `list` says "standby" and whose, `list --porcelain`
+  has `standby_of`, the page says "Standby of crumble", the app lists it under the master.
+- Getting started: `init` asks the way to the Internet too (Riseup suggested), and says every
+  disk is encrypted.
+
 ## 2.165.0 — the master's VPN server always starts again
 
 - **A container others live in starts again also when something was left in its network**

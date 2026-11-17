@@ -86,8 +86,9 @@ kiwi-server next ~/kiwi/fleet.yaml   # does the next step and says what it did; 
 
 `init` first says what you need: a master (the one machine reachable from
 the Internet, usually a small rented server), a machine at home for your
-files, a USB stick. Then it asks three things: where the master runs, its
-address on the Internet, and what the machine at home does. "No master yet"
+files, a USB stick. Then it asks four things: where the master runs, its
+address on the Internet, how your devices reach the Internet, and what the
+machine at home does. "No master yet"
 is an answer too: the machines at home then answer at their own addresses,
 at home only, and the first one answers for their names. A master can come
 later ([A network without a master](design/no-master.md)). Everything else
@@ -97,6 +98,10 @@ it finds on this computer or decides for you:
 - the address of a machine at home is one that does not answer right now, so
   it looks free;
 - the install disk is `auto`: the installer takes the machine's one disk;
+- the way to the Internet it suggests is Riseup, free and without an account
+  (a VPN provider of yours and the master's own connection are the other
+  answers: [The way to the Internet](network.md#the-way-to-the-internet));
+- every machine's disk is encrypted;
 - the keys are made and encrypted, and the recovery key is shown once.
 
 A wrong answer is asked again with a sentence that says what is wrong.

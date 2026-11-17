@@ -4093,6 +4093,15 @@ class TestStandby(Base):
         self.assertFalse(backup.keep_wireguard(b, None, runner=lambda *a, **k: self.fail("a standby's peers are not kept")))
         self.assertTrue(cli.has_master(f, self.roles))
 
+    def test_list_says_it_is_a_standby(self):
+        f = self.fleet_with_standby()
+        rc, out, err = TestManage.run_cli(self, "list", f.path, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        rows = {r["name"]: r for r in json.loads(out)["hosts"]}
+        self.assertEqual((rows["gate-b"]["standby_of"], rows["gate"]["standby_of"]), ("gate", ""))
+        rc, out, err = TestManage.run_cli(self, "list", f.path)
+        self.assertIn("gate's standby: the same master on its own machine", out)
+
     def test_its_masters_nodes_know_where_it_is(self):
         f = self.fleet_with_standby()
         r = cli.Renderer(f, self.roles, self.tmp, None, self.ms)
@@ -4100,6 +4109,47 @@ class TestStandby(Base):
         bare = self.fleet({"defaults": self.base_defaults(), "hosts": {
             "gate": {"role": "master", "target": "debian", "master": self.master()}}})
         self.assertEqual(cli.Renderer(bare, self.roles, self.tmp, None, self.ms).standby_endpoints(), [])
+
+    def test_the_devices_are_sent_to_the_standby_and_back(self):
+        from kiwiserver import watchdog
+        f = self.fleet_with_standby()
+        calls, state = [], {}
+
+        def point(address):
+            calls.append(address)
+            return "198.51.100.9"               # where the name pointed before
+        kinds = {"gate": "master", "gate-b": "node", "store": "node"}
+        watchdog.step(f, kinds, {"gate": False}, state, 0, restart=lambda n: None, point=point)
+        self.assertEqual(calls, [])                                                   # not yet: it waits its minutes
+        events = watchdog.step(f, kinds, {"gate": False}, state, 16 * 60, restart=lambda n: None, point=point)
+        self.assertEqual(calls, ["192.168.7.70"])
+        self.assertIn("its devices are sent to its standby gate-b", " ".join(e["text"] for e in events))
+        watchdog.step(f, kinds, {"gate": False}, state, 30 * 60, restart=lambda n: None, point=point)
+        self.assertEqual(calls, ["192.168.7.70"])                                     # once
+        events = watchdog.step(f, kinds, {"gate": True}, state, 40 * 60, restart=lambda n: None, point=point)
+        self.assertEqual(calls, ["192.168.7.70", "198.51.100.9"])                    # back where it was
+        self.assertEqual(state["pointed"], {})
+        self.assertIn("its devices are sent back to it", " ".join(e["text"] for e in events))
+
+    def test_the_name_is_changed_at_the_provider_without_showing_its_token(self):
+        from kiwiserver import ddns
+        f = self.fleet_with_standby()
+        write(f.resolve_path(ddns.FILE), "https://user:s3cret@ddns.example/update?hostname={name}&myip={address}\n")
+        seen = []
+
+        def opener(url):
+            seen.append(url)
+            return 200, "good 192.168.7.70"
+        self.assertEqual(ddns.point(f, "vpn.example.org", "192.168.7.70", opener, resolve=lambda n: "198.51.100.9"), "198.51.100.9")
+        self.assertEqual(seen, ["https://user:s3cret@ddns.example/update?hostname=vpn.example.org&myip=192.168.7.70"])
+        with self.assertRaises(KiwiError) as e:
+            ddns.point(f, "vpn.example.org", "1.2.3.4", lambda url: (200, "badauth"), resolve=lambda n: "")
+        self.assertNotIn("s3cret", str(e.exception))
+        write(f.resolve_path(ddns.FILE), "http://ddns.example/u?ip={address}\n")
+        with self.assertRaisesRegex(KiwiError, "must be https"):
+            ddns.point(f, "vpn.example.org", "1.2.3.4", opener)
+        self.assertTrue(ddns.is_name("vpn.example.org"))
+        self.assertFalse(ddns.is_name("188.68.38.110"))
 
     def test_a_standby_of_another_name_is_refused(self):
         with self.assertRaises(KiwiError):
@@ -8343,7 +8393,9 @@ class TestWeb(StoreBase):
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"groups": {"devices": "10.9.3.0/24"}, "hosts": [
             {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "backup"],
              "sites": ["cloud.papaya.home", "vault.papaya.home"], "vpn_ip": "10.9.0.2", "next": ""},
-            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "modules": [], "sites": [], "next": "apply it"}]}))
+            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "modules": [], "sites": [], "next": "apply it"},
+            {"name": "sorbet-b", "hostname": "sorbet.home", "role": "master", "standby_of": "sorbet", "modules": [], "sites": [],
+             "next": ""}]}))
         util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
             {"host": "papaya", "state": "warn", "output": "raw words", "notes": ["disk 14%"],
              "problems": [{"level": "warn", "text": "an update is waiting for a reboot"}],
@@ -8360,6 +8412,7 @@ class TestWeb(StoreBase):
         self.assertIn("Files (Nextcloud)", there)
         self.assertIn('href="https://vault.papaya.home"', there)
         self.assertIn("<a href=\"/hosts/papaya\">papaya</a>", there)
+        self.assertIn("Standby of sorbet", self.ask("/machines")[1])            # not a second master
         code, body = self.ask("/hosts/papaya")
         self.assertIn("Home server (node)", body)
         self.assertIn("Changes nothing.", body)                                   # each button says what it does

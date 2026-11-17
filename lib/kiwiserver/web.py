@@ -174,7 +174,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 {% else %}<main>{{ self.main() }}</main>{% endif %}</body></html>"""
 
 STEP = """{% macro step(m, tok) %}<div class="card"><div class="row"><strong>{{ m.name }}</strong>
-<span class="muted">{{ kind(m.role) }}</span></div>
+<span class="muted">{{ kind(m.role, m.standby_of) }}</span></div>
 {% if m.phase == "invalid" %}<p class="bad">Its settings are not complete: {{ m.next }}</p>
 <div class="actions"><a class="btn primary" href="/hosts/{{ m.name }}/settings">Open its settings</a></div>
 {% elif m.phase == "bare" %}<p>It has no job yet. <span class="muted">Give it one in its settings, under Role.</span></p>
@@ -472,7 +472,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 <form class="inline" method="post" action="/refresh">{{ tok }}<input type="hidden" name="back" value="/machines"><button>Check now</button></form></div>
 <div class="machines">{% for m in machines %}<a class="mach" href="/hosts/{{ m.name }}"><div class="row">
 <b><span class="dot {{ m.state }}{{ " busy" if looking }}"></span>{{ m.name }}</b><span class="state {{ m.state }}">{{ words(m.state) }}</span></div>
-<span class="cap">{{ kind(m.role) }}{% for t in m.tags %} · {{ t }}{% endfor %}</span>
+<span class="cap">{{ kind(m.role, m.standby_of) }}{% for t in m.tags %} · {{ t }}{% endfor %}</span>
 {% for b in m.bars %}<div class="meter" title="{{ b.more }}"><span>{{ b.label }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span><span>{{ b.pct }} %</span></div>{% endfor %}
 {% if m.chips %}<div class="chips">{% for c in m.chips[:3] %}<span class="chip">{{ c }}</span>{% endfor %}{% if m.chips|length > 3 %}<span class="chip">+{{ m.chips|length - 3 }}</span>{% endif %}</div>{% endif %}</a>
 {% endfor %}</div>{% if not machines %}<p class="muted">No machines yet.</p>{% endif %}
@@ -480,7 +480,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 <p class="muted" style="margin:0 0 8px">The ticked machines, one after the other. A machine that fails does not stop the
 others; each one's History says how it went.</p>
 {% for m in running %}<label class="check"><input type="checkbox" name="host" value="{{ m.name }}"><span>{{ m.name }}
-<span class="muted small">{{ kind(m.role) }}</span></span></label>{% endfor %}
+<span class="muted small">{{ kind(m.role, m.standby_of) }}</span></span></label>{% endfor %}
 <div class="actions"><button name="action" value="status">Check them</button><button name="action" value="plan">Preview</button>
 <button class="primary" name="action" value="apply" onclick="return confirm('Apply to the ticked machines now? Services that changed restart for a moment.')">Apply</button></div>
 </form></details>{% endif %}
@@ -590,7 +590,7 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
     "host.html": """{% extends "base.html" %}{% block main %}
 <p><a href="/">← Home</a></p>
 <h1><span class="dot {{ m.state }}"></span>{{ m.name }} <span class="state {{ m.state }}" style="font-size:1rem">{{ words(m.state) }}</span></h1>
-<p class="muted">{{ kind(m.role) }}{% for t in m.tags %} · {{ t }}{% endfor %} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}</p>
+<p class="muted">{{ kind(m.role, m.standby_of) }}{% for t in m.tags %} · {{ t }}{% endfor %} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}</p>
 {% if chips %}<div class="chips">{% for c in chips %}<span class="chip {{ c.level }}">{{ c.text }}</span>{% endfor %}</div>{% endif %}
 <nav class="tabs">{% for t, label in (("overview", "Overview"), ("services", "Services"), ("history", "History"), ("backups", "Backups")) %}
 <a href="/hosts/{{ m.name }}{{ '' if t == 'overview' else '?tab=' ~ t }}" class="{{ 'on' if tab == t }}">{{ label }}</a>{% endfor %}
@@ -1575,7 +1575,7 @@ def make_app(control: Control):
     env.globals.update(brand_name=os.environ.get("KIWI_BRAND", ""), brand_accent=re.sub(r"[^#0-9a-fA-F]", "", os.environ.get("KIWI_ACCENT", ""))[:7],
                        about_text=os.environ.get("KIWI_ABOUT", ""), contact=os.environ.get("KIWI_CONTACT", ""))
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
-                       kind=lambda r: KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
+                       kind=lambda r, standby_of="": ("Standby of %s" % standby_of) if standby_of else KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
                        to_text=formmod.to_text, icon=icon, size=size, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -1636,7 +1636,7 @@ def make_app(control: Control):
         out = []
         for h in info.get("hosts") or []:
             s = said.get(h["name"])
-            out.append({"name": h["name"], "hostname": h["hostname"], "role": h["role"], "modules": h.get("modules") or [],
+            out.append({"name": h["name"], "hostname": h["hostname"], "role": h["role"], "standby_of": h.get("standby_of") or "", "modules": h.get("modules") or [],
                         "sites": h.get("sites") or [], "vpn_ip": h.get("vpn_ip") or "", "next": h.get("next") or "",
                         "phase": h.get("phase") or "", "provider": h.get("provider") or "", "address": h.get("address") or "",
                         "here": bool(h.get("here")),
@@ -1651,7 +1651,7 @@ def make_app(control: Control):
             m["chips"] = [SERVICES.get(x.split(".", 1)[0], x.split(".", 1)[0].capitalize()) for x in m["sites"]]
         for name, s in said.items():            # a look at a machine the fleet file no longer names
             if name not in [m["name"] for m in out]:
-                out.append({"name": name, "hostname": name, "role": "", "modules": [], "sites": [], "vpn_ip": "",
+                out.append({"name": name, "hostname": name, "role": "", "standby_of": "", "modules": [], "sites": [], "vpn_ip": "",
                             "next": "", "phase": "", "provider": "", "address": "", "media": 0, "on_done": "", "master_ready": True, "here": False, "known": True, "bars": bars(s.get("facts") or {}), "tags": [], "chips": [], "state": s.get("state") or "unknown",
                             "problems": s.get("problems") or [], "notes": s.get("notes") or [],
                             "facts": s.get("facts") or {}, "output": s.get("output") or ""})

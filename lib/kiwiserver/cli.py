@@ -958,7 +958,7 @@ def cmd_list(args):
         mesh_ip = (h.role_settings or {}).get("vpn_ip") or (
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         nxt = next_step(fleet, roles, h, errs, o)
-        rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
+        rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
@@ -990,7 +990,9 @@ def cmd_list(args):
         s = r["status"]
         have = [k for k in ("script", "stack", "config", "ignition", "iso") if s.get(k)]
         state = "INVALID" if r["phase"] == "invalid" else (", ".join(have) if have else "-")
-        print(fmt % (r["name"], r["hostname"], r["target"], r["role"], r["address"] or "", state))
+        print(fmt % (r["name"], r["hostname"], r["target"], "standby" if r["standby_of"] else r["role"], r["address"] or "", state))
+        if r["standby_of"]:
+            print("    %s's standby: the same master on its own machine (docs/design/standby.md)" % r["standby_of"])
         for e in r["errors"]:
             if r["phase"] == "invalid":
                 print("    error: %s" % e)
@@ -1533,7 +1535,7 @@ def cmd_recover(args):
     fleet, roles, ms = load(args)
     state = fleet_state(fleet)
     applied = state.get("applied") or {}
-    kinds = {h.name: ("master" if h.role in roles and roles[h.role].node_type == "master" else "node")
+    kinds = {h.name: ("master" if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of else "node")
              for h in fleet.hosts.values() if h.name in applied}
     if args.status:
         with open(args.status) as fh:
@@ -1569,7 +1571,17 @@ def cmd_recover(args):
         rc = main(["vps", "restart", args.fleet, name] + (["--api", args.api] if args.api else []))
         if rc:
             raise KiwiError("the provider did not do it")
-    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it)
+    from . import ddns
+    master = next((h for h in fleet.hosts.values() if kinds.get(h.name) == "master"), None)
+    wg_host = (master.role_settings_raw.get("vpn-server") or {}).get("wg_host") if master else ""
+
+    def point(address):
+        if args.dry_run:
+            return ""
+        return ddns.point(fleet, wg_host, address)
+    can_point = bool(master and fleet.standbys(master.name) and ddns.is_name(wg_host) and ddns.template(fleet))
+    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
+                           point if can_point else None)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)

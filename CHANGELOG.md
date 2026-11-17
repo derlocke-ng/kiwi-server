@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.173.0 — the app sets how it locks
+
+- **The app's Locking…** (in its menu): after how long unused the secrets lock (15 minutes,
+  30, an hour, 8 hours or never), whether with the screen, and a password for this computer's
+  key (set, change, remove). Clicked through in the app: 15 minutes taken, a password set, the
+  store locked and opened again with it. `secrets status --porcelain` says both.
+
 ## 2.172.0 — the store locks by itself
 
 - **After a while unused**: 30 minutes after the last command or action in the app (its own

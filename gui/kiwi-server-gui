@@ -1775,6 +1775,92 @@ class AccountsDialog(Adw.Dialog):
         d.present(self)
 
 
+class LockDialog(Adw.Dialog):
+    """When this computer locks the network's secrets by itself, and whether its key wants a
+    password too (`kiwi-server secrets autolock`, `secrets password`; docs/security.md)."""
+    IDLE = [("15m", "15 minutes"), ("30m", "30 minutes"), ("1h", "1 hour"), ("8h", "8 hours"), ("0", "Never")]
+
+    def __init__(self, win):
+        super().__init__(title="Locking", content_width=520, content_height=440)
+        self.win = win
+        st = dict(win.store or {})
+        auto = st.get("autolock") or {"idle": "30m", "screen": True}
+        page = Adw.PreferencesPage()
+        tb = Adw.ToolbarView(content=page)
+        tb.add_top_bar(Adw.HeaderBar())
+        self.set_child(tb)
+        g = Adw.PreferencesGroup(title="It locks by itself",
+                                 description="So that a computer left unlocked gives away as little as possible. "
+                                             "This computer's choice, for every network on it.")
+        self.idle = Adw.ComboRow(title="When unused for", model=Gtk.StringList.new([t for _v, t in self.IDLE]))
+        values = [v for v, _t in self.IDLE]
+        self.idle.set_selected(values.index(str(auto.get("idle"))) if str(auto.get("idle")) in values else 1)
+        self.idle.connect("notify::selected", lambda *_: self.set_auto(["--idle", values[self.idle.get_selected()]]))
+        g.add(self.idle)
+        self.screen = Adw.SwitchRow(title="When the screen locks", active=bool(auto.get("screen", True)))
+        self.screen.connect("notify::active", lambda *_: self.set_auto(["--screen", "on" if self.screen.get_active() else "off"]))
+        g.add(self.screen)
+        page.add(g)
+        p = Adw.PreferencesGroup(title="A password for this computer",
+                                 description="The keyring opens with your login, so anyone at your unlocked computer could "
+                                             "open the network's secrets. With a password they open only together with it, "
+                                             "asked once per unlock. Forgotten: the recovery key still opens them.")
+        if st.get("password"):
+            p.add(plain_row("set", "this computer's key opens only with its password"))
+            change = Adw.ButtonRow(title="Change the password…")
+            change.connect("activated", lambda *_: self.password(change=True))
+            p.add(change)
+            off = Adw.ButtonRow(title="Remove the password")
+            off.connect("activated", lambda *_: self.password(off=True))
+            p.add(off)
+        else:
+            on = Adw.ButtonRow(title="Set a password…")
+            on.connect("activated", lambda *_: self.password())
+            p.add(on)
+        page.add(p)
+
+    def set_auto(self, args):
+        path = self.win.doc.path
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["secrets", "autolock", path] + args)
+            GLib.idle_add(lambda: (self.win.toast(((err or out).strip().replace("error: ", "").splitlines() or [""])[-1][:160]),
+                                   self.win.poll(), False)[-1])
+        threading.Thread(target=work, daemon=True).start()
+
+    def password(self, change=False, off=False):
+        dlg = Adw.AlertDialog(heading="Remove the password" if off else "A password for this computer",
+                              body="Its current password first." if off else
+                              "8 characters or more. Asked once each time the secrets open.")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        entries = []
+        for label in (["Current password"] if (change or off) else []) + ([] if off else ["New password", "The same again"]):
+            e = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text=label)
+            entries.append(e)
+            box.append(e)
+        dlg.set_extra_child(box)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("ok", "Remove" if off else "Set")
+        dlg.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE if off else Adw.ResponseAppearance.SUGGESTED)
+        path = self.win.doc.path
+
+        def answer(_d, r):
+            if r != "ok":
+                return
+            lines = "".join(e.get_text() + "\n" for e in entries)
+            for e in entries:
+                e.set_text("")
+            args = ["secrets", "password", path, "--password-stdin"] + (["--off"] if off else [])
+
+            def work():
+                rc, out, err = run_cli(self.win.cli, args, input=lines)
+                said = ((err or out).strip().replace("error: ", "").replace(":: ", "").splitlines() or [""])[-1]
+                GLib.idle_add(lambda: (self.win.toast(said[:160]), self.win.poll(), self.close() if rc == 0 else None, False)[-1])
+            threading.Thread(target=work, daemon=True).start()
+        dlg.connect("response", answer)
+        dlg.present(self)
+
+
 class SshCaDialog(Adw.Dialog):
     """The fleet's SSH CA: made once, then machines carry host certificates and keys can be
     let in for a while."""
@@ -3407,6 +3493,7 @@ class Window(Adw.ApplicationWindow):
                          ("activity", lambda: self.doc.path and ActivityDialog(self).present(self)),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
+                         ("locking", lambda: self.doc.path and LockDialog(self).present(self)),
                          ("rotate", self.rotate_dialog), ("connect", self.connect_dialog),
                          ("recovery", lambda: self.doc.path and RecoveryDialog(self).present(self)),
                          ("rebuild-host", lambda: self.is_host() and RebuildDialog(self, self.current_scope).present(self))):
@@ -3449,6 +3536,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Activity…", "win.activity")
         section.append("Federation…", "win.federation")
         section.append("SSH certificates…", "win.sshca")
+        section.append("Locking…", "win.locking")
         menu.append_section(None, section)
         section = Gio.Menu()
         section.append("Doctor — are the build tools here?", "app.doctor")

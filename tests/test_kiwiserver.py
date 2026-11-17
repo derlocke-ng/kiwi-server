@@ -5977,6 +5977,8 @@ class TestAutolock(StoreBase):
         self.assertEqual(rc, 0, err)
         store.Store.password_given = None
         self.assertEqual(store.keyring_key(sid), plain)                          # asked once per unlock: kept while open
+        said = json.loads(self.run_cli("secrets", "status", self.f.path, "--porcelain")[1])
+        self.assertEqual((said["password"], said["autolock"]["idle"]), (True, "30m"))       # what the app's Locking shows
         rc, out, err = self.run_in("long enough 1\n", "secrets", "password", self.f.path, "--password-stdin", "--off")
         self.assertEqual(rc, 0, err)
         self.assertEqual(store.keyring_get(sid), plain)
@@ -6184,7 +6186,10 @@ class TestStore(StoreBase):
         self.assertEqual(rc, 0, err)
         self.assertIn("open; opens with: desktop, recovery", out)
         rc, out, err = self.run_cli("secrets", "status", self.f.path, "--porcelain")
-        self.assertEqual(json.loads(out), {"store": True, "open": True, "locks_at": None, "opens_with": ["desktop", "recovery"]})
+        said = json.loads(out)
+        self.assertEqual({k: said[k] for k in ("store", "open", "locks_at", "opens_with", "password")},
+                         {"store": True, "open": True, "locks_at": None, "opens_with": ["desktop", "recovery"], "password": False})
+        self.assertIn("idle", said["autolock"])
         self.run_cli("secrets", "lock", self.f.path)
         rc, out, err = self.run_cli("secrets", "status", self.f.path)
         self.assertIn("locked", out)

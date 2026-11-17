@@ -44,7 +44,8 @@ kiwi-server secrets autolock ~/kiwi/fleet.yaml --screen off
 kiwi-server secrets password ~/kiwi/fleet.yaml                 # set or change; --off removes it
 ```
 
-The first two are this computer's choice for every network on it. A
+In the app: the menu, **Locking…** (the same three). The first two are this
+computer's choice for every network on it. A
 forgotten password: the recovery key still opens the store, or remove this
 computer and join again. None of it helps against something already running
 as you when you unlock next.

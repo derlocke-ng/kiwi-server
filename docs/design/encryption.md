@@ -100,7 +100,8 @@ not answer yet at an apply are bound at a later one; until then the disk opens w
 Tried in a local VM (`tests/drills/master-encrypt-vm.sh`).
 
 **Then:** a ring for the first machine too (the master's, answering only the home's address),
-and Debian machines at home.
+and Debian machines at home. Both built: the ring `away` below; a Debian machine at home binds
+rings as a CoreOS one does (damson on kiwi2, 17 November 2026).
 
 **The ring `away` (2.169.0).** The first run gives the master the tang module with the ring
 `away` (port 7501) when there is a first machine at home; that machine binds it. On the master

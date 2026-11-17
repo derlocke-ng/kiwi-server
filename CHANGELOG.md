@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.170.0 — a network's copies are signed
+
+- **A copy carries a signature from a key the recovery key gives** (`secrets/copy-auth.key`,
+  made with a new store). `restore` (and the control page's) checks it with the recovery key
+  and refuses a copy that is not the network's own: someone who can replace a copy on a machine
+  could otherwise hand back another network, encrypted for the same public keys. A copy without
+  a signature is refused too, unless `--unsigned` (an older copy of one's own).
+- A network made before: `kiwi-server secrets copy-key FLEET --identity RECOVERY-KEY-FILE`
+  once, and its copies are signed from then on.
+- tests/drills/ram-master-power.py finds a master that booted from its image on port 22
+  (17 November 2026: role back 219 s after power on, the ring `away` with the same keys).
+
 ## 2.169.0 — the first machine at home opens by itself after a power cut
 
 - **The ring `away` on the master** (docs/design/encryption.md): the first run gives the master

@@ -423,6 +423,9 @@ class Control:
             try:
                 fleet_name, plain, kept = backupmod.open_copy(archive, recovery)
             except KiwiError as e:
+                if "no signature" in str(e):       # a choice for the terminal, with its own words
+                    raise KiwiError("this copy has no signature: an older copy of yours comes back with "
+                                    "`kiwi-server restore FILE --unsigned` on a computer")
                 if "does not open" in str(e):       # guessed keys wait as guessed passwords do
                     self.failures.setdefault(address, []).append(self.clock())
                     self.audit("admin", "a copy was not brought back: the recovery key does not open it", address=address)

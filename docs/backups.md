@@ -70,11 +70,20 @@ tar xf fleet-fleet-20261114T101500Z.tar
 age -d -i recovery.key fleet.yaml.age
 ```
 
-**A copy is not signed.** `MANIFEST.json` finds a damaged copy. It does not
-find a forged one: someone who can replace the file on a machine can put
-another network in its place, encrypted for the same public keys, and your
-recovery key would open it. After a restore, compare the machines' names
-with yours before you apply anything.
+**A copy is signed.** `MANIFEST.json` finds a damaged copy, and its
+signature a forged one: someone who can replace the file on a machine could
+put another network in its place, encrypted for the same public keys, and your
+recovery key would open it. The signature's key comes from the recovery key, so
+`restore` checks it with the key you give, and refuses a copy that is not your
+network's. A network made before 2.170.0 signs its copies once you give its
+recovery key one time:
+
+```bash
+kiwi-server secrets copy-key ~/kiwi/fleet.yaml --identity recovery.key
+```
+
+An older copy of yours has no signature; `restore … --unsigned` opens it
+(anyone could make a copy without one, so only for one you know is yours).
 
 ### Bring it back
 

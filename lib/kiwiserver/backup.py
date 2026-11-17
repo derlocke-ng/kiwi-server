@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import hashlib
+import hmac
 import shlex
 import subprocess
 import sys
@@ -204,12 +205,20 @@ def copy_files(fleet):
     return out
 
 
-def pack(fleet_name, files, when=None):
-    """The copy from {name: bytes}, its list in front."""
+def _signature(key, manifest):
+    """The copy's signature: its list, every file's sha256 in it, under the network's copy key."""
+    body = json.dumps({k: v for k, v in manifest.items() if k != "signature"}, sort_keys=True).encode()
+    return hmac.new(str(key).encode(), body, hashlib.sha256).hexdigest()
+
+
+def pack(fleet_name, files, when=None, key=None):
+    """The copy from {name: bytes}, its list in front, signed with the copy key when there is one."""
     now = time.time() if when is None else when
     manifest = {"format": FORMAT, "what": "a kiwi-server network: its secret store and its fleet file, for the store's keys",
                 "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), "kiwi-server": VERSION, "fleet": fleet_name,
                 "files": [{"name": n, "size": len(b), "sha256": hashlib.sha256(b).hexdigest()} for n, b in files.items()]}
+    if key:
+        manifest["signature"] = _signature(key, manifest)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tar:
         for name, blob in [(MANIFEST, json.dumps(manifest, indent=1).encode() + b"\n")] + list(files.items()):
@@ -228,7 +237,30 @@ def create_copy(fleet, when=None):
     files = {storemod.FILE: util.read_bytes(st.file), storemod.RECIPIENTS: util.read_bytes(st.recipients)}
     for path, name in copy_files(fleet):
         files[name + ".age"] = storemod.encrypt_bytes(st.recipients, util.read_bytes(path))
-    return pack(os.path.basename(fleet.path), files, when)
+    try:
+        key = util.read_text(fleet.resolve_path("secrets/" + storemod.COPY_KEY)).strip()
+    except OSError:
+        key = ""            # a store made before 2.170.0: unsigned until `secrets copy-key`
+    return pack(os.path.basename(fleet.path), files, when, key or None)
+
+
+UNSIGNED = ("this copy has no signature. Copies are signed since 2.170.0, once the store has its copy key "
+            "(kiwi-server secrets copy-key FLEET --identity RECOVERY-KEY-FILE); an older copy of yours has none, and "
+            "neither would one someone else made")
+
+
+def check_signature(manifest, identity, unsigned_ok=False):
+    """None when the copy is the network's own (signed with the key its recovery key gives), a
+    warning when it is unsigned and that is allowed; KiwiError otherwise. Its store's own keys
+    prove nothing: whoever forges a copy encrypts it for the same public keys."""
+    if "signature" not in manifest:
+        if unsigned_ok:
+            return UNSIGNED
+        raise KiwiError(UNSIGNED + ": open it only when you know it is yours (--unsigned)")
+    if not hmac.compare_digest(str(manifest["signature"]), _signature(storemod.copy_key_from(identity), manifest)):
+        raise KiwiError("this copy is not your network's: its signature does not match your recovery key. Someone "
+                        "may have put another network in its place; nothing was opened")
+    return None
 
 
 def kind(data):
@@ -302,9 +334,10 @@ def read_copy(data):
     return manifest, files
 
 
-def open_copy(data, identity):
+def open_copy(data, identity, unsigned_ok=False):
     """(the fleet file's name, {name: plain bytes}, the store's two files) of a copy, opened
-    with a key of its store. Nothing reaches a disk: what age reads is staged in memory."""
+    with a key of its store. Nothing reaches a disk: what age reads is staged in memory. Its
+    signature is checked first (check_signature)."""
     manifest, files = read_copy(data)
     plain = {}
     tmp = tempfile.mkdtemp(prefix="kiwi-copy-", dir=os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm")
@@ -321,15 +354,19 @@ def open_copy(data, identity):
                 plain[name[:-4]] = opened
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    # the key opens it: now whether it is the network's own (a forged one opens with it too)
+    said = check_signature(manifest, identity, unsigned_ok)
+    if said:
+        util.warn(said)
     return manifest["fleet"], plain, {n: files[n] for n in (storemod.FILE, storemod.RECIPIENTS)}
 
 
-def restore_copy(data, identity, into):
+def restore_copy(data, identity, into, unsigned_ok=False):
     """A copy into a directory (created 0700), as a desktop keeps a fleet: the store as it is,
     the fleet file and the others as plain files 0600. A key that does not open it, or a
     directory that holds a network already: nothing is written. Returns (the fleet file's
     name, the files written)."""
-    fleet_name, plain, kept = open_copy(data, identity)
+    fleet_name, plain, kept = open_copy(data, identity, unsigned_ok)
     there = [n for n in (storemod.FILE, storemod.RECIPIENTS, "secrets", fleet_name) if os.path.lexists(os.path.join(into, n))]
     if there:
         raise KiwiError("%s holds a network already (%s): give an empty directory with --into" % (into, ", ".join(there)))

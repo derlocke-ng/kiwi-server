@@ -1788,6 +1788,19 @@ def secrets_store(args):
     elif args.action == "lock":
         st.lock()
         util.say("the secret store is locked")
+    elif args.action == "copy-key":
+        # once, for a store made before 2.170.0: the key its copies are signed with, from the recovery key
+        if not args.identity:
+            raise KiwiError("give the recovery key: kiwi-server secrets copy-key %s --identity RECOVERY-KEY-FILE" % args.fleet)
+        identity = st.identity(args.identity)
+        if store.public_of(identity) != store.recovery_public(util.read_text(st.recipients)):
+            raise KiwiError("that is not this store's recovery key: the copy key comes from the recovery key only")
+        if not st.is_open():
+            st.unlock(identity)
+        path = os.path.join(st.runtime(), "secrets", store.COPY_KEY)
+        util.write_text(path, store.copy_key_from(identity) + "\n", 0o600)
+        st.sync()
+        util.say("this network's copies are signed from now on; a restore checks them with the recovery key")
     elif args.action == "join":
         public = st.join()
         util.say("this computer has a key for the store now, in its keyring; on a computer that can open it run:")
@@ -3572,7 +3585,7 @@ def restore_copy(args, name, data, into):
     """A fleet with a store, from its copy: the recovery key opens it, and this computer gets
     a key of its own for the store."""
     identity = backupmod.recovery_key(args.recovery_file, args.passphrase_file)
-    fleet_name, files = backupmod.restore_copy(data, identity, into)
+    fleet_name, files = backupmod.restore_copy(data, identity, into, getattr(args, "unsigned", False))
     fleet_path = os.path.join(into, fleet_name)
     util.say("restored %d files from %s into %s" % (len(files), name, into))
     st = store.Store(into)
@@ -3879,7 +3892,7 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s.add_argument("--for", default="8h", metavar="TIME", help="unlock: lock again after this long (default 8h; 0: stay open)")
     s.add_argument("--identity", metavar="FILE", help="unlock: a file with the age secret key, instead of the keyring")
@@ -4067,6 +4080,8 @@ def build_parser():
     s.add_argument("--into", metavar="DIR", help="where the fleet directory is recreated (default .)")
     s.add_argument("--recovery-file", metavar="FILE",
                    help="the recovery key of a fleet with a secret store (or KIWI_RECOVERY_KEY, or typed)")
+    s.add_argument("--unsigned", action="store_true",
+                   help="open a copy without a signature: one of yours made before 2.170.0 (anyone could make such a copy)")
     s.add_argument("--passphrase-file", metavar="FILE", help="the passphrase of a copy of the older kind")
     sub("roles", cmd_roles)
     sub("modules", cmd_modules)

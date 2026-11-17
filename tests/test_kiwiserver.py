@@ -3171,6 +3171,17 @@ class TestAccess(Base):
             accessmod.canon("apps", self.FOUND, "home", group=False)
         self.assertEqual(accessmod.words(["apps", "papaya:22"]), "every app, papaya:22")
 
+    def test_admin_areas_inside_a_site_are_refused_to_every_group_without_the_switch(self):
+        """ejabberd's and Vaultwarden's /admin: a group that has the site has not its admin area. The
+        access drill found a family device on both (16 Nov)."""
+        groups = {"devices": {"subnet": "10.8.3.0/24", "reach": ["all"], "admin": True},
+                  "family": {"subnet": "10.8.5.0/24", "reach": ["apps"]},
+                  "ops": {"subnet": "10.8.7.0/24", "reach": ["apps", "portainer.papaya"]},
+                  "plain": {}}
+        self.assertEqual(accessmod.admin_ranges(groups), ["10.8.5.0/24", "10.8.7.0/24"])
+        self.assertEqual(accessmod.admin_ranges({"devices": groups["devices"]}), [])
+        self.assertEqual(accessmod.admin_ranges(None), [])
+
     def test_a_linked_network_opens_an_admin_page_only_by_name(self):
         found = fedmod.with_addresses({
             "b": {"mesh": "10.10.0.0/16", "share": ["papaya"], "from": []},
@@ -3198,7 +3209,8 @@ class TestAccess(Base):
         site = lambda n: nginx.split("server_name %s.papaya.home;" % n, 1)[1].split("server {", 1)[0]      # noqa: E731
         self.assertIn("deny 10.8.5.0/24;", site("portainer"))                       # an admin page
         self.assertNotIn("deny 10.8.5.0/24;", site("cloud"))
-        self.assertNotIn("deny 10.8.5.0/24;", site("vault"))
+        self.assertNotIn("deny 10.8.5.0/24;", site("vault").split("location ^~ /admin", 1)[0])
+        self.assertIn("deny 10.8.5.0/24;", site("vault").split("location ^~ /admin", 1)[1])      # its admin page: not theirs
         rc, out, err = TestManage.run_cli(self, "access", f.path)
         self.assertRegex(out, r"family +10\.8\.5\.0/24 +every app")
         self.assertIn("portainer.papaya", out.split("admin pages (only", 1)[1].splitlines()[0])

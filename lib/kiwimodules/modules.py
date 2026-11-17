@@ -734,7 +734,9 @@ class Renderer:
                          "extra_directives": [self.expand(x, ctx, what) for x in (e.get("extra_directives") or [])],
                          "extra_locations": [{"path": self.expand(x["path"], ctx, what),
                                               "config": self.expand(x["config"], ctx, what),
-                                              "proxy": bool(x.get("proxy"))}
+                                              "proxy": bool(x.get("proxy")),
+                                              # an admin area inside a site: refused to the VPN groups without the admin pages
+                                              "admin": bool(x.get("admin"))}
                                              for x in (e.get("extra_locations") or [])
                                              if not x.get("when") or ctx.get(str(x["when"]))],
                          "cors": self.cors_block(e.get("cors"), ctx, what, len(servers))}

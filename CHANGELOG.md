@@ -1,8 +1,14 @@
 # Changelog
 
-## 2.159.0 — the starter stick encrypts the disk
+## 2.159.0 — the starter stick encrypts the disk; admin areas for the admins only
 
-The first step of encryption by default (docs/design/encryption.md).
+With kiwi-modules 0.67.0. The first step of encryption by default (docs/design/encryption.md).
+
+- **Admin areas inside a site are for the admins only.** The access drill, with one real VPN client
+  per group, found that a device in a group without the admin pages (`family`) reached
+  Vaultwarden's `/admin` and ejabberd's `/admin` on the test network. Such a location is now
+  refused to every group without the admin switch, on nodes and masters; Vaultwarden's `/admin`
+  answers the VPN only. The drill tries these areas too (`tests/drills/access.py`).
 
 - **The starter stick installs encrypted.** There is no ring before there is a network, so the
   machine's TPM 2.0 opens the disk until a network takes the machine in. Then `apply` adds the

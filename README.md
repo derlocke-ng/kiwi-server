@@ -12,6 +12,9 @@ chose.
   backups
 - **No root on your computer**: installed into `~/.local`; the ISO tools run
   in a container when they are missing
+- **The master only routes**: the one machine on the Internet, usually a rented server, passes
+  traffic on and keeps none of your data; your services run on machines at home, reached over
+  your VPN or, for what you open, through the master without it reading along
 - **Services for others too**: a start page for everyone on the network, a
   front page for strangers, accounts with invite codes or requests you accept
   (no email) that sign people in to Forgejo, Nextcloud, Paperless, Vaultwarden

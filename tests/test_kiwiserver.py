@@ -6541,6 +6541,23 @@ class TestModuleSources(Base):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "other", "modules", "hello", "module.yaml")))
 
 
+class TestMasterRoutes(Base):
+    def test_a_master_that_keeps_data_is_told_where_it_could_run(self):
+        """The master routes, the nodes keep the data: a data service on the master is allowed, and said."""
+        roles, ms = rolesmod.discover(), cli.modset()
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "master": {"modules": ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "paste", "xmpp"],
+                                                  "vpn-server": {"wg_host": "203.0.113.7"}}},
+            "plain": {"role": "master", "master": {"vpn-server": {"wg_host": "203.0.113.8"}}}}})
+        for h in f.hosts.values():
+            rolesmod.resolve_settings(roles[h.role], h, ms)
+            cli.warn_data_on_master(h, roles, ms)
+        said = " ".join(f.hosts["gate"].warnings)
+        self.assertIn("paste, xmpp keep data on the master", said)
+        self.assertIn("on a node instead", said)
+        self.assertFalse([w for w in f.hosts["plain"].warnings if "keep" in w])      # the default master routes only
+
+
 class TestNetcupDropped(unittest.TestCase):
     def test_a_dropped_connection_is_said_not_a_traceback(self):
         """netcup's login closed the connection without an answer (17 Nov 2026): `next` showed a

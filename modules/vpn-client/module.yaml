@@ -43,11 +43,15 @@ validate:
 templates:
   compose: docker-compose.yml.j2
   post_rules: post-rules.txt.j2
+  master_switch: master-switch.sh.j2
+  master_switch_service: kn-master-switch.service.j2
 
 outputs:
   post_rules: { path: "{{ container_prefix }}-vpn-client/post-rules.txt", mode: 0644 }
   wireguard_config: { path: "{{ container_prefix }}-vpn-client/wg0.conf", mode: 0600 }
   openvpn_config: { path: "{{ container_prefix }}-vpn-client/custom.ovpn", mode: 0600 }
+  master_switch: { path: "{{ container_prefix }}-vpn-client/master-switch.sh", mode: 0755, when: standby_endpoints }
+  master_switch_service: { kind: host_unit, name: kn-master-switch.service, when: standby_endpoints }
 
 storage:
   bind_mounts:
@@ -156,6 +160,17 @@ settings:
     label: The host's SSH port
     help: "Where mesh SSH ends on the machine; follows admin.ssh_port."
     default: 22
+  - key: standby_endpoints
+    type: list
+    group: Advanced
+    label: The master and its standbys
+    help: "address:WireGuard port:SSH port of the master, then of each standby. kiwi-server fills it in for a node whose master has a standby (docs/design/standby.md): the tunnel moves to the next one after three minutes without the master, and back once the master's machine has answered for ten."
+    default: []
+  - key: standby_ping
+    group: Advanced
+    label: The master's mesh address
+    help: "What the switch pings through the tunnel to see that it works (with standby_endpoints)."
+    default: ""
   - key: mss_clamp
     type: bool
     label: Clamp TCP MSS to the tunnel

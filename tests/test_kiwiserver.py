@@ -3995,6 +3995,63 @@ class TestFederation(Base):
         self.assertIsNone(fedmod.exit_through(self.tmp))
         self.assertFalse(fedmod.partners(other)[mine_name]["internet"])
 
+    def two_fleets(self):
+        a = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}),
+                        "hosts": {"gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        with open(a.path) as fh:
+            data = yaml.safe_load(fh)
+        data["defaults"]["domain"] = "internal"
+        data["defaults"]["master"] = {"mesh_subnet": "10.10.0.0/16"}
+        data["hosts"]["gate"]["master"]["vpn-server"]["wg_host"] = "198.51.100.9"
+        data["hosts"]["gate"]["master"]["vpn-server"]["groups"] = {"devices": {"subnet": "10.10.3.0/24"}}
+        write(os.path.join(other, "fleet.yaml"), yaml.safe_dump(data))
+        if os.path.isdir(os.path.join(self.tmp, "secrets")):
+            shutil.copytree(os.path.join(self.tmp, "secrets"), os.path.join(other, "secrets"), dirs_exist_ok=True)
+        return a.path, os.path.join(other, "fleet.yaml"), other
+
+    def test_from_takes_the_partners_groups_by_name_or_its_addresses(self):
+        a, b, other = self.two_fleets()
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["groups"], {"devices": "10.10.3.0/24"})
+        with open(os.path.join(self.tmp, "federation.yaml")) as fh:
+            data = yaml.safe_load(fh)
+        data["other"]["from"] = ["devices", "10.10.0.3"]
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(data))
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["from"], ["10.10.3.0/24", "10.10.0.3/32"])
+        for bad, said in (("family", "neither an address nor a group of other (its groups: devices"),
+                          ("10.9.0.5", "is not in its mesh 10.10.0.0/16")):
+            data["other"]["from"] = [bad]
+            write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(data))
+            with self.assertRaises(KiwiError) as e:
+                fedmod.partners(self.tmp)
+            self.assertIn(said, str(e.exception))
+
+    def test_two_operators_link_their_networks_with_cards(self):
+        a, b, other = self.two_fleets()
+        card = os.path.join(self.tmp, "mine.card.yaml")
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--invite", card)
+        self.assertEqual(rc, 0, err)
+        text = util.read_text(card)
+        self.assertNotIn("secret", text.split("\n", 1)[1].lower())     # the link key's public half only
+        mine_name = os.path.basename(self.tmp)
+        self.assertEqual(yaml.safe_load(text)["name"], mine_name)
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", card)          # the other operator
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fedmod.partners(other)[mine_name]["mesh"], "10.9.0.0/16")
+        answer = os.path.join(self.tmp, "other.card.yaml")                                 # their answer, beside it
+        self.assertTrue(os.path.isfile(answer), out + err)
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--accept", answer)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["groups"], {"devices": "10.10.3.0/24"})
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["endpoint"], "198.51.100.9")
+        write(card, "name: x\n")
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", card)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not a network's card", err)
+
 
 class TestPlan(unittest.TestCase):
     def test_a_container_restarts_when_its_quadlet_or_a_file_it_mounts_changed(self):

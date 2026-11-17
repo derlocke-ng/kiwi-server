@@ -148,11 +148,13 @@ def pull(fleet, host, tgt, force=False, identity=None):
     if here and here_digest(fleet_dir, fleet_name) != here and not force:
         raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
                         "or pull --force to overwrite it")
-    there, _their_stamp = remote_state(tgt, rdir)
+    there, their_stamp = remote_state(tgt, rdir)
     if not there:
         raise KiwiError("%s holds no fleet yet: kiwi-server control push" % host.name)
-    if there == then:
-        return 0            # the node did not change either
+    if there == then:       # the node did not change either: its stamp says so too, or a push is refused
+        if their_stamp != there:
+            remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
+        return 0
     key = identity or storemod.keyring_get(st.store_id())
     if not key:
         raise KiwiError("pull opens what comes with this computer's key, and the keyring has none: "

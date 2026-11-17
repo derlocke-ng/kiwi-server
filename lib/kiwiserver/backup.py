@@ -574,7 +574,7 @@ def carries_wireguard(host):
 
 
 def _wireguard_copy(host):
-    return host.fleet.resolve_path("secrets/wg-easy/%s.json" % host.name)
+    return host.fleet.resolve_path("secrets/wg-easy/%s.json" % (getattr(host, "standby_of", None) or host.name))
 
 
 def _wireguard_file(host):
@@ -589,13 +589,20 @@ def put_back_wireguard(host, tgt, runner=subprocess.run):
     f = shlex.quote(_wireguard_file(host))
     script = ('[ -s %s ] && { echo present; exit 0; }\nmkdir -p "$(dirname %s)"\numask 027\ncat > %s.new && mv %s.new %s\necho restored'
               % (f, f, f, f, f))
+    if getattr(host, "standby_of", None):       # a standby: the master's peers, whenever they changed
+        script = ('mkdir -p "$(dirname %s)"\numask 027\ncat > %s.new\ncmp -s %s.new %s && { rm -f %s.new; echo present; exit 0; }\n'
+                  'mv %s.new %s\nsystemctl try-restart km-vpn-server.service 2>/dev/null || docker restart km-vpn-server >/dev/null 2>&1 || true\n'
+                  'echo restored' % (f, f, f, f, f, f, f))
     with open(path, "rb") as stored:
         out = remote.run(tgt, script, stored.read(), runner=runner)
     return b"restored" in out
 
 
 def keep_wireguard(host, tgt, runner=subprocess.run):
-    """The machine's state into the fleet's secrets, when there is one worth keeping."""
+    """The machine's state into the fleet's secrets, when there is one worth keeping. Never a
+    standby's: the master's peers are the ones it carries."""
+    if getattr(host, "standby_of", None):
+        return False
     f = shlex.quote(_wireguard_file(host))
     out = remote.run(tgt, "[ -s %s ] && cat %s || true" % (f, f), runner=runner)
     try:

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# The master and its standbys (kiwi-server docs/design/standby.md): this node's tunnel goes to
+# one of them; the same WireGuard key answers on each. Down for three minutes: the next one. On
+# a standby: back to the master once its machine has answered for ten minutes.
+#   master-switch.sh watch      (kn-master-switch.service)
+set -u
+conf={{ docker_dir }}/{{ container_prefix }}-vpn-client/wg0.conf
+state={{ docker_dir }}/{{ container_prefix }}-vpn-client/master-switch.state
+ping_to={{ standby_ping | default('', true) }}
+# each: address:wireguard port:ssh port, the master first
+endpoints=({% for e in standby_endpoints %}{{ e }} {% endfor %})
+DOWN=6 BACK=20 EVERY=30
+tunnel_up() {
+    {{ 'docker' if runtime == 'docker' else 'podman' }} exec {{ container_prefix }}-vpn-client ping -c 1 -W 3 "$ping_to" >/dev/null 2>&1
+}
+restart_client() {
+{% if runtime == 'podman' %}
+    systemctl restart {{ container_prefix }}-vpn-client.service
+{% else %}
+    docker restart {{ container_prefix }}-vpn-client >/dev/null
+{% endif %}
+}
+{% raw %}
+
+say() { echo "kn-master-switch: $*"; logger -t kiwi "kn-master-switch: $*" 2>/dev/null || true; }
+machine_answers() {     # ADDRESS SSH-PORT: its sshd greets
+    timeout 5 bash -c 'exec 3<>/dev/tcp/$0/$1 && head -c 4 <&3' "$1" "$2" 2>/dev/null | grep -q '^SSH-'
+}
+current() {
+    local e; e=$(sed -n 's/^Endpoint *= *//p' "$conf" | head -1)
+    for i in "${!endpoints[@]}"; do
+        [ "${endpoints[$i]%:*}" = "$e" ] && { echo "$i"; return; }
+    done
+    echo 0
+}
+move_to() {     # INDEX
+    local to=${endpoints[$1]%:*}
+    sed -i "s/^Endpoint *=.*/Endpoint = $to/" "$conf"
+    echo "$1" > "$state"
+    say "the tunnel goes to $to now"
+    restart_client
+}
+
+[ "${1:-}" = watch ] || { echo "usage: $0 watch" >&2; exit 2; }
+[ "${#endpoints[@]}" -ge 2 ] && [ -n "$ping_to" ] || { say "no standby: nothing to do"; exec sleep infinity; }
+down=0 back=0
+while :; do
+    i=$(current)
+    if tunnel_up; then
+        down=0
+    else
+        down=$((down + 1))
+    fi
+    if [ "$down" -ge "$DOWN" ]; then
+        say "no answer from $ping_to through ${endpoints[$i]%:*} for $((DOWN * EVERY)) s"
+        move_to $(( (i + 1) % ${#endpoints[@]} ))
+        down=0 back=0
+    elif [ "$i" != 0 ]; then
+        first=${endpoints[0]}; addr=${first%%:*}; ssh=${first##*:}
+        if machine_answers "$addr" "$ssh"; then back=$((back + 1)); else back=0; fi
+        if [ "$back" -ge "$BACK" ]; then
+            say "the master's machine ($addr) has answered for $((BACK * EVERY)) s: back to it"
+            move_to 0
+            back=0
+        fi
+    fi
+    sleep "$EVERY"
+done
+{% endraw %}

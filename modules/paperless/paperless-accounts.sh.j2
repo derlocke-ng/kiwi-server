@@ -2,9 +2,10 @@
 # {{ hostname }}'s Paperless signs people in with the network's accounts (kiwi-server accounts <fleet>
 # connect <host> paperless). A person's first sign-in makes their Paperless user, in the group
 # "accounts": it may use documents, tags, saved views, notes and mail rules (each person sees their
-# own documents, the ones shared with them and the ones that have no owner), not the workflows, which
-# act on every document, and not the system's settings. kn-paperless-accounts.service makes or
-# updates the group after every start of the stack.
+# own documents and the ones shared with them), not the workflows, which act on every document, and
+# not the system's settings. A document without an owner would be everyone's to change and delete:
+# the admin owns the ones from the consume folder and from mail (a workflow), and any left without.
+# kn-paperless-accounts.service makes or updates all this after every start of the stack.
 set -euo pipefail
 
 py='
@@ -13,6 +14,23 @@ g, _ = Group.objects.get_or_create(name="accounts")
 ps = Permission.objects.filter(content_type__app_label__in=["documents", "paperless_mail"]).exclude(content_type__model__startswith="workflow")
 g.permissions.set(ps)
 print("kiwi: the group accounts may use %d kinds of things" % ps.count())
+from django.contrib.auth.models import User
+from documents.data_models import DocumentSource
+from documents.models import Document, Workflow, WorkflowAction, WorkflowTrigger
+admin = User.objects.filter(is_superuser=True).order_by("id").first()
+if admin:
+    name = "kiwi: the admin owns what comes from the consume folder and mail"
+    if not Workflow.objects.filter(name=name).exists():
+        t = WorkflowTrigger.objects.create(type=WorkflowTrigger.WorkflowTriggerType.CONSUMPTION,
+                                           sources=[str(int(DocumentSource.ConsumeFolder)), str(int(DocumentSource.MailFetch))])
+        a = WorkflowAction.objects.create(type=WorkflowAction.WorkflowActionType.ASSIGNMENT, assign_owner=admin)
+        w = Workflow.objects.create(name=name, order=0, enabled=True)
+        w.triggers.add(t)
+        w.actions.add(a)
+        print("kiwi: documents from the consume folder and mail belong to %s" % admin.username)
+    n = Document.objects.filter(owner__isnull=True).update(owner=admin)
+    if n:
+        print("kiwi: %d documents without an owner belong to %s now" % (n, admin.username))
 '
 for _ in {1..240}; do
     if {{ runtime }} exec --user paperless -w /usr/src/paperless/src {{ container_prefix }}-paperless python3 manage.py shell -c "$py" 2>/dev/null; then

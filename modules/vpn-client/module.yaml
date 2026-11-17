@@ -27,6 +27,10 @@ env:
     DOT_PROVIDERS: "quad9"
 
 validate:
+  - when: "vpn_type == 'openvpn' and vpn_provider == 'custom' and not openvpn_config_present"
+    error: "provider custom with vpn_type openvpn needs openvpn_config: the provider's .ovpn with its certificates inside"
+  - when: "openvpn_config_present and not (vpn_type == 'openvpn' and vpn_provider == 'custom')"
+    error: "openvpn_config is for vpn_provider custom with vpn_type openvpn"
   - when: "vpn_type == 'wireguard' and vpn_provider == 'custom' and not wireguard_config_present and not (wireguard_private_key and wireguard_addresses and wireguard_public_key and wireguard_endpoint_ip and vpn_endpoint_port)"
     error: "provider custom needs wireguard_config (the client config the master's wg-easy issued — `kiwi-server enroll <host>` fetches it into secrets/<hostname>.conf, where it is picked up by itself), or for another provider's WireGuard: wireguard_private_key, wireguard_addresses, wireguard_public_key, wireguard_endpoint_ip and vpn_endpoint_port from its config"
   - when: "vpn_type == 'wireguard' and vpn_provider != 'custom' and not wireguard_private_key"
@@ -43,6 +47,7 @@ templates:
 outputs:
   post_rules: { path: "{{ container_prefix }}-vpn-client/post-rules.txt", mode: 0644 }
   wireguard_config: { path: "{{ container_prefix }}-vpn-client/wg0.conf", mode: 0600 }
+  openvpn_config: { path: "{{ container_prefix }}-vpn-client/custom.ovpn", mode: 0600 }
 
 storage:
   bind_mounts:
@@ -72,6 +77,11 @@ settings:
     help: "For provider custom: the client config issued by the master's wg-easy — it holds the private key and endpoint. Embedded into the role script. Empty: secrets/<hostname>.conf when that exists, which is where `kiwi-server enroll <host>` puts it."
     placeholder: secrets/sh3.home.conf
     fallback_file: "secrets/{hostname}.conf"
+  - key: openvpn_config
+    type: file
+    label: OpenVPN config file
+    help: "For provider custom with vpn_type openvpn: another provider's .ovpn with its certificates and key inside (Riseup's, say). Embedded into the role script."
+    placeholder: secrets/riseup.ovpn
   - key: wireguard_private_key
     type: secret
     label: WireGuard private key

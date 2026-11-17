@@ -61,7 +61,7 @@ class Signup:
     """`ejabberd`: {page name: {"api": URL of its HTTP API, "host": the Jabber domain}} makes Jabber
     accounts (the person chooses a password, or gets one) instead of the network's accounts."""
     def __init__(self, state_dir, kanidm="", token_file="", id_host="", opener=None, clock=_now, ejabberd=None,
-                 invites=True, requests=True, captcha=False, id_onion=""):
+                 invites=True, requests=True, captcha=False, id_onion="", kanidm_cert=""):
         self.dir = state_dir
         self.path = os.path.join(state_dir, "signup.json")
         self.kanidm_url = kanidm.rstrip("/")
@@ -72,6 +72,7 @@ class Signup:
         self.opener = opener            # tests: a stand-in for Kanidm (or ejabberd)
         self.ejabberd = ejabberd or {}
         self.id_onion = id_onion        # the accounts' own hidden service: links stay on Tor for who came over Tor
+        self.kanidm_cert = kanidm_cert  # the chain Kanidm shows: pinned (its name on the stack network is no name in it)
         self.ways = {"invites": invites, "requests": requests, "captcha": captcha}
         self.pictures = {}              # picture test id -> [its letters, their digest, good until]; memory only
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
@@ -100,7 +101,7 @@ class Signup:
                                      data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=20, context=ssl._create_unverified_context()) as r:
+            with urllib.request.urlopen(req, timeout=20, context=self._kanidm_tls()) as r:
                 text = r.read().decode() or "null"
                 return json.loads(text)
         except urllib.error.HTTPError as e:
@@ -111,6 +112,17 @@ class Signup:
             raise KiwiError("the accounts did not take it (%s %s)" % (e.code, said))
         except (urllib.error.URLError, OSError) as e:
             raise KiwiError("the accounts do not answer just now (%s)" % getattr(e, "reason", e))
+
+    def _kanidm_tls(self):
+        """Kanidm answers with the reverse proxy's certificate, for names the stack network does not
+        use: its own chain file is the trust anchor, the name is not checked. Without the file (an
+        older module): not checked at all, as before."""
+        if not (self.kanidm_cert and os.path.isfile(self.kanidm_cert)):
+            return ssl._create_unverified_context()
+        ctx = ssl.create_default_context(cafile=self.kanidm_cert)
+        ctx.check_hostname = False
+        ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN     # the leaf or its issuer, as the file has them
+        return ctx
 
     def make_account(self, name, display, page="", password=None):
         """The account, and what its person needs: Kanidm's link that sets the password, or a

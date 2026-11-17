@@ -21,6 +21,7 @@ import re
 import secrets as pysecrets
 import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -164,6 +165,7 @@ class Control:
         self._joined = ""                     # a starter: the network whose control node is taking it in
         self._hoster = {}                     # the first run: a sign-in at a hoster, by its handle (hoster_start)
         self._tokens = {}                     # token -> (controller, expires): who may sync
+        self._accounts_kept = {}              # the Accounts page's reads: argv -> (until, answer); "down" -> (until, error)
 
     # ---- the password and the store ----------------------------------------------------
     @property
@@ -273,6 +275,15 @@ class Control:
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
         info = self.fleet_info() or {}
+        # what adding it would refuse (its name, its address, what it should do), said before the stick
+        # is told anything: a stick that was taken in and then refused waits until it is restarted
+        from . import setup as setupmod
+        trial = tempfile.mkdtemp(dir=self.run)          # RAM, as the fleet file itself
+        try:
+            shutil.copyfile(os.path.realpath(self.fleet_path), os.path.join(trial, "fleet.yaml"))
+            name = setupmod.add_home_machine(os.path.join(trial, "fleet.yaml"), preset, (address or "").strip(), name, "coreos")
+        finally:
+            shutil.rmtree(trial, ignore_errors=True)
         address, name = starter_handshake(os.path.realpath(self.fleet_path), self.fleet_dir, address, code, preset, name,
                                           str(info.get("domain") or ""), ask=ask)
         made = self.add_machine(preset, address, name, target="coreos", user=user)
@@ -296,8 +307,9 @@ class Control:
             raise KiwiError("that is not the setup code. After five wrong tries, wait ten minutes")
         who = providers.get(provider)
         handle = pysecrets.token_urlsafe(18)
-        d = os.path.join(self.run, "hoster")
-        shutil.rmtree(d, ignore_errors=True)            # one sign-in at a time: an older one is dropped
+        shutil.rmtree(os.path.join(self.run, "hoster"), ignore_errors=True)    # one sign-in at a time: an older one is dropped
+        # a folder of its own: an older sign-in still finishing writes its login nowhere this one reads
+        d = os.path.join(self.run, "hoster", handle)
         os.makedirs(d, mode=0o700)
         state = {"provider": who.id, "name": who.name, "state": "starting", "url": "", "rows": [], "error": "",
                  "token": os.path.join(d, "%s.token" % who.id)}
@@ -895,8 +907,16 @@ class Control:
         path = os.path.join(self.dir, "audit.jsonl")
         if not os.path.isfile(path):
             return []
-        with open(path) as fh:
-            return [json.loads(x) for x in fh.readlines()[-n:]][::-1]
+        out = []
+        with open(path, errors="replace") as fh:
+            for x in fh.readlines()[-n:]:
+                try:            # a line cut off by a power cut is left out, not the whole history
+                    d = json.loads(x)
+                except ValueError:
+                    continue
+                if isinstance(d, dict):
+                    out.append(d)
+        return out[::-1]
 
     # ---- jobs -----------------------------------------------------------------------
     def argv(self, action, hosts=(), at="", module=""):
@@ -1003,7 +1023,11 @@ class Control:
         for h in hosts:
             if not HOST.match(h):
                 raise KiwiError("not a host name: %r" % h)
+        me = os.environ.get("KIWI_CONTROL_HOST")    # this node last: its own apply may restart this page
+        hosts = [h for h in hosts if h != me] + [h for h in hosts if h == me]
         argv = self.argv(action, hosts, at.strip(), module.strip())
+        if action == "update" and not hosts:    # every machine: each one's History says so, and how it went for it
+            hosts = argv[argv.index("--update") + 1:]
         jid = time.strftime("%Y%m%d-%H%M%S-") + pysecrets.token_hex(3)
         meta = {"id": jid, "action": action, "hosts": list(hosts), "user": user,
                 "state": "waiting", "started": None, "ended": None, "rc": None}
@@ -1202,12 +1226,32 @@ class Control:
         if r.returncode:
             raise KiwiError((r.stderr.strip().splitlines() or ["not done"])[-1].replace("error: ", ""))
         words = [str(a) for a in argv if not str(a).startswith("--")]
+        if words and words[0] not in ("list", "invites", "requests"):
+            self._accounts_kept = {}          # something changed: the page asks anew
         if words and words[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect"):
             self.audit(user, "accounts: %s%s" % ("jabber " if "--jabber" in argv else "", words[0]), name=" ".join(words[1:2]))
         try:
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
         except (ValueError, IndexError):
             raise KiwiError("the accounts' answer could not be read")
+
+    def accounts_read(self, *argv):
+        """What the Accounts page shows (list, invites, requests), kept 30 s. An accounts machine
+        that is off answers after its time-out: once a look then, not once a list."""
+        now, key = self.clock(), tuple(str(a) for a in argv)
+        down = self._accounts_kept.get("down")
+        if down and down[0] > now:
+            raise down[1]
+        kept = self._accounts_kept.get(key)
+        if kept and kept[0] > now:
+            return kept[1]
+        try:
+            answer = self.accounts(*argv)
+        except KiwiError as e:
+            self._accounts_kept["down"] = (now + 30, e)
+            raise
+        self._accounts_kept[key] = (now + 30, answer)
+        return answer
 
     # ---- the fleet's SSH CA: keys let in for a while (kiwi-server sshca) --------------------
     def sshca(self):

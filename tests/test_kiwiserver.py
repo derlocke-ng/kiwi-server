@@ -2666,6 +2666,12 @@ class TestSetup(Base):
         self.assertIs(hosts["quince"]["node"]["vpn"], False)
         self.assertNotIn("vpn-client", hosts["quince"]["node"])
         self.assertIn("fixed address", err + out)
+        # quince left through a commercial VPN of its own (Tor, downloads)
+        data = yaml.safe_load(util.read_text(dest))
+        data["hosts"]["quince"]["node"]["vpn-client"] = {"vpn_provider": "mullvad", "wireguard_addresses": "10.66.1.2/32",
+                                                        "wireguard_private_key": "test-key-only"}
+        data["hosts"]["quince"]["node"]["modules"] = ["vpn-client", "reverse-proxy"]
+        write(dest, yaml.safe_dump(data, sort_keys=False))
         # a master comes: every machine at home goes onto the VPN
         rc, out, err = self.run_cli("add", dest, "master", "trifle", "--address", "203.0.113.7")
         self.assertEqual(rc, 0, err)
@@ -2675,7 +2681,10 @@ class TestSetup(Base):
             self.assertIs(hosts[n]["node"]["vpn"], True)
             self.assertEqual(hosts[n]["node"]["vpn-client"], {"wireguard_config": "secrets/%s.home.conf" % n})
         self.assertEqual(hosts["mango"]["node"]["modules"][:2], ["vpn-client", "dns"])
-        self.assertIn("a comment kept by hand", util.read_text(dest))
+        # quince's provider is not thrown away: the new master leaves through it, for everyone
+        self.assertEqual(hosts["trifle"]["master"]["vpn-client"]["vpn_provider"], "mullvad")
+        self.assertEqual(hosts["trifle"]["master"]["modules"][0], "vpn-client")
+        self.assertIn("exit of trifle", err + out)
         self.assertIn("enroll", err + out)
         rc, out, err = self.run_cli("list", dest, "--porcelain")
         listed = {h["name"]: h for h in json.loads(out)["hosts"]}
@@ -3511,9 +3520,12 @@ class TestOnion(Base):
         argv = c.argv("adopt", ["fig"], "192.168.1.40")
         self.assertEqual(argv[1:], ["adopt", c.fleet_path, "fig", "--as", "core@192.168.1.40", "--key",
                                     os.path.join(os.path.dirname(f.path), "secrets", "admin_ed25519")])
-        with self.assertRaisesRegex(KiwiError, "already a machine called fig"):
+        # refused before the stick hears anything: it is never left waiting as "taken in"
+        asked = []
+        with self.assertRaisesRegex(KiwiError, "already a (machine|host) called fig"):
             with mock.patch.object(c, "locked", lambda: False):
-                c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=ask)
+                c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=lambda *a: asked.append(a) or ask(*a))
+        self.assertEqual(asked, [])
         # another device answering at the address: it never saw the code, so its answer is refused,
         # and a line that is not a key (a wildcard, a CA) is never written, even with the right proof
         def impostor(address, body):
@@ -10003,14 +10015,42 @@ class TestFirstRunPage(StoreBase):
                          (303, "/hosts/fig"))                                               # a machine can still be added
         self.at_rest()
 
+    def test_the_accounts_page_asks_an_absent_accounts_machine_once(self):
+        """Its lists are kept 30 s, and a machine that does not answer is not asked four times a look."""
+        c = self.c
+        calls, now = [], [1000.0]
+        c.clock = lambda: now[0]
+
+        def accounts(*argv, user="admin"):
+            calls.append(argv)
+            raise KiwiError("the accounts do not answer just now")
+        with mock.patch.object(c, "accounts", accounts):
+            for what in ("list", "invites", "requests"):
+                with self.assertRaisesRegex(KiwiError, "do not answer"):
+                    c.accounts_read(what)
+            self.assertEqual(calls, [("list",)])
+            now[0] += 31
+            with self.assertRaisesRegex(KiwiError, "do not answer"):
+                c.accounts_read("list")
+            self.assertEqual(len(calls), 2)
+        with mock.patch.object(c, "accounts", lambda *a, user="admin": calls.append(a) or [{"name": ["anna"]}]):
+            now[0] += 31
+            self.assertEqual(c.accounts_read("list"), [{"name": ["anna"]}])
+            self.assertEqual(c.accounts_read("list"), [{"name": ["anna"]}])      # kept
+            self.assertEqual(len(calls), 3)
+
     def test_the_role_script_is_made_when_asked_and_kept_nowhere(self):
         cookie, _csrf = self.made()
         master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
-        self.assertIn('href="/hosts/%s/script"' % master, self.ask("/hosts/" + master, cookie=cookie)[1])
-        status, body, _ = self.ask("/hosts/%s/script" % master)                 # no login: no script
+        self.assertIn('action="/hosts/%s/script"' % master, self.ask("/hosts/" + master, cookie=cookie)[1])
+        status, body, _ = self.ask("/hosts/%s/script" % master, {"csrf": _csrf})       # no login: no script
+        self.assertNotIn("#!", body)
+        status, body, _ = self.ask("/hosts/%s/script" % master, cookie=cookie)         # a GET: never (it may make secrets)
+        self.assertNotIn("#!", body)
+        status, body, _ = self.ask("/hosts/%s/script" % master, {"csrf": "wrong"}, cookie=cookie)
         self.assertNotIn("#!", body)
         self.assertNotIn("role script shown", str(self.c.audit_tail(20)))
-        status, body, _ = self.ask("/hosts/%s/script" % master, cookie=cookie)
+        status, body, _ = self.ask("/hosts/%s/script" % master, {"csrf": _csrf}, cookie=cookie)
         self.assertEqual(status, 200, body[-300:])
         self.assertTrue(body.startswith("#!"), body[:80])
         self.assertIn("It embeds this host's secrets", body)
@@ -10022,7 +10062,7 @@ class TestFirstRunPage(StoreBase):
                 for n in names:
                     if os.path.isfile(os.path.join(dp, n)):
                         self.assertNotIn(mark, util.read_bytes(os.path.join(dp, n)), os.path.join(dp, n))
-        status, body, _ = self.ask("/hosts/nosuch/script", cookie=cookie)
+        status, body, _ = self.ask("/hosts/nosuch/script", {"csrf": _csrf}, cookie=cookie)
         self.assertEqual(status, 400)
         self.assertIn("could not be made", body)
 

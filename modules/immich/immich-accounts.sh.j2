@@ -17,8 +17,8 @@ for _ in {1..240}; do
     sleep 5
 done
 
-changed=$(db -v issuer={{ accounts_issuer | shquote }} -v client={{ accounts_client | shquote }} -v secret="$KIWI_SECRET" \
-             -v mobile=https://{{ immich_host }}/api/oauth/mobile-redirect <<'SQL'
+# the secret goes in on psql's input, never on a command line (where every process could read it)
+changed=$( { printf '\\set secret %s\n' "'${KIWI_SECRET//\'/\'\'}'"; cat <<'SQL'
 select coalesce((select value->'oauth' from system_metadata where key = 'system-config'), '{}'::jsonb)::text as before \gset
 insert into system_metadata (key, value)
 select 'system-config', jsonb_build_object('oauth', jsonb_build_object(
@@ -31,7 +31,8 @@ on conflict (key) do update
         coalesce(system_metadata.value->'oauth', '{}'::jsonb) || (excluded.value->'oauth'));
 select (value->'oauth')::text <> :'before' from system_metadata where key = 'system-config';
 SQL
-)
+} | db -v issuer={{ accounts_issuer | shquote }} -v client={{ accounts_client | shquote }} \
+       -v mobile=https://{{ immich_host }}/api/oauth/mobile-redirect)
 if [[ $changed == t ]]; then
     {{ runtime }} restart {{ container_prefix }}-immich >/dev/null
     echo "kiwi: Immich signs people in with the network's accounts (restarted)"

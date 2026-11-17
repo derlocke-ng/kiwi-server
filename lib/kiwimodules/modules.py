@@ -122,6 +122,9 @@ class Module:
         self.node_types = [str(t) for t in types]
         deps = meta.get("dependencies") or {}
         self.requires = [str(d) for d in (deps.get("required") or [])]
+        # what it sends out leaves through the VPN client: on a machine with no VPN (vpn: false) that
+        # client is never left out silently; it must be a commercial VPN's, listed with the modules
+        self.exit = bool(deps.get("exit"))
         self.optional = [str(d) for d in (deps.get("optional") or [])]
         self.templates = {str(k): str(v) for k, v in (meta.get("templates") or {}).items()}
         self.outputs = meta.get("outputs") or {}
@@ -211,6 +214,13 @@ class ModuleSet:
         order, seen, visiting = [], set(), set()
 
         def visit(n, chain):
+            if chain and n in without and n not in seen and n not in [str(x) for x in names]:
+                parent = self.get(chain[-1])
+                if parent.exit:
+                    raise KiwiError("%s sends its traffic out through %s, and this machine has no VPN (vpn: false): add "
+                                    "%s with a commercial VPN (vpn_provider) to its modules, or leave %s out"
+                                    % (parent.name, n, n, parent.name))
+                return
             if n in seen or (chain and n in without):
                 return
             if n in visiting:

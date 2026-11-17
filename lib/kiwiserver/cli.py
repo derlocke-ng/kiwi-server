@@ -324,7 +324,7 @@ class Renderer:
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
                 # a VPN name that sends on to a public one: in the DNS and the certificate, but no service of its own
                 rr = modmod.Renderer(self.ms)
-                ordered = self.ms.resolve(spec.modules, spec.node_type)
+                ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
                 _up, blocks = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
                 self.aliases.update(b["alias"] for b in blocks if b.get("alias") and b["alias"] != b["server_name"])
                 mesh_only += modmod.Renderer(self.ms).mesh_only_names(spec)
@@ -2395,7 +2395,7 @@ def cmd_signup(args):
         args.id_onion = args.id_onion or c.get("id_onion", "")
     s = signupmod.Signup(args.state, kanidm=args.kanidm or "", token_file=args.token_file or "", id_host=args.id_host or "",
                          ejabberd=ejabberd, invites="invites" in ways, requests="requests" in ways, captcha="captcha" in ways,
-                         id_onion=args.id_onion or "")
+                         id_onion=args.id_onion or "", kanidm_cert=getattr(args, "kanidm_cert", "") or "")
     if what == "serve":
         import uvicorn
         host, _, port = args.listen.rpartition(":")
@@ -3146,7 +3146,7 @@ def site_names(ms, host, role, with_usable=False):
     site (xmpp for chat.example.org). A hidden service is named by the short one."""
     spec = rolesmod.stack_spec(host, role)
     rr = modmod.Renderer(ms)
-    ordered = ms.resolve(spec.modules, spec.node_type)
+    ordered = ms.resolve(spec.modules, spec.node_type, spec.without)
     _up, servers = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
     out, usable, owner = {}, set(), {}
     for s in servers:
@@ -3822,6 +3822,8 @@ def build_parser():
     s = sub("signup", cmd_signup); s.add_argument("what"); s.add_argument("arg", nargs="?")
     s.add_argument("--state", default="/state", metavar="DIR", help="where the invites and requests are kept")
     s.add_argument("--kanidm", default="", metavar="URL", help="Kanidm's address on the stack network")
+    s.add_argument("--kanidm-cert", default="", metavar="FILE",
+                   help="the certificate Kanidm shows (its chain file): the only one this trusts there")
     s.add_argument("--token-file", default="", metavar="FILE", help="the sign-up's token for Kanidm")
     s.add_argument("--id-host", default="", metavar="NAME", help="the accounts' public name (the links point there)")
     s.add_argument("--brand", default="", help="the network's name on the page")

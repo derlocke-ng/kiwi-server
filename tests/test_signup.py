@@ -181,5 +181,41 @@ class TestJabberSignup(unittest.TestCase):
         self.assertGreater(len(png), 2000)
 
 
+
+class TestKanidmTLS(unittest.TestCase):
+    """The sign-up talks to Kanidm over TLS with Kanidm's own certificate pinned (review, 16 Nov):
+    a stranger on the stack network answering as Kanidm gets no token."""
+    def test_only_the_pinned_certificate_is_trusted(self):
+        import http.server, shutil, ssl, subprocess, threading
+        if not shutil.which("openssl"):
+            self.skipTest("openssl not installed")
+        from kiwiserver import web
+        d = tempfile.mkdtemp()
+        _k, cert, _fp = web.self_signed(os.path.join(d, "real"))
+        _k2, other, _fp2 = web.self_signed(os.path.join(d, "other"))
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200); self.end_headers(); self.wfile.write(b'{"ok": true}')
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert, os.path.join(d, "real", "page.key"))
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        token = os.path.join(d, "token")
+        with open(token, "w") as f:
+            f.write("t")
+        url = "https://127.0.0.1:%d" % srv.server_address[1]
+        good = signupmod.Signup(os.path.join(d, "s1"), kanidm=url, token_file=token, kanidm_cert=cert)
+        self.assertEqual(good.kanidm("GET", "/v1/x"), {"ok": True})
+        bad = signupmod.Signup(os.path.join(d, "s2"), kanidm=url, token_file=token, kanidm_cert=other)
+        with self.assertRaisesRegex(KiwiError, "do not answer"):
+            bad.kanidm("GET", "/v1/x")
+
+
 if __name__ == "__main__":
     unittest.main()

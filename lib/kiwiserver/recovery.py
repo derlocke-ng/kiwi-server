@@ -99,7 +99,9 @@ def _resolved(fleet, roles, ms):
             try:
                 wanted = raw.get("modules")
                 wanted = role.default_modules(plain) if wanted is None else str(wanted).split() if isinstance(wanted, str) else wanted
-                h.modules = ms.resolve([str(m) for m in wanted], role.node_type)
+                # a machine off the VPN (vpn: false): its presets' VPN client is left out, as at an apply
+                without = ("vpn-client",) if plain.get("vpn") is False and role.node_type != "master" else ()
+                h.modules = ms.resolve([str(m) for m in wanted], role.node_type, without)
                 h.module_settings = {m: deep_merge(deep_merge({x.key: x.default for x in ms.get(m).settings},
                                                               role.defaults_for(m, plain)), raw.get(m) or {})
                                      for m in h.modules}

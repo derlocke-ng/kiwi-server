@@ -98,7 +98,7 @@ settings:
     help: "Empty: generated from the fleet's seed."
   - key: upstream_dns
     label: Upstream resolvers
-    help: "Semicolon separated, overrides the chain. Empty: on a node the master's Pi-hole (stack setting master_ip), so the whole network shares one blocklist and leaves through the master's exit; on a master the VPN client's DNS-over-TLS resolver. Names under the fleet's domain always go to the master and never leave it."
+    help: "Semicolon separated, overrides the chain. Empty: on a node the master's Pi-hole (stack setting master_ip), so the whole network shares one blocklist and leaves through the master's exit; on a master the VPN client's DNS-over-TLS resolver; in a network without a master (vpn: false) the fallback resolvers below, asked unencrypted from your home line: set your own here (your router's, say) if you would rather. Names under the fleet's domain always go to the master and never leave it."
     default: ""
   - key: fallback_dns
     label: Fallback resolvers

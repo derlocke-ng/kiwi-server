@@ -81,8 +81,8 @@ settings:
     pattern: '[a-z0-9.-]*'
   - key: ldap
     type: bool
-    label: Jabber checks passwords here
-    help: "Kanidm answers LDAP on the stack network, so that Jabber can take the network's accounts (who is in the group jabber). Off: Jabber keeps its own accounts."
+    label: LDAP for other services
+    help: "Kanidm answers LDAP on the stack network. Nothing uses it yet: Jabber keeps its own accounts (its sign-up page, invite codes and requests). Off by default."
     default: false
   - key: signup
     type: bool

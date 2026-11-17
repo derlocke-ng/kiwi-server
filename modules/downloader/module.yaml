@@ -10,6 +10,8 @@ module:
 
 dependencies:
   required: [vpn-client]
+  # what it sends out leaves through the VPN client: never dropped by vpn: false
+  exit: true
   optional: [reverse-proxy]
 
 network:

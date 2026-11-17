@@ -3,7 +3,8 @@ services:
 {% for sname, s in servers.items() if s.game in catalog %}
 {% set g = catalog[s.game] %}
 {% set shift = (s.port | int) - (g.ports[0].split('/')[0] | int) if s.port else 0 %}
-{% macro fill(v) %}{{ v | string | replace('{name}', s.name or sname) | replace('{server}', sname) | replace('{password}', s.password or '') | replace('{memory}', s.memory or '2G') }}{% endmacro %}
+{% set first = (g.ports[0].split('/')[0] | int) + shift %}
+{% macro fill(v) %}{{ v | string | replace('{name}', s.name or sname) | replace('{server}', sname) | replace('{password}', s.password or '') | replace('{memory}', s.memory or '2G') | replace('{port}', first | string) }}{% endmacro %}
   {{ container_prefix }}-game-{{ sname }}:
     image: {{ s.image or g.image }}
     container_name: {{ container_prefix }}-game-{{ sname }}
@@ -22,7 +23,7 @@ services:
       {{ network_name }}: {}
     ports:
 {% for p in g.ports %}
-      - "{{ (p.split('/')[0] | int) + shift }}:{{ p.split('/')[0] }}/{{ p.split('/')[1] }}"
+      - "{{ (p.split('/')[0] | int) + shift }}:{{ (p.split('/')[0] | int) + (shift if g.same_port else 0) }}/{{ p.split('/')[1] }}"
 {% endfor %}
     restart: unless-stopped
     # a world is written when the server stops: it gets the time

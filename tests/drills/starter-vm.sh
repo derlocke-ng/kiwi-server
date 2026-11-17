@@ -582,14 +582,25 @@ alone)
     disk_key=""
     if [ "${TPM:-1}" = 1 ]; then
         pw=$(cat page-password)
-        disk_key=$(sh_vm "c=/run/drill-jar; rm -f \$c; r='--resolve control.$node.home:443:127.0.0.1'; \
-            curl -sk -c \$c -b \$c -o /dev/null \$r --data-urlencode 'password=$pw' https://control.$node.home/login; \
-            curl -sk -b \$c \$r https://control.$node.home/api/hosts/$node/logins; echo; rm -f \$c" |
-            python3 -c 'import json, sys
-for line in sys.stdin:
+        sh_vm "c=/run/drill-jar; rm -f \$c; r='--resolve control.$node.home:443:10.0.2.15'; \
+            curl -sk -c \$c -b \$c -o /dev/null -w 'login %{http_code}\n' \$r --data-urlencode 'password=$pw' https://control.$node.home/login; \
+            curl -sk -b \$c \$r https://control.$node.home/api/hosts/$node/logins; echo; rm -f \$c" > logins.out
+        disk_key=$(python3 -c 'import json, sys
+for line in open(sys.argv[1]):
     if line.startswith("{"):
-        print(next((x["password"] for x in json.loads(line).get("logins", []) if x.get("module") == "disk"), ""))')
+        print(next((x["password"] for x in json.loads(line).get("logins", []) if x.get("module") == "disk"), ""))' logins.out)
+        # what came back, without a password in it
+        python3 -c 'import json, sys
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if line.startswith("{"):
+        d = json.loads(line)
+        print("    logins:", d.get("error") or [(x.get("module"), x.get("has_password")) for x in d.get("logins", [])])
+    elif line:
+        print("    " + line[:160])' logins.out
+        rm -f logins.out
         [ -n "$disk_key" ]; check $? "the page shows the disk's key among the machine's logins"
+        [ -n "$disk_key" ] || { say "no key to type: the VM is left as it is, not reset (stop ends it)"; exit 1; }
     fi
     before=$(grep -ac 'login:' "$log")
     python3 - "$w/monitor.sock" <<'EOF2'

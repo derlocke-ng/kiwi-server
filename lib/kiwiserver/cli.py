@@ -1994,6 +1994,7 @@ def cmd_apply(args):
                     unlock.bind(h, tgt, servers)
                 elif h.target in ("coreos", "ucore"):
                     unlock.drop_standin(h, tgt)
+                save_store(args)    # the disk's key sealed now: the role below restarts this container
                 # the control node applies itself: the role may restart the container this runs in,
                 # so it runs as a unit of its own on the machine and outlives the connection
                 # a machine the starter stick installed takes away what the starter needed, when the role is in

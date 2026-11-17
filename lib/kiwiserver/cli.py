@@ -324,7 +324,7 @@ class Renderer:
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
                 # a VPN name that sends on to a public one: in the DNS and the certificate, but no service of its own
                 rr = modmod.Renderer(self.ms)
-                ordered = self.ms.resolve(spec.modules, spec.node_type)
+                ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
                 _up, blocks = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
                 self.aliases.update(b["alias"] for b in blocks if b.get("alias") and b["alias"] != b["server_name"])
                 mesh_only += modmod.Renderer(self.ms).mesh_only_names(spec)
@@ -3146,7 +3146,7 @@ def site_names(ms, host, role, with_usable=False):
     site (xmpp for chat.example.org). A hidden service is named by the short one."""
     spec = rolesmod.stack_spec(host, role)
     rr = modmod.Renderer(ms)
-    ordered = ms.resolve(spec.modules, spec.node_type)
+    ordered = ms.resolve(spec.modules, spec.node_type, spec.without)
     _up, servers = rr.nginx_blocks(spec, ordered, rr.base_context(spec, ordered))
     out, usable, owner = {}, set(), {}
     for s in servers:

@@ -10015,6 +10015,30 @@ class TestFirstRunPage(StoreBase):
                          (303, "/hosts/fig"))                                               # a machine can still be added
         self.at_rest()
 
+    def test_the_accounts_page_asks_an_absent_accounts_machine_once(self):
+        """Its lists are kept 30 s, and a machine that does not answer is not asked four times a look."""
+        c = self.c
+        calls, now = [], [1000.0]
+        c.clock = lambda: now[0]
+
+        def accounts(*argv, user="admin"):
+            calls.append(argv)
+            raise KiwiError("the accounts do not answer just now")
+        with mock.patch.object(c, "accounts", accounts):
+            for what in ("list", "invites", "requests"):
+                with self.assertRaisesRegex(KiwiError, "do not answer"):
+                    c.accounts_read(what)
+            self.assertEqual(calls, [("list",)])
+            now[0] += 31
+            with self.assertRaisesRegex(KiwiError, "do not answer"):
+                c.accounts_read("list")
+            self.assertEqual(len(calls), 2)
+        with mock.patch.object(c, "accounts", lambda *a, user="admin": calls.append(a) or [{"name": ["anna"]}]):
+            now[0] += 31
+            self.assertEqual(c.accounts_read("list"), [{"name": ["anna"]}])
+            self.assertEqual(c.accounts_read("list"), [{"name": ["anna"]}])      # kept
+            self.assertEqual(len(calls), 3)
+
     def test_the_role_script_is_made_when_asked_and_kept_nowhere(self):
         cookie, _csrf = self.made()
         master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")

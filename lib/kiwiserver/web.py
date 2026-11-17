@@ -2380,12 +2380,12 @@ def make_app(control: Control):
         available, people, invites, requests, id_host, error = control.has_accounts(), [], [], [], "", kw.pop("error", None)
         if available:
             try:
-                for p in control.accounts("list") or []:
+                for p in control.accounts_read("list") or []:
                     name = (p.get("name") or [""])[0]
                     people.append({"name": name, "display": (p.get("displayname") or [name])[0],
                                    "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or [])})
-                invites = control.accounts("invites") or []
-                requests = control.accounts("requests") or []
+                invites = control.accounts_read("invites") or []
+                requests = control.accounts_read("requests") or []
             except KiwiError as e:
                 error = error or str(e)
         info = control.fleet_info() or {}
@@ -2396,8 +2396,8 @@ def make_app(control: Control):
         jabber = None
         if control.has_jabber_join():
             try:
-                jr = control.accounts("requests", "--jabber") or []
-                jabber = {"waiting": [r for r in jr if r.get("state") == "waiting"], "invites": control.accounts("invites", "--jabber") or []}
+                jr = control.accounts_read("requests", "--jabber") or []
+                jabber = {"waiting": [r for r in jr if r.get("state") == "waiting"], "invites": control.accounts_read("invites", "--jabber") or []}
             except KiwiError as e:
                 error = error or str(e)
         connectable = [{"host": h["name"], "module": m, "label": label,

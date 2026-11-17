@@ -598,9 +598,12 @@ The six steps agreed with the owner, with the items above folded in.
    first boot, `curl … | sudo bash` (from cloud-init user-data on a VPS) for
    hand-installed machines; per-host ISOs stay for offline installs.
    (design/control-plane.md, The image)
-6. **Workloads.** Runtime management of containers through podman's remote
-   API over SSH (docker likewise), the kiwi-game plugin (catalog, idle
-   shutdown, wake on first packet), the GTK app talking to the API.
+6. **Workloads.** Built in 2.176.0 to 2.178.0, without a remote API: one
+   container of a machine started, stopped, restarted or its log read over SSH
+   (`kiwi-server service`, the machine's page, the app); game servers that
+   sleep while nobody plays and wake on the first packet (`sleep: N`); the game
+   page, where people of one accounts group do the same for the game servers
+   without being admins. Open: the app does not open the game page itself.
 
 After that, in the order the owner set: the unlock (design/control-plane.md,
 Unlock: the `tang` module with rings, `vpn-server.published_ports` and

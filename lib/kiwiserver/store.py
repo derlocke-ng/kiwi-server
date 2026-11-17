@@ -290,6 +290,29 @@ class Store:
         self._write_ways(ways + [(name, public)], sid)
         self._reencrypt()
 
+    def new_recovery(self, keep=None):
+        """A new recovery key in place of the old one (lost, or seen by someone): the store is
+        encrypted for it, the copies are signed with its copy key from now on. `keep(secret)` is
+        asked first and must say it was kept (shown and typed back, or written to a file): nothing
+        changes before. Returns its secret. Copies made before open with the old key, and only with it."""
+        if not self.is_open():
+            raise KiwiError("the store is locked: kiwi-server secrets unlock first (this computer's key opens it)")
+        secret, public = keygen()
+        if keep is not None and not keep(secret):
+            raise KiwiError("nothing changed: the old recovery key is still the one")
+        path = os.path.join(self._tree(), COPY_KEY)
+        fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(copy_key_from(secret) + "\n")
+        os.replace(path + ".new", path)
+        ways = [(n, k) for n, k in self.ways() if n != "recovery"] + [("recovery", public)]
+        self._write_ways(ways, self.store_id())
+        self._reencrypt()
+        data = snapshot(self._tree())
+        if self._decrypt(secret) != data:
+            raise KiwiError("the store did not open with the new recovery key: keep the old one, and say so")
+        return secret
+
     def remove(self, name):
         ways = self.ways()
         keep = [(n, k) for n, k in ways if n != name]

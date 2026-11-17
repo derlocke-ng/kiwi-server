@@ -85,6 +85,20 @@ kiwi-server secrets copy-key ~/kiwi/fleet.yaml --identity recovery.key
 An older copy of yours has no signature; `restore … --unsigned` opens it
 (anyone could make a copy without one, so only for one you know is yours).
 
+**The recovery key is lost, or someone saw it.** It was shown once, when the
+store was made, and no command shows it again. While a computer still opens the
+store, make a new one:
+
+```bash
+kiwi-server secrets recovery ~/kiwi/fleet.yaml
+```
+
+It shows the new key once and asks you to type its last 8 characters: only then
+does it replace the old one (anything else, and nothing changes). With `--out
+FILE` the key goes into a new file only you can read, never onto the screen.
+The copies are signed with it from then on; the old key still opens the copies
+made before, and nothing after.
+
 ### Bring it back
 
 On a computer, from a file:

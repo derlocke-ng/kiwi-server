@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.160.0 — the rest of the review of 15–16 November
+
+With kiwi-modules 0.69.0 (0.68.0's fixes inside).
+
+- **Taking in a starter stick** says what would be refused (its name, its address) before the
+  stick hears anything: a stick taken in and then refused waited until it was restarted.
+- **The sign-up page trusts only Kanidm's own certificate** when it talks to Kanidm; it checked
+  none before.
+- **One damaged line in the activity log** (a power cut while it was written) no longer breaks
+  every machine's page; it is left out.
+- **"Update every machine"** is in each machine's History, with how it went for that machine.
+- **Several at once** does the control node last: its own apply restarts the page.
+- **A wrong setup code** no longer freezes the whole page for a second.
+- **The Accounts page** asks an accounts machine that is off once a look, not once a list, and
+  keeps the lists 30 s.
+- **Adding a master** to a network without one keeps a machine's commercial VPN: it becomes the
+  new master's exit, for the whole network.
+- **The role script** is shown after a button (a POST with the page's token), not a link: making
+  it may make the machine's missing secrets.
+- **Two hoster sign-ins** after another no longer share the file a login lands in.
+- Site names and the recovery's view of a machine take `vpn: false` into account.
+- From kiwi-modules 0.68.0: `vpn: false` keeps a module's exit or says so; no mesh ways in on a
+  commercial exit off the VPN; Paperless documents without an owner belong to the admin;
+  Immich's and Nextcloud's client secrets off command lines; a second Bedrock server's port; a
+  provider's OpenVPN file as an exit (Riseup), also without a master.
+- The starter's SSH key on the disk (a low finding) is on an encrypted disk since 2.159.0.
+- docs/roles.md: `ldap` makes Kanidm answer LDAP; nothing uses it yet.
+- `tests/drills/riseup-ovpn.py`: a RiseupVPN config (Riseup's API hands out an anonymous
+  certificate), for a master's exit in tests.
+
 ## 2.159.0 — the starter stick encrypts the disk; admin areas for the admins only
 
 With kiwi-modules 0.67.0. The first step of encryption by default (docs/design/encryption.md).

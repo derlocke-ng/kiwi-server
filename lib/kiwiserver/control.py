@@ -25,6 +25,7 @@ import tempfile
 import sys
 import threading
 import time
+import yaml
 
 from . import VERSION, store as storemod, util
 from .util import KiwiError
@@ -1602,11 +1603,18 @@ class Control:
         """The settings every role and module has, the base fields and the targets, as the CLI
         publishes them (`roles --porcelain`, `targets --porcelain`). They change with the
         program only: asked once per version, kept in RAM."""
-        path = os.path.join(self.run, "schema-%s.json" % VERSION)
+        # the fleet's module sources add modules (and their settings): they are part of the key
+        try:
+            raw = (yaml.safe_load(util.read_text(self.fleet_path)) or {}).get("module_sources") if not self.locked() else None
+        except (OSError, yaml.YAMLError):
+            raw = None
+        key = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()[:10] if raw else "built-in"
+        path = os.path.join(self.run, "schema-%s-%s.json" % (VERSION, key))
         if not os.path.isfile(path):
             out = {}
             for what in ("roles", "targets"):
-                r = subprocess.run(list(self.kiwi) + [what, "--porcelain"], capture_output=True, text=True,
+                more = ["--fleet", self.fleet_path] if raw and what == "roles" else []
+                r = subprocess.run(list(self.kiwi) + [what, "--porcelain"] + more, capture_output=True, text=True,
                                    stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
                 try:
                     out.update(json.loads(r.stdout))

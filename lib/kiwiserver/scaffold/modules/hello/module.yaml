@@ -1,0 +1,50 @@
+schema_version: "1.0"
+
+# An example: a small web page behind the machine's reverse proxy, on the VPN at hello.<machine>.
+# Copy the folder, rename it (the folder's name is the module's), and make it yours.
+module:
+  name: hello
+  title: Hello
+  version: 0.1.0
+  description: "A page that says who asks: the example module of a module source"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: []
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  hello_host: "{{ hello_hostname or 'hello.' ~ hostname }}"
+
+urls:
+  - "Hello: https://{{ hello_host }}"
+
+nginx:
+  upstream:
+    name: hello
+    server: "{{ container_prefix }}-hello:80"
+  server_name: "{{ hello_host }}"
+  proxy_pass: "http://hello"
+  comment: hello
+
+settings:
+  - key: hello_hostname
+    label: Name
+    help: "Empty: hello.<machine>."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: image
+    group: Advanced
+    default: docker.io/traefik/whoami:v1.10

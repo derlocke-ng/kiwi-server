@@ -16,7 +16,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import health as healthmod, recovery as recoverymod, starter as startermod
+from . import health as healthmod, recovery as recoverymod, sources as sourcesmod, starter as startermod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -266,7 +266,7 @@ class Renderer:
     def __init__(self, fleet, roles, out_dir, tc, modset=None, media_dir=None):
         self.fleet, self.roles, self.out_dir, self.tc = fleet, roles, out_dir, tc
         self.media_dir = media_dir or out_dir
-        self.ms = modset or modmod.discover()
+        self.ms = modset or modmod.discover(extra=sourcesmod.folders(fleet))
         self._scanned = False
         self._records = []
         self._node_lan = []
@@ -671,8 +671,21 @@ def load(args, need_roles=True):
     if st.exists() and st.is_open() and not getattr(args, "porcelain", False):
         store.touch(st, args.fleet)     # in use: it locks itself the idle time from now (the app's looks do not count)
     roles = rolesmod.discover() if need_roles else None
-    ms = modmod.discover() if need_roles else None
+    ms = modset(fleet) if need_roles else None
     return fleet, roles, ms
+
+
+def modset(fleet=None):
+    """The modules: the built-in ones, and the fleet's module sources (sources.py), fetched where needed."""
+    if fleet is None:
+        return modmod.discover()
+    return modmod.discover(extra=sourcesmod.folders(fleet))
+
+
+def modset_for(args):
+    """The modules for a command whose fleet is optional (--fleet): the schema of the page and the app."""
+    path = getattr(args, "fleet_file", None)
+    return modset(config.Fleet.load(path) if path else None)
 
 
 def warn_literal_secrets(h, ms):
@@ -993,6 +1006,9 @@ def cmd_list(args):
                 play = {"host": h.name, "site": c.get("play_hostname") or "play." + h.hostname, "group": c.get("play_group") or "games"}
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
                           "default_group": default_group, "play": play,
+                          # modules beyond the built-in ones, and which source each came from
+                          "module_sources": [dict(x, modules=sorted(m.name for m in r.ms.modules.values() if m.source == x["name"]))
+                                             for x in fleet.module_sources],
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
@@ -1341,7 +1357,7 @@ def cmd_logins(args):
 
 def cmd_roles(args):
     roles = rolesmod.discover()
-    ms = modmod.discover()
+    ms = modset_for(args)
     if args.porcelain:
         # base: the fields every machine has, which no role publishes (form.py); a tuple is a list here
         print(json.dumps({"roles": [r.as_dict(ms) for r in roles.values()],
@@ -1373,18 +1389,126 @@ def cmd_roles(args):
 
 
 def cmd_modules(args):
-    ms = modmod.discover()
+    ms = modset_for(args)
     if args.porcelain:
         print(json.dumps({"modules": [m.as_dict() for m in ms.modules.values()]}, indent=2))
         return
     for m in ms.modules.values():
-        print("%-14s %-12s %-12s %s" % (m.name, m.category, "/".join(m.node_types), m.description))
+        print("%-14s %-12s %-12s %s%s" % (m.name, m.category, "/".join(m.node_types), m.description,
+                                         "  (from the module source %s)" % m.source if getattr(m, "source", None) else ""))
         if m.requires:
             print("               requires: %s" % ", ".join(m.requires))
         if args.verbose:
             for s in m.settings:
                 req = " (required)" if s.required else ""
                 print("               %-24s %-7s default=%r%s" % (s.key, s.type, s.default, req))
+
+
+def cmd_sources(args):
+    """Module sources (sources.py): list them, add one by its link (pinned to the commit it is now),
+    move one's pin to what it is now, remove one, or make a new one's folder to start from."""
+    import yaml
+    what, rest = args.what, list(args.arg or [])
+    if args.fleet == "new" and not os.path.isfile("new"):      # `sources new FOLDER`: no fleet to it
+        what, rest, args.fleet = "new", ([args.what] if args.what and args.what != "list" else []) + rest, None
+    if what not in ("list", "add", "update", "remove", "new"):
+        raise KiwiError("sources: list, add, update, remove or new, not %r" % what)
+    if what == "new":
+        if not rest:
+            raise KiwiError("sources new FOLDER: where the new module source goes")
+        made = sourcesmod.scaffold(rest[0], name=args.name or "hello")
+        util.say("a module source in %s, with the module %s to start from: put it in a git repository, push it, "
+                 "then: kiwi-server sources FLEET add <its https link>" % (made, args.name or "hello"))
+        return
+    if not args.fleet:
+        raise KiwiError("sources %s needs the fleet file: kiwi-server sources FLEET %s" % (what, what))
+    fleet = config.Fleet.load(args.fleet)
+    listed = sourcesmod.raw(fleet)
+    names = [str(x.get("name")) for x in listed if isinstance(x, dict)]
+    if what == "list":
+        if args.porcelain:
+            print(json.dumps({"sources": fleet.module_sources}, indent=2))
+            return
+        if not listed:
+            util.say("no module sources: only the built-in modules (kiwi-server sources %s add <link>)" % args.fleet)
+        for x in fleet.module_sources:
+            print("%-12s %s" % (x["name"], x.get("path") or "%s @ %s" % (x["url"], x["commit"][:12])))
+            try:
+                folder = sourcesmod.fetch(x)
+                print("%-12s modules: %s" % ("", ", ".join(sorted(n for n in os.listdir(folder)
+                                                                   if os.path.isfile(os.path.join(folder, n, "module.yaml"))))))
+            except KiwiError as e:
+                print("%-12s %s" % ("", e))
+        return
+    if what == "add":
+        if not rest and not args.path:
+            raise KiwiError("sources FLEET add LINK [--ref TAG] [--name NAME], or add --path FOLDER --name NAME")
+        if args.path:
+            name = args.name or os.path.basename(os.path.abspath(os.path.expanduser(args.path))).lower()
+            entry = {"name": name, "path": args.path}
+        else:
+            url = rest[0].rstrip("/")
+            name = args.name or re.sub(r"\.git$", "", url.rsplit("/", 1)[-1]).lower()
+            entry = {"name": name, "url": url, "commit": sourcesmod.resolve(url, args.ref)}
+        if name in names:
+            raise KiwiError("there is a module source called %s already: --name another, or sources %s update %s"
+                            % (name, args.fleet, name))
+        found, errs = sourcesmod.check([entry])
+        if errs:
+            raise KiwiError(errs[0])
+        folder = sourcesmod.fetch(found[0])
+        ms = modmod.discover(extra=sourcesmod.folders(fleet) + [(name, folder)])     # clashes are said now, not later
+        mods = sorted(m.name for m in ms.modules.values() if m.source == name)
+        sourcesmod.write(args.fleet, listed + [entry])
+        util.say("module source %s: %s. Its templates and scripts run as root on the machines that use its modules"
+                 % (name, ", ".join(mods)))
+        if entry.get("url"):
+            util.say("pinned to commit %s: nothing of it changes until kiwi-server sources %s update %s"
+                     % (entry["commit"][:12], args.fleet, name))
+        else:
+            util.say("a folder on this computer: other computers and the control node do not have it")
+        return
+    if what in ("update", "remove"):
+        if not rest or rest[0] not in names:
+            raise KiwiError("which module source: %s" % (", ".join(names) or "there are none"))
+        name = rest[0]
+        entry = next(x for x in listed if x.get("name") == name)
+        if what == "remove":
+            roles = rolesmod.discover()
+            ms = modset(fleet)
+            theirs = {m.name for m in ms.modules.values() if m.source == name}
+            users = sorted("%s (%s)" % (h.name, ", ".join(sorted(theirs & set(h.modules))))
+                           for h in fleet.hosts.values() if h.role in roles and theirs & set(h.modules))
+            if users:
+                raise KiwiError("its modules are in use: %s. Take them off those machines first" % "; ".join(users))
+            sourcesmod.write(args.fleet, [x for x in listed if x.get("name") != name])
+            util.say("module source %s removed" % name)
+            return
+        if not entry.get("url"):
+            raise KiwiError("%s is a folder on this computer: it is always as it is now" % name)
+        new = sourcesmod.resolve(entry["url"], args.ref)
+        if new == entry["commit"]:
+            util.say("%s is at %s already" % (name, new[:12]))
+            return
+        moved = dict(entry, commit=new)
+        folder = sourcesmod.fetch(moved)
+        old_folder = sourcesmod.fetch(entry)
+
+        def versions(d):
+            out = {}
+            for n in sorted(os.listdir(d)):
+                if os.path.isfile(os.path.join(d, n, "module.yaml")):
+                    meta = yaml.safe_load(util.read_text(os.path.join(d, n, "module.yaml"))) or {}
+                    out[n] = str((meta.get("module") or {}).get("version") or "?")
+            return out
+        before, after = versions(old_folder), versions(folder)
+        for n in sorted(set(before) | set(after)):
+            if before.get(n) != after.get(n):
+                util.say("  %s: %s -> %s" % (n, before.get(n, "none"), after.get(n, "gone")))
+        sourcesmod.write(args.fleet, [moved if x.get("name") == name else x for x in listed])
+        util.say("%s now at %s. Apply the machines that use its modules to bring the change" % (name, new[:12]))
+        return
+    raise KiwiError("sources: list, add, update, remove or new")
 
 
 def cmd_targets(args):
@@ -3300,7 +3424,7 @@ def cmd_access(args):
             print("%-10s %-15s %s%s" % (x["name"], x["range"] if x["kind"] == "group" else "linked network", x["says"], more))
             if x["devices"]:
                 print("%-10s %-15s devices: %s" % ("", "", ", ".join(x["devices"])))
-        for h, s, a, c, _site in _hidden(fleet, rolesmod.discover(), modmod.discover()) if not args.who else []:
+        for h, s, a, c, _site in _hidden(fleet, rolesmod.discover(), modset(fleet)) if not args.who else []:
             print("%-10s %-15s %s.%s  (%s)" % ("Tor", "hidden service", s, h.name, ("only: " + ", ".join(c)) if c else "anyone with the address"))
         grouped = {d for x in rows for d in x["devices"]}
         loose = sorted(d for d in devices if d not in grouped)
@@ -4277,8 +4401,16 @@ def build_parser():
     s.add_argument("--unsigned", action="store_true",
                    help="open a copy without a signature: one of yours made before 2.170.0 (anyone could make such a copy)")
     s.add_argument("--passphrase-file", metavar="FILE", help="the passphrase of a copy of the older kind")
-    sub("roles", cmd_roles)
-    sub("modules", cmd_modules)
+    for name, fn in (("roles", cmd_roles), ("modules", cmd_modules)):
+        sub(name, fn).add_argument("--fleet", dest="fleet_file", metavar="FLEET",
+                                   help="with the modules of this fleet's module sources too")
+    s = sub("sources", cmd_sources)
+    s.add_argument("fleet", nargs="?", help="the fleet file (not for new)")
+    s.add_argument("what", nargs="?", default="list", help="list (default), add, update, remove; or `sources new FOLDER`")
+    s.add_argument("arg", nargs="*")
+    s.add_argument("--ref", help="add, update: a branch, tag or commit instead of the repository's default branch")
+    s.add_argument("--name", help="add: the source's name (default: the repository's); new: the example module's")
+    s.add_argument("--path", help="add: a folder on this computer instead of a link (while you write a module)")
     sub("targets", cmd_targets)
     sub("toolchain", cmd_toolchain).add_argument("action", nargs="?", choices=("status", "build"))
     sub("doctor", cmd_doctor)

@@ -10,6 +10,7 @@
   Restart, Stop or Start, and Log. Each is a job, and the machine's History says
   which container and what was done.
 - **The app**: the same in a menu at each row of the machine's Services.
+- kiwi-modules 0.76.1: the onion module's help says what `round` does (a new address).
 
 ## 2.175.0 — a new recovery key from the app
 

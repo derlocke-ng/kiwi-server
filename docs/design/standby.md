@@ -13,7 +13,10 @@ its address and its unlock are its own. In the fleet file it is a block of the m
   crumble:
     role: master
     standby:
-      crumble-b: { target: debian, address: 192.168.2.70, disk: auto }
+      crumble-b:
+        target: debian
+        network: { dhcp: false, address: 192.168.2.70/16, gateway: 192.168.2.1 }
+        # endpoint: 203.0.113.8    # where the nodes reach it, when not its network.address
 ```
 
 `crumble-b` is a machine of the fleet like any other for `build`, `next`, `apply`, `unlock` and

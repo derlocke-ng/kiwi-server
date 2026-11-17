@@ -3850,7 +3850,8 @@ class Window(Adw.ApplicationWindow):
             if rc == 0 and stamp() != was:      # the file is another now: a pull, or a push that merged
                 GLib.idle_add(came)
             GLib.idle_add(done, rc, text)
-            if rc == 0 and os.path.isfile(os.path.join(os.path.dirname(path), "control", "folder")):
+            # a computer asking to join is shown also when the sync failed: it may be what is needed
+            if os.path.isfile(os.path.join(os.path.dirname(path), "control", "folder")):
                 rc2, out2, _e = run_cli(self.cli, ["control", "requests", path, "--porcelain"], timeout=60)
                 try:
                     asking = json.loads(out2)["requests"] if rc2 == 0 else []

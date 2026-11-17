@@ -349,6 +349,7 @@ class Host:
         self.secrets = fleet      # what the resolver asks for derived secrets, file paths and the seed
         self.modules = []         # module roles: the resolved module list
         self.standby_of = None    # the master this machine stands by for (docs/design/standby.md)
+        self.standby_endpoint = ""  # a standby's address its master's nodes reach
         self.module_settings = {}  # module -> {key: value}
         self.module_files = {}    # "module/key" -> bytes
         self.warnings = []
@@ -585,7 +586,7 @@ class Fleet:
             self.errors.append("backup.keep must be a positive integer")
 
     # what a standby does not take from its master: it is a machine of its own there
-    STANDBY_OWN = ("standby", "address", "vps", "disk", "mac", "network", "install", "unlock")
+    STANDBY_OWN = ("standby", "vps", "disk", "mac", "network", "install", "unlock")
 
     def _add_standby(self, primary, name, over):
         """A machine that renders as `primary` (same name on the mesh, stack, secrets and WireGuard
@@ -598,10 +599,12 @@ class Fleet:
         if not isinstance(over, dict):
             raise KiwiError("%s.standby.%s must be a mapping" % (primary.name, name))
         base = {k: v for k, v in primary.overrides.items() if k not in self.STANDBY_OWN}
+        over = dict(over)
+        endpoint = str(over.pop("endpoint", "") or "")     # where nodes reach it, when not its network.address
         merged = deep_merge(deep_merge(base, over), {"hostname": primary.hostname})
         role = str(merged.get("role") or self.defaults.get("role") or "")
         block = dict(merged.get(role) or {}) if role else {}
-        addr = str(merged.get("address") or "").split("/")[0]
+        addr = endpoint or str(((merged.get("network") or {}).get("address")) or "").split("/")[0]
         try:
             home = bool(addr) and ipaddress.ip_address(addr).is_private
         except ValueError:
@@ -617,6 +620,7 @@ class Fleet:
             merged[role] = block
         h = Host(self, name, merged)
         h.standby_of = primary.name
+        h.standby_endpoint = addr
         self.hosts[name] = h
 
     def standbys(self, name):

@@ -4063,6 +4063,50 @@ class TestFederation(Base):
         self.assertIn("not a network's card", err)
 
 
+class TestStandby(Base):
+    def fleet_with_standby(self, **standby):
+        sb = {"target": "debian", "network": {"dhcp": False, "address": "192.168.7.70/24", "gateway": "192.168.7.1"}}
+        sb.update(standby)
+        master = self.master()
+        master["modules"] = ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"]
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "admin": {"ssh_port": 41022}, "master": master,
+                     "standby": {"gate-b": sb}},
+            "store": {"role": "node", "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.9",
+                                               "preset": "minimal"}}}})
+
+    def test_a_standby_is_its_master_on_another_machine(self):
+        f = self.fleet_with_standby()
+        b, gate = f.hosts["gate-b"], f.hosts["gate"]
+        self.assertEqual((b.standby_of, b.hostname, b.standby_endpoint), ("gate", gate.hostname, "192.168.7.70"))
+        self.assertEqual(f.standbys("gate"), [b])
+        self.assertEqual(b.admin["ssh_port"], 41022)                       # its master's, unless its own
+        self.assertNotIn("standby", b.overrides)
+        role_g, role_b = self.prepare(gate), self.prepare(b)
+        self.assertEqual(role_b.node_type, "master")
+        self.assertNotIn("tor", b.modules)                                  # at home: no Tor
+        self.assertIn("tor", gate.modules)
+        self.assertEqual(b.module_settings["dns"]["pihole_password"], gate.module_settings["dns"]["pihole_password"])
+        self.assertEqual(b.module_settings["vpn-server"]["wg_host"], gate.module_settings["vpn-server"]["wg_host"])
+        self.assertEqual(backup._wireguard_copy(b), backup._wireguard_copy(gate))     # the master's identity
+        self.assertFalse(backup.keep_wireguard(b, None, runner=lambda *a, **k: self.fail("a standby's peers are not kept")))
+        self.assertTrue(cli.has_master(f, self.roles))
+
+    def test_its_masters_nodes_know_where_it_is(self):
+        f = self.fleet_with_standby()
+        r = cli.Renderer(f, self.roles, self.tmp, None, self.ms)
+        self.assertEqual(r.standby_endpoints(), ["vpn.example.org:51820:41022", "192.168.7.70:51820:41022"])
+        bare = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        self.assertEqual(cli.Renderer(bare, self.roles, self.tmp, None, self.ms).standby_endpoints(), [])
+
+    def test_a_standby_of_another_name_is_refused(self):
+        with self.assertRaises(KiwiError):
+            self.fleet({"defaults": self.base_defaults(), "hosts": {
+                "gate": {"role": "master", "target": "debian", "master": self.master(), "standby": {"store": {}}},
+                "store": {"role": "bare"}}})
+
+
 class TestPlan(unittest.TestCase):
     def test_a_container_restarts_when_its_quadlet_or_a_file_it_mounts_changed(self):
         class B:
@@ -6769,6 +6813,9 @@ peers=4 3
         f, (_s, _p, notes) = self.assessed("luks=1")
         self.assertEqual(f["encryption"], "bound")
         self.assertFalse([n for n in notes if "disk" in n])
+        f, (state, problems, notes) = self.assessed("luks=ram")          # a RAM master: no disk to encrypt
+        self.assertEqual((f["encryption"], problems), ("ram", []))
+        self.assertIn("in RAM only: nothing stays on a disk", notes)
 
     def test_the_status_page_keeps_ninety_days_of_each_service(self):
         from kiwiserver import health

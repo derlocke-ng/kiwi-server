@@ -290,9 +290,8 @@ class Renderer:
         port = int(vs.get("wg_port") or 51820)
         ends = ["%s:%d:%d" % (vs.get("wg_host"), port, int(master.admin.get("ssh_port") or 22))]
         for s in standbys:
-            addr = str(s.cfg.get("address") or "").split("/")[0]
-            if addr:
-                ends.append("%s:%d:%d" % (addr, port, int(s.admin.get("ssh_port") or 22)))
+            if s.standby_endpoint:
+                ends.append("%s:%d:%d" % (s.standby_endpoint, port, int(s.admin.get("ssh_port") or 22)))
         return ends if len(ends) > 1 else []
 
     def prepare(self, host):

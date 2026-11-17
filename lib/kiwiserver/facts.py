@@ -37,7 +37,10 @@ kv clock "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
 if [ -e /run/reboot-required ] || [ -e /run/ostree/staged-deployment ]; then kv reboot yes; fi
 kv failed "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
 luks=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device 2>/dev/null | head -n 1)
-if [ -n "$luks" ]; then kv luks "$(clevis luks list -d "$luks" 2>/dev/null | wc -l)"; else kv luks none; fi
+if [ -n "$luks" ]; then kv luks "$(clevis luks list -d "$luks" 2>/dev/null | wc -l)"
+elif grep -q 'coreos.liveiso=' /proc/cmdline 2>/dev/null || [ "$(findmnt -n -o FSTYPE / 2>/dev/null)" = tmpfs ]; then
+  kv luks ram       # in RAM only (a live system): no disk holds anything
+else kv luks none; fi
 if [ -f /etc/kiwi-server/stack.env ]; then
     # shellcheck disable=SC1091
     . /etc/kiwi-server/stack.env
@@ -206,7 +209,8 @@ def parse(data, local_now=None):
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
     if raw.get("luks"):
-        out["encryption"] = "none" if raw["luks"] == "none" else ("bound" if _int(raw["luks"]) else "key")
+        out["encryption"] = (raw["luks"] if raw["luks"] in ("none", "ram")
+                             else ("bound" if _int(raw["luks"]) else "key"))
     if raw.get("vpn"):
         container = next((s for s in services if s["name"] == raw["vpn"]), None)
         out["tunnel"] = {"container": raw["vpn"], "running": bool(container and container["running"]),
@@ -306,5 +310,7 @@ def assess(f):
         problems.append(warn("the disk is not encrypted: whoever takes it can read everything on it"))
     elif encryption == "key":
         notes.append("the disk opens only with a typed key")
+    elif encryption == "ram":
+        notes.append("in RAM only: nothing stays on a disk")
     levels = {p["level"] for p in problems}
     return ("bad" if "bad" in levels else "warn" if "warn" in levels else "ok"), problems, notes

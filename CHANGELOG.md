@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.168.0 — a ring's keys survive a power cut
+
+- **kiwi-modules 0.74.0**: the Tang image (15-kiwi4) makes a ring's keys beside, on the disk,
+  then puts them in place, and never serves a key file a power cut left empty (the last gap of
+  the power-cut round: files the machines write themselves; kiwi-stack's own were already
+  flushed before they take their place).
+
 ## 2.167.0 — data disks are encrypted too
 
 - **A new data disk is put in LUKS before its filesystem** (`mounts:` with a format word), as the

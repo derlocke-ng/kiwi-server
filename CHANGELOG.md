@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.177.0 — game servers that sleep while nobody plays
+
+- **`sleep: N` for a game server** (kiwi-modules 0.77.0): stopped after N minutes without
+  players, woken by the first who tries to join. [roles.md](docs/roles.md#game-servers).
+- A sleeping server is **asleep, not down**: kiwi-stack 0.9.12, `kiwi-server status`, the
+  machine's page (Its containers) and the app say so; nothing warns.
+- Drill `tests/drills/games-sleep.py`: waits until the servers sleep, then knocks the way
+  their games do and times the waking.
+
 ## 2.176.0 — one container at a time
 
 - **`kiwi-server service FLEET HOST NAME restart|stop|start|logs`**: one container

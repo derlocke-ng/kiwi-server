@@ -47,6 +47,7 @@ checked out. `drill.py` holds what they share.
 | `nginx-check.py FLEET MACHINE [MACHINE ...]` | Would the machine's reverse proxy start with what the fleet file says now? Renders into RAM and has nginx read the config (`nginx -t` in a container); nothing is sent. Run it before applying a change to a proxy. | Seconds per machine. |
 | `fail2ban.py FLEET MASTER[:PORT] NODE URL [--app NAME]` | Does fail2ban ban who attacks a node's public site, and only them? From a Tor exit (a Tor on the master, for the drill only): a page with 150 files at once is neither refused nor banned; a scanner is banned by the node's nginx and let out again; the node has the master's list of the network's own addresses; with `--app`, the app's wrong logins reach its jail and its pattern matches. | A few minutes. |
 | `game-ports.py ADDRESS GAME:PORT [...]` | Do game servers answer at an address, asked the way the game's client asks: Minecraft's server-list question (TCP), Zandronum's launcher question (UDP), any other port as one that opens. For a public server the address is the master's. | Seconds. |
+| `games-sleep.py FLEET HOST` | Game servers with `sleep:` fall asleep when nobody plays and `status` calls that asleep, not down; then each is knocked the way its game asks (game-ports.py) and the waking is timed. Nobody may play meanwhile. | The longest `sleep` plus a few minutes. |
 
 Each drill prints what it measured, one line per step, and puts back what it changed (a
 firewall rule, a stopped container) when it ends, also when it fails half way.

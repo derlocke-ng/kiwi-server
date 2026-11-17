@@ -14,7 +14,7 @@ def facts(load, cpus, mem, disks, running, backup=None, up=400000):
          "os": "Fedora CoreOS 43", "uptime": up, "load": [load, load, load], "cpus": cpus,
          "memory": {"total": mem[0] * GB, "available": int((mem[0] - mem[1]) * GB)},
          "disks": [{"mount": m, "size": s * GB, "used": int(u * GB)} for m, s, u in disks],
-         "running": running, "expected": running, "services": []}
+         "running": running, "expected": running, "services": [], "asleep": []}
     if backup is not None:
         f["backup"] = {"last": 1, "age": backup, "held": "", "copies": []}
     return f

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: games
   title: Game servers
-  version: 1.0.0
+  version: 1.1.0
   description: "Game servers for the people on your network: Minecraft, Enshrouded, Abiotic Factor, Zandronum, Valheim, Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One container and one folder per server, reachable at home and through the VPN"
   category: gaming
   node_types: [node]
@@ -34,12 +34,23 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  sleep_script: sleep.sh.j2
+  sleep_service: kn-games-sleep.service.j2
+
+derived:
+  sleepers: "{{ 'yes' if servers.values() | selectattr('sleep') | list else '' }}"
+
+outputs:
+  sleep_script: { path: "kiwi/games-sleep.sh", mode: 0755, when: sleepers }
+  sleep_service: { kind: host_unit, name: "{{ container_prefix }}-games-sleep.service", when: sleepers }
 
 validate:
   - when: "servers.values() | map(attribute='game') | reject('in', catalog) | list"
     error: "games.servers: no such game: {{ servers.values() | map(attribute='game') | reject('in', catalog) | join(', ') }}. Known: {{ catalog.keys() | sort | join(', ') }} (catalog: adds your own)"
   - when: "not eula and servers.values() | map(attribute='game') | select('in', ['minecraft', 'minecraft-bedrock']) | list"
     error: "games.eula: a Minecraft server needs its licence accepted (https://aka.ms/MinecraftEULA): eula: true"
+  - when: "servers.values() | selectattr('sleep') | rejectattr('sleep', 'integer') | list or servers.values() | selectattr('sleep') | selectattr('sleep', 'lt', 5) | list"
+    error: "games.servers: sleep is the minutes without players before a server stops, 5 or more (sleep: 30)"
   - when: "servers.keys() | reject('match', '^[a-z0-9][a-z0-9-]{0,30}$') | list"
     error: "games.servers: a server's name is made of lowercase letters, digits and dashes: {{ servers.keys() | reject('match', '^[a-z0-9][a-z0-9-]{0,30}$') | join(', ') }}"
 
@@ -60,11 +71,12 @@ settings:
     type: object
     label: Servers
     help: |
-      One entry per server, YAML: name -> {game, port, name, password, memory, env, args, image}.
+      One entry per server, YAML: name -> {game, port, name, password, memory, sleep, env, args, image}.
       game: one of the catalog (minecraft, minecraft-bedrock, enshrouded, abiotic-factor, zandronum, valheim, factorio, satisfactory, palworld, terraria).
       port: the server's first port on this machine, when the game's usual one is taken by another server; its other ports move with it.
       public: true opens the server to the Internet: players outside your VPN join at the master's address, which hands the game's ports on to this machine. Nothing is opened at home.
       name: what players see. password: to join, where the game has one. memory: for Minecraft, like 4G.
+      sleep: minutes without players after which the server stops, to free the machine's memory; the first player who tries to join wakes it, and joins a minute or two later (Minecraft: refresh the server list, then join). Not for a server's first start, while it downloads the game.
       env: more settings of the image, as NAME: value. args: the server's command line, where the game takes one. image: another image than the catalog's.
       Example: survival: {game: minecraft, memory: 4G}
     default: {}

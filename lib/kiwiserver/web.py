@@ -630,7 +630,8 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 stopped until you start it or the machine restarts.</p>
 <div class="scroll"><table class="tbl"><thead><tr><th>Container</th><th>Now</th><th></th></tr></thead><tbody>
 {% for s in m.facts.services %}<tr><td><b>{{ s.name }}</b>{% if s.image %}<br><span class="sm">{{ s.image.split("/")[-1] }}</span>{% endif %}</td>
-<td><span class="badge {{ 'ok' if s.running and s.health != 'unhealthy' else 'bad' }}">{{ s.health or s.state }}</span>
+<td>{% if s.asleep %}<span class="badge" title="Nobody played for a while; the first player who joins wakes it">asleep</span>{% else %}
+<span class="badge {{ 'ok' if s.running and s.health != 'unhealthy' else 'bad' }}">{{ s.health or s.state }}</span>{% endif %}
 {% if not s.stack %}<br><span class="sm">not of its stack</span>{% endif %}</td>
 <td>{% if s.stack %}{% for act, label in (("restart", "Restart"), ("stop", "Stop"), ("start", "Start"), ("logs", "Log")) %}
 {% if not (act == "stop" and not s.running) and not (act == "start" and s.running) %}<form class="inline" method="post" action="/run"

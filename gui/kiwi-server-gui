@@ -4839,8 +4839,8 @@ class Window(Adw.ApplicationWindow):
         else:
             g.set_description("No stack on this machine")
         for s in f["services"]:
-            kind = "bad" if not s["running"] else {"unhealthy": "warn", "starting": "warn"}.get(s["health"], "ok")
-            word = "stopped" if not s["running"] else s["health"] or "running"
+            kind = "ok" if s.get("asleep") else "bad" if not s["running"] else {"unhealthy": "warn", "starting": "warn"}.get(s["health"], "ok")
+            word = "asleep" if s.get("asleep") else "stopped" if not s["running"] else s["health"] or "running"
             row = plain_row(s["name"], s["status"] or s["state"], tooltip_text=s["image"] or None)
             row.add_prefix(dot(kind))
             row.add_suffix(pill(word, kind if kind != "ok" else "dim"))

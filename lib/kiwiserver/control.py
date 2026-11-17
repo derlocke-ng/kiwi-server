@@ -169,6 +169,8 @@ class Control:
         self._hoster = {}                     # the first run: a sign-in at a hoster, by its handle (hoster_start)
         self._tokens = {}                     # token -> (controller, expires): who may sync
         self._accounts_kept = {}              # the Accounts page's reads: argv -> (until, answer); "down" -> (until, error)
+        self._play_last = {}                  # the game page: (machine, container) -> when it was last clicked
+        self._play_conf = (0, None)           # the accounts' OpenID configuration, as last asked: (until, conf)
 
     # ---- the password and the store ----------------------------------------------------
     @property
@@ -1269,8 +1271,9 @@ class Control:
         words = [str(a) for a in argv if not str(a).startswith("--")]
         if words and words[0] not in ("list", "invites", "requests"):
             self._accounts_kept = {}          # something changed: the page asks anew
-        if words and words[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect"):
-            self.audit(user, "accounts: %s%s" % ("jabber " if "--jabber" in argv else "", words[0]), name=" ".join(words[1:2]))
+        if words and words[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect", "member"):
+            self.audit(user, "accounts: %s%s" % ("jabber " if "--jabber" in argv else "", words[0]),
+                       name=" ".join(words[1:4] if words[0] == "member" else words[1:2]))
         try:
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
         except (ValueError, IndexError):
@@ -1479,6 +1482,47 @@ class Control:
 
     def _env(self):
         return dict(os.environ, PYTHONUNBUFFERED="1", KIWI_MEDIA_DIR=self.media_dir())
+
+    # ---- the game page (play.py) --------------------------------------------------------
+    def play_client(self):
+        """The game page's client at the network's accounts ({client, secret, issuer}), once
+        `kiwi-server accounts <fleet> connect <this node> control` made it; None before, or locked."""
+        me = os.environ.get("KIWI_CONTROL_HOST") or ""
+        if self.locked() or not HOST.match(me):
+            return None
+        try:
+            with open(os.path.join(self.fleet_dir, "secrets", "accounts", "%s-control.json" % me)) as f:
+                got = json.load(f)
+        except (OSError, ValueError):
+            return None
+        return got if all(isinstance(got.get(k), str) and got.get(k) for k in ("client", "secret", "issuer")) else None
+
+    def play_ca(self):
+        return os.path.join(self.fleet_dir, "secrets", "ca", "kiwiCA.pem")
+
+    def play_conf(self, issuer, opener=None):
+        """The accounts' OpenID configuration, asked again after an hour."""
+        from . import play as playmod
+        until, conf = self._play_conf
+        if conf is None or until < self.clock() or conf.get("_issuer") != issuer:
+            conf = dict(playmod.discover(issuer, self.play_ca(), opener=opener), _issuer=issuer)
+            self._play_conf = (self.clock() + 3600, conf)
+        return conf
+
+    def play_start(self, person, machine, container, action, extra=()):
+        """A click on the game page: a job of `kiwi-server service`, as play:<person>. Only for what
+        the page lists, and one change per server every few seconds."""
+        from . import play as playmod
+        if action not in playmod.ACTIONS:
+            raise KiwiError("start, stop, restart or its log")
+        if not playmod.allowed(self.fleet_info(), extra, machine, container):
+            raise KiwiError("%s on %s is not on the game page" % (container, machine))
+        now = self.clock()
+        if action != "logs":
+            if now - self._play_last.get((machine, container), 0) < playmod.PAUSE:
+                raise KiwiError("one moment: %s was just told something" % container)
+            self._play_last[(machine, container)] = now
+        return self.start("service", [machine], user="play:" + person, at=action, module=container)
 
     def media(self, name):
         """The install media of a machine, when they are made: (path, size)."""

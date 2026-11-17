@@ -19,6 +19,12 @@ services:
       - {{ ("KIWI_ACCENT=" ~ brand_accent) | tojson }}
       - {{ ("KIWI_ABOUT=" ~ (about | replace('\n', ' '))) | tojson }}
       - {{ ("KIWI_CONTACT=" ~ contact) | tojson }}
+{% if play_page %}
+      # the game page: its name (only /play/ answers there), who may, and what more it lists
+      - KIWI_PLAY_HOST={{ play_hostname or 'play.' ~ hostname }}
+      - KIWI_PLAY_GROUP={{ play_group }}
+      - {{ ("KIWI_PLAY_EXTRA=" ~ (play_extra | join(' '))) | tojson }}
+{% endif %}
     tmpfs:
       - /run/kiwi:size={{ ram_mb }}m,mode=0700
     volumes:

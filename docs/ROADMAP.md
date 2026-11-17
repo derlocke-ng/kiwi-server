@@ -849,7 +849,9 @@ Asked for by the owner in November 2026:
   cloud-init user-data on a stock Debian. So one generic path, user-data that installs the
   role and lets the backup restore itself, behind a small provider interface; netcup stays
   the ISO path. Hetzner Cloud first: its API is small. Masters there go without LUKS.
-- **A master without LUKS is the default**, decided 10 November 2026. On a VPS disk
+- **A master without LUKS was the default**, decided 10 November 2026; replaced 17 November
+  2026 by encryption by default (docs/design/encryption.md): the control node gives a waiting
+  master its key by itself, so a reboot no longer needs someone. On a VPS disk
   encryption protects disk images and old disks only (the hoster can read RAM), and costs
   someone at every reboot and the unattended update reboots. `debian.encrypt` stays per
   host; home nodes keep LUKS and their rings.

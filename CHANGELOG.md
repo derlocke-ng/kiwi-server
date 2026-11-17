@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.162.0 — the master is encrypted too
+
+The third step of encryption by default (docs/design/encryption.md).
+
+- **The first run and "Add a master" write the master encrypted** (Debian, with SSH in its
+  initramfs). Its first start waits for the one-time key of its media; `kiwi-server next` sees
+  that and gives it; the first apply puts its own key in place.
+- **After a restart the control node gives a waiting machine its key** by itself when no ring is
+  forwarded to it (`kiwi-server unlock` does the same, without `--manual`).
+- **Rings that do not answer yet** at an apply (the machine serving them comes later) no longer
+  stop it: the disk opens with its key until an apply after they answer, and the machine does
+  not restart by itself for updates meanwhile.
+- docs/ROADMAP.md: "a master without LUKS" (10 November) is replaced.
+
 ## 2.161.0 — every machine kiwi-server installs is encrypted
 
 The second step of encryption by default (docs/design/encryption.md).

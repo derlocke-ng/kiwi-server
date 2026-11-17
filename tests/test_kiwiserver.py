@@ -597,6 +597,8 @@ class TestStarter(Base):
         # encrypted, as every machine: the first one serves the ring at home, the others open with it
         self.assertEqual(mango["node"]["tang"], {"rings": {"home": "7500"}})
         self.assertNotIn("unlock", mango)                                     # its own: the key for its screen
+        masters = [h for h in data["hosts"].values() if h["role"] == "master"]
+        self.assertTrue(all(m["debian"] == {"encrypt": True} and m["unlock"] == {"ssh": True} for m in masters))
         self.assertNotIn("unlock", quince)          # no fixed address: no ring on the LAN reaches it; its key
         # a machine added later with a fixed address opens with the ring at home
         fleet = os.path.join(self.tmp, "ring-fleet.yaml")
@@ -2700,6 +2702,8 @@ class TestSetup(Base):
         self.assertEqual(rc, 0, err)
         hosts = yaml.safe_load(util.read_text(dest))["hosts"]
         self.assertEqual(hosts["trifle"]["master"]["vpn-server"]["wg_host"], "203.0.113.7")
+        # encrypted, as every machine: its key given over SSH in its initramfs
+        self.assertEqual((hosts["trifle"]["debian"], hosts["trifle"]["unlock"]), ({"encrypt": True}, {"ssh": True}))
         for n in ("mango", "quince"):
             self.assertIs(hosts[n]["node"]["vpn"], True)
             self.assertEqual(hosts[n]["node"]["vpn-client"], {"wireguard_config": "secrets/%s.home.conf" % n})
@@ -4756,6 +4760,17 @@ class TestUnlock(Base):
         with a, b, mock.patch.object(remote, "_answers", lambda addr, port=22, timeout=2: True), self.assertRaisesRegex(KiwiError, "no initramfs answered"):
             unlock.open_disk(h, self.servers(f), timeout=20, runner=runner, clock=lambda: now[0], sleep=sleeper)
 
+    def test_a_disk_without_rings_is_opened_with_its_key(self):
+        """No ring to forward (an encrypted master, a machine alone): `unlock` types its key, which is
+        what the control node's watchdog runs for a machine that waits after a restart."""
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"tart": {"target": "debian", "debian": {"encrypt": True},
+                                                                             "unlock": {"ssh": True}}}})
+        typed = []
+        with mock.patch.object(unlock, "type_key", lambda h, **kw: typed.append(h.name) or True), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["unlock", f.path, "tart"]), 0)
+        self.assertEqual(typed, ["tart"])
+
     def test_the_key_goes_over_ssh_without_a_line_end(self):
         f, h = self.tunnel_host()
         seen = []
@@ -5485,7 +5500,9 @@ class TestManage(Base):
         self.assertEqual((once, current), (self.ONCE, ""))
         self.assertRegex(new, r"^[a-kmnp-x2-9]{16}$")
         self.assertIn("role.sh.tmp", calls[1][0])            # the secrets come after the swap
-        self.assertEqual(len(calls), 2)                      # and no new volume key on a non-master
+        # no new volume key on a non-master; its disk opens with its key only: no restart for updates by itself
+        self.assertEqual(len(calls), 3)
+        self.assertIn("kiwi-key-only", calls[2][0])
         with open(self.luks_file("key")) as fh:
             self.assertEqual(fh.read(), new)
         self.assertEqual(oct(os.stat(self.luks_file("key")).st_mode & 0o777), "0o600")

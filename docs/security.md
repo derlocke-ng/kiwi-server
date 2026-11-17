@@ -86,6 +86,11 @@ After a power cut someone types that one key; the rest follow. A machine added
 later with a fixed address binds `home` too. `encryption: false` on a machine
 keeps it plain, by choice.
 
+**The master** is encrypted as well (Debian): its first start waits for the
+one-time key of its media, which `kiwi-server next` gives it over SSH in its
+initramfs. After a restart the control node gives it its key the same way, by
+itself.
+
 ### Unlocking at boot
 
 A disk can open itself at boot. The `tang` module on one node serves a

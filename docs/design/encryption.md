@@ -111,3 +111,11 @@ and Debian machines at home.
    the network's rings only.
 3. A new test network from the first run: every machine encrypted, a power cut, all back by
    themselves.
+
+## Data disks (2.167.0)
+
+A new data disk (`mounts:` with a format word) goes into LUKS before its filesystem. Its key is
+derived from the seed (`disk/<where>` of the machine), so a machine installed anew opens it
+again, and is kept in `/etc/kiwi-server/disks/` on the system disk, which is encrypted itself:
+`/etc/crypttab` opens the data disk after the system's. A disk with data on it is left as it is
+and reported by `status`.

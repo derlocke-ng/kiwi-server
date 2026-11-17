@@ -268,17 +268,24 @@ _NOT_A_MOUNT = ("/", "/boot", "/etc", "/usr", "/var", "/home", "/root", "/sysroo
 
 
 def mounts_of(cfg):
-    """A machine's data disks: [(device, where, format or "")]. An entry is "DEVICE WHERE"
-    (as a line of fstab begins) or {device, at, format}. The device by its label, its UUID or
-    a /dev path that does not change (by-id); `format` (xfs, ext4) makes a filesystem on a
-    disk that has none, and is never used on one that has."""
+    """A machine's data disks: [(device, where, format or "", encrypt)]. An entry is "DEVICE WHERE"
+    (as a line of fstab begins) or {device, at, format, encrypt}. The device by its label, its
+    UUID or a /dev path that does not change (by-id); `format` (xfs, ext4) makes a filesystem on
+    a disk that has none, and is never used on one that has: in LUKS first, as the system disk,
+    unless the machine has `encryption: false` or the entry says `plain` (a fourth word) or
+    `encrypt: false`. A disk that holds data stays as it is; one in LUKS is opened."""
     out = []
+    machine = cfg.get("encryption", True) is not False
     for e in cfg.get("mounts") or []:
         if isinstance(e, dict):
             dev, at, fmt = str(e.get("device") or ""), str(e.get("at") or ""), str(e.get("format") or "")
+            enc = machine and e.get("encrypt", True) is not False
         else:
             parts = str(e).split()
+            plain = parts[-1:] == ["plain"]
+            parts = parts[:-1] if plain else parts
             dev, at, fmt = (parts + ["", "", ""])[:3] if 2 <= len(parts) <= 3 else ("", "", "")
+            enc = machine and not plain
         at = at.rstrip("/") if len(at) > 1 else at
         if not _MOUNT_DEVICE.match(dev) or not _MOUNT_AT.match(at):
             raise KiwiError("mounts: %r is not a disk and a place, like LABEL=data /mnt/data "
@@ -289,7 +296,7 @@ def mounts_of(cfg):
             raise KiwiError("mounts: format is xfs or ext4 (got %r)" % fmt)
         if at in [x[1] for x in out]:
             raise KiwiError("mounts: two disks at %s" % at)
-        out.append((dev, at, fmt))
+        out.append((dev, at, fmt, enc))
     return out
 
 

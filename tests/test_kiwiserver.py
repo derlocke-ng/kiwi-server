@@ -3766,8 +3766,13 @@ class TestMounts(Base):
     def test_an_entry_is_a_disk_and_a_place(self):
         self.assertEqual(config.mounts_of({"mounts": ["LABEL=data /mnt/data", "UUID=0a1b-2c /srv/media/ xfs",
                                                       {"device": "/dev/disk/by-id/ata-X_1", "at": "/mnt/big", "format": "ext4"}]}),
-                         [("LABEL=data", "/mnt/data", ""), ("UUID=0a1b-2c", "/srv/media", "xfs"), ("/dev/disk/by-id/ata-X_1", "/mnt/big", "ext4")])
+                         [("LABEL=data", "/mnt/data", "", True), ("UUID=0a1b-2c", "/srv/media", "xfs", True),
+                          ("/dev/disk/by-id/ata-X_1", "/mnt/big", "ext4", True)])
         self.assertEqual(config.mounts_of({}), [])
+        # a new disk goes into LUKS unless the entry or the machine says otherwise
+        self.assertEqual(config.mounts_of({"mounts": ["UUID=1 /mnt/a xfs plain", {"device": "UUID=2", "at": "/mnt/b", "encrypt": False}]}),
+                         [("UUID=1", "/mnt/a", "xfs", False), ("UUID=2", "/mnt/b", "", False)])
+        self.assertEqual(config.mounts_of({"encryption": False, "mounts": ["UUID=1 /mnt/a xfs"]}), [("UUID=1", "/mnt/a", "xfs", False)])
         for bad, why in ((["data /mnt/data"], "not a disk and a place"), (["LABEL=data"], "not a disk and a place"),
                          (["LABEL=data /var"], "the system's own"), (["LABEL=data /mnt/../etc"], "the system's own"),
                          (["LABEL=data /mnt/data btrfs"], "xfs or ext4"), (["LABEL=a /mnt/d", "LABEL=b /mnt/d"], "two disks"),
@@ -3782,7 +3787,15 @@ class TestMounts(Base):
             "x": {"role": "bare", "mounts": ["LABEL=data /mnt/data", "UUID=0a1b-2c /srv/media xfs"]}}}), "x")
         self.assertIn("ks_role_apply_role() {", script)                  # the role's own steps, under another name
         tail = script.split("# ---- data disks (fleet.yaml mounts)", 1)[1]
-        self.assertIn("LABEL=data /mnt/data \nUUID=0a1b-2c /srv/media xfs\nKS_MOUNTS", tail)
+        self.assertRegex(tail, r"LABEL=data /mnt/data - 1 [A-Za-z0-9+/=]{20,}\nUUID=0a1b-2c /srv/media xfs 1 [A-Za-z0-9+/=]{20,}\nKS_MOUNTS")
+        keys = re.findall(r"^(?:LABEL|UUID)=\S+ \S+ \S+ 1 (\S+)$", tail, re.M)
+        self.assertEqual(len(set(keys)), 2)                              # a key of its own for each disk
+        again = self.render(self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "x": {"role": "bare", "mounts": ["LABEL=data /mnt/data", "UUID=0a1b-2c /srv/media xfs"]}}}), "x")
+        self.assertIn(keys[0], again)                                    # from the seed: the same after an install anew
+        self.assertIn("cryptsetup luksFormat --batch-mode --type luks2 --key-file", tail)
+        self.assertIn("/etc/crypttab", tail)
+        self.assertIn('[[ $enc == 1 ]]', tail)                            # only a new, empty disk is encrypted
         self.assertLess(tail.index("    ks_mounts\n"), tail.index("    ks_role_apply_role\n"))
         self.assertIn("nofail", tail)                                    # a disk that is gone does not keep the machine from booting
         self.assertLess(tail.index("install -m 0644 /dev/null /etc/fstab"), tail.index("sed -i"))     # uCore has no fstab
@@ -6864,6 +6877,9 @@ peers=4 3
         f, (_s, _p, notes) = self.assessed("luks=1")
         self.assertEqual(f["encryption"], "bound")
         self.assertFalse([n for n in notes if "disk" in n])
+        f, (state, problems, _n) = self.assessed("luks=1\nplaindata=1")    # its data disk is not
+        self.assertIn({"level": "warn", "text": "a data disk is not encrypted: whoever takes it can read everything on it"}, problems)
+        self.assertNotIn("plain_data_disks", self.assessed("luks=1\nplaindata=0")[0])
         f, (state, problems, notes) = self.assessed("luks=ram")          # a RAM master: no disk to encrypt
         self.assertEqual((f["encryption"], problems), ("ram", []))
         self.assertIn("in RAM only: nothing stays on a disk", notes)

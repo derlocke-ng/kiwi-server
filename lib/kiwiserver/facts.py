@@ -203,7 +203,9 @@ def parse(data, local_now=None):
         "clock_synced": raw.get("clock") == "yes",
         "skew": remote_now - int(local_now if local_now is not None else time.time()) if remote_now else 0,
         "reboot": raw.get("reboot") == "yes",
-        "failed_units": [u for u in raw.get("failed", "").split() if not _HEALTHCHECK_UNIT.match(u)],
+        # a game server asleep whose stop ended with an error code of its own is no failure (Zandronum)
+        "failed_units": [u for u in raw.get("failed", "").split() if not _HEALTHCHECK_UNIT.match(u)
+                         and u[:-len(".service")] not in {s["name"] for s in services if s["asleep"]}],
         "runtime": raw.get("runtime", ""),
         "services": services,
         "running": sum(1 for s in services if s["stack"] and s["running"]),

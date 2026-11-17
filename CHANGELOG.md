@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.184.1 — a sleeping game server is not a failed one
+
+- Zandronum ends with an error code when it is stopped, so a sleeping Doom server left a failed
+  unit and medlar showed a failed service (18 Nov 2026). The sleeper clears it now
+  (kiwi-modules 0.83.1), and a failed unit of a server that is asleep is not counted.
+
 ## 2.184.0 — open to: the VPN, Tor, the Internet, per site
 
 - **Open to**, at each module of a node in the app and on the page: per web site a switch for

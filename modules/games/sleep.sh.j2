@@ -67,7 +67,14 @@ running() {
 
 stop_it() {
     touch "$DIR/$1"         # first: a look at the stack while it stops sees it sleeping, not down
-    if [[ $RUNTIME == podman ]]; then systemctl stop "$1.service"; else docker stop "$1" >/dev/null; fi
+    if [[ $RUNTIME == podman ]]; then
+        systemctl stop "$1.service"
+        # a game that ends on the stop with an error code of its own (Zandronum) leaves its unit
+        # failed: asleep is no failure (medlar, 18 Nov 2026)
+        systemctl reset-failed "$1.service" 2>/dev/null || true
+    else
+        docker stop "$1" >/dev/null
+    fi
 }
 
 start_it() {

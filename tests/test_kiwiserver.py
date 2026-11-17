@@ -7214,6 +7214,11 @@ peers=4 3
         _state, problems, notes = facts.assess(f)
         self.assertFalse(any("kn-gone" in p["text"] for p in problems))
         self.assertIn("kn-gone sleeps until a player comes", notes)
+        # asleep, and its unit failed on the stop (Zandronum ends with an error code): still no failure
+        f = facts.parse(self.SAMPLE.replace("service=kn-gone inactive", "service=kn-gone sleeping")
+                        .replace("failed=012c89533cccbc4fbd60eadec0d1bb3f13f79eb7ab9b218f8f8a4c02bbdefb94-7ee2adc215a743d0.service kiwi-backup.service",
+                                 "failed=kn-gone.service kiwi-backup.service"), local_now=990)
+        self.assertEqual(f["failed_units"], ["kiwi-backup.service"])
 
     def test_the_hidden_services_as_tor_last_found_them(self):
         f = facts.parse(self.SAMPLE + "onion_check=git abc.onion 200 900\nonion_check=jabber def.onion 000 900\nonion_check=bad line\n",

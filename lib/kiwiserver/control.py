@@ -152,6 +152,7 @@ class Control:
         self.kiwi = kiwi_cmd or [sys.executable, "-m", "kiwiserver"]
         self.status_minutes = status_minutes
         self.watch_seconds = watch_seconds
+        self._riseup_at = 0         # when Riseup certificates were last looked at (loop)
         self.clock = clock
         self.lock = threading.Lock()          # one job at a time: two applies never cross
         self.failures = {}                    # address -> [times] of failed logins
@@ -1856,6 +1857,10 @@ class Control:
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                     elif any(e.get("kind") == "waiting" for e in events):
                         last_status = now - self.status_minutes * 60 + 120      # something is gone: look again soon
+                if now - self._riseup_at >= 6 * 3600:      # a Riseup certificate running out: renewed by an apply
+                    self._riseup_at = now
+                    for name in self.riseup_due():
+                        self.start("apply", [name], user="riseup")
                 if self.watch_seconds and self.has_ram_masters():
                     with self.lock:
                         subprocess.run(self.argv("watch"), capture_output=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
@@ -1872,6 +1877,31 @@ class Control:
             return bool(((data.get("defaults") or {}).get("backup") or {}).get("hosts"))
         except (OSError, ValueError, AttributeError, yaml.YAMLError):
             return False
+
+    def riseup_due(self):
+        """The machines whose VPN client is Riseup's and whose certificate runs out within
+        riseup.RENEW_DAYS, or is not there yet."""
+        from . import riseup
+        try:
+            import yaml
+            with open(self.fleet_path) as fh:
+                data = yaml.safe_load(fh) or {}
+        except (OSError, ValueError):
+            return []
+        defaults, due = data.get("defaults") or {}, []
+        for name, h in (data.get("hosts") or {}).items():
+            role = str((h or {}).get("role") or "")
+            vc = ((h or {}).get(role) or {}).get("vpn-client") or (defaults.get(role) or {}).get("vpn-client") or {}
+            if not (isinstance(vc, dict) and vc.get("vpn_provider") == "riseup"):
+                continue
+            full = os.path.join(self.fleet_dir, "secrets", "riseup", "%s.ovpn" % name)
+            try:
+                left = riseup.days_left(util.read_text(full))
+            except OSError:
+                left = None
+            if left is None or left < riseup.RENEW_DAYS:
+                due.append(name)
+        return due
 
     def has_ram_masters(self):
         try:

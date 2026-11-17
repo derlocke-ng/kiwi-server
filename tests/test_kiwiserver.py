@@ -3520,9 +3520,12 @@ class TestOnion(Base):
         argv = c.argv("adopt", ["fig"], "192.168.1.40")
         self.assertEqual(argv[1:], ["adopt", c.fleet_path, "fig", "--as", "core@192.168.1.40", "--key",
                                     os.path.join(os.path.dirname(f.path), "secrets", "admin_ed25519")])
-        with self.assertRaisesRegex(KiwiError, "already a machine called fig"):
+        # refused before the stick hears anything: it is never left waiting as "taken in"
+        asked = []
+        with self.assertRaisesRegex(KiwiError, "already a (machine|host) called fig"):
             with mock.patch.object(c, "locked", lambda: False):
-                c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=ask)
+                c.take_in("192.168.1.41", "abcd-1234", "cloud", "fig", ask=lambda *a: asked.append(a) or ask(*a))
+        self.assertEqual(asked, [])
         # another device answering at the address: it never saw the code, so its answer is refused,
         # and a line that is not a key (a wildcard, a CA) is never written, even with the right proof
         def impostor(address, body):
@@ -10015,11 +10018,15 @@ class TestFirstRunPage(StoreBase):
     def test_the_role_script_is_made_when_asked_and_kept_nowhere(self):
         cookie, _csrf = self.made()
         master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
-        self.assertIn('href="/hosts/%s/script"' % master, self.ask("/hosts/" + master, cookie=cookie)[1])
-        status, body, _ = self.ask("/hosts/%s/script" % master)                 # no login: no script
+        self.assertIn('action="/hosts/%s/script"' % master, self.ask("/hosts/" + master, cookie=cookie)[1])
+        status, body, _ = self.ask("/hosts/%s/script" % master, {"csrf": _csrf})       # no login: no script
+        self.assertNotIn("#!", body)
+        status, body, _ = self.ask("/hosts/%s/script" % master, cookie=cookie)         # a GET: never (it may make secrets)
+        self.assertNotIn("#!", body)
+        status, body, _ = self.ask("/hosts/%s/script" % master, {"csrf": "wrong"}, cookie=cookie)
         self.assertNotIn("#!", body)
         self.assertNotIn("role script shown", str(self.c.audit_tail(20)))
-        status, body, _ = self.ask("/hosts/%s/script" % master, cookie=cookie)
+        status, body, _ = self.ask("/hosts/%s/script" % master, {"csrf": _csrf}, cookie=cookie)
         self.assertEqual(status, 200, body[-300:])
         self.assertTrue(body.startswith("#!"), body[:80])
         self.assertIn("It embeds this host's secrets", body)
@@ -10031,7 +10038,7 @@ class TestFirstRunPage(StoreBase):
                 for n in names:
                     if os.path.isfile(os.path.join(dp, n)):
                         self.assertNotIn(mark, util.read_bytes(os.path.join(dp, n)), os.path.join(dp, n))
-        status, body, _ = self.ask("/hosts/nosuch/script", cookie=cookie)
+        status, body, _ = self.ask("/hosts/nosuch/script", {"csrf": _csrf}, cookie=cookie)
         self.assertEqual(status, 400)
         self.assertIn("could not be made", body)
 

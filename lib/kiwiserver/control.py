@@ -21,6 +21,7 @@ import re
 import secrets as pysecrets
 import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -273,6 +274,15 @@ class Control:
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
         info = self.fleet_info() or {}
+        # what adding it would refuse (its name, its address, what it should do), said before the stick
+        # is told anything: a stick that was taken in and then refused waits until it is restarted
+        from . import setup as setupmod
+        trial = tempfile.mkdtemp(dir=self.run)          # RAM, as the fleet file itself
+        try:
+            shutil.copyfile(os.path.realpath(self.fleet_path), os.path.join(trial, "fleet.yaml"))
+            name = setupmod.add_home_machine(os.path.join(trial, "fleet.yaml"), preset, (address or "").strip(), name, "coreos")
+        finally:
+            shutil.rmtree(trial, ignore_errors=True)
         address, name = starter_handshake(os.path.realpath(self.fleet_path), self.fleet_dir, address, code, preset, name,
                                           str(info.get("domain") or ""), ask=ask)
         made = self.add_machine(preset, address, name, target="coreos", user=user)

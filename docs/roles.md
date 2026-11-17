@@ -230,7 +230,7 @@ VPN, or through its hidden service.
 
 Invite codes and requests are made and answered under Accounts on the control page, or with
 `kiwi-server accounts <fleet> --jabber …`. The rules on the page: `terms`. These Jabber addresses
-are not the network's accounts (the accounts module); `ldap` there joins the two where wanted.
+are not the network's accounts (the accounts module), and nothing joins the two yet.
 
 ## Pastebin
 
@@ -268,8 +268,8 @@ strangers should sign up.
   a new link. The page says so.
 - **A password alone will do** unless `second_factor: true`: then every account
   needs a passkey, or a password and a code from an authenticator app.
-- **Jabber** keeps its own accounts. With `ldap: true` it can take the network's
-  accounts too, with the same password, for the people in the group `jabber`.
+- **Jabber** keeps its own accounts. `ldap: true` makes Kanidm answer LDAP on the
+  stack network, but nothing uses it yet.
 - **Forgejo signs people in with these accounts** after `kiwi-server accounts
   <fleet> connect <host> git` (or Connect under Accounts on the control page) and an
   apply of that machine: "Sign in with accounts", and a person's first sign-in makes

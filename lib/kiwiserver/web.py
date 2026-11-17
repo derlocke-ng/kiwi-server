@@ -625,6 +625,19 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% else %}<p class="muted">No services of its own: its parts are {{ m.modules|join(", ") or "none" }}.</p>{% endif %}
 
 {% include "logins.html" %}
+{% if m.facts.services %}<h2 id="containers">Its containers</h2>
+<p class="muted small">As the last look saw them. Restart one that hangs; <em>Log</em> shows its last lines. A stopped one stays
+stopped until you start it or the machine restarts.</p>
+<div class="scroll"><table class="tbl"><thead><tr><th>Container</th><th>Now</th><th></th></tr></thead><tbody>
+{% for s in m.facts.services %}<tr><td><b>{{ s.name }}</b>{% if s.image %}<br><span class="sm">{{ s.image.split("/")[-1] }}</span>{% endif %}</td>
+<td><span class="badge {{ 'ok' if s.running and s.health != 'unhealthy' else 'bad' }}">{{ s.health or s.state }}</span>
+{% if not s.stack %}<br><span class="sm">not of its stack</span>{% endif %}</td>
+<td>{% if s.stack %}{% for act, label in (("restart", "Restart"), ("stop", "Stop"), ("start", "Start"), ("logs", "Log")) %}
+{% if not (act == "stop" and not s.running) and not (act == "start" and s.running) %}<form class="inline" method="post" action="/run"
+{% if act == "stop" %}onsubmit="return confirm('Stop {{ s.name }} on {{ m.name }}? It stays stopped until you start it.')"{% endif %}>{{ tok }}
+<input type="hidden" name="action" value="service"><input type="hidden" name="host" value="{{ m.name }}">
+<input type="hidden" name="module" value="{{ s.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
+{% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 {% endif %}{% if tab == "history" %}
 <p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
 {% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
@@ -1326,7 +1339,7 @@ VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "che
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "remove": "Removing",
         "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
         "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
-        "doctor": "Checking the tools of this machine"}
+        "doctor": "Checking the tools of this machine", "service": "Looking after a container on"}
 SERVICES = healthmod.SERVICES        # a service by the first part of its name, in plain words
 HINTS = (
     ("unreachable", "It did not answer. Is it switched on and online? After a restart, give it a minute, then check again."),
@@ -2313,8 +2326,8 @@ def make_app(control: Control):
         if action not in ACTIONS:
             return JSONResponse({"error": "unknown action"}, status_code=400)
         try:
-            jid = control.start(action, [host] if host else [], user=u, at=at if action in ("setup", "restore") else "",
-                                module=module if action == "restore" else "")
+            jid = control.start(action, [host] if host else [], user=u, at=at if action in ("setup", "restore", "service") else "",
+                                module=module if action in ("restore", "service") else "")
         except KiwiError as e:
             if action == "backup":              # said where the button is
                 ms, _st, _info = machines()
@@ -2347,7 +2360,7 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "remove", "start-new", "prune") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "remove", "start-new", "prune", "service") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":

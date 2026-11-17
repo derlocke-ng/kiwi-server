@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.176.0 — one container at a time
+
+- **`kiwi-server service FLEET HOST NAME restart|stop|start|logs`**: one container
+  of a machine's stack, without an apply. `logs` shows its last lines (`--lines`,
+  200 by default). Only the stack's own containers (`kn-…`, `km-…`); podman
+  machines through their systemd units, docker ones through docker.
+- **The control page**, machine page, Services tab: **Its containers**, with
+  Restart, Stop or Start, and Log. Each is a job, and the machine's History says
+  which container and what was done.
+- **The app**: the same in a menu at each row of the machine's Services.
+
 ## 2.175.0 — a new recovery key from the app
 
 - **The app's Locking… has "A new recovery key…"**: kiwi-server makes the key (nothing changes

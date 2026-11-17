@@ -3494,6 +3494,39 @@ def cmd_onion(args):
     util.say("bring it to the machine: kiwi-server apply %s %s" % (base, host.name))
 
 
+SERVICE_NAME = re.compile(r"^k[nm]-[a-z0-9][a-z0-9-]{0,40}$")
+SERVICE_ACTIONS = ("restart", "stop", "start", "logs")
+
+
+def service_script(name, action, lines=200):
+    """What runs on the machine for one service of its stack: restart, stop, start, or its last
+    lines of log. Only a container of the stack (kn-…, km-…): a podman machine runs each as its
+    own systemd unit (kiwi-stack's quadlets), a docker one as a container."""
+    if not SERVICE_NAME.match(name or ""):
+        raise KiwiError("%r is not a service of a stack (its container's name, like kn-nginx)" % name)
+    if action not in SERVICE_ACTIONS:
+        raise KiwiError("restart, stop, start or logs")
+    lines = max(1, min(int(lines), 2000))
+    done = {"restart": "restarted", "stop": "stopped", "start": "started"}.get(action)
+    unit = ('journalctl -u "$n.service" -n %d --no-pager -o short-iso' % lines if action == "logs"
+            else 'systemctl %s "$n.service"' % action)
+    dock = 'docker logs --tail %d "$n" 2>&1' % lines if action == "logs" else 'docker %s "$n" >/dev/null' % action
+    return ("n=%s\n"
+            'if systemctl cat "$n.service" >/dev/null 2>&1; then %s\n'
+            'elif command -v docker >/dev/null && docker inspect "$n" >/dev/null 2>&1; then %s\n'
+            'else echo "this machine has no service $n" >&2; exit 3; fi\n' % (shlex.quote(name), unit, dock)
+            + ('echo "$n: %s"\n' % done if done else ""))
+
+
+def cmd_service(args):
+    """One service of a machine's stack, by hand: restarted, stopped, started, or its last lines
+    of log. Stopped stays stopped until it is started again or the machine restarts."""
+    fleet, _roles, _ms = load(args)
+    h = fleet.select([args.host])[0]
+    script = service_script(args.name, args.action, args.lines)
+    sys.stdout.write(remote.run(remote.reach(h, args.ssh), script).decode(errors="replace"))
+
+
 def cmd_disks(args):
     """The disks a machine has, as it sees them, and which of them hold data that is not
     mounted: with the line for `mounts` in the fleet file that puts it there."""
@@ -4153,6 +4186,11 @@ def build_parser():
     s.add_argument("--accept", metavar="CARD", help="take a partner's card (and write this network's for them)")
     s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
+    s = sub("service", cmd_service); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("name", help="the service as its container is called, e.g. kn-nginx")
+    s.add_argument("action", choices=["restart", "stop", "start", "logs"])
+    s.add_argument("--lines", type=int, default=200, help="logs: how many of the last lines")
+    s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("disks", cmd_disks); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("onion", cmd_onion); s.add_argument("fleet"); s.add_argument("what", nargs="?", help="<service>.<machine>, e.g. git.papaya")

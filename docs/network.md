@@ -34,8 +34,11 @@ Routers join the mesh with `kiwi-server openwrt` or the steps in
 ## The way to the Internet
 
 Phones, laptops and the home's machines reach the Internet through the master.
-From there they leave one of two ways:
+From there they leave one of three ways:
 
+- **Riseup** (the first run's suggestion): they come out at a Riseup server.
+  Free, with no account; Riseup is run by volunteers, so it is slower than a paid
+  provider. See [Riseup](#riseup).
 - **The master's own connection**: they come out at the master's address. This is
   the simplest; nothing to sign up for.
 - **A VPN provider**: they come out at the provider's servers, and the master's own
@@ -62,7 +65,22 @@ In the fleet file it is the master's `vpn-client` block:
 ```
 
 `server_countries`, `server_regions`, `server_cities` and `server_hostnames`
-choose the provider's servers. Without a `vpn-client` block the master is its
+choose the provider's servers.
+
+### Riseup
+
+```yaml
+    master:
+      vpn-client: { vpn_provider: riseup }            # or: { vpn_provider: riseup, server_cities: amsterdam }
+```
+
+Riseup gives anyone a client certificate for its OpenVPN servers, with no account
+and nothing to type. The computer that applies fetches one from riseup.net into
+the fleet's secrets (`secrets/riseup/<machine>.ovpn`, sealed with the other keys)
+and renews it when fewer than ten days are left of its five weeks; the control
+node looks every six hours and applies the machine whose certificate runs out. It picks the first of Riseup's servers that answers, in the
+city of `server_cities` when one is given. A node without a master can use it as
+its exit too (`vpn: false`). Without a `vpn-client` block the master is its
 own exit. A second network can be the exit too
 ([Leave to the Internet through a partner](#leave-to-the-internet-through-a-partner)).
 

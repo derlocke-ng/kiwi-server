@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import sys
 import urllib.request
 
@@ -45,6 +46,12 @@ for g in service.get("gateways", []):
     for t in (g.get("capabilities") or {}).get("transport", []):
         if t.get("type") == "openvpn" and o.proto in (t.get("protocols") or []) and t.get("ports"):
             port = "1194" if "1194" in t["ports"] else t["ports"][0]     # OpenVPN's own port before 53 and 80
+            if o.proto == "tcp":        # some gateways do not answer at all: the first that does
+                try:
+                    socket.create_connection((g["ip_address"], int(port)), timeout=4).close()
+                except OSError:
+                    print("riseup: %s (%s) does not answer, the next" % (g.get("host", ""), g["ip_address"]), file=sys.stderr)
+                    break
             remote = (g["ip_address"], port, g.get("host", ""), g.get("location", ""))
             break
     if remote:

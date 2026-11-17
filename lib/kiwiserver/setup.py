@@ -395,8 +395,9 @@ def questions(found=None):
              "help": "A rented server: the IPv4 address your hoster shows for it, like 203.0.113.7. At home: a name "
                      "from a dynamic DNS service that points at your router, like myhome.example.org. Your phones and "
                      "machines connect to it."},
-            {"id": "exit", "label": "How your devices reach the Internet on the VPN", "type": "choice", "default": "direct", "when": "master_where in %s" % ",".join(list(providers.PROVIDERS) + ["vps", "home"]),
-             "options": [{"value": "direct", "label": "Through the master's own connection (simplest)"}] + [
+            {"id": "exit", "label": "How your devices reach the Internet on the VPN", "type": "choice", "default": "riseup", "when": "master_where in %s" % ",".join(list(providers.PROVIDERS) + ["vps", "home"]),
+             "options": [{"value": "riseup", "label": "Through Riseup (free, no account; run by volunteers, slower)"},
+                         {"value": "direct", "label": "Through the master's own connection (simplest)"}] + [
                 {"value": k, "label": ("Through " + v[0] + " (more private; needs an account there)") if k != "custom" else
                  "Through another VPN provider (its WireGuard config)"} for k, v in EXITS.items()]},
             {"id": "exit_key", "label": "WireGuard private key", "secret": True, "required": True, "when": "exit in mullvad,protonvpn,nordvpn,surfshark,airvpn,windscribe,ivpn,fastestvpn,custom",
@@ -630,6 +631,8 @@ def make(answers, fleet_dir):
         else:   # Windscribe sorts its servers by region, which are countries there
             vc["server_regions" if a["exit"] == "windscribe" else "server_countries"] = a.get("exit_country") or "Germany"
         master = {"vpn-client": vc, "vpn-server": {"wg_host": addr}}
+    elif a.get("exit") == "riseup":     # its certificate comes at the first apply (riseup.py)
+        master = {"vpn-client": {"vpn_provider": "riseup"}, "vpn-server": {"wg_host": addr}}
     alone = a.get("master_where") == "none"
     if a.get("master_where") == "home":     # its own connection is the home line: Tor only through a VPN exit there
         master["at_home"] = True

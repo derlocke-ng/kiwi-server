@@ -29,11 +29,18 @@ import yaml
 
 from kiwimodules import manifest as _manifest, profiles as _profiles, resolver as _resolver
 from kiwimodules.manifest import _bash_var, _q, stack_manifest, stack_vars  # noqa: F401  (re-exported)
-from kiwimodules.resolver import (_mesh_address_from_wireguard, resolve_settings, service_user,  # noqa: F401
+from kiwimodules.resolver import (_mesh_address_from_wireguard, service_user,  # noqa: F401
                                   stack_spec)
 
-from . import util
+from . import riseup, util
 from .util import KiwiError
+
+
+def resolve_settings(role, host, modset=None):
+    """kiwimodules' resolver, after what kiwi-server gives a block itself: Riseup as a VPN
+    client's exit becomes the custom OpenVPN config it fetched (riseup.py)."""
+    riseup.settle(host)
+    return _resolver.resolve_settings(role, host, modset)
 
 
 class Role(_profiles.Profile):

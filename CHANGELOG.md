@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.163.0 — Riseup, a free exit
+
+- **`vpn-client: { vpn_provider: riseup }`**: the VPN's way out through Riseup, free and with
+  no account. The computer that applies fetches Riseup's anonymous certificate into the
+  fleet's secrets, renews it when fewer than ten days are left (the control node applies
+  that machine by itself), and picks a Riseup server that
+  answers (`server_cities` for a city). docs/network.md.
+- **The first run suggests it** as the way to the Internet for people without a VPN provider
+  (the master's own connection and the paid providers stay choices).
+- **Tor wakes at every start** (kiwi-modules 0.70.0): it slept after a day without a client and
+  stayed asleep across restarts, so the first request after that waited.
+
 ## 2.162.0 — the master is encrypted too
 
 The third step of encryption by default (docs/design/encryption.md).

@@ -2764,11 +2764,11 @@ class TestSetup(Base):
 
     def test_the_terminal_asks_little_and_enter_takes_the_suggestion(self):
         a, said = self.ask(["",                    # the hub: at netcup
-                            "198.51.100.4", "",    # its address, the direct exit
+                            "198.51.100.4", "",    # its address, the Riseup exit
                             "", "", "",            # a machine at home: yes, files and passwords, the address that looks free
                             ""])                   # no second one
         self.assertEqual((a["timezone"], a["keyboard"], a["locale"], a["domain"]), ("Europe/Vienna", "at", "de_AT.UTF-8", "home"))
-        self.assertEqual((a["master_where"], a["exit"], a["master_disk"]), ("netcup", "direct", "auto"))
+        self.assertEqual((a["master_where"], a["exit"], a["master_disk"]), ("netcup", "riseup", "auto"))
         self.assertEqual(a["nodes"], [{"preset": "cloud", "address": "192.168.1.31/24", "name": "papaya",
                                        "target": "ucore", "disk": "auto"}])
         self.assertIn("You need three things", said)             # said before anything is asked

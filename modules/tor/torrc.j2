@@ -17,4 +17,7 @@ CircuitBuildTimeout 5
 KeepalivePeriod 60
 NewCircuitPeriod 15
 NumEntryGuards 8
+# Tor sleeps (dormant) after a day without a client and stays asleep across restarts until one
+# asks: its directory grows old meanwhile, and the first request waits. A start wakes it
+DormantCanceledByStartup 1
 DataDirectory /var/lib/tor

@@ -1110,6 +1110,13 @@ class TestAdopt(Base):
                    "2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://10.0.2.2:18000\"}]}}'\n"
                    "3: tpm2 '{\"hash\":\"sha256\",\"key\":\"ecc\"}'\n")
         self.assertEqual(unlock._bound(listing), [("1", 1, ["tpm2"]), ("2", 1, ["http://10.0.2.2:18000"]), ("3", 1, ["tpm2"])])
+        # a disk that opens only with its key: no restart for updates by itself, they are staged
+        path = os.path.join(self.tmp, "key-only.sh")
+        write(path, unlock.INSTALL_KEY_ONLY)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        self.assertIn("ExecCondition=/usr/local/sbin/kiwi-key-only", unlock.INSTALL_KEY_ONLY)
+        self.assertIn("AutomaticUpdatePolicy=stage", unlock.INSTALL_KEY_ONLY)
+        self.assertIn("disable --now zincati.service", unlock.INSTALL_KEY_ONLY)
         self.assertIn("clevis luks unbind -f", unlock.DROP_TPM_SCRIPT)
         self.assertIn("</dev/null", unlock.DROP_TPM_SCRIPT)        # unbind reads stdin: it must not read the script's
 

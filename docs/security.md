@@ -72,7 +72,9 @@ TPM 2.0 opens the disk until the network takes it in. Then `apply` adds the key
 for the console, binds the network's rings (or leaves the console key alone,
 when there is no ring yet) and removes the TPM: from then on the TPM opens
 nothing. A machine without a TPM is installed plain only after PLAIN at its
-screen. A disk that is not encrypted is a warning on the control page's
+screen. A disk that opens only with its key (no ring) means the machine no
+longer restarts by itself for updates: they are fetched and start with the
+next restart, which someone does, with the key at the screen. A disk that is not encrypted is a warning on the control page's
 overview ("Needs a look"), on the machine's page and in `status`.
 
 ### Unlocking at boot

@@ -27,7 +27,9 @@ With kiwi-modules 0.67.0. The first step of encryption by default (docs/design/e
 - **An unencrypted disk is a warning**, on the control page's overview and the machine's page
   and in `status`, not a note.
 - **The disk's key is among a machine's logins** (the Logins tab, `kiwi-server logins`): a
-  machine alone at home waits for it at its screen after a power cut.
+  machine alone at home waits for it at its screen after a power cut. Such a machine no longer
+  restarts by itself for updates (it would wait at the prompt): they are staged and start with
+  the next restart. The key is sealed into the store before the control node restarts itself.
 - Taking in a starter machine keeps a disk the stick encrypted, and sets the kernel arguments
   its rings need.
 

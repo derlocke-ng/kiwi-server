@@ -579,6 +579,14 @@ alone)
     out=$(sh_vm 'd=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device | head -n1); echo "dev $d"; clevis luks list -d "$d"')
     printf '%s\n' "$out" | sed 's/^/    /'
     grep -q '^dev /dev/' <<< "$out" && ! grep -q tpm2 <<< "$out"; check $? "the disk is encrypted, and its TPM opens it no more"
+    # its key only opens it: updates are staged, never a restart by itself (it would wait at the prompt)
+    out=$(sh_vm 'systemctl is-enabled zincati.service 2>&1 | tail -1; grep -h "^AutomaticUpdatePolicy" /etc/rpm-ostreed.conf; \
+        ls /etc/systemd/system/kiwi-staged-reboot.service.d/key-only.conf /etc/systemd/system/kiwi-reboot-if-required.service.d/key-only.conf 2>/dev/null | wc -l; \
+        systemctl is-active rpm-ostreed-automatic.timer; /usr/local/sbin/kiwi-key-only; echo "rc $?"')
+    printf '%s\n' "$out" | sed 's/^/    /'
+    grep -qx disabled <<< "$out" && grep -qx 'AutomaticUpdatePolicy=stage' <<< "$out" && grep -qx 2 <<< "$out" \
+        && grep -qx active <<< "$out" && grep -qx 'rc 1' <<< "$out"
+    check $? "no restart for updates by itself: Zincati off, updates staged for the next restart"
     disk_key=""
     if [ "${TPM:-1}" = 1 ]; then
         pw=$(cat page-password)

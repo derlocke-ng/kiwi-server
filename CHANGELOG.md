@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.179.1 — a saved setting no longer drops a machine's hidden services
+
+- Saving any setting of a machine (the Settings page, the app's settings) also removed every
+  empty `{}` of that machine's block. A hidden service with its defaults is one:
+  `onion: services: {git: {}}` went, and the next apply would have taken the hidden services
+  off the machine (seen on medlar's test entry, 17 Nov 2026; stopped by the nginx check before
+  an apply). Now only the blocks a change itself leaves empty go. A machine whose hidden
+  services are missing from its settings: compare with a copy (`kiwi-server backups`) and put
+  them back.
+
 ## 2.179.0 — the hidden services on the status page; Jabber's sign-up page names its own service
 
 - **Over Tor** on the status page: each hidden service, its Tor address, and whether it answered

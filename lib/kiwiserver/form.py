@@ -280,16 +280,20 @@ class Doc:
             d = d[p]
         if value is None:
             d.pop(path[-1], None)
+            self._prune(host, path[:-1])
         else:
             d[path[-1]] = value
-        self._prune(self.block(host))
 
-    def _prune(self, d):
-        for k in list(d):
-            if isinstance(d[k], dict):
-                self._prune(d[k])
-                if not d[k] and k not in ("hosts",):
-                    del d[k]
+    def _prune(self, host, parents):
+        """The blocks an override that went leaves empty, from the inside out, and nothing else:
+        an empty {} elsewhere can mean something (a hidden service with its defaults,
+        `onion: services: {git: {}}`, was dropped by any other change of its machine until 2.179.1)."""
+        for i in range(len(parents), 0, -1):
+            parent = self.get(host, parents[:i - 1]) if i > 1 else self.block(host)
+            if isinstance(parent, dict) and parent.get(parents[i - 1]) == {}:
+                del parent[parents[i - 1]]
+            else:
+                break
 
     def apply(self, host, changes):
         """{path: value or None} into the document; the dotted paths that are different now."""

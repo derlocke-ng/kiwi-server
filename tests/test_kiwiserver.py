@@ -4396,6 +4396,21 @@ class TestForm(Base):
         with self.assertRaises(KiwiError):
             formmod.Doc.parse("defaults: [1")
 
+    def test_a_change_keeps_the_empty_blocks_that_mean_something(self):
+        """A hidden service with its defaults is `{}`: a change of another setting of the machine
+        took medlar's three away (17 Nov 2026), and its next apply would have removed them."""
+        doc = formmod.Doc.parse(yaml.safe_dump({"hosts": {"medlar": {"node": {
+            "modules": ["onion", "games"], "onion": {"services": {"git": {}, "jabber": {}}, "tls": True},
+            "games": {"servers": {"doom": {"game": "zandronum"}}}}}}}))
+        self.assertEqual(doc.apply("medlar", {"node.games.servers.doom.sleep": 5}), ["node.games.servers.doom.sleep"])
+        self.assertEqual(doc.get("medlar", ("node", "onion", "services")), {"git": {}, "jabber": {}})
+        doc.apply("medlar", {"node.onion.tls": None})                    # what a change empties goes, nothing else
+        self.assertEqual(yaml.safe_load(doc.dump())["hosts"]["medlar"]["node"]["onion"], {"services": {"git": {}, "jabber": {}}})
+        doc.apply("medlar", {"node.games.servers.doom": None})
+        self.assertNotIn("games", doc.get("medlar", ("node",)))                # emptied by the change: gone
+        self.assertEqual(doc.apply("medlar", {"node.onion.services": {"git": {}, "xmpp": {}}}), ["node.onion.services"])
+        self.assertEqual(doc.get("medlar", ("node", "onion", "services")), {"git": {}, "xmpp": {}})
+
     def test_a_form_for_a_machine_and_for_the_defaults(self):
         data = yaml.safe_load(yaml.safe_dump(self.FLEET))
         found = self.groups(data, "papaya")

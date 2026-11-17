@@ -929,7 +929,8 @@ types this key when it asks:<br><code>{{ key.line }}</code></div>{% endif %}
 <input name="who.{{ m.name }}.{{ s }}" value="{{ h.clients | join(' ') if h else '' }}" placeholder="anyone; or names, like anna ben"
 style="margin-top:2px">
 {% if h %}{% for c in h.clients %}<button class="small" name="show" value="{{ s }}.{{ m.name }}:{{ c }}">Show {{ c }}'s key</button>
-{% endfor %}{% endif %}</div>{% endfor %}</div>{% endif %}{% endfor %}
+{% endfor %}<button class="small" name="new" value="{{ s }}.{{ m.name }}"
+onclick="return confirm('A new address for {{ s }}.{{ m.name }}? The old one stops answering with its next apply, and whoever had it needs the new one.')">New address</button>{% endif %}</div>{% endfor %}</div>{% endif %}{% endfor %}
 <p class="muted small">Listed are the sites that were seen to work through Tor. Others send a visitor to their name on the VPN,
 or need it; <code>kiwi-server onion SERVICE.MACHINE --anyway</code> makes one all the same.</p>
 <div class="actions"><button class="primary">Save hidden services</button></div></form>
@@ -2556,6 +2557,11 @@ def make_app(control: Control):
         if not u:
             return login_page()
         try:
+            if form.get("new"):                         # its next address: the old one stops with the next apply
+                what = str(form["new"])
+                address = control.onion_new(what, user=u)
+                return RedirectResponse("/access?tor=" + urllib.parse.quote("%s, at its new address http://%s" % (what, address))
+                                        + "#tor", status_code=303)
             if form.get("show"):                        # one person's key, shown once on the page
                 what, _, client = str(form["show"]).partition(":")
                 found = control.onion().get(what)

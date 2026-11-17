@@ -1385,6 +1385,22 @@ class Control:
             self.fleet_info(fresh=True)
         return done
 
+    def onion_new(self, what, user="admin"):
+        """A hidden service's next address (`kiwi-server onion … --new-address`): the old one
+        stops answering with the machine's next apply."""
+        from . import onion as onionmod
+        service, _, machine = what.partition(".")
+        if not (onionmod.NAME.match(service) and HOST.match(machine)):
+            raise KiwiError("no such name")
+        with self.lock:
+            try:
+                self._onion(what, "--new-address")
+            finally:
+                self.save_fleet()
+        self.audit(user, "gave %s a new hidden-service address" % what, host=machine)
+        self.fleet_info(fresh=True)
+        return (self.onion().get(what) or {}).get("address", "")
+
     def onion_key(self, what, client, user="admin"):
         """What a named person types into Tor Browser for one hidden service."""
         from . import onion as onionmod

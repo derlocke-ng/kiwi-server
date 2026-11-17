@@ -47,9 +47,12 @@ def _derive(seed, what):
     return hmac.new(seed, what.encode(), hashlib.sha256).digest()
 
 
-def service_key(seed, host, service):
-    """(expanded secret key, public key) of a hidden service: 64 and 32 bytes, as Tor keeps them."""
-    h = bytearray(hashlib.sha512(_derive(seed, "onion/%s/%s" % (host, service))).digest())
+def service_key(seed, host, service, round=1):
+    """(expanded secret key, public key) of a hidden service: 64 and 32 bytes, as Tor keeps them.
+    Each round (`kiwi-server onion … --new-address`) is another key, so another address; the
+    first is the one every service had before rounds."""
+    what = "onion/%s/%s" % (host, service) if int(round) <= 1 else "onion/%s/%s/round%d" % (host, service, int(round))
+    h = bytearray(hashlib.sha512(_derive(seed, what)).digest())
     h[0] &= 248
     h[31] &= 127
     h[31] |= 64
@@ -82,10 +85,20 @@ def services(host):
     out = {}
     for name, spec in found.items():
         clients = [str(c) for c in ((spec or {}).get("clients") or [])] if isinstance(spec or {}, dict) else None
+        r = (spec or {}).get("round", 1) if isinstance(spec or {}, dict) else 1
+        if not isinstance(r, int) or r < 1:
+            raise KiwiError("%s: onion.services.%s.round is a whole number, 1 or more (kiwi-server onion --new-address)"
+                            % (host.name, name))
         if clients is None or not NAME.match(str(name)) or not all(NAME.match(c) for c in clients):
             raise KiwiError("%s: onion.services.%s: a service of this machine, and clients: [names] in small letters" % (host.name, name))
         out[str(name)] = clients
     return out
+
+
+def rounds(host):
+    """{service: its round}: which of its addresses a hidden service has now (1: its first)."""
+    found = ((host.module_settings or {}).get("onion") or {}).get("services") or {}
+    return {str(n): int((spec or {}).get("round", 1)) if isinstance(spec or {}, dict) else 1 for n, spec in found.items()}
 
 
 def for_host(seed, host):
@@ -93,7 +106,7 @@ def for_host(seed, host):
     the keys base64 for the files Tor reads."""
     out = []
     for name, clients in services(host).items():
-        secret, public = service_key(seed, host.name, name)
+        secret, public = service_key(seed, host.name, name, rounds(host).get(name, 1))
         out.append({"service": name, "address": address(public),
                     "secret": base64.b64encode(SECRET_HEAD + secret).decode(),
                     "public": base64.b64encode(PUBLIC_HEAD + public).decode(),

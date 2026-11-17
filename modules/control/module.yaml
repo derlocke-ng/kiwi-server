@@ -37,6 +37,10 @@ logins:
   - label: Control page
     note: "It opens with the password chosen when the page was set up. The network keeps no copy of it."
 
+# the status page's door to the Internet is a page of its own, under its own name
+pages:
+  status: {label: Status page, about: Whether everything works, public: public_status_hostname}
+
 nginx:
   upstream:
     name: control

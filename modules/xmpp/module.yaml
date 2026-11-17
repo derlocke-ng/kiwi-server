@@ -102,6 +102,10 @@ logins:
     password: admin_password
     note: "The admin's account, in a Jabber app or on the admin panel at /admin (from the VPN). Every start sets this password again. Other people make their own account on the page /join, in the ways switched on."
 
+# its page on the VPN (jabber.<hostname>); the Internet's door is its own public name
+pages:
+  jabber: {label: Jabber, about: "Chat with anyone on Jabber (XMPP)", public: xmpp_domain}
+
 nginx:
   servers:
     # the page of the service on the VPN: new accounts (/register), files, chat for web apps

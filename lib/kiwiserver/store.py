@@ -37,6 +37,25 @@ def _tool(name):
     return path
 
 
+COPY_KEY = "copy-auth.key"     # in secrets/: what signs the network's copies (backup.py)
+
+
+def copy_key_from(identity):
+    """The key that signs a network's copies, from its recovery key: whoever restores with that
+    key can check a copy is the network's own, and a computer that opens the store can sign."""
+    # as age reads it: one key in capitals or in small letters (bech32), around it nothing
+    return hashlib.sha256(b"kiwi-server copy key 1\0" + str(identity).strip().upper().encode()).hexdigest()
+
+
+def recovery_public(recipients_text):
+    """The recovery key's public half, as a store's list of keys names it, or ""."""
+    lines = [l.strip() for l in str(recipients_text).splitlines()]
+    for i, line in enumerate(lines):
+        if line.lower().startswith("# recovery") and i + 1 < len(lines):
+            return lines[i + 1]
+    return ""
+
+
 def keygen():
     """(secret key, public key) of a new age identity."""
     out = subprocess.run([_tool("age-keygen")], capture_output=True, text=True, check=True).stdout
@@ -396,6 +415,9 @@ class Store:
         with os.fdopen(fd, "w") as f:
             f.write("# who can open secrets.age: one public key per way of unlocking it\n"
                     "# desktop (its secret key is in the keyring)\n%s\n# recovery\n%s\n" % (desktop[1], recovery[1]))
+        fd = os.open(os.path.join(self.link, COPY_KEY), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:       # the copies' signature, checked with the recovery key
+            f.write(copy_key_from(recovery[0]) + "\n")
         data = snapshot(self.link)
         try:
             self._encrypt(data)

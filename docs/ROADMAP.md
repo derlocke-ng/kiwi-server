@@ -160,8 +160,8 @@ Management and security:
     from the nodes it will later trust. Document the two bootstrap secrets
     now; move to `age` if the format is touched.
     Moved to `age` for a fleet with a secret store: its recovery key opens
-    the copy (backups.md). Still open: a copy is not signed, so whoever can
-    replace the file on a node can hand back another network.
+    the copy (backups.md). Signed since 2.170.0: the copy key comes from
+    the recovery key, so a restore with it refuses another network's copy.
 22. `enroll <name>` is unvalidated and used in a path and as the wg-easy
     client name; validate against a DNS label.
 23. Mesh address collisions: `enroll --address` is not checked, hand-set
@@ -868,8 +868,10 @@ Asked for by the owner in November 2026:
   the master keeps nothing, and the "someone" at boot is a machine at home: the image carries
   only its SSH host key, and `kiwi-server watch` sends a blank master its role and the
   identity the fleet keeps of it. `target: coreos-ram` (2.52.0), tried in a local VM only.
-  Open: the control node running `watch`, the phoenix spin with the images inside, netcup
-  swapping the ISO (`vps`), a hoster without ISOs.
+  Since then: the control node runs `watch` for its RAM masters (control.py, its loop), the ring
+  `away` keeps its keys with the fleet's copy, and `tests/drills/ram-master-power.py` passes on
+  crumble (17 November 2026: role back 219 s after power on, same keys). Open: the phoenix spin
+  with the images inside, netcup swapping the ISO (`vps`), a hoster without ISOs.
 - **Testing updates before they reach live machines**, raised 10 November 2026:
   `kiwi-server plan` (render every host with the installed release and the new one, and
   say per host which files, units and containers change and which containers restart);

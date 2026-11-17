@@ -9431,6 +9431,46 @@ class TestNetworkCopy(StoreBase):
         self.assertIn("the passphrase is not used", out)
         self.assertEqual([n for n in os.listdir(self.out) if n.endswith(".enc")], [])
 
+    def test_a_copy_is_signed_and_a_forged_or_unsigned_one_is_refused(self):
+        recovery = self.init()
+        self.assertEqual(util.read_text(os.path.join(self.secrets, store.COPY_KEY)).strip(), store.copy_key_from(recovery))
+        path, data = self.copy()
+        manifest, files = backup.read_copy(data)
+        self.assertIn("signature", manifest)
+        # someone with the public keys makes another network's copy, signed or not
+        forged = os.path.join(self.tmp, "forged.tar")
+        with open(forged, "wb") as fh:
+            fh.write(backup.pack(manifest["fleet"], files, key="someone else's"))
+        into = os.path.join(self.tmp, "back")
+        rc, out, err = self.run_cli("restore", forged, "--into", into, "--recovery-file", self.keyfile(recovery))
+        self.assertEqual(rc, 1)
+        self.assertIn("this copy is not your network's", err)
+        self.assertFalse(os.path.exists(into))
+        rc, out, err = self.run_cli("restore", forged, "--into", into, "--recovery-file", self.keyfile(recovery), "--unsigned")
+        self.assertEqual(rc, 1)                                    # a wrong signature is never let through
+        with open(forged, "wb") as fh:
+            fh.write(backup.pack(manifest["fleet"], files))
+        rc, out, err = self.run_cli("restore", forged, "--into", into, "--recovery-file", self.keyfile(recovery))
+        self.assertEqual(rc, 1)
+        self.assertIn("this copy has no signature", err)
+        rc, out, err = self.run_cli("restore", forged, "--into", into, "--recovery-file", self.keyfile(recovery), "--unsigned")
+        self.assertEqual(rc, 0, err)                               # an older copy of one's own: on purpose
+        self.assertIn("this copy has no signature", err)
+
+    def test_an_older_store_gets_its_copy_key_from_the_recovery_key(self):
+        recovery = self.init()
+        os.remove(os.path.join(self.secrets, store.COPY_KEY))         # as a store made before 2.170.0
+        _path, data = self.copy()
+        self.assertNotIn("signature", backup.read_copy(data)[0])
+        rc, out, err = self.run_cli("secrets", "copy-key", self.f.path, "--identity", self.keyfile(store.keygen()[0]))
+        self.assertEqual(rc, 1)
+        self.assertIn("not this store's recovery key", err)
+        rc, out, err = self.run_cli("secrets", "copy-key", self.f.path, "--identity", self.keyfile(recovery))
+        self.assertEqual(rc, 0, err)
+        data = backup.create_copy(config.Fleet.load(self.f.path))     # (a second copy in the same second has the same name)
+        manifest = backup.read_copy(data)[0]
+        self.assertIsNone(backup.check_signature(manifest, recovery))
+
     def test_the_recovery_key_brings_it_back_on_another_computer(self):
         recovery = self.init()
         write(os.path.join(self.secrets, "later"), "made after the store was opened")

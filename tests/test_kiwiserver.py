@@ -4029,6 +4029,16 @@ class TestFederation(Base):
                 fedmod.partners(self.tmp)
             self.assertIn(said, str(e.exception))
 
+    def test_a_renamed_folder_keeps_its_entry(self):
+        a, b, other = self.two_fleets()
+        fedmod.write(self.tmp, "old-name", {"endpoint": "198.51.100.9", "public_key": "k", "mesh": "10.10.0.0/16"})
+        fedmod.set_share(self.tmp, "old-name", ["cloud.gate"])
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        found = fedmod.partners(self.tmp)
+        self.assertEqual(list(found), ["old-name"])                 # not a second entry for the same network
+        self.assertEqual(found["old-name"]["share"], ["cloud.gate"])
+
     def test_two_operators_link_their_networks_with_cards(self):
         a, b, other = self.two_fleets()
         card = os.path.join(self.tmp, "mine.card.yaml")

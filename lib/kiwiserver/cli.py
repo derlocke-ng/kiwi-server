@@ -3435,8 +3435,8 @@ def cmd_federate(args):
         raise KiwiError("both fleets are called %s: rename one folder" % na)
     if not ea["mesh"] or not eb["mesh"] or ea["mesh"] == eb["mesh"]:
         raise KiwiError("the two meshes must be set and differ (%s, %s): every network has its own /16" % (ea["mesh"], eb["mesh"]))
-    fedmod.write(fa.dir, nb, eb)
-    fedmod.write(fb.dir, na, ea)
+    nb = fedmod.write(fa.dir, nb, eb)        # the names each side knows the other by
+    na = fedmod.write(fb.dir, na, ea)
     if args.exit or args.no_exit:
         # the first network leaves to the internet through the second, over the link: the
         # first says so (exit), the second allows it (internet)

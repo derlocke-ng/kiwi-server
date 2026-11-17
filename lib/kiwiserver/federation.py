@@ -220,9 +220,12 @@ def inject(fleet_dir, data):
 
 
 def write(fleet_dir, partner, entry):
-    """One partner's entry, its share and from kept when it is there already."""
+    """One partner's entry, its share and from kept when it is there already (by its name, or by
+    its mesh when its folder was renamed). The name it is written under."""
     p = os.path.join(fleet_dir, FILE)
     data = (yaml.safe_load(util.read_text(p)) or {}) if os.path.isfile(p) else {}
+    if partner not in data:     # the same network under the name it had (its folder renamed): that entry
+        partner = next((n for n, x in data.items() if (x or {}).get("mesh") == entry.get("mesh")), partner)
     old = data.get(partner) or {}
     entry = dict(entry, share=old.get("share") or [], **{"from": old.get("from") or []})
     for k in ("exit", "internet"):          # the owner's, like share and from
@@ -232,6 +235,7 @@ def write(fleet_dir, partner, entry):
     head = ("# federation.yaml — the partner networks and what each may reach here "
             "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
     util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+    return partner
 
 
 def set_share(fleet_dir, partner, share):

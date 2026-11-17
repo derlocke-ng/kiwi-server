@@ -107,6 +107,17 @@ def _answers(address, port=22, timeout=2):
         return False
 
 
+def speaks_ssh(address, port=22, timeout=4):
+    """Does an SSH server answer there (its greeting, not only an open port)? A forwarding in
+    between (QEMU's, a NAT) can take the connection although nothing listens behind it."""
+    try:
+        with socket.create_connection((address, port), timeout=timeout) as s:
+            s.settimeout(timeout)
+            return s.recv(64).startswith(b"SSH-")
+    except OSError:
+        return False
+
+
 def addresses(host):
     """Where this machine may answer, its name first."""
     found = [host.hostname]

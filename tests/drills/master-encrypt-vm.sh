@@ -7,20 +7,28 @@
 # (WORKDIR/fleet, keys as plain files: a test) and no machine. One PASS or FAIL line per check.
 #
 #   tests/drills/master-encrypt-vm.sh [WORKDIR]       (default ~/kiwi-vm/masterenc; ~20 minutes)
+#   REUSE=1 tests/drills/master-encrypt-vm.sh         (the last run's network and disk, from its first start)
 set -u
 {
 here=$(cd "$(dirname "$0")/../.." && pwd)
 w=${1:-$HOME/kiwi-vm/masterenc}
 mkdir -p "$w"; cd "$w" || exit 2
 OVMF=/usr/share/edk2/ovmf
-P_INIT=${P_INIT:-2222}; P_SSH=${P_SSH:-2201}
+P_INIT=${P_INIT:-2222}; P_SSH=${P_SSH:-2201}; P_FIRST=${P_FIRST:-2203}   # its sshd is on 22 until the first apply moves it
 ks=("$here/bin/kiwi-server")
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 check() { if [ "$1" = 0 ]; then say "PASS $2"; else say "FAIL $2"; fails=$((fails + 1)); fi; }
 fails=0
 stop() { [ -s qemu.pid ] && { kill "$(cat qemu.pid)" 2>/dev/null; sleep 2; kill -9 "$(cat qemu.pid)" 2>/dev/null; rm -f qemu.pid; }; true; }
 trap stop EXIT
-answers() { (exec 3<>/dev/tcp/127.0.0.1/"$1") 2>/dev/null; }
+answers() {     # PORT: an SSH server's greeting there (QEMU takes a forwarded connection although nothing listens)
+    python3 -c 'import socket, sys
+try:
+    s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=4); s.settimeout(4)
+    sys.exit(0 if s.recv(64).startswith(b"SSH-") else 1)
+except OSError:
+    sys.exit(1)' "$1"
+}
 vm() {     # LOG BOOT(cd|disk)
     stop
     local boot=()
@@ -29,11 +37,13 @@ vm() {     # LOG BOOT(cd|disk)
     qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 2048 \
         -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.fd" -drive if=pflash,format=raw,file=vars.fd \
         "${boot[@]}" -drive if=none,id=disk,format=qcow2,file=disk.qcow2 -device virtio-blk-pci,drive=disk,bootindex=1 \
-        -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$P_INIT-:2222,hostfwd=tcp:127.0.0.1:$P_SSH-:$P_SSH \
+        -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$P_INIT-:2222,hostfwd=tcp:127.0.0.1:$P_SSH-:$P_SSH,hostfwd=tcp:127.0.0.1:$P_FIRST-:22 \
         -display none -chardev socket,id=s0,path=serial.sock,server=on,wait=off,logfile="$1" -serial chardev:s0 \
         -daemonize -pidfile qemu.pid
 }
 
+# REUSE=1: the network and the installed disk of the last run, from its first start on
+if [ "${REUSE:-0}" != 1 ]; then
 # ---- a network whose master is this VM -----------------------------------------------------------
 rm -rf fleet; mkdir -p fleet
 cat > answers.json <<EOF
@@ -64,6 +74,7 @@ t0=$(date +%s)
 vm install.log cd
 for _ in $(seq 360); do kill -0 "$(cat qemu.pid 2>/dev/null)" 2>/dev/null || break; sleep 5; done
 ! kill -0 "$(cat qemu.pid 2>/dev/null)" 2>/dev/null; check $? "installed and powered off ($(( $(date +%s) - t0 )) s)"
+fi
 vm first.log disk
 n=300; while [ "$n" -gt 0 ] && ! answers "$P_INIT"; do sleep 5; n=$((n - 5)); done
 answers "$P_INIT" && ! answers "$P_SSH"; check $? "its first start waits: its initramfs answers, its system not"
@@ -72,9 +83,9 @@ answers "$P_INIT" && ! answers "$P_SSH"; check $? "its first start waits: its in
 "${ks[@]}" next fleet/fleet.yaml --yes >next.log 2>&1
 grep -E "one-time key|starts now" next.log | sed 's/^/    /'
 grep -q "starts now" next.log; check $? "next sees it waiting and gives it the one-time key"
-n=300; while [ "$n" -gt 0 ] && ! answers "$P_SSH"; do sleep 5; n=$((n - 5)); done
-answers "$P_SSH"; check $? "its system starts"
-out=$(ssh -q -p "$P_SSH" -i fleet/secrets/admin_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no \
+n=300; while [ "$n" -gt 0 ] && ! answers "$P_FIRST"; do sleep 5; n=$((n - 5)); done
+answers "$P_FIRST"; check $? "its system starts (its sshd on 22 until the first apply)"
+out=$(ssh -q -p "$P_FIRST" -i fleet/secrets/admin_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 core@127.0.0.1 'lsblk -rno TYPE,MOUNTPOINT | grep -c "^crypt"' 2>&1)
 [ "${out:-0}" -ge 1 ] 2>/dev/null; check $? "its root is encrypted (crypt devices: ${out:-none})"
 say "$([ "$fails" = 0 ] && echo "all passed" || echo "$fails failed")"

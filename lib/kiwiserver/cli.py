@@ -1072,8 +1072,8 @@ def cmd_next(args):
     addr = (str(net["address"]).split("/")[0] if not net.get("dhcp", True) and net.get("address")
             else (h.role_settings_raw.get("vpn-server") or {}).get("wg_host") if is_master(h) else None)
     tgt = "%s@%s" % (h.admin["user"], addr) if addr else None
-    if addr and luks.at_first_boot(h) and h.cfg["unlock"].get("ssh") and remote._answers(addr, unlock.ssh_port(h)) \
-            and not remote._answers(addr, remote.ssh_port(h)):
+    if addr and luks.at_first_boot(h) and h.cfg["unlock"].get("ssh") and remote.speaks_ssh(addr, unlock.ssh_port(h)) \
+            and not remote.speaks_ssh(addr, remote.ssh_port(h)):
         # installed encrypted, its first start waits for the one-time key of its media (its initramfs
         # answers, its system not yet; that initramfs's key is on record only after the first apply)
         if go("%s waits for its disk's key at %s. Give it the one-time key of its install media?" % (h.name, addr)):

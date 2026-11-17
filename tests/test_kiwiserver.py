@@ -4110,6 +4110,47 @@ class TestStandby(Base):
             "gate": {"role": "master", "target": "debian", "master": self.master()}}})
         self.assertEqual(cli.Renderer(bare, self.roles, self.tmp, None, self.ms).standby_endpoints(), [])
 
+    def test_the_devices_are_sent_to_the_standby_and_back(self):
+        from kiwiserver import watchdog
+        f = self.fleet_with_standby()
+        calls, state = [], {}
+
+        def point(address):
+            calls.append(address)
+            return "198.51.100.9"               # where the name pointed before
+        kinds = {"gate": "master", "gate-b": "node", "store": "node"}
+        watchdog.step(f, kinds, {"gate": False}, state, 0, restart=lambda n: None, point=point)
+        self.assertEqual(calls, [])                                                   # not yet: it waits its minutes
+        events = watchdog.step(f, kinds, {"gate": False}, state, 16 * 60, restart=lambda n: None, point=point)
+        self.assertEqual(calls, ["192.168.7.70"])
+        self.assertIn("its devices are sent to its standby gate-b", " ".join(e["text"] for e in events))
+        watchdog.step(f, kinds, {"gate": False}, state, 30 * 60, restart=lambda n: None, point=point)
+        self.assertEqual(calls, ["192.168.7.70"])                                     # once
+        events = watchdog.step(f, kinds, {"gate": True}, state, 40 * 60, restart=lambda n: None, point=point)
+        self.assertEqual(calls, ["192.168.7.70", "198.51.100.9"])                    # back where it was
+        self.assertEqual(state["pointed"], {})
+        self.assertIn("its devices are sent back to it", " ".join(e["text"] for e in events))
+
+    def test_the_name_is_changed_at_the_provider_without_showing_its_token(self):
+        from kiwiserver import ddns
+        f = self.fleet_with_standby()
+        write(f.resolve_path(ddns.FILE), "https://user:s3cret@ddns.example/update?hostname={name}&myip={address}\n")
+        seen = []
+
+        def opener(url):
+            seen.append(url)
+            return 200, "good 192.168.7.70"
+        self.assertEqual(ddns.point(f, "vpn.example.org", "192.168.7.70", opener, resolve=lambda n: "198.51.100.9"), "198.51.100.9")
+        self.assertEqual(seen, ["https://user:s3cret@ddns.example/update?hostname=vpn.example.org&myip=192.168.7.70"])
+        with self.assertRaises(KiwiError) as e:
+            ddns.point(f, "vpn.example.org", "1.2.3.4", lambda url: (200, "badauth"), resolve=lambda n: "")
+        self.assertNotIn("s3cret", str(e.exception))
+        write(f.resolve_path(ddns.FILE), "http://ddns.example/u?ip={address}\n")
+        with self.assertRaisesRegex(KiwiError, "must be https"):
+            ddns.point(f, "vpn.example.org", "1.2.3.4", opener)
+        self.assertTrue(ddns.is_name("vpn.example.org"))
+        self.assertFalse(ddns.is_name("188.68.38.110"))
+
     def test_a_standby_of_another_name_is_refused(self):
         with self.assertRaises(KiwiError):
             self.fleet({"defaults": self.base_defaults(), "hosts": {

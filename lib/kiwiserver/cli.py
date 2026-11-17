@@ -1535,7 +1535,7 @@ def cmd_recover(args):
     fleet, roles, ms = load(args)
     state = fleet_state(fleet)
     applied = state.get("applied") or {}
-    kinds = {h.name: ("master" if h.role in roles and roles[h.role].node_type == "master" else "node")
+    kinds = {h.name: ("master" if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of else "node")
              for h in fleet.hosts.values() if h.name in applied}
     if args.status:
         with open(args.status) as fh:
@@ -1571,7 +1571,17 @@ def cmd_recover(args):
         rc = main(["vps", "restart", args.fleet, name] + (["--api", args.api] if args.api else []))
         if rc:
             raise KiwiError("the provider did not do it")
-    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it)
+    from . import ddns
+    master = next((h for h in fleet.hosts.values() if kinds.get(h.name) == "master"), None)
+    wg_host = (master.role_settings_raw.get("vpn-server") or {}).get("wg_host") if master else ""
+
+    def point(address):
+        if args.dry_run:
+            return ""
+        return ddns.point(fleet, wg_host, address)
+    can_point = bool(master and fleet.standbys(master.name) and ddns.is_name(wg_host) and ddns.template(fleet))
+    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
+                           point if can_point else None)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)

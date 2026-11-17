@@ -150,9 +150,19 @@ apply the master (that applies the standby too):
 ```
 
 The master's machines move to the standby by themselves three minutes after the
-master is gone, and back when it returns. Phones and laptops follow only when
-the master's address is a name you point to the standby. A standby at home runs
-no Tor. ([design](design/standby.md))
+master is gone, and back when it returns. Phones and laptops follow when the
+master's address (`vpn-server.wg_host`) is a name at a dynamic DNS provider and
+the control node may change it: put the provider's update address in
+`secrets/ddns.url`, with `{address}` where the new address goes, for example
+
+```
+https://www.duckdns.org/update?domains=mykiwi&token=TOKEN&ip={address}
+```
+
+Then, once the master is gone for its `recovery.master.after` minutes, the name
+points at the standby, and back when the master answers again. A device follows
+when its VPN app connects anew. A standby at home runs no Tor.
+([design](design/standby.md))
 
 ## A phone or laptop was lost or stolen
 

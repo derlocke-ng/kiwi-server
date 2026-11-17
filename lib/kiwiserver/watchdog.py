@@ -38,17 +38,31 @@ def policy(fleet, kind):
     return after, cfg["do"]
 
 
-def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None):
+def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None, point=None):
     """One look. `kinds`: {machine: "master"|"node"} for the machines that have their role;
     `said`: {machine: bool} whether it answered just now; `state`: the fleet's state, changed
     in place (`gone`: since when, `acted`: when); `restart(name)` does a power cycle and may
     raise KiwiError; `where(name)` says what the machine is at its provider, or None. `locked`: {machine: bool}
     whether it waits at boot with its disk locked; `unlock(name)` forwards its ring and may raise
-    KiwiError. More kinds of events then: unlocked, locked. Returns the events: [{host, kind: waiting|tell|restarted|held, text}]."""
+    KiwiError. More kinds of events then: unlocked, locked. `point(address)` points the master's
+    name (wg_host) at an address and returns the one it had, or raises KiwiError: with it, a master
+    gone for its `after` sends the devices to its standby, and back when it answers (moved).
+    Returns the events: [{host, kind: waiting|tell|restarted|held|moved, text}]."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
+    pointed = state.setdefault("pointed", {})
     for name in list(gone):
         if said.get(name) or name not in kinds:
             del gone[name]                      # back, or no longer a machine of the network
+    for name, there in list(pointed.items()):   # its devices went to the standby: back once it answers
+        if said.get(name) and point:
+            try:
+                point(there["before"])
+            except KiwiError as e:
+                events.append({"host": name, "kind": "held", "text": "%s answers again, but its name could not be pointed "
+                               "back at it (%s): its devices stay at %s" % (name, str(e).splitlines()[0][:120], there["standby"])})
+                continue
+            del pointed[name]
+            events.append({"host": name, "kind": "moved", "text": "%s answers again: its devices are sent back to it" % name})
     opened = state.setdefault("opened", {})
     for name, kind in kinds.items():
         if (locked or {}).get(name):            # there, but its disk waits: not gone
@@ -83,6 +97,17 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         if minutes < after:
             events.append({"host": name, "kind": "waiting", "text": what})
             continue
+        standbys = [s for s in fleet.standbys(name) if s.standby_endpoint] if point and kind == "master" else []
+        if point and standbys and name not in pointed:
+            sb = standbys[0]
+            try:
+                before = point(sb.standby_endpoint)
+            except KiwiError as e:
+                events.append({"host": name, "kind": "held", "text": what + ". Its devices could not be sent to its "
+                               "standby %s (%s)" % (sb.name, str(e).splitlines()[0][:120])})
+            else:
+                pointed[name] = {"standby": sb.name, "before": before, "since": now}
+                events.append({"host": name, "kind": "moved", "text": what + ": its devices are sent to its standby %s" % sb.name})
         if do == "tell":
             events.append({"host": name, "kind": "tell", "text": what})
             continue

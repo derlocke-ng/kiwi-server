@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.184.0 — open to: the VPN, Tor, the Internet, per site
+
+- **Open to**, at each module of a node in the app and on the page: per web site a switch for
+  Tor (a hidden service; the machine's onion part comes along) and a public name (the module's
+  own name setting; the node's proxy opens through the master). On the VPN always; admin pages
+  are offered neither. [roles.md](docs/roles.md#a-nodes-service-open-to-the-internet).
+- kiwi-modules 0.83.0: each module says its sites, the setting for a public name, and whether
+  they work over Tor.
+
 ## 2.183.0 — modules from a source, first-class; the app keeps hidden services
 
 - **The app dropped a machine's hidden services** when any of its settings was saved (the page's

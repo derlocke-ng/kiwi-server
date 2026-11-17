@@ -4366,6 +4366,35 @@ class TestForm(Base):
     def field(self, groups, name):
         return next(f for g in groups for f in g["fields"] if f["name"] == name)
 
+    def test_open_to_tor_and_the_internet_per_site(self):
+        """A module's site on a node: a switch for Tor and a public name, the VPN always. Tor brings
+        the onion part along; a public name opens the node's proxy through the master."""
+        data = yaml.safe_load(yaml.safe_dump(self.FLEET))
+        data["hosts"]["papaya"]["node"] = {"modules": ["vpn-client", "reverse-proxy", "git", "vault", "control"]}
+        found = self.groups(data, "papaya")
+        tor, public = self.field(found, "open.git.git.tor"), self.field(found, "open.git.git.public")
+        self.assertEqual((tor["value"], public["value"]), (False, None))
+        self.assertRaises(StopIteration, self.field, found, "open.vault.vault.tor")        # not usable over Tor
+        self.assertRaises(StopIteration, self.field, found, "open.control.control.public")  # an admin page: never
+        out, errors = formmod.changes(found, {"open.git.git.tor": "yes", "open.git.git.public": "git.example.org",
+                                              "open.vault.vault.public": "pw.example.org"})
+        self.assertEqual(errors, {})
+        self.assertEqual(out[("node", "onion", "services", "git")], {})
+        self.assertIn("onion", out[("node", "modules")])
+        self.assertEqual(out[("node", "git", "git_hostname")], "git.example.org")
+        self.assertEqual(out[("node", "vault", "vault_domain")], "https://pw.example.org")    # a URL there
+        self.assertIs(out[("node", "reverse-proxy", "public")], True)
+        doc = formmod.Doc(data)
+        doc.apply("papaya", {".".join(k): v for k, v in out.items()})
+        found = self.groups(doc.data, "papaya")
+        self.assertEqual((self.field(found, "open.git.git.tor")["value"], self.field(found, "open.git.git.public")["value"]),
+                         (True, "git.example.org"))
+        out, errors = formmod.changes(found, {"open.git.git.tor": "no", "open.git.git.public": ""})
+        self.assertEqual((out[("node", "onion", "services", "git")], out[("node", "git", "git_hostname")]), (None, None))
+        self.assertIn("open.git.git.public", formmod.changes(found, {"open.git.git.public": "not a name!"})[1])
+        # the defaults and a master offer none of it
+        self.assertFalse([f for g in self.groups(data, None) for f in g["fields"] if f.get("open")])
+
     def test_the_app_and_the_page_have_the_same_base_fields(self):
         """The app (gui/kiwi-server-gui) still has its own copy of the base fields. Until it
         reads them from `roles --porcelain` ("base"), this holds the two copies equal: a field

@@ -104,7 +104,13 @@ applied, and the question has to find its way through the master. On the VPN the
 devices that may reach that machine ([who may reach what](network.md#who-may-reach-what)).
 
 A site is public when its name is outside the fleet's domain; every other site
-of the node stays on the VPN. Ports that are not web traffic are handed on when
+of the node stays on the VPN.
+
+**Open to**, in the app and on the page, at each module of a node: per web site a
+switch for Tor (a hidden service of the machine's onion part, which comes along)
+and a public name. A public name sets the module's own name setting and opens the
+node's proxy through the master; point the name's DNS record at the master and
+apply the master, then the node. Admin pages are offered neither. Ports that are not web traffic are handed on when
 the module says so (Jabber's 5222, 5223 and 5269).
 
 ## A cache for the LAN

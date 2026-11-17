@@ -6,6 +6,7 @@ The app (gui/kiwi-server-gui) still carries its own copy of BASE_GROUPS, SECTION
 to_text and from_text. A test (TestForm) holds the two copies of the data equal until the app
 reads them from `kiwi-server roles --porcelain` ("base") instead.
 """
+import re
 import yaml
 
 from .util import KiwiError
@@ -363,6 +364,39 @@ def _as_list(v):
     return None
 
 
+def _open_fields(doc, host, role_name, module, schema):
+    """Open to: for each web site of a module on a node, a switch for Tor (a hidden service of the
+    machine's onion part) and a public name (its DNS record at the master, the node's proxy
+    open through it). The VPN always. An admin page is offered neither."""
+    domain = str(doc.value(host, ("domain",), "") or doc.value(None, ("domain",), "") or "home")
+    services = doc.value(host, (role_name, "onion", "services"), None) or {}
+    out = []
+    for site in schema.get("sites") or []:
+        if site.get("admin"):
+            continue
+        key, label = site["key"], "%s.%s" % (site["key"], host)
+        if site.get("tor"):
+            out.append({"path": [role_name, "onion", "services", key], "name": "open.%s.%s.tor" % (module, key),
+                        "type": "bool", "open": "tor", "label": "%s over Tor" % label,
+                        "help": "A hidden service: anyone with its address opens it in Tor Browser, without the VPN. "
+                                "The address: on the machine's page once it is applied.",
+                        "options": [], "placeholder": "", "value": key in services, "inherited": False, "secret": False,
+                        "set": key in services, "inherited_set": False, "more": False})
+        if site.get("setting"):
+            now = doc.value(host, (role_name, module, site["setting"]), None)
+            name = str(now or "").split("://")[-1].strip("/")
+            public = name if name and not (name + ".").endswith("." + domain + ".") else ""
+            out.append({"path": [role_name, module, site["setting"]], "name": "open.%s.%s.public" % (module, key),
+                        "type": "string", "open": "public", "url": bool(site.get("url")),
+                        "label": "%s from the Internet" % label,
+                        "help": "A name outside your network's domain, like %s.example.org, whose DNS record points at the "
+                                "master's address: the master hands it on to this machine, which holds its certificate. "
+                                "Empty: on the VPN only." % key,
+                        "options": [], "placeholder": "%s.example.org" % key, "value": public or None, "inherited": None,
+                        "secret": False, "set": bool(public), "inherited_set": False, "more": False})
+    return out
+
+
 def _role_groups(doc, host, role, mods):
     """The role's part of a form: what the machine runs (preset, module list), one group per
     module it runs, then the role's own settings."""
@@ -404,6 +438,8 @@ def _role_groups(doc, host, role, mods):
                 continue
             fields = [_from_schema(doc, host, (name, m, st["key"]), st, (defaults.get(m) or {}).get(st["key"], st.get("default")))
                       for st in mods[m]["settings"]]
+            if host is not None and kind == "node":
+                fields = _open_fields(doc, host, name, m, mods[m]) + fields
             out.append({"id": "mod:" + m, "title": mods[m]["title"], "help": mods[m].get("description", ""), "kind": "module",
                         "advanced": True, "fields": fields})
     by_group = {}
@@ -508,6 +544,26 @@ def changes(found, posted):
         if name not in posted:
             continue
         got = posted[name]
+        if f.get("open") == "tor":
+            want = str(got).strip().lower() in ("yes", "true", "1", "on")
+            if want != bool(f["value"]):
+                out[path] = {} if want else None
+                if want:        # the machine's onion part comes along
+                    mf = next((x for gg, x in fields if x["type"] == "modules"), None)
+                    if mf and "onion" not in [o["value"] for o in mf["options"] if o["on"]]:
+                        out[tuple(mf["path"])] = list(mf["wanted"]) + ["onion"]
+            continue
+        if f.get("open") == "public":
+            text = str(got or "").strip().lower().split("://")[-1].strip("/")
+            if text == (f["value"] or ""):
+                continue
+            if text and not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", text):
+                errors[name] = "%s: a name like %s" % (f["label"], f["placeholder"])
+                continue
+            out[path] = ("https://" + text if f.get("url") else text) if text else None
+            if text:            # the node's proxy takes it in through the master
+                out[(path[0], "reverse-proxy", "public")] = True
+            continue
         if f["type"] == "modules":
             needs = {o["value"]: o["needs"] for o in f["options"]}
             picked = [m for m in got if m in needs]
@@ -543,6 +599,8 @@ def changes(found, posted):
             out[path] = new
     by_path = {tuple(f["path"]): (g, f) for g, f in fields}
     for path in list(out):
+        if path not in by_path:     # a value "Open to" brings along (the proxy open, the onion part)
+            continue
         g, f = by_path[path]
         if ("role",) in out and g["kind"] != "base":       # another role: these were the old one's settings
             del out[path]

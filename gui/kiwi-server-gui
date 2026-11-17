@@ -829,6 +829,59 @@ class Form:
             visit(m, set())
         return out
 
+    def open_group(self, role, name, m, schema):
+        """Open to: per web site of the module on a node, Tor (a hidden service of the machine's onion
+        part) and a public name (its DNS record at the master, the node's proxy open through it). The
+        VPN always; an admin page is offered neither. As the page has it."""
+        sites = [x for x in schema.get("sites") or [] if not x.get("admin")]
+        if self.scope == "defaults" or (role.get("node_type") or "node") != "node" or not sites:
+            return None
+        domain = str(self.doc.get(self.scope, ("domain",)) or self.doc.get("defaults", ("domain",)) or "home")
+        g = Adw.PreferencesGroup(title="Open to", description="On the VPN always. Over Tor: a hidden service. From the "
+                                 "Internet: a public name whose DNS record points at the master; Apply the master, then this machine.")
+        services = self.doc.get(self.scope, (name, "onion", "services")) or {}
+
+        def tor_changed(row, _p, key):
+            if self.loading:
+                return
+            if row.get_active():
+                self.doc.set(self.scope, (name, "onion", "services", key), {})
+                if "onion" not in self.effective_modules(role):     # the machine's onion part comes along
+                    v = self.doc.get(self.scope, (name, "modules"))
+                    wanted = [str(x) for x in v] if isinstance(v, list) else self.preset_modules(role)
+                    self.write({"path": (name, "modules")}, wanted + ["onion"])
+                    return
+            else:
+                self.doc.set(self.scope, (name, "onion", "services", key), None)
+            self.win.mark_dirty()
+
+        def public_applied(row, site):
+            text = row.get_text().strip().lower().split("://")[-1].strip("/")
+            if text and not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", text):
+                self.win.toast("A name like %s.example.org" % site["key"])
+                return
+            self.doc.set(self.scope, (name, m, site["setting"]), ("https://" + text if site.get("url") else text) if text else None)
+            if text:        # the node's proxy takes it in through the master
+                self.doc.set(self.scope, (name, "reverse-proxy", "public"), True)
+            self.win.mark_dirty()
+            self.win.toast("%s: %s" % (site["key"], ("open as %s once applied" % text) if text else "on the VPN only, once applied"))
+        for site in sites:
+            key = site["key"]
+            label = "%s.%s" % (key, self.scope)
+            if site.get("tor"):
+                row = Adw.SwitchRow(title="%s over Tor" % label, use_markup=False, active=key in services,
+                                    subtitle="A hidden service: opened in Tor Browser, without the VPN")
+                row.connect("notify::active", tor_changed, key)
+                g.add(row)
+            if site.get("setting"):
+                now = str(self.doc.get(self.scope, (name, m, site["setting"])) or "").split("://")[-1].strip("/")
+                public = now if now and not (now + ".").endswith("." + domain + ".") else ""
+                row = Adw.EntryRow(title="%s from the Internet, as" % label,
+                                   use_markup=False, show_apply_button=True, text=public)
+                row.connect("apply", public_applied, site)
+                g.add(row)
+        return g
+
     def preset_modules(self, role):
         """The modules the role's preset (or the role) starts from, as the fleet chooses it here."""
         if role.get("presets"):
@@ -968,7 +1021,11 @@ class Form:
                     g.add(self.folded("More", "Images, versions and what is seldom changed", more, settings=True))
                 if not shown:
                     g.add(Adw.ActionRow(title="No settings", subtitle="On or off, nothing else."))
-                add("mod:" + m, schema["title"], [g])
+                groups_here = [g]
+                opened = self.open_group(role, name, m, schema)
+                if opened is not None:
+                    groups_here.append(opened)
+                add("mod:" + m, schema["title"], groups_here)
         self.loading = was
         if current and self.stack.get_child_by_name(current):
             self.select(current)

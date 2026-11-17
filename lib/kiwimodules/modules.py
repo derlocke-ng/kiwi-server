@@ -134,7 +134,8 @@ class Module:
         for key, page in (meta.get("pages") or {}).items():
             if not isinstance(page, dict) or not re.match(r"^[a-z0-9][a-z0-9-]{0,40}$", str(key)):
                 raise KiwiError("modules/%s/module.yaml pages: %r is no site name (the first part of it)" % (self.name, key))
-            self.pages[str(key)] = {"label": str(page.get("label") or ""), "about": str(page.get("about") or "")}
+            self.pages[str(key)] = {"label": str(page.get("label") or ""), "about": str(page.get("about") or ""),
+                                    "public": str(page.get("public") or "")}
         self.outputs = meta.get("outputs") or {}
         env = meta.get("env") or {}
         self.env_optional = {str(k): v for k, v in (env.get("optional") or {}).items()}
@@ -201,11 +202,38 @@ class Module:
             raise KiwiError("modules/%s: template %s is missing" % (self.name, name))
         return util.read_text(p)
 
+    def sites(self):
+        """Its web sites as a person can open them to more than the VPN: [{key, setting, tor}].
+        key: the first part of the name it has by default (git for git.<hostname>); setting: the
+        setting that takes another name for it, a public one (git_hostname), when it has one; tor:
+        whether it works as a hidden service (its nginx block's `onion: true`). Read from the
+        module's own nginx blocks and the derived values they use."""
+        blocks = ([self.nginx] + list(self.nginx.get("servers") or [])) if isinstance(self.nginx, dict) else []
+        keys_of = {st.key for st in self.settings}
+        out = []
+        for b in blocks:
+            text = str(b.get("server_name") or "")
+            for _ in range(3):              # derived values may name others
+                for name, expr in self.derived.items():
+                    if re.search(r"\b%s\b" % re.escape(name), text) and expr not in text:
+                        text += " " + expr
+            key = re.findall(r"'(?:https://)?([a-z0-9-]+)\.' ~ hostname", text)
+            if not key:
+                continue
+            named = [w for w in re.findall(r"\b([a-z_][a-z0-9_]*)\b", text) if w in keys_of and re.search(r"(domain|hostname|host)$", w)]
+            page = self.pages.get(key[0]) or {}
+            if key[0] not in [x["key"] for x in out]:
+                out.append({"key": key[0], "setting": page.get("public") or (named[0] if named else ""),
+                            "tor": bool(b.get("onion")), "admin": bool(b.get("admin")),
+                            # the setting takes https://<name> rather than the name (Vaultwarden's domain)
+                            "url": "replace('https://'" in text})
+        return out
+
     def as_dict(self):
         return {"name": self.name, "title": self.title, "description": self.description,
                 "category": self.category, "node_types": self.node_types, "requires": self.requires,
                 "optional": self.optional, "settings": [s.as_dict() for s in self.settings],
-                "logins": [x.as_dict() for x in self.logins], "source": self.source, "pages": self.pages, "accounts": self.accounts}
+                "logins": [x.as_dict() for x in self.logins], "source": self.source, "pages": self.pages, "accounts": self.accounts, "sites": self.sites()}
 
 
 class ModuleSet:

@@ -1,0 +1,20 @@
+[Unit]
+Description=Game servers of {{ hostname }} that sleep while nobody plays
+Documentation=https://github.com/derlocke-ng/kiwi-server
+{% if runtime == 'docker' %}
+After=docker.service kiwi-stack.service
+Requires=docker.service
+{% else %}
+After=kiwi-stack.service
+{% endif %}
+Wants=kiwi-stack.service
+
+[Service]
+ExecStartPre=/usr/bin/bash {{ docker_dir }}/kiwi/games-sleep.sh start
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/games-sleep.sh watch
+ExecStopPost=/usr/bin/bash {{ docker_dir }}/kiwi/games-sleep.sh stop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

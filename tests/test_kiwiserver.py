@@ -6938,6 +6938,13 @@ peers=4 3
         self.assertFalse(by["by-hand"]["stack"])
         self.assertEqual(by["kn-gone"]["image"], "")
 
+    def test_a_game_server_asleep_is_not_down(self):
+        f = facts.parse(self.SAMPLE.replace("service=kn-gone inactive", "service=kn-gone sleeping"), local_now=990)
+        self.assertEqual((f["running"], f["expected"], f["asleep"]), (2, 2, ["kn-gone"]))
+        _state, problems, notes = facts.assess(f)
+        self.assertFalse(any("kn-gone" in p["text"] for p in problems))
+        self.assertIn("kn-gone sleeps until a player comes", notes)
+
     def test_a_healthcheck_that_is_starting_is_not_a_failed_unit(self):
         self.assertEqual(facts.parse(self.SAMPLE)["failed_units"], ["kiwi-backup.service"])
 

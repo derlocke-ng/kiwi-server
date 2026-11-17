@@ -72,7 +72,9 @@ if [ -f /etc/kiwi-server/stack.env ]; then
     done
     "$rt" ps -a --format 'container={{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null
     for s in ${STACK_SERVICES:-}; do
-        if [ "$rt" = podman ]; then
+        if [ -e "/run/kiwi-stack/sleeping/$s" ]; then
+            kv service "$s sleeping"        # a game server nobody plays on: the first player wakes it
+        elif [ "$rt" = podman ]; then
             kv service "$s $(systemctl is-active "$s.service" 2>/dev/null)"
         else
             kv service "$s $(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)"
@@ -170,7 +172,7 @@ def parse(data, local_now=None):
         status = c[2] if c else ""
         health = _HEALTH.search(status)
         return {"name": name, "state": state, "running": state in RUNNING, "status": status,
-                "image": c[3] if c else "", "health": health.group(1) if health else ""}
+                "image": c[3] if c else "", "health": health.group(1) if health else "", "asleep": state == "sleeping"}
     for name, state in units:
         services.append(dict(entry(name, state, containers.pop(name, None)), stack=True))
     for name, c in sorted(containers.items()):     # started by hand: shown, never counted as missing
@@ -196,7 +198,8 @@ def parse(data, local_now=None):
         "runtime": raw.get("runtime", ""),
         "services": services,
         "running": sum(1 for s in services if s["stack"] and s["running"]),
-        "expected": sum(1 for s in services if s["stack"]),
+        "expected": sum(1 for s in services if s["stack"] and not s["asleep"]),     # asleep: not missing
+        "asleep": [s["name"] for s in services if s["asleep"]],
     }
     if "backup" in raw:
         last = _int(raw["backup"])
@@ -235,7 +238,9 @@ def assess(f):
     elif not f.get("applied"):
         problems.append(warn("no role has been applied here yet"))
     for s in f.get("services", []):
-        if s["stack"] and not s["running"]:
+        if s.get("asleep"):
+            notes.append("%s sleeps until a player comes" % s["name"])
+        elif s["stack"] and not s["running"]:
             if booting and s["state"] in ("inactive", "activating", "created", "missing"):
                 notes.append("%s has not started yet: the machine just booted" % s["name"])
             else:

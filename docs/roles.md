@@ -152,6 +152,12 @@ document it and are not tried.
   `args:` is the server's command line.
 - The big games need a machine for it: Enshrouded wants about 16 GB of memory,
   Abiotic Factor and Palworld about 8.
+- **A server that sleeps while nobody plays**: `sleep: 30` stops it after 30
+  minutes (5 or more) in which no player sent it anything, and frees the memory.
+  The first player who tries to join wakes it; they get in a minute or two later
+  (Minecraft: refresh the server list, then join). The machine's page and
+  `kiwi-server status` say "asleep", not "down". A server you stop by hand stays
+  stopped. Leave `sleep` out for its first start, while a game downloads.
 
 ## Jabber
 

@@ -3847,6 +3847,52 @@ class TestMounts(Base):
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x", "--porcelain")
             self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1"])
 
+    def test_service_restarts_stops_starts_or_shows_the_log_of_one_container_of_the_stack(self):
+        from kiwiserver import cli as climod
+        for bad in ("nginx", "kn-x; rm -rf /", "kn-$(id)", "../kn-a", "", "kn-" + "a" * 50):
+            with self.assertRaises(KiwiError):
+                climod.service_script(bad, "restart")
+        with self.assertRaises(KiwiError):
+            climod.service_script("kn-nginx", "rm")
+        # run for real against stand-ins: a podman machine (systemd units), then a docker one
+        d = os.path.join(self.tmp, "svc-bin")
+        os.makedirs(d, exist_ok=True)
+        said = os.path.join(self.tmp, "said")
+        for tool in ("systemctl", "journalctl", "docker"):
+            write(os.path.join(d, tool), '#!/bin/sh\necho "%s $*" >> %s\n'
+                  'case "%s $*" in "systemctl cat kn-gone.service"|"systemctl cat kn-dock.service") exit 1 ;;\n'
+                  '"docker inspect kn-gone") exit 1 ;; esac\n' % (tool, said, tool))
+            os.chmod(os.path.join(d, tool), 0o755)
+        env = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+
+        def run(name, action, lines=200):
+            if os.path.exists(said):
+                os.remove(said)
+            r = subprocess.run(["sh", "-c", climod.service_script(name, action, lines)], capture_output=True, text=True, env=env)
+            return r.returncode, r.stdout + r.stderr, util.read_text(said) if os.path.exists(said) else ""
+        rc, out, calls = run("kn-nginx", "restart")
+        self.assertEqual((rc, out.strip()), (0, "kn-nginx: restarted"))
+        self.assertIn("systemctl restart kn-nginx.service", calls)
+        rc, out, calls = run("km-vpn-server", "logs", 50)
+        self.assertIn("journalctl -u km-vpn-server.service -n 50 --no-pager", calls)
+        self.assertIn("2000", run("kn-nginx", "logs", 10 ** 6)[2])           # at most 2000 lines
+        rc, out, calls = run("kn-dock", "stop")                               # no unit of that name: docker's container
+        self.assertEqual((rc, out.strip()), (0, "kn-dock: stopped"))
+        self.assertIn("docker stop kn-dock", calls)
+        rc, out, calls = run("kn-gone", "start")
+        self.assertEqual(rc, 3)
+        self.assertIn("no service kn-gone", out)
+        # the command: over SSH to the machine, its words as they came
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        sent = []
+        with mock.patch.object(remote, "run", lambda tgt, script, *a, **kw: sent.append((tgt, script)) or b"kn-nginx: restarted\n"), \
+                mock.patch.object(remote, "reach", lambda h, o=None: "core@x"):
+            rc, out, err = TestManage.run_cli(self, "service", f.path, "x", "kn-nginx", "restart")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("kn-nginx: restarted", out)
+        self.assertEqual(sent[0][0], "core@x")
+        self.assertIn("n=kn-nginx", sent[0][1])
+
 
 class TestNoLockout(Base):
     """A machine does not restart for updates while its unlock rings do not answer, and one
@@ -7960,6 +8006,12 @@ class TestControl(StoreBase):
         self.assertEqual(c.argv("save", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--now"])
         self.assertEqual(c.argv("start-new", ["papaya"])[-4:], ["backups", c.fleet_path, "papaya", "--new"])
         self.assertEqual(c.argv("prune", ["lychee"])[-3:], ["prune", c.fleet_path, "lychee"])
+        self.assertEqual(c.argv("service", ["lychee"], "restart", "kn-nginx")[-5:],
+                         ["service", c.fleet_path, "lychee", "kn-nginx", "restart"])
+        for hosts, at, module in ((["lychee"], "rm", "kn-nginx"), (["lychee"], "stop", "kn-x;id"), ([], "stop", "kn-nginx"),
+                                  (["lychee"], "stop", "sshd")):
+            with self.assertRaises(KiwiError):
+                c.argv("service", hosts, at, module)
         self.assertEqual(c.argv("doctor")[-1:], ["doctor"])                   # this node, no fleet
         with self.assertRaises(KiwiError):
             c.argv("prune", [])
@@ -8641,6 +8693,34 @@ class TestWeb(StoreBase):
         self.assertIn('value="start-new"', body)
         self.assertIn('value="prune"', body)
         self.assertIn("50 GB free", body)
+        # its containers, each with Restart, Stop or Start, and Log: one job on the machine
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "papaya", "state": "ok", "facts": {"services": [
+                {"name": "kn-nginx", "state": "active", "running": True, "status": "Up 2 hours", "image": "docker.io/library/nginx:1",
+                 "health": "", "stack": True},
+                {"name": "kn-vault", "state": "inactive", "running": False, "status": "", "image": "", "health": "", "stack": True},
+                {"name": "mine", "state": "running", "running": True, "status": "Up", "image": "", "health": "", "stack": False}]}}]}))
+        body = self.ask("/hosts/papaya?tab=services")[1]
+        self.assertIn("Its containers", body)
+        row = body[body.index("<b>kn-nginx</b>"):body.index("<b>kn-vault</b>")]
+        self.assertIn('value="restart"', row)
+        self.assertIn('value="stop"', row)
+        self.assertNotIn('value="start"', row)                                    # it runs
+        row = body[body.index("<b>kn-vault</b>"):body.index("<b>mine</b>")]
+        self.assertIn('value="start"', row)
+        self.assertNotIn('value="stop"', row)
+        self.assertNotIn('value="restart"', body[body.index("<b>mine</b>"):])     # not of its stack: shown, not handled
+        self.c.kiwi = [sys.executable, "-c", "import sys; print('ran', *sys.argv[1:])"]
+        status, where = self.ask("/run", {"csrf": csrf, "action": "service", "host": "papaya", "module": "kn-nginx", "at": "restart"})[:2]
+        self.assertEqual(status, 303)
+        jid = where.rsplit("/", 1)[1]
+        for _ in range(100):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertIn("service %s papaya kn-nginx restart" % self.c.fleet_path, self.c.log(jid)[0])
+        self.assertIn("kn-nginx: restart", [e.get("part") for e in self.c.audit_tail(3)])      # its History says which
+        self.assertEqual(self.ask("/run", {"csrf": csrf, "action": "service", "host": "papaya", "module": "sshd", "at": "stop"})[0], 400)
         # a group with the admin pages is never preselected for a new device (here it is the only one)
         self.assertIn('<option value="devices" >', self.ask("/devices")[1])
 

@@ -175,6 +175,22 @@ two actions on the host page.
 and the command, and `kiwi-server status` shows it. The marker that means
 "applied" is only written once every container of the stack runs.
 
+### One container
+
+One container of a machine's stack can be restarted, stopped, started, or
+show its last lines of log, without an apply:
+
+```bash
+kiwi-server service ~/kiwi/fleet.yaml papaya kn-nginx restart
+kiwi-server service ~/kiwi/fleet.yaml papaya kn-vault logs --lines 50
+```
+
+The name is the container's, as `status` lists it: `kn-…` on a node, `km-…` on
+the master. A stopped one stays stopped until you start it or the machine
+restarts. The control page has the same buttons on the machine's page,
+Services tab, **Its containers**; the app has them in the menu at each row of
+**Services**. A restart from there is in the machine's History.
+
 ## Sign in to a service
 
 A service such as Nextcloud, Pi-hole or Portainer asks for a user name and a

@@ -1567,7 +1567,8 @@ class ActivityDialog(Adw.Dialog):
              "build": "Made the install media of", "restore": "Brought back on", "unlock": "Unlocked", "remove": "Removed",
              "rotate-seed": "Replaced the secrets inside the services", "tell-test": "Sent a test message",
              "start-new": "Started a new backup history of", "prune": "Removed old snapshots on",
-             "doctor": "Checked the tools of the control node", "adopt": "Took in"}
+             "doctor": "Checked the tools of the control node", "adopt": "Took in",
+             "service": "Looked after a container on"}
     STATE = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 
     def __init__(self, win):
@@ -4724,7 +4725,7 @@ class Window(Adw.ApplicationWindow):
             parts.append(backups)
         if f:
             parts.append(self.machine_group(f))
-            parts.append(self.services_group(f))
+            parts.append(self.services_group(f, name))
         parts.append(self.network_group(name, st, live, f))
         parts.append(self.deploy_group(name, st, f))
         self.host_column.show(parts)
@@ -4810,7 +4811,28 @@ class Window(Adw.ApplicationWindow):
         g.add(info_row("Clock", "synchronised" if f["clock_synced"] else "not synchronised"))
         return g
 
-    def services_group(self, f):
+    def service_menu(self, host, s):
+        """Restart, stop or start one container of the machine's stack, or its last lines of log
+        (`kiwi-server service`), from a menu at its row."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=4, margin_bottom=4,
+                      margin_start=4, margin_end=4)
+        pop = Gtk.Popover(child=box)
+        n = s["name"]
+        acts = [("Restart", "restart", None),
+                ("Stop", "stop", ("Stop %s?" % n, "It stays stopped on %s until you start it or the machine restarts." % host, "Stop"))
+                if s["running"] else ("Start", "start", None),
+                ("Log", "logs", None)]
+        for label, act, ask in acts:
+            msg = {"restart": "Restarting %s on %s…", "stop": "Stopping %s on %s…", "start": "Starting %s on %s…",
+                   "logs": "The log of %s on %s…"}[act] % (n, host)
+            b = self.action_button(label, ["service", self.doc.path, host, n, act], msg, ask)
+            b.set_halign(Gtk.Align.FILL)
+            b.connect("clicked", lambda *_: pop.popdown())
+            box.append(b)
+        return Gtk.MenuButton(icon_name="view-more-symbolic", popover=pop, valign=Gtk.Align.CENTER,
+                              css_classes=["flat"], tooltip_text="Restart, stop, start, log")
+
+    def services_group(self, f, host=None):
         g = Adw.PreferencesGroup(title="Services")
         if f["expected"]:
             g.set_description("%d of %d running, on %s" % (f["running"], f["expected"], f["runtime"]))
@@ -4822,6 +4844,8 @@ class Window(Adw.ApplicationWindow):
             row = plain_row(s["name"], s["status"] or s["state"], tooltip_text=s["image"] or None)
             row.add_prefix(dot(kind))
             row.add_suffix(pill(word, kind if kind != "ok" else "dim"))
+            if host and s.get("stack"):
+                row.add_suffix(self.service_menu(host, s))
             g.add(row)
         return g
 

@@ -44,6 +44,7 @@ settings:
     help: |
       Which sites of this machine are hidden services. YAML: service -> {clients: [names]}, the service as in its address (git for git.<hostname>).
       No clients: anyone with the address gets in. With clients: only who holds one of their keys (kiwi-server onion shows them).
+      round: 2 (3, …) gives the service a new address and the old one stops working (kiwi-server onion --new-address does it, as does New address on the page and in the app).
     default: {}
   - key: tls
     type: bool

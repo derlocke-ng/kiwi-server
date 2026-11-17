@@ -42,15 +42,18 @@ share the load are two networks with a federation link.
 
 ## Limits
 
-- The standby is only as new as the last apply or enroll: a device added in wg-easy's own
-  page reaches it with the next apply.
+- The standby is only as new as the last apply, enroll or remove: a device added in wg-easy's
+  own page reaches it with the next apply of the master.
 - When the master comes back after the nodes moved, the devices still on the master do not
   reach the nodes until the nodes move back (ten minutes).
 - A standby at home has no Tor: Tor does not leave from a home connection.
 
 ## Steps
 
-1. The `standby` block, the render as the master, the identity, apply. Nodes switch.
-2. A drill: master off, nodes on the standby; master back, nodes back.
+1. The `standby` block, the render as the master, the identity, apply; enroll and remove pass
+   the devices on. Nodes switch (kiwi-modules 0.71.0), a failed return waits longer (0.72.0).
+   Built in 2.164.0.
+2. A drill: master off, nodes on the standby; master back, nodes back
+   (`tests/drills/standby.py`; first run on kiwi2: crumble, crumble-b on sh3, damson).
 3. The control node and the page: the standby in the machine list, its state.
 4. Phones and laptops: a dynamic DNS name the control node points at the standby.

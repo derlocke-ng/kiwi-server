@@ -75,3 +75,12 @@ requests, invite codes, accounts and their password links) on the page, in the a
 in the terminal (`kiwi-server accounts`). Page only for now: Connect a service to the accounts (`accounts
 connect` in a terminal), and the Settings / Admin page links under each service. The start pages and the
 front page for strangers are for everyone, not for the people who run the network: neither app nor control page.
+
+Since 2.170.0 to 2.174.0 (17 November 2026):
+- **Signed copies**: the page refuses an unsigned copy and points to `kiwi-server restore FILE --unsigned`;
+  the app's Restore runs the same CLI. Gap: neither page nor app can open an unsigned copy on purpose.
+- **A new recovery key** (`secrets recovery`): terminal only. The app could offer it next to Locking…; the
+  control node has its own control password and recovery-key path already.
+- **Locking** (idle, screen, password of this computer's key): the app's Locking… and the terminal. Not on the
+  page on purpose: it is about this computer's keyring. The page's own sessions end after 30 minutes unused.
+- **Hidden services, New address**: in all three.

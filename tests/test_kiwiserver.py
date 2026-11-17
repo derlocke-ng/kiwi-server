@@ -4495,6 +4495,11 @@ class TestBackup(Base):
             backup.restore(data, "other", os.path.join(self.tmp, "r2"))
         with self.assertRaisesRegex(KiwiError, "not a kiwi-server"):
             backup.restore(backup.encrypt(b"hello", "pw"), "pw", os.path.join(self.tmp, "r3"))
+        # what a wrong passphrase that slips past openssl gives: noise, refused in plain words
+        with mock.patch.object(backup, "decrypt", lambda data, pw: os.urandom(4096)):
+            for _ in range(20):
+                with self.assertRaisesRegex(KiwiError, "passphrase does not open"):
+                    backup.restore(data, "other", os.path.join(self.tmp, "r4"))
         self.assertRegex(backup.archive_name(f, 0), r"^fleet-fleet-19700101T000000Z\.tar\.enc$")
 
     def test_store_and_fetch_through_ssh(self):
@@ -9616,6 +9621,23 @@ class TestNetworkCopy(StoreBase):
         before_path = self.write_copy(before, "before.tar")
         rc, out, err = self.run_cli("restore", before_path, "--into", into, "--recovery-file", self.keyfile(old))
         self.assertEqual(rc, 0, err)                                                  # nor did the old copies change
+
+    def test_the_app_makes_a_new_recovery_key_in_two_steps(self):
+        old = self.init()
+        st = store.Store.for_fleet(self.f.path)
+        before = util.read_text(st.recipients)
+        rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--make")
+        self.assertEqual(rc, 0, err)
+        new = out.strip()
+        self.assertTrue(new.startswith("AGE-SECRET-KEY-1"))
+        self.assertEqual(util.read_text(st.recipients), before)                  # made, nothing changed yet
+        with mock.patch.object(sys, "stdin", io.StringIO(old + "\n")):
+            rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--key-stdin")
+        self.assertEqual(rc, 1)                                                    # the one it is already
+        with mock.patch.object(sys, "stdin", io.StringIO(new + "\n")):
+            rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--key-stdin")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(store.recovery_public(util.read_text(st.recipients)), store.public_of(new))
 
     def test_a_new_recovery_key_that_is_not_kept_changes_nothing(self):
         old = self.init()

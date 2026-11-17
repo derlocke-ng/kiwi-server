@@ -30,6 +30,7 @@ import shlex
 import subprocess
 import sys
 import tarfile
+import zlib
 import tempfile
 import time
 
@@ -126,15 +127,18 @@ def create(fleet, passphrase):
 def restore(data, passphrase, into):
     """Unpack an archive into a directory (created 0700); every file 0600."""
     raw = decrypt(data, passphrase)
+    # a wrong passphrase gets past openssl's padding check about once in 256 tries: what comes
+    # out is then noise, which gzip or tar refuse in their own words (it once failed CI so)
     try:
         tar = tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz")
-    except tarfile.TarError:
-        raise KiwiError("decrypted, but this is not a kiwi-server fleet backup")
+        members = tar.getmembers()
+    except (tarfile.TarError, OSError, EOFError, zlib.error):
+        raise KiwiError("the passphrase does not open this copy, or it is not a kiwi-server fleet backup")
     os.makedirs(into, mode=0o700, exist_ok=True)
     names = []
     kw = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
     with tar:
-        for m in tar.getmembers():
+        for m in members:
             parts = m.name.split("/")
             if m.name.startswith("/") or ".." in parts or not (m.isfile() or m.isdir()):
                 raise KiwiError("refusing archive member %r" % m.name)

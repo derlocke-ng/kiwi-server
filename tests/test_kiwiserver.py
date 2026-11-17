@@ -4069,6 +4069,7 @@ class TestStandby(Base):
         sb.update(standby)
         master = self.master()
         master["modules"] = ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"]
+        master["tor"] = {}                                  # its settings go with it on a standby at home
         return self.fleet({"defaults": self.base_defaults(), "hosts": {
             "gate": {"role": "master", "target": "debian", "admin": {"ssh_port": 41022}, "master": master,
                      "standby": {"gate-b": sb}},

@@ -602,25 +602,24 @@ class Fleet:
         over = dict(over)
         endpoint = str(over.pop("endpoint", "") or "")     # where nodes reach it, when not its network.address
         merged = deep_merge(deep_merge(base, over), {"hostname": primary.hostname})
-        role = str(merged.get("role") or self.defaults.get("role") or "")
-        block = dict(merged.get(role) or {}) if role else {}
         addr = endpoint or str(((merged.get("network") or {}).get("address")) or "").split("/")[0]
         try:
             home = bool(addr) and ipaddress.ip_address(addr).is_private
         except ValueError:
             home = False
-        if home and role:
-            mods = block.get("modules")
-            if isinstance(mods, list):
-                block["modules"] = [m for m in mods if m not in ("tor", "onion")]
-            block["at_home"] = True
-        if role and isinstance(block.get("vpn-server"), dict):
-            block["vpn-server"] = {k: v for k, v in block["vpn-server"].items() if k != "federation"}
-        if role:
-            merged[role] = block
         h = Host(self, name, merged)
         h.standby_of = primary.name
         h.standby_endpoint = addr
+        raw = dict(h.role_settings_raw or {})       # its master's settings, the fleet's defaults in them
+        if isinstance(raw.get("vpn-server"), dict):
+            raw["vpn-server"] = {k: v for k, v in raw["vpn-server"].items() if k != "federation"}
+        if home and h.role:
+            if isinstance(raw.get("modules"), list):
+                raw["modules"] = [m for m in raw["modules"] if m not in ("tor", "onion")]
+            for m in ("tor", "onion"):
+                raw.pop(m, None)
+            raw["at_home"] = True
+        h.role_settings_raw = raw
         self.hosts[name] = h
 
     def standbys(self, name):

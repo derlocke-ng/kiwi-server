@@ -145,7 +145,10 @@ def resolve_settings(role, host, modset=None):
             exit_only = raw.get("modules") is not None and "vpn-client" in wanted
             provider = str(((raw.get("vpn-client") or {}) if isinstance(raw.get("vpn-client"), dict) else {}).get(
                 "vpn_provider") or "custom")
-            if exit_only and provider == "custom":
+            vtype = str(((raw.get("vpn-client") or {}) if isinstance(raw.get("vpn-client"), dict) else {}).get(
+                "vpn_type") or "wireguard")
+            # custom WireGuard is the mesh's config; a provider's own .ovpn (Riseup, say) is an exit
+            if exit_only and provider == "custom" and vtype != "openvpn":
                 raise KiwiError("%s: vpn is false, so its vpn-client can only be a commercial VPN's (an exit for Tor "
                                 "or downloads: vpn_provider mullvad, protonvpn, …), not the mesh's" % where)
             if not exit_only:

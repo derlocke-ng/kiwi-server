@@ -10,6 +10,8 @@ module:
 
 dependencies:
   required: [vpn-client, reverse-proxy]
+  # what it sends out leaves through the VPN client: never dropped by vpn: false
+  exit: true
   optional: [onion]
 
 network:

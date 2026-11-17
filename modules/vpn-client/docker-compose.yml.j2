@@ -10,7 +10,10 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER={{ vpn_provider }}
       - VPN_TYPE={{ vpn_type }}
-{% if not wireguard_config_present %}
+{% if openvpn_config_present %}
+      # another provider's OpenVPN config, as a file (its certificates inside)
+      - OPENVPN_CUSTOM_CONFIG=/gluetun/custom.ovpn
+{% elif not wireguard_config_present %}
       - WIREGUARD_PRIVATE_KEY={{ wireguard_private_key }}
 {% if wireguard_addresses %}
       - WIREGUARD_ADDRESSES={{ wireguard_addresses }}
@@ -87,4 +90,7 @@ services:
       - {{ docker_dir }}/{{ container_prefix }}-vpn-client/post-rules.txt:/iptables/post-rules.txt:z
 {% if wireguard_config_present %}
       - {{ docker_dir }}/{{ container_prefix }}-vpn-client/wg0.conf:/gluetun/wireguard/wg0.conf:z
+{% endif %}
+{% if openvpn_config_present %}
+      - {{ docker_dir }}/{{ container_prefix }}-vpn-client/custom.ovpn:/gluetun/custom.ovpn:ro,z
 {% endif %}

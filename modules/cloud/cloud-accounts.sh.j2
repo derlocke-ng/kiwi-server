@@ -10,6 +10,10 @@ WWW_DATA=33
 # home folder on an SELinux host, so the script reads it)
 set -a; . {{ docker_dir }}/kiwi/cloud-accounts.env; set +a
 occ() { {{ runtime }} exec --user "$WWW_DATA" nextcloud-aio-nextcloud php /var/www/html/occ "$@"; }
+# the secret reaches the container in its environment (-e NAME takes the value from here): never on
+# this host's command lines; inside, occ takes it as an option for the moment it runs
+occ_secret() { {{ runtime }} exec -e KIWI_SECRET --user "$WWW_DATA" nextcloud-aio-nextcloud sh -c \
+    'exec php /var/www/html/occ "$@" --clientsecret="$KIWI_SECRET"' occ "$@"; }
 
 for _ in {1..360}; do
     status=$(occ status --output=json 2>/dev/null || true)
@@ -24,7 +28,7 @@ occ config:app:set --value=1 user_oidc allow_multiple_user_backends >/dev/null
 # and nobody becomes one of them by having the same name: a sign-in whose name a local user has is
 # refused instead of joined to that user (user_oidc's "soft auto provisioning", on by default)
 occ config:system:set user_oidc soft_auto_provision --type=boolean --value=false >/dev/null
-occ user_oidc:provider accounts --clientid={{ accounts_client }} --clientsecret="$KIWI_SECRET" \
+occ_secret user_oidc:provider accounts --clientid={{ accounts_client }} \
     --discoveryuri={{ accounts_issuer }}/.well-known/openid-configuration --scope="openid email profile" \
     --mapping-uid=preferred_username --mapping-display-name=name --mapping-email=email --unique-uid=0 >/dev/null
 echo "kiwi: Nextcloud signs people in with the network's accounts"

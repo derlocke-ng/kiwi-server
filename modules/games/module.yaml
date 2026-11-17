@@ -92,10 +92,12 @@ settings:
       minecraft-bedrock:
         title: Minecraft (Bedrock)
         image: docker.io/itzg/minecraft-bedrock-server:latest
-        # since 1.26.50 (NetherNet): TCP 19132 for the handshake, the game itself on the UDP port named here
+        # since 1.26.50 (NetherNet): TCP 19132 for the handshake, the game itself on the UDP port named here.
+        # The server tells clients its own port: a second one (port: 19133) listens on 19133 inside too
         ports: [19132/tcp, 19132/udp]
+        same_port: true
         data: { data: /data }
-        env: { EULA: "TRUE", SERVER_NAME: "{name}", SERVER_UDP_PORTS: "19132" }
+        env: { EULA: "TRUE", SERVER_NAME: "{name}", SERVER_PORT: "{port}", SERVER_UDP_PORTS: "{port}" }
       enshrouded:
         title: Enshrouded
         image: docker.io/mornedhels/enshrouded-server:latest

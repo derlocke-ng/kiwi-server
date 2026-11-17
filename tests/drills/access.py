@@ -43,12 +43,16 @@ nodes = [x for x in facts["machines"] if not x["master"]]
 ssh_port = {h.name: int(h.admin.get("ssh_port") or 22) for h in _fleet.hosts.values()}
 INTERNET = "1.1.1.1"
 admin_page = "wg.%s" % next(x["hostname"] for x in facts["machines"] if x["master"])       # wg-easy, through the master's proxy
+# admin areas inside a site (kiwi-modules 0.67.0: `admin: true` on a location): only for the groups with the admin pages
+ADMIN_AREAS = {"jabber": "admin/", "xmpp": "admin/", "vault": "admin"}
 
 PROBE = r"""
 while read kind a b; do
   case $kind in
     tcp)  nc -z -w 4 "$a" "$b" 2>/dev/null && r=open || r=closed ;;
     web)  r=$(curl -sk -o /tmp/body -w '%{http_code}' --max-time 8 --resolve "$a:443:$b" "https://$a/")
+          [ "$r" = 403 ] && grep -q '<center>nginx' /tmp/body && r=refused ;;
+    admin) h=${a%%/*}; r=$(curl -sk -o /tmp/body -w '%{http_code}' --max-time 8 --resolve "$h:443:$b" "https://$h/${a#*/}")
           [ "$r" = 403 ] && grep -q '<center>nginx' /tmp/body && r=refused ;;
     ping) ping -c 1 -W 3 "$a" >/dev/null 2>&1 && r=open || r=closed ;;
     dns)  dig +time=3 +tries=1 @"$b" "$a" +short 2>/dev/null | grep -q . && r=open || r=closed ;;
@@ -132,6 +136,9 @@ def expect(row, other):
             page = s in (n.get("admin") or [])
             if s in mm["services"] or ((whole or apps) and (admin or not page)):
                 out.append((name, ("web", name, n["ip"]), None))                        # any answer of the service
+                if s in ADMIN_AREAS and is_group:       # its admin area: the admins only (a device outside every group is one)
+                    out.append(("%s/%s (an admin area)" % (name, ADMIN_AREAS[s]), ("admin", "%s/%s" % (name, ADMIN_AREAS[s]), n["ip"]),
+                                None if row["admin"] else ("refused",)))
             else:
                 out.append((name + (" (an admin page)" if page and (whole or apps) else " (not given)"),
                             ("web", name, n["ip"]), ("000", "refused")))

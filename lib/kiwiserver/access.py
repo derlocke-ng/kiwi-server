@@ -195,6 +195,14 @@ def node_rules(groups, name, hostname, admin=()):
     return {"names": names, "others": sorted(limited)}
 
 
+def admin_ranges(groups):
+    """The client ranges of the VPN groups without the admin switch: refused the admin areas
+    inside a site (ejabberd's /admin, Vaultwarden's /admin), whatever else they reach there.
+    A site that is an admin page as a whole goes by node_rules (it may be named for a group)."""
+    return sorted(str(g["subnet"]) for g in (groups or {}).values()
+                  if g and g.get("subnet") and not g.get("admin", FLAG_DEFAULT["admin"]))
+
+
 def next_range(groups, mesh):
     """A free /24 of the mesh for a new group: after the highest one in use."""
     net = ipaddress.ip_network(mesh, strict=False)

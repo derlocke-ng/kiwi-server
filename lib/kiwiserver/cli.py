@@ -479,12 +479,16 @@ class Renderer:
                 a = json.loads(util.read_text(path))
                 host.module_settings[module].update(accounts_client=a["client"], accounts_issuer=a["issuer"],
                                                     accounts_secret=a["secret"])
+        if "reverse-proxy" in host.modules and accessmod.admin_ranges(self._groups):
+            # the admin areas inside a site (a master's too): not for the groups without the admin pages
+            host.module_settings["reverse-proxy"].setdefault("access", {})["admin"] = accessmod.admin_ranges(self._groups)
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
             rules = accessmod.node_rules(self._groups, host.name, host.hostname, pages)
             if rules:
-                host.module_settings["reverse-proxy"]["access"] = rules
+                host.module_settings["reverse-proxy"]["access"] = dict(rules, **{
+                    k: v for k, v in (host.module_settings["reverse-proxy"].get("access") or {}).items() if k == "admin"})
             if pages and self._partners:        # a linked network opens an admin page only when it is named for it
                 rp = host.module_settings["reverse-proxy"]
                 rp["federation"] = fedmod.admin_rules(rp.get("federation"), self._partners, host.name, pages,

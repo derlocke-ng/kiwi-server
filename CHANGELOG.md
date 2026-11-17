@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.174.0 — the control page logs out when left; a hidden service gets a new address
+
+- **A login on the control page ends 30 minutes after its last use** (and 12 hours after the
+  login whatever happens), as the app's secrets lock: a browser left open at an unwatched
+  computer does not stay in. The page's own refreshes do not count; a form already on the page
+  stays good while the login lasts.
+- **A hidden service gets a new address**: `kiwi-server onion FLEET git.medlar --new-address`, and
+  **New address** on the page (Who may reach what) and in the app. The old address stops
+  answering with the machine's next apply; its people and their keys stay. The first address of
+  every service is the one it had (rounds: `onion.services.<name>.round`).
+
 ## 2.173.0 — the app sets how it locks
 
 - **The app's Locking…** (in its menu): after how long unused the secrets lock (15 minutes,

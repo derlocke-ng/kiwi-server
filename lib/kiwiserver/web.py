@@ -426,7 +426,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 {% set running = machines|rejectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
 {% if machines and not running %}<div class="banner ok">Your network is made. Now its machines, one after the other.</div>
 {% elif looking or not looked %}<div class="banner warn">Checking your machines… this takes a minute.</div>
-<script>setTimeout(function(){location.reload()},6000)</script>
+<script>setTimeout(function(){location.replace(location.pathname + '?auto=1')},6000)</script>
 {% elif bad %}<div class="banner bad">{{ bad|length }} of {{ machines|length }} machines {{ "has" if bad|length == 1 else "have" }} a problem</div>
 {% elif silent %}<div class="banner bad">{{ silent|length }} {{ "service does" if silent|length == 1 else "services do" }} not answer</div>
 {% elif warn %}<div class="banner warn">Everything runs. {{ warn|length }} {{ "machine wants" if warn|length == 1 else "machines want" }} a look.</div>
@@ -929,7 +929,8 @@ types this key when it asks:<br><code>{{ key.line }}</code></div>{% endif %}
 <input name="who.{{ m.name }}.{{ s }}" value="{{ h.clients | join(' ') if h else '' }}" placeholder="anyone; or names, like anna ben"
 style="margin-top:2px">
 {% if h %}{% for c in h.clients %}<button class="small" name="show" value="{{ s }}.{{ m.name }}:{{ c }}">Show {{ c }}'s key</button>
-{% endfor %}{% endif %}</div>{% endfor %}</div>{% endif %}{% endfor %}
+{% endfor %}<button class="small" name="new" value="{{ s }}.{{ m.name }}"
+onclick="return confirm('A new address for {{ s }}.{{ m.name }}? The old one stops answering with its next apply, and whoever had it needs the new one.')">New address</button>{% endif %}</div>{% endfor %}</div>{% endif %}{% endfor %}
 <p class="muted small">Listed are the sites that were seen to work through Tor. Others send a visitor to their name on the VPN,
 or need it; <code>kiwi-server onion SERVICE.MACHINE --anyway</code> makes one all the same.</p>
 <div class="actions"><button class="primary">Save hidden services</button></div></form>
@@ -1029,7 +1030,7 @@ onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done 
 your network, under Machines.</p>
 {% endblock %}""",
     "status.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}: status{% endblock %}{% block main %}
-<meta http-equiv="refresh" content="120"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}</style>
+<meta http-equiv="refresh" content="120;url=?auto=1"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}</style>
 <div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ brand_name or "Kiwi" }}</h1>
 <span class="muted small"><a href="/">← all services</a>{% if h.checked %} · checked {{ age(now - h.checked) }} ago · every ten minutes{% endif %}</span></div>
 <p class="sub">{{ "The services that are open to the Internet, asked the way you reach them." if h.strangers else "How the network is: every service, asked from the network itself." }}</p>
@@ -1126,7 +1127,7 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 {% endblock %}""",
 
     "start.html": """{% extends "base.html" %}{% block title %}{{ brand_name or "Kiwi" }}{% endblock %}{% block main %}
-<meta http-equiv="refresh" content="300">
+<meta http-equiv="refresh" content="300;url=?auto=1">
 <style>main{max-width:1120px}
 .hero{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between;padding:26px 0 8px}
 .hero h1{font-size:2rem;margin:0;display:flex;align-items:center;gap:12px}.hero .logo{width:40px;height:40px;display:inline-flex}
@@ -1578,6 +1579,21 @@ def make_app(control: Control):
                        kind=lambda r, standby_of="": ("Standby of %s" % standby_of) if standby_of else KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
                        to_text=formmod.to_text, icon=icon, size=size, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
+    PASSIVE = ("/setup/hoster/", "/machines/hoster/", "/static/", "/favicon")
+
+    @app.middleware("http")
+    async def keep_session(request: Request, call_next):
+        """A page used: the login lasts another SESSION_IDLE_MINUTES. The page's own reloads
+        (?auto=1) and polls do not count, or a tab left open would never end its login."""
+        response = await call_next(request)
+        tok = request.cookies.get(COOKIE)
+        if tok and "auto" not in request.query_params and not request.url.path.startswith(PASSIVE) \
+                and COOKIE not in (response.headers.get("set-cookie") or ""):
+            new = control.refresh(tok)
+            if new and new != tok:
+                secure = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
+                response.set_cookie(COOKIE, new, httponly=True, samesite="strict", secure=secure, max_age=12 * 3600)
+        return response
 
     def page(template, request=None, nav=None, **kw):
         # tok: the hidden field every form of a logged-in page carries (see posted())
@@ -2541,6 +2557,11 @@ def make_app(control: Control):
         if not u:
             return login_page()
         try:
+            if form.get("new"):                         # its next address: the old one stops with the next apply
+                what = str(form["new"])
+                address = control.onion_new(what, user=u)
+                return RedirectResponse("/access?tor=" + urllib.parse.quote("%s, at its new address http://%s" % (what, address))
+                                        + "#tor", status_code=303)
             if form.get("show"):                        # one person's key, shown once on the page
                 what, _, client = str(form["show"]).partition(":")
                 found = control.onion().get(what)

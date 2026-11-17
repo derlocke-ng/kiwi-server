@@ -3620,6 +3620,29 @@ class TestOnion(Base):
             self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
         self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
 
+    def test_a_hidden_service_gets_a_new_address(self):
+        f = self.net()
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address", "--anyway")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("no hidden service", out + err)
+        TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--anyway", "--client", "anna")
+        first = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "vault")[1])
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address")
+        self.assertEqual(rc, 0, err)
+        second = onionmod.address(onionmod.service_key(b"T" * 32, "papaya", "vault", 2)[1])
+        self.assertNotEqual(first, second)
+        self.assertIn("has a new address: http://%s. The old one (%s) stops answering" % (second, first), out + err)
+        node = config.Fleet.load(f.path).hosts["papaya"].cfg["node"]
+        self.assertEqual(node["onion"], {"services": {"vault": {"clients": ["anna"], "round": 2}}})   # its people stay
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        h = fleet.hosts["papaya"]
+        b = r.bundle(h, r.prepare(h))
+        self.assertIn("printf '%%s\\n' '%s'" % second, b.files["kn-onion/etc/start.sh"][0])
+        self.assertNotIn(first, b.files["kn-onion/etc/start.sh"][0] + b.files["kn-nginx/nginx.conf"][0])
+        rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address", "--remove")
+        self.assertNotEqual(rc, 0)
+
     def test_the_command_makes_limits_and_removes_a_hidden_service(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path)
@@ -7882,6 +7905,23 @@ class TestControl(StoreBase):
         self.assertTrue(c.locked())
         self.assertIsNone(c.session(token))                                   # a locked fleet has no sessions
         token = c.login(self.PW, "10.9.3.2")
+        csrf = c.csrf(token)
+        now[0] += 20 * 60
+        used = c.refresh(token)                                               # used after 20 minutes
+        self.assertEqual(c.session(used), "admin")
+        self.assertEqual(c.csrf(used), csrf)                                  # a form already on the page stays good
+        now[0] += 25 * 60
+        self.assertIsNone(c.session(token))                                   # the old one: 30 minutes unused
+        self.assertEqual(c.session(used), "admin")                            # the used one: 25 minutes since its use
+        now[0] += 31 * 60
+        self.assertIsNone(c.session(used))                                    # nothing for 31 minutes: over
+        self.assertIsNone(c.refresh(used))
+        token = c.login(self.PW, "10.9.3.2")
+        for _ in range(26):                                                   # used every 29 minutes for 12½ hours
+            now[0] += 29 * 60
+            token = c.refresh(token) or token
+        self.assertIsNone(c.session(token))                                   # 12 hours after the login: over whatever
+        token = c.login(self.PW, "10.9.3.2")
         now[0] += 13 * 3600
         self.assertIsNone(c.session(token))                                   # expired
         for _ in range(5):
@@ -10688,8 +10728,17 @@ class TestFirstRunPage(StoreBase):
         body = self.ask("/onion", {"csrf": csrf, "show": "cloud.%s:anna" % node}, cookie=cookie)[1]
         self.assertRegex(body, r"types this key when it asks:<br><code>[A-Z2-7]{52}</code>")
         self.assertIn("showed the Tor key of anna", str(self.c.audit_tail(3)))
+        before = re.search(r"http://([a-z2-7]{56}\.onion)", self.ask("/access", cookie=cookie)[1]).group(1)
+        self.assertIn('name="new" value="cloud.%s"' % node, self.ask("/access", cookie=cookie)[1])
+        status, where, _ = self.ask("/onion", {"csrf": csrf, "new": "cloud.%s" % node}, cookie=cookie)       # a new address
+        self.assertEqual(status, 303)
+        self.assertIn("at its new address", urllib.parse.unquote(where))
+        after = re.search(r"http://([a-z2-7]{56}\.onion)", self.ask("/access", cookie=cookie)[1]).group(1)
+        self.assertNotEqual(after, before)
+        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"cloud": {"clients": ["anna"], "round": 2}}})
+        self.assertIn("gave cloud.%s a new hidden-service address" % node, str(self.c.audit_tail(3)))
         status, where, _ = self.ask("/onion", {"csrf": csrf, "on.%s.cloud" % node: "on"}, cookie=cookie)     # anna's name taken out: anyone
-        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"cloud": {}}})
+        self.assertEqual(self.data()["hosts"][node]["node"]["onion"], {"services": {"cloud": {"round": 2}}})   # its address stays
         status, where, _ = self.ask("/onion", {"csrf": csrf}, cookie=cookie)                                 # unticked
         self.assertNotIn("cloud", (self.data()["hosts"][node]["node"].get("onion") or {}).get("services") or {})
         self.assertEqual(self.ask("/onion", {"csrf": "x"})[:2], (303, "/login"))

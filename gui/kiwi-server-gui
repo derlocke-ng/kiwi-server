@@ -1449,6 +1449,10 @@ class AccessDialog(Adw.Dialog):
                 on = Adw.SwitchRow(title=sv, subtitle=("http://" + has["address"]) if has else "not a hidden service",
                                    active=bool(has))
                 who = Adw.EntryRow(title="%s: only these people (empty: anyone)" % sv, text=" ".join(has["clients"]) if has else "")
+                if has:         # its next address: the old one stops with the machine's next apply
+                    renew = Gtk.Button(label="New address", valign=Gtk.Align.CENTER, css_classes=["flat"])
+                    renew.connect("clicked", lambda _b, w=what, row=on: self.new_address(w, row))
+                    on.add_suffix(renew)
                 exp.add_row(on)
                 exp.add_row(who)
                 self.onion[what] = (on, who)
@@ -1484,6 +1488,35 @@ class AccessDialog(Adw.Dialog):
                     reach += ["%s.%s" % (s, m["name"]) for s, row in svc.items() if row.get_active()]
             reach += [e for e in r["extra"].get_text().split() if e not in reach]
         return reach, {k: row.get_active() for k, row in r["flags"].items()}
+
+    def new_address(self, what, row):
+        dlg = Adw.AlertDialog(heading="A new address for %s?" % what,
+                              body="The old address stops answering with the machine's next apply, and whoever had it "
+                                   "needs the new one. Its people and their keys stay.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("new", "New address")
+        dlg.set_response_appearance("new", Adw.ResponseAppearance.DESTRUCTIVE)
+        path = self.win.doc.path
+
+        def answer(_d, r):
+            if r != "new":
+                return
+
+            def work():
+                rc, out, err = run_cli(self.win.cli, ["onion", path, what, "--new-address"])
+                found = re.search(r"new address: (http://\S+?\.onion)", out + err)
+
+                def done():
+                    if rc != 0 or not found:
+                        self.win.alert("No new address", ((err or out).strip().replace("error: ", "").splitlines() or ["?"])[-1])
+                    else:
+                        row.set_subtitle(found.group(1))
+                        self.win.toast("%s: new address; apply %s for it to take effect" % (what, what.partition(".")[2]))
+                    return False
+                GLib.idle_add(done)
+            threading.Thread(target=work, daemon=True).start()
+        dlg.connect("response", answer)
+        dlg.present(self)
 
     def save(self):
         calls = []

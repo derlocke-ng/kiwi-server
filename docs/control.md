@@ -181,6 +181,10 @@ copy**, above the questions. It asks for five things:
 
 The page then opens on Home, logged in, with the machines of the network.
 
+A login ends 30 minutes after you last did something on the page (its own
+refreshes do not count), and 12 hours after you logged in whatever you do: a
+browser left open at a computer nobody watches does not stay in.
+
 - The copy is opened in memory. On the disk are only the encrypted files, as after a
   first run.
 - The password of the page you had before stops working. So does the key of a

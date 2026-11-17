@@ -3364,7 +3364,8 @@ def _hidden(fleet, roles, ms):
         except KiwiError:
             full = {}
         for name, clients in onionmod.services(h).items():
-            out.append((h, name, onionmod.address(onionmod.service_key(fleet.seed(), h.name, name)[1]), clients,
+            out.append((h, name, onionmod.address(onionmod.service_key(fleet.seed(), h.name, name,
+                                                                      onionmod.rounds(h).get(name, 1))[1]), clients,
                         full.get(name) or "%s.%s" % (name, h.hostname)))
     return out
 
@@ -3417,7 +3418,15 @@ def cmd_onion(args):
         util.warn("%s: Tor leaves through its own connection (onion.without_vpn): your internet provider can see that "
                   "it uses Tor" % host.name)
     have = onionmod.services(host) if "onion" in host.modules else {}
-    address = onionmod.address(onionmod.service_key(fleet.seed(), host.name, service)[1])
+    rounds = onionmod.rounds(host) if "onion" in host.modules else {}
+    if args.new_address:
+        if args.remove or args.client:
+            raise KiwiError("--new-address changes the address only: without --remove or --client")
+        if service not in have:
+            raise KiwiError("%s.%s is no hidden service: it has no address to change" % (service, host.name))
+        old_address = onionmod.address(onionmod.service_key(fleet.seed(), host.name, service, rounds.get(service, 1))[1])
+        rounds[service] = rounds.get(service, 1) + 1
+    address = onionmod.address(onionmod.service_key(fleet.seed(), host.name, service, rounds.get(service, 1))[1])
     base = os.path.basename(fleet.path)
     if args.show:
         if args.show not in have.get(service, []):
@@ -3443,7 +3452,11 @@ def cmd_onion(args):
         if args.client and args.client not in clients:
             clients.append(args.client)
         said = "%s.%s is a hidden service: http://%s" % (service, host.name, address)
-    value = {"services": {s: ({"clients": c} if c else {}) for s, c in have.items()}}
+        if args.new_address:
+            said = ("%s.%s has a new address: http://%s. The old one (%s) stops answering with the next apply; "
+                    "whoever had it needs the new one" % (service, host.name, address, old_address))
+    value = {"services": {s: dict(({"clients": c} if c else {}), **({"round": rounds[s]} if rounds.get(s, 1) > 1 else {}))
+                          for s, c in have.items()}}
     mods = list(host.modules) if "onion" in host.modules else list(host.modules) + ["onion"]
     if not have:                # no hidden service left: the machine does not run Tor for nothing
         mods = [x for x in mods if x != "onion"]
@@ -4136,6 +4149,8 @@ def build_parser():
     s.add_argument("--client", metavar="NAME", help="only named people get in: add this name (with --remove: take it away)")
     s.add_argument("--show", metavar="NAME", help="what this person types into Tor Browser")
     s.add_argument("--remove", action="store_true", help="take the hidden service away, or with --client that name")
+    s.add_argument("--new-address", action="store_true",
+                   help="a new address for this hidden service; the old one stops answering with the next apply")
     s.add_argument("--anyway", action="store_true",
                    help="make it of a site that is not marked as usable over Tor (it may send visitors to its name on the VPN)")
     s = sub("access", cmd_access); s.add_argument("fleet"); s.add_argument("who", nargs="?", help="a group of the VPN or a linked network")

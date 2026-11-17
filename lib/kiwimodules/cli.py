@@ -28,6 +28,17 @@ def write_bundle(out_dir, m, profile, bundle):
     write_text(os.path.join(out_dir, "stack.sh"), manifest.stack_manifest(m, profile, "kiwi-modules %s" % VERSION, bundle), 0o644)
 
 
+def sources(args):
+    """--source NAME=FOLDER, as often as there are: the module sources of a fleet."""
+    out = []
+    for word in getattr(args, "source", None) or []:
+        name, sep, folder = word.partition("=")
+        if not sep or not name or not folder:
+            raise KiwiError("--source takes NAME=FOLDER, not %r" % word)
+        out.append((name, os.path.expanduser(folder)))
+    return out
+
+
 def cmd_render(args):
     m = machinemod.load(args.machine)
     profiles = profmod.discover()
@@ -36,7 +47,7 @@ def cmd_render(args):
     profile = profiles[m.role]
     if not profile.stack:
         raise KiwiError("%s: profile %s has no stack to render" % (m.name, m.role))
-    ms = modmod.discover()
+    ms = modmod.discover(extra=sources(args))
     resolver.resolve_settings(profile, m, ms)
     spec = resolver.stack_spec(m, profile, m.dns_records, master_ip=m.master_ip, ca_cert=m.ca_cert,
                               lan_addresses=m.lan_addresses, mesh_only=m.mesh_only)
@@ -51,9 +62,10 @@ def cmd_render(args):
 
 
 def cmd_modules(args):
-    ms = modmod.discover()
+    ms = modmod.discover(extra=sources(args))
     for mod in ms.modules.values():
-        print("%-14s %-12s %s" % (mod.name, "/".join(mod.node_types), mod.description))
+        print("%-14s %-12s %s%s" % (mod.name, "/".join(mod.node_types), mod.description,
+                                    "  (from %s)" % mod.source if mod.source else ""))
         if args.verbose:
             for s in mod.settings:
                 print("               %-24s %-7s default=%r%s" % (s.key, s.type, s.default, " (required)" if s.required else ""))
@@ -74,6 +86,9 @@ def main(argv=None):
     r.add_argument("machine"); r.add_argument("-o", "--output", required=True)
     mm = sp.add_parser("modules", help="the modules"); mm.set_defaults(fn=cmd_modules)
     mm.add_argument("-v", "--verbose", action="store_true")
+    for q in (r, mm):
+        q.add_argument("--source", action="append", metavar="NAME=FOLDER",
+                       help="the modules of a module source too (a folder per module): as often as there are")
     sp.add_parser("profiles", help="the profiles and their presets").set_defaults(fn=cmd_profiles)
     args = p.parse_args(argv)
     if not args.cmd:

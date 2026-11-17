@@ -6451,6 +6451,96 @@ class TestMtu(Base):
         self.assertEqual(r.returncode, 0, r.stdout)
 
 
+@unittest.skipUnless(have("git"), "git not installed")
+class TestModuleSources(Base):
+    """Modules beyond the built-in ones: listed by hand in the fleet file, fetched at a pinned commit."""
+
+    def repo(self, name="hello"):
+        from kiwiserver import sources
+        src = os.path.join(self.tmp, "src-" + name)
+        sources.scaffold(src, name=name)
+        git = ["git", "-C", src, "-c", "user.name=t", "-c", "user.email=t@example.org"]
+        for argv in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "one"]):
+            subprocess.run(git + argv, check=True, capture_output=True)
+        return src, git
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(list(args))
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_a_source_is_added_pinned_moved_on_purpose_and_removed(self):
+        from kiwiserver import sources
+        src, git = self.repo()
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache")}):
+            rc, out, err = self.run_cli("sources", f.path, "add", "file://" + src, "--name", "community")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("module source community: hello", err + out)
+            self.assertIn("run as root", err + out)
+            listed = yaml.safe_load(util.read_text(f.path))["module_sources"]
+            first = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            self.assertEqual(listed, [{"name": "community", "url": "file://" + src, "commit": first}])
+            self.assertEqual(list(yaml.safe_load(util.read_text(f.path)))[-1], "hosts")        # hosts stays last
+            fleet = config.Fleet.load(f.path)
+            ms = cli.modset(fleet)
+            self.assertEqual((ms.get("hello").source, ms.get("cloud").source), ("community", None))
+            rc, out, err = self.run_cli("modules", "--fleet", f.path)
+            self.assertIn("(from the module source community)", out)
+            # a new commit there changes nothing here until it is asked for
+            mod = os.path.join(src, "modules", "hello", "module.yaml")
+            util.write_text(mod, util.read_text(mod).replace("version: 0.1.0", "version: 0.2.0"))
+            subprocess.run(git + ["commit", "-qam", "two"], check=True, capture_output=True)
+            ms = cli.modset(config.Fleet.load(f.path))
+            self.assertEqual(ms.get("hello").version, "0.1.0")
+            rc, out, err = self.run_cli("sources", f.path, "update", "community")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("hello: 0.1.0 -> 0.2.0", err + out)
+            self.assertEqual(cli.modset(config.Fleet.load(f.path)).get("hello").version, "0.2.0")
+            # the same name twice, a clash with a built-in module, a link that is no https
+            self.assertNotEqual(self.run_cli("sources", f.path, "add", "file://" + src, "--name", "community")[0], 0)
+            bad, _ = self.repo("cloud")
+            rc, out, err = self.run_cli("sources", f.path, "add", "file://" + bad, "--name", "bad")
+            self.assertIn("its module cloud has the name of a built-in module", err)
+            self.assertNotIn("bad", [x["name"] for x in yaml.safe_load(util.read_text(f.path))["module_sources"]])
+            rc, out, err = self.run_cli("sources", f.path, "add", "http://example.org/x")
+            self.assertNotEqual(rc, 0)
+            rc, out, err = self.run_cli("sources", f.path, "remove", "community")
+            self.assertEqual(rc, 0, err)
+            self.assertNotIn("module_sources", yaml.safe_load(util.read_text(f.path)))
+
+    def test_the_fleet_file_says_what_is_wrong_with_a_source(self):
+        from kiwiserver import sources
+        good, errs = sources.check([{"name": "a", "url": "https://github.com/x/y", "commit": "0" * 40},
+                                    {"name": "b", "path": "~/m"}])
+        self.assertEqual((len(good), errs), (2, []))
+        for bad, says in (({"name": "a", "url": "https://github.com/x/y", "commit": "main"}, "commit is the 40 hex"),
+                          ({"name": "a", "url": "ssh://git@x/y", "commit": "0" * 40}, "url is an https address"),
+                          ({"name": "A b", "path": "/m"}, "name is lowercase"),
+                          ({"name": "a", "path": "/m", "url": "https://x/y"}, "url or path, not both"),
+                          ({"name": "a", "path": "/m", "more": 1}, "unknown key more")):
+            self.assertTrue(any(says in e for e in sources.check([bad])[1]), (bad, sources.check([bad])[1]))
+        self.assertIn("module_sources: two are called a", sources.check([{"name": "a", "path": "/m"}, {"name": "a", "path": "/n"}])[1])
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}},
+                        "module_sources": [{"name": "a", "url": "https://github.com/x/y", "commit": "main"}]})
+        self.assertTrue(any("commit is the 40 hex" in e for e in f.errors))
+
+    def test_a_new_source_starts_with_an_example_and_its_check(self):
+        from kiwiserver import sources
+        d = sources.scaffold(os.path.join(self.tmp, "mine"), name="grow")
+        self.assertTrue(os.path.isfile(os.path.join(d, "modules", "grow", "module.yaml")))
+        self.assertIn("name: grow", util.read_text(os.path.join(d, "modules", "grow", "module.yaml")))
+        self.assertIn("{{ container_prefix }}-grow", util.read_text(os.path.join(d, "modules", "grow", "docker-compose.yml.j2")))
+        self.assertTrue(os.access(os.path.join(d, "tools", "check-modules.py"), os.X_OK))
+        self.assertTrue(os.path.isfile(os.path.join(d, ".github", "workflows", "check.yml")))
+        with self.assertRaisesRegex(KiwiError, "not empty"):
+            sources.scaffold(d)
+        rc, out, err = self.run_cli("sources", "new", os.path.join(self.tmp, "other"))
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "other", "modules", "hello", "module.yaml")))
+
+
 class TestNetcupDropped(unittest.TestCase):
     def test_a_dropped_connection_is_said_not_a_traceback(self):
         """netcup's login closed the connection without an answer (17 Nov 2026): `next` showed a

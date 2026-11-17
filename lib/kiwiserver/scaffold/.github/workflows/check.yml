@@ -1,0 +1,17 @@
+name: check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  modules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kiwi-modules, its newest release
+        run: |
+          tag=$(git ls-remote --tags --sort=-v:refname https://github.com/derlocke-ng/kiwi-modules 'v*' | head -1 | sed 's|.*refs/tags/||; s|\^{}||')
+          git clone -q --depth 1 --branch "$tag" https://github.com/derlocke-ng/kiwi-modules ../kiwi-modules
+          echo "kiwi-modules $tag"
+      - run: pip install jinja2 pyyaml
+      - name: every module renders
+        run: python3 tools/check-modules.py

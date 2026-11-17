@@ -104,9 +104,10 @@ def wg_key(secret):
 
 
 class Module:
-    def __init__(self, path):
+    def __init__(self, path, source=None):
         self.dir = path
         self.name = os.path.basename(path)
+        self.source = source            # the module source it came from (a fleet's module_sources), or None: built in
         meta = yaml.safe_load(util.read_text(os.path.join(path, "module.yaml"))) or {}
         m = meta.get("module") or {}
         if m.get("name") and m["name"] != self.name:
@@ -181,11 +182,14 @@ class Module:
         return {"name": self.name, "title": self.title, "description": self.description,
                 "category": self.category, "node_types": self.node_types, "requires": self.requires,
                 "optional": self.optional, "settings": [s.as_dict() for s in self.settings],
-                "logins": [x.as_dict() for x in self.logins]}
+                "logins": [x.as_dict() for x in self.logins], "source": self.source}
 
 
 class ModuleSet:
-    def __init__(self, path=None):
+    def __init__(self, path=None, extra=()):
+        """The built-in modules, then those of each extra folder: [(source name, folder)], a
+        fleet's module sources. A source's module never takes a built-in one's name, nor
+        another source's: which of two it would be is never a guess."""
         self.dir = path or modules_dir()
         if not os.path.isdir(self.dir):
             raise KiwiError("modules directory not found: %s" % self.dir)
@@ -196,6 +200,23 @@ class ModuleSet:
                 self.modules[name] = Module(d)
         if not self.modules:
             raise KiwiError("no modules found in %s" % self.dir)
+        for label, folder in extra or ():
+            if not os.path.isdir(folder):
+                raise KiwiError("module source %s: %s is not a folder" % (label, folder))
+            found = 0
+            for name in sorted(os.listdir(folder)):
+                d = os.path.join(folder, name)
+                if not os.path.isfile(os.path.join(d, "module.yaml")):
+                    continue
+                if name in self.modules:
+                    other = self.modules[name].source
+                    raise KiwiError("module source %s: its module %s has the name of %s" % (
+                        label, name, "a module of the source %s" % other if other else "a built-in module"))
+                self.modules[name] = Module(d, source=label)
+                found += 1
+            if not found:
+                raise KiwiError("module source %s: no modules in %s (a folder per module, each with its module.yaml)"
+                                % (label, folder))
         nets = os.path.join(self.dir, "networks.yml.j2")
         self.networks_template = util.read_text(nets) if os.path.isfile(nets) else None
 
@@ -1048,5 +1069,5 @@ class Renderer:
         return bundle
 
 
-def discover(path=None):
-    return ModuleSet(path)
+def discover(path=None, extra=()):
+    return ModuleSet(path, extra)

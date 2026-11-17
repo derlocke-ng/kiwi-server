@@ -426,3 +426,47 @@ host and read `output/<host>/<host>.stack/`. The unit tests render every
 preset; add yours to `tests/test_kiwiserver.py` the same way.
 `KIWI_SERVER_MODULES=/path/to/modules` points kiwi-server at another module
 tree — a checkout of kiwi-v2, for instance.
+
+## Modules from elsewhere
+
+A module that is not built in comes from a **module source**: a git repository with a folder per
+module in `modules/`, or a folder on this computer while you write one. Sources are listed by
+hand in the fleet file; kiwi-server never finds one by itself.
+
+```bash
+kiwi-server sources ~/kiwi/fleet.yaml add https://github.com/derlocke-ng/kiwi-modules-community
+kiwi-server sources ~/kiwi/fleet.yaml                     # the sources and their modules
+kiwi-server sources ~/kiwi/fleet.yaml update kiwi-modules-community
+kiwi-server sources ~/kiwi/fleet.yaml remove kiwi-modules-community
+kiwi-server sources ~/kiwi/fleet.yaml add --path ~/src/my-modules --name mine
+```
+
+`add` pins the repository to the commit it is at now (`--ref` takes a branch or tag instead):
+
+```yaml
+module_sources:
+  - name: kiwi-modules-community
+    url: https://github.com/derlocke-ng/kiwi-modules-community
+    commit: 73b7c54…                # 40 hex digits
+```
+
+Whatever renders the fleet fetches that commit into its cache (`~/.cache/kiwi-server/module-sources`):
+this computer, another one, the control node. Nothing of the source changes until `update`,
+which says which modules changed their version. Then a module of the source goes into a
+machine's modules like a built-in one, in the fleet file, the app or the page; `list`, the app
+and the page say which source it is from. A source's module never takes the name of a built-in
+module or of another source's; `remove` refuses while a machine uses one of its modules.
+
+**Their templates and scripts run as root on your machines.** Add only sources you trust, and
+read what `update` brings.
+
+Two sources to start from:
+
+- [kiwi-modules-community](https://github.com/derlocke-ng/kiwi-modules-community): modules
+  people wrote for each other, added by pull request, each one rendered by its CI.
+- [kiwi-modules-personal](https://github.com/derlocke-ng/kiwi-modules-personal): derlocke's own
+  (smartfritz).
+
+A source of your own: `kiwi-server sources new FOLDER` writes the layout, an example module and
+the check that renders every module as on a machine (`tools/check-modules.py`, also as CI).
+Put it into a git repository and add its link.

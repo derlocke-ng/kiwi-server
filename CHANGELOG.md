@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.181.0 — modules from elsewhere
+
+- **Module sources**: modules beyond the built-in ones, from a git repository or a folder,
+  listed by hand in the fleet file (`module_sources:`) and pinned to a commit.
+  `kiwi-server sources FLEET [list|add LINK|update NAME|remove NAME]`; `sources new FOLDER`
+  starts a source of your own with an example module and its render check.
+  [modules.md](docs/modules.md#modules-from-elsewhere).
+- Two to start from: [kiwi-modules-community](https://github.com/derlocke-ng/kiwi-modules-community)
+  (pull requests, each module rendered by its CI) and
+  [kiwi-modules-personal](https://github.com/derlocke-ng/kiwi-modules-personal) (smartfritz).
+- Their modules are in the settings of the app and the page, and `list --porcelain` names the
+  sources and their modules. The control image has git for them.
+- kiwi-modules 0.80.0: `--source NAME=FOLDER`; a source never takes a built-in module's name.
+
 ## 2.180.0 — the first steps, tried as a newcomer
 
 A dry run of `init` and `next` from nothing, as the getting-started guide says, found:

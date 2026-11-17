@@ -3799,7 +3799,11 @@ class Window(Adw.ApplicationWindow):
     def load_schema(self):
         # both questions at once: each starts kiwi-server, and the window waits for them
         got = {}
-        ask = [threading.Thread(target=lambda w=w: got.__setitem__(w, run_cli(self.cli, [w, "--porcelain"])), daemon=True)
+        # the open network's module sources add modules: the roles are asked with its fleet file
+        doc = getattr(self, "doc", None)
+        more = {"roles": ["--fleet", doc.path] if doc is not None and getattr(doc, "path", None) else []}
+        ask = [threading.Thread(target=lambda w=w: got.__setitem__(w, run_cli(self.cli, [w, "--porcelain"] + more.get(w, []))),
+                                daemon=True)
                for w in ("roles", "targets")]
         for a in ask:
             a.start()
@@ -4132,6 +4136,8 @@ class Window(Adw.ApplicationWindow):
         self.rebuild_sidebar(FLEET)
         self.mark_dirty()
         self.set_actions_sensitive()
+        if (self.doc.data or {}).get("module_sources"):     # their modules belong in the settings too
+            self.load_schema()
         self.poll()
         if sync:
             self.sync()

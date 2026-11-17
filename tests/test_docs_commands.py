@@ -18,7 +18,11 @@ def documented():
     for doc in ["README.md"] + sorted(glob.glob(os.path.join(ROOT, "docs", "**", "*.md"), recursive=True)):
         with open(os.path.join(ROOT, doc)) as f:
             text = f.read()
-        for block in re.findall(r"```(?:bash|sh|console)?\n(.*?)```", text, re.S):
+        # every fenced block, whatever its language, so that a yaml block's closing fence is never
+        # taken for the start of a shell block; then only the shell ones
+        for lang, block in re.findall(r"```([A-Za-z]*)\n(.*?)```", text, re.S):
+            if lang not in ("", "bash", "sh", "console"):
+                continue
             for line in block.splitlines():
                 line = line.strip()
                 if not line.startswith("kiwi-server "):

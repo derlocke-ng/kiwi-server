@@ -572,8 +572,11 @@ class Fleet:
             for sname, sover in (primary.overrides.get("standby") or {}).items():
                 self._add_standby(primary, str(sname), sover)
         self._assign_addresses()
-        # fleet-wide findings: the domain choice, the backup block
+        # fleet-wide findings: the domain choice, the backup block, the module sources
         self.errors, self.warnings = [], []
+        from . import sources as sourcesmod
+        self.module_sources, errs = sourcesmod.check(data.get("module_sources"))
+        self.errors += errs
         for d in sorted({h.domain for h in self.hosts.values()} | {str(self.defaults.get("domain") or "")}):
             adv = domain_advice(d)
             if adv:

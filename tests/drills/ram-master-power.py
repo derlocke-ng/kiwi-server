@@ -39,9 +39,12 @@ t_on = time.time()
 
 
 def role_back():
-    rc, out = kiwi("watch", args.fleet, h.name, "--once", "--ssh", master.target, timeout=900)
-    return any(line.endswith(": applied") for line in out) or master.run("test -f /var/lib/kiwi-server/role.done", 15)[0] == 0 \
-        and master.run("kiwi-stack verify", 120)[0] == 0
+    # no --ssh: a master that booted from its image listens on 22 until its role moves sshd to
+    # its own port, and watch finds the way that answers (17 Nov 2026: --ssh with port 41022
+    # never reached it). Its own line: a standby of it is applied in the same run
+    rc, out = kiwi("watch", args.fleet, h.name, "--once", timeout=900)
+    return any(line.endswith("%s: applied" % h.name) and (":: %s:" % h.name) in line for line in out) \
+        or master.run("test -f /var/lib/kiwi-server/role.done", 15)[0] == 0 and master.run("kiwi-stack verify", 120)[0] == 0
 took = wait(role_back, 1200, 20)
 say("role back %s after power on" % ("%d s" % (time.time() - t_on) if took is not None else "NOT within 20 minutes"))
 failures = [] if took is not None else ["no role within 20 minutes"]

@@ -440,7 +440,7 @@ def make_app(signup: Signup, brand="", terms=""):
                 kw.setdefault("error", str(e))
         where = signup.ejabberd.get(host) or (next(iter(signup.ejabberd.values())) if signup.ejabberd else {})
         return HTMLResponse(env.get_template("join.html").render(
-            brand=brand, terms=terms, id_host=signup.id_host, nav=None, jabber=bool(signup.ejabberd), host=where.get("host", ""),
+            brand=where.get("brand") or brand, terms=terms, id_host=signup.id_host, nav=None, jabber=bool(signup.ejabberd), host=where.get("host", ""),
             onion=where.get("onion", "") or (signup.id_onion if not signup.ejabberd and host != signup.id_onion else ""),
             over_tor=bool(signup.id_onion) and host == signup.id_onion, page_host=host, ways=signup.ways, picture=picture, **kw))
 

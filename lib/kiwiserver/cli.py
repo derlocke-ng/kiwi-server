@@ -1818,8 +1818,16 @@ def secrets_store(args):
     elif args.action == "recovery":
         # a new recovery key, when the old one is lost. It replaces the old one only once it is
         # kept: typed back here, or written to a file of the person's (never printed then)
+        if args.make:                   # a new key on stdout for the app to show; nothing changes yet
+            print(store.keygen()[0])
+            return
         if not st.is_open():
             st.unlock(st.identity(args.identity))
+        if args.key_stdin:              # the one the app showed and saw typed back
+            st.new_recovery(secret=sys.stdin.readline().strip())
+            util.say("the store opens with the new recovery key, and copies are signed with it from now on; "
+                     "the old one opens only the copies made before today")
+            return
         out = getattr(args, "out", None)
         if out and os.path.exists(out):
             raise KiwiError("%s is there already: give a new file" % out)
@@ -3996,6 +4004,8 @@ def build_parser():
     s.add_argument("--off", action="store_true", help="password: the keyring alone opens it again")
     s.add_argument("--identity", metavar="FILE", help="unlock: a file with the age secret key, instead of the keyring")
     s.add_argument("--out", metavar="FILE", help="recovery: the new key into this new file (0600), not on the screen")
+    s.add_argument("--make", action="store_true", help=argparse.SUPPRESS)        # recovery, for the app: a key, nothing else
+    s.add_argument("--key-stdin", action="store_true", help=argparse.SUPPRESS)   # recovery, for the app: that key, kept
     s = sub("mtu", cmd_mtu); s.add_argument("fleet"); s.add_argument("target", help="a node, a device in secrets/devices/, or a mesh address")
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")

@@ -9622,6 +9622,23 @@ class TestNetworkCopy(StoreBase):
         rc, out, err = self.run_cli("restore", before_path, "--into", into, "--recovery-file", self.keyfile(old))
         self.assertEqual(rc, 0, err)                                                  # nor did the old copies change
 
+    def test_the_app_makes_a_new_recovery_key_in_two_steps(self):
+        old = self.init()
+        st = store.Store.for_fleet(self.f.path)
+        before = util.read_text(st.recipients)
+        rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--make")
+        self.assertEqual(rc, 0, err)
+        new = out.strip()
+        self.assertTrue(new.startswith("AGE-SECRET-KEY-1"))
+        self.assertEqual(util.read_text(st.recipients), before)                  # made, nothing changed yet
+        with mock.patch.object(sys, "stdin", io.StringIO(old + "\n")):
+            rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--key-stdin")
+        self.assertEqual(rc, 1)                                                    # the one it is already
+        with mock.patch.object(sys, "stdin", io.StringIO(new + "\n")):
+            rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--key-stdin")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(store.recovery_public(util.read_text(st.recipients)), store.public_of(new))
+
     def test_a_new_recovery_key_that_is_not_kept_changes_nothing(self):
         old = self.init()
         st = store.Store.for_fleet(self.f.path)

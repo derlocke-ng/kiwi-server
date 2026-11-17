@@ -294,14 +294,21 @@ class Store:
         self._write_ways(ways + [(name, public)], sid)
         self._reencrypt()
 
-    def new_recovery(self, keep=None):
+    def new_recovery(self, keep=None, secret=None):
         """A new recovery key in place of the old one (lost, or seen by someone): the store is
         encrypted for it, the copies are signed with its copy key from now on. `keep(secret)` is
         asked first and must say it was kept (shown and typed back, or written to a file): nothing
         changes before. Returns its secret. Copies made before open with the old key, and only with it."""
         if not self.is_open():
             raise KiwiError("the store is locked: kiwi-server secrets unlock first (this computer's key opens it)")
-        secret, public = keygen()
+        if secret:                  # made before and kept already (the app shows it, then hands it back)
+            if not str(secret).startswith("AGE-SECRET-KEY-1"):
+                raise KiwiError("that is not an age secret key")
+            public = public_of(secret)
+            if public == recovery_public(util.read_text(self.recipients)):
+                raise KiwiError("that is the recovery key already")
+        else:
+            secret, public = keygen()
         if keep is not None and not keep(secret):
             raise KiwiError("nothing changed: the old recovery key is still the one")
         path = os.path.join(self._tree(), COPY_KEY)

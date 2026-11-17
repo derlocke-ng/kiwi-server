@@ -1814,7 +1814,7 @@ class LockDialog(Adw.Dialog):
     IDLE = [("15m", "15 minutes"), ("30m", "30 minutes"), ("1h", "1 hour"), ("8h", "8 hours"), ("0", "Never")]
 
     def __init__(self, win):
-        super().__init__(title="Locking", content_width=520, content_height=440)
+        super().__init__(title="Locking", content_width=520, content_height=680)
         self.win = win
         st = dict(win.store or {})
         auto = st.get("autolock") or {"idle": "30m", "screen": True}
@@ -1851,6 +1851,55 @@ class LockDialog(Adw.Dialog):
             on.connect("activated", lambda *_: self.password())
             p.add(on)
         page.add(p)
+        r = Adw.PreferencesGroup(title="The recovery key",
+                                 description="It was shown once, when the network's keys were made, and opens them when "
+                                             "this computer is gone. Lost, or seen by someone: make a new one. The old one "
+                                             "then opens only the copies made before.")
+        renew = Adw.ButtonRow(title="A new recovery key…")
+        renew.connect("activated", lambda *_: self.new_recovery())
+        r.add(renew)
+        page.add(r)
+
+    def new_recovery(self):
+        """Made, shown, typed back, and only then put in place of the old one."""
+        path = self.win.doc.path
+
+        def made():
+            rc, out, err = run_cli(self.win.cli, ["secrets", "recovery", path, "--make"])
+            key = out.strip()
+            GLib.idle_add(lambda: (self.show_new(key) if rc == 0 and key.startswith("AGE-SECRET-KEY-1") else
+                                   self.win.alert("No new recovery key", (err or out).strip().replace("error: ", "")), False)[-1])
+        threading.Thread(target=made, daemon=True).start()
+
+    def show_new(self, key):
+        dlg = Adw.AlertDialog(heading="Your new recovery key",
+                              body="Write it down or put it in a password manager now. It replaces the old one only once "
+                                   "you have typed its last 8 characters below.")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        shown = Gtk.Label(label=key, selectable=True, wrap=True, wrap_mode=Pango.WrapMode.CHAR, css_classes=["monospace"])
+        typed = Gtk.Entry(placeholder_text="its last 8 characters")
+        box.append(shown)
+        box.append(typed)
+        dlg.set_extra_child(box)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("kept", "It is kept")
+        dlg.set_response_appearance("kept", Adw.ResponseAppearance.SUGGESTED)
+        path = self.win.doc.path
+
+        def answer(_d, r):
+            ok = r == "kept" and typed.get_text().strip().upper() == key[-8:].upper()
+            shown.set_label("")
+            if not ok:
+                self.win.toast("Nothing changed: the old recovery key is still the one")
+                return
+
+            def work():
+                rc, out, err = run_cli(self.win.cli, ["secrets", "recovery", path, "--key-stdin"], input=key + "\n")
+                said = ((err or out).strip().replace("error: ", "").replace(":: ", "").splitlines() or [""])[-1]
+                GLib.idle_add(lambda: (self.win.toast(said[:160]), self.win.poll(), False)[-1])
+            threading.Thread(target=work, daemon=True).start()
+        dlg.connect("response", answer)
+        dlg.present(self)
 
     def set_auto(self, args):
         path = self.win.doc.path

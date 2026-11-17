@@ -6,7 +6,7 @@ module:
   version: 1.0.0
   description: "Tang servers, which let the fleet's encrypted machines unlock at boot without anyone typing a key. A ring is one server with its own keys; the host's unlock: block says which rings may open its disk."
   category: security
-  node_types: [node]
+  node_types: [node, master]
 
 dependencies:
   required: []
@@ -15,13 +15,14 @@ dependencies:
 network:
   needs_vpn_dnat: false
   # Tang's exchange is safe in the clear, and what a machine reaches at boot is this host's plain port
-  open_ports: ["{% for port in rings.values() %}{{ port }}/tcp {% endfor %}"]
+  # (on a master the VPN server publishes them, behind its gate for the home's addresses)
+  open_ports: ["{% if node_type != 'master' %}{% for port in rings.values() %}{{ port }}/tcp {% endfor %}{% endif %}"]
 
 firewall:
   scope: vpn-client
   rules:
     # the mesh reaches the rings too, for a master's relay: on to the host's published ports
-    - "-t nat -A PREROUTING -d ${VPN_IP} -p tcp -m multiport --dports {{ rings.values() | join(',') }} -j DNAT --to-destination {{ docker_gateway }}"
+    - "{% if node_type != 'master' %}-t nat -A PREROUTING -d ${VPN_IP} -p tcp -m multiport --dports {{ rings.values() | join(',') }} -j DNAT --to-destination {{ docker_gateway }}{% endif %}"
 
 templates:
   compose: docker-compose.yml.j2
@@ -38,11 +39,11 @@ settings:
   - key: rings
     type: map
     label: Rings
-    help: "Name=port: one Tang server each, with keys of its own. A machine bound to a ring can be opened by it and by no other."
+    help: "Name=port: one Tang server each, with keys of its own. A machine bound to a ring can be opened by it and by no other. On a master (the ring `away`) it answers at the master's public address, to the home's addresses only."
     default: { infra: "7500" }
     key_pattern: '[a-z0-9-]+'
     pattern: '[0-9]+'
   - key: image
     group: Advanced
     help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default is this repository's build (images/tang)."
-    default: ghcr.io/derlocke-ng/tang:15-kiwi4
+    default: ghcr.io/derlocke-ng/tang:15-kiwi5

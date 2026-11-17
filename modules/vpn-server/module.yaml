@@ -15,7 +15,7 @@ dependencies:
 network:
   listen_ports: ["51820/udp", "51821/tcp"]
   needs_vpn_dnat: false
-  open_ports: ["{{ wg_port }}/udp", "{% for port in unlock_relay %}{{ port }}/tcp {% endfor %}", "{{ federation_port ~ '/udp' if federation else '' }}"]
+  open_ports: ["{{ wg_port }}/udp", "{% for port in unlock_relay %}{{ port }}/tcp {% endfor %}{% for port in local_rings.values() %}{{ port }}/tcp {% endfor %}", "{{ federation_port ~ '/udp' if federation else '' }}"]
 
 firewall:
   # applied inside the container by start.sh (WG_POST_UP)
@@ -100,6 +100,14 @@ settings:
     default: {}
     key_pattern: '[0-9]+'
     pattern: '[0-9]+(\.[0-9]+){3}:[0-9]+'
+  - key: local_rings
+    type: map
+    group: Advanced
+    label: Tang rings on this master
+    help: "Name=port of the tang module's rings here (kiwi-server fills it in): published at the public address, and only the addresses enrolled machines last connected from get through, as with unlock_relay."
+    default: {}
+    key_pattern: '[a-z0-9-]+'
+    pattern: '[0-9]+'
   - key: wg_hostname
     label: wg-easy page hostname
     help: "Empty: wg.<hostname>. Served by the reverse proxy when there is one, for admin groups only."

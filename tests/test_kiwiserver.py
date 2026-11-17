@@ -596,8 +596,10 @@ class TestStarter(Base):
         self.assertEqual(mango["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "control", "tang"])
         # encrypted, as every machine: the first one serves the ring at home, the others open with it
         self.assertEqual(mango["node"]["tang"], {"rings": {"home": "7500"}})
-        self.assertNotIn("unlock", mango)                                     # its own: the key for its screen
+        self.assertEqual(mango["unlock"], {"rings": ["away"]})                # the master's ring opens it, from home only
         masters = [h for h in data["hosts"].values() if h["role"] == "master"]
+        self.assertTrue(all(m["master"]["tang"] == {"rings": {"away": "7501"}} and "tang" in m["master"]["modules"]
+                            for m in masters))
         self.assertTrue(all(m["debian"] == {"encrypt": True} and m["unlock"] == {"ssh": True} for m in masters))
         self.assertNotIn("unlock", quince)          # no fixed address: no ring on the LAN reaches it; its key
         # a machine added later with a fixed address opens with the ring at home
@@ -4083,6 +4085,8 @@ class TestStandby(Base):
         master = self.master()
         master["modules"] = ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy"]
         master["tor"] = {}                                  # its settings go with it on a standby at home
+        master["modules"].append("tang")
+        master["tang"] = {"rings": {"away": "7501"}}
         return self.fleet({"defaults": self.base_defaults(), "hosts": {
             "gate": {"role": "master", "target": "debian", "admin": {"ssh_port": 41022}, "master": master,
                      "standby": {"gate-b": sb}},
@@ -4099,6 +4103,7 @@ class TestStandby(Base):
         role_g, role_b = self.prepare(gate), self.prepare(b)
         self.assertEqual(role_b.node_type, "master")
         self.assertNotIn("tor", b.modules)                                  # at home: no Tor
+        self.assertNotIn("tang", b.modules)                                 # nor its master's ring
         self.assertIn("tor", gate.modules)
         self.assertEqual(b.module_settings["dns"]["pihole_password"], gate.module_settings["dns"]["pihole_password"])
         self.assertEqual(b.module_settings["vpn-server"]["wg_host"], gate.module_settings["vpn-server"]["wg_host"])
@@ -4169,6 +4174,29 @@ class TestStandby(Base):
             self.fleet({"defaults": self.base_defaults(), "hosts": {
                 "gate": {"role": "master", "target": "debian", "master": self.master(), "standby": {"store": {}}},
                 "store": {"role": "bare"}}})
+
+
+class TestAwayRing(Base):
+    def test_a_machine_at_home_opens_with_the_masters_ring(self):
+        master = self.master()
+        master["modules"] = ["vpn-client", "vpn-server", "dns", "reverse-proxy", "tang"]
+        master["tang"] = {"rings": {"away": "7501"}}
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": master},
+            "store": {"role": "node", "network": {"dhcp": False, "address": "192.168.7.30/24", "gateway": "192.168.7.1"},
+                      "unlock": {"rings": ["away"]},
+                      "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.9", "preset": "minimal"}}}})
+        r = cli.Renderer(f, self.roles, self.tmp, None, self.ms)
+        servers = unlock.ring_servers(f, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms))
+        server, port = servers["away"]
+        self.assertEqual(server.name, "gate")
+        self.assertEqual(unlock.url(f.hosts["store"], "away", server, port), "http://vpn.example.org:7501")
+        gate = f.hosts["gate"]
+        b = r.bundle(gate, r.prepare(gate))
+        self.assertEqual(gate.module_settings["vpn-server"]["local_rings"], {"away": "7501"})
+        compose = yaml.safe_load(b.files["docker-compose.yml"][0]) if "docker-compose.yml" in b.files else None
+        if compose:
+            self.assertEqual(compose["services"]["km-tang-away"]["network_mode"], "service:km-vpn-server")
 
 
 class TestPlan(unittest.TestCase):

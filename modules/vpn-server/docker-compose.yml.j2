@@ -32,6 +32,9 @@ services:
 {% for port in unlock_relay %}
       - "{{ public_ip ~ ':' if public_ip else '' }}{{ port }}:{{ port }}/tcp"
 {% endfor %}
+{% for port in local_rings.values() %}
+      - "{{ public_ip ~ ':' if public_ip else '' }}{{ port }}:{{ port }}/tcp"
+{% endfor %}
 {# Jabber lives in this namespace too: a public name's clients (5222) and other servers (5269) #}
 {# (a separate public instance has a container of its own and publishes them itself) #}
 {% set xmpp_name = module_config.get('xmpp', {}).get('xmpp_domain') %}

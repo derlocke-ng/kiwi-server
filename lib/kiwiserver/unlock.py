@@ -402,6 +402,11 @@ def url(client, ring, server, port):
     mine, theirs = _lan(client), _lan(server)
     if mine and theirs and theirs.ip in mine.network:
         return "http://%s:%d" % (theirs.ip, port)
+    mods = getattr(server, "modules", None) or []
+    if "vpn-server" in mods and "tang" in mods:      # a ring on the master (away): its public address, gated
+        public = (server.module_settings.get("vpn-server") or {}).get("wg_host")
+        if public:
+            return "http://%s:%d" % (public, port)
     raise KiwiError("%s cannot reach the ring on %s at boot: they are not on one LAN with static addresses "
                     "(unlock.via says where else to find it)" % (client.name, server.name))
 

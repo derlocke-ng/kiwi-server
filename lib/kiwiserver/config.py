@@ -619,7 +619,10 @@ class Fleet:
         h.standby_endpoint = addr
         raw = dict(h.role_settings_raw or {})       # its master's settings, the fleet's defaults in them
         if isinstance(raw.get("vpn-server"), dict):
-            raw["vpn-server"] = {k: v for k, v in raw["vpn-server"].items() if k != "federation"}
+            raw["vpn-server"] = {k: v for k, v in raw["vpn-server"].items() if k not in ("federation", "local_rings")}
+        if isinstance(raw.get("modules"), list) and "tang" in raw["modules"]:     # a ring has one place: the master's
+            raw["modules"] = [m for m in raw["modules"] if m != "tang"]
+        raw.pop("tang", None)
         if home and h.role:
             if isinstance(raw.get("modules"), list):
                 raw["modules"] = [m for m in raw["modules"] if m not in ("tor", "onion")]

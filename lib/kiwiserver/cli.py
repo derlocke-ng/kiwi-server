@@ -495,6 +495,9 @@ class Renderer:
                 a = json.loads(util.read_text(path))
                 host.module_settings[module].update(accounts_client=a["client"], accounts_issuer=a["issuer"],
                                                     accounts_secret=a["secret"])
+        if role.node_type == "master" and "tang" in host.modules and "vpn-server" in host.modules:
+            # a ring here (away): the VPN server publishes it, to the home's addresses only
+            host.module_settings["vpn-server"]["local_rings"] = dict(host.module_settings["tang"].get("rings") or {})
         if "reverse-proxy" in host.modules and accessmod.admin_ranges(self._groups):
             # the admin areas inside a site (a master's too): not for the groups without the admin pages
             host.module_settings["reverse-proxy"].setdefault("access", {})["admin"] = accessmod.admin_ranges(self._groups)

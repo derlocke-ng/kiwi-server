@@ -6,10 +6,17 @@ services:
     container_name: {{ container_prefix }}-tang-{{ ring }}
     environment:
       - TZ={{ timezone }}
+{% if node_type == 'master' %}
+      # in the VPN server's namespace: it publishes the port, behind its gate for the home's addresses
+      - TANG_PORT={{ port }}
+    network_mode: "service:{{ container_prefix }}-vpn-server"
+    depends_on: [{{ container_prefix }}-vpn-server]
+{% else %}
     networks:
       {{ network_name }}: {}
     ports:
       - "{{ port }}:7500"
+{% endif %}
     restart: unless-stopped
     logging:
       driver: json-file

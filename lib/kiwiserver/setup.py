@@ -684,9 +684,14 @@ def make(answers, fleet_dir):
                 node["modules"] = (node.get("modules") or [x for x in preset_modules(node["preset"])
                                                            if not (alone and x == "vpn-client")]) + ["tang"]
                 node["tang"] = {"rings": {"home": "7500"}}
+                if not alone:       # the master's ring `away` opens it, answering the home's address only
+                    h["unlock"] = {"rings": ["away"]}
             else:
                 h["unlock"] = {"rings": ["home"]}
         hosts[name] = h
+    if ring_host and not alone:     # the ring `away` the first machine at home opens with (docs/design/encryption.md)
+        master["modules"] = (master.get("modules") or ["vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "fail2ban"]) + ["tang"]
+        master["tang"] = {"rings": {"away": "7501"}}
     return {"defaults": defaults, "hosts": hosts}, made
 
 

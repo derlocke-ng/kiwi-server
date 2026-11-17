@@ -35,6 +35,7 @@ LogDriver=journald
 Restart=always
 RestartSec=15
 TimeoutStartSec=900
+ExecStartPre=-/usr/bin/podman rm -f -i --depend kn-vpn-client
 
 [Install]
 WantedBy=kiwi-stack.target

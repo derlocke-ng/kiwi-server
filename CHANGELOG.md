@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.165.0 — the master's VPN server always starts again
+
+- **A container others live in starts again also when something was left in its network**
+  (kiwi-modules 0.73.0): a container started there by hand once kept kiwi2's VPN server from
+  being replaced after a stop, and its unit failed over and over until the whole stack was
+  started anew.
+- Proven on the test networks, 17 November 2026: a chained exit, a device of the first
+  network leaving the internet through the second network's master and its Riseup exit
+  (`tests/drills/multihop.py --expect`); a standby master taking over a node and handing it
+  back (`tests/drills/standby.py`, in the drills README now).
+
 ## 2.164.0 — a standby master; federation by group and by card
 
 - **A standby master** (docs/design/standby.md, step 1): a `standby:` block under the master

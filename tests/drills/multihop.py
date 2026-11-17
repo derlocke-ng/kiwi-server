@@ -27,6 +27,8 @@ sys.argv, extra = sys.argv[:3], sys.argv[3:]
 args, fleet, m = setup(__doc__.splitlines()[0], roles=("master",))
 more = argparse.ArgumentParser()
 more.add_argument("--exit-mesh", help="an address in the exit network's mesh that must stay closed")
+more.add_argument("--expect", help="the public address to expect instead of the exit master's, when the exit "
+                  "master itself leaves through a VPN (Riseup, Mullvad, …): kiwi -> kiwi2 -> Riseup, 17 Nov 2026")
 opts = more.parse_args(extra)
 master = m["master"]
 h = master.host
@@ -74,7 +76,9 @@ try:
             return r.returncode, r.stdout
         except subprocess.TimeoutExpired:
             return 124, ""
-    results = [("leaves the internet at the exit master", seen == exit_ip, seen or "no tunnel")]
+    want = opts.expect or exit_ip
+    results = [("leaves the internet at %s" % ("the exit master's own exit" if opts.expect else "the exit master"),
+                seen == want, seen or "no tunnel")]
     _rc, dns = run("nslookup", h.hostname, own_ip)
     answers = re.findall(r"Address:\s*([0-9.]+)$", dns, re.M)
     results.append(("%s resolves to its own mesh address" % h.hostname, own_ip in answers, " ".join(answers) or "no answer"))

@@ -361,8 +361,24 @@ Each network keeps its fleet, seed, CA and mesh (every network its own /16).
 The masters are linked by WireGuard on UDP 51822, each Pi-hole asks the other
 for the other's domain, and a partner reaches only what it is given, in the
 same words as a group ([above](#who-may-reach-what)). `federation.yaml` next to
-the fleet file holds it as `share`; `from` there limits which addresses of the
-partner may come.
+the fleet file holds it as `share`; `from` there limits who of the partner may
+come: its groups by name, or single addresses.
+
+```yaml
+kiwi2:
+  share: [cloud.papaya, lychee, papaya:22]   # a service, a whole node, one port of a node
+  from: [devices, 10.10.0.3]                 # their group devices and one device; empty: all of them
+```
+
+When the two networks have two operators, each gives the other a card instead
+(nothing secret on it: the link key's public half, the master's address, the
+mesh, the domain and the groups):
+
+```bash
+kiwi-server federate ~/kiwi/fleet.yaml --invite kiwi.card.yaml   # send this file to the other
+kiwi-server federate ~/theirs/fleet.yaml --accept kiwi.card.yaml # they take it; it writes their card beside it
+kiwi-server federate ~/kiwi/fleet.yaml --accept theirs.card.yaml # and you take theirs
+```
 
 ### Leave to the Internet through a partner
 

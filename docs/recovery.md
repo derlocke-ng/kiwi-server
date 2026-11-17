@@ -135,6 +135,25 @@ settings first. Your devices find it again by themselves only when that
 address is a name (`vpn-server.wg_host`) that you point to the new server.
 Otherwise each device needs its code again.
 
+**Before it happens: a standby.** A second machine can hold the master's place
+while it is gone: the same master, with its own disk and address. Write it under
+the master in the fleet file, install it from its media like any machine, and
+apply the master (that applies the standby too):
+
+```yaml
+  sorbet:
+    role: master
+    standby:
+      sorbet-b:
+        target: debian
+        network: { dhcp: false, address: 192.168.2.70/24, gateway: 192.168.2.1 }
+```
+
+The master's machines move to the standby by themselves three minutes after the
+master is gone, and back when it returns. Phones and laptops follow only when
+the master's address is a name you point to the standby. A standby at home runs
+no Tor. ([design](design/standby.md))
+
 ## A phone or laptop was lost or stolen
 
 **By itself.** Nothing. It stays on your VPN until you remove it.

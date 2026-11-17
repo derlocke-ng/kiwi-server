@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # The master and its standbys (kiwi-server docs/design/standby.md): this node's tunnel goes to
 # one of them; the same WireGuard key answers on each. Down for three minutes: the next one. On
-# a standby: back to the master once its machine has answered for ten minutes.
+# a standby: back to the master once its machine has answered for ten minutes. A machine that
+# answers is not yet a VPN that does: a return that fails doubles the wait for the next one.
 #   master-switch.sh watch      (kn-master-switch.service)
 set -u
-conf={{ docker_dir }}/{{ container_prefix }}-vpn-client/wg0.conf
-state={{ docker_dir }}/{{ container_prefix }}-vpn-client/master-switch.state
+conf=${KIWI_SWITCH_CONF:-{{ docker_dir }}/{{ container_prefix }}-vpn-client/wg0.conf}
+state=${KIWI_SWITCH_STATE:-{{ docker_dir }}/{{ container_prefix }}-vpn-client/master-switch.state}
 ping_to={{ standby_ping | default('', true) }}
 # each: address:wireguard port:ssh port, the master first
 endpoints=({% for e in standby_endpoints %}{{ e }} {% endfor %})
-DOWN=6 BACK=20 EVERY=30
+DOWN=6 BACK=20 EVERY=${KIWI_SWITCH_EVERY:-30}      # checks: 3 minutes down, 10 minutes back
 tunnel_up() {
     {{ 'docker' if runtime == 'docker' else 'podman' }} exec {{ container_prefix }}-vpn-client ping -c 1 -W 3 "$ping_to" >/dev/null 2>&1
 }
@@ -43,25 +44,32 @@ move_to() {     # INDEX
 
 [ "${1:-}" = watch ] || { echo "usage: $0 watch" >&2; exit 2; }
 [ "${#endpoints[@]}" -ge 2 ] && [ -n "$ping_to" ] || { say "no standby: nothing to do"; exec sleep infinity; }
-down=0 back=0
+down=0 back=0 wait=$BACK returned=0 steady=0
 while :; do
     i=$(current)
     if tunnel_up; then
         down=0
+        steady=$((steady + 1))
+        if [ "$i" = 0 ] && [ "$steady" -ge 120 ]; then wait=$BACK returned=0; fi     # an hour on the master: as new
     else
-        down=$((down + 1))
+        down=$((down + 1)) steady=0
     fi
     if [ "$down" -ge "$DOWN" ]; then
         say "no answer from $ping_to through ${endpoints[$i]%:*} for $((DOWN * EVERY)) s"
+        if [ "$i" = 0 ] && [ "$returned" = 1 ] && [ "$wait" -lt 960 ]; then
+            wait=$((wait * 2))      # back too soon: its machine answered, its VPN did not
+            say "the next return to the master waits $((wait * EVERY / 60)) minutes"
+        fi
+        returned=0
         move_to $(( (i + 1) % ${#endpoints[@]} ))
         down=0 back=0
     elif [ "$i" != 0 ]; then
         first=${endpoints[0]}; addr=${first%%:*}; ssh=${first##*:}
         if machine_answers "$addr" "$ssh"; then back=$((back + 1)); else back=0; fi
-        if [ "$back" -ge "$BACK" ]; then
-            say "the master's machine ($addr) has answered for $((BACK * EVERY)) s: back to it"
+        if [ "$back" -ge "$wait" ]; then
+            say "the master's machine ($addr) has answered for $((wait * EVERY)) s: back to it"
             move_to 0
-            back=0
+            back=0 returned=1 steady=0
         fi
     fi
     sleep "$EVERY"

@@ -9457,6 +9457,47 @@ class TestNetworkCopy(StoreBase):
         self.assertEqual(rc, 0, err)                               # an older copy of one's own: on purpose
         self.assertIn("this copy has no signature", err)
 
+    def test_a_lost_recovery_key_is_replaced(self):
+        old = self.init()
+        _path, before = self.copy()
+        rc, out, err = self.run_cli("secrets", "recovery", self.f.path)          # no terminal, no file: nothing
+        self.assertEqual(rc, 1)
+        self.assertIn("--out FILE", err)
+        keyfile = os.path.join(self.tmp, "new-recovery.key")
+        rc, out, err = self.run_cli("secrets", "recovery", self.f.path, "--out", keyfile)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("AGE-SECRET-KEY", out + err)                             # never on the screen then
+        self.assertEqual(stat.S_IMODE(os.stat(keyfile).st_mode), 0o600)
+        new = util.read_text(keyfile).strip()
+        self.assertNotEqual(new, old)
+        st = store.Store.for_fleet(self.f.path)
+        self.assertEqual(store.recovery_public(util.read_text(st.recipients)), store.public_of(new))
+        self.assertEqual([n for n, _k in st.ways()].count("recovery"), 1)            # the old one is gone
+        data = backup.create_copy(config.Fleet.load(self.f.path))
+        self.assertIsNone(backup.check_signature(backup.read_copy(data)[0], new))     # signed for the new one
+        into = os.path.join(self.tmp, "back")
+        rc, out, err = self.run_cli("restore", self.write_copy(data), "--into", into, "--recovery-file", self.keyfile(old))
+        self.assertEqual(rc, 1)                                                       # the old one opens no new copy
+        self.assertIn("does not open", err)
+        before_path = self.write_copy(before, "before.tar")
+        rc, out, err = self.run_cli("restore", before_path, "--into", into, "--recovery-file", self.keyfile(old))
+        self.assertEqual(rc, 0, err)                                                  # nor did the old copies change
+
+    def test_a_new_recovery_key_that_is_not_kept_changes_nothing(self):
+        old = self.init()
+        st = store.Store.for_fleet(self.f.path)
+        before = util.read_text(st.recipients)
+        with self.assertRaisesRegex(KiwiError, "nothing changed"):
+            st.new_recovery(lambda secret: False)                 # typed back wrong
+        self.assertEqual(util.read_text(st.recipients), before)
+        self.assertEqual(store.recovery_public(before), store.public_of(old))
+
+    def write_copy(self, data, name="copy.tar"):
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
     def test_an_older_store_gets_its_copy_key_from_the_recovery_key(self):
         recovery = self.init()
         os.remove(os.path.join(self.secrets, store.COPY_KEY))         # as a store made before 2.170.0

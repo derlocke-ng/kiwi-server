@@ -1788,6 +1788,34 @@ def secrets_store(args):
     elif args.action == "lock":
         st.lock()
         util.say("the secret store is locked")
+    elif args.action == "recovery":
+        # a new recovery key, when the old one is lost. It replaces the old one only once it is
+        # kept: typed back here, or written to a file of the person's (never printed then)
+        if not st.is_open():
+            st.unlock(st.identity(args.identity))
+        out = getattr(args, "out", None)
+        if out and os.path.exists(out):
+            raise KiwiError("%s is there already: give a new file" % out)
+        if not out and not sys.stdin.isatty():
+            raise KiwiError("without a terminal the new key goes to a file: --out FILE")
+
+        def keep(secret):
+            if out:
+                fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w") as f:
+                    f.write(secret + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                util.say("the new recovery key is in %s (only you can read it): copy it somewhere safe, away "
+                         "from this computer" % out)
+                return True
+            print("\nYour new recovery key. Write it down or put it in a password manager now:\n\n  %s\n" % secret)
+            typed = input("Type its last 8 characters to show it is kept (anything else: nothing changes): ")
+            print("\033[2J\033[H", end="")         # off the screen again
+            return typed.strip().upper() == secret[-8:].upper()
+        st.new_recovery(keep)
+        util.say("the store opens with the new recovery key, and copies are signed with it from now on; "
+                 "the old one opens only the copies made before today")
     elif args.action == "copy-key":
         # once, for a store made before 2.170.0: the key its copies are signed with, from the recovery key
         if not args.identity:
@@ -3892,10 +3920,11 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s.add_argument("--for", default="8h", metavar="TIME", help="unlock: lock again after this long (default 8h; 0: stay open)")
     s.add_argument("--identity", metavar="FILE", help="unlock: a file with the age secret key, instead of the keyring")
+    s.add_argument("--out", metavar="FILE", help="recovery: the new key into this new file (0600), not on the screen")
     s = sub("mtu", cmd_mtu); s.add_argument("fleet"); s.add_argument("target", help="a node, a device in secrets/devices/, or a mesh address")
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.171.0 — a new recovery key when the old one is lost
+
+- **`kiwi-server secrets recovery FLEET`**: a new recovery key in place of the old one, while a
+  computer still opens the store. It replaces the old one only once it is kept: shown once and
+  typed back (its last 8 characters), or written to a new file with `--out` and never shown. The
+  copies are signed with it from then on; the old key opens only the copies made before. A recovery key is shown once, when the store is
+  made, and nothing shows it again (docs/backups.md).
+
 ## 2.170.0 — a network's copies are signed
 
 - **A copy carries a signature from a key the recovery key gives** (`secrets/copy-auth.key`,

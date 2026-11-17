@@ -32,18 +32,20 @@ trap 'kill "$tor" 2>/dev/null; wait "$tor"; exit 0' TERM INT
 # nothing, and Tor ends: the container starts anew.
 # What it found is written down for the status pages (kiwi-check: name, address, answer, when).
 ADDRESSES="{% for name, k in keys.items() if not k.clients %}{{ name }}={{ k.address }} {% endfor %}"
-CHECK=/var/lib/tor/kiwi-check
+CHECK=${KIWI_CHECK:-/var/lib/tor/kiwi-check}
 (
     [ -n "${ADDRESSES% }" ] || exit 0
-    sleep 120           # the first look soon after a start: a new address takes a minute to be found
+    sleep "${KIWI_FIRST:-120}"           # the first look soon after a start: a new address takes a minute to be found
     misses=0
     while kill -0 "$tor" 2>/dev/null; do
         gone=""
         : > "$CHECK.new"
         for na in $ADDRESSES; do
             a=${na#*=}
+            # (curl fails when nothing answers, and this runs under set -e: `|| true`, or the
+            # first address that does not answer would end the check, as it did until 0.79.1)
             code=$(su-exec tor curl -s -o /dev/null -m 120 -w '%{http_code}' \
-                   -x "socks5h://localhost/var/lib/tor/self-check.sock" "http://$a/" 2>/dev/null)
+                   -x "socks5h://localhost/var/lib/tor/self-check.sock" "http://$a/" 2>/dev/null) || true
             [ "${code:-000}" = 000 ] && gone="$gone $a"
             printf '%s %s %s %s\n' "${na%%=*}" "$a" "${code:-000}" "$(date +%s)" >> "$CHECK.new"
         done
@@ -54,7 +56,7 @@ CHECK=/var/lib/tor/kiwi-check
             kill "$tor"
             exit 0
         fi
-        sleep 600
+        sleep "${KIWI_EVERY:-600}"
     done
 ) &
 wait "$tor"

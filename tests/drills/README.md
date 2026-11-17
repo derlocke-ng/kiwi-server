@@ -48,6 +48,7 @@ checked out. `drill.py` holds what they share.
 | `fail2ban.py FLEET MASTER[:PORT] NODE URL [--app NAME]` | Does fail2ban ban who attacks a node's public site, and only them? From a Tor exit (a Tor on the master, for the drill only): a page with 150 files at once is neither refused nor banned; a scanner is banned by the node's nginx and let out again; the node has the master's list of the network's own addresses; with `--app`, the app's wrong logins reach its jail and its pattern matches. | A few minutes. |
 | `game-ports.py ADDRESS GAME:PORT [...]` | Do game servers answer at an address, asked the way the game's client asks: Minecraft's server-list question (TCP), Zandronum's launcher question (UDP), any other port as one that opens. For a public server the address is the master's. | Seconds. |
 | `games-sleep.py FLEET HOST` | Game servers with `sleep:` fall asleep when nobody plays and `status` calls that asleep, not down; then each is knocked the way its game asks (game-ports.py) and the waking is timed. Nobody may play meanwhile. | The longest `sleep` plus a few minutes. |
+| `play-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME PLAY_ADDRESS PLAY_NAME [SERVER]` | The game page in Firefox: a throwaway account in the group `games` signs in through the accounts and reads a server's log; one outside the group does not get in. Both accounts are deleted afterwards. | A few minutes. |
 
 Each drill prints what it measured, one line per step, and puts back what it changed (a
 firewall rule, a stopped container) when it ends, also when it fails half way.

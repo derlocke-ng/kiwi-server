@@ -880,7 +880,7 @@ def cmd_remove(args):
                 util.say("%s is off the VPN: its key no longer works" % name)
                 if not args.api:
                     try:
-                        backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+                        keep_identity(fleet, master, args.ssh)
                     except KiwiError as e:
                         util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
         except KiwiError as e:
@@ -2614,6 +2614,19 @@ def _master_of(fleet, roles, ms, name=None):
     raise KiwiError("no master in the fleet%s" % (" named %s" % name if name else ""))
 
 
+def keep_identity(fleet, master, ssh=None):
+    """The master's WireGuard state into the fleet's copy, and on to its standbys: a device added
+    or removed there is added or removed on them too (a removed key must not keep working)."""
+    backupmod.keep_wireguard(master, remote.reach(master, ssh))
+    for s in fleet.standbys(master.name):
+        try:
+            if backupmod.put_back_wireguard(s, remote.reach(s)):
+                util.say("%s: the master's devices are there too now" % s.name)
+        except KiwiError as e:
+            util.warn("%s (standby) not reached: it has the master's devices as of before (%s); "
+                      "the next apply of %s brings them" % (s.name, e, master.name))
+
+
 def cmd_enroll(args):
     """A WireGuard client on the master's wg-easy, by API: a node (its config
     lands where the fleet file looks for it), a phone, a laptop, a router."""
@@ -2675,7 +2688,7 @@ def cmd_enroll(args):
         if not was and not had:
             raise KiwiError("there is no device called %s" % name)
         try:
-            backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+            keep_identity(fleet, master, args.ssh)
         except KiwiError as e:
             util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
         util.say("%s is off the VPN: its key no longer works" % name)
@@ -2698,7 +2711,7 @@ def cmd_enroll(args):
     util.write_text(dest, text if text.endswith("\n") else text + "\n", 0o600)
     util.say("%s" % dest)
     try:                                 # the new peer is part of what a rebuilt master needs
-        backupmod.keep_wireguard(master, remote.reach(master, args.ssh))
+        keep_identity(fleet, master, args.ssh)
     except KiwiError as e:
         util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
     if host:

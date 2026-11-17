@@ -233,10 +233,10 @@ def find_cli():
     return shutil.which("kiwi-server")
 
 
-def run_cli(cli, args, timeout=120):
+def run_cli(cli, args, timeout=120, input=None):
     try:
-        r = subprocess.run([cli] + list(args), capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, timeout=timeout)
+        r = subprocess.run([cli] + list(args), capture_output=True, text=True, timeout=timeout,
+                           **({"input": input} if input is not None else {"stdin": subprocess.DEVNULL}))
         return r.returncode, r.stdout, r.stderr
     except (OSError, subprocess.TimeoutExpired) as e:
         return 1, "", str(e)
@@ -4811,18 +4811,41 @@ class Window(Adw.ApplicationWindow):
         action = "unlock" if self.locked() else "lock"
         path, gen = self.doc.path, self.generation
 
-        def worker():
-            rc, out, err = run_cli(self.cli, ["secrets", action, path])
+        def worker(password=None):
+            args = ["secrets", action, path] + (["--password-stdin"] if password is not None else [])
+            rc, out, err = run_cli(self.cli, args, input=(password + "\n") if password is not None else None)
             GLib.idle_add(done, rc, err or out)
 
         def done(rc, text):
             if gen != self.generation:
+                return False
+            if rc != 0 and action == "unlock" and ("has a password" in text or "does not open this computer" in text):
+                ask_password("does not open" in text)       # this computer's key wants its password too
                 return False
             if rc != 0:
                 self.alert("The store did not %s" % action,
                            "%s\n\nIn a terminal it can ask for the recovery key:\n  kiwi-server secrets unlock %s" % (text.strip(), path))
             self.poll()
             return False
+
+        def ask_password(wrong):
+            dlg = Adw.AlertDialog(heading="This computer's password",
+                                  body=("That was not it. " if wrong else "") +
+                                  "This computer's key for the network opens only together with its password.")
+            entry = Gtk.PasswordEntry(show_peek_icon=True, activates_default=True)
+            dlg.set_extra_child(entry)
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("unlock", "Unlock")
+            dlg.set_response_appearance("unlock", Adw.ResponseAppearance.SUGGESTED)
+            dlg.set_default_response("unlock")
+
+            def answer(_d, r):
+                if r == "unlock" and entry.get_text():
+                    pw = entry.get_text()
+                    entry.set_text("")
+                    threading.Thread(target=worker, args=(pw,), daemon=True).start()
+            dlg.connect("response", answer)
+            dlg.present(self)
         threading.Thread(target=worker, daemon=True).start()
 
     # ---- what the CLI says ----

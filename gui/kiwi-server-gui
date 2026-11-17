@@ -306,17 +306,22 @@ class FleetDoc:
         if value is None:
             if path[-1] in d:
                 del d[path[-1]]
+            self._prune(scope, path[:-1])
         else:
             d[path[-1]] = value
-        self._prune(self.block(scope))
         self.dirty = True
 
-    def _prune(self, d):
-        for k in list(d):
-            if isinstance(d[k], dict):
-                self._prune(d[k])
-                if not d[k] and k not in ("hosts",):
-                    del d[k]
+    def _prune(self, scope, parents):
+        """The blocks a removed value leaves empty, from the inside out, and nothing else: an empty
+        {} elsewhere can mean something (a hidden service with its defaults, `onion: services:
+        {git: {}}`, was dropped by any other change of its machine until 2.183.0, as on the page
+        until 2.179.1)."""
+        for i in range(len(parents), 0, -1):
+            parent = self.get(scope, parents[:i - 1]) if i > 1 else self.block(scope)
+            if isinstance(parent, dict) and parent.get(parents[i - 1]) == {}:
+                del parent[parents[i - 1]]
+            else:
+                break
 
     def add_host(self, name):
         self.data["hosts"][name] = {}
@@ -824,6 +829,69 @@ class Form:
             visit(m, set())
         return out
 
+    def preset_modules(self, role):
+        """The modules the role's preset (or the role) starts from, as the fleet chooses it here."""
+        if role.get("presets"):
+            pr = self.doc.get(self.scope, (role["name"], "preset"))
+            if pr is None and self.scope != "defaults":
+                pr = self.doc.get("defaults", (role["name"], "preset"))
+            presets = role["presets"]
+            pr = pr if pr in presets else next(iter(presets))
+            return list(presets[pr].get("modules") or [])
+        return list(role.get("modules") or [])
+
+    def parts_group(self, role, name):
+        """Its parts: a switch for every module the role can run (as the page has them), with what it
+        is for, what it needs, and the module source it comes from. A part another one needs comes along."""
+        g = Adw.PreferencesGroup(title="Its parts", description="What runs on it. A part that another one needs comes along by itself.")
+        schemas = self.win.module_schemas
+        on = self.effective_modules(role)
+        v = self.doc.get(self.scope, (name, "modules"))
+        if v is None and self.scope != "defaults":
+            v = self.doc.get("defaults", (name, "modules"))
+        wanted = [str(x) for x in v] if isinstance(v, list) else (v.split() if isinstance(v, str) and v.strip() else self.preset_modules(role))
+        kind = role.get("node_type") or "node"
+        offered = [m for m, sch in schemas.items() if kind in (sch.get("node_types") or [kind]) or m in on]
+        needed_by = {}
+        for m in on:
+            for d in (schemas.get(m) or {}).get("requires", []):
+                needed_by.setdefault(d, []).append(m)
+
+        def resolve(names):
+            out = []
+
+            def visit(m, seen):
+                if m in out or m in seen:
+                    return
+                seen.add(m)
+                for d in (schemas.get(m) or {}).get("requires", []):
+                    visit(d, seen)
+                out.append(m)
+            for m in names:
+                visit(m, set())
+            return out
+
+        def toggled(row, _p, m):
+            if self.loading:
+                return
+            new = [x for x in wanted if x != m] + ([m] if row.get_active() and m not in wanted else [])
+            same = set(resolve(new)) == set(resolve(self.preset_modules(role)))
+            self.write({"path": (name, "modules")}, None if same else new)
+        for m in sorted(offered, key=lambda x: (schemas[x].get("source") or "", (schemas[x].get("title") or x).lower())):
+            sch = schemas[m]
+            bits = [sch.get("description") or ""]
+            if sch.get("requires"):
+                bits.append("needs " + ", ".join(sch["requires"]))
+            if needed_by.get(m) and m not in wanted:
+                bits.append("comes along for " + ", ".join(needed_by[m]))
+            if sch.get("source"):
+                bits.append("from the module source " + sch["source"])
+            row = Adw.SwitchRow(title=sch.get("title") or m, subtitle=" · ".join(b for b in bits if b), active=m in on, use_markup=False,
+                                subtitle_lines=3, tooltip_text=m)
+            row.connect("notify::active", toggled, m)
+            g.add(row)
+        return g
+
     def _field(self, path, s, default):
         doc = "modules/%s/module.yaml" % path[1] if len(path) == 3 else "roles/%s/role.yaml" % path[0]
         f = dict(path=path, type=s["type"], label=s["label"] + (" *" if s.get("required") else ""),
@@ -856,13 +924,7 @@ class Form:
         stack = bool(role.get("stack"))
         groups = []
         if stack:
-            g = Adw.PreferencesGroup(title=role["title"])
-            g.add(self.row_for(dict(
-                path=(name, "modules"), type="list", label="Modules", apply=True,
-                help="Space separated, Enter applies. Empty: the preset — %s" % " ".join(role.get("modules") or []),
-                doc="README.md#roles-and-modules",
-                default=list(role.get("modules") or []), placeholder=" ".join(role.get("modules") or []))))
-            groups.append(g)
+            groups.append(self.parts_group(role, name))
         by_group = {}
         for st in role["settings"]:
             if st.get("group") == "Generated":         # kiwi-server fills these in: nothing to type

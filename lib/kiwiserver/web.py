@@ -1606,7 +1606,7 @@ def tiles(machines):
     for m in machines:
         for site in m["sites"]:
             first = site.split(".", 1)[0]
-            out.append({"site": site, "label": SERVICES.get(first, first.capitalize()), "machine": m["name"],
+            out.append({"site": site, "label": healthmod.label(site), "machine": m["name"],
                         "module": SITE_MODULE.get(first, ""), "admin": ADMIN_PATH.get(first)})
     return out
 

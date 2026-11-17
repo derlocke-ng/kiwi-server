@@ -6540,6 +6540,39 @@ class TestModuleSources(Base):
         self.assertEqual(rc, 0, err)
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "other", "modules", "hello", "module.yaml")))
 
+    def test_a_module_that_says_how_it_signs_in_is_connected_like_a_built_in_one(self):
+        from kiwiserver import sources
+        src, git = self.repo("grow")
+        mod = os.path.join(src, "modules", "grow", "module.yaml")
+        text = util.read_text(mod).replace("settings:\n", "settings:\n  - key: accounts_client\n    default: \"\"\n"
+                                           "  - key: accounts_issuer\n    default: \"\"\n"
+                                           "  - key: accounts_secret\n    type: secret\n    default: \"\"\n")
+        text += ("pages:\n  grow: {label: Grow lights, about: Light schedules for the plugs}\n"
+                 "accounts:\n  site: \"{{ grow_hostname or 'grow.' ~ hostname }}\"\n  callbacks: [/oauth/back]\n  pkce: true\n")
+        util.write_text(mod, text)
+        subprocess.run(git + ["commit", "-qam", "sign-in"], check=True, capture_output=True)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "id1": {"role": "node", "network": {"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1"},
+                    "node": {"modules": ["reverse-proxy", "accounts"], "vpn": False}},
+            "box": {"role": "node", "network": {"dhcp": False, "address": "192.168.1.31/24", "gateway": "192.168.1.1"},
+                    "node": {"modules": ["reverse-proxy", "grow"], "vpn": False}}}})
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache")}):
+            self.assertEqual(self.run_cli("sources", f.path, "add", "file://" + src, "--name", "c")[0], 0)
+            sent = []
+
+            def run(tgt, script, *a, **kw):
+                sent.append(script)
+                return b'{"client": "grow-box", "secret": "s", "issuer": "https://id.id1.kiwi/oauth2/openid/grow-box"}\n'
+            with mock.patch.object(remote, "run", run), mock.patch.object(remote, "reach", lambda h, o=None: "core@id1"):
+                rc, out, err = self.run_cli("accounts", f.path, "connect", "box", "grow")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("oauth grow-box 'Grow on box' https://grow.box.kiwi https://grow.box.kiwi/oauth/back --pkce", sent[0])
+            self.assertTrue(os.path.isfile(cli.accounts_file(config.Fleet.load(f.path), "box", "grow")))
+            rc, out, err = self.run_cli("list", f.path, "--porcelain")
+            listed = json.loads(out)
+            self.assertIn(["grow", "Grow"], listed["connectable"])
+            self.assertEqual(listed["pages"]["grow"]["label"], "Grow lights")
+
 
 class TestMasterRoutes(Base):
     def test_a_master_that_keeps_data_is_told_where_it_could_run(self):
@@ -6556,6 +6589,42 @@ class TestMasterRoutes(Base):
         self.assertIn("paste, xmpp keep data on the master", said)
         self.assertIn("on a node instead", said)
         self.assertFalse([w for w in f.hosts["plain"].warnings if "keep" in w])      # the default master routes only
+
+
+class TestAppDoc(unittest.TestCase):
+    def app_doc(self):
+        """The app's FleetDoc, out of its source without GTK."""
+        import ast
+        src = util.read_text(os.path.join(ROOT, "gui", "kiwi-server-gui"))
+        node = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == "FleetDoc")
+        ns = {"yaml": yaml, "os": os}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "kiwi-server-gui", "exec"), ns)
+        return ns["FleetDoc"]
+
+    def test_a_change_in_the_app_keeps_the_empty_blocks_that_mean_something(self):
+        """The app's own copy of the page's bug: saving medlar's smartfritz settings dropped its
+        hidden services (`onion: services: {git: {}}`) again, 17 Nov 2026."""
+        FleetDoc = self.app_doc()
+        path = os.path.join(tempfile.mkdtemp(), "fleet.yaml")
+        util.write_text(path, yaml.safe_dump({"hosts": {"medlar": {"node": {
+            "modules": ["onion", "smartfritz"], "onion": {"services": {"git": {}, "jabber": {}}, "tls": True}}}}}))
+        doc = FleetDoc(path)
+        doc.set("medlar", ("node", "smartfritz", "fritz_url"), "https://192.0.2.1")
+        self.assertEqual(doc.get("medlar", ("node", "onion", "services")), {"git": {}, "jabber": {}})
+        doc.set("medlar", ("node", "smartfritz", "fritz_url"), None)          # what a change empties goes
+        self.assertIsNone(doc.get("medlar", ("node", "smartfritz")))
+        self.assertEqual(doc.get("medlar", ("node", "onion", "services")), {"git": {}, "jabber": {}})
+
+
+class TestModulePages(unittest.TestCase):
+    def test_a_module_names_its_pages_on_the_start_and_status_pages(self):
+        from kiwiserver import health
+        self.addCleanup(health.PAGES.clear)
+        self.assertEqual(health.label("grow.medlar.home"), "Grow")              # nobody said anything
+        health.register({"grow": {"label": "Grow lights", "about": "Light schedules for the plugs"}})
+        self.assertEqual((health.label("grow.medlar.home"), health.about("grow.medlar.home")),
+                         ("Grow lights", "Light schedules for the plugs"))
+        self.assertEqual(health.label("cloud.papaya.home"), "Files (Nextcloud)")   # the built-in names stay
 
 
 class TestNetcupDropped(unittest.TestCase):

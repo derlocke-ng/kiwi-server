@@ -488,7 +488,7 @@ class Renderer:
                 rp["exposed"] = self._exposed
             elif role.node_type != "master" and rp.get("public") and self._master_ip:
                 rp["via"] = self._master_ip
-        for module in CONNECTABLE:
+        for module in set(CONNECTABLE) | {m for m in host.modules if m in self.ms.modules and getattr(self.ms.get(m), "accounts", None)}:
             # the network's accounts sign people in here (kiwi-server accounts connect)
             path = accounts_file(self.fleet, host.name, module)
             if module in host.modules and os.path.isfile(path):
@@ -992,6 +992,7 @@ def cmd_list(args):
     rows = []
     r = Renderer(fleet, roles, out_dir, None, ms)
     domain, master_ip, mesh, _mtu = fleet_facts(fleet, roles, ms, r)
+    healthmod.register({k: v for m in r.ms.modules.values() for k, v in (getattr(m, "pages", None) or {}).items()})
     records = r.dns_records()
     for h in fleet.hosts.values():
         errs = h.validate(roles)
@@ -1031,6 +1032,11 @@ def cmd_list(args):
                 play = {"host": h.name, "site": c.get("play_hostname") or "play." + h.hostname, "group": c.get("play_group") or "games"}
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
                           "default_group": default_group, "play": play,
+                          # the modules' own names of their pages, and the modules that sign people in
+                          # with the network's accounts beyond the built-in ones (module.yaml)
+                          "pages": {k: v for m in r.ms.modules.values() for k, v in (getattr(m, "pages", None) or {}).items()},
+                          "connectable": sorted({(m.name, m.accounts["label"]) for m in r.ms.modules.values()
+                                                 if getattr(m, "accounts", None) and m.name not in CONNECTABLE}),
                           # modules beyond the built-in ones, and which source each came from
                           "module_sources": [dict(x, modules=sorted(m.name for m in r.ms.modules.values() if m.source == x["name"]))
                                              for x in fleet.module_sources],
@@ -2689,20 +2695,34 @@ def cmd_accounts(args):
             raise KiwiError("accounts connect HOST [MODULE]: which machine's service (%s)" % ", ".join(CONNECTABLE))
         target = fleet.hosts.get(rest[0])
         module = rest[1] if len(rest) > 1 else "git"
-        if not target or module not in CONNECTABLE:
-            raise KiwiError("accounts connect: a machine of the fleet and one of %s" % ", ".join(CONNECTABLE))
+        declared = getattr(ms.get(module), "accounts", None) if module in ms.modules else None
+        if not target or (module not in CONNECTABLE and not declared):
+            raise KiwiError("accounts connect: a machine of the fleet and one of %s" % ", ".join(
+                list(CONNECTABLE) + sorted(m.name for m in ms.modules.values() if getattr(m, "accounts", None))))
         rolesmod.resolve_settings(roles[target.role], target, ms)
         if module not in target.modules:
             raise KiwiError("%s does not run %s" % (target.name, module))
-        label, site, callbacks = CONNECTABLE[module]
-        name = site(target.module_settings.get(module) or {}, target)
+        if module in CONNECTABLE:
+            label, site, callbacks = CONNECTABLE[module]
+            name = site(target.module_settings.get(module) or {}, target)
+            pkce, group = module in PKCE, None
+            if module in GROUPED:
+                key, default = GROUPED[module]
+                group = str((target.module_settings.get(module) or {}).get(key) or default)
+        else:
+            # a module that says how it signs people in (module.yaml `accounts:`), built in or from a source
+            import jinja2
+            settings = dict(target.module_settings.get(module) or {}, hostname=target.hostname)
+            name = jinja2.Environment().from_string(declared["site"]).render(**settings).strip().split("://")[-1].strip("/")
+            if not re.fullmatch(r"[a-z0-9.-]+", name):
+                raise KiwiError("%s: its accounts site came out as %r, no name" % (module, name))
+            label, callbacks, pkce, group = declared["label"], declared["callbacks"], declared["pkce"], declared["group"] or None
         client = "%s-%s" % (module, target.name)
         words = [client, "%s on %s" % (label, target.name), "https://" + name]
         words += ["https://" + name + c for c in ((callbacks,) if isinstance(callbacks, str) else callbacks)]
-        words += ["--pkce"] if module in PKCE else []
-        if module in GROUPED:
-            key, default = GROUPED[module]
-            words += ["--group", str((target.module_settings.get(module) or {}).get(key) or default)]
+        words += ["--pkce"] if pkce else []
+        if group:
+            words += ["--group", group]
         cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); sudo sh \"$S\" oauth %s"
                % " ".join(shlex.quote(x) for x in words))
         answer = json.loads(remote.run(remote.reach(h, args.ssh), cmd).decode(errors="replace").strip().splitlines()[-1])

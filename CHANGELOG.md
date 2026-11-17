@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.183.0 — modules from a source, first-class; the app keeps hidden services
+
+- **The app dropped a machine's hidden services** when any of its settings was saved (the page's
+  bug of 2.179.1, in the app's own copy): saving smartfritz's settings on medlar took
+  `onion: services` away again. Now only what a change itself empties goes.
+- **A game server asleep failed the apply** although every container ran (kiwi-stack 0.9.13).
+- **Its parts in the app** are switches with what each one is for, what it needs and the module
+  source it comes from, as on the page; no more text box.
+- **A module names its own pages** (`pages:` in its module.yaml, kiwi-modules 0.82.0): the start
+  and status pages, the app and `list` show that name and what it is for.
+- **A module that says how it signs in** (`accounts:` in its module.yaml) is connected to the
+  network's accounts like Forgejo or Nextcloud: `kiwi-server accounts FLEET connect HOST MODULE`.
+
 ## 2.182.0 — the master routes, your data lives on the nodes
 
 - Said where people read first (the README, [roles.md](docs/roles.md)): the master is a server you

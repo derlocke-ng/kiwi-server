@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.169.0 — the first machine at home opens by itself after a power cut
+
+- **The ring `away` on the master** (docs/design/encryption.md): the first run gives the master
+  a Tang ring (port 7501) that answers only the addresses enrolled machines last connected from,
+  and the first machine at home opens with it. Tried on kiwi2: damson (a Debian VM at home)
+  restarted and opened its disk with crumble's ring, nobody typing a key; asked from another
+  address, the ring did not answer. A RAM master keeps the ring's keys with the fleet's copy; a
+  standby serves no ring.
+- **A smaller Tang image** (kiwi-modules 0.75.1, 15-kiwi6, 14 MB instead of about 150): it fits on
+  a master in memory, whose first try ran out of room.
+- **An apply that ended early no longer forgets a restart** (kiwi-stack 0.9.10, 0.9.11): what it
+  wrote and did not restart yet is restarted by the next one. Seen when crumble's VPN server kept
+  its old settings after an apply that ended at an image pull.
+
 ## 2.168.0 — a ring's keys survive a power cut
 
 - **kiwi-modules 0.74.0**: the Tang image (15-kiwi4) makes a ring's keys beside, on the disk,

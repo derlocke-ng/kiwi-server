@@ -402,13 +402,18 @@ def url(client, ring, server, port):
     mine, theirs = _lan(client), _lan(server)
     if mine and theirs and theirs.ip in mine.network:
         return "http://%s:%d" % (theirs.ip, port)
+    mods = getattr(server, "modules", None) or []
+    if "vpn-server" in mods and "tang" in mods:      # a ring on the master (away): its public address, gated
+        public = (server.module_settings.get("vpn-server") or {}).get("wg_host")
+        if public:
+            return "http://%s:%d" % (public, port)
     raise KiwiError("%s cannot reach the ring on %s at boot: they are not on one LAN with static addresses "
                     "(unlock.via says where else to find it)" % (client.name, server.name))
 
 
 def thumbprint(server, ring, port):
     """The ring's signing key, as its own host reports it."""
-    out = _in_ring(server, ring, "tang-show-keys 7500")
+    out = _in_ring(server, ring, "tang-show-keys %d" % _inner_port(server, ring))
     for line in out.split():
         return line
     raise KiwiError("%s: the ring %s reports no key — is its container running?" % (server.name, ring))
@@ -417,7 +422,7 @@ def thumbprint(server, ring, port):
 def advertisement(server, ring):
     """What the ring offers, from its own host: a binding must not need to reach it at
     bind time, as `via` may name a port that exists only while it is being forwarded."""
-    out = _in_ring(server, ring, "curl -sf http://localhost:7500/adv").strip()
+    out = _in_ring(server, ring, "curl -sf http://localhost:%d/adv" % _inner_port(server, ring)).strip()
     try:
         json.loads(out)
     except ValueError:
@@ -425,9 +430,22 @@ def advertisement(server, ring):
     return out
 
 
+def _on_master(server):
+    return "vpn-server" in (getattr(server, "modules", None) or [])
+
+
+def _inner_port(server, ring):
+    """Where the ring listens in its container: 7500, or on a master (in the VPN server's
+    namespace) its own port."""
+    if _on_master(server):
+        return int(((server.module_settings.get("tang") or {}).get("rings") or {}).get(ring) or 7500)
+    return 7500
+
+
 def _in_ring(server, ring, command):
     runtime = shlex.quote(server.role_settings.get("runtime") or "podman")
-    return remote.run(remote.reach(server), "%s exec kn-tang-%s %s" % (runtime, ring, command)).decode(errors="replace")
+    prefix = "km" if _on_master(server) else "kn"
+    return remote.run(remote.reach(server), "%s exec %s-tang-%s %s" % (runtime, prefix, ring, command)).decode(errors="replace")
 
 
 def pins(host, servers):

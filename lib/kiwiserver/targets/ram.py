@@ -27,7 +27,7 @@ SSHD_DROP_IN = "/etc/ssh/sshd_config.d/30-kiwi-ram.conf"
 DEFAULT_STACK_DIR = "/home/user/docker"
 # what the fleet keeps of a RAM master beside its WireGuard identity: a public site's
 # certificates and ACME account (asking again is limited to a few a week)
-KEPT = ("km-nginx/letsencrypt", "km-nginx/acme")
+KEPT = ("km-nginx/letsencrypt", "km-nginx/acme", "km-tang")     # km-tang: a ring here (away), its keys
 KEEP_EVERY = 3600       # watch refreshes the fleet's copies of a running master this often
 
 

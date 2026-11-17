@@ -102,6 +102,14 @@ Tried in a local VM (`tests/drills/master-encrypt-vm.sh`).
 **Then:** a ring for the first machine too (the master's, answering only the home's address),
 and Debian machines at home.
 
+**The ring `away` (2.169.0).** The first run gives the master the tang module with the ring
+`away` (port 7501) when there is a first machine at home; that machine binds it. On the master
+the ring lives in the VPN server's namespace, which publishes its port behind the unlock relay's
+gate: only the addresses enrolled machines last connected from get through, so the home's own
+address does and a box carried elsewhere does not. A RAM master keeps the ring's keys with the
+fleet's copy (`targets/ram.py`, KEPT). A standby serves no ring. Tried on kiwi2: crumble serves
+it, damson (a Debian VM at home) opens with it after a restart.
+
 ## How it is tried
 
 1. In a local VM: CoreOS with its root bound to the `null` pin boots, then a ring is bound and

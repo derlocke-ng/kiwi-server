@@ -113,7 +113,7 @@ iptables -A INPUT -i wg0 -p tcp --dport 80 -j DROP
 iptables -A INPUT -i wg0 -p tcp --dport 443 -j DROP
 {% endif %}
 
-{% if unlock_relay %}
+{% if unlock_relay or local_rings %}
 # The Tang relay. A machine rebooting where it cannot reach its ring asks this public port;
 # the packet goes into the mesh without leaving the kernel, and this master learns nothing
 # it can use: Tang's exchange is safe in the clear. The gate lets through only the addresses
@@ -129,6 +129,12 @@ iptables -A FORWARD -i eth0 -o wg0 -d {{ ip }} -p tcp --dport {{ dport }} -m con
 iptables -A FORWARD -i eth0 -o wg0 -d {{ ip }} -p tcp --dport {{ dport }} -m conntrack --ctstate NEW -j DROP
 # the answers go back out of the real interface, not through the exit
 iptables -t mangle -A PREROUTING -i eth0 -p tcp --dport {{ port }} -j CONNMARK --set-mark 65
+{% endfor %}
+{% for ring, port in local_rings.items() %}
+# the ring {{ ring }} lives here (tang module): its public port, through the same gate
+iptables -A INPUT -i eth0 -p tcp --dport {{ port }} -m conntrack --ctstate NEW -j KIWI_RELAY
+iptables -A INPUT -i eth0 -p tcp --dport {{ port }} -m conntrack --ctstate NEW -m limit --limit 6/min -j LOG --log-prefix "kiwi-ring refused: "
+iptables -A INPUT -i eth0 -p tcp --dport {{ port }} -m conntrack --ctstate NEW -j DROP
 {% endfor %}
 iptables -t mangle -A PREROUTING -i wg0 -m connmark --mark 65 -j CONNMARK --restore-mark
 relay_gate() {
@@ -182,6 +188,9 @@ iptables -t mangle -A OUTPUT -p tcp --sport {{ port }} ! -d {{ mesh_subnet }} -j
 {% endfor %}
 {% for p in (exposed or {}).get('ports', []) %}
 iptables -t mangle -A OUTPUT -p {{ p.proto or 'tcp' }} --sport {{ p.port }} ! -d {{ mesh_subnet }} -j MARK --set-mark 65
+{% endfor %}
+{% for port in local_rings.values() %}
+iptables -t mangle -A OUTPUT -p tcp --sport {{ port }} ! -d {{ mesh_subnet }} -j MARK --set-mark 65
 {% endfor %}
 {% endif %}
 {% if federation %}

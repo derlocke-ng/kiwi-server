@@ -22,4 +22,34 @@ printf '%s\n' 'descriptor:x25519:{{ key }}' > "$D/{{ name }}/authorized_clients/
 {% endfor %}
 {% endfor %}
 chown -R tor:tor /var/lib/tor
-exec su-exec tor tor -f /etc/tor/torrc
+su-exec tor tor -f /etc/tor/torrc &
+tor=$!
+trap 'kill "$tor" 2>/dev/null; wait "$tor"; exit 0' TERM INT
+# The self-check: Tor can stop being found at its addresses while it runs on (17 Nov 2026: two
+# of three hidden services answered nothing for hours, after the tunnel under it had changed; a
+# start anew brought them back). Every ten minutes each address open to anyone is asked through
+# Tor itself; three rounds in a row with one that answers nothing, and Tor ends: the container
+# starts anew.
+ADDRESSES="{% for name, k in keys.items() if not k.clients %}{{ k.address }} {% endfor %}"
+(
+    [ -n "${ADDRESSES% }" ] || exit 0
+    sleep 600
+    misses=0
+    while kill -0 "$tor" 2>/dev/null; do
+        gone=""
+        for a in $ADDRESSES; do
+            code=$(su-exec tor curl -s -o /dev/null -m 120 -w '%{http_code}' \
+                   -x "socks5h://localhost/var/lib/tor/self-check.sock" "http://$a/" 2>/dev/null)
+            [ "${code:-000}" = 000 ] && gone="$gone $a"
+        done
+        if [ -n "$gone" ]; then misses=$((misses + 1)); else misses=0; fi
+        if [ "$misses" -ge 3 ]; then
+            echo "kiwi: not found through Tor three times in a row:$gone; Tor starts anew"
+            kill "$tor"
+            exit 0
+        fi
+        sleep 600
+    done
+) &
+wait "$tor"
+exit 1          # Tor ended by itself or by the self-check: the container starts anew

@@ -4093,6 +4093,15 @@ class TestStandby(Base):
         self.assertFalse(backup.keep_wireguard(b, None, runner=lambda *a, **k: self.fail("a standby's peers are not kept")))
         self.assertTrue(cli.has_master(f, self.roles))
 
+    def test_list_says_it_is_a_standby(self):
+        f = self.fleet_with_standby()
+        rc, out, err = TestManage.run_cli(self, "list", f.path, "--porcelain")
+        self.assertEqual(rc, 0, err)
+        rows = {r["name"]: r for r in json.loads(out)["hosts"]}
+        self.assertEqual((rows["gate-b"]["standby_of"], rows["gate"]["standby_of"]), ("gate", ""))
+        rc, out, err = TestManage.run_cli(self, "list", f.path)
+        self.assertIn("gate's standby: the same master on its own machine", out)
+
     def test_its_masters_nodes_know_where_it_is(self):
         f = self.fleet_with_standby()
         r = cli.Renderer(f, self.roles, self.tmp, None, self.ms)
@@ -8343,7 +8352,9 @@ class TestWeb(StoreBase):
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"groups": {"devices": "10.9.3.0/24"}, "hosts": [
             {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "backup"],
              "sites": ["cloud.papaya.home", "vault.papaya.home"], "vpn_ip": "10.9.0.2", "next": ""},
-            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "modules": [], "sites": [], "next": "apply it"}]}))
+            {"name": "sorbet", "hostname": "sorbet.home", "role": "master", "modules": [], "sites": [], "next": "apply it"},
+            {"name": "sorbet-b", "hostname": "sorbet.home", "role": "master", "standby_of": "sorbet", "modules": [], "sites": [],
+             "next": ""}]}))
         util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
             {"host": "papaya", "state": "warn", "output": "raw words", "notes": ["disk 14%"],
              "problems": [{"level": "warn", "text": "an update is waiting for a reboot"}],
@@ -8360,6 +8371,7 @@ class TestWeb(StoreBase):
         self.assertIn("Files (Nextcloud)", there)
         self.assertIn('href="https://vault.papaya.home"', there)
         self.assertIn("<a href=\"/hosts/papaya\">papaya</a>", there)
+        self.assertIn("Standby of sorbet", self.ask("/machines")[1])            # not a second master
         code, body = self.ask("/hosts/papaya")
         self.assertIn("Home server (node)", body)
         self.assertIn("Changes nothing.", body)                                   # each button says what it does

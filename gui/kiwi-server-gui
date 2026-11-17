@@ -4489,9 +4489,13 @@ class Window(Adw.ApplicationWindow):
             net.add(info_row("Domain", "." + info["domain"], copy=True))
         if info.get("mesh"):
             net.add(info_row("Mesh", info["mesh"], copy=True))
-        master = next((h for h, st in self.status.items() if st.get("vpn_ip") and st["vpn_ip"] == info.get("master_ip")), None)
+        master = next((h for h, st in self.status.items() if st.get("vpn_ip") and st["vpn_ip"] == info.get("master_ip")
+                       and not st.get("standby_of")), None)
         if master:
             net.add(info_row("Master", "%s, %s" % (master, info["master_ip"]), copy=True))
+            standbys = [(h, st.get("address") or "") for h, st in self.status.items() if st.get("standby_of") == master]
+            if standbys:        # the same master on another machine (docs/design/standby.md)
+                net.add(info_row("Standby", ", ".join("%s, %s" % (h, a.split("/")[0]) if a else h for h, a in standbys)))
             peers = ((self.live.get(master) or {}).get("facts") or {}).get("peers")
             if peers:
                 net.add(info_row("Tunnels", "%d of %d connected" % (peers["recent"], peers["total"])))

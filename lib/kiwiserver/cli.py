@@ -958,7 +958,7 @@ def cmd_list(args):
         mesh_ip = (h.role_settings or {}).get("vpn_ip") or (
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         nxt = next_step(fleet, roles, h, errs, o)
-        rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role,
+        rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
@@ -990,7 +990,9 @@ def cmd_list(args):
         s = r["status"]
         have = [k for k in ("script", "stack", "config", "ignition", "iso") if s.get(k)]
         state = "INVALID" if r["phase"] == "invalid" else (", ".join(have) if have else "-")
-        print(fmt % (r["name"], r["hostname"], r["target"], r["role"], r["address"] or "", state))
+        print(fmt % (r["name"], r["hostname"], r["target"], "standby" if r["standby_of"] else r["role"], r["address"] or "", state))
+        if r["standby_of"]:
+            print("    %s's standby: the same master on its own machine (docs/design/standby.md)" % r["standby_of"])
         for e in r["errors"]:
             if r["phase"] == "invalid":
                 print("    error: %s" % e)

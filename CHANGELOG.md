@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.175.0 — a new recovery key from the app
+
+- **The app's Locking… has "A new recovery key…"**: kiwi-server makes the key (nothing changes
+  yet), the app shows it, and only once its last 8 characters are typed back does it replace the
+  old one (`secrets recovery --make` / `--key-stdin`, as the terminal's own way). The dialog is
+  taller, so its three parts show without scrolling.
+- A wrong passphrase on an older backup that slips past openssl (about once in 256 tries) is
+  refused in plain words, not with a gzip traceback (it had failed CI now and then).
+
 ## 2.174.0 — the control page logs out when left; a hidden service gets a new address
 
 - **A login on the control page ends 30 minutes after its last use** (and 12 hours after the

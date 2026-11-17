@@ -4,12 +4,19 @@ A **role** says what a machine becomes. A module role is a set of
 **modules**, one service each, rendered on your machine into a container
 stack the host starts on first boot.
 
+**The master routes; your data lives on the nodes.** The master is usually a rented server you
+need not trust: by default it runs only what moves traffic (the VPN, the names, the Tor proxy,
+a proxy that hands public names on to nodes without reading them). Every service that keeps
+data runs on a node and is reached over the VPN, or from the Internet through the master
+([A node's service, open to the Internet](#a-nodes-service-open-to-the-internet)). A service can
+run on the master if you want it there; none does by default.
+
 ## Roles
 
 | role | what the machine becomes | modules |
 |---|---|---|
 | `bare` | the base system: admin user, SSH, updates | — |
-| `master` | the kiwi-master: WireGuard entry point (wg-easy) whose default route is the VPN client (gluetun to Mullvad or any provider — the double hop), Pi-hole and Tor on the server's network stack, isolated-client subnet; nginx for the admin pages; a nostr relay and a hub built on kiwi-framework if its `modules:` list them | vpn-client, vpn-server, dns, tor |
+| `master` | the kiwi-master: WireGuard entry point (wg-easy) whose default route is the VPN client (gluetun to Mullvad or any provider — the double hop), Pi-hole and Tor on the server's network stack, isolated-client subnet; nginx for the admin pages and to hand public names on to the nodes. It keeps no data of yours | vpn-client, vpn-server, dns, tor |
 | `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway and download station (Pi-hole with DHCP, policy routing through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
 | `node-gw`, `node-cloud` | the gateway and cloud presets as roles of their own, for fleet files that use them | as above |
 
@@ -49,25 +56,29 @@ Everything cross-host comes from the fleet file:
 every module.yaml key, how to add one. `kiwi-server modules -v` lists what is
 there with every setting.
 
-## A public hub
+## A hub
 
-A hub belongs on a master. As a private hub it needs only the two modules. To
-make it public, give it public names, point their DNS records at the master
-(DNS only, if the provider proxies), and open the proxy:
+A hub (a nostr relay and a hub built on kiwi-framework) runs on a node, so its
+messages stay at home. As a private hub it needs only the two modules. To make
+it public, give it public names, point their DNS records at the master (DNS
+only, if the provider proxies), and open the node's proxy:
 
 ```yaml
-master:
-  modules: [vpn-client, vpn-server, dns, tor, reverse-proxy, nostr-relay, hub]
-  reverse-proxy: { public: true, acme_email: you@example.org }
-  hub: { hub_domain: hub.example.org }
-  nostr-relay: { relay_domain: relay.example.org, write_pubkeys: [<64 hex characters>] }
+hosts:
+  medlar:
+    node:
+      modules: [vpn-client, reverse-proxy, nostr-relay, hub]
+      reverse-proxy: { public: true }
+      hub: { hub_domain: hub.example.org }
+      nostr-relay: { relay_domain: relay.example.org, write_pubkeys: [<64 hex characters>] }
 ```
 
-That publishes 80 and 443. The public names get Let's Encrypt certificates,
-which a timer renews; `acme_staging: true` tries it out on the test service
-first. Every other site on the master, the admin pages among them, keeps
-answering the mesh only. Anyone may read the relay; the mesh may post, and
-from the internet only the keys in `write_pubkeys`.
+The master hands the names on to the node as below; the node holds their Let's
+Encrypt certificates. Every other site keeps answering the VPN only. Anyone may
+read the relay; the VPN may post, and from the Internet only the keys in
+`write_pubkeys`. On a master the same two modules work too, with
+`reverse-proxy: { public: true, acme_email: … }` on the master: then the hub's
+data is on the rented server.
 
 ## A node's service, open to the Internet
 

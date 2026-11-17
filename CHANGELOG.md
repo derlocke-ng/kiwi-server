@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.182.0 — the master routes, your data lives on the nodes
+
+- Said where people read first (the README, [roles.md](docs/roles.md)): the master is a server you
+  need not trust; by default it only moves traffic, and every service that keeps data runs on a
+  node, reached over the VPN or through the master without it reading along.
+- A master that runs a service with data of its own gets a warning naming it, and the way to run
+  it on a node (allowed, not refused).
+- A hub and its nostr relay run on a node now (kiwi-modules 0.81.0); roles.md shows a public hub
+  on a node. The kiwi-modules table no longer lists Jabber, tang, the relay and the hub as master
+  only, and its links lead to pages that exist.
+
 ## 2.181.0 — modules from elsewhere
 
 - **Module sources**: modules beyond the built-in ones, from a git repository or a folder,

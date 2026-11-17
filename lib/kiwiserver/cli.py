@@ -707,12 +707,37 @@ def warn_literal_secrets(h, ms):
             h.warnings.append(msg)
 
 
+# what a master runs to move traffic: nothing of the people's data in it
+ROUTING = {"vpn-client", "vpn-server", "dns", "tor", "reverse-proxy", "fail2ban", "tang", "backup", "onion", "portainer"}
+
+
+def warn_data_on_master(h, roles, ms):
+    """The master routes, the nodes keep the data: a master that runs a service with data of its
+    own is told so, once, with the way out. A warning: the owner may want it there."""
+    if h.role not in roles or roles[h.role].node_type != "master":
+        return
+    there = []
+    for m in h.modules:
+        if m in ROUTING or m not in ms.modules:
+            continue
+        if "node" in (ms.get(m).node_types or []):
+            there.append(m)
+    if there:
+        msg = ("%s keep%s data on the master, a server you may not fully trust. %s on a node instead, "
+               "and open %s to the Internet through the master (reverse-proxy: public: true on the node)"
+               % (", ".join(there), "s" if len(there) == 1 else "", "It can run" if len(there) == 1 else "They can run",
+                  "it" if len(there) == 1 else "them"))
+        if msg not in h.warnings:
+            h.warnings.append(msg)
+
+
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
         warn_literal_secrets(h, ms)
+        warn_data_on_master(h, roles, ms)
     if errs and strict:
         if porcelain:
             print(json.dumps({"ok": False, "errors": errs}, indent=2))

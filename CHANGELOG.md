@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.179.2 — the hidden services' self-check keeps going
+
+- kiwi-modules 0.79.1: the onion part's self-check ended quietly at the first address that did
+  not answer through Tor (since 0.76.0, the case it is for): it neither started Tor anew nor
+  told the status page. Now it writes the miss down and goes on.
+- Tried on the test network: the status page as papaya's hidden service, opened over Tor from
+  the master; the game page in a browser (`tests/drills/play-browser.py`: a member signs in and
+  reads a log, someone outside the group is turned away); sleeping game servers on medlar
+  (`tests/drills/games-sleep.py`: both slept, `status` said asleep, they woke in 21 s and 13 s).
+
 ## 2.179.1 — a saved setting no longer drops a machine's hidden services
 
 - Saving any setting of a machine (the Settings page, the app's settings) also removed every

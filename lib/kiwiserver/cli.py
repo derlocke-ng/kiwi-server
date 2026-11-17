@@ -566,9 +566,24 @@ class Renderer:
                 elif os.path.exists(stale):
                     os.unlink(stale)
         else:
+            host.unlock_standin = False
             if unlock.wanted(host):      # the thumbprints go into the Ignition: Ignition binds the disk
-                host.unlock_pins = unlock.pins(host, unlock.ring_servers(
-                    self.fleet, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms)))
+                try:
+                    host.unlock_pins = unlock.pins(host, unlock.ring_servers(
+                        self.fleet, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms)))
+                except KiwiError as e:
+                    # its rings do not answer yet (the machine serving them is installed later): the
+                    # machine's TPM opens the disk until the first apply binds them
+                    host.unlock_pins = None
+                    host.unlock_standin = host.target in ("coreos", "ucore")
+                    if not host.unlock_standin:
+                        raise
+                    util.warn("%s: its rings do not answer yet (%s): its TPM opens the disk until the first apply binds them"
+                              % (host.name, e))
+            elif host.cfg.get("encryption", True) and host.target in ("coreos", "ucore"):
+                # encrypted as every machine is: no ring yet, so the TPM until the first apply leaves the
+                # key for its screen instead (docs/design/encryption.md)
+                host.unlock_standin = True
             # coreos-ram: the live system's Ignition, without the role (apply puts it on the state partition)
             util.write_text(o.bu, ram_t.render(host) if host.target == "coreos-ram" else coreos_t.render(host, script), 0o600)
             produced.append(o.bu)

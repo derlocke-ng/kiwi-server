@@ -305,6 +305,10 @@ def build_butane(host, role_script):
         bu["kernel_arguments"] = {"should_exist": kargs}
     if co.get("boot_device"):
         bu["boot_device"] = co["boot_device"]
+    elif not pins and getattr(host, "unlock_standin", False):
+        # no ring answers yet: the machine's TPM stands in (the install checks there is one), and the
+        # first apply puts the rings or the key for its screen in its place and removes it
+        bu["boot_device"] = {"luks": {"tpm2": True, "discard": True}}
     elif pins:
         bu["boot_device"] = {"luks": {"tang": [{"url": p["url"], "thumbprint": p["thp"], "advertisement": p["adv"]} for p in pins],
                                       "threshold": int(c["unlock"]["threshold"]), "discard": True}}

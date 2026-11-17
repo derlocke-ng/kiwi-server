@@ -33,6 +33,12 @@ there.
 - **CoreOS/uCore** media is the stock live ISO after `coreos-installer iso
   customize --dest-device <disk> --dest-ignition <host>.ign`. No network is
   needed for the install; Ignition is embedded for the installed system.
+  The disk is encrypted: with the machine's rings when they answer at
+  build time, else with its TPM standing in until the first apply binds the
+  rings (or leaves the key for its screen). The install checks for a TPM 2.0
+  and 4 GB of memory first and stops with what to do when one is missing;
+  `encryption: false` on the machine installs it plain, by choice, and every
+  page says so afterwards (docs/design/encryption.md).
 - **Debian** media is the stock netinst with the preseed appended to the
   installer's initrd, so it answers from the first question on. The boot
   menus are rewritten to start the unattended entry after a second, and the

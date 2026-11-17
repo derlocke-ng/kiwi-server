@@ -67,8 +67,23 @@ def add_home_machine(path, preset, address="", name="", target=""):
     add_host(path, name, "node", preset, target or "ucore", network=not net)
     disk = "" if target == "coreos" else "\n    disk: auto"        # a starter's system is installed already
     text = util.read_text(path).rstrip("\n") + disk
-    util.write_text(path, text + ("\n    network: %s\n" % net if net else "\n"), 0o600)
+    # encrypted, as every machine: the network's ring at home opens it at boot (both on the LAN with
+    # fixed addresses); without, the key for its screen (docs/design/encryption.md)
+    ring = net and ring_at_home(data)
+    text += "\n    network: %s" % net if net else ""
+    text += "\n    unlock: { rings: [%s] }" % ring if ring else ""
+    util.write_text(path, text + "\n", 0o600)
     return name
+
+
+def ring_at_home(data):
+    """The ring the machines at home bind (`home`), when a machine with a fixed address serves it."""
+    for h in (data.get("hosts") or {}).values():
+        node = (h or {}).get("node") if isinstance(h, dict) else None
+        if isinstance(node, dict) and "home" in ((node.get("tang") or {}).get("rings") or {}) \
+                and "/" in str((h.get("network") or {}).get("address") or ""):
+            return "home"
+    return ""
 
 
 def remove_host(path, name):
@@ -625,6 +640,7 @@ def make(answers, fleet_dir):
         prefix = ipaddress.ip_network(str(a.get("lan_subnet") or "")).prefixlen
     except ValueError:
         prefix = 24
+    ring_host = None    # the first machine at home with a fixed address: it serves the ring `home`
     for n in a.get("nodes") or []:
         name = n["name"]
         node = {"preset": n.get("preset") or "cloud",
@@ -651,6 +667,16 @@ def make(answers, fleet_dir):
                                                           if not (alone and x == "vpn-client")]) + ["control"]
                 if a.get("lan_gateway"):
                     h["network"]["dns"] = [a["lan_gateway"]]
+            # encrypted, as every machine (docs/design/encryption.md): the first machine with a fixed
+            # address serves the ring `home`; the others open with it at boot, by themselves. The first
+            # one opens with the key for its screen (a ring of its own cannot open itself)
+            if ring_host is None:
+                ring_host = name
+                node["modules"] = (node.get("modules") or [x for x in preset_modules(node["preset"])
+                                                           if not (alone and x == "vpn-client")]) + ["tang"]
+                node["tang"] = {"rings": {"home": "7500"}}
+            else:
+                h["unlock"] = {"rings": ["home"]}
         hosts[name] = h
     return {"defaults": defaults, "hosts": hosts}, made
 

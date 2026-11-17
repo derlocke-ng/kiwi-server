@@ -59,6 +59,25 @@ systemctl poweroff
 # disk: auto on CoreOS. Run by the live system before the installer starts: the machine's one
 # disk that is not the install media becomes the target; with none or several the install
 # stops and the console says which disks there are.
+# The disk is encrypted with the machine's TPM standing in for the rings (docs/design/encryption.md):
+# without a TPM 2.0, or with less memory than encrypting a CoreOS root takes at the first boot, the
+# install stops here with what to do, instead of a first boot that fails
+TPM_CHECK_SCRIPT = r"""#!/bin/bash
+set -u
+why=
+if [ "$(cat /sys/class/tpm/tpm0/tpm_version_major 2>/dev/null)" != 2 ]; then
+    why="it has no TPM 2.0 chip that is switched on (in the firmware settings: TPM, fTPM or PTT)"
+elif [ "$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)" -lt 3500000 ]; then
+    why="it has less than 4 GB of memory, which encrypting its disk takes at the first start"
+fi
+if [ -n "$why" ]; then
+    for t in /dev/console /dev/tty1 /dev/ttyS0; do
+        printf '\nkiwi-server: @HOST@ is not installed: its disk cannot be encrypted here: %s.\nSwitch the TPM on and start again from this stick, or set encryption: false for @HOST@ in the fleet file (installed WITHOUT encryption) and build the stick again.\n' "$why" > "$t" 2>/dev/null || true
+    done
+    exit 1
+fi
+"""
+
 AUTO_DISK_SCRIPT = r"""#!/bin/bash
 set -u
 src=$(findmnt -no SOURCE /run/media/iso 2>/dev/null || true)
@@ -131,12 +150,17 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
         raise KiwiError("%s: disk: is required to build an unattended ISO" % host.name)
     base = fcos_base_iso(tc, host.cfg["coreos"]["stream"], cache_dir)
     argv = ["coreos-installer", "iso", "customize", "--dest-ignition", ign_path]
+    pre_text = ""
+    if getattr(host, "unlock_standin", False):
+        pre_text += TPM_CHECK_SCRIPT.replace("@HOST@", host.name)
     if disk == "auto":
-        pre = os.path.join(util.parent(ign_path), host.name + ".pre-install.sh")
-        util.write_text(pre, AUTO_DISK_SCRIPT, mode=0o700)
-        argv += ["--pre-install", pre]
+        pre_text += AUTO_DISK_SCRIPT if not pre_text else AUTO_DISK_SCRIPT.split("\n", 1)[1]
     else:
         argv += ["--dest-device", disk]
+    if pre_text:
+        pre = os.path.join(util.parent(ign_path), host.name + ".pre-install.sh")
+        util.write_text(pre, pre_text if pre_text.startswith("#!") else "#!/bin/bash\n" + pre_text, mode=0o700)
+        argv += ["--pre-install", pre]
     co = host.cfg["coreos"]
     if co.get("console"):
         argv += ["--dest-console", str(co["console"])]

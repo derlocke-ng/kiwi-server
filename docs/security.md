@@ -77,6 +77,15 @@ longer restarts by itself for updates: they are fetched and start with the
 next restart, which someone does, with the key at the screen. A disk that is not encrypted is a warning on the control page's
 overview ("Needs a look"), on the machine's page and in `status`.
 
+**kiwi-server's own media** do the same for CoreOS and uCore machines: rings
+when they answer at build time, else the TPM until the first apply. The first
+run picks the rings: the first machine at home with a fixed address serves the
+ring `home`, the others open with it at boot by themselves; that first machine
+opens with the key for its screen (a ring cannot open the machine it runs on).
+After a power cut someone types that one key; the rest follow. A machine added
+later with a fixed address binds `home` too. `encryption: false` on a machine
+keeps it plain, by choice.
+
 ### Unlocking at boot
 
 A disk can open itself at boot. The `tang` module on one node serves a

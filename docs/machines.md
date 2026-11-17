@@ -87,10 +87,19 @@ data later.
 
 A new, empty disk needs a filesystem once: `"LABEL=…"` cannot name it yet, so
 give its by-id path and a third word, `xfs` or `ext4`. That is only ever done on
-a disk with nothing on it.
+a disk with nothing on it, and it is encrypted first, as the system disk is:
 
-The data disk is not encrypted by this. The system disk is, when the machine has
-unlock rings ([security.md](security.md)).
+```yaml
+    mounts: ["/dev/disk/by-id/ata-Samsung_SSD_870_S5Y1 /mnt/data xfs"]
+```
+
+Its key comes from the network's seed, so the machine installed anew opens the
+same disk again; on the machine it is kept on the system disk, which is
+encrypted itself, and the disk opens at every start after the system's. A fourth
+word `plain` (or a machine with `encryption: false`) leaves it unencrypted. A
+disk that already holds data is mounted as it is; `kiwi-server status` says when
+a data disk is not encrypted. To encrypt one that holds data, copy the data off,
+empty the disk (`wipefs -a`) and give its entry the format word.
 
 ## Updates
 

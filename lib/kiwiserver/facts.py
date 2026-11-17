@@ -41,6 +41,8 @@ if [ -n "$luks" ]; then kv luks "$(clevis luks list -d "$luks" 2>/dev/null | wc 
 elif grep -q 'coreos.liveiso=' /proc/cmdline 2>/dev/null || [ "$(findmnt -n -o FSTYPE / 2>/dev/null)" = tmpfs ]; then
   kv luks ram       # in RAM only (a live system): no disk holds anything
 else kv luks none; fi
+# the data disks kiwi-server mounts (fleet.yaml mounts) that are not in LUKS
+kv plaindata "$(sed -n '/^# kiwi-server mounts: begin/,/^# kiwi-server mounts: end/p' /etc/fstab 2>/dev/null | grep -v '^#' | grep -vc '^/dev/mapper/kiwi-data')"
 if [ -f /etc/kiwi-server/stack.env ]; then
     # shellcheck disable=SC1091
     . /etc/kiwi-server/stack.env
@@ -208,6 +210,8 @@ def parse(data, local_now=None):
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
+    if _int(raw.get("plaindata")):
+        out["plain_data_disks"] = _int(raw["plaindata"])
     if raw.get("luks"):
         out["encryption"] = (raw["luks"] if raw["luks"] in ("none", "ram")
                              else ("bound" if _int(raw["luks"]) else "key"))
@@ -312,5 +316,10 @@ def assess(f):
         notes.append("the disk opens only with a typed key")
     elif encryption == "ram":
         notes.append("in RAM only: nothing stays on a disk")
+    if f.get("plain_data_disks"):
+        n = f["plain_data_disks"]
+        problems.append(warn("%s not encrypted: whoever takes %s can read everything on %s"
+                             % ("a data disk is" if n == 1 else "%d data disks are" % n, "it" if n == 1 else "them",
+                                "it" if n == 1 else "them")))
     levels = {p["level"] for p in problems}
     return ("bad" if "bad" in levels else "warn" if "warn" in levels else "ok"), problems, notes

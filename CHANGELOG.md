@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.167.0 — data disks are encrypted too
+
+- **A new data disk is put in LUKS before its filesystem** (`mounts:` with a format word), as the
+  system disk is. Its key comes from the seed, so a machine installed anew opens it again; on
+  the machine the key lives on the encrypted system disk, and `/etc/crypttab` opens the disk at
+  every start. `plain` (a fourth word) or `encryption: false` leaves it as before. A disk that
+  holds data is not touched. Tried on a VM: encrypted, mounted, still there after a restart.
+- `kiwi-server status` warns about a data disk that is not encrypted.
+- Making the filesystem on a small Debian installs its tool first (xfsprogs was missing).
+
 ## 2.166.0 — phones follow the master to its standby
 
 - **Phones and laptops are sent to the standby** (docs/design/standby.md, step 4): when the

@@ -3383,7 +3383,7 @@ def cmd_disks(args):
     tgt = remote.reach(host, args.ssh)
     out = remote.run(tgt, "lsblk -P -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINT -e 7,11").decode()
     rows = [dict(re.findall(r'(\w+)="([^"]*)"', line)) for line in out.splitlines() if line.strip()]
-    set_up = {dev: at for dev, at, _f in config.mounts_of(host.cfg)}
+    set_up = {m[0]: m[1] for m in config.mounts_of(host.cfg)}
     free = []
     for r in rows:
         if r.get("FSTYPE") in ("xfs", "ext4", "btrfs") and not r.get("MOUNTPOINT") and r.get("LABEL") not in ("boot", "root"):

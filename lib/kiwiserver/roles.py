@@ -98,40 +98,75 @@ def stack_cli(path=None):
     return util.read_text(p)
 
 
-def mount_lines(mounts):
+def mount_lines(mounts, keys=None):
     """The role script's part for the data disks (fleet.yaml `mounts`): each in /etc/fstab
-    between two marks, so a disk taken out of the fleet file leaves the file again, and
-    mounted before the role's own steps. A disk that is not there, or has no filesystem
-    where none may be made, ends the script with what to do: services writing into an empty
-    folder on the system disk would look like lost data later."""
+    (and, in LUKS, /etc/crypttab) between two marks, so a disk taken out of the fleet file
+    leaves the files again, and mounted before the role's own steps. A new, empty disk is put
+    in LUKS first unless its entry says otherwise; its key comes from the seed (`keys`: {where:
+    key}), so a machine installed anew opens it again, and is kept on the system disk, which is
+    encrypted itself. A disk that is not there, or has no filesystem where none may be made,
+    ends the script with what to do: services writing into an empty folder on the system disk
+    would look like lost data later."""
+    keys = keys or {}
     out = ["# ---- data disks (fleet.yaml mounts) --------------------------------------",
            "ks_mounts() {",
-           "    local dev at fmt real fs",
+           "    local dev at fmt enc key real fs name kf src",
+           "    ks_mkfs() {     # FORMAT DEVICE: the tool comes along where a small system has none (Debian: xfsprogs)",
+           "        if ! command -v \"mkfs.$1\" >/dev/null && command -v apt-get >/dev/null; then",
+           "            DEBIAN_FRONTEND=noninteractive apt-get install -y -q \"$([[ $1 == xfs ]] && echo xfsprogs || echo e2fsprogs)\" >/dev/null",
+           "        fi",
+           "        \"mkfs.$1\" -q \"$2\" || ks_die \"no $1 filesystem could be made on $2\"",
+           "    }",
            "    [[ -f /etc/fstab ]] || install -m 0644 /dev/null /etc/fstab      # CoreOS comes without one",
-           "    sed -i '/^# kiwi-server mounts: begin/,/^# kiwi-server mounts: end/d' /etc/fstab",
-           "    echo '# kiwi-server mounts: begin (from the fleet file: change them there)' >> /etc/fstab",
-           "    while read -r dev at fmt; do",
+           "    [[ -f /etc/crypttab ]] || install -m 0600 /dev/null /etc/crypttab",
+           "    sed -i '/^# kiwi-server mounts: begin/,/^# kiwi-server mounts: end/d' /etc/fstab /etc/crypttab",
+           "    echo '# kiwi-server mounts: begin (from the fleet file: change them there)' | tee -a /etc/fstab >> /etc/crypttab",
+           "    install -d -m 0700 /etc/kiwi-server/disks",
+           "    while read -r dev at fmt enc key; do",
            "        [[ -n $dev ]] || continue",
+           "        [[ $fmt == - ]] && fmt=",
            "        at=$(realpath -m \"$at\")          # /mnt is /var/mnt on CoreOS: the path as the system has it",
            "        real=$(findfs \"$dev\" 2>/dev/null || true)",
            "        [[ $dev == /dev/* && -b $dev ]] && real=$dev",
            "        [[ -n $real ]] || ks_die \"the data disk $dev is not there: plug it in, or take it out of mounts in the fleet file\"",
+           "        name=kiwi-data$(tr / - <<< \"$at\")",
+           "        kf=/etc/kiwi-server/disks/$name.key",
+           "        (umask 077; base64 -d <<< \"$key\" > \"$kf.new\" && mv \"$kf.new\" \"$kf\") || ks_die \"the key of the data disk $dev was not written\"",
            "        fs=$(blkid -o value -s TYPE \"$real\" 2>/dev/null || true)",
            "        if [[ -z $fs ]]; then",
            "            [[ -n $fmt ]] || ks_die \"the data disk $dev has no filesystem: format: xfs in its mounts entry makes one\"",
            "            [[ -z $(wipefs -n \"$real\" 2>/dev/null) ]] || ks_die \"the data disk $dev is not empty and has no filesystem kiwi-server knows: look at it first\"",
-           "            ks_say \"making a filesystem ($fmt) on the empty disk $dev\"",
-           "            \"mkfs.$fmt\" -q \"$real\"",
+           "            if [[ $enc == 1 ]]; then",
+           "                ks_say \"encrypting the empty disk $dev (LUKS), a filesystem ($fmt) in it\"",
+           "                cryptsetup luksFormat --batch-mode --type luks2 --key-file \"$kf\" \"$real\" || ks_die \"the data disk $dev could not be encrypted\"",
+           "                fs=crypto_LUKS",
+           "            else",
+           "                ks_say \"making a filesystem ($fmt) on the empty disk $dev\"",
+           "                ks_mkfs \"$fmt\" \"$real\"",
+           "            fi",
            "        fi",
-           "        echo \"$dev $at auto nofail,x-systemd.device-timeout=30s 0 2\" >> /etc/fstab",
+           "        src=$dev",
+           "        if [[ $fs == crypto_LUKS ]]; then      # opened at every start by its key on the system disk",
+           "            echo \"$name UUID=$(blkid -o value -s UUID \"$real\") $kf luks,nofail\" >> /etc/crypttab",
+           "            [[ -e /dev/mapper/$name ]] || cryptsetup open --key-file \"$kf\" \"$real\" \"$name\" \\",
+           "                || ks_die \"the data disk $dev does not open with its key: was it encrypted by another network?\"",
+           "            if [[ -z $(blkid -o value -s TYPE \"/dev/mapper/$name\" 2>/dev/null) ]]; then",
+           "                [[ -n $fmt ]] || ks_die \"the encrypted data disk $dev has no filesystem in it: format: xfs makes one\"",
+           "                ks_mkfs \"$fmt\" \"/dev/mapper/$name\"",
+           "            fi",
+           "            src=/dev/mapper/$name",
+           "        else",
+           "            rm -f \"$kf\"",
+           "        fi",
+           "        echo \"$src $at auto nofail,x-systemd.device-timeout=30s 0 2\" >> /etc/fstab",
            "        install -d \"$at\"",
            "        systemctl daemon-reload",
            "        findmnt -rn \"$at\" >/dev/null || mount \"$at\" || ks_die \"the data disk $dev does not mount at $at\"",
-           "        ks_say \"data disk $dev is at $at\"",
+           "        ks_say \"data disk $dev is at $at$([[ $fs == crypto_LUKS ]] && echo ', encrypted')\"",
            "    done <<'KS_MOUNTS'"]
-    out += ["%s %s %s" % m for m in mounts]
+    out += ["%s %s %s %d %s" % (dev, at, fmt or "-", 1 if enc else 0, keys.get(at) or "-") for dev, at, fmt, enc in mounts]
     out += ["KS_MOUNTS",
-            "    echo '# kiwi-server mounts: end' >> /etc/fstab",
+            "    echo '# kiwi-server mounts: end' | tee -a /etc/fstab >> /etc/crypttab",
             "}", ""]
     return out
 
@@ -226,7 +261,9 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
               body.rstrip("\n"), ""]
     lines += watchdog_lines()
     if mounts:
-        lines += mount_lines(mounts)
+        # each data disk's key, from the seed: the same after an install anew
+        keys = {at: util.b64(host.secrets.derive_secret(host.hostname, "disk", at)) for _d, at, _f, _e in mounts}
+        lines += mount_lines(mounts, keys)
     lines += ["ks_role_apply() {", "    ks_watchdog"] + (["    ks_mounts"] if mounts else []) + [
         "    ks_role_apply_role", "}", ""]
     lines += [

@@ -565,7 +565,7 @@ ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or diffe
 KS_PENDING=${KS_PENDING:-/etc/kiwi-server/restart-pending}
 ks_stack_note_pending() {
     local svc all=()
-    mapfile -t all < <( { ks_stack_changed_services; cat "$KS_PENDING" 2>/dev/null; } | sort -u | sed '/^$/d')
+    mapfile -t all < <(ks_stack_restart_due)
     install -d -m 0755 "$(dirname "$KS_PENDING")"
     if (( ${#all[@]} )); then
         printf '%s\n' "${all[@]}" > "$KS_PENDING.tmp" && ks_replace "$KS_PENDING.tmp" "$KS_PENDING"
@@ -573,7 +573,11 @@ ks_stack_note_pending() {
     return 0
 }
 ks_stack_restart_due() {        # what changed now, and what an earlier run did not get to
-    { ks_stack_changed_services; cat "$KS_PENDING" 2>/dev/null; } | sort -u | sed '/^$/d'
+    # (no file is the usual case: under the role's ERR trap and pipefail nothing here may fail)
+    local due
+    due=$(ks_stack_changed_services; if [[ -f $KS_PENDING ]]; then cat -- "$KS_PENDING"; fi)
+    [[ -n $due ]] && printf '%s\n' "$due" | sort -u | grep -v '^$'
+    return 0
 }
 
 ks_stack_changed_services() {   # the containers whose quadlet, or a file they mount or read, changed

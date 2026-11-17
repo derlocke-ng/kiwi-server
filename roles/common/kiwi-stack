@@ -111,7 +111,10 @@ misrouted() {
     [[ $STACK_RUNTIME == podman ]] || return 0
     local s ip dev
     for s in $STACK_SERVICES; do
-        ip=$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$s" 2>/dev/null | awk '{print $1}')
+        # a container asleep (a game server nobody plays on) does not exist until it wakes: its
+        # failed inspect ended verify under set -e, after it had said every container runs (0.9.12)
+        [[ -e ${KS_SLEEPING:-/run/kiwi-stack/sleeping}/$s ]] && continue
+        ip=$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$s" 2>/dev/null | awk '{print $1}') || continue
         [[ -n $ip ]] || continue
         dev=$(ip -o route get "$ip" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p')
         if [[ -n $dev && $dev != podman* && $dev != knet* && $dev != br-* && $dev != lo ]]; then

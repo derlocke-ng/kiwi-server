@@ -37,8 +37,21 @@ ABOUT = {"cloud": "Your files, calendars and contacts, on every device", "vault"
          "dl": "Downloads", "jd": "Downloads", "status": "Whether everything works"}
 
 
+# what the modules say of their own pages (module.yaml `pages:`): a module from a source is named like
+# a built-in one. Filled from the fleet's modules (register), asked first.
+PAGES = {}
+
+
+def register(pages):
+    """{first part of a site's name: {label, about}} of the fleet's modules."""
+    for key, page in (pages or {}).items():
+        if isinstance(page, dict):
+            PAGES[str(key)] = {"label": str(page.get("label") or ""), "about": str(page.get("about") or "")}
+
+
 def about(site):
-    return ABOUT.get(site.split(".", 1)[0], "")
+    first = site.split(".", 1)[0]
+    return (PAGES.get(first) or {}).get("about") or ABOUT.get(first, "")
 
 
 KEEP_DAYS = 30
@@ -48,7 +61,7 @@ KEEP_INCIDENTS = 200
 
 def label(site):
     first = site.split(".", 1)[0]
-    return SERVICES.get(first, first.capitalize())
+    return (PAGES.get(first) or {}).get("label") or SERVICES.get(first, first.capitalize())
 
 
 def probe_one(site, timeout=6, at=None):

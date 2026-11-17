@@ -1833,14 +1833,19 @@ class Control:
                                text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
             try:
                 data = json.loads(r.stdout)
+                from . import health as healthmod
+                healthmod.register(data.get("pages"))      # the modules' own names of their pages
             except ValueError:
                 return None
             self._put(path, r.stdout)
             return data
         try:
-            return json.loads(util.read_text(path))
+            data = json.loads(util.read_text(path))
         except (OSError, ValueError):
             return None
+        from . import health as healthmod
+        healthmod.register(data.get("pages"))
+        return data
 
     # ---- logins: what a person types to get into a service ------------------------------
     def logins(self, host):

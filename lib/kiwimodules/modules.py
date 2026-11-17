@@ -128,10 +128,33 @@ class Module:
         self.exit = bool(deps.get("exit"))
         self.optional = [str(d) for d in (deps.get("optional") or [])]
         self.templates = {str(k): str(v) for k, v in (meta.get("templates") or {}).items()}
+        # its sites as people see them on the start and status pages: by the first part of the
+        # name (grow for grow.<hostname>), what it is called and what it is for
+        self.pages = {}
+        for key, page in (meta.get("pages") or {}).items():
+            if not isinstance(page, dict) or not re.match(r"^[a-z0-9][a-z0-9-]{0,40}$", str(key)):
+                raise KiwiError("modules/%s/module.yaml pages: %r is no site name (the first part of it)" % (self.name, key))
+            self.pages[str(key)] = {"label": str(page.get("label") or ""), "about": str(page.get("about") or "")}
         self.outputs = meta.get("outputs") or {}
         env = meta.get("env") or {}
         self.env_optional = {str(k): v for k, v in (env.get("optional") or {}).items()}
         self.settings = load_settings("modules/%s" % self.name, meta.get("settings"))
+        # its sign-in with the network's accounts (OpenID Connect), when it has one: where it is,
+        # where the accounts send people back to, and the settings it takes the client in
+        acc = meta.get("accounts")
+        self.accounts = None
+        if acc is not None:
+            if not isinstance(acc, dict) or not acc.get("site") or not acc.get("callbacks"):
+                raise KiwiError("modules/%s/module.yaml accounts: site (its address, a template) and callbacks (paths) are needed"
+                                % self.name)
+            keys = {st.key for st in self.settings}
+            missing = [k for k in ("accounts_client", "accounts_issuer", "accounts_secret") if k not in keys]
+            if missing:
+                raise KiwiError("modules/%s/module.yaml accounts: the settings %s take the client: add them (as git's module has them)"
+                                % (self.name, ", ".join(missing)))
+            self.accounts = {"site": str(acc["site"]), "callbacks": [str(c) for c in acc["callbacks"]],
+                             "pkce": bool(acc.get("pkce")), "group": str(acc.get("group") or ""),
+                             "label": str(acc.get("label") or self.title)}
         net = meta.get("network") or {}
         self.needs_vpn_dnat = bool(net.get("needs_vpn_dnat", False))
         self.open_ports = [str(p) for p in (net.get("open_ports") or [])]
@@ -182,7 +205,7 @@ class Module:
         return {"name": self.name, "title": self.title, "description": self.description,
                 "category": self.category, "node_types": self.node_types, "requires": self.requires,
                 "optional": self.optional, "settings": [s.as_dict() for s in self.settings],
-                "logins": [x.as_dict() for x in self.logins], "source": self.source}
+                "logins": [x.as_dict() for x in self.logins], "source": self.source, "pages": self.pages, "accounts": self.accounts}
 
 
 class ModuleSet:

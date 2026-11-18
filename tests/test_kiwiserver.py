@@ -9588,6 +9588,22 @@ class TestWeb(WebBase):
             self.assertNotIn("ran sources", body)
         self.assertEqual(self.ask("/modules/add", {"url": "https://example.org/x"})[0], 303)    # no form of this session: no
 
+    def test_the_control_part_writes_only_public_data_for_the_public_pages(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        os.makedirs(self.c.dir, exist_ok=True)
+        util.write_text(self.c.health_file, json.dumps({"checked": 1, "machines": {"on": 2, "of": 2}, "services": [
+            {"site": "chat.example.org", "label": "Chat", "host": "papaya", "admin": False, "ok": True, "public": True, "since": 1},
+            {"site": "control.papaya.home", "label": "This page", "host": "papaya", "admin": True, "ok": True, "since": 1}]}))
+        self.assertFalse(self.c.write_public())                                   # no folder named: nothing written
+        with mock.patch.dict(os.environ, {"KIWI_PUBLIC_DIR": folder}):
+            self.assertTrue(self.c.write_public())
+        got = json.loads(util.read_text(os.path.join(folder, "health.json")))
+        self.assertEqual([x["site"] for x in got["services"]], ["chat.example.org"])
+        self.assertNotIn("machines", got)
+        self.assertEqual(sorted(os.listdir(folder)), sorted(f for f in ("health.json", "info.json", "ca.pem")
+                                                            if os.path.isfile(os.path.join(folder, f))))
+
     def test_the_status_page_needs_no_login_and_shows_no_admin_page(self):
         now = time.time()
         os.makedirs(self.c.dir, exist_ok=True)
@@ -11192,6 +11208,62 @@ class TestWebsite(WebBase):
             self.assertEqual(self.at(path)[0], 404, path)                          # nothing of the control page here
         self.assertEqual(self.at("/", method="POST")[0], 404)
         self.assertEqual(self.at("/login", "control.papaya.home")[0], 200)        # the control page's own name: as before
+
+
+class TestPublicPages(unittest.TestCase):
+    """The public pages in their own container: from a folder the control part fills, with no
+    fleet and no key; the public routes answer, nothing else does."""
+
+    def setUp(self):
+        import threading
+        import uvicorn
+        from kiwiserver import health as healthmod, publicpages, web
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        now = time.time()
+        state = {"checked": now - 60, "machines": {"on": 3, "of": 3}, "window": "Sun 03:30",
+                 "services": [{"site": "chat.example.org", "label": "Chat", "host": "papaya", "admin": False, "ok": True,
+                               "public": True, "since": now - 500},
+                              {"site": "vault.papaya.home", "label": "Passwords", "host": "papaya", "admin": False, "ok": True,
+                               "since": now - 500}],
+                 "incidents": [{"key": "service:vault.papaya.home", "text": "Passwords does not answer (vault.papaya.home)",
+                                "from": now - 900, "to": now - 600}],
+                 "days": {"chat.example.org": {}, "vault.papaya.home": {}}, "onion": {"vault.papaya.home": "x.onion"}}
+        cut = healthmod.for_strangers(state)
+        self.assertEqual([s["site"] for s in cut["services"]], ["chat.example.org"])        # nothing of the VPN's own
+        self.assertEqual((cut["incidents"], cut["onion"], list(cut["days"])), ([], {}, ["chat.example.org"]))
+        self.assertNotIn("machines", cut)
+        write(os.path.join(self.folder, "health.json"), json.dumps(cut))
+        write(os.path.join(self.folder, "info.json"), json.dumps({"domain": "home"}))
+        port = remote.free_port()
+        self.server = uvicorn.Server(uvicorn.Config(web.make_app(publicpages.PublicControl(self.folder)), host="127.0.0.1",
+                                                    port=port, log_level="error"))
+        threading.Thread(target=self.server.run, daemon=True).start()
+        self.addCleanup(setattr, self.server, "should_exit", True)
+        self.url = "http://127.0.0.1:%d" % port
+        for _ in range(100):
+            if self.server.started:
+                break
+            time.sleep(0.05)
+
+    def at(self, path, method="GET"):
+        req = urllib.request.Request(self.url + path, headers={"Host": "status.example.org"}, method=method)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read().decode()
+
+    def test_only_the_public_pages_answer(self):
+        code, body = self.at("/start/public")
+        self.assertEqual(code, 200)
+        self.assertIn("chat.example.org", body)
+        self.assertNotIn("vault.papaya.home", body)
+        self.assertEqual(self.at("/api/registry/public")[0], 200)
+        for path in ("/", "/login", "/machines", "/api/fleet", "/api/status", "/setup", "/control", "/devices"):
+            self.assertEqual(self.at(path)[0], 404, path)
+        self.assertEqual(self.at("/start/public", "POST")[0], 404)
 
 
 class TestFirstRunPage(StoreBase):

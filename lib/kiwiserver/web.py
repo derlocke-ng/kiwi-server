@@ -3337,6 +3337,21 @@ def make_app(control: Control):
             return JSONResponse({"error": "the fleet here is another than the one you built on"}, status_code=409)
         return {"revision": new}
 
+    if getattr(control, "public_only", False):
+        # the public pages' own container (publicpages.py): the website, the status page for the
+        # Internet and the public registry, and nothing else, whatever name is asked
+        PUBLIC_PATHS = ("/start/public", "/status/public", "/api/registry/public", "/healthz")
+
+        @app.middleware("http")
+        async def public_only(request: Request, call_next):
+            host = (request.headers.get("host") or "").split(":")[0].lower()
+            path = request.url.path
+            if request.method not in ("GET", "HEAD") or "/.." in path or "//" in path:
+                return Response("Not here.", status_code=404, media_type="text/plain")
+            if (SITE_HOST and host in sitemod.hosts(SITE_HOST)) or (SITE_CDN and host == SITE_CDN) or path in PUBLIC_PATHS:
+                return await call_next(request)
+            return Response("Not here.", status_code=404, media_type="text/plain")
+
     return app
 
 
@@ -3372,6 +3387,15 @@ def redirect_app(https_port):
         target = "https://%s%s/%s" % (name, ":%d" % https_port if port else "", path)
         return Redirect(target, status_code=308)
     return app
+
+
+def serve_public(folder, listen="0.0.0.0:8741"):
+    """The public pages from FOLDER (publicpages.py): no loop, no fleet, nothing to look after."""
+    import uvicorn
+    from . import publicpages
+    host, port = listen.rsplit(":", 1)
+    uvicorn.run(make_app(publicpages.PublicControl(folder)), host=host.strip("[]"), port=int(port), log_level="warning",
+                proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
 
 
 def serve(control: Control, listen="127.0.0.1:8740", https=None, tls_dir=None):

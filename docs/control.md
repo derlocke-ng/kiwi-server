@@ -527,6 +527,9 @@ control:
   website_commit: <40 hexadecimal digits>
 ```
 
+The website, like the status page for the Internet, runs in a container of its own beside the
+control part, with no fleet and no key in it (`<prefix>-control-public`).
+
 Point `example.org` and `www.example.org` at the master in DNS, set `reverse-proxy: public:
 true` on that machine, and apply the master and the machine. A change to the site is a commit, a
 new `website_commit` and an apply. The pages are Markdown in a small, safe subset: HTML in them

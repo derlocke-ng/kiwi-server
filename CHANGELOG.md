@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.211.0 — the public pages apart from the network
+
+- **The website, the status page for the Internet and the public registry run in a container of
+  their own** (kiwi-modules 0.93.0; the owner: "this whole thing is about security"). They ran in the
+  control part, which holds the fleet, the secret store and the keys to every machine; one fault in
+  a page strangers reach would have opened all of it. `kiwi-server serve-public` has no fleet and
+  no key, its root is read-only, and what it shows comes from a folder the control part writes
+  after each look (`health.for_strangers`: the services open to the Internet, their days and
+  incidents, the domain, the CA's certificate), mounted read-only. Every other route answers 404
+  there.
+
 ## 2.210.0 — the public names in the check
 
 - **`kiwi-server check` asks every public name too**, from this computer as a stranger reaches it,

@@ -1645,7 +1645,8 @@ class AccessDialog(Adw.Dialog):
                 r["machines"][m["name"]] = (whole, svc)
                 g.add(exp)
             extra = ["%s:%s" % (n, x) for n, o in w["open"]["machines"].items() for x in o["ports"]] + w["open"]["other"]
-            r["extra"] = Adw.EntryRow(title="Single ports, like lychee:22", text=" ".join(extra))
+            r["extra"] = Adw.EntryRow(title="Single ports, like lychee:22" + (", or a linked network by its name" if group else ""),
+                                      text=" ".join(extra))
             g.add(r["extra"])
             if group:
                 for key, title in (("peers", "Other devices on the VPN"), ("internet", "The Internet through the VPN"),

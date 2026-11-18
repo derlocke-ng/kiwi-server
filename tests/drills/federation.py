@@ -12,6 +12,7 @@ a node that is not shared does not answer (A's master drops it).
 B's master must be listed in drills.yaml next to B's fleet file. Needs podman with /dev/net/tun.
 """
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -47,7 +48,10 @@ allow = os.path.join(os.path.dirname(os.path.abspath(args.b)), "drills.yaml")
 allowed = (fleet_data(allow) or {}).get("allowed", []) if os.path.isfile(allow) else []
 if master_b not in allowed:
     sys.exit("drill: %s is not in %s: the drill enrolls a client there" % (master_b, allow))
-dns_b = ((b.get("defaults") or {}).get("master") or {}).get("vpn-server", {}).get("server_ip") or "10.10.0.1"
+# B's DNS: its master's address in its mesh (the server_ip setting, else the mesh's first address)
+master_b_cfg = (b.get("defaults") or {}).get("master") or {}
+dns_b = (master_b_cfg.get("vpn-server") or {}).get("server_ip") or str(next(ipaddress.ip_network(
+    master_b_cfg.get("mesh_subnet") or "10.8.0.0/16", strict=False).hosts()))
 
 device = os.path.join(os.path.dirname(os.path.abspath(args.b)), "secrets", "devices", "drill-federation.conf")
 cmd = ["enroll", args.b, "drill-federation"] + (["--ssh", args.ssh] if args.ssh else [])
@@ -56,6 +60,17 @@ if os.path.isfile(device):
 rc, out = kiwi(*cmd, timeout=300)
 if rc != 0:
     sys.exit("drill: enroll failed: %s" % " ".join(out[-2:]))
+# where the client stands in B: its group decides whether it may reach what A opens (a group
+# reaches a linked network with `all`, or when its reach names it: kiwi-server access B <group> <A>)
+with open(device) as fh:
+    m = re.search(r"^\s*Address\s*=\s*([0-9.]+)", fh.read(), re.M)
+client_ip = m.group(1) if m else "?"
+groups_b = ((b.get("defaults") or {}).get("master") or {}).get("vpn-server", {}).get("groups") or {}
+for h in (b.get("hosts") or {}).values():
+    groups_b = groups_b or (((h or {}).get("master") or {}).get("vpn-server") or {}).get("groups") or {}
+in_group = next((n for n, g in groups_b.items() if client_ip != "?" and
+                 ipaddress.ip_address(client_ip) in ipaddress.ip_network(str((g or {}).get("subnet") or "0.0.0.0/32"), strict=False)), "")
+say("client drill-federation at %s%s" % (client_ip, " (group %s: reach %s)" % (in_group, ", ".join(map(str, groups_b[in_group].get("reach", ["all"])))) if in_group else " (no group: everything)"))
 
 name = "kiwi-drill-federation"
 subprocess.run(["podman", "rm", "-f", name], capture_output=True)

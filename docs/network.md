@@ -260,13 +260,16 @@ kiwi-server access ~/kiwi/fleet.yaml guests cloud.papaya paperless.papaya
 
 What a group or a linked network can be given:
 
-- `all`: everything on the VPN (a group only).
+- `all`: everything on the VPN, and what the linked networks open to this one
+  (a group only).
 - `nodes`: every node.
 - `apps`: every app: the web pages of every node, and nothing else of them. No
   SSH, no other port, no admin pages (a group only).
 - `papaya`: one machine, all of it.
 - `cloud.papaya`: one service, its web address only.
 - `papaya:22`: one port of a machine.
+- `kiwi2`: a linked network by its name: what it opens to this one (a group
+  only). A group without `all` reaches nothing of a linked network otherwise.
 - `nothing`.
 
 `--add` and `--remove` change the list by single entries. `--new` makes a group

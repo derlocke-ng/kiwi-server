@@ -933,8 +933,9 @@ name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.servic
 {% for s in m.admin %}<label style="display:inline;white-space:nowrap;margin-left:8px"><input type="checkbox"
 name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.services %} checked{% endif %}> {{ s }}</label>{% endfor %}{% endif %}{% endif %}
 </div>{% endfor %}
-<label for="p-{{ w.name }}">Single ports{{ " and addresses" if w.kind == "group" else "" }}</label>
-<input id="p-{{ w.name }}" name="p.{{ w.name }}" placeholder="lychee:22" value="{{ w.extra | join(' ') }}">
+<label for="p-{{ w.name }}">Single ports{{ ", addresses and linked networks" if w.kind == "group" else "" }}</label>
+<input id="p-{{ w.name }}" name="p.{{ w.name }}" placeholder="{{ "lychee:22 kiwi2" if w.kind == "group" else "lychee:22" }}" value="{{ w.extra | join(' ') }}">
+{% if w.kind == "group" %}<p class="muted small" style="margin:4px 0 0">A linked network by its name (kiwi2): what it opens to this network. Without it, or <em>Everything</em>, the group reaches nothing of it.</p>{% endif %}
 {% if w.kind == "group" %}<div style="margin-top:8px">
 <label style="display:inline"><input type="checkbox" name="peers.{{ w.name }}" style="width:auto"{% if w.peers %} checked{% endif %}> Other devices on the VPN</label>
 <label style="display:inline;margin-left:12px"><input type="checkbox" name="internet.{{ w.name }}" style="width:auto"{% if w.internet %} checked{% endif %}> The Internet through the VPN</label>

@@ -7566,6 +7566,39 @@ peers=4 3
         self.assertIn("latest-handshakes", facts.SCRIPT)
 
 
+class TestAgent(Base):
+    """The kiwi-server that stays beside the app: it answers what only reads, and keeps `list`'s
+    answer until the fleet's folder changes."""
+
+    def test_it_reads_keeps_list_until_something_changes_and_refuses_the_rest(self):
+        from kiwiserver import agent
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {"role": "bare"}}})
+        calls = []
+
+        def main(argv):
+            calls.append(list(argv))
+            print("answer %d" % len(calls))
+            return 0
+        a = agent.Agent()
+        with mock.patch.object(a.cli, "main", main):
+            first = a.answer({"argv": ["list", f.path, "--porcelain"]})
+            again = a.answer({"argv": ["list", f.path, "--porcelain"]})
+            self.assertEqual((first, len(calls)), (again, 1))                   # kept: no second run
+            time.sleep(0.02)
+            write(f.path, util.read_text(f.path) + "# changed\n")
+            self.assertEqual(a.answer({"argv": ["list", f.path, "--porcelain"]})["out"], "answer 2\n")
+            a.answer({"argv": ["logins", f.path, "a"]})
+            a.answer({"argv": ["logins", f.path, "a"]})
+            self.assertEqual(len(calls), 4)                                       # only list is kept
+            for argv in (["apply", f.path, "a"], ["secrets", "init", f.path], ["sources", f.path, "add", "x"], []):
+                self.assertEqual(a.answer({"argv": argv})["rc"], 2, argv)
+            self.assertEqual(len(calls), 4)                                       # nothing that changes ran
+            a.answer({"forget": True})
+            a.answer({"argv": ["list", f.path, "--porcelain"]})
+            self.assertEqual(len(calls), 5)
+        self.assertTrue(agent.reads(["secrets", f.path, "status"]) and agent.reads(["sources", f.path, "list"]))
+
+
 class TestApplyWaves(unittest.TestCase):
     def test_masters_then_names_and_rings_then_the_rest_at_once_the_control_node_last(self):
         H = lambda name, role, mods=(), standby="": types.SimpleNamespace(name=name, role=role, modules=list(mods), standby_of=standby)  # noqa: E731
@@ -9505,6 +9538,8 @@ class TestWeb(WebBase):
         self.assertEqual((reg["kind"], reg["network"], reg["machine"]), ("kiwi-registry", "Kiwi", None))
         labels = {x["label"]: x for x in reg["services"]}
         self.assertEqual(labels["Files (Nextcloud)"]["url"], "https://cloud.papaya.home/")
+        self.assertEqual(labels["Files (Nextcloud)"]["android"], "com.nextcloud.client")
+        self.assertIn("ca_mark", reg)
         self.assertFalse(labels["Files (Nextcloud)"]["ok"])
         self.assertNotIn("This page", labels)                                   # no admin page
         self.assertTrue(reg["ca"].endswith("/api/ca"))

@@ -4284,6 +4284,12 @@ def cmd_doctor(args):
         sys.exit(1)
 
 
+def cmd_agent(args):
+    """A kiwi-server that stays running beside the app and answers its reading commands (agent.py)."""
+    from . import agent
+    agent.serve(args.parent)
+
+
 def cmd_version(_args):
     print("kiwi-server %s" % VERSION)
 
@@ -4650,6 +4656,8 @@ def build_parser():
     sub("toolchain", cmd_toolchain).add_argument("action", nargs="?", choices=("status", "build"))
     sub("doctor", cmd_doctor)
     sub("version", cmd_version)
+    s = sub("agent", cmd_agent)
+    s.add_argument("--parent", type=int, help="end when this process (the app) ends")
     sub("help", lambda a: print(USAGE))
     return p
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.196.0 — the app asks one kiwi-server that stays
+
+- **`kiwi-server agent`**: a kiwi-server that the app starts and that ends with it, on a socket
+  only its user opens. It answers what only reads (`list`, `logins`, `secrets status`,
+  `sources list`, `names`, `validate`) without a new process each time, and keeps `list`'s
+  answer until the fleet's folder changes: four seconds became none after the first time, a
+  machine's logins half of what they took. Everything that changes something still runs as a
+  command of its own.
+- **The registry** names the network's mark (`ca_mark`: the CA's first eight SHA-256 digits, as
+  an invite ends with) and each service's Android app where there is one (`android`); the status
+  page on the VPN shows the mark, to compare with what kiwi-app shows for the network.
+
 ## 2.195.0 — several machines at once
 
 - **`apply` of several machines runs them together** (the owner: "the last apply took server

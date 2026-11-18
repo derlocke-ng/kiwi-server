@@ -5,6 +5,7 @@ set with `kiwi-server serve FLEET --set-password`; it opens the encrypted store 
 """
 import asyncio
 import base64
+import hashlib
 import hmac
 import json
 import math
@@ -1149,7 +1150,8 @@ or by asking. No email address is needed. <a href="{{ h.join }}">Get one</a>.</p
 who run this network to add it{% if h.onion %}, or use the Tor addresses with Tor Browser{% endif %}.</p>{% endif %}
 <p class="muted small" style="margin-top:28px">{% if h.strangers %}This page shows the services that are open to the Internet,
 asked the way you reach them, and nothing else.{% else %}This page needs no login. It shows which services work, and no admin pages or
-settings. The people who run this network see more on their control page.{% endif %}{% if contact %} Contact: {{ contact }}.{% endif %}</p>
+settings. The people who run this network see more on their control page.{% if mark %} The network's mark: <code>{{ mark }}</code>,
+the same as an app shows for it.{% endif %}{% endif %}{% if contact %} Contact: {{ contact }}.{% endif %}</p>
 {% endblock %}""",
 
     "accounts.html": """{% extends "base.html" %}{% block main %}
@@ -1610,6 +1612,20 @@ ADMIN_PATH = {"cloud": "/settings/admin", "vault": "/admin", "immich": "/admin",
               "portainer": "/", "wg": "/", "opencloud": "/admin-settings"}
 
 
+# the Android app that belongs to a service, where there is one (free software, on F-Droid where it
+# is there): an app on the phone opens that instead of the web page. By module; later each module
+# can name its own
+ANDROID_APPS = {"cloud": "com.nextcloud.client", "vault": "com.x8bit.bitwarden", "immich": "app.alextran.immich",
+                "xmpp": "eu.siacs.conversations", "paperless": "de.astubenbord.paperless_mobile",
+                "authenticator": "", "git": "", "paste": ""}
+
+
+def ca_mark(pem):
+    """The CA's mark: the first eight hex digits of its certificate's SHA-256, as an invite link ends
+    with. A person compares it with what an app shows before trusting that app's network."""
+    return hashlib.sha256(pem.encode()).hexdigest()[:8] if pem else ""
+
+
 def tiles(machines):
     out = []
     for m in machines:
@@ -1769,6 +1785,7 @@ def make_app(control: Control):
             one = {"name": machine, "state": (said or {}).get("state") or ("down" if said and not said.get("ok") else "unknown")}
             found = [g for g in found if g["machine"] == machine]
         return page("status.html", h=h, now=now, tor=tor_checks(), games=found, play_host=PLAY_HOST, one=one,
+                    mark=ca_mark(control.ca_pem() or ""),
                     stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
     def registry(request, strangers=False, machine=""):
@@ -1793,8 +1810,10 @@ def make_app(control: Control):
                 "join": h.get("join") if (not strangers or h.get("join_public")) else "",
                 "play": ("https://%s/" % PLAY_HOST) if PLAY_HOST and not strangers else "",
                 "ca": "" if strangers else base + "api/ca",
+                "ca_mark": "" if strangers else ca_mark(control.ca_pem() or ""),
                 "services": [{"label": x["label"], "about": x.get("about") or "", "url": "https://%s/" % x["site"], "ok": bool(x["ok"]),
-                              "uptime": x.get("uptime"), "onion": x.get("onion") or ""}
+                              "uptime": x.get("uptime"), "onion": x.get("onion") or "",
+                              "android": ANDROID_APPS.get(SITE_MODULE.get(x["site"].split(".", 1)[0], ""), "")}
                              for x in h["services"] if not x["site"].startswith("status.")],
                 "games": [{"name": g["name"], "title": g["title"], "address": g["address"], "state": g["state"]} for g in found]}
 

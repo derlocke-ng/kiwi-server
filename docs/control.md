@@ -282,10 +282,10 @@ gives, without a login, what the status page shows, as data for an app:
 |---|---|
 | `kind`, `version` | `kiwi-registry`, 1 |
 | `network`, `domain` | the network's name, its private domain (`home`) |
-| `services` | each with `label`, `about`, `url`, `ok`, `uptime`, `onion` |
+| `services` | each with `label`, `about`, `url`, `ok`, `uptime`, `onion`, and `android`: the package of its Android app, where there is one |
 | `games` | each game server with `name`, `title`, `address`, `state` |
 | `join`, `play`, `status` | the sign-up page, the game page, the status page |
-| `ca` | the network's CA (`/api/ca`), from which the `.home` names' certificates come |
+| `ca`, `ca_mark` | the network's CA (`/api/ca`), from which the `.home` names' certificates come, and its mark: the first eight hex digits of its SHA-256, as an invite link ends with; the status page shows it too |
 | `machine` | with `?machine=NAME`: that machine and whether it answers |
 
 Every machine with a proxy leads there from `https://<its name>/.well-known/kiwi`

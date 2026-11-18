@@ -52,10 +52,12 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    actions (jobs), devices, accounts, settings, who may reach what, the linked
    networks and module sources, each through the same function as the page. Left:
    the app (kiwi-app) has to use the routes.
-2. **An encrypted machine at another site.** The offsite drill passed with a plain
-   node (kumquat, 18 November); next, one whose disk opens through the master's
-   ring. Since 2.212.0 the drill leaves `run.sh` beside its VM, which starts it
-   again after the computer it runs on restarts.
+2. **An encrypted machine at another site:** done on 18 November. The offsite
+   drill with `ENCRYPT=away` (nashi): its first boot opened with the one-time key
+   through the initramfs's SSH, its disk bound to the ring `away` on the master,
+   and after a restart it opened by itself and came back on the mesh. Since
+   2.215.0 such a machine is reached at its mesh address before the home's DNS
+   knows its name.
 3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option),
    rings on more than one machine, ring rotation, the leash, a third share for
    papaya, and the control node's own unlock, which hangs on one ring today.

@@ -62,7 +62,9 @@ the fleet's folder changes. Everything that changes something runs as a command 
 The gear at the top of the list, or *Preferences* in the menu (Ctrl+,):
 
 - **General**: the app's icon, the kiwi in any of kiwi-icons' colourways and
-  styles (as in Kiwi Apps); light or dark; the messages kept under the bell.
+  styles (as in Kiwi Apps); light or dark; the messages kept under the bell;
+  *Applying*: when this copy belongs to a control node, the machines are applied
+  there and the log shows here (on by default).
 - **Sharing**: another computer, a synced folder, a home server that looks after
   the network; *Sync now* and *Compare with the other copy*.
 - **Security**: *Locking*, and what to do when a computer was lost or stolen.

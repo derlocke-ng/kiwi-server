@@ -2752,6 +2752,14 @@ def cmd_control(args):
         print(json.dumps({"ring": ring, "server": server.name, "url": where,
                           "adv": json.loads(unlock.advertisement(server, ring))}))
         return
+    if args.action == "run":            # an action as a job on the control node: this copy goes there first
+        if not args.link:
+            from .control import ACTIONS
+            raise KiwiError("which action? kiwi-server control run <fleet> apply <machine…> (as the page's buttons: %s)"
+                            % ", ".join(sorted(ACTIONS)))
+        if not controlsync.run_api(fleet_dir, fleet_name, args.link, args.more or [], key):
+            sys.exit(1)
+        return
     if args.action == "activity":       # the control page's Activity: tasks, and who did what
         out = controlsync.activity_api(fleet_dir, key)
         if args.porcelain:
@@ -4511,9 +4519,11 @@ def build_parser():
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
-    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity"])
+    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run"])
     s.add_argument("fleet")
-    s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name")
+    s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
+                                           "run: the action (apply, update, status, plan, check, backup …)")
+    s.add_argument("more", nargs="*", help="run: the machines")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
     s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")

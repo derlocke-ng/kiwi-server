@@ -9681,6 +9681,36 @@ class TestWeb(WebBase):
         self.assertIn("own key", body)                                            # said on the page, not a crash
         self.assertEqual(self.ask("/api/fleet")[0], 401)                          # the sync API wants a controller
 
+    def test_a_controller_starts_a_job_and_reads_its_log(self):
+        """The app on a computer sends its applies to the control node: a job, its log by the token."""
+        import urllib.request
+        import urllib.error
+
+        def ask(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        self.assertEqual(ask("POST", "/api/jobs", body={"action": "apply", "hosts": ["papaya"]})[0], 401)
+        started = []
+        with mock.patch.object(self.c, "controller", lambda t: "laptop" if t == "tok" else None), \
+                mock.patch.object(self.c, "start", lambda action, hosts=(), **kw: started.append((action, list(hosts), kw["user"])) or "j1"), \
+                mock.patch.object(self.c, "job", lambda jid: {"id": jid, "state": "ok"} if jid == "j1" else None), \
+                mock.patch.object(self.c, "log", lambda jid, offset=0: ("applied\n", offset + 8)):
+            self.assertEqual(ask("POST", "/api/jobs", "tok", {"action": "apply", "hosts": ["papaya"]}), (200, {"job": "j1"}))
+            self.assertEqual(started, [("apply", ["papaya"], "laptop")])               # in its name, in the History
+            self.assertEqual(ask("POST", "/api/jobs", "tok", {"action": "rm -rf", "hosts": []})[0], 400)
+            self.assertEqual(ask("POST", "/api/jobs", "tok", ["apply"])[0], 400)
+            code, out = ask("GET", "/api/jobs/j1/log?offset=0", "tok")
+            self.assertEqual((code, out["text"], out["state"]), (200, "applied\n", "ok"))
+            self.assertEqual(ask("GET", "/api/jobs/j1/log", "nope")[0], 401)
+
     def test_a_controller_reads_the_status_and_the_machines(self):
         """The Android app is a controller: it reads with its token what the page reads with its login."""
         import urllib.request

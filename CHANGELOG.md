@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.200.0 — one admin: the control node applies
+
+- **A computer that joined lets the control node apply the machines** (the owner: "two apps
+  working against each other"): the app's Apply buttons push this copy, start the job on the
+  control node and show its log as it comes; what the job changed comes back. In a terminal:
+  `kiwi-server control run FLEET apply MACHINE…`. Without a control node, for a first apply
+  over SSH, or with *Preferences*, *Applying* off, the computer applies itself as before.
+- **`POST /api/jobs`** for a computer's token: the page's actions as jobs; `/api/jobs/{job}/log`
+  takes the token too. kiwi-app can start applies the same way.
+
 ## 2.199.0 — the network as a family tree, with what the linked networks open
 
 - **How they are linked is a family tree** on the control page and in the app (the owner: "masters

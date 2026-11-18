@@ -61,6 +61,19 @@ for _ in $(seq 1 180); do [ -s qemu.pid ] && kill -0 "$(cat qemu.pid)" 2>/dev/nu
 ! { [ -s qemu.pid ] && kill -0 "$(cat qemu.pid)" 2>/dev/null; }; check $? "the install ended and switched it off"
 rm -f qemu.pid
 vm boot.log disk; check $? "it starts from its disk"
+# for later: after this computer restarts, ./run.sh in the VM's folder starts the machine again
+cat > run.sh <<RUN
+#!/bin/bash
+# $N, the offsite test node (tests/drills/offsite-vm.sh): start it again after this computer restarts.
+cd "\$(dirname "\$0")" || exit 1
+if [ -f qemu.pid ] && kill -0 "\$(cat qemu.pid)" 2>/dev/null; then echo "$N runs already"; exit 0; fi
+exec qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 2048 \\
+    -drive if=pflash,format=raw,readonly=on,file=$OVMF/OVMF_CODE.fd -drive if=pflash,format=raw,file=vars.fd \\
+    -drive if=none,id=disk,format=qcow2,file=disk.qcow2 -device virtio-blk-pci,drive=disk,bootindex=1 \\
+    -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${P_SSH:-2290}-:22 -display none -serial file:boot-run.log \\
+    -daemonize -pidfile qemu.pid
+RUN
+chmod +x run.sh
 
 # ---- its first apply comes from a computer at its site: home cannot reach it before it is on the VPN ----
 # (here QEMU's forwarded port stands for a laptop on that LAN; later the join token makes this unneeded)

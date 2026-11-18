@@ -100,7 +100,8 @@ def linked_networks(fleet):
     except KiwiError:
         return []
     return [{"name": n, "mesh": str(x.get("mesh") or ""), "exit": bool(x.get("exit")), "internet": bool(x.get("internet")),
-             "shared": len(x.get("share") or []), "reach": [str(e) for e in x.get("share") or []]}
+             "shared": len(x.get("share") or []), "reach": [str(e) for e in x.get("share") or []],
+             "domain": str(x.get("domain") or "")}
             for n, x in sorted(found.items())]
 
 
@@ -3385,6 +3386,13 @@ def cmd_enroll(args):
         dest = fleet.resolve_path("secrets/devices/%s.conf" % name)
     util.write_text(dest, text if text.endswith("\n") else text + "\n", 0o600)
     util.say("%s" % dest)
+    if args.split and not host:
+        # imported as it is, its DNS line takes every name of the computer; a split tunnel wants only the network's
+        domains = ["~" + d for d in [fleet.hosts[next(iter(fleet.hosts))].domain] +
+                   [p["domain"] for p in fedmod.partners(fleet.dir).values() if p.get("domain")] if d]
+        util.say("on a computer with NetworkManager, after importing it: nmcli connection modify %s ipv4.dns-search %s "
+                 "ipv4.never-default yes, so that only the network's names are asked through it (kiwi-server connect "
+                 "does that for this computer by itself)" % (name, ",".join(dict.fromkeys(domains))))
     try:                                 # the new peer is part of what a rebuilt master needs
         keep_identity(fleet, master, args.ssh)
     except KiwiError as e:
@@ -3458,7 +3466,9 @@ def cmd_connect(args):
     else:
         # the network's public names lead to their machines on the VPN as well (its DNS says so)
         records = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).dns_records()
-        con = connectmod.up(conf, domain, names=[n for _ip, n in records if not n.endswith("." + domain)])
+        # and the linked networks' domains: their names come through the master too (2.201.0)
+        linked = ["%s" % p["domain"] for p in fedmod.partners(fleet.dir).values() if p.get("domain") and p["domain"] != domain]
+        con = connectmod.up(conf, domain, names=[n for _ip, n in records if not n.endswith("." + domain)] + linked)
         util.say("connected: %s in this computer's network settings. It carries your network only, comes up by "
                  "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
         master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of), None)

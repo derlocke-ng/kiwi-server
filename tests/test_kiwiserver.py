@@ -9735,6 +9735,16 @@ class TestWeb(WebBase):
         self.assertIn('action="/devices/download"', body)
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone", "csrf": tok}), (200, conf))
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone"})[0], 303)   # no token: nothing
+        # a laptop at home: only the network through the tunnel, and what to do so that its own names still work
+        self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
+                       "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write("
+                       "'[Interface]\\n# ' + ' '.join(sys.argv[3:]) + '\\nAllowedIPs = 10.8.0.0/16\\n')"]
+        code, body = self.ask("/devices/add", {"name": "work-laptop", "split": "yes", "csrf": tok})
+        self.assertIn("work-laptop is ready", body)
+        self.assertIn("ipv4.dns-search ~", body)
+        laptop = os.path.join(self.c.fleet_dir, "secrets", "devices", "work-laptop.conf")
+        self.assertIn("--split", util.read_text(laptop))
+        os.remove(laptop)                                                         # the rest of this test counts phones
         if shutil.which("qrencode"):
             self.assertIn("<svg", body)
         self.assertIn("exists already", self.ask("/devices/add", {"name": "annas-phone", "csrf": tok})[1])
@@ -11170,9 +11180,12 @@ class TestWebsite(WebBase):
         super().setUp()
 
     def at(self, path, host="example.org", method="GET", headers=None):
+        class Stay(urllib.request.HTTPRedirectHandler):          # a redirect is the answer: never followed out
+            def redirect_request(self, *a, **kw):
+                return None
         req = urllib.request.Request(self.url + path, headers={"Host": host}, method=method)
         try:
-            with urllib.request.urlopen(req) as r:
+            with urllib.request.build_opener(Stay).open(req) as r:
                 if headers is not None:
                     headers.update({k.lower(): v for k, v in r.headers.items()})
                 return r.status, r.read()
@@ -11190,7 +11203,7 @@ class TestWebsite(WebBase):
         self.assertNotIn("<script>alert", body)                                   # the repository's HTML stays text
         self.assertIn("&lt;script&gt;", body)
         self.assertNotIn("../x", body)
-        self.assertEqual(self.at("/", "www.example.org")[0], 200)
+        self.assertEqual(self.at("/", "www.example.org")[0], 301)                 # www. leads to the bare name
         code, body = self.at("/terms")
         self.assertIn("<strong>nice</strong>", body.decode())
         self.assertIn('<img src="https://cdn.example.org/assets/logo.png?v=abc" alt="Our logo" loading="lazy">', body.decode())
@@ -11264,6 +11277,38 @@ class TestPublicPages(unittest.TestCase):
         for path in ("/", "/login", "/machines", "/api/fleet", "/api/status", "/setup", "/control", "/devices"):
             self.assertEqual(self.at(path)[0], 404, path)
         self.assertEqual(self.at("/start/public", "POST")[0], 404)
+
+
+class TestPublicWebsite(TestPublicPages):
+    """The website from the public pages' own container, as from the control part before."""
+
+    def setUp(self):
+        site = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, site, True)
+        os.makedirs(os.path.join(site, "pages"))
+        write(os.path.join(site, "site.yaml"), "name: dlhost\npages: [home]\n")
+        write(os.path.join(site, "pages", "home.md"), "# Welcome\n\nHello.\n")
+        env = mock.patch.dict(os.environ, {"KIWI_SITE_HOST": "example.org", "KIWI_SITE_DIR": site})
+        env.start()
+        self.addCleanup(env.stop)
+        super().setUp()
+
+    def site(self, path, host="example.org"):
+        req = urllib.request.Request(self.url + path, headers={"Host": host})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read().decode()
+
+    def test_the_website_answers_and_nothing_else(self):
+        code, body = self.site("/")
+        self.assertEqual(code, 200)
+        self.assertIn("<h1>Welcome</h1>", body)
+        self.assertIn("chat.example.org", body)                                   # the public services, from the snapshot
+        for path in ("/login", "/api/fleet", "/machines"):
+            self.assertEqual(self.site(path)[0], 404, path)
 
 
 class TestFirstRunPage(StoreBase):

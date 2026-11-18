@@ -801,6 +801,9 @@ Away from home they do not open: a master gives your devices the VPN.</p></div>{
 <li>In the app: <strong>+</strong>, then <strong>Scan from QR code</strong>. Scan this:</li></ol>
 {% if qr %}<div class="qr">{{ qr }}</div>{% else %}<p class="warn">No QR code could be made here; use the file.</p>{% endif %}
 <p class="muted">On a laptop, import the file instead:</p>
+{% if "0.0.0.0/0" not in config %}<p class="muted small">Only the network goes through this one. On a computer with NetworkManager,
+after importing it: <code>nmcli connection modify {{ shown }} ipv4.dns-search {{ dns_domains }} ipv4.never-default yes</code>,
+so that only the network's names are asked through it and the computer's own names still work.</p>{% endif %}
 <form method="post" action="/devices/download">{{ tok }}<input type="hidden" name="name" value="{{ shown }}"><button>Download {{ shown }}.conf</button></form>
 <p class="warn small">Whoever has this code or file is on your VPN as this device. Do not send it around.</p></div>{% endif %}
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
@@ -810,6 +813,8 @@ Away from home they do not open: a master gives your devices the VPN.</p></div>{
 {% if groups %}<label for="g">Who is it for?</label><select id="g" name="group">
 {% for g in groups %}<option value="{{ g }}" {% if g == default_group %}selected{% endif %}>{{ g }}</option>{% endfor %}</select>
 <p class="muted small">The group decides what the device may reach. The admin pages only for a group that has them.</p>{% endif %}
+<label class="check"><input type="checkbox" name="split" value="yes"><span>Only the network through the VPN
+<span class="muted small">(a laptop at home, say): its own Internet stays as it is. Without it, everything goes through the VPN.</span></span></label>
 <div class="actions"><button class="primary">Add it</button></div></form>
 <h2>Devices on your VPN</h2>
 {% for d in devices %}<div class="card row"><strong>{{ d }}</strong>
@@ -1986,6 +1991,8 @@ def make_app(control: Control):
         if SITE_HOST and host in sitemod.hosts(SITE_HOST):
             if "/.." in request.url.path or "//" in request.url.path or request.method not in ("GET", "HEAD"):
                 return Response("Not here.", status_code=404, media_type="text/plain")
+            if host == "www." + SITE_HOST:        # one address for the site: www. leads to the bare name
+                return RedirectResponse("https://%s%s" % (SITE_HOST, request.url.path), status_code=301)
             return site_answer(request)
         return await call_next(request)
 
@@ -2971,7 +2978,8 @@ def make_app(control: Control):
         return accounts_page(request, error="not a thing to do here")
 
     @app.post("/devices/{what}")
-    def devices_do(request: Request, what: str, name: str = Form(""), group: str = Form(""), csrf: str = Form("")):
+    def devices_do(request: Request, what: str, name: str = Form(""), group: str = Form(""), csrf: str = Form(""),
+                   split: str = Form("")):
         u = posted(request, csrf)
         if not u:
             return login_page()
@@ -2980,7 +2988,7 @@ def make_app(control: Control):
             if what == "remove":
                 control.remove_device(name, u)
                 return devices_page(request, removed=name)
-            config = control.add_device(name, group, u) if what == "add" else control.device_config(name)
+            config = control.add_device(name, group, u, split=split == "yes") if what == "add" else control.device_config(name)
         except KiwiError as e:
             return devices_page(request, error=str(e))
         if not config:
@@ -2989,7 +2997,10 @@ def make_app(control: Control):
             safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "device"
             return Response(config, media_type="text/plain; charset=utf-8", headers={
                 "Content-Disposition": 'attachment; filename="%s.conf"' % safe, "Cache-Control": "no-store"})
-        return devices_page(request, config=config, shown=name, qr=markupsafe.Markup(control.qr_svg(config)))
+        domains = ["~" + str((control.fleet_info() or {}).get("domain") or "home")] + \
+            ["~" + str(n["domain"]) for n in ((control.fleet_info() or {}).get("linked") or []) if n.get("domain")]
+        return devices_page(request, config=config, shown=name, qr=markupsafe.Markup(control.qr_svg(config)),
+                            dns_domains=",".join(dict.fromkeys(domains)))
 
     @app.get("/backups/network.tar")
     def network_copy(request: Request):

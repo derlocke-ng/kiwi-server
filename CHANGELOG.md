@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.201.0 — a website for strangers, and a partner's names under .internal
+
+- **The network's website** (docs/design/website.md): the control node serves it at its name and
+  `www.` (kiwi-modules 0.90.0: the control module's `website_hostname`, `website_repo`,
+  `website_commit`). The pages come from a repository pinned to a commit, in a small, safe part
+  of Markdown; the services open to the Internet, whether they work, the sign-up and the status
+  come from the network itself. Nothing else answers at those names. The template is
+  [dlhost-eu](https://github.com/derlocke-ng/dlhost-eu); `KIWI_SITE_DIR` shows a folder while
+  writing it.
+- **A partner's names under `.internal` resolve** (kiwi-modules 0.89.2): Pi-hole 6 kept
+  `.internal` to itself, so kiwi did not reach kiwi2's names, nor learn what kiwi2 opens to it.
+  The federation drill now asks that way too.
+
 ## 2.200.0 — one admin: the control node applies
 
 - **A computer that joined lets the control node apply the machines** (the owner: "two apps

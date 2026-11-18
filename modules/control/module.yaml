@@ -125,6 +125,18 @@ nginx:
       proxy_pass: "http://control/play$request_uri"
       when: play_page
       comment: Kiwi game page (the network's accounts; the control part's /play/ only)
+    # the network's website for strangers (docs/design/website.md in kiwi-server): pages from a pinned
+    # repository, rendered by the control part; the bare name and www. both
+    - server_name: "{{ website_hostname }}"
+      site: website
+      proxy_pass: "http://control"
+      when: website_hostname
+      comment: Kiwi website for the Internet (pages from a pinned repository)
+    - server_name: "www.{{ website_hostname }}"
+      site: website-www
+      proxy_pass: "http://control"
+      when: website_hostname
+      comment: Kiwi website for the Internet, at www.
 
 backup:
   # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
@@ -133,6 +145,10 @@ backup:
 validate:
   - when: "public_status_hostname and (public_status_hostname ~ '.').endswith('.' ~ domain ~ '.')"
     error: "control.public_status_hostname is for a public name (status.example.org). On the VPN the status page is status.<hostname>"
+  - when: "website_hostname and not (website_repo and website_commit)"
+    error: "control.website_hostname needs website_repo (an https git address) and website_commit (the commit the site is pinned to)"
+  - when: "website_hostname and (website_hostname ~ '.').endswith('.' ~ domain ~ '.')"
+    error: "control.website_hostname is for a public name (example.org); the bare name and www. both lead to the site"
 
 settings:
   - key: image
@@ -176,6 +192,21 @@ settings:
     help: "A name that points at the master in DNS, like status.example.org, with reverse-proxy: public: true on this machine. Strangers then see whether the services that are open to the Internet work, and what was wrong with them in the last week: nothing about the machines, and nothing about what is on the VPN only. Empty: no such page."
     default: ""
     pattern: '[a-z0-9.-]*'
+  - key: website_hostname
+    label: Website's name
+    help: "The network's website for strangers, like example.org (www.example.org leads there too): it and www. point at the master in DNS, with reverse-proxy: public: true on this machine. Its pages come from website_repo at website_commit; the services, the sign-up and the status come from the network itself. Empty: no website."
+    default: ""
+    pattern: '[a-z0-9.-]*'
+  - key: website_repo
+    label: Website's repository
+    help: "An https address of a git repository with site.yaml and pages/*.md, like the template dlhost-eu."
+    default: ""
+    pattern: '(https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+)?'
+  - key: website_commit
+    label: Website's commit
+    help: "The commit of website_repo the site shows (40 hexadecimal digits): a new one is a new pin and an apply."
+    default: ""
+    pattern: '([0-9a-f]{40})?'
   - key: status_minutes
     type: int
     label: Look every (minutes)

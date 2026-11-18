@@ -12,6 +12,7 @@ a node that is not shared does not answer (A's master drops it).
 B's master must be listed in drills.yaml next to B's fleet file. Needs podman with /dev/net/tun.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -104,6 +105,22 @@ try:
         results.append(("%s does not answer" % args.closed, rc != 0, "closed" if rc else "OPEN"))
 finally:
     subprocess.run(["podman", "rm", "-f", name], capture_output=True)
+# the other way: A's master asks B's DNS what B opens to A (a TXT record over the link, with
+# B's names under its domain, which Pi-hole 6 kept to itself for .internal before kiwi-modules 0.89.2)
+a_masters = [n for n, h in (fleet_data(args.a).get("hosts") or {}).items() if (h or {}).get("role") == "master"]
+b_name = next(iter((yaml.safe_load(open(os.path.join(os.path.dirname(os.path.abspath(args.a)), "federation.yaml")))) or {}), "")
+if a_masters and b_name:
+    got = subprocess.run([os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bin", "kiwi-server"), "status",
+                          args.a, a_masters[0], "--porcelain"], capture_output=True, text=True, timeout=180)
+    try:
+        facts = json.loads(got.stdout)["hosts"][0]["facts"]
+    except (ValueError, KeyError, IndexError):
+        facts = {}
+    said = (facts.get("opened") or {}).get(b_name)
+    results.append(("%s learns from %s's DNS what it opens to it" % (a_masters[0], b_name), said is not None,
+                    ", ".join(said) if said else "nothing" if said == [] else "no answer"))
+    results.append(("%s knows %s's master by name" % (a_masters[0], b_name), bool((facts.get("partner_masters") or {}).get(b_name)),
+                    (facts.get("partner_masters") or {}).get(b_name) or "no answer"))
 for what, ok, detail in results:
     say("%s %s (%s)" % ("ok    " if ok else "FAILED", what, detail))
 sys.exit(0 if results and all(ok for _w, ok, _d in results) else 1)

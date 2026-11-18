@@ -512,6 +512,29 @@ When the control node itself is off, it cannot say so. That is what `heartbeat`
 is for: a service outside (healthchecks.io, or your own) that is asked after
 every look and tells you when the asking stops.
 
+## A website for strangers
+
+The control node can serve the network's website: a few pages of your own text, and what only
+the network knows (the services open to the Internet and whether they work, the sign-up page,
+the status page). The text lives in a git repository, pinned to one commit; start from the
+template [dlhost-eu](https://github.com/derlocke-ng/dlhost-eu). In the fleet file, on the
+machine with the `control` module:
+
+```yaml
+control:
+  website_hostname: example.org
+  website_repo: https://github.com/you/your-site
+  website_commit: <40 hexadecimal digits>
+```
+
+Point `example.org` and `www.example.org` at the master in DNS, set `reverse-proxy: public:
+true` on that machine, and apply the master and the machine. A change to the site is a commit, a
+new `website_commit` and an apply. The pages are Markdown in a small, safe subset: HTML in them
+is shown as text.
+
+To look at a site while writing it, run the page with `KIWI_SITE_HOST=localhost` and
+`KIWI_SITE_DIR=<the folder>` in its environment and open `http://localhost:8740/`.
+
 ## The game page
 
 People who are not admins can start and stop the game servers and read their

@@ -34,4 +34,5 @@ pages:
   - design/encryption.md: "Design: encrypted disks by default"
   - design/no-master.md: "Design: a network without a master"
   - design/public-services.md: "Design: services for the public"
+  - design/website.md: "Design: a public website"
   - design/data-partition.md: "Design: keeping the data across a reinstall"

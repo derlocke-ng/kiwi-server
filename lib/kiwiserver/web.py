@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import VERSION, access as accessmod, form as formmod, health as healthmod, play as playmod, providers as providersmod, util
+from . import VERSION, access as accessmod, form as formmod, health as healthmod, play as playmod, providers as providersmod, site as sitemod, util
 from .control import ACTIONS, Control
 
 controlmod_job = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")      # a job's id, as Control.start makes it
@@ -1100,6 +1100,26 @@ onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done 
 <p>Nothing more to do here. In a few minutes this page goes away, and the machine shows up on the control page of
 your network, under Machines.</p>
 {% endblock %}""",
+    # the network's website for strangers (site.py): its pages from the pinned repository, the services
+    # and the sign-up from the network itself
+    "site.html": """{% extends "base.html" %}{% block title %}{{ site.name or brand_name or "Kiwi" }}{% if pg and pg.slug != home %}: {{ pg.title }}{% endif %}{% endblock %}{% block main %}
+<style>main{max-width:980px}.snav{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 18px}.snav a{padding:6px 12px;border-radius:999px;color:var(--fg);text-decoration:none}
+.snav a.on,.snav a:hover{background:var(--tint)}.prose{line-height:1.65}.prose h1{margin-top:4px}.prose pre{overflow:auto;background:var(--hover);padding:12px;border-radius:10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin:10px 0 18px}.cards .card{margin:0}
+.foot{margin-top:28px;color:var(--muted);font-size:.86rem;display:flex;gap:14px;flex-wrap:wrap}
+{% if site.accent %}:root{--accent:{{ site.accent }}}{% endif %}</style>
+<div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ site.name or brand_name or "Kiwi" }}</h1>
+{% if h.join and h.join_public %}<a class="btn primary" href="{{ h.join }}">Get an account</a>{% endif %}</div>
+{% if site.tagline %}<p class="sub">{{ site.tagline }}</p>{% endif %}
+<nav class="snav">{% for p in site.pages %}<a href="/{{ "" if p.slug == home else p.slug }}"{% if pg and p.slug == pg.slug %} class="on"{% endif %}>{{ p.title }}</a>{% endfor %}
+<a href="/services"{% if not pg %} class="on"{% endif %}>Services</a><a href="/status">Status</a></nav>
+{% if pg %}<article class="prose">{{ pg.html|safe }}</article>{% endif %}
+{% if not pg or pg.slug == home %}<h2>Services</h2>
+{% if h.services %}<div class="cards">{% for s in h.services %}<div class="card"><b>{{ s.label }}</b> <span class="badge {{ "ok" if s.ok else "bad" }}">{{ "Up" if s.ok else "Down" }}</span>
+{% if s.about %}<p class="sm" style="margin:6px 0">{{ s.about }}</p>{% endif %}<a class="sm" href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a></div>{% endfor %}</div>
+{% else %}<p class="muted">No service is open to the Internet yet.</p>{% endif %}{% endif %}
+<div class="foot"><a href="/status">Whether everything works</a>{% if contact %}<span>Contact: {{ contact }}</span>{% endif %}<span>Made with Kiwi Network</span></div>
+{% endblock %}""",
     "status.html": """{% extends "base.html" %}{% block title %}{{ (brand_name if h.strangers else "") or "Kiwi" }}: {{ one.name if one else "status" }}{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120;url=?auto=1"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}
 .cta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.about{color:var(--muted);font-size:.86rem}</style>
@@ -1879,6 +1899,56 @@ def make_app(control: Control):
         h["join_public"] = bool(h.get("join")) and not h["join"].split("/")[2].endswith("." + str((control.fleet_info() or {}).get("domain") or "home"))
         return page("status.html", h=h, now=now, tor=tor_checks(), games=[], play_host="",
                     stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+
+    # ---- the website (site.py): at its name and www., where only the site's pages answer ------------
+    SITE_HOST, SITE_REPO, SITE_COMMIT = sitemod.settings()
+    SITE = {}
+
+    def the_site():
+        """The site at its pin: fetched once, kept; None while it cannot be had (said in the log)."""
+        if "got" not in SITE or SITE_COMMIT == "dir":       # a folder being written: read anew each time
+            try:
+                SITE["got"] = sitemod.fetch(SITE_REPO, SITE_COMMIT, os.path.join(control.run, "site"))   # fetched again after a restart
+            except (KiwiError, OSError) as e:
+                util.warn("the website %s at %s: %s" % (SITE_REPO, SITE_COMMIT[:12], e))
+                return None
+        return SITE["got"]
+
+    def site_answer(request):
+        path = request.url.path
+        if path == "/status":
+            return status_public()
+        if path in ("/api/registry", "/.well-known/kiwi"):
+            return JSONResponse(registry(request, True))
+        site = the_site()
+        if site is None:
+            return status_public()          # the front page there is, until the site can be had
+        if path.startswith("/assets/"):
+            found = sitemod.asset(site, path[len("/assets/"):])
+            if not found:
+                return Response("Not here.", status_code=404, media_type="text/plain")
+            with open(found[0], "rb") as fh:
+                return Response(fh.read(), media_type=found[1], headers={"Cache-Control": "public, max-age=86400"})
+        home = site["pages"][0]["slug"] if site["pages"] else ""
+        slug = path.strip("/") or home
+        pg = next((p for p in site["pages"] if p["slug"] == slug), None)
+        if pg is None and slug != "services":
+            return Response("Not here.", status_code=404, media_type="text/plain")
+        now = time.time()
+        h = healthmod.public(control.health(), now, strangers=True)
+        h["services"] = [x for x in h["services"] if not x["site"].startswith("status.")]
+        h["join_public"] = bool(h.get("join")) and not h["join"].split("/")[2].endswith(
+            "." + str((control.fleet_info() or {}).get("domain") or "home"))
+        return page("site.html", site=site, pg=pg, home=home, h=h, contact=os.environ.get("KIWI_CONTACT", ""))
+
+    @app.middleware("http")
+    async def site_only(request: Request, call_next):
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        if SITE_HOST and host in sitemod.hosts(SITE_HOST):
+            if "/.." in request.url.path or "//" in request.url.path or request.method not in ("GET", "HEAD"):
+                return Response("Not here.", status_code=404, media_type="text/plain")
+            return site_answer(request)
+        return await call_next(request)
 
     # ---- the game page (play.py): at play.<this node>, where nothing but /play/ answers ----------
     PLAY_HOST, PLAY_GROUP, PLAY_EXTRA = playmod.settings()

@@ -19,6 +19,12 @@ services:
       - {{ ("KIWI_ACCENT=" ~ brand_accent) | tojson }}
       - {{ ("KIWI_ABOUT=" ~ (about | replace('\n', ' '))) | tojson }}
       - {{ ("KIWI_CONTACT=" ~ contact) | tojson }}
+{% if website_hostname %}
+      # the website for strangers: its name, and the pinned repository its pages come from
+      - {{ ("KIWI_SITE_HOST=" ~ website_hostname) | tojson }}
+      - {{ ("KIWI_SITE_REPO=" ~ website_repo) | tojson }}
+      - {{ ("KIWI_SITE_COMMIT=" ~ website_commit) | tojson }}
+{% endif %}
 {% if play_page %}
       # the game page: its name (only /play/ answers there), who may, and what more it lists
       - KIWI_PLAY_HOST={{ play_hostname or 'play.' ~ hostname }}

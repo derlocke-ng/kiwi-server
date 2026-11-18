@@ -530,6 +530,8 @@ class Renderer:
         if "reverse-proxy" in host.modules and self._status_page:
             # the machine's own name (https://papaya.home) leads to its part of the network's status page
             host.module_settings["reverse-proxy"]["machine_page"] = "%s?machine=%s" % (self._status_page, host.name)
+            # and for the apps (kiwi-app): https://<name>/.well-known/kiwi and the machine's LAN address lead to the registry
+            host.module_settings["reverse-proxy"]["machine_registry"] = "%sapi/registry?machine=%s" % (self._status_page, host.name)
         if role.node_type != "master" and "hub" in host.modules and self._turn and not host.module_settings["hub"].get("ice"):
             # a hub on a node: its calls go through the master's turn server, as a hub on the master's would
             host.module_settings["hub"].update(self._turn)

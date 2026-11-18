@@ -9486,6 +9486,19 @@ class TestWeb(WebBase):
         self.assertIn("This machine has not been asked yet.", body)
         self.assertNotIn("Files (Nextcloud)", body)
         self.assertIn("Kiwi: status", self.ask("/status?machine=%3Cscript%3E")[1])      # no such name: the whole page
+        # the same as data, for an app: the network as a person on it uses it
+        reg = json.loads(self.ask("/api/registry")[1])
+        self.assertEqual((reg["kind"], reg["network"], reg["machine"]), ("kiwi-registry", "Kiwi", None))
+        labels = {x["label"]: x for x in reg["services"]}
+        self.assertEqual(labels["Files (Nextcloud)"]["url"], "https://cloud.papaya.home/")
+        self.assertFalse(labels["Files (Nextcloud)"]["ok"])
+        self.assertNotIn("This page", labels)                                   # no admin page
+        self.assertTrue(reg["ca"].endswith("/api/ca"))
+        one = json.loads(self.ask("/api/registry?machine=papaya")[1])
+        self.assertEqual(one["machine"]["name"], "papaya")
+        pub = json.loads(self.ask("/api/registry/public")[1])
+        self.assertEqual([x["url"] for x in pub["services"]], ["https://chat.example.org/"])    # only what is open to the Internet
+        self.assertEqual((pub["domain"], pub["ca"], pub["games"], pub["machine"]), ("", "", [], None))
         # over Tor: each hidden service as its machine last asked it through Tor
         addr = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
         body = self.ask("/status")[1]

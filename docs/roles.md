@@ -80,6 +80,11 @@ read the relay; the VPN may post, and from the Internet only the keys in
 `reverse-proxy: { public: true, acme_email: … }` on the master: then the hub's
 data is on the rented server.
 
+Calls in the hub's chat need a TURN server where two people's networks allow
+no direct path (two phones on mobile data). Add `turn` to the master's modules:
+it only relays the browsers' encrypted media and keeps nothing, and the hub on
+the node is told its address and login by itself.
+
 ## A node's service, open to the Internet
 
 A service need not live on the master to be reached from outside. Give it a

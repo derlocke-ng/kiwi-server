@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: hub
   title: Hub page
-  version: 1.2.0
+  version: 1.2.1
   description: "A hub built on kiwi-framework (Armory, or your fork) as a container behind the reverse proxy at hub.<hostname>: its relays, policy and public area set here, so a private hub inside the VPN, a semi-public one with a public chat, or a public one come from the same image"
   category: productivity
   node_types: [master, node]
@@ -81,7 +81,7 @@ settings:
   - key: ice
     type: list
     label: Servers for calls (STUN, TURN)
-    help: "stun:, turn: or turns: addresses for the chat's calls, e.g. turn:turn.example.org:3478. A hub on a node uses the master's: turn:<the master's public name>:3478 with its login. Empty: this host's turn module when it runs one, else the public STUN servers the distribution names (calls between two strict networks then often fail)."
+    help: "stun:, turn: or turns: addresses for the chat's calls, e.g. turn:turn.example.org:3478. Empty: a turn module on this host, else the master's (kiwi-server names it to a hub on a node), else the public STUN servers the distribution names (calls between two strict networks then often fail)."
     default: []
     pattern: '(stun|turns?):[A-Za-z0-9.:\[\]-]+(\?transport=(udp|tcp))?'
   - key: ice_username

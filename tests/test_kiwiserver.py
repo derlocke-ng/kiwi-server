@@ -3303,6 +3303,31 @@ class TestAccess(Base):
         self.assertEqual(rules["names"]["cloud.papaya.home"]["allow"], ["10.9.255.2"])       # as before
         self.assertEqual(fedmod.admin_rules(plain, {}, "papaya", ["control.papaya.home"], "home"), plain)
 
+    def test_a_hub_on_a_node_calls_through_the_masters_turn(self):
+        hub = {"vpn_ip": "10.8.0.25", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
+               "modules": ["vpn-client", "reverse-proxy", "nostr-relay", "hub"]}
+        master = self.master(**{"vpn-server": {"wg_host": "vpn.example.org", "wg_password": "w"}})
+        master["modules"] = list(master.get("modules") or ["vpn-client", "vpn-server", "dns", "reverse-proxy"]) + ["turn"]
+        f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": master},
+            "papaya": {"role": "node", "node": hub},
+            "quince": {"role": "node", "node": dict(hub, vpn_ip="10.8.0.26", hub={"ice": ["turn:turn.example.net:3478"]})}}})
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        node = fleet.hosts["papaya"]
+        files = r.bundle(node, r.prepare(node)).files
+        compose = files["docker-compose.yml"][0] + files.get("kiwi/env/kn-hub.env", [""])[0]
+        self.assertIn("HUB_ICE=stun:vpn.example.org:3478 turn:vpn.example.org:3478?transport=udp", compose)
+        self.assertIn("HUB_ICE_USERNAME=kiwi", compose)
+        password = fleet.hosts["gate"].module_settings["turn"]["password"]
+        self.assertTrue(password)
+        self.assertIn("HUB_ICE_CREDENTIAL=" + password, compose)
+        other = fleet.hosts["quince"]                       # one named by hand stays
+        files = r.bundle(other, r.prepare(other)).files
+        compose = files["docker-compose.yml"][0] + files.get("kiwi/env/kn-hub.env", [""])[0]
+        self.assertIn("HUB_ICE=turn:turn.example.net:3478", compose)
+        self.assertNotIn("vpn.example.org", compose)
+
     def test_every_app_is_the_pages_without_the_admin_pages_and_without_ssh(self):
         f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
             "gate": {"role": "master", "target": "debian", "master": self.master(**{"vpn-server": {

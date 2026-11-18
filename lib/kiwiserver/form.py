@@ -441,7 +441,9 @@ def _role_groups(doc, host, role, mods):
         if preset:      # the preset's own defaults win over the role's
             for m, d in (presets[preset].get("module_defaults") or {}).items():
                 defaults[m] = dict(defaults.get(m) or {}, **d)
-        for m in on:
+        # every part on offer has its group, the ones not running hidden: switched on, a page shows
+        # its settings at once, as the app does; untouched, a hidden group changes nothing
+        for m in list(on) + [m for m in offered if m not in on]:
             if m not in mods:
                 continue
             fields = [_from_schema(doc, host, (name, m, st["key"]), st, (defaults.get(m) or {}).get(st["key"], st.get("default")))
@@ -449,7 +451,7 @@ def _role_groups(doc, host, role, mods):
             if host is not None and kind == "node":
                 fields = _open_fields(doc, host, name, m, mods[m]) + fields
             out.append({"id": "mod:" + m, "title": mods[m]["title"], "help": mods[m].get("description", ""), "kind": "module",
-                        "advanced": True, "fields": fields})
+                        "advanced": True, "fields": fields, "off": m not in on, "module": m})
     by_group = {}
     for st in role["settings"]:
         if not (st["key"] == "preset" and presets):
@@ -547,10 +549,13 @@ def changes(found, posted):
     field left alone is not written, and neither is one that is not in `posted`."""
     out, errors = {}, {}
     fields = [(g, f) for g in found for f in g["fields"]]
+    mods = next((f for _g, f in fields if f["type"] == "modules"), None)
+    picked = set(posted.get(mods["name"]) or ()) if mods and mods["name"] in posted else \
+        {o["value"] for o in (mods or {}).get("options", ()) if o["on"]}
     for g, f in fields:
         name, path = f["name"], tuple(f["path"])
-        if name not in posted:
-            continue
+        if name not in posted or (mods and g.get("module") and g["module"] not in picked):
+            continue            # a module not ticked: the page sends its hidden settings, they wait
         got = posted[name]
         if f.get("open") == "tor":
             want = str(got).strip().lower() in ("yes", "true", "1", "on")

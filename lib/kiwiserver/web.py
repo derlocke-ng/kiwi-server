@@ -704,7 +704,7 @@ is named first.</span></p>
 {% macro field(f) %}{% set id = "f-" + f.name %}<div class="q">
 {% if f.type == "modules" %}<label>{{ f.label }}</label><p class="muted" style="margin:0 0 4px">{{ f.help }}</p>
 <input type="hidden" name="shown:{{ f.name }}" value="1">
-{% for o in f.options %}<label class="check"><input type="checkbox" name="f:{{ f.name }}" value="{{ o.value }}"
+{% for o in f.options %}<label class="check"><input type="checkbox" name="f:{{ f.name }}" value="{{ o.value }}" onchange="var g=document.querySelector('[data-module=&quot;{{ o.value }}&quot;]');if(g){g.hidden=!this.checked;if(this.checked)g.open=true}"
 {%- if ((o.value in typed[f.name]) if f.name in typed else o.on) %} checked{% endif %}><span>{{ o.label }}
 <span class="muted small">{{ o.help }}{% if o.needs %} (needs {{ o.needs|join(", ") }}){% endif %}</span></span></label>{% endfor %}
 {% else %}<label for="{{ id }}">{{ f.label }}{% if host and f.set and not f.secret %} <span class="chip">set here</span>{% endif %}</label>
@@ -743,7 +743,7 @@ name="reset:{{ f.name }}" value="1"><span>As for every machine{% if to_text(f.ty
 {% else %}<b>Every setting</b> · <a href="/hosts/{{ host }}/settings?only=set">Only what {{ host }} sets itself</a>{% endif %}</p>{% endif %}
 <form method="post" action="{{ "/hosts/" + host + "/settings" if host else "/settings" }}" autocomplete="off">{{ tok }}
 {% for g in groups if not only or g.fields|selectattr("set")|list %}{% set more = g.fields|selectattr("more")|selectattr("set" if only else "more")|list %}
-{% if g.advanced %}<details class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"{% if g.id in open %} open{% endif %}><summary>{{ g.title }}</summary>
+{% if g.advanced %}<details class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"{% if g.id in open %} open{% endif %}{% if g.module %} data-module="{{ g.module }}"{% endif %}{% if g.off %} hidden{% endif %}><summary>{{ g.title }}</summary>
 {% else %}<div class="card" id="s-{{ g.id|replace(':', '-') }}" style="scroll-margin-top:64px"><h2 style="margin-top:0">{{ g.title }}</h2>{% endif %}
 {% if g.help %}<p class="muted">{{ g.help }}</p>{% endif %}
 {% for f in g.fields if not f.more and (not only or f.set) %}{{ field(f) }}{% else %}{% if not more %}<p class="muted">{{ "Nothing set here." if only else "Nothing to set: it is on or off." }}</p>{% endif %}{% endfor %}

@@ -17,6 +17,8 @@
 - The Accounts page, the settings form and the module sources were split into one part that reads or does and one
   that shows it; nothing changes on the page.
 - Docs: the split choice for devices and its DNS line (network, control page, app).
+- The offsite drill takes `ENCRYPT=RING`: an encrypted machine at another site, its first boot opened
+  through the initramfs's SSH, every later one by a ring on the master.
 
 ## 2.212.0 — a laptop that keeps its own Internet and names
 

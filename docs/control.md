@@ -13,7 +13,7 @@ that booted. The page:
 | **Machines** | every machine with its load, memory and disk; add a machine; update everything |
 | **Services** | every service in one table: whether it works and its last 90 days, how fast it answers, where it is open (VPN, Internet, Tor: the badge copies the address), and under its name **Settings** (what kiwi-server sets for it) and **Admin page** (the app's own, for what is inside it) |
 | **A machine** | what it is, how busy and how full it is, what runs on it; Check now, Preview, Apply, each with what it does |
-| **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
+| **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app and the config to download; *Only the network through the VPN* makes a split config (see [Joining the mesh](network.md#joining-the-mesh)) |
 | **Accounts** | with the accounts module: requests to accept or deny, invite codes, the accounts and their password links, which services sign people in with them; Jabber's sign-up page too |
 | **Linked networks** | from Home: what other networks may reach here, and whether this network leaves to the Internet through one of them |
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |

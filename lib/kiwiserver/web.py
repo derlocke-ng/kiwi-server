@@ -450,6 +450,13 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 <a class="btn" href="/hosts/{{ s.host }}">Open {{ s.host }}</a></div><p>It does not answer at {{ s.site }}, for {{ age(now - s.since) }}.</p>
 <p class="muted">Its machine answers and may say that everything runs: the service itself was asked for a page and gave none.
 <em>Apply</em> on the machine's page sets it up again; what the machine says, word for word, is under Details there.</p></div>{% endfor %}
+{% if changed %}<div class="card"><div class="row"><strong><span class="dot warn"></span>Changes not applied yet</strong>
+<form class="inline" method="post" action="/run-many" onsubmit="return confirm('Apply {{ changed|join(", ") }} now? Services that changed restart for a moment.')">{{ tok }}
+<input type="hidden" name="action" value="apply">{% for h in changed %}<input type="hidden" name="host" value="{{ h }}">{% endfor %}
+<button class="primary">Apply {{ "it" if changed|length == 1 else "all " ~ changed|length }}</button></form></div>
+<p>{{ changed|join(", ") }}: {{ "its" if changed|length == 1 else "their" }} settings changed, or something elsewhere that reaches
+{{ "it" if changed|length == 1 else "them" }} (a new name the DNS must know, a public name the master hands on). Until applied,
+{{ "it keeps" if changed|length == 1 else "they keep" }} the old.</p></div>{% endif %}
 {% set todo = machines|selectattr("problems")|list %}{% if todo %}<h2>Needs a look</h2>
 {% for m in todo %}{% for p in m.problems %}<div class="card"><div class="row"><strong><span class="dot {{ p.level }}"></span>{{ m.name }}</strong>
 <a class="btn" href="/hosts/{{ m.name }}">Open</a></div><p>{{ p.text }}</p>
@@ -734,7 +741,8 @@ name="reset:{{ f.name }}" value="1"><span>As for every machine{% if to_text(f.ty
 {% if more %}<details{% if more|selectattr("name", "in", touched)|list %} open{% endif %}><summary>More settings</summary>
 {% for f in more %}{{ field(f) }}{% endfor %}</details>{% endif %}
 {{ "</details>"|safe if g.advanced else "</div>"|safe }}{% endfor %}
-<div class="actions"><button class="primary">Save</button></div></form>{% endif %}
+<div class="actions"><button name="then" value="">Save</button>
+<button class="primary" name="then" value="apply" title="Save, then apply {{ host or "every machine" }} and every other machine the change reaches">Save &amp; apply</button></div></form>{% endif %}
 <script>(function(){var e=location.hash&&document.getElementById(location.hash.slice(1));if(e){if(e.tagName=="DETAILS")e.open=true;
 e.querySelectorAll("details").forEach(function(d){d.open=true});e.scrollIntoView();e.style.outline="2px solid var(--accent)"}})()</script>
 {% if not host %}<div class="card"><h2 style="margin-top:0">Try the messages</h2><p>Sends one test message to every place set under
@@ -2187,6 +2195,8 @@ def make_app(control: Control):
         up = {m["name"] for m in ms if m["state"] in ("ok", "warn", "bad")}
         silent = [s for s in control.health().get("services") or [] if not s["ok"] and s["host"] in up]
         return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
+                    changed=[n for n in (_info or {}).get("changed") or [] if n != os.environ.get("KIWI_CONTROL_HOST")]
+                            + [n for n in (_info or {}).get("changed") or [] if n == os.environ.get("KIWI_CONTROL_HOST")],
                     stats=stats(ms, devs), wide=picture(ms, len(devs), 4), narrow=picture(ms, len(devs), 1), silent=silent, now=time.time(),
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
                     add_error=request.query_params.get("add_error"))
@@ -2435,6 +2445,19 @@ def make_app(control: Control):
             keys = control.save_settings(host, changes, u)
         except KiwiError as e:
             return settings_page(request, host, typed, None, "Not saved: %s" % e, touched)
+        if str(sent.get("then") or "") == "apply":
+            # Save & apply: this machine (or, for the defaults, every one) and every other machine the
+            # change reaches: those whose role script is another now (`list`'s changed)
+            info = control.fleet_info(fresh=True) or {}
+            names = [h["name"] for h in info.get("hosts") or [] if h.get("phase") == "applied"]
+            todo = ([host] if host else names) + [n for n in info.get("changed") or [] if n != host]
+            todo = [n for n in dict.fromkeys(todo) if n in names]
+            if todo:
+                try:
+                    jid = control.start("apply", todo, user=u)
+                except KiwiError as e:
+                    return settings_page(request, host, typed, None, "Saved, not applied: %s" % e, touched)
+                return RedirectResponse("/jobs/" + jid, status_code=303)
         where = "/hosts/%s/settings" % host if host else "/settings"
         return RedirectResponse("%s?saved=%d" % (where, 1 if keys else 0), status_code=303)
 

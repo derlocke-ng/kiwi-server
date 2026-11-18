@@ -4769,6 +4769,18 @@ class Window(Adw.ApplicationWindow):
             row.add_suffix(b)
             g.add(row)
             parts.append(g)
+        changed = self.fleet_info.get("changed") or []
+        if changed:             # settings saved and not applied, here or reaching other machines
+            g = Adw.PreferencesGroup(title="Changes not applied yet")
+            row = plain_row(", ".join(changed), "Their settings changed, or something elsewhere that reaches them (a new "
+                                                "name the DNS must know, a public name the master hands on)")
+            row.add_prefix(dot("warn"))
+            b = Gtk.Button(label="Apply %s" % ("it" if len(changed) == 1 else "all %d" % len(changed)),
+                           valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            b.connect("clicked", lambda *_: self.spawn(["apply", self.doc.path, "--changed"], "Applying %s…" % ", ".join(changed)))
+            row.add_suffix(b)
+            g.add(row)
+            parts.append(g)
         if n["attention"]:
             parts.append(self.attention_group(n["attention"], True))
         fresh = [h for h in self.doc.hosts() if self.is_new(h)]
@@ -5247,6 +5259,7 @@ class Window(Adw.ApplicationWindow):
             self.status = {h["name"]: h for h in listing["hosts"]}
             self.fleet_info = {k: listing.get(k) or "" for k in ("domain", "mesh", "master_ip")}
             self.fleet_info["groups"] = listing.get("groups") or {}      # where a new device may go
+            self.fleet_info["changed"] = listing.get("changed") or []    # changes not applied yet
         if err:
             self.append_log(err + "\n")
             self.toast(err.splitlines()[-1])
@@ -5525,16 +5538,22 @@ class Window(Adw.ApplicationWindow):
             return self.first_apply(host)
         where = (self.live.get(host) or {}).get("target") or "%s@%s" % (
             self.admin_user(host), (self.status.get(host) or {}).get("hostname") or host)
+        others = [h for h in self.fleet_info.get("changed") or [] if h != host]
         dlg = Adw.AlertDialog(
             heading="Apply %s?" % host,
             body="Sets %s up the way the settings say now. Services that changed restart for a moment; its disk "
-                 "and your data are not touched. (Reached as %s.)" % (host, where))
+                 "and your data are not touched. (Reached as %s.)%s" % (host, where, (
+                     "\n\n%s %s changes not applied yet too: %s." % (", ".join(others), "has" if len(others) == 1 else "have",
+                                                                    "with them, everything is as the settings say")) if others else ""))
         dlg.add_response("cancel", "Cancel")
-        dlg.add_response("apply", "Apply")
+        if others:
+            dlg.add_response("only", "Only %s" % host)
+        dlg.add_response("apply", "Apply %s" % ("all %d" % (len(others) + 1) if others else host))
         dlg.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
         dlg.set_close_response("cancel")
-        dlg.connect("response", lambda _d, r: r == "apply" and
-                    self.spawn(["apply", self.doc.path, host], "Applying %s…" % host))
+        dlg.connect("response", lambda _d, r: (r == "only" and self.spawn(["apply", self.doc.path, host], "Applying %s…" % host)) or
+                    (r == "apply" and self.spawn(["apply", self.doc.path, host] + (["--changed"] if others else []),
+                                                 "Applying %s…" % ", ".join([host] + others))))
         dlg.present(self)
 
     def first_apply(self, host):

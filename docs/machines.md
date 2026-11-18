@@ -168,7 +168,21 @@ a password; the install gave the admin user passwordless sudo.
 `--ssh core@192.168.1.7` reaches a machine whose name does not resolve yet.
 
 The script runs with `--force`, so the stack is rewritten and restarted with
-whatever changed; the disk and the OS are not touched. The GUI has the same
+whatever changed; the disk and the OS are not touched.
+
+**A change can reach other machines.** A new site on a node is a new name the
+machines that answer for names (the master, a home gateway) must learn; a public
+name is one the master hands on; a new backup client is one its backup server
+must take. kiwi-server remembers what each apply sent and names every machine
+whose role script is another now:
+
+```bash
+kiwi-server apply fleet.yaml --changed          # every machine with changes not applied yet
+kiwi-server apply fleet.yaml medlar --changed   # medlar, and every other one the change reached
+```
+
+The app's **Apply** offers them along; the page has **Save & apply** in the
+settings and **Apply all** on Home under "Changes not applied yet". The GUI has the same
 two actions on the host page.
 
 **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the step

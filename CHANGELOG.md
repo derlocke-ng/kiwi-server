@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.185.0 — save & apply, and every machine a change reaches
+
+- **Changes not applied yet**: kiwi-server remembers a fingerprint of what each apply sent and
+  names every machine whose role script is another now, also where the change came from
+  elsewhere (a new site on medlar is a new name the master's and the home gateway's DNS must
+  learn: `grow.medlar.home` did not open from a phone, 18 Nov 2026).
+- `kiwi-server apply FLEET --changed` applies them; an apply says which other machines it left
+  changed; `next` offers them once every machine is set up.
+- **The page**: **Save** and **Save & apply** (this machine and every other one the change
+  reaches) in the settings; on Home "Changes not applied yet" with **Apply all**.
+- **The app**: Apply offers the other changed machines along ("Apply all 3" or "Only medlar");
+  the overview has "Changes not applied yet" with **Apply all**.
+- A machine this computer never applied with this release is not judged yet.
+
 ## 2.184.1 — a sleeping game server is not a failed one
 
 - Zandronum ends with an error code when it is stopped, so a sleeping Doom server left a failed

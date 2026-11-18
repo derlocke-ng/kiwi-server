@@ -49,6 +49,16 @@ def answers():
                                 "health": "", "stack": True} for m in modules[:f["running"]]])
         said.append({"host": name, "target": "core@%s.home" % name, "ok": state != "down", "state": state, "problems": problems, "notes": [], "facts": f,
                      "output": ""})
+    # two game servers on lychee: one played on, one asleep until someone joins
+    for h, w in zip(hosts, said):
+        if h["name"] == "lychee":
+            h["modules"].append("games")
+            h["games"] = [{"server": "survival", "title": "Minecraft (Java)", "container": "kn-game-survival", "address": "lychee.home:25565"},
+                          {"server": "doom", "title": "Zandronum", "container": "kn-game-doom", "address": "lychee.home:10666"}]
+            w["facts"]["services"] += [{"name": "kn-game-survival", "state": "active", "running": True, "status": "Up 2 hours", "image": "",
+                                        "health": "", "stack": True},
+                                       {"name": "kn-game-doom", "state": "inactive", "running": False, "asleep": True, "status": "", "image": "",
+                                        "health": "", "stack": True}]
     return {"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts}, {"hosts": said}
 
 

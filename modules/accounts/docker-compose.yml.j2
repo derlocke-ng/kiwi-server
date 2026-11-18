@@ -27,7 +27,7 @@ services:
     command: ["signup", "serve", "--state", "/state", "--kanidm", "https://{{ container_prefix }}-accounts:8443",
               "--kanidm-cert", "/certs/kanidm.pem",
               "--token-file", "/state/token", "--id-host", "{{ id_host }}", "--id-onion", "{{ (onion or {}).values() | first | default('') }}",
-              "--brand", "{{ brand or domain }}",
+              "--brand", "{{ brand or 'Kiwi' }}",
               "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
 {% if proxy_ip %}
     environment:

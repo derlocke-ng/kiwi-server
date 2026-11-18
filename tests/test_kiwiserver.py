@@ -9247,12 +9247,13 @@ class TestWeb(WebBase):
         withjoin.update(onion={"vault.papaya.home": "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"},
                         join="https://id.example.org/join")
         util.write_text(self.c.health_file, json.dumps(withjoin))
-        code, body = self.ask("/start")
+        code, body = self.ask("/start")                                            # one page at status.<host>: the status page
         self.assertEqual(code, 200)
         for words in ("Passwords (Vaultwarden)", "Passwords, kept and shared safely", "abcdefghijklmnopqrstuvwxyz234567", "Get an account",
-                      "https://id.example.org/join", "1 not answering", "not on the VPN yet"):
+                      "https://id.example.org/join", "1 service does not answer", "not on the VPN yet", "Kiwi: status"):
             self.assertIn(words, body)
-        self.assertNotIn("control.papaya.home", body)                              # no admin page
+        for words in ("control.papaya.home", "all services", "Game servers"):         # no admin page, no second page, no games here
+            self.assertNotIn(words, body)
         code, body = self.ask("/start/public")
         self.assertEqual(code, 200)
         for words in ("chat.example.org", "Run by people, not by a company", "Get an account"):
@@ -9271,7 +9272,7 @@ class TestWeb(WebBase):
             body = self.ask("/status")[1]
             self.assertIn(word, body[body.index("Over Tor"):])
             self.assertIn("5 minutes ago", body[body.index("Over Tor"):])
-        self.assertNotIn("Over Tor", self.ask("/status/public")[1])           # no hidden service is shown to the Internet here
+        self.assertNotIn('id="tor"', self.ask("/status/public")[1])          # no hidden service is shown to the Internet here
         stale = json.loads(util.read_text(self.c.health_file))
         stale["checked"] = now - 7200
         util.write_text(self.c.health_file, json.dumps(stale))
@@ -9450,7 +9451,8 @@ class TestGamePage(WebBase):
 
     def setUp(self):
         env = mock.patch.dict(os.environ, {"KIWI_PLAY_HOST": "play.papaya.home", "KIWI_PLAY_GROUP": "games",
-                                           "KIWI_PLAY_EXTRA": "papaya/kn-jellyfin", "KIWI_CONTROL_HOST": "papaya"})
+                                           "KIWI_PLAY_EXTRA": "papaya/kn-jellyfin", "KIWI_CONTROL_HOST": "papaya",
+                                           "KIWI_BRAND": "dlhost"})
         env.start()
         self.addCleanup(env.stop)
         super().setUp()
@@ -9482,6 +9484,10 @@ class TestGamePage(WebBase):
         self.assertIn("waits for its admin", self.play("/play/")[1])                    # locked: nothing to do yet
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)              # the admin opens the store
         self.assertIn("not connected to the network", self.play("/play/")[1])
+        for _ in range(200):                # the login's look at every machine writes status.json too: let it end first
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
         os.makedirs(os.path.join(self.c.fleet_dir, "secrets", "accounts"), exist_ok=True)
         util.write_text(os.path.join(self.c.fleet_dir, "secrets", "accounts", "papaya-control.json"),
                         json.dumps({"client": "control-papaya", "secret": "s3cret", "issuer": "https://id.papaya.home/oauth2/openid/control-papaya"}))
@@ -9492,6 +9498,17 @@ class TestGamePage(WebBase):
         util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
             {"host": "medlar", "state": "ok", "facts": {"services": [{"name": "kn-game-survival", "running": False, "asleep": True}]}},
             {"host": "papaya", "state": "ok", "facts": {"services": [{"name": "kn-jellyfin", "running": True}]}}]}))
+        # the status page on the VPN lists them, and leads to this page; it says Kiwi, the public brand is for the Internet
+        body = self.ask("/status")[1]
+        for words in ("Game servers", "Minecraft (Java)", "Asleep", "wakes when you join", "medlar.home:25565",
+                      'href="https://play.papaya.home/play/"', "Kiwi: status"):
+            self.assertIn(words, body)
+        for words in ("kn-jellyfin", "dlhost"):                     # another container named for the page is no game server
+            self.assertNotIn(words, body)
+        body = self.ask("/status/public")[1]
+        self.assertIn("dlhost: status", body)
+        for words in ("Game servers", "Minecraft", "play.papaya.home"):
+            self.assertNotIn(words, body)
         # at its name, only /play/ answers: never an admin page
         for path in ("/", "/machines", "/hosts/medlar", "/play/../machines", "/login", "/api/hosts/medlar/logins"):
             self.assertEqual(self.play(path)[0], 404, path)

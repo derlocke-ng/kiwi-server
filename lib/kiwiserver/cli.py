@@ -3458,7 +3458,9 @@ def cmd_connect(args):
     else:
         # the network's public names lead to their machines on the VPN as well (its DNS says so)
         records = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).dns_records()
-        con = connectmod.up(conf, domain, names=[n for _ip, n in records if not n.endswith("." + domain)])
+        # and the linked networks' domains: their names come through the master too (2.201.0)
+        linked = ["%s" % p["domain"] for p in fedmod.partners(fleet.dir).values() if p.get("domain") and p["domain"] != domain]
+        con = connectmod.up(conf, domain, names=[n for _ip, n in records if not n.endswith("." + domain)] + linked)
         util.say("connected: %s in this computer's network settings. It carries your network only, comes up by "
                  "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
         master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of), None)

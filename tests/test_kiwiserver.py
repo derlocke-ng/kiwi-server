@@ -11170,9 +11170,12 @@ class TestWebsite(WebBase):
         super().setUp()
 
     def at(self, path, host="example.org", method="GET", headers=None):
+        class Stay(urllib.request.HTTPRedirectHandler):          # a redirect is the answer: never followed out
+            def redirect_request(self, *a, **kw):
+                return None
         req = urllib.request.Request(self.url + path, headers={"Host": host}, method=method)
         try:
-            with urllib.request.urlopen(req) as r:
+            with urllib.request.build_opener(Stay).open(req) as r:
                 if headers is not None:
                     headers.update({k.lower(): v for k, v in r.headers.items()})
                 return r.status, r.read()
@@ -11190,7 +11193,7 @@ class TestWebsite(WebBase):
         self.assertNotIn("<script>alert", body)                                   # the repository's HTML stays text
         self.assertIn("&lt;script&gt;", body)
         self.assertNotIn("../x", body)
-        self.assertEqual(self.at("/", "www.example.org")[0], 200)
+        self.assertEqual(self.at("/", "www.example.org")[0], 301)                 # www. leads to the bare name
         code, body = self.at("/terms")
         self.assertIn("<strong>nice</strong>", body.decode())
         self.assertIn('<img src="https://cdn.example.org/assets/logo.png?v=abc" alt="Our logo" loading="lazy">', body.decode())

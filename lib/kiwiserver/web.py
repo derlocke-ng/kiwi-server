@@ -1986,6 +1986,8 @@ def make_app(control: Control):
         if SITE_HOST and host in sitemod.hosts(SITE_HOST):
             if "/.." in request.url.path or "//" in request.url.path or request.method not in ("GET", "HEAD"):
                 return Response("Not here.", status_code=404, media_type="text/plain")
+            if host == "www." + SITE_HOST:        # one address for the site: www. leads to the bare name
+                return RedirectResponse("https://%s%s" % (SITE_HOST, request.url.path), status_code=301)
             return site_answer(request)
         return await call_next(request)
 

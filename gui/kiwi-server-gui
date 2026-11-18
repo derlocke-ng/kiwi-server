@@ -1863,6 +1863,146 @@ class SourcesDialog(Adw.Dialog):
         d.present(self)
 
 
+class PreferencesDialog(Adw.PreferencesDialog):
+    """The app's own settings, behind the gear (as in Kiwi Apps): how it looks, how this network is
+    shared with other computers, its locking, and the tools. The machines' settings are elsewhere:
+    Defaults in the list, and each machine's page."""
+
+    def __init__(self, win):
+        super().__init__(title="Preferences")
+        self.win = win
+        self.add(self._general())
+        self.add(self._sharing())
+        self.add(self._security())
+        self.add(self._tools())
+
+    def _row(self, title, subtitle, label, then, group, style=None):
+        row = Adw.ActionRow(title=title, subtitle=subtitle, activatable=True)
+        b = Gtk.Button(label=label, valign=Gtk.Align.CENTER, css_classes=[style] if style else [])
+
+        def go(*_):
+            self.close()
+            then()
+        b.connect("clicked", go)
+        row.connect("activated", go)
+        row.add_suffix(b)
+        group.add(row)
+        return row
+
+    def _action(self, name):
+        return lambda: self.win.activate_action("win." + name, None)
+
+    def _general(self):
+        page = Adw.PreferencesPage(title="General", icon_name="preferences-system-symbolic")
+        g = Adw.PreferencesGroup(title="Appearance")
+        conf = gui_conf()
+        self._busy = True
+        self._preview = Gtk.Image(pixel_size=48, valign=Gtk.Align.CENTER)
+        self._colors = icon_colors()
+        self._color_row = Adw.ComboRow(title="App icon", subtitle="in the app grid, the dash and this window",
+                                       model=Gtk.StringList.new([label for _k, label in self._colors]))
+        self._color_row.add_prefix(self._preview)
+        keys = [k for k, _l in self._colors]
+        self._color_row.set_selected(keys.index(conf.get("icon_color", "")) if conf.get("icon_color", "") in keys else 0)
+        g.add(self._color_row)
+        self._style_row = Adw.ComboRow(title="Icon style", subtitle="kiwi-icons' three styles",
+                                       model=Gtk.StringList.new([label for _k, label in ICON_STYLES]))
+        styles = [k for k, _l in ICON_STYLES]
+        self._style_row.set_selected(styles.index(conf.get("icon_style", "classic")) if conf.get("icon_style") in styles else 0)
+        if kiwi_icon is None:
+            self._style_row.set_sensitive(False)
+            self._style_row.set_subtitle("kiwi_icon.py is missing: install Kiwi Server again")
+        g.add(self._style_row)
+        self._scheme_row = Adw.ComboRow(title="Light or dark", model=Gtk.StringList.new([label for _k, label in SCHEMES]))
+        schemes = [k for k, _l in SCHEMES]
+        self._scheme_row.set_selected(schemes.index(conf.get("scheme", "system")) if conf.get("scheme") in schemes else 0)
+        g.add(self._scheme_row)
+        for r in (self._color_row, self._style_row):
+            r.connect("notify::selected", self._icon_changed)
+        self._scheme_row.connect("notify::selected", self._scheme_changed)
+        self._busy = False
+        self._show_icon()
+        page.add(g)
+        g = Adw.PreferencesGroup(title="Messages", description="What the app said, under the bell at the top right.")
+        n = len(getattr(self.win, "messages", []) or [])
+        row = Adw.ActionRow(title="Kept messages", subtitle="%d, the newest 300 at most" % n)
+        clear = Gtk.Button(label="Clear", valign=Gtk.Align.CENTER, sensitive=bool(n))
+
+        def wipe(*_):
+            self.win.clear_bell()
+            row.set_subtitle("0, the newest 300 at most")
+            clear.set_sensitive(False)
+        clear.connect("clicked", wipe)
+        row.add_suffix(clear)
+        g.add(row)
+        page.add(g)
+        return page
+
+    def _show_icon(self):
+        f = os.path.join(HICOLOR, "scalable", "apps", APP_ID + ".svg")
+        if os.path.isfile(f):
+            self._preview.set_from_file(f)
+        else:
+            self._preview.set_from_icon_name(APP_ID)
+
+    def _icon_changed(self, *_):
+        if self._busy:
+            return
+        color = self._colors[self._color_row.get_selected()][0]
+        style = ICON_STYLES[self._style_row.get_selected()][0]
+        gui_conf_set(icon_color=color, icon_style=style)
+        err = apply_icon(color, style)
+        self._show_icon()
+        self.add_toast(Adw.Toast(title=GLib.markup_escape_text(
+            "Icon not changed: %s" % err if err else "Icon changed. The app grid may show it after the next login."), timeout=4))
+
+    def _scheme_changed(self, *_):
+        if self._busy:
+            return
+        key = SCHEMES[self._scheme_row.get_selected()][0]
+        gui_conf_set(scheme=key)
+        apply_scheme(key)
+
+    def _sharing(self):
+        page = Adw.PreferencesPage(title="Sharing", icon_name="emblem-shared-symbolic")
+        g = Adw.PreferencesGroup(title="This network on other computers",
+                                 description="Each way keeps the network's copies in step; the app syncs by itself.")
+        self._row("Use another computer", "an invite link for a computer that should manage this network too",
+                  "Open…", self._action("move"), g)
+        self._row("Keep it in a synced folder", "Nextcloud, Syncthing, a stick: the encrypted network in a folder",
+                  "Open…", self._action("folder"), g)
+        self._row("A home server that looks after it", "the control node: its page, and the network without this computer",
+                  "Open…", self._action("control-setup"), g)
+        page.add(g)
+        g = Adw.PreferencesGroup(title="In step")
+        self._row("Sync now", "fetch what is newer there, send what was saved here", "Sync", self._action("sync"), g)
+        self._row("Compare with the other copy", "what differs, and who changed it", "Compare…", self._action("diff"), g)
+        page.add(g)
+        return page
+
+    def _security(self):
+        page = Adw.PreferencesPage(title="Security", icon_name="channel-secure-symbolic")
+        g = Adw.PreferencesGroup(title="This computer's key",
+                                 description="The network's secrets open with this computer's key, in its keyring.")
+        self._row("Locking", "when the secrets close again by themselves, and a password for the key",
+                  "Open…", self._action("locking"), g)
+        self._row("A computer was lost or stolen", "replace the keys it knew", "Open…", self._action("rotate"), g)
+        page.add(g)
+        return page
+
+    def _tools(self):
+        page = Adw.PreferencesPage(title="Tools", icon_name="applications-engineering-symbolic")
+        g = Adw.PreferencesGroup(title="Install media and scripts",
+                                 description="Mostly for when something does not work: the app does these when they are needed.")
+        self._row("Are the build tools here?", "what this computer needs to make install media", "Check",
+                  lambda: self.win.get_application().activate_action("doctor", None), g)
+        self._row("Render every machine", "the role scripts and files into the output folder", "Render",
+                  self._action("render-all"), g)
+        self._row("Build every ISO", "install media for every machine", "Build…", self._action("build-all"), g)
+        page.add(g)
+        return page
+
+
 class DiffDialog(Adw.Dialog):
     """This copy next to the other computers' (`kiwi-server control diff`): each file that differs,
     who changed it since the last sync, and in the settings the lines, every secret value hidden.
@@ -2510,21 +2650,105 @@ def when(iso):
     return "%s, %s ago" % (dt.to_local().format("%d %b %H:%M"), duration(max(ago, 0)))
 
 
-def load_recent():
+def gui_conf():
+    """The app's own settings (gui.json): the recent fleets, its icon, light or dark."""
     try:
         with open(RECENT, encoding="utf-8") as f:
-            return [p for p in json.load(f).get("recent", []) if os.path.isfile(p)]
-    except (OSError, ValueError, AttributeError):
-        return []
+            got = json.load(f)
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def gui_conf_set(**values):
+    d = gui_conf()
+    d.update(values)
+    try:
+        os.makedirs(os.path.dirname(RECENT), exist_ok=True)
+        with open(RECENT + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        os.replace(RECENT + ".tmp", RECENT)
+    except OSError:
+        pass
+
+
+def load_recent():
+    return [p for p in gui_conf().get("recent", []) if isinstance(p, str) and os.path.isfile(p)]
 
 
 def save_recent(paths):
+    gui_conf_set(recent=paths[:8])
+
+
+# The app icon, as in kiwi-updater: kiwi-icons' stock server kiwi, or the same kiwi in a kiwi-icons
+# colourway and style. kiwi_icon.py is kiwi-icons' kit/kiwi_icon.py, copied unchanged; install.sh
+# puts it and the stock icon in the lib folder, a checkout has them beside this script and in data/.
+ICON_GLYPH = "server"
+ICON_STYLES = [("classic", "Classic"), ("flat", "Flat"), ("night", "Night")]
+HICOLOR = os.path.join(GLib.get_user_data_dir(), "icons", "hicolor")
+_HERE = os.path.dirname(os.path.realpath(__file__))
+for _d in (os.path.join(_HERE, "..", "lib", "kiwi-server"), _HERE):
+    if os.path.isfile(os.path.join(_d, "kiwi_icon.py")):
+        sys.path.insert(0, _d)
+        break
+try:
+    import kiwi_icon  # noqa: E402
+except ImportError:
+    kiwi_icon = None
+
+
+def icon_colors():
+    """(key, label): the stock icon first, then every kiwi-icons colourway."""
+    out = [("", "Kiwi Server's own")]
+    if kiwi_icon is not None:
+        out += [(k, v["label"]) for k, v in kiwi_icon.COLORWAYS.items()]
+    return out
+
+
+def stock_icon():
+    for c in (os.path.join(_HERE, "..", "lib", "kiwi-server", APP_ID + ".svg"),
+              os.path.join(_HERE, "..", "data", "icons", APP_ID + ".svg")):
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def apply_icon(color, style):
+    """The icon these choices make, where the desktop entry finds it. None, or what went wrong."""
+    apps = os.path.join(HICOLOR, "scalable", "apps")
+    target = os.path.join(apps, APP_ID + ".svg")
     try:
-        os.makedirs(os.path.dirname(RECENT), exist_ok=True)
-        with open(RECENT, "w", encoding="utf-8") as f:
-            json.dump({"recent": paths[:8]}, f)
-    except OSError:
-        pass
+        os.makedirs(apps, exist_ok=True)
+        if color or style != "classic":
+            if kiwi_icon is None:
+                return "kiwi_icon.py is missing: install Kiwi Server again"
+            svg = kiwi_icon.render(ICON_GLYPH, colorway=color or None, style=style, title="Kiwi Server")
+        else:
+            stock = stock_icon()
+            if stock is None:
+                return "the stock icon is missing: install Kiwi Server again"
+            with open(stock) as fh:
+                svg = fh.read()
+        with open(target + ".tmp", "w") as fh:
+            fh.write(svg)
+        os.replace(target + ".tmp", target)
+    except (OSError, ValueError, KeyError) as e:
+        return str(e)
+    if shutil.which("gtk-update-icon-cache"):
+        try:
+            subprocess.run(["gtk-update-icon-cache", "-qtf", HICOLOR], timeout=20, capture_output=True,
+                           stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return None
+
+
+SCHEMES = [("system", "Follow the system"), ("light", "Light"), ("dark", "Dark")]
+
+
+def apply_scheme(key):
+    Adw.StyleManager.get_default().set_color_scheme({"light": Adw.ColorScheme.FORCE_LIGHT, "dark": Adw.ColorScheme.FORCE_DARK}
+                                                    .get(key, Adw.ColorScheme.DEFAULT))
 
 
 def tilde(path):
@@ -3996,6 +4220,7 @@ class Window(Adw.ApplicationWindow):
                          ("accounts", lambda: self.doc.path and AccountsDialog(self).present(self)),
                          ("activity", lambda: self.doc.path and ActivityDialog(self).present(self)),
                          ("sources", lambda: self.doc.path and SourcesDialog(self).present(self)),
+                         ("preferences", lambda: PreferencesDialog(self).present(self)),
                          ("diff", lambda: self.doc.path and (DiffDialog(self).present(self) if self.joined()
                                                               else self.toast("This network is not shared yet: Use another computer… in the menu"))),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
@@ -4022,33 +4247,27 @@ class Window(Adw.ApplicationWindow):
         menu.append_section(None, section)
         menu.append_section("Recent", self.recent_menu)
         section = Gio.Menu()
-        section.append("Take in a waiting machine…", "win.take-in")
-        section.append("Connect this computer…", "win.connect")
-        section.append("Add a phone or laptop…", "win.device")
-        section.append("Back up the network now", "win.backup-now")
-        section.append("Save a copy of the network…", "win.copy")
-        section.append("Use another computer…", "win.move")
-        section.append("Keep it in a synced folder…", "win.folder")
-        section.append("A home server that looks after it…", "win.control-setup")
-        section.append("Update everything…", "win.update-all")
+        net = Gio.Menu()                        # what one does with the network now and then
+        net.append("Take in a waiting machine…", "win.take-in")
+        net.append("Add a phone or laptop…", "win.device")
+        net.append("Connect this computer…", "win.connect")
+        net.append("Update everything…", "win.update-all")
+        net.append("Back up the network now", "win.backup-now")
+        net.append("Save a copy of the network…", "win.copy")
+        net.append("If something breaks…", "win.recovery")
+        section.append_submenu("This network", net)
+        manage = Gio.Menu()                     # who may do what, and where modules come from
+        manage.append("Who may reach what…", "win.access")
+        manage.append("Accounts…", "win.accounts")
+        manage.append("Federation…", "win.federation")
+        manage.append("Module sources…", "win.sources")
+        manage.append("SSH certificates…", "win.sshca")
+        manage.append("Activity…", "win.activity")
+        section.append_submenu("Manage", manage)
         section.append("Sync now", "win.sync")
-        section.append("Compare with the other copy…", "win.diff")
-        section.append("A computer was lost or stolen…", "win.rotate")
-        section.append("If something breaks…", "win.recovery")
-        section.append("Render every host", "win.render-all")
-        section.append("Build every ISO…", "win.build-all")
         menu.append_section(None, section)
         section = Gio.Menu()
-        section.append("Who may reach what…", "win.access")
-        section.append("Accounts…", "win.accounts")
-        section.append("Activity…", "win.activity")
-        section.append("Module sources…", "win.sources")
-        section.append("Federation…", "win.federation")
-        section.append("SSH certificates…", "win.sshca")
-        section.append("Locking…", "win.locking")
-        menu.append_section(None, section)
-        section = Gio.Menu()
-        section.append("Doctor — are the build tools here?", "app.doctor")
+        section.append("Preferences", "win.preferences")
         section.append("About Kiwi Server", "app.about")
         menu.append_section(None, section)
 
@@ -4065,6 +4284,9 @@ class Window(Adw.ApplicationWindow):
         b_add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a host")
         b_add.connect("clicked", lambda *_: self.add_host_dialog())
         side_hb.pack_end(b_add)
+        b_prefs = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Preferences")
+        b_prefs.connect("clicked", lambda *_: PreferencesDialog(self).present(self))
+        side_hb.pack_end(b_prefs)
         side_tb.add_top_bar(side_hb)
         foot = Gtk.Box(spacing=8, margin_top=4, margin_bottom=4, margin_start=12, margin_end=6)
         self.store_icon = Gtk.Image(icon_name="changes-prevent-symbolic")
@@ -6223,6 +6445,8 @@ class Application(Adw.Application):
         icons = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "data", "icons")
         if os.path.isfile(os.path.join(icons, APP_ID + ".svg")):
             Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.path.realpath(icons))
+        apply_scheme(gui_conf().get("scheme", "system"))
+        self.set_accels_for_action("win.preferences", ["<Control>comma"])
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,

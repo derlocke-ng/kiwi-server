@@ -4,6 +4,7 @@ import argparse
 import concurrent.futures
 import ipaddress
 import getpass
+import hashlib
 import socket
 import json
 import os
@@ -1032,6 +1033,8 @@ def cmd_list(args):
                 play = {"host": h.name, "site": c.get("play_hostname") or "play." + h.hostname, "group": c.get("play_group") or "games"}
         print(json.dumps({"fleet": fleet.path, "output_dir": out_dir, "domain": domain, "mesh": mesh,
                           "default_group": default_group, "play": play,
+                          # machines with changes not applied yet (their role script is another now)
+                          "changed": changed_since_apply(fleet, roles, r),
                           # the modules' own names of their pages, and the modules that sign people in
                           # with the network's accounts beyond the built-in ones (module.yaml)
                           "pages": {k: v for m in r.ms.modules.values() for k, v in (getattr(m, "pages", None) or {}).items()},
@@ -1096,6 +1099,14 @@ def cmd_next(args):
         todo = [t for t in todo if t[0] is again] or [
             (again, "install", "", [], Outputs(out_dir, again, media_dir_for(args, fleet)))]
     if not todo:
+        changed = changed_since_apply(fleet, roles, Renderer(fleet, roles, out_dir, None, ms))
+        if changed:
+            util.say("%s ha%s changes not applied yet" % (", ".join(changed), "s" if len(changed) == 1 else "ve"))
+            if args.yes or not sys.stdin.isatty() or not input(
+                    "Apply them now? [Enter to go on, n to stop]: ").strip().lower().startswith("n"):
+                rc = main(["apply", path] + changed)
+                if rc:
+                    raise SystemExit(rc)
         for server, new in sorted(backup_untold(fleet).items()):
             util.say("%s does not take the backups of %s yet" % (server, ", ".join(new)))
             if args.yes or not sys.stdin.isatty() or not input(
@@ -1276,6 +1287,39 @@ def backup_untold(fleet):
         new = [c for c in _backup_clients(h) if c not in told.get(h.name, [c])]
         if new:
             out[h.name] = new
+    return out
+
+
+def _fingerprint(script):
+    return hashlib.sha256(script.encode() if isinstance(script, str) else script).hexdigest()
+
+
+def record_rendered(fleet, name, script):
+    """What a machine got with its last apply, as a fingerprint of its role script (the same
+    settings render the same script, byte for byte)."""
+    state = fleet_state(fleet)
+    state.setdefault("rendered", {})[name] = _fingerprint(script)
+    try:
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    except OSError:
+        pass
+
+
+def changed_since_apply(fleet, roles, r, skip=()):
+    """Machines whose role script is another now than the one their last apply sent: a setting of
+    theirs changed, or one elsewhere that reaches them (a new name the DNS machines must know, a
+    public name the master hands on, a new client of a backup server). A machine this computer
+    never applied with this release is not judged."""
+    told, out = fleet_state(fleet).get("rendered") or {}, []
+    for h in fleet.hosts.values():
+        if h.name in skip or h.name not in told or h.role not in roles or h.validate(roles):
+            continue
+        try:
+            script, _b = r.script(h)
+        except KiwiError:
+            continue
+        if _fingerprint(script) != told[h.name]:
+            out.append(h.name)
     return out
 
 
@@ -2296,6 +2340,12 @@ def cmd_apply(args):
     """Re-render a host and run the role script on it: settings changed, a
     certificate renewed, a module added — without a reinstall."""
     fleet, roles, ms = load(args)
+    if getattr(args, "changed", False):         # every machine whose role script is another now
+        found = changed_since_apply(fleet, roles, Renderer(fleet, roles, out_dir_for(args, fleet), None, ms))
+        if not found and not args.hosts:
+            util.say("every machine has what its settings say")
+            return
+        args.hosts = sorted(set(args.hosts or []) | set(found))
     hosts = fleet.select(args.hosts)
     if not hosts:
         raise KiwiError("which host? kiwi-server apply <fleet> <host...>")
@@ -2382,6 +2432,8 @@ def cmd_apply(args):
             tgt = addressmod.settle(h, tgt)     # last: the connection goes away with the old address
             record_applied(fleet, h.name)
             record_backup_clients(fleet, h)
+            if not args.no_run:
+                record_rendered(fleet, h.name, script)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             failed.append(h.name)
@@ -2389,6 +2441,10 @@ def cmd_apply(args):
     for server, new in sorted(backup_untold(fleet).items()):
         util.warn("%s does not take the backups of %s yet: kiwi-server apply %s %s"
                   % (server, ", ".join(new), shown_path(fleet.path), server))
+    others = changed_since_apply(fleet, roles, r, skip={h.name for h in hosts})
+    if others:          # what this change reaches beyond the machines just applied
+        util.warn("%s ha%s changes not applied yet: kiwi-server apply %s --changed"
+                  % (", ".join(others), "s" if len(others) == 1 else "ve", shown_path(fleet.path)))
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
 
@@ -4281,6 +4337,8 @@ def build_parser():
     s = sub("plan", cmd_plan); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--changed", action="store_true",
+                   help="every machine with changes not applied yet (its role script is another now), besides those named")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
     s.add_argument("--new-host-key", action="store_true",

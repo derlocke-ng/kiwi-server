@@ -2763,6 +2763,39 @@ class TestSetup(Base):
         self.assertIn("kiwi-server next %s" % dest, err)
         self.assertEqual(calls, [])                              # no enroll was tried
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_change_names_every_machine_it_reaches_until_they_are_applied(self):
+        """A new site on one machine is a new name for the machines that answer for names: they are
+        changed too (grow.medlar.home did not open from a phone, 18 Nov 2026)."""
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        wg = ("[Interface]\nPrivateKey = dGVzdC1wcml2YXRlLWtleS1ub3QtcmVhbC0wMDAwMDAwMDAwMDA=\nAddress = 10.8.0.%d/24\n"
+              "DNS = 10.8.0.1\n\n[Peer]\nPublicKey = dGVzdC1zZXJ2ZXItcHVibGljLWtleS1ub3QtcmVhbC0wMDAwMDA=\n"
+              "AllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n")
+        for i, h in enumerate(config.Fleet.load(dest).hosts.values()):      # their places on the VPN, enrolled
+            write(os.path.join(self.tmp, "secrets", "%s.conf" % h.hostname), wg % (20 + i))
+        if True:
+            fleet = config.Fleet.load(dest)
+            roles, ms = rolesmod.discover(), cli.modset(fleet)
+            ok = [h for h in fleet.hosts.values() if h.role in roles and not h.validate(roles)]
+            r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+            for h in ok:
+                cli.record_rendered(fleet, h.name, r.script(h)[0])
+            self.assertEqual(cli.changed_since_apply(fleet, roles, r), [])      # as applied
+            data = yaml.safe_load(util.read_text(dest))
+            node = next(h.name for h in ok if roles[h.role].node_type == "node" and "dns" not in h.modules)
+            block = data["hosts"][node].setdefault("node", {})
+            block["modules"] = list(fleet.hosts[node].modules) + ["paste"]
+            write(dest, yaml.safe_dump(data, sort_keys=False))
+            fleet = config.Fleet.load(dest)
+            r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+            changed = cli.changed_since_apply(fleet, roles, r)
+        self.assertIn(node, changed)
+        dns = [h.name for h in ok if "dns" in fleet.hosts[h.name].modules]
+        self.assertTrue(dns and all(d in changed for d in dns), (dns, changed))       # they must learn paste.<node>
+
     def test_a_backup_server_with_a_new_client_is_named_until_it_is_applied(self):
         answers = os.path.join(self.tmp, "answers.json")
         write(answers, json.dumps(self.ANSWERS))
@@ -8841,6 +8874,31 @@ class WebBase(StoreBase):
 @unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
 class TestWeb(WebBase):
     """The control page's own pages."""
+
+    def test_changes_not_applied_yet_are_applied_with_one_button(self):
+        """Save & apply, and the Home card (after OpenWrt): a change reaches other machines too."""
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        info = {"hosts": [{"name": n, "hostname": n + ".home", "role": "node", "phase": "applied", "modules": [], "sites": []}
+                          for n in ("papaya", "lime", "sorbet")], "changed": ["lime", "sorbet"]}
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps(info))
+        body = self.ask("/")[1]
+        self.assertIn("Changes not applied yet", body)
+        self.assertIn("Apply all 2", body)
+        self.assertIn('<input type="hidden" name="host" value="sorbet">', body)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        with mock.patch.object(self.c, "settings", lambda host: {"groups": []}), \
+                mock.patch.object(self.c, "save_settings", lambda host, changes, user="admin": []), \
+                mock.patch.object(self.c, "fleet_info", lambda fresh=False: info):
+            code, where = self.ask("/hosts/papaya/settings", {"csrf": csrf, "then": "apply"})[:2]
+            self.assertEqual(code, 303)
+            jid = where.rsplit("/", 1)[1]
+            self.assertEqual(self.c.job(jid)["hosts"], ["papaya", "lime", "sorbet"])
+            for _ in range(200):            # its end, before this test's folder goes
+                if self.c.job(jid)["state"] in ("ok", "failed"):
+                    break
+                time.sleep(0.05)
+            code, where = self.ask("/hosts/papaya/settings", {"csrf": csrf, "then": ""})[:2]
+            self.assertEqual(where, "/hosts/papaya/settings?saved=0")              # Save alone applies nothing
 
     def test_the_page_changes_its_password_and_replaces_the_keys(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)

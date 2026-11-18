@@ -5730,8 +5730,14 @@ class Window(Adw.ApplicationWindow):
             g.add(info_row("LAN address", "by DHCP" if st["address"] == "dhcp" else st["address"], copy=True))
         t = f.get("tunnel")
         if t:
-            g.add(info_row("VPN client", "not running" if not t["running"] else "no tunnel" if not t["mtu"] else
-                           "up, MTU %d, %s" % (t["mtu"], "forwarding" if t["forward"] else "NOT forwarding")))
+            row = info_row("VPN client", "not running" if not t["running"] else "no tunnel" if not t["mtu"] else
+                           "up, MTU %d, %s" % (t["mtu"], "forwarding" if t["forward"] else "NOT forwarding"))
+            if t["running"] and t["mtu"] and self.value_of(name, "role", "bare") == "node":
+                # how big a packet gets through, inside the tunnel and outside: whether the MTU fits, how large it could be
+                measure = Gtk.Button(label="Measure", valign=Gtk.Align.CENTER, tooltip_text="Measure the tunnel's MTU (changes nothing)")
+                measure.connect("clicked", lambda *_: self.spawn(["mtu", self.doc.path, name], "Measuring %s's MTU…" % name))
+                row.add_suffix(measure)
+            g.add(row)
         p = f.get("peers")
         if p:
             g.add(info_row("Tunnels here", "%d of %d connected" % (p["recent"], p["total"])))

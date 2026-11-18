@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.205.0 — the website, and what federation is for
+
+- **Every page the network shows wears the control page's frame** (the owner: "why don't you use
+  the control node's design for every web UI"): the website, both status pages and the game page
+  have its sidebar, its top bar and its bottom bar on a phone, with their own menu and the light
+  or dark switch, no machine counts and no logout. The website's pages are its cards and buttons;
+  its *Status* is the status page for the Internet (status.dlhost.eu), and `/status` leads there.
+- **The public services are listed again** on the status page for the Internet and the website:
+  since 2.202.0 a machine's sites were read from the network's own DNS, which no longer has the
+  public names.
+- **A device on a split tunnel routes the linked networks' meshes too** (the owner: "that's the
+  sense of federation"): `enroll --split` writes them into the config next to the own mesh. A
+  device made before gets them with `kiwi-server enroll FLEET NAME --existing --split`.
+- **Measure the MTU on a machine's page**, in the app (beside *VPN client*) and on the control
+  page (the owner: "is the MTU measuring in the GUI?"). `kiwi-server mtu` now measures the path
+  outside the tunnel too and says how large the tunnel could be: at home today 1376 fits, the path
+  to the master takes 1452 bytes, so 1392 would (1.2 % more a packet).
+- **Who may reach what in a linked network** (kiwi-modules 0.91.0): a group that reaches
+  everything reaches what the linked networks open; a narrower one only when it names the network,
+  `kiwi-server access FLEET guests kiwi2`. Before, guests and pentest reached what a partner
+  opened.
+
 ## 2.204.0 — the control part of this release, and the picture at its smallest
 
 - **An apply brings the control part of the kiwi-server that applies it**: the control module's

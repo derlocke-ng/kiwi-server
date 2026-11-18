@@ -172,20 +172,21 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 {% if cls == "nav" and group != seen.group %}{% set seen.group = group %}<span class="grp">{{ group }}</span>{% endif %}
 <a class="{{ cls }}{% if nav == href %} on{% endif %}" href="{{ href }}">{{ icon(pic) }}<span>{{ label }}</span>{% if cls == "nav" and h.counts.get(href) %}<span class="count">{{ h.counts[href] }}</span>{% endif %}</a>{% endfor %}{% endmacro %}
 {% macro theme() %}<button type="button" class="icon" title="Light or dark" aria-label="Light or dark" onclick="var d=document.documentElement,t=(d.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark';d.dataset.theme=t;document.cookie='kiwi_theme='+t+';path=/;max-age=31536000;samesite=strict'">{{ icon("moon") }}</button>{% endmacro %}
-<div class="shell"><aside class="side"><a class="brand" href="/">{{ icon("kiwi") }}<span>Kiwi <small>{{ h.domain }}</small></span></a>
+{% macro brand() %}<a class="brand" href="{{ open_frame.home if open_frame else "/" }}">{{ icon("kiwi") }}<span>{% if open_frame %}{{ open_frame.name }}{% else %}Kiwi <small>{{ h.domain }}</small>{% endif %}</span></a>{% endmacro %}
+<div class="shell"><aside class="side">{{ brand() }}
 {{ links(navitems, "nav") }}
-<div class="foot">{% if h.total %}<div class="health"><span class="t">Your machines</span>
+<div class="foot">{% if open_frame %}<div class="row2">{{ theme() }}</div>{% elif h.total %}<div class="health"><span class="t">Your machines</span>
 <span><span class="dot ok"></span>fine</span><b>{{ h.ok }}</b>
 {% if h.warn %}<span><span class="dot warn"></span>want a look</span><b>{{ h.warn }}</b>{% endif %}
 {% if h.bad %}<span><span class="dot bad"></span>with a problem</span><b>{{ h.bad }}</b>{% endif %}
 {% if h.down %}<span><span class="dot down"></span>not reachable</span><b>{{ h.down }}</b>{% endif %}
 <a class="t" href="/status">What everyone sees: the status page</a></div>{% endif %}
-<div class="row2">{{ theme() }}<form class="inline" method="post" action="/logout" style="flex:3;display:flex">{{ tok }}<button>Log out</button></form></div></div></aside>
-<div><header class="top"><a class="brand" href="/">{{ icon("kiwi") }}<span>Kiwi <small>{{ h.domain }}</small></span></a>
-{% if h.total %}<span class="pill {{ h.level }}">{{ h.word }}</span>{% endif %}{{ theme() }}</header>
+{% if not open_frame %}<div class="row2">{{ theme() }}<form class="inline" method="post" action="/logout" style="flex:3;display:flex">{{ tok }}<button>Log out</button></form></div>{% endif %}</div></aside>
+<div><header class="top">{{ brand() }}
+{% if h.total and not open_frame %}<span class="pill {{ h.level }}">{{ h.word }}</span>{% endif %}{{ theme() }}</header>
 <main>{% block main %}{% endblock %}</main></div>
-<nav class="bar">{{ links(navitems[:3], "") }}<details><summary>{{ icon("more") }}<span>More</span></summary>
-<div class="sheet">{{ links(navitems[3:], "nav") }}<form method="post" action="/logout">{{ tok }}<button>Log out</button></form></div></details></nav></div>
+<nav class="bar">{{ links(navitems[:3], "") }}{% if navitems|length > 3 or not open_frame %}<details><summary>{{ icon("more") }}<span>More</span></summary>
+<div class="sheet">{{ links(navitems[3:], "nav") }}{% if not open_frame %}<form method="post" action="/logout">{{ tok }}<button>Log out</button></form>{% endif %}</div></details>{% endif %}</nav></div>
 {% else %}<main>{{ self.main() }}</main>{% endif %}</body></html>"""
 
 STEP = """{% macro step(m, tok) %}<div class="card"><div class="row"><strong>{{ m.name }}</strong>
@@ -640,6 +641,8 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <p>Asks the machine how it is. <span class="muted">Changes nothing.</span></p>
 <form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="plan"><input type="hidden" name="host" value="{{ m.name }}"><button>Preview</button></form>
 <p>Shows what <em>Apply</em> would change on it. <span class="muted">Changes nothing.</span></p>
+{% if m.role == "node" %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="mtu"><input type="hidden" name="host" value="{{ m.name }}"><button>Measure the MTU</button></form>
+<p>How big a packet gets through its tunnel to the master, and through the path outside it: whether the tunnel's MTU fits, and how large it could be. <span class="muted">Changes nothing.</span></p>{% endif %}
 <form method="post" action="/run" onsubmit="return confirm('Apply to {{ m.name }} now? Services that changed restart for a moment.')">{{ tok }}
 <input type="hidden" name="action" value="apply"><input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Apply</button></form>
 <p>Sets the machine up the way your network's settings say: new settings, updates of its services, repairs.
@@ -1103,22 +1106,23 @@ your network, under Machines.</p>
     # the network's website for strangers (site.py): its pages from the pinned repository, the services
     # and the sign-up from the network itself
     "site.html": """{% extends "base.html" %}{% block title %}{{ site.name or brand_name or "Kiwi" }}{% if pg and pg.slug != home %}: {{ pg.title }}{% endif %}{% endblock %}{% block main %}
-<style>main{max-width:980px}.snav{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 18px}.snav a{padding:6px 12px;border-radius:999px;color:var(--fg);text-decoration:none}
-.snav a.on,.snav a:hover{background:var(--tint)}.prose{line-height:1.65}.prose h1{margin-top:4px}.prose pre{overflow:auto;background:var(--hover);padding:12px;border-radius:10px}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin:10px 0 18px}.cards .card{margin:0}
-.foot{margin-top:28px;color:var(--muted);font-size:.86rem;display:flex;gap:14px;flex-wrap:wrap}
-{% if site.accent %}:root{--accent:{{ site.accent }}}{% endif %}</style>
-<div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ site.name or brand_name or "Kiwi" }}</h1>
-{% if h.join and h.join_public %}<a class="btn primary" href="{{ h.join }}">Get an account</a>{% endif %}</div>
-{% if site.tagline %}<p class="sub">{{ site.tagline }}</p>{% endif %}
-<nav class="snav">{% for p in site.pages %}<a href="/{{ "" if p.slug == home else p.slug }}"{% if pg and p.slug == pg.slug %} class="on"{% endif %}>{{ p.title }}</a>{% endfor %}
-<a href="/services"{% if not pg %} class="on"{% endif %}>Services</a><a href="/status">Status</a></nav>
-{% if pg %}<article class="prose">{{ pg.html|safe }}</article>{% endif %}
-{% if not pg or pg.slug == home %}<h2>Services</h2>
-{% if h.services %}<div class="cards">{% for s in h.services %}<div class="card"><b>{{ s.label }}</b> <span class="badge {{ "ok" if s.ok else "bad" }}">{{ "Up" if s.ok else "Down" }}</span>
-{% if s.about %}<p class="sm" style="margin:6px 0">{{ s.about }}</p>{% endif %}<a class="sm" href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a></div>{% endfor %}</div>
-{% else %}<p class="muted">No service is open to the Internet yet.</p>{% endif %}{% endif %}
-<div class="foot"><a href="/status">Whether everything works</a>{% if contact %}<span>Contact: {{ contact }}</span>{% endif %}<span>Made with Kiwi Network</span></div>
+<style>{% if site.accent %}:root{--accent:{{ site.accent }}}{% endif %}
+.prose{line-height:1.65}.prose>:first-child{margin-top:0}.prose pre{overflow:auto;background:var(--hover);padding:12px;border-radius:10px}
+.svcs{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin:10px 0 18px}.svcs .card{margin:0;display:flex;flex-direction:column;gap:6px}
+.svcs .card p{margin:0;flex:1}</style>
+{% if pg and pg.slug == home %}
+<div class="row" style="margin-top:8px"><h1 style="margin:0">{{ site.tagline or pg.title }}</h1></div>
+<div class="actions" style="margin:14px 0 18px">{% if join_url %}<a class="btn primary" href="{{ join_url }}">Get an account</a>{% endif %}
+<a class="btn" href="/services">The services</a><a class="btn" href="{{ status_url }}">Is everything working?</a></div>
+<div class="card prose">{{ pg.html|safe }}</div>
+{% elif pg %}<div class="card prose" style="margin-top:8px">{{ pg.html|safe }}</div>{% endif %}
+{% if not pg or pg.slug == home %}<h2>Services</h2><p class="sub">What is open to everyone, and whether it works right now.</p>
+{% if h.services %}<div class="svcs">{% for s in h.services %}<div class="card"><div class="row"><b>{{ s.label }}</b><span class="badge {{ "ok" if s.ok else "bad" }}">{{ "Up" if s.ok else "Down" }}</span></div>
+{% if s.about %}<p class="muted small">{{ s.about }}</p>{% else %}<p></p>{% endif %}<a class="small" href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a></div>{% endfor %}</div>
+{% else %}<p class="muted">No service is open to the Internet yet.</p>{% endif %}
+{% if join_url %}<div class="card"><div class="row"><div><b>Want an account?</b><p class="muted" style="margin:4px 0 0">One account for every service that needs one.</p></div>
+<a class="btn primary" href="{{ join_url }}">Get an account</a></div></div>{% endif %}{% endif %}
+<p class="muted small" style="margin-top:24px">{% if contact %}Contact: {{ contact }} · {% endif %}Made with Kiwi Network</p>
 {% endblock %}""",
     "status.html": """{% extends "base.html" %}{% block title %}{{ (brand_name if h.strangers else "") or "Kiwi" }}: {{ one.name if one else "status" }}{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120;url=?auto=1"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}
@@ -1742,7 +1746,8 @@ def make_app(control: Control):
             tok = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">'
                                     % control.csrf(request.cookies.get(COOKIE)))
         kw.setdefault("alone", alone())
-        return HTMLResponse(env.get_template(template).render(tok=tok, nav=nav, shell=shell_state() if nav else None, **kw))
+        frame = ({"counts": {}, "total": 0, "domain": ""} if kw.get("open_frame") else shell_state()) if nav else None
+        return HTMLResponse(env.get_template(template).render(tok=tok, nav=nav, shell=frame, **kw))
 
     def alone():
         """A network without a master (docs/design/no-master.md): the name of the machine that answers
@@ -1844,8 +1849,8 @@ def make_app(control: Control):
             one = {"name": machine, "state": (said or {}).get("state") or ("down" if said and not said.get("ok") else "unknown")}
             found = [g for g in found if g["machine"] == machine]
         return page("status.html", h=h, now=now, tor=tor_checks(), games=found, play_host=PLAY_HOST, one=one,
-                    mark=ca_mark(control.ca_pem() or ""),
-                    stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+                    mark=ca_mark(control.ca_pem() or ""), stale=bool(h["checked"]) and now - h["checked"] > 45 * 60,
+                    **status_frame(h, play=PLAY_HOST, games=bool(found)))
 
     def registry(request, strangers=False, machine=""):
         """The network as a person on it uses it, as data for an app (kiwi-app's user side): its name,
@@ -1888,6 +1893,18 @@ def make_app(control: Control):
         r["join"] = join if join and not join.split("/")[2].endswith("." + str((control.fleet_info() or {}).get("domain") or "home")) else ""
         return r
 
+    def status_frame(h, strangers=False, play="", games=False):
+        """The status page in the control page's frame: itself, the website, the sign-up, the game page."""
+        items = [("/", "Status", "pulse", "")]
+        if SITE_HOST and strangers:
+            items.append(("https://%s/" % SITE_HOST, "Website", "home", ""))
+        if h.get("join") and (not strangers or h.get("join_public")):
+            items.append((h["join"], "Get an account", "people", ""))
+        if play and games:
+            items.append(("https://%s/" % play, "Game servers", "grid", ""))
+        name = (os.environ.get("KIWI_BRAND") if strangers else "") or "Kiwi"
+        return {"nav": "/", "navitems": items, "open_frame": {"name": name, "home": "/"}}
+
     @app.get("/status/public")
     @app.get("/start/public")
     def status_public():
@@ -1898,7 +1915,7 @@ def make_app(control: Control):
         h["services"] = [s for s in h["services"] if not s["site"].startswith("status.")]
         h["join_public"] = bool(h.get("join")) and not h["join"].split("/")[2].endswith("." + str((control.fleet_info() or {}).get("domain") or "home"))
         return page("status.html", h=h, now=now, tor=tor_checks(), games=[], play_host="",
-                    stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
+                    stale=bool(h["checked"]) and now - h["checked"] > 45 * 60, **status_frame(h, strangers=True))
 
     # ---- the website (site.py): at its name and www., where only the site's pages answer ------------
     SITE_HOST, SITE_REPO, SITE_COMMIT = sitemod.settings()
@@ -1914,10 +1931,19 @@ def make_app(control: Control):
                 return None
         return SITE["got"]
 
+    SITE_ICONS = {"home": "home", "join": "people", "terms": "shield", "rules": "shield", "privacy": "shield", "about": "help"}
+
+    def site_nav(site, home, status_url):
+        """The website's menu in the control page's frame: its pages, the services, the status page."""
+        items = [("/" if p["slug"] == home else "/" + p["slug"], p["title"], SITE_ICONS.get(p["slug"], "link"), "") for p in site["pages"]]
+        return items[:1] + [("/services", "Services", "grid", "")] + items[1:] + [(status_url, "Status", "pulse", "")]
+
     def site_answer(request):
         path = request.url.path
         if path == "/status":
-            return status_public()
+            h = healthmod.public(control.health(), time.time(), strangers=True)
+            there = next(("https://%s/" % x["site"] for x in h["services"] if x["site"].startswith("status.")), "")
+            return RedirectResponse(there, status_code=302) if there else status_public()
         if path in ("/api/registry", "/.well-known/kiwi"):
             return JSONResponse(registry(request, True))
         site = the_site()
@@ -1936,10 +1962,15 @@ def make_app(control: Control):
             return Response("Not here.", status_code=404, media_type="text/plain")
         now = time.time()
         h = healthmod.public(control.health(), now, strangers=True)
-        h["services"] = [x for x in h["services"] if not x["site"].startswith("status.")]
+        status_url = next(("https://%s/" % x["site"] for x in h["services"] if x["site"].startswith("status.")), "/status")
+        h["services"] = [x for x in h["services"] if not x["site"].startswith("status.") and x["site"] not in sitemod.hosts(SITE_HOST)]
         h["join_public"] = bool(h.get("join")) and not h["join"].split("/")[2].endswith(
             "." + str((control.fleet_info() or {}).get("domain") or "home"))
-        return page("site.html", site=site, pg=pg, home=home, h=h, contact=os.environ.get("KIWI_CONTACT", ""))
+        join_url = h["join"] if h.get("join") and h["join_public"] else ("/join" if any(p["slug"] == "join" for p in site["pages"]) else "")
+        return page("site.html", nav="/" + ("" if not pg or pg["slug"] == home else pg["slug"]) if pg else "/services",
+                    navitems=site_nav(site, home, status_url), open_frame={"name": site["name"] or os.environ.get("KIWI_BRAND") or "Kiwi",
+                                                                         "home": "/"},
+                    site=site, pg=pg, home=home, h=h, status_url=status_url, join_url=join_url, contact=os.environ.get("KIWI_CONTACT", ""))
 
     @app.middleware("http")
     async def site_only(request: Request, call_next):
@@ -1980,7 +2011,11 @@ def make_app(control: Control):
         if ready and kw["person"] and "rows" not in kw and kw["log"] is None:
             kw["rows"] = playmod.servers(control.fleet_info(), control.status(), PLAY_EXTRA)
         form = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">' % playmod.csrf(control._session_key, tok))
-        r = HTMLResponse(env.get_template("play.html").render(tok=form, nav=None, shell=None, alone="", **kw))
+        # in the control page's frame, for the people of the network's accounts: the game servers only
+        r = HTMLResponse(env.get_template("play.html").render(
+            tok=form, nav="/play/", navitems=[("/play/", "Game servers", "grid", "")],
+            open_frame={"name": os.environ.get("KIWI_BRAND") or "Kiwi", "home": "/play/"},
+            shell={"counts": {}, "total": 0, "domain": ""}, alone="", **kw))
         r.headers["Cache-Control"] = "no-store"
         return r
 

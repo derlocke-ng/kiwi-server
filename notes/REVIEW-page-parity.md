@@ -37,7 +37,7 @@ run included. Compared command by command and setting by setting.
 
 ## Neither has
 
-`vps login/list/probe/install` (the terminal's `next` does it), `adopt`, `validate`, `mtu`,
+`vps login/list/probe/install` (the terminal's `next` does it), `adopt`, `validate`,
 `openwrt`, `secrets show/join/add/remove` by name.
 
 ## Since then (14 November 2026, 2.86.0 to 2.90.1)

@@ -43,6 +43,35 @@ def send(tgt, container, addr, size):
     return int(m.group(1) or 0), int(m.group(2))
 
 
+_PATH = r'''
+set -u
+lo=1200; hi=1501
+ping -M do -c 1 -W 2 -s 1172 %(addr)s >/dev/null 2>&1 || { echo "path=none"; exit 0; }
+while [ $((hi - lo)) -gt 1 ]; do
+    mid=$(((lo + hi) / 2))
+    if ping -M do -c 1 -W 2 -s $((mid - %(header)d)) %(addr)s >/dev/null 2>&1 || ping -M do -c 1 -W 2 -s $((mid - %(header)d)) %(addr)s >/dev/null 2>&1; then
+        lo=$mid; else hi=$mid; fi
+done
+echo "path=$lo"
+'''
+
+
+def path(tgt, addr, ipv6=False):
+    """The largest packet from the machine itself to `addr` outside the tunnel (the master's public
+    address): what the tunnel's own packets have to fit in. None when the address does not answer pings."""
+    out = remote.run(tgt, _PATH % {"addr": shlex.quote(addr), "header": 48 if ipv6 else 28}).decode(errors="replace")
+    m = re.search(r"path=(\d+|none)", out)
+    if not m:
+        raise KiwiError("%s: could not read the path measurement: %s" % (tgt, out.strip()[:120]))
+    return None if m.group(1) == "none" else int(m.group(1))
+
+
+def best(path_size, ipv6=False):
+    """The largest tunnel MTU that fits a path: WireGuard adds 60 bytes over IPv4, 80 over IPv6,
+    rounded down to the 16 it pads to."""
+    return (path_size - (80 if ipv6 else 60)) // STEP * STEP
+
+
 def fits(result):
     received, reassembled = result
     return received >= 2 and reassembled < received     # other traffic may be reassembled too: one per reply is ours

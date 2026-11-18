@@ -3501,6 +3501,10 @@ class TestAccess(Base):
         self.assertEqual(rc, 0, err)
         p = fedmod.partners(self.tmp)["other"]
         self.assertEqual((p["share"], p["from"]), (["cloud.papaya", "papaya:22"], ["10.10.3.0/24"]))      # the rest stays
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "guests", "--add", "other")          # a group: the linked network by name
+        self.assertEqual(rc, 0, err)
+        self.assertIn("other", yaml.safe_load(util.read_text(f.path))["hosts"]["sorbet"]["master"]["vpn-server"]["groups"]["guests"]["reach"]) \
+            if "sorbet" in yaml.safe_load(util.read_text(f.path))["hosts"] else None
         rc, out, err = TestManage.run_cli(self, "access", f.path, "other", "--remove", "papaya:22")
         self.assertEqual(fedmod.partners(self.tmp)["other"]["share"], ["cloud.papaya"])
         for bad in (["all"], ["--internet", "no"], ["10.8.0.99"]):
@@ -5804,6 +5808,15 @@ class TestManage(Base):
         self.assertEqual(rc, 0, err)
         with open(dest) as fh:
             self.assertIn("AllowedIPs = 10.8.0.0/16\n", fh.read())
+        # a linked network: what it opens is reached through the master too, so its mesh is routed
+        write(os.path.join(os.path.dirname(f.path), "federation.yaml"), yaml.safe_dump({"other": {
+            "endpoint": "198.51.100.9", "public_key": "cGFydG5lci1wdWJsaWMta2V5LW5vdC1yZWFsLTAwMDA9", "mesh": "10.10.0.0/16",
+            "domain": "internal", "dns": "10.10.0.1", "share": [], "from": []}}))
+        rc, out, err = self.run_cli("enroll", f.path, "sh3", "--api", api.url, "--existing", "--split")
+        self.assertEqual(rc, 0, err)
+        with open(dest) as fh:
+            self.assertIn("AllowedIPs = 10.8.0.0/16, 10.10.0.0/16\n", fh.read())
+        os.remove(os.path.join(os.path.dirname(f.path), "federation.yaml"))
         self.assertEqual(len(api.clients), 1)
         # a phone in the devices group gets the next address of that group's range
         rc, out, err = self.run_cli("enroll", f.path, "phone", "--group", "devices", "--api", api.url)

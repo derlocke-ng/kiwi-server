@@ -1704,6 +1704,11 @@ class Control:
             finally:
                 if not kept:        # whatever went wrong: the file as it was
                     util.write_text(path, before, 0o600)
+            if any("password" in k or "secret" in k or "token" in k or k.endswith("_key") for k in keys):
+                # a password typed into the form goes into the secret store, not the fleet file, which
+                # computers that join keep on their disks (`secrets keep`; the same value)
+                subprocess.run(list(self.kiwi) + ["secrets", "keep", self.fleet_path, "--quiet"], capture_output=True,
+                               stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
             self.save_fleet()
         # which settings, never what they are now: a value may be a secret
         self.audit(user, "settings changed", hosts=[host] if host else [], keys=keys)

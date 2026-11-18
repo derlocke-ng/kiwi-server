@@ -29,6 +29,12 @@ def _resolve_block(settings, block, host, where, files, file_prefix):
             continue
         given = block.get(s.key)
         v = coerce(s, s.default if given is None else given, where)
+        if is_empty(v) and s.type == "secret" and not getattr(s, "generate", False) and hasattr(host.secrets, "pins"):
+            # a password nothing can generate (a provider's key, a router's password), kept in the
+            # secret store instead of the fleet file: `kiwi-server secrets keep` puts it there
+            kept = host.secrets.pins().get("%s/%s/%s" % (host.hostname, file_prefix.rstrip("/") or "role", s.key))
+            if kept:
+                v = coerce(s, kept, where)
         if is_empty(v) and getattr(s, "generate", False):
             # hostname, module, key — never the fleet's host key or the role name, so a
             # renamed role (node-cloud -> node) or a standalone render keeps the same secrets

@@ -569,6 +569,19 @@ class Form:
     def current(self, field):
         return self.doc.get(self.scope, field["path"])
 
+    def kept(self, field):
+        """Is this module password kept in the secret store (`secrets keep`, its pins)?"""
+        path = tuple(field["path"])
+        if self.scope in (None, "defaults") or len(path) != 3 or not self.doc.path:
+            return False
+        domain = self.doc.get(self.scope, ("domain",)) or self.doc.get("defaults", ("domain",))
+        hostname = self.doc.get(self.scope, ("hostname",)) or (self.scope + ("." + domain if domain else ""))
+        try:
+            with open(os.path.join(os.path.dirname(self.doc.path), "secrets", "pins.json"), encoding="utf-8") as fh:
+                return bool(json.load(fh).get("%s/%s/%s" % (hostname, path[1], path[2])))
+        except (OSError, ValueError, AttributeError):
+            return False
+
     def write(self, field, value):
         if self.loading:
             return
@@ -636,14 +649,16 @@ class Form:
         sub = []
         if field.get("help"):
             sub.append(field["help"])
-        if self.scope != "defaults" and inh:
+        if field["type"] == "secret" and cur is None and self.kept(field):
+            sub.append("kept in the secret store: type a new one to replace it")
+        elif self.scope != "defaults" and inh:
             sub.append("inherited: %s" % ("••••" if field["type"] == "secret" else inh))
         elif field.get("placeholder"):
             sub.append("e.g. %s" % field["placeholder"])
         if sub:
             row.set_tooltip_text(" — ".join(sub))
             # EntryRow has no subtitle; a dim hint label as suffix keeps it visible
-            shown = sub[-1] if (self.scope != "defaults" and inh) or field.get("placeholder") else ""
+            shown = sub[-1] if (self.scope != "defaults" and inh) or field.get("placeholder") or sub[-1].startswith("kept in") else ""
             if shown:
                 hint = Gtk.Label(label=shown, ellipsize=3, max_width_chars=28, valign=Gtk.Align.CENTER)
                 hint.add_css_class("dim-label")
@@ -5043,8 +5058,37 @@ class Window(Adw.ApplicationWindow):
         self.mark_dirty()
         self.poll()
         self.toast("Saved %s" % os.path.basename(self.doc.path))
+        self.keep_passwords()
         self.sync(after_save=True)
         return True
+
+    def keep_passwords(self):
+        """A password typed into a module's settings goes into the secret store, not the fleet file
+        on this disk (`secrets keep`, the same value); the settings then show it as kept there."""
+        path = self.doc.path
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            return
+        if not re.search(r"(?m)^\s+\w*(password|secret|token|_key)\w*:\s*\S", text):
+            return
+
+        def work():
+            rc, out, _err = run_cli(self.cli, ["secrets", "keep", path])
+            moved = [x.split(":")[0] + ": " + x.split(": ", 1)[1].split(" is in", 1)[0]
+                     for x in out.splitlines() if " is in the secret store now" in x]
+
+            def done():
+                if rc != 0 or not moved or self.doc.path != path or self.doc.dirty:
+                    return False
+                self.doc = FleetDoc(path)
+                if self.current_scope is not None:
+                    self.show_scope(self.current_scope)
+                self.toast("In the secret store now, out of the fleet file: %s" % ", ".join(moved))
+                return False
+            GLib.idle_add(done)
+        threading.Thread(target=work, daemon=True).start()
 
     def mark_dirty(self):
         self.title.set_title("Kiwi Server" + (" •" if self.doc.dirty else ""))

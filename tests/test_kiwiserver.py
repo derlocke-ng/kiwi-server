@@ -8239,10 +8239,10 @@ class TestCli(Base):
     def test_validate_warns_about_passwords_that_need_not_be_written(self):
         rc, out, err = self.run_cli("validate", self.media_fleet().path)
         self.assertEqual(rc, 0, err)
-        self.assertIn("vpn-server.wg_password, dns.pihole_password: literal", err)
+        self.assertIn("vpn-client.wireguard_private_key, vpn-server.wg_password, dns.pihole_password: a password written in the fleet file", err)
         rc, out, err = self.run_cli("validate", self.unwritten_fleet().path)
         self.assertEqual(rc, 0, err)
-        self.assertNotIn("literal in the fleet file, and generated", err)
+        self.assertNotIn("a password written in the fleet file", err)
 
     def media_fleet(self):
         return self.fleet({"defaults": self.base_defaults(), "hosts": {
@@ -8362,6 +8362,35 @@ class TestLogins(Base):
         self.assertNotIn("admin.password is a literal", err)
         rc, out, err = self.run_cli("secrets", "admin-password", f.path)               # once more: nothing left to move
         self.assertNotIn("password_hash", util.read_text(f.path).replace("password_hash: '", "", 1))
+
+    def test_module_passwords_move_into_the_store_and_stay_the_same(self):
+        """`secrets keep`: no password left in the fleet file, every machine renders the same values."""
+        f = self.network()
+        os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
+        before = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
+        shut = types.SimpleNamespace(is_open=lambda: False, exists=lambda: True)
+        with self.assertRaisesRegex(KiwiError, "locked"):                              # never into a plain folder on the disk
+            cli.secrets_keep(f.path, shut)
+        synced = []
+        open_store = types.SimpleNamespace(is_open=lambda: True, exists=lambda: True, sync=lambda: synced.append(1))
+        cli.secrets_keep(f.path, open_store)
+        self.assertEqual(synced, [1])                                                  # in secrets.age before the file loses them
+        text = util.read_text(f.path)
+        for gone in ("wg_password", "pihole_password", "transmission_password", "sftp_password", "wireguard_private_key"):
+            self.assertNotIn(gone, text)
+        pins = json.loads(util.read_text(os.path.join(os.path.dirname(f.path), "secrets", "pins.json")))
+        self.assertEqual((pins["gate.home/vpn-server/wg_password"], pins["gate.home/vpn-client/wireguard_private_key"],
+                          pins["m1.home/sftp/sftp_password"]), ("w", "k", "s"))
+        after = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
+        self.assertEqual(after, before)                                                # the same passwords, generated ones too
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "wg_password")
+        self.assertEqual((rc, out.strip()), (0, "w"), err)
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("a password written in the fleet file", err)
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()) as said:
+            cli.secrets_keep(f.path, open_store)                                       # once more: nothing to move
+        self.assertIn("nothing to move", said.getvalue())
 
     def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
         f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),

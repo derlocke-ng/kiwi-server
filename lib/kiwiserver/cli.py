@@ -759,11 +759,10 @@ def warn_literal_secrets(h, ms):
     names = []
     for m in h.modules:
         given = h.role_settings_raw.get(m) or {}
-        names += ["%s.%s" % (m, s.key) for s in ms.get(m).settings if s.generate and given.get(s.key)]
+        names += ["%s.%s" % (m, s.key) for s in ms.get(m).settings if s.type == "secret" and given.get(s.key)]
     if names:
-        msgs.append("%s: literal in the fleet file, and generated from the seed when left out "
-                    "(kiwi-server secrets show); leaving one out on a running machine changes that password"
-                    % ", ".join(names))
+        msgs.append("%s: a password written in the fleet file: kiwi-server secrets keep <fleet> moves it into the "
+                    "secret store, unchanged" % ", ".join(names))
     for msg in msgs:
         if msg not in h.warnings:      # settings are checked more than once per command
             h.warnings.append(msg)
@@ -2161,6 +2160,56 @@ def admin_password_into_store(path, st):
              "kiwi-server logins shows it" % os.path.basename(path))
 
 
+def literal_module_secrets(fleet, ms):
+    """[(host, module, key, value, written_in)] for every password written in the fleet file for a
+    module: written_in is the host's name, or None for the defaults (every machine of that role)."""
+    out = []
+    for h in fleet.hosts.values():
+        for where, block in ((h.name, (h.overrides or {}).get(h.role)), (None, (fleet.defaults or {}).get(h.role))):
+            for m, given in (block or {}).items():
+                mod = ms.get(m) if isinstance(given, dict) else None
+                if not mod:
+                    continue
+                for st in mod.settings:
+                    if st.type == "secret" and given.get(st.key) not in (None, ""):
+                        out.append((h, m, st.key, str(given[st.key]), where))
+    return out
+
+
+def secrets_keep(path, st):
+    """Every module password written in the fleet file, into the secret store (its pins,
+    hostname/module/key, which the renderer reads before it generates one) and out of the file:
+    the same value on every machine, and no password left in the file. Only with the store open."""
+    from . import form as formmod
+    if not st.is_open():
+        raise KiwiError("the secret store is %s: kiwi-server secrets %s %s first" % (
+            "locked" if st.exists() else "not set up", "unlock" if st.exists() else "init", path))
+    fleet = config.Fleet.load(path)
+    found = literal_module_secrets(fleet, modset(fleet))
+    mine = [x for x in found if x[4] is not None]
+    shared = sorted({"%s.%s" % (m, k) for _h, m, k, _v, w in found if w is None})
+    if shared:
+        util.warn("written in the defaults, for every machine: %s. Not moved: give each machine its own, or leave "
+                  "it out to have one generated (that changes the password)" % ", ".join(shared))
+    if not mine:
+        util.say("no module password is written for a machine in %s: nothing to move" % os.path.basename(path))
+        return
+    pins_path = fleet.resolve_path("secrets/pins.json")
+    pins = json.loads(util.read_text(pins_path)) if os.path.isfile(pins_path) else {}
+    text = util.read_text(os.path.realpath(path))
+    doc = formmod.Doc.parse(text)
+    for h, m, key, value, _w in mine:
+        pins["%s/%s/%s" % (h.hostname, m, key)] = value
+        doc.set(h.name, (h.role, m, key), None)
+    util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
+    st.sync()                   # in secrets.age before the file loses them
+    util.write_text(os.path.realpath(path), doc.dump(), 0o600)
+    for h, m, key, _v, _w in mine:
+        util.say("%s: %s.%s is in the secret store now (secrets/pins.json), out of the fleet file" % (h.name, m, key))
+    util.say("the same passwords as before: kiwi-server secrets show %s HOST SETTING prints one; an apply changes "
+             "nothing on the machines" % os.path.basename(path))
+
+
 def secrets_store(args):
     if args.action == "autolock":     # this computer's, for every network on it
         screen = {"on": True, "off": False}.get(args.screen) if args.screen else None
@@ -2180,6 +2229,8 @@ def secrets_store(args):
     st = store.Store.for_fleet(args.fleet)
     if args.action == "admin-password":
         return admin_password_into_store(args.fleet, st)
+    if args.action == "keep":
+        return secrets_keep(args.fleet, st)
     if args.action == "init":
         recovery, saved = st.init()
         util.say("secrets/ is now %s, and open in memory" % store.FILE)
@@ -4622,7 +4673,7 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password", "admin-password"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password", "admin-password", "keep"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s.add_argument("--for", default=None, metavar="TIME", help="unlock: lock again after this long unused (default: autolock's idle, 30m; 0: stay open)")
     s.add_argument("--idle", metavar="TIME", help="autolock: lock after this long unused, e.g. 15m, 1h; 0: never")

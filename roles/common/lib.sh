@@ -325,6 +325,76 @@ ks_firewall_trust_mesh() { # the mesh is as trusted as the stack network itself
     fi
 }
 
+# The groups of the home network (kiwi-server docs/design/lans.md): what each may open on this
+# machine. KS_STACK_LAN_RULES: "SUBNET all|none|tcp:443,udp:51820,…" per group. Only what is
+# addressed to this machine is looked at (published container ports too: before their DNAT);
+# DNS, DHCP and ping stay open to everyone, and answers to what this machine started come back.
+ks_lan_nft() { # the nftables ruleset on stdout: replaces the table kiwi_lan in one transaction
+    local r net ports p
+    printf '%s\n' 'table inet kiwi_lan' 'delete table inet kiwi_lan' 'table inet kiwi_lan {' '  chain pre {' \
+        '    type filter hook prerouting priority -160; policy accept;' \
+        '    fib daddr type != local accept' \
+        '    ct state established,related accept' \
+        '    meta l4proto { icmp, ipv6-icmp } accept' \
+        '    udp dport { 53, 67, 68 } accept' \
+        '    tcp dport 53 accept'
+    for r in "${KS_STACK_LAN_RULES[@]}"; do
+        net=${r%% *}; ports=${r#* }
+        [[ $net =~ ^[0-9.]+/[0-9]+$ ]] || { ks_warn "lan rule $r: not a subnet, left out"; continue; }
+        case $ports in
+            all) printf '    ip saddr %s accept\n' "$net" ;;
+            none) printf '    ip saddr %s drop\n' "$net" ;;
+            *)  for p in ${ports//,/ }; do
+                    [[ $p =~ ^(tcp|udp):[0-9]+(-[0-9]+)?$ ]] || { ks_warn "lan rule $r: $p left out"; continue; }
+                    printf '    ip saddr %s %s dport %s accept\n' "$net" "${p%%:*}" "${p#*:}"
+                done
+                printf '    ip saddr %s drop\n' "$net" ;;
+        esac
+    done
+    printf '%s\n' '  }' '}'
+}
+
+ks_firewall_lan() { # the table kiwi_lan, kept across reboots by kiwi-lan.service; none: gone
+    local f=/etc/kiwi-server/lan.nft nft
+    nft=$(command -v nft || true)
+    if [[ ${#KS_STACK_LAN_RULES[@]} -eq 0 ]]; then
+        if [[ -f $f ]]; then
+            ks_say "the groups of the home network: none any more"
+            [[ -n $nft ]] && "$nft" delete table inet kiwi_lan 2>/dev/null || true
+            systemctl disable -q kiwi-lan.service 2>/dev/null || true
+            rm -f "$f" "${KS_SYSTEMD_DIR:-/etc/systemd/system}/kiwi-lan.service"
+        fi
+        return 0
+    fi
+    [[ -n $nft ]] || { ks_warn "no nft here: the groups of the home network are not kept on this machine"; return 0; }
+    install -d -m 0755 /etc/kiwi-server
+    ks_lan_nft > "$f.new"
+    if ! "$nft" -c -f "$f.new"; then
+        rm -f "$f.new"
+        ks_warn "the rules for the groups of the home network do not load: left as they were"
+        return 0
+    fi
+    mv "$f.new" "$f"
+    "$nft" -f "$f"
+    ks_say "the groups of the home network: ${#KS_STACK_LAN_RULES[@]} kept on this machine (nftables kiwi_lan)"
+    ks_unit kiwi-lan.service <<UNIT
+[Unit]
+Description=kiwi-server: what the groups of the home network may open here
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$nft -f $f
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl enable -q kiwi-lan.service 2>/dev/null || true
+}
+
 ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates exist
     local cert=$1 key=$2 cn=$3
     ks_say "no TLS certificate given — generating a self-signed one for $cn and *.$cn"
@@ -967,6 +1037,7 @@ ks_stack_apply() {
     ks_stack_unpack
     ks_stack_install_cli
     ks_firewall_trust_mesh
+    ks_firewall_lan
     ks_time_sync_at_boot
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
         ks_firewall_open "${KS_STACK_PORTS[@]}"

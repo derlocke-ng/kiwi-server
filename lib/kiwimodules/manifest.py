@@ -46,6 +46,7 @@ def stack_vars(host, bundle):
             _bash_var("KS_STACK_VPN_DEPENDENTS", list(getattr(bundle, "vpn_dependents", []))),
             _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),
             _bash_var("KS_STACK_MESH_VIA", getattr(bundle, "mesh_via", "") or ""),
+            _bash_var("KS_STACK_LAN_RULES", [str(r) for r in (rs.get("lan_rules") or [])]),
             _bash_var("KS_STACK_HOSTS", ["%s %s" % (ip, n) for ip, n in getattr(bundle, "hosts", [])]),
             _bash_var("KS_STACK_RUNTIME", getattr(bundle, "runtime", "podman") or "podman"),
             _bash_var("KS_STACK_QUADLETS", sorted(getattr(bundle, "quadlets", {}))),

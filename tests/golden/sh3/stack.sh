@@ -31,6 +31,7 @@ KS_STACK_VPN_CONTAINER='kn-vpn-client'
 KS_STACK_VPN_DEPENDENTS=()
 KS_STACK_MESH_SUBNET='10.8.0.0/16'
 KS_STACK_MESH_VIA='172.128.0.2'
+KS_STACK_LAN_RULES=()
 KS_STACK_HOSTS=('10.8.0.1 gate.home' '10.8.0.1 wg.gate.home' '10.8.0.1 pihole.gate.home' '10.8.0.6 m1.home' '10.8.0.6 pihole.m1.home' '10.8.0.6 dl.m1.home' '10.8.0.6 jd.m1.home' '10.8.0.6 portainer.m1.home' '127.0.0.1 sh3.home' '127.0.0.1 cloud.sh3.home' '127.0.0.1 vault.sh3.home' '127.0.0.1 portainer.sh3.home' '10.8.0.9 min.home')
 KS_STACK_RUNTIME='podman'
 KS_STACK_QUADLETS=('kiwi-stack.target' 'kn-nginx.container' 'kn-portainer.container' 'kn-vault.container' 'kn-vpn-client.container' 'knet-node.network' 'nextcloud-aio-apache.container' 'nextcloud-aio-collabora.container' 'nextcloud-aio-database.container' 'nextcloud-aio-imaginary.container' 'nextcloud-aio-nextcloud.container' 'nextcloud-aio-notify-push.container' 'nextcloud-aio-redis.container' 'nextcloud-aio-talk.container')

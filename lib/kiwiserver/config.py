@@ -64,6 +64,10 @@ DEFAULTS = {
         "dns": [],
         "iprange": None,
         "mask": None,
+        # where the machine stands: machines of one site with fixed addresses in one LAN reach
+        # each other there; a machine at another site (a friend's, an office) over the VPN, also
+        # when its LAN has the same numbers as the home's (two routers of one make)
+        "site": "home",
     },
     "updates": {
         # When an update may REBOOT the machine. Updates themselves are fetched

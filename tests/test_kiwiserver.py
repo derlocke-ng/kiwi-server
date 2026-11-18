@@ -3188,10 +3188,14 @@ class TestLocalCache(Base):
                      "node": dict(node, vpn_ip="10.8.0.10", preset="minimal")},
             "far": {"role": "node", "target": "debian",
                     "network": {"dhcp": False, "address": "10.44.0.5/24", "gateway": "10.44.0.1"},
-                    "node": dict(node, vpn_ip="10.8.0.11", preset="minimal", apt_proxy="http://10.44.0.9:3142")}}})
+                    "node": dict(node, vpn_ip="10.8.0.11", preset="minimal", apt_proxy="http://10.44.0.9:3142")},
+            # the same numbers as home, at a friend's: not the cache's LAN
+            "friend": {"role": "node", "target": "debian",
+                       "network": {"dhcp": False, "address": "192.168.7.32/24", "gateway": "192.168.7.1", "site": "friend"},
+                       "node": dict(node, vpn_ip="10.8.0.12", preset="minimal")}}})
         r = cli.Renderer(f, rolesmod.discover(), self.tmp, None, modmod.discover())
         got = {}
-        for name in ("gate", "store", "near", "far"):
+        for name in ("gate", "store", "near", "far", "friend"):
             h = f.hosts[name]
             role = r.prepare(h)
             r.use_cache(h, role)
@@ -3201,6 +3205,7 @@ class TestLocalCache(Base):
         self.assertEqual(got["store"][0]["docker.io"], "cache.store.kiwi/docker.io")      # its own mirrors too
         self.assertEqual(got["far"], ({}, "http://10.44.0.9:3142"))                       # another LAN; its own setting stays
         self.assertEqual(got["gate"], ({}, ""))                                           # a master is nowhere near
+        self.assertEqual(got["friend"], ({}, ""))                                         # another site, the same numbers
 
 
 class TestCheck(Base):
@@ -5090,6 +5095,15 @@ class TestUnlock(Base):
         h, srv = f.hosts["lychee"], f.hosts["papaya"]
         h.cfg["unlock"]["via"] = {"infra": "http://127.0.0.1:7500"}
         self.assertEqual(unlock.url(h, "infra", srv, 7500), "http://127.0.0.1:7500")
+
+    def test_a_ring_at_another_site_is_not_looked_for_on_this_lan(self):
+        f = self.unlock_fleet()
+        h, srv = f.hosts["lychee"], f.hosts["papaya"]
+        url = unlock.url(h, "infra", srv, 7500)                                   # one site, one LAN: its address there
+        self.assertTrue(url.startswith("http://192.168."), url)
+        h.cfg["network"]["site"] = "friend"                                    # the same numbers at a friend's
+        with self.assertRaisesRegex(KiwiError, "not on one LAN with static addresses at one site"):
+            unlock.url(h, "infra", srv, 7500)
 
     def tunnel_host(self):
         f = self.unlock_fleet()
@@ -7544,9 +7558,14 @@ class TestLanAddresses(Base):
     def view(self, host, node_type="node"):
         r = cli.Renderer.__new__(cli.Renderer)
         r._scanned = True
-        r._node_lan = [("10.9.0.2", ipaddress.ip_address("192.168.2.30")), ("10.9.0.3", ipaddress.ip_address("192.168.2.61")),
-                       ("10.9.0.4", ipaddress.ip_address("10.20.0.5"))]
+        r._node_lan = [("10.9.0.2", ipaddress.ip_address("192.168.2.30"), "home"), ("10.9.0.3", ipaddress.ip_address("192.168.2.61"), "home"),
+                       ("10.9.0.4", ipaddress.ip_address("10.20.0.5"), "home"),
+                       ("10.9.0.5", ipaddress.ip_address("192.168.2.40"), "office")]       # the same numbers, another place
         return r.lan_addresses(host, types.SimpleNamespace(node_type=node_type))
+
+    def test_another_site_with_the_same_numbers_is_reached_over_the_vpn(self):
+        self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.41/16", site="office")), {"10.9.0.5": "192.168.2.40"})
+        self.assertNotIn("10.9.0.5", self.view(self.host(dhcp=False, address="192.168.2.30/16")))     # home: over the VPN
 
     def test_only_nodes_on_this_lan_get_their_lan_address(self):
         self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.30/16")),

@@ -6597,6 +6597,31 @@ class TestModuleSources(Base):
             self.assertEqual(rc, 0, err)
             self.assertNotIn("module_sources", yaml.safe_load(util.read_text(f.path)))
 
+    def test_the_control_node_runs_the_same_command_and_saves_the_fleet(self):
+        src, _git = self.repo()
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+        c = controlmod.Control(f.path, kiwi_cmd=[sys.executable, "-m", "kiwiserver"], run_dir=os.path.join(self.tmp, "ram"))
+        saved = []
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache"), "PYTHONPATH": os.path.abspath(lib)}), \
+                mock.patch.object(c, "locked", lambda: False), mock.patch.object(c, "save_fleet", lambda: saved.append(1)), \
+                mock.patch.object(c, "fleet_info", lambda fresh=False: None):
+            ok, said = c.sources_run(["add", "file://" + src, "--name", "community"], "anna")
+            self.assertTrue(ok, said)
+            self.assertIn("module source community: hello", said)
+            self.assertNotIn(":: ", said)
+            self.assertEqual(saved, [1])
+            self.assertEqual(yaml.safe_load(util.read_text(f.path))["module_sources"][0]["name"], "community")
+            ok, said = c.sources_run(["add", "file://" + src, "--name", "community"], "anna")
+            self.assertFalse(ok)
+            self.assertIn("there is a module source called community already", said)
+            self.assertEqual(saved, [1])                            # nothing saved when the command refused
+            with self.assertRaises(KiwiError):
+                c.sources_run(["new", "/tmp/x"], "anna")            # only add, update and remove
+        audit = util.read_text(os.path.join(c.dir, "audit.jsonl"))
+        self.assertIn('"module source added"', audit)
+        self.assertIn('"anna"', audit)
+
     def test_a_source_with_versions_is_pinned_to_its_newest_one(self):
         src, git = self.repo()
         subprocess.run(git + ["tag", "-a", "v0.1.0", "-m", "0.1.0"], check=True, capture_output=True)
@@ -7436,16 +7461,38 @@ peers=4 3
         self.assertNotIn("backup", f)
         self.assertFalse([x for x in problems + notes if "backup" in str(x)])
 
+    def test_a_message_says_what_to_do_and_quiet_is_checked(self):
+        from kiwiserver import health
+        st = {}
+        m = [{"name": "papaya", "ok": True, "problems": [{"level": "warn", "text": "the clock is not synchronised",
+                                                          "key": "clock", "hint": facts.HINTS["clock"]}]}]
+        health.update(st, m, [], [], 1000.0)
+        _title, text, _level = health.message(health.update(st, m, [], [], 2000.0))
+        self.assertIn("Wrong: papaya: the clock is not synchronised\n  What to do: Apply the machine", text)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {"role": "bare", "quiet": ["disk-plain"]},
+                                                                    "b": {"role": "bare", "quiet": ["role-failed"]}}})
+        self.assertEqual(f.hosts["a"].validate(self.roles), [])
+        self.assertIn("quiet: warnings to leave out", " ".join(f.hosts["b"].validate(self.roles)))
+
     def test_the_disk_is_reported_as_it_is(self):
         state, problems, _n = self.assessed("luks=none")[1]
-        self.assertIn({"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it"}, problems)
+        self.assertIn({"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it",
+                       "key": "disk-plain", "hint": facts.HINTS["disk-plain"]}, problems)
+        self.assertIn("leave this warning out", problems[0]["hint"])           # and what to do about it
         self.assertEqual(state, "warn")
+        # left out on purpose (the machine's `quiet`): a note then, and the machine is fine
+        state, problems, notes = facts.assess(self.assessed("luks=none")[0], quiet=["disk-plain"])
+        self.assertEqual((state, problems), ("ok", []))
+        self.assertIn("left out on purpose: the disk is not encrypted: whoever takes it can read everything on it", notes)
+        state, problems, _n = facts.assess(dict(self.assessed("luks=none")[0], role_failed="x"), quiet=["disk-plain", "role-failed"])
+        self.assertEqual([p["key"] for p in problems], ["role-failed"])              # what is broken never goes quiet
         self.assertIn("the disk opens only with a typed key", self.assessed("luks=0")[1][2])
         f, (_s, _p, notes) = self.assessed("luks=1")
         self.assertEqual(f["encryption"], "bound")
         self.assertFalse([n for n in notes if "disk" in n])
         f, (state, problems, _n) = self.assessed("luks=1\nplaindata=1")    # its data disk is not
-        self.assertIn({"level": "warn", "text": "a data disk is not encrypted: whoever takes it can read everything on it"}, problems)
+        self.assertIn("a data disk is not encrypted: whoever takes it can read everything on it", [p["text"] for p in problems])
+        self.assertEqual([p["key"] for p in problems], ["data-disk-plain"])
         self.assertNotIn("plain_data_disks", self.assessed("luks=1\nplaindata=0")[0])
         f, (state, problems, notes) = self.assessed("luks=ram")          # a RAM master: no disk to encrypt
         self.assertEqual((f["encryption"], problems), ("ram", []))
@@ -9210,6 +9257,71 @@ class TestWeb(WebBase):
         self.assertEqual(web.bars({}), [])
         self.assertEqual(web.stats([], []), [])
 
+    def test_a_warning_says_what_to_do_and_can_be_left_out(self):
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        for _ in range(200):
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        info = {"hosts": [{"name": "a", "hostname": "a.home", "role": "node", "phase": "applied", "modules": [], "sites": []}]}
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps(info))
+        problem = {"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it",
+                   "key": "disk-plain", "hint": "Install it again with encryption when it suits you."}
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "a", "ok": True, "state": "warn", "problems": [problem], "notes": [], "facts": {}}]}))
+        for path in ("/", "/hosts/a"):
+            body = self.ask(path)[1]
+            self.assertIn("Install it again with encryption when it suits you.", body, path)
+            self.assertIn('action="/hosts/a/quiet"', body, path)
+        tok = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        saved = []
+        with mock.patch.object(self.c, "save_settings", lambda host, changes, user="admin": saved.append((host, changes)) or ["quiet"]), \
+                mock.patch.object(self.c, "look", lambda: None):
+            self.assertEqual(self.ask("/hosts/a/quiet", {"key": "disk-plain", "csrf": tok})[0], 303)
+            self.assertEqual(saved, [("a", {("quiet",): ["disk-plain"]})])
+            self.ask("/hosts/a/quiet", {"key": "role-failed", "csrf": tok})      # what is broken never goes quiet
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(self.ask("/hosts/a/quiet", {"key": "disk-plain"})[0], 303)       # no form of this session
+            self.assertEqual(len(saved), 1)
+
+    def test_module_sources_are_added_updated_and_removed_on_the_page(self):
+        self.assertEqual(self.ask("/modules")[0], 303)                              # a login first
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        for _ in range(200):                # the login's look writes fleet.json too: let it end first
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [], "module_sources": [
+            {"name": "personal", "url": "https://github.com/someone/kiwi-modules-personal", "commit": "a" * 40, "tag": "v0.1.0",
+             "modules": ["smartfritz"]}]}))
+        code, body = self.ask("/modules")
+        self.assertEqual(code, 200)
+        tok = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        for words in ("Module sources", "personal", "github.com/someone/kiwi-modules-personal", "v0.1.0", "Its modules: smartfritz",
+                      "Add a module source", "run as root"):
+            self.assertIn(words, body)
+        # the same command as in a terminal, on this copy (the stand-in kiwi-server says what it was asked)
+        code, body = self.ask("/modules/add", {"url": "https://github.com/someone/kiwi-modules-community/", "name": "community",
+                                               "ref": "v0.2.0", "csrf": tok})
+        self.assertEqual(code, 200)
+        self.assertIn("ran sources %s add https://github.com/someone/kiwi-modules-community --name community --ref v0.2.0"
+                      % self.c.fleet_path, body)
+        self.assertIn("take the change with their next apply", body)
+        self.assertIn('"module source added"', util.read_text(os.path.join(self.c.dir, "audit.jsonl")))
+        self.assertIn("ran sources %s update personal" % self.c.fleet_path,
+                      self.ask("/modules/update", {"name": "personal", "csrf": tok})[1])
+        self.assertIn("ran sources %s remove personal" % self.c.fleet_path,
+                      self.ask("/modules/remove", {"name": "personal", "csrf": tok})[1])
+        # nothing typed passes for an option of the command, nor a link that is no https repository
+        for form, why in (({"url": "--path=/etc", "csrf": tok}, "https address"),
+                          ({"url": "file:///etc", "csrf": tok}, "https address"),
+                          ({"url": "https://example.org/x", "name": "--path", "csrf": tok}, "lowercase letters"),
+                          ({"url": "https://example.org/x", "ref": "--upload-pack=x", "csrf": tok}, "a tag or a branch")):
+            body = self.ask("/modules/add", form)[1]
+            self.assertIn(why, body)
+            self.assertNotIn("ran sources", body)
+        self.assertEqual(self.ask("/modules/add", {"url": "https://example.org/x"})[0], 303)    # no form of this session: no
+
     def test_the_status_page_needs_no_login_and_shows_no_admin_page(self):
         now = time.time()
         os.makedirs(self.c.dir, exist_ok=True)
@@ -9501,7 +9613,7 @@ class TestGamePage(WebBase):
         # the status page on the VPN lists them, and leads to this page; it says Kiwi, the public brand is for the Internet
         body = self.ask("/status")[1]
         for words in ("Game servers", "Minecraft (Java)", "Asleep", "wakes when you join", "medlar.home:25565",
-                      'href="https://play.papaya.home/play/"', "Kiwi: status"):
+                      'href="https://play.papaya.home/"', "Kiwi: status"):
             self.assertIn(words, body)
         for words in ("kn-jellyfin", "dlhost"):                     # another container named for the page is no game server
             self.assertNotIn(words, body)

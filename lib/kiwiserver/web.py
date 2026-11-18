@@ -460,7 +460,10 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 {% set todo = machines|selectattr("problems")|list %}{% if todo %}<h2>Needs a look</h2>
 {% for m in todo %}{% for p in m.problems %}<div class="card"><div class="row"><strong><span class="dot {{ p.level }}"></span>{{ m.name }}</strong>
 <a class="btn" href="/hosts/{{ m.name }}">Open</a></div><p>{{ p.text }}</p>
-{% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}</div>{% endfor %}{% endfor %}{% endif %}
+{% set tip = p.hint or hint(p.text) %}{% if tip %}<p class="muted">{{ tip }}</p>{% endif %}
+{% if p.level == "warn" and p.key in quietable %}<form class="inline" method="post" action="/hosts/{{ m.name }}/quiet">{{ tok }}
+<input type="hidden" name="key" value="{{ p.key }}"><button title="It stays as a note on the machine's page; its settings bring it back">Leave it out</button></form>{% endif %}
+</div>{% endfor %}{% endfor %}{% endif %}
 
 {% from "step.html" import step with context %}
 {% set fresh = machines|selectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
@@ -610,7 +613,9 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 {% for b in m.bars %}<div class="stat"><span class="lbl">{{ b.label }}</span><b class="{{ b.level }}">{{ b.pct }}<small> %</small></b>
 <span class="cap">{{ b.more }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span></div>{% endfor %}</div>{% endif %}
 {% for p in m.problems %}<div class="card"><p><span class="dot {{ p.level }}"></span>{{ p.text }}</p>
-{% if hint(p.text) %}<p class="muted">{{ hint(p.text) }}</p>{% endif %}
+{% set tip = p.hint or hint(p.text) %}{% if tip %}<p class="muted">{{ tip }}</p>{% endif %}
+{% if p.level == "warn" and p.key in quietable %}<form class="inline" method="post" action="/hosts/{{ m.name }}/quiet">{{ tok }}
+<input type="hidden" name="key" value="{{ p.key }}"><button title="It stays as a note here; the settings bring it back">Leave it out</button></form>{% endif %}
 {% if "disk is locked" in p.text|lower %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="unlock">
 <input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Unlock it</button></form>{% endif %}</div>{% endfor %}
 {% from "step.html" import step with context %}
@@ -959,6 +964,35 @@ onclick="return confirm('A new address for {{ s }}.{{ m.name }}? The old one sto
 or need it; <code>kiwi-server onion SERVICE.MACHINE --anyway</code> makes one all the same.</p>
 <div class="actions"><button class="primary">Save hidden services</button></div></form>
 {% endblock %}""",
+    "sources.html": """{% extends "base.html" %}{% block main %}
+<h1>Module sources</h1><p class="sub">Modules besides the built-in ones, from a git repository of your own or a community one.
+Each is held at one version: nothing of it changes until you update it.</p>
+{% if said %}<div class="banner ok" style="white-space:pre-line">{{ said }}</div>{% endif %}
+{% if error %}<div class="banner bad" style="white-space:pre-line">{{ error }}</div>{% endif %}
+{% for s in sources %}{% set new = news.get(s.name) %}<div class="card"><div class="row"><span><b>{{ s.name }}</b>
+{% if s.url %}<span class="muted small"> · <a href="{{ s.url }}" rel="noopener" target="_blank">{{ s.url.split("//", 1)[1] }}</a></span>{% endif %}</span>
+<span>{% if s.tag %}<span class="badge plain">{{ s.tag }}</span>{% elif s.commit %}<span class="badge plain">commit {{ s.commit[:12] }}</span>{% else %}<span class="badge plain">a folder</span>{% endif %}
+{% if new and new.tag and new.commit != s.commit %}<span class="badge warn">{{ new.tag }} is out</span>{% elif new and new.error %}<span class="badge plain" title="{{ new.error }}">could not ask</span>{% elif new %}<span class="badge ok">the newest</span>{% endif %}</span></div>
+<p class="muted small">{% if s.modules %}Its modules: {{ s.modules|join(", ") }}{% else %}No modules found in it.{% endif %}{% if not s.url %} A folder on the computer that added it: this
+machine does not have it.{% endif %}</p>
+<div class="actions">{% if s.url %}<form class="inline" method="post" action="/modules/update">{{ tok }}<input type="hidden" name="name" value="{{ s.name }}">
+<button{% if new and new.tag and new.commit != s.commit %} class="primary"{% endif %}>Update{% if new and new.tag and new.commit != s.commit %} to {{ new.tag }}{% endif %}</button></form>{% endif %}
+<form class="inline" method="post" action="/modules/remove" onsubmit="return confirm('Remove the module source {{ s.name }}?')">{{ tok }}
+<input type="hidden" name="name" value="{{ s.name }}"><button>Remove</button></form></div></div>
+{% else %}<div class="card"><p class="muted">None yet: only the built-in modules.</p></div>{% endfor %}
+{% if sources %}<p class="small"><a href="/modules?check=1">Look for new versions</a>{% if checked %} · asked just now{% endif %}</p>{% endif %}
+<h2>Add a module source</h2>
+<form method="post" action="/modules/add" class="card">{{ tok }}
+<label for="url">Its link</label><input id="url" name="url" required placeholder="https://github.com/someone/kiwi-modules-community" pattern="https://[A-Za-z0-9.:-]+/[A-Za-z0-9._~/-]+">
+<label for="name">Its name here <span class="muted small">(empty: from the link)</span></label><input id="name" name="name" pattern="[a-z0-9][a-z0-9-]{0,39}">
+<label for="ref">Version <span class="muted small">(empty: its newest version tag, or its main branch as it is now)</span></label><input id="ref" name="ref" placeholder="v0.1.0" pattern="[A-Za-z0-9][A-Za-z0-9._/-]{0,99}">
+<p class="muted small">Its modules' templates and scripts run as root on the machines that use them: add only sources you trust.
+Then a machine takes its modules in its settings, like the built-in ones.</p>
+<button class="primary">Add it</button></form>
+<p class="muted small">In a terminal: <code>kiwi-server sources FLEET</code>. A new source to start from: <code>kiwi-server sources new FOLDER</code>
+(<a href="https://kiwi-network.eu/docs/server/modules/" rel="noopener" target="_blank">Modules</a>).</p>
+{% endblock %}""",
+
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
 <h1>Computers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
@@ -1057,7 +1091,7 @@ your network, under Machines.</p>
 <meta http-equiv="refresh" content="120;url=?auto=1"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}
 .cta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.about{color:var(--muted);font-size:.86rem}</style>
 <div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ (brand_name if h.strangers else "") or "Kiwi" }}</h1>
-<div class="cta">{% if play_host %}<a class="btn" href="https://{{ play_host }}/play/">Game servers</a>{% endif %}
+<div class="cta">{% if play_host %}<a class="btn" href="https://{{ play_host }}/">Game servers</a>{% endif %}
 {% if h.join and (not h.strangers or h.join_public) %}<a class="btn primary" href="{{ h.join }}">Get an account</a>{% endif %}</div></div>
 <p class="sub">{% if h.strangers and about_text %}{{ about_text }} {% endif %}{{ "The services that are open to the Internet, asked the way you reach them." if h.strangers else "Every service of the network, asked from the network itself." }}{% if h.checked %}
 <span class="muted small">Checked {{ age(now - h.checked) }} ago, every ten minutes.</span>{% endif %}</p>
@@ -1085,7 +1119,7 @@ the people who run this network to unlock it.</div>
 {% for g in games %}<tr><td><b>{{ g.title or g.name }}</b>{% if g.title %}<br><span class="sm">{{ g.name }}</span>{% endif %}</td>
 <td>{% if g.state == "running" %}<span class="badge ok">Up</span>{% elif g.state == "asleep" %}<span class="badge plain">Asleep</span><br><span class="sm">wakes when you join</span>{% elif g.state == "stopped" %}<span class="badge bad">Stopped</span>{% else %}<span class="badge plain">not known yet</span>{% endif %}</td>
 <td class="wide">{% if g.address %}<code class="sm">{{ g.address }}</code>{% else %}<span class="sm">–</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-{% if play_host %}<p class="muted small">Start, stop and read the logs on <a href="https://{{ play_host }}/play/">the game page</a>, with your account.</p>{% endif %}{% endif %}
+{% if play_host %}<p class="muted small">Start, stop and read the logs on <a href="https://{{ play_host }}/">the game page</a>, with your account.</p>{% endif %}{% endif %}
 {% set hidden = h.services|selectattr("onion")|list %}{% if hidden %}<h2 id="tor">Over Tor</h2>
 <p class="muted small">Each hidden service is asked through Tor every ten minutes, by the machine it runs on: the way Tor Browser
 finds it.{% for site, a in h.onion.items() if site.startswith("status.") %} This page itself: <code>{{ a }}</code>.{% endfor %}</p>
@@ -1400,7 +1434,8 @@ NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/se
        ("/federation", "Linked networks", "link", "Access"),
        ("/backups", "Backups", "box", "Safety"), ("/recovery", "If something breaks", "buoy", "Safety"),
        ("/controllers", "Computers", "screen", "Safety"),
-       ("/activity", "Activity", "pulse", "More"), ("/settings", "Settings", "sliders", "More"), ("/help", "Help", "help", "More"))
+       ("/activity", "Activity", "pulse", "More"), ("/settings", "Settings", "sliders", "More"),
+       ("/modules", "Module sources", "stack", "More"), ("/help", "Help", "help", "More"))
 # line drawings, 24 by 24, drawn here: nothing is fetched from anywhere
 ICONS = {
     "home": '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
@@ -1609,6 +1644,8 @@ def with_logins(tiles, info):
 def make_app(control: Control):
     env = jinja2.Environment(loader=jinja2.DictLoader(TEMPLATES), autoescape=True)
     # the network's own name, colour and words on the pages for everyone (the control module's settings)
+    from .facts import QUIETABLE
+    env.globals.update(quietable=QUIETABLE)
     env.globals.update(brand_name=os.environ.get("KIWI_BRAND", ""), brand_accent=re.sub(r"[^#0-9a-fA-F]", "", os.environ.get("KIWI_ACCENT", ""))[:7],
                        about_text=os.environ.get("KIWI_ABOUT", ""), contact=os.environ.get("KIWI_CONTACT", ""))
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
@@ -2455,6 +2492,25 @@ def make_app(control: Control):
     async def host_settings_do(request: Request, name: str):
         return await settings_post(request, name)
 
+    @app.post("/hosts/{name}/quiet")
+    def host_quiet(request: Request, name: str, key: str = Form(""), csrf: str = Form("")):
+        """A warning this machine leaves out from now on (its setting `quiet`): it stays as a note."""
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        from .facts import QUIETABLE
+        if key not in QUIETABLE:
+            return RedirectResponse("/hosts/%s" % name, status_code=303)
+        try:
+            doc = formmod.Doc.parse(util.read_text(os.path.realpath(control.fleet_path)))
+            now = list(doc.get(name, ("quiet",)) or [])
+            if key not in now:
+                control.save_settings(name, {("quiet",): now + [key]}, u)
+            control.look()                      # the warning goes with the next look, which starts now
+        except KiwiError:
+            pass
+        return RedirectResponse("/hosts/%s" % name, status_code=303)
+
     @app.post("/refresh")
     def refresh(request: Request, csrf: str = Form(""), back: str = Form("")):
         if not posted(request, csrf):
@@ -2839,6 +2895,51 @@ def make_app(control: Control):
     def controllers_page(request, **kw):
         return page("controllers.html", request, "/controllers", ways=control.controllers(), rot=control.rotation(),
                     ca=control.sshca(), **kw)
+
+    @app.get("/modules")
+    def sources_page(request: Request, check: int = 0, said: str = "", error: str = ""):
+        """The module sources of the fleet: which, at what version, their modules; add, update, remove."""
+        if not user(request):
+            return login_page()
+        found = list(((control.fleet_info() or {}).get("module_sources")) or [])
+        news = {}
+        if check:                               # each repository asked for its newest version tag
+            from . import sources as sourcesmod
+            for x in found:
+                if x.get("url"):
+                    try:
+                        got = sourcesmod.latest(x["url"])
+                        news[x["name"]] = {"tag": got[0], "commit": got[1]} if got else {"tag": "", "commit": x.get("commit")}
+                    except KiwiError as e:
+                        news[x["name"]] = {"error": str(e)}
+        return page("sources.html", request, "/modules", sources=found, news=news, checked=bool(check), said=said, error=error)
+
+    @app.post("/modules/{what}")
+    def sources_do(request: Request, what: str, csrf: str = Form(""), url: str = Form(""), name: str = Form(""),
+                   ref: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        from . import sources as sourcesmod
+        url, name, ref = url.strip().rstrip("/"), name.strip(), ref.strip()
+        # nothing typed here may pass for an option of the command
+        if (name and not sourcesmod.NAME.match(name)) or (ref and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}", ref)):
+            return sources_page(request, error="A name is lowercase letters, digits and dashes; a version is a tag or a branch.")
+        if what == "add":
+            if not url.startswith("https://") or not sourcesmod.URL.match(url):
+                return sources_page(request, error="The link is the https address of a git repository.")
+            args = ["add", url] + (["--name", name] if name else []) + (["--ref", ref] if ref else [])
+        elif what in ("update", "remove") and name:
+            args = [what, name] + (["--ref", ref] if ref and what == "update" else [])
+        else:
+            return sources_page(request, error="Which module source?")
+        try:
+            ok, said = control.sources_run(args, u)
+        except KiwiError as e:
+            ok, said = False, str(e)
+        if ok and what in ("add", "update") and " already" not in said:
+            said += "\nThe machines that use its modules take the change with their next apply (Home: Changes not applied yet)."
+        return sources_page(request, said=said if ok else "", error="" if ok else said)
 
     @app.get("/controllers")
     def controllers(request: Request):

@@ -240,16 +240,45 @@ def parse(data, local_now=None):
     return out
 
 
-def assess(f):
-    """(state, problems, notes). state: ok, warn or bad; a problem is {level, text}."""
-    bad = lambda text: {"level": "bad", "text": text}    # noqa: E731
-    warn = lambda text: {"level": "warn", "text": text}  # noqa: E731
+# what a person can do about each kind of problem: with it in the app, on the page and in messages
+HINTS = {
+    "unreachable": "Is it on and on the network? Look at its screen or restart it. If it stays away: If something breaks.",
+    "locked": "Its disk waits for its key: Unlock on the machine's page, or the rings it needs must be up.",
+    "role-failed": "Open the machine: the output of its last apply says where it stopped. Apply it again.",
+    "not-applied": "Apply it.",
+    "service": "Restart it under the machine's services, and read its log there.",
+    "unhealthy": "Read its log under the machine's services; a restart often helps.",
+    "tunnel": "Apply the machine. If it stays, read the VPN client's log.",
+    "failed-units": "Read their log on the machine (journalctl -u NAME); a restart of the machine clears them.",
+    "disk-full": "Remove what is not needed there, or give the machine a bigger disk.",
+    "backup-store-full": "Remove old snapshots (Backups, Prune), or give the backup machine more space.",
+    "memory": "Fewer services on it, or more memory.",
+    "clock": "Apply the machine: its time service is set up again.",
+    "backups-held": "Backups: what holds them is said there.",
+    "backup-none": "Backups: Save it now, and look whether the backup machine answers.",
+    "backup-old": "Backups: Save it now, and look whether the backup machine answers.",
+    "copy-old": "Look whether that backup machine answers; the next backup copies again.",
+    "certificate": "Apply the machine to renew it. A public name: its DNS record must point at the master.",
+    "disk-plain": "Install it again with encryption when it suits you, or leave this warning out in its settings.",
+    "data-disk-plain": "Its data disk is encrypted when it is set up again empty, or leave this warning out in its settings.",
+}
+# the warnings a machine may leave out (its setting `quiet`): never one that says something is broken
+QUIETABLE = {"disk-plain": "The disk is not encrypted", "data-disk-plain": "A data disk is not encrypted",
+             "clock": "The clock", "memory": "Little free memory", "failed-units": "Failed units",
+             "unhealthy": "A service reports unhealthy", "not-applied": "No role applied yet"}
+
+
+def assess(f, quiet=()):
+    """(state, problems, notes). state: ok, warn or bad; a problem is {level, text, key, hint}.
+    `quiet`: the keys of warnings this machine leaves out (QUIETABLE): they become notes."""
+    bad = lambda text, key: {"level": "bad", "text": text, "key": key, "hint": HINTS.get(key, "")}     # noqa: E731
+    warn = lambda text, key: {"level": "warn", "text": text, "key": key, "hint": HINTS.get(key, "")}   # noqa: E731
     problems, notes = [], []
     booting = 0 < f.get("uptime", 0) < BOOTING
     if f.get("role_failed"):
-        problems.append(bad("the role failed: %s" % f["role_failed"]))
+        problems.append(bad("the role failed: %s" % f["role_failed"], "role-failed"))
     elif not f.get("applied"):
-        problems.append(warn("no role has been applied here yet"))
+        problems.append(warn("no role has been applied here yet", "not-applied"))
     for s in f.get("services", []):
         if s.get("asleep"):
             notes.append("%s sleeps until a player comes" % s["name"])
@@ -257,23 +286,23 @@ def assess(f):
             if booting and s["state"] in ("inactive", "activating", "created", "missing"):
                 notes.append("%s has not started yet: the machine just booted" % s["name"])
             else:
-                problems.append(bad("%s is not running (%s)" % (s["name"], s["state"])))
+                problems.append(bad("%s is not running (%s)" % (s["name"], s["state"]), "service"))
         elif s["health"] == "unhealthy":
-            problems.append(warn("%s reports unhealthy" % s["name"]))
+            problems.append(warn("%s reports unhealthy" % s["name"], "unhealthy"))
         elif s["health"] == "starting":
             notes.append("%s is still starting" % s["name"])
     t = f.get("tunnel")
     if t and t["running"]:
         if not t["mtu"]:
-            problems.append(bad("the VPN client %s has no tunnel" % t["container"]))
+            problems.append(bad("the VPN client %s has no tunnel" % t["container"], "tunnel"))
         if not t["forward"]:
-            problems.append(bad("the VPN client %s does not forward: the mesh behind it has no internet" % t["container"]))
+            problems.append(bad("the VPN client %s does not forward: the mesh behind it has no internet" % t["container"], "tunnel"))
     if f.get("failed_units"):
-        problems.append(warn("failed units: %s" % ", ".join(f["failed_units"])))
+        problems.append(warn("failed units: %s" % ", ".join(f["failed_units"]), "failed-units"))
     for d in f.get("disks", []):
         used = d["used"] / d["size"] if d["size"] else 0
         if used >= .85:
-            problems.append((bad if used >= .95 else warn)("%s is %d%% full" % (d["mount"], used * 100)))
+            problems.append((bad if used >= .95 else warn)("%s is %d%% full" % (d["mount"], used * 100), "disk-full"))
     if f.get("disks"):
         notes.append("disk " + ", ".join("%s %d%% of %s" % (d["mount"], 100 * d["used"] / d["size"], human(d["size"]))
                                          for d in f["disks"] if d["size"]))
@@ -287,14 +316,14 @@ def assess(f):
             human(st["free_kib"]), ", about %s at last week's rate" % lasts(days) if days is not None else ""))
         if days is not None and days < BACKUP_FULL_SOON:
             problems.append((bad if days < 7 else warn)(
-                "the backups fill %s in about %s at last week's rate: kiwi-server prune" % (st["mount"], lasts(days))))
+                "the backups fill %s in about %s at last week's rate: kiwi-server prune" % (st["mount"], lasts(days)), "backup-store-full"))
     m = f.get("memory") or {}
     if m.get("total") and m["available"] / m["total"] < .05:
-        problems.append(warn("only %d MiB of memory free" % (m["available"] / 1024)))
+        problems.append(warn("only %d MiB of memory free" % (m["available"] / 1024), "memory"))
     if f.get("os") and not f.get("clock_synced"):
-        problems.append(warn("the clock is not synchronised"))
+        problems.append(warn("the clock is not synchronised", "clock"))
     if abs(f.get("skew", 0)) > 30:
-        problems.append(warn("the clock is %+d s off from this computer's" % f["skew"]))
+        problems.append(warn("the clock is %+d s off from this computer's" % f["skew"], "clock"))
     if f.get("reboot"):
         notes.append("an update is waiting for a reboot")
     if f.get("banned"):
@@ -302,14 +331,14 @@ def assess(f):
     b = f.get("backup")
     if b:
         if b.get("held"):
-            problems.append(warn("backups are held: %s" % b["held"]))
+            problems.append(warn("backups are held: %s" % b["held"], "backups-held"))
         elif not b["last"]:
             # the first run follows the first apply: late only once the machine has been up a while
-            (notes.append("no backup yet") if booting else problems.append(warn("no backup has succeeded yet")))
+            (notes.append("no backup yet") if booting else problems.append(warn("no backup has succeeded yet", "backup-none")))
         elif b["age"] is not None and b["age"] > BACKUP_BAD:
-            problems.append(bad("the last backup is %d days old" % (b["age"] / 86400)))
+            problems.append(bad("the last backup is %d days old" % (b["age"] / 86400), "backup-old"))
         elif b["age"] is not None and b["age"] > BACKUP_LATE:
-            problems.append(warn("the last backup is %d hours old" % (b["age"] / 3600)))
+            problems.append(warn("the last backup is %d hours old" % (b["age"] / 3600), "backup-old"))
         elif b["age"] is not None:
             notes.append("last backup %d h ago" % (b["age"] / 3600))
         copies = b.get("copies") or []
@@ -318,13 +347,13 @@ def assess(f):
                                               for c in copies))
         for c in copies:
             if c["age"] is not None and c["age"] > BACKUP_LATE and b["age"] is not None and b["age"] <= BACKUP_LATE:
-                problems.append(warn("the last copy at %s is %d hours old" % (c["server"], c["age"] / 3600)))
+                problems.append(warn("the last copy at %s is %d hours old" % (c["server"], c["age"] / 3600), "copy-old"))
     for c in f.get("certificates", []):
         days = int(c["left"] / 86400)
         if c["left"] < CERTIFICATE_BAD:
-            problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %d days" % days)))
+            problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %d days" % days), "certificate"))
         elif c["left"] < CERTIFICATE_LATE:
-            problems.append(warn("the certificate of %s expires in %d days: it should have been renewed" % (c["name"], days)))
+            problems.append(warn("the certificate of %s expires in %d days: it should have been renewed" % (c["name"], days), "certificate"))
     for o in f.get("onion") or []:
         if not o["ok"]:
             notes.append("the hidden service %s did not answer through Tor when last asked" % o["service"])
@@ -332,7 +361,7 @@ def assess(f):
         notes.append("certificates good for %d days" % int(min(c["left"] for c in f["certificates"]) / 86400))
     encryption = f.get("encryption")
     if encryption == "none":    # encrypted is the default: a machine without it says so, every time
-        problems.append(warn("the disk is not encrypted: whoever takes it can read everything on it"))
+        problems.append(warn("the disk is not encrypted: whoever takes it can read everything on it", "disk-plain"))
     elif encryption == "key":
         notes.append("the disk opens only with a typed key")
     elif encryption == "ram":
@@ -341,6 +370,13 @@ def assess(f):
         n = f["plain_data_disks"]
         problems.append(warn("%s not encrypted: whoever takes %s can read everything on %s"
                              % ("a data disk is" if n == 1 else "%d data disks are" % n, "it" if n == 1 else "them",
-                                "it" if n == 1 else "them")))
+                                "it" if n == 1 else "them"), "data-disk-plain"))
+    kept = []
+    for p in problems:      # what this machine leaves out on purpose stays visible, as a note
+        if p["level"] == "warn" and p["key"] in quiet:
+            notes.append("left out on purpose: " + p["text"])
+        else:
+            kept.append(p)
+    problems = kept
     levels = {p["level"] for p in problems}
     return ("bad" if "bad" in levels else "warn" if "warn" in levels else "ok"), problems, notes

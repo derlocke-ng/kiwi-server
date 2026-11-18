@@ -1650,6 +1650,25 @@ class Control:
             said = [x[7:] for x in lines if x.startswith("error: ")] or lines[-1:] or ["the fleet file could not be checked"]
             raise KiwiError(said[0][:300])
 
+    def sources_run(self, args, user="admin"):
+        """`kiwi-server sources FLEET …` (add, update, remove) on this copy: the same checks as in a
+        terminal, then the fleet saved. (it worked, what it said)."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not args or args[0] not in ("add", "update", "remove"):
+            raise KiwiError("module sources: add, update or remove")
+        with self.lock:
+            r = subprocess.run(list(self.kiwi) + ["sources", self.fleet_path] + [str(a) for a in args], capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=600)
+            said = "\n".join(line[3:] if line.startswith(":: ") else line for line in (r.stdout + r.stderr).strip().splitlines())
+            if r.returncode:
+                return False, said.replace("error: ", "", 1)
+            self.save_fleet()
+        self.audit(user, "module source %s" % {"add": "added", "update": "updated", "remove": "removed"}[args[0]],
+                   keys=[a for a in args[1:2]])
+        self.fleet_info(fresh=True)
+        return True, said
+
     def save_settings(self, host, changes, user="admin"):
         """Changed settings of a machine, or of the defaults (host None), into the fleet file:
         {path: value}, None takes an override away. `validate` has the last word: when the

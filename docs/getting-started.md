@@ -53,7 +53,8 @@ a network cable, it does this by itself:
   less than 4 GB of memory is installed without encryption only when you type
   PLAIN (or press the page's button), and it says so on every page after.
 - A machine alone at home opens with a key typed at its screen after a
-  restart (the machine's Logins tab shows it: write it down). So it never
+  restart (*The disk's key* among the machine's logins: *Logins…* in the app, the
+  *Services* tab on the page; write it down). So it never
   restarts by itself for updates; they start when you restart it.
 - When an install stops, the page says why, with what the installer said.
 - A machine that is installed already: it starts that system and says to take

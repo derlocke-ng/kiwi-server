@@ -91,6 +91,16 @@ def site_of(host):
     return str((host.cfg.get("network") or {}).get("site") or "home")
 
 
+def host_aliases(host):
+    """The other names of a machine: what a linked network with this network's own domain calls it
+    (papaya.home -> papaya.kiwi.home), for its certificate; its nginx says the same (federation alias)."""
+    al = (((host.module_settings or {}).get("reverse-proxy") or {}).get("federation") or {}).get("alias") or {}
+    suffix = "." + str(al.get("domain") or "")
+    if al.get("as") and host.hostname.endswith(suffix):
+        return [host.hostname[:-len(suffix)] + "." + str(al["as"])]
+    return []
+
+
 def linked_networks(fleet):
     """[{name, mesh, exit, internet, shared, reach}] of the networks linked to this one, nothing
     secret: for the picture of the network (reach: what each may reach here, as `share` names it).
@@ -99,9 +109,10 @@ def linked_networks(fleet):
         found = fedmod.partners(os.path.dirname(os.path.abspath(fleet.path)))
     except KiwiError:
         return []
-    return [{"name": n, "mesh": str(x.get("mesh") or ""), "exit": bool(x.get("exit")), "internet": bool(x.get("internet")),
+    # its mesh and domain as this network sees them (an alias where they are this network's own)
+    return [{"name": n, "mesh": fedmod.seen(x)[0], "exit": bool(x.get("exit")), "internet": bool(x.get("internet")),
              "shared": len(x.get("share") or []), "reach": [str(e) for e in x.get("share") or []],
-             "domain": str(x.get("domain") or "")}
+             "domain": fedmod.seen(x)[1], "translated": bool(x.get("seen_as"))}
             for n, x in sorted(found.items())]
 
 
@@ -464,7 +475,8 @@ class Renderer:
         key, full = certs.ensure_host_cert(self.ca_dir(host), host.hostname,
                                            days=int(tls.get("cert_days") or certs.CERT_DAYS),
                                            ca_days=int(tls.get("days") or certs.DAYS),
-                                           name_constraints=tls.get("name_constraints") or [])
+                                           name_constraints=tls.get("name_constraints") or [],
+                                           aliases=host_aliases(host))
         mf["reverse-proxy/tls_fullchain"] = util.read_bytes(full)
         mf["reverse-proxy/tls_privkey"] = util.read_bytes(key)
         host.module_settings["reverse-proxy"]["tls_fullchain"] = "fullchain.pem"
@@ -555,7 +567,7 @@ class Renderer:
             host.module_settings["control"]["image"] = CONTROL_IMAGE_MAJOR.rsplit(":", 1)[0] + ":" + VERSION
         if role.node_type != "master" and "dns" in host.modules and self._partners:
             # a node's Pi-hole asks its master for the linked networks' names (the master asks the partner)
-            host.module_settings["dns"]["partner_domains"] = sorted({str(p["domain"]) for p in self._partners.values() if p.get("domain")})
+            host.module_settings["dns"]["partner_domains"] = sorted({fedmod.seen(p)[1] for p in self._partners.values() if fedmod.seen(p)[1]})
         if role.node_type == "master" and "tang" in host.modules and "vpn-server" in host.modules:
             # a ring here (away): the VPN server publishes it, to the home's addresses only
             host.module_settings["vpn-server"]["local_rings"] = dict(host.module_settings["tang"].get("rings") or {})
@@ -3504,7 +3516,7 @@ def cmd_enroll(args):
     if args.split and not host:
         # imported as it is, its DNS line takes every name of the computer; a split tunnel wants only the network's
         domains = ["~" + d for d in [fleet.hosts[next(iter(fleet.hosts))].domain] +
-                   [p["domain"] for p in fedmod.partners(fleet.dir).values() if p.get("domain")] if d]
+                   [fedmod.seen(p)[1] for p in fedmod.partners(fleet.dir).values()] if d]
         util.say("on a computer with NetworkManager, after importing it: nmcli connection modify %s ipv4.dns-search %s "
                  "ipv4.never-default yes, so that only the network's names are asked through it (kiwi-server connect "
                  "does that for this computer by itself)" % (name, ",".join(dict.fromkeys(domains))))
@@ -3582,7 +3594,7 @@ def cmd_connect(args):
         # the network's public names lead to their machines on the VPN as well (its DNS says so)
         records = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).dns_records()
         # and the linked networks' domains: their names come through the master too (2.201.0)
-        linked = ["%s" % p["domain"] for p in fedmod.partners(fleet.dir).values() if p.get("domain") and p["domain"] != domain]
+        linked = [fedmod.seen(p)[1] for p in fedmod.partners(fleet.dir).values() if fedmod.seen(p)[1] and fedmod.seen(p)[1] != domain]
         con = connectmod.up(conf, domain, names=[n for _ip, n in records if not n.endswith("." + domain)] + linked)
         util.say("connected: %s in this computer's network settings. It carries your network only, comes up by "
                  "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
@@ -4278,12 +4290,44 @@ def _federation_side(args, path):
         "domain": h.domain, "dns": vs.get("server_ip") or "", "groups": groups}
 
 
-def _different_domains(mine, theirs):
-    """Each side's DNS sends the other's domain to the other: with one domain for both, a name
-    like papaya.home would be both networks' and the partner's names would not resolve."""
-    if mine and theirs and str(mine).lower().rstrip(".") == str(theirs).lower().rstrip("."):
-        raise KiwiError("both networks use the domain %s: each side's DNS sends the other's names to the other, so "
-                        "they need a domain each (home, internal, corp, mail …); a network's domain is set at init" % mine)
+def _seen_as(fleet, entry, them, theirs):
+    """How a partner is seen here when its mesh or domain is this network's own (docs/design/
+    federation.md, "translated at the link"): {mesh, domain}, or None when nothing collides.
+    The alias it had is kept; a new mesh is a free /16 at random, the domain <its name>.<domain>."""
+    from . import setup as setupmod
+    others = {n: x for n, x in fedmod.partners(fleet.dir).items() if n != them}
+    had = (fedmod.partners(fleet.dir).get(them) or {}).get("seen_as") or {}
+    for n, x in others.items():
+        if x.get("mesh") == theirs.get("mesh"):
+            raise KiwiError("%s has the mesh %s, as %s, a partner already: two partners of one mesh cannot share the "
+                            "link" % (them, theirs["mesh"], n))
+    out = {}
+    if theirs.get("mesh") == entry["mesh"]:
+        taken = set()
+        for net in [entry["mesh"]] + [v for x in others.values() for v in (x.get("mesh"), (x.get("seen_as") or {}).get("mesh")) if v]:
+            parts = str(net).split(".")
+            if parts[0] == "10":
+                taken.add(int(parts[1]))
+        for h in fleet.hosts.values():          # the machines' own LANs
+            addr = str((h.cfg.get("network") or {}).get("address") or "")
+            if addr.startswith("10."):
+                taken.add(int(addr.split(".")[1]))
+        mine = had.get("mesh")
+        out["mesh"] = mine if mine and int(mine.split(".")[1]) not in taken else setupmod.free_mesh(taken=taken)
+    if str(theirs.get("domain") or "").lower() == str(entry.get("domain") or "").lower() and entry.get("domain"):
+        label = re.sub(r"[^a-z0-9-]", "-", them.lower()).strip("-") or "partner"
+        if label in fleet.hosts:
+            raise KiwiError("%s would be seen here as %s.%s, which is the name of this network's machine %s: rename "
+                            "one of them" % (them, label, entry["domain"], label))
+        out["domain"] = "%s.%s" % (label, entry["domain"])
+    return out or None
+
+
+def _say_seen(them, seen):
+    if seen:
+        util.say("%s has this network's own %s: it is seen here as %s, translated at the link"
+                 % (them, " and ".join(k for k in ("mesh", "domain") if seen.get(k)),
+                    " and ".join(seen[k] for k in ("mesh", "domain") if seen.get(k))))
 
 
 def cmd_federate(args):
@@ -4300,10 +4344,9 @@ def cmd_federate(args):
             them, theirs = fedmod.read_card(args.accept)
             if them == name:
                 raise KiwiError("%s: the card is of a network called %s, as this one: one of them renames its folder" % (args.accept, them))
-            if theirs["mesh"] == entry["mesh"]:
-                raise KiwiError("the two meshes are the same (%s): every network has its own /16" % entry["mesh"])
-            _different_domains(entry.get("domain"), theirs.get("domain"))
-            fedmod.write(fleet.dir, them, theirs)
+            seen = _seen_as(fleet, entry, them, theirs)
+            fedmod.write(fleet.dir, them, dict(theirs, seen_as=seen))
+            _say_seen(them, seen)
             fedmod.partners(fleet.dir)
             util.say("%s is a partner of %s now; nothing is shared yet: share and from in %s, then apply the master"
                      % (them, name, os.path.join(fleet.dir, fedmod.FILE)))
@@ -4320,11 +4363,13 @@ def cmd_federate(args):
     (fa, na, ea), (fb, nb, eb) = sides
     if na == nb:
         raise KiwiError("both fleets are called %s: rename one folder" % na)
-    if not ea["mesh"] or not eb["mesh"] or ea["mesh"] == eb["mesh"]:
-        raise KiwiError("the two meshes must be set and differ (%s, %s): every network has its own /16" % (ea["mesh"], eb["mesh"]))
-    _different_domains(ea.get("domain"), eb.get("domain"))
-    nb = fedmod.write(fa.dir, nb, eb)        # the names each side knows the other by
-    na = fedmod.write(fb.dir, na, ea)
+    if not ea["mesh"] or not eb["mesh"]:
+        raise KiwiError("both meshes must be set (%s, %s)" % (ea["mesh"], eb["mesh"]))
+    seen_b, seen_a = _seen_as(fa, ea, nb, eb), _seen_as(fb, eb, na, ea)
+    nb = fedmod.write(fa.dir, nb, dict(eb, seen_as=seen_b))        # the names each side knows the other by
+    na = fedmod.write(fb.dir, na, dict(ea, seen_as=seen_a))
+    _say_seen(nb, seen_b)
+    _say_seen(na, seen_a)
     if args.exit or args.no_exit:
         # the first network leaves to the internet through the second, over the link: the
         # first says so (exit), the second allows it (internet)

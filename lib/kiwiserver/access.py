@@ -157,7 +157,7 @@ def view(groups, partners, found, domain, device_addresses=None):
         rows.append(row)
     for name, p in (partners or {}).items():
         reach = _loose(p.get("share"), found, domain, False)
-        rows.append({"kind": "network", "name": name, "range": p.get("mesh") or "", "reach": reach,
+        rows.append({"kind": "network", "name": name, "range": str((p.get("seen_as") or {}).get("mesh") or p.get("mesh") or ""), "reach": reach,
                      "open": shape(reach, found), "says": words(reach), "devices": [], "from": list(p.get("from") or [])})
     return rows
 

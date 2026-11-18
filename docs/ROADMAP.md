@@ -76,12 +76,11 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    one VLAN only, and the gateway's DHCP, DNS and routing per VLAN. Tested on a
    Linux bridge with VLAN filtering and VMs, no managed switch needed. Design
    first.
-8. **Federation of two networks with the same domain or mesh:** the link
-   translates (the partner's mesh 1:1 into a free range, NETMAP; its names under
-   an alias such as `papaya.kiwi2`, through a small DNS proxy; the alias in the
-   partner's certificates). Until then `federate` refuses both. A tool that moves
-   a whole fleet to another domain or /16 is the other way; it must pin every
-   secret derived from a host name (passwords, data disk keys) first.
+8. **Moving a whole network to another mesh or domain**, for just in case
+   (docs/design/federation.md): it must pin every secret derived from a host name
+   (passwords, data disk keys) first. Two networks of one mesh or domain link
+   since 2.216.0, translated at the link; left there: a partner's CA trusted on
+   the devices for its alias domain.
 9. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
    kernel TLS instead of the SFTP container, backups of the desktop and the phone
    (not designed yet), the OpenWrt package, rootless podman for the minimal

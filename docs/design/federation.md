@@ -103,10 +103,10 @@ Not done: the entry network's DNS lookups still leave from its own master.
 
 ## The same mesh or the same domain: translated at the link
 
-Decided on 18 November 2026 (the owner: "translate is the best idea"). Two networks made with
-the same defaults (both `home`, both 10.8 before 2.215.0 gave each its own /16 at random) can
-still link, and neither renumbers or renames anything. Not built yet; `federate` refuses both
-until it is.
+Decided on 18 November 2026 (the owner: "translate is the best idea"), built in 2.216.0
+(kiwi-modules 0.95.0). Two networks made with the same defaults (both `home`, both 10.8 before
+2.215.0 gave each its own /16 at random) can still link, and neither renumbers or renames
+anything.
 
 **How each side sees the other.** A partner whose mesh or domain is this network's own gets an
 alias here, chosen by this side and written in its `federation.yaml`:
@@ -148,8 +148,13 @@ A's own host names.
 **What does not change.** `share` and `from` are written in the partner's own words, as now;
 the TXT records, the picture and the access manager show the alias names.
 
-**Tests.** Two throwaway networks on one mesh and one domain, a client of each reaching what the
-other shares under the alias, and nothing else; both directions, both masters restarted.
+**Tests.** `tests/drills/translate-netns.py` runs the federation part of each master's rendered
+start.sh in throwaway network namespaces on this computer's kernel (no root), with a real
+WireGuard link: a client of A reaches B's web at 10.209.0.5 while A's own node keeps 10.9.0.5,
+web sees B's address for A, a port B does not share stays shut, and A's link DNS gives
+`web.gate-b.home` at 10.209.0.5. Two details it found: B answers DNS from 10.9.0.1, which is
+A's own address (`accept_local` on `wg-fed`), and A's own lookups need a route for the alias
+before NETMAP turns it into the partner's.
 
 ## Moving a whole network to another mesh or domain
 

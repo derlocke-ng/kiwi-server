@@ -137,6 +137,8 @@ def seen(p):
 def moved(addr, frm, to):
     """An address of the network `frm` at the same place in `to` (10.9.0.1 in 10.9/16 -> 10.209.0.1)."""
     a, f, t = ipaddress.ip_address(addr), ipaddress.ip_network(frm), ipaddress.ip_network(to)
+    if a not in f:              # not of that network: it stays where it is
+        return str(a)
     return str(ipaddress.ip_address(int(t.network_address) + int(a) - int(f.network_address)))
 
 
@@ -272,8 +274,8 @@ def inject(fleet_dir, data):
             block["vpn-server"] = dict(block["vpn-server"] or {}, federation=found)
         else:
             rules = node_rules(found, name, domain)
-            if rules and alias:          # a partner sees this network as <its name>.<domain>: its nginx answers that too
-                rules["alias"] = {"domain": domain, "as": alias}
+            if alias:                    # a partner sees this network as <its name>.<domain>: its nginx answers that too
+                rules = dict(rules or {}, alias={"domain": domain, "as": alias})
             if rules:
                 block["reverse-proxy"] = dict(block.get("reverse-proxy") or {}, federation=rules)
 
@@ -288,6 +290,8 @@ def write(fleet_dir, partner, entry):
         partner = next((n for n, x in data.items() if (x or {}).get("mesh") == entry.get("mesh")), partner)
     old = data.get(partner) or {}
     entry = dict(entry, share=old.get("share") or [], **{"from": old.get("from") or []})
+    if not entry.get("seen_as"):            # only when its mesh or domain is this network's own
+        entry.pop("seen_as", None)
     for k in ("exit", "internet"):          # the owner's, like share and from
         if old.get(k):
             entry[k] = True

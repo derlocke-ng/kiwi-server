@@ -311,6 +311,13 @@ strangers should sign up.
   vault user made earlier with an email and password stays as it is. Immich:
   `connect <host> immich`; its admin page stays editable, kiwi sets only the sign-in
   part of its settings, and the phone app signs in the same way.
+- **The network's admins**: *Make admin* at an account on the control page (the
+  app: the *Admin* switch under Accounts; a terminal: `kiwi-server accounts <fleet>
+  member admins NAME on`). From the person's next sign-in, Forgejo and Nextcloud make
+  them an admin and Immich too. Taken back, Forgejo and Nextcloud follow at the next
+  sign-in; Immich keeps it until it is taken back in Immich. Paperless and Vaultwarden
+  keep their own admins. Kanidm's own `admin` and `idm_admin` are not for signing in:
+  kiwi-server takes them over afresh for each change and keeps no password of theirs.
 - **Over Tor** a person sets a password at the accounts' page; a passkey belongs to
   the usual name and does not work at the hidden address. A service opened as a
   hidden service sends "Sign in with accounts" to the accounts' usual name: that

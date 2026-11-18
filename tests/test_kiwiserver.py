@@ -8709,8 +8709,7 @@ class TestControlSync(StoreBase):
         self.assertEqual(util.read_text(os.path.join(self.secrets, "new.conf")), "from the node")
         controlsync.push(self.f, self.h, "t")                    # in step again
         write(os.path.join(self.secrets, "local.conf"), "x")     # changed here, not saved yet: pull saves and sees it
-        with self.assertRaisesRegex(KiwiError, "control push first"):
-            controlsync.pull(self.f, self.h, "t")
+        self.assertIsNone(controlsync.pull(self.f, self.h, "t"))     # nothing to fetch: this copy is newer, push sends it
         write(os.path.join(self.node, "control", "audit.jsonl"), "{}\n")
         controlsync.push(self.f, self.h, "t")
         self.assertTrue(os.path.isfile(os.path.join(self.node, "control", "audit.jsonl")))    # the node's own files stay
@@ -8723,6 +8722,32 @@ class TestControlSync(StoreBase):
         with self.assertRaisesRegex(KiwiError, "changed on both sides since the last sync: secrets/new.conf"):
             controlsync.push(self.f, self.h, "t")
         controlsync.push(self.f, self.h, "t", force=True)
+
+    def test_the_differences_are_shown_with_every_secret_hidden(self):
+        from kiwiserver import merge
+        self.init()
+        controlmod.Control(self.f.path, run_dir=os.path.join(self.tmp, "ram")).set_password(self.PW)
+        controlsync.push(self.f, self.h, "t")
+        key = util.read_text(os.path.join(self.keyring, "item")).strip()
+        dirname = os.path.dirname(self.f.path)
+        name = os.path.basename(self.f.path)
+        # only this copy changed: a pull has nothing to fetch and says so, it does not refuse
+        write(os.path.join(self.secrets, "here.conf"), "from this computer")
+        self.assertIsNone(controlsync.pull(self.f, self.h, "t"))
+        # the node's copy: a password changed in its fleet file (a job did it)
+        node_fleet = util.read_text(self.f.path) + "# admin_password: hunter2-long-enough-to-see\n"
+        util.write_bytes(os.path.join(self.node, "fleet.yaml.age"),
+                         store.encrypt_bytes(store.Store.for_fleet(self.f.path).recipients, node_fleet.encode()), 0o600)
+        rows = controlsync.compare(dirname, name, controlsync.other_copy(dirname, host=self.h, tgt="t"), key)
+        found = {r["path"]: r for r in rows}
+        self.assertEqual((found["fleet.yaml"]["who"], found["secrets/here.conf"]["who"]), ("there", "here"))
+        self.assertEqual(found["secrets/here.conf"]["state"], "only here")
+        self.assertEqual(found["secrets/here.conf"]["lines"], [])                 # of a secret, only its name
+        self.assertIn("-# admin_password: •••", found["fleet.yaml"]["lines"])
+        self.assertNotIn("hunter2", json.dumps(rows))
+        self.assertEqual(merge.masked("    wg_password: s3cr3t"), "    wg_password: •••")
+        self.assertEqual(merge.masked("PrivateKey = " + "A" * 43 + "="), "PrivateKey = •••")
+        self.assertEqual(merge.masked("    hostname: papaya"), "    hostname: papaya")
 
     def test_which_control_node(self):
         with self.assertRaisesRegex(KiwiError, "no host has the control module"):
@@ -9450,6 +9475,50 @@ class TestWeb(WebBase):
         code, body = self.ask("/controllers/remove", {"name": "control", "csrf": tok})
         self.assertIn("own key", body)                                            # said on the page, not a crash
         self.assertEqual(self.ask("/api/fleet")[0], 401)                          # the sync API wants a controller
+
+    def test_a_controller_reads_the_status_and_the_machines(self):
+        """The Android app is a controller: it reads with its token what the page reads with its login."""
+        import urllib.request
+        import urllib.error
+
+        def get(path, token=None):
+            req = urllib.request.Request(self.url + path, headers={"Authorization": "Bearer " + token} if token else {})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, {}
+        for path in ("/api/status", "/api/machines"):
+            self.assertEqual(get(path)[0], 401, path)                                 # neither a login nor a token
+            self.assertEqual(get(path, "not-a-token")[0], 401, path)
+        os.makedirs(self.c.run, exist_ok=True)
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1000, "hosts": [
+            {"host": "papaya", "state": "warn", "problems": [{"level": "warn", "text": "a data disk is not encrypted"}], "notes": ["x"]}]}))
+        info = {"domain": "home", "fleet": "/home/someone/kiwi/fleet.yaml", "output_dir": "/run/user/1000/out",
+                "module_sources": [{"name": "mine", "path": "/home/someone/src/mods", "modules": ["hello"]}],
+                "hosts": [{"name": "papaya", "hostname": "papaya.home", "role": "node", "target": "ucore", "phase": "applied",
+                           "next": "", "modules": ["cloud"], "sites": ["cloud.papaya.home"], "admin_sites": [], "errors": [],
+                           "warnings": [], "dir": "/run/user/1000/out/papaya", "iso": "/home/someone/kiwi/output/papaya/papaya.iso"}]}
+        audit = os.path.join(self.c.dir, "audit.jsonl")
+        before = util.read_text(audit) if os.path.isfile(audit) else ""
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok-phone" else None), \
+                mock.patch.object(self.c, "fleet_info", lambda fresh=False: info):
+            code, body = get("/api/status", "tok-phone")
+            self.assertEqual((code, body["hosts"][0]["state"], body["time"]), (200, "warn", 1000))
+            code, body = get("/api/machines", "tok-phone")
+            self.assertEqual(code, 200)
+            self.assertEqual((body["domain"], body["hosts"][0]["name"], body["hosts"][0]["sites"]), ("home", "papaya", ["cloud.papaya.home"]))
+            for gone in ("fleet", "output_dir"):
+                self.assertNotIn(gone, body)
+            self.assertNotIn("dir", body["hosts"][0])
+            self.assertNotIn("iso", body["hosts"][0])
+            self.assertNotIn("path", body["module_sources"][0])
+            self.assertNotIn("/home/someone", json.dumps(body))                   # no path of this machine
+        with mock.patch.object(self.c, "controller", lambda t: "phone"), mock.patch.object(self.c, "fleet_info", lambda fresh=False: None):
+            self.assertEqual(get("/api/machines", "tok-phone"), (200, {}))       # the fleet is locked
+        self.assertEqual((util.read_text(audit) if os.path.isfile(audit) else ""), before)     # reads: no line per call
+        self.ask("/login", {"password": self.PW})                                  # the page's login reads them too
+        self.assertEqual(self.ask("/api/status")[0], 200)
 
     def test_the_computers_page_lets_a_key_in_for_a_while(self):
         self.ask("/login", {"password": self.PW})

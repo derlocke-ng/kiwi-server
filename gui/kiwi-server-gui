@@ -1863,6 +1863,102 @@ class SourcesDialog(Adw.Dialog):
         d.present(self)
 
 
+class DiffDialog(Adw.Dialog):
+    """This copy next to the other computers' (`kiwi-server control diff`): each file that differs,
+    who changed it since the last sync, and in the settings the lines, every secret value hidden.
+    When both sides changed something, the buttons say which copy counts."""
+    WHO = {"here": ("changed on this computer", "accent"), "there": ("changed on the other side", "warning"),
+           "both": ("changed on both sides", "error"), "unknown": ("differs", "dim-label")}
+
+    def __init__(self, win, both=False):
+        super().__init__(title="This copy and the other", content_width=720, content_height=720)
+        self.win, self.both = win, both
+        self.load()
+
+    def load(self):
+        self.set_child(Adw.StatusPage(title="Comparing the two copies…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
+        path = self.win.doc.path
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["control", "diff", path, "--porcelain"], timeout=180)
+            try:
+                got = json.loads(out)["differences"] if rc == 0 else None
+            except (ValueError, KeyError):
+                got = None
+            GLib.idle_add(self.show, got, (err.strip().replace("error: ", "").splitlines() or ["no answer"])[-1])
+        threading.Thread(target=work, daemon=True).start()
+
+    def show(self, got, why):
+        tb = Adw.ToolbarView()
+        tb.add_top_bar(Adw.HeaderBar())
+        if got is None:
+            tb.set_content(Adw.StatusPage(title="The two copies could not be compared", description=why,
+                                          icon_name="dialog-information-symbolic"))
+            self.set_child(tb)
+            return False
+        page = Adw.PreferencesPage()
+        if not got:
+            tb.set_content(Adw.StatusPage(title="The two copies are the same", icon_name="object-select-symbolic",
+                                          description="Nothing to decide."))
+            self.set_child(tb)
+            return False
+        both = any(r["who"] == "both" for r in got)
+        g = Adw.PreferencesGroup(title="What differs", description=(
+            "Both sides changed the same thing: say below which copy counts. The other change is lost."
+            if both else "Each side changed something else: the next sync makes one copy of the two by itself."))
+        for r in got:
+            words, style = self.WHO[r["who"]]
+            name = r["path"].replace("secrets/", "secret: ").replace("fleet.yaml", "the settings (fleet.yaml)")
+            row = Adw.ExpanderRow(title=GLib.markup_escape_text(name),
+                                  subtitle=GLib.markup_escape_text(words + ("" if r["state"] == "changed" else ", " + r["state"])))
+            row.add_suffix(Gtk.Label(label="●", css_classes=[style], valign=Gtk.Align.CENTER))
+            if r["lines"]:
+                view = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR,
+                                    top_margin=8, bottom_margin=8, left_margin=10, right_margin=10)
+                buf = view.get_buffer()
+                tags = {"-": buf.create_tag(None, foreground="#c4332b"), "+": buf.create_tag(None, foreground="#13805c"),
+                        "@": buf.create_tag(None, foreground="#8a9297")}
+                for line in r["lines"]:
+                    tag = tags.get(line[:1])
+                    end = buf.get_end_iter()
+                    if tag:
+                        buf.insert_with_tags(end, line + "\n", tag)
+                    else:
+                        buf.insert(end, line + "\n")
+                row.add_row(view)
+                row.set_expanded(len(got) == 1 or r["who"] == "both")
+            else:
+                row.set_enable_expansion(False)
+            g.add(row)
+        page.add(g)
+        legend = Adw.PreferencesGroup(description="Red: as the other copy has it. Green: as this computer has it. "
+                                                  "Secret values show as •••.")
+        page.add(legend)
+        if both:
+            g = Adw.PreferencesGroup(title="Which copy counts?")
+            box = Gtk.Box(spacing=10, halign=Gtk.Align.START)
+            for label, how, style in (("This computer's", "push", "suggested-action"), ("The other one's", "pull", "")):
+                b = Gtk.Button(label=label, css_classes=["pill"] + ([style] if style else []))
+                b.connect("clicked", lambda _b, h=how: self.decide(h))
+                box.append(b)
+            g.add(box)
+            page.add(g)
+        tb.set_content(page)
+        self.set_child(tb)
+        return False
+
+    def decide(self, how):
+        path = self.win.doc.path
+        rc, out, err = run_cli(self.win.cli, ["control", how, path, "--force"], timeout=180)
+        if rc != 0:
+            self.win.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
+            return
+        if how == "pull":
+            self.win.open_path(path, sync=False)
+        self.win.toast("In step: %s counts" % ("this computer's copy" if how == "push" else "the other copy"), "ok")
+        self.close()
+
+
 class ActivityDialog(Adw.Dialog):
     """The control node's Activity: its newest tasks and who did what, as on the control page.
     Through `kiwi-server control activity`, with this computer's key."""
@@ -2061,6 +2157,16 @@ class AccountsDialog(Adw.Dialog):
                         "%s %s the game page" % (n, "may use" if s.get_active() else "no longer uses")))
                     row.add_suffix(Gtk.Label(label="Game page", css_classes=["dim-label"]))
                     row.add_suffix(sw)
+                # the network's admins: an admin in Forgejo, Nextcloud and Immich at the next sign-in
+                boss = any(str(x).startswith("admins@") for x in p_.get("memberof") or [])
+                sw2 = Gtk.Switch(active=boss, valign=Gtk.Align.CENTER,
+                                 tooltip_text="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there")
+                sw2.connect("notify::active", lambda s, _p, n=name: self.act(
+                    ["member", "admins", n, "on" if s.get_active() else "off"],
+                    "%s %s" % (n, "is an admin from the next sign-in" if s.get_active() else "is no admin from the next sign-in "
+                                  "(Immich keeps it: take it back there)")))
+                row.add_suffix(Gtk.Label(label="Admin", css_classes=["dim-label"]))
+                row.add_suffix(sw2)
                 row.add_suffix(link)
                 row.add_suffix(gone)
                 g.add(row)
@@ -3890,6 +3996,8 @@ class Window(Adw.ApplicationWindow):
                          ("accounts", lambda: self.doc.path and AccountsDialog(self).present(self)),
                          ("activity", lambda: self.doc.path and ActivityDialog(self).present(self)),
                          ("sources", lambda: self.doc.path and SourcesDialog(self).present(self)),
+                         ("diff", lambda: self.doc.path and (DiffDialog(self).present(self) if self.joined()
+                                                              else self.toast("This network is not shared yet: Use another computer… in the menu"))),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
                          ("locking", lambda: self.doc.path and LockDialog(self).present(self)),
@@ -3924,6 +4032,7 @@ class Window(Adw.ApplicationWindow):
         section.append("A home server that looks after it…", "win.control-setup")
         section.append("Update everything…", "win.update-all")
         section.append("Sync now", "win.sync")
+        section.append("Compare with the other copy…", "win.diff")
         section.append("A computer was lost or stolen…", "win.rotate")
         section.append("If something breaks…", "win.recovery")
         section.append("Render every host", "win.render-all")
@@ -4387,7 +4496,9 @@ class Window(Adw.ApplicationWindow):
             if rc != 0 and "changed on both sides" in text:
                 self.both_changed(path, text)
             elif rc != 0:
-                self.toast("Not in step: %s" % (text.splitlines() or ["?"])[-1][:160])
+                self.toast("Not in step with the other computers: %s" % (text.splitlines() or ["?"])[-1][:140], "warn",
+                           "Your changes stay on this computer and go to the others with the next sync (menu: Sync now). "
+                           "Menu, Compare with the other copy… shows what differs and who changed it.")
             elif say:
                 self.toast("In step")
             return False
@@ -4401,10 +4512,15 @@ class Window(Adw.ApplicationWindow):
                               body="This computer and another one both changed %s since they last agreed. "
                                    "Which one should count? The other change is lost." % what)
         dlg.add_response("later", "Decide later")
+        dlg.add_response("show", "Show the differences")
         dlg.add_response("theirs", "The other one's")
         dlg.add_response("mine", "This computer's")
+        dlg.set_default_response("show")
 
         def answer(_d, r):
+            if r == "show":
+                DiffDialog(self, both=True).present(self)
+                return
             if r not in ("mine", "theirs"):
                 return
             rc, out, err = run_cli(self.cli, ["control", "push" if r == "mine" else "pull", path, "--force"], timeout=180)
@@ -4899,13 +5015,31 @@ class Window(Adw.ApplicationWindow):
         return next((p for p in (self.live.get(host) or {}).get("problems") or [] if p.get("text") == text), {})
 
     def leave_out(self, host, key):
-        """A warning this machine does not show any more (its setting `quiet`): it stays as a note."""
+        """A warning this machine does not show any more (its setting `quiet`): it stays as a note.
+        Gone from the screen at once; the next look at the machines says the same by itself."""
+        if self.doc.dirty:
+            self.toast("Save your other changes first")
+            return
         now = list(self.doc.get(host, ("quiet",)) or [])
-        if key not in now:
-            self.doc.set(host, ("quiet",), now + [key])
-            self.save()
-            self.toast("%s leaves that warning out from now on: its settings bring it back" % host, "ok")
-            self.poll()
+        if key in now:
+            return
+        self.doc.set(host, ("quiet",), now + [key])
+        try:
+            self.doc.save()
+        except OSError as e:
+            self.alert("Save failed", str(e))
+            return
+        live = self.live.get(host)
+        if live:
+            gone = [p for p in live.get("problems") or [] if p.get("key") == key and p.get("level") == "warn"]
+            live["problems"] = [p for p in live["problems"] if p not in gone]
+            live.setdefault("notes", []).extend("left out on purpose: " + p["text"] for p in gone)
+            levels = {p.get("level") for p in live["problems"]}
+            live["state"] = "bad" if "bad" in levels else "warn" if "warn" in levels else "ok"
+        self.mark_dirty()
+        self.render_current()
+        self.toast("%s: that warning is left out from now on (its settings bring it back)" % host, "ok")
+        self.sync(after_save=True)
 
     def attention_group(self, items, with_host):
         g = Adw.PreferencesGroup(title="Needs attention")
@@ -5987,9 +6121,9 @@ class Window(Adw.ApplicationWindow):
         self.logbuf.delete_mark(mark)
         return False
 
-    def toast(self, text, kind=None):
+    def toast(self, text, kind=None, hint=""):
         self.toasts.add_toast(Adw.Toast.new(text))
-        self.remember(text, kind)
+        self.remember(text, kind, hint)
 
     def remember(self, text, kind=None, hint=""):
         """Into the bell's list: what the app said, with its time; kept after the app closes."""

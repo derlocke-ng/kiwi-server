@@ -106,3 +106,13 @@ Since 2.170.0 to 2.174.0 (17 November 2026):
 | Game servers on the status page | (the status) | not needed: the status page is for everyone | status.<host> |
 
 Left: a module source that is a folder on this computer (`add --path`) is for the terminal only, on purpose.
+
+## The Android app (kiwi-app, from 18 November 2026)
+
+A controller like a second computer: it joins with the invite link and reads the control node's API.
+
+| What | API | Android |
+|---|---|---|
+| Home, Machines, Services, read only | `/api/status`, `/api/machines` (2.190.0) | in work |
+| Activity | `/api/activity` | not yet |
+| Everything that changes something (apply, settings, devices, accounts, who may reach what, backups, services, module sources, game servers) | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |

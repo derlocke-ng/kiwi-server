@@ -6,6 +6,7 @@ set with `kiwi-server serve FLEET --set-password`; it opens the encrypted store 
 import asyncio
 import base64
 import hmac
+import json
 import math
 import os
 import re
@@ -1182,10 +1183,13 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <form class="card row" method="post" action="/accounts/create" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
 <div><label for="acc-name">Make one yourself</label><input id="acc-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" placeholder="lowercase letters and digits" required></div>
 <button>Make the account</button></form>
-{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th></th></tr></thead><tbody>
+{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there">Admin</th><th></th></tr></thead><tbody>
 {% for p in people %}<tr><td><b>{{ p.name }}</b></td><td class="wide">{{ p.display }}</td><td class="wide">{{ "yes" if p.jabber else "–" }}</td>
 {% if play_group %}<td><form class="inline" method="post" action="/accounts/games">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}">
 <input type="hidden" name="note" value="{{ 'off' if p.games else 'on' }}"><button title="Members of {{ play_group }} start and stop the game servers at the game page">{{ "In · leave out" if p.games else "Let in" }}</button></form></td>{% endif %}
+<td><form class="inline" method="post" action="/accounts/admins"{% if not p.admin %} onsubmit="return confirm('Make {{ p.name }} an admin of Forgejo, Nextcloud and Immich? It takes effect at the next sign-in there.')"{% endif %}>{{ tok }}
+<input type="hidden" name="name" value="{{ p.name }}"><input type="hidden" name="note" value="{{ 'off' if p.admin else 'on' }}">
+<button title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there">{{ "Admin · take back" if p.admin else "Make admin" }}</button></form></td>
 <td style="white-space:nowrap"><form class="inline" method="post" action="/accounts/link">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>New password link</button></form>
 <form class="inline" method="post" action="/accounts/delete" onsubmit="return confirm('Delete the account {{ p.name }}? Its person can no longer sign in anywhere.')">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}"><button>Delete</button></form></td></tr>{% endfor %}</tbody></table></div>
 {% else %}<p class="muted">No accounts yet.</p>{% endif %}
@@ -2506,7 +2510,17 @@ def make_app(control: Control):
             now = list(doc.get(name, ("quiet",)) or [])
             if key not in now:
                 control.save_settings(name, {("quiet",): now + [key]}, u)
-            control.look()                      # the warning goes with the next look, which starts now
+            # gone from the pages at once: the next look says the same by itself
+            st = control.status() or {}
+            for h in st.get("hosts") or []:
+                if h.get("host") == name:
+                    gone = [p for p in h.get("problems") or [] if p.get("key") == key and p.get("level") == "warn"]
+                    h["problems"] = [p for p in h.get("problems") or [] if p not in gone]
+                    h["notes"] = list(h.get("notes") or []) + ["left out on purpose: " + p["text"] for p in gone]
+                    levels = {p.get("level") for p in h["problems"]}
+                    h["state"] = "bad" if "bad" in levels else "warn" if "warn" in levels else "ok"
+            if st:
+                control._put(os.path.join(control.run, "status.json"), json.dumps(st))
         except KiwiError:
             pass
         return RedirectResponse("/hosts/%s" % name, status_code=303)
@@ -2590,9 +2604,26 @@ def make_app(control: Control):
 
     @app.get("/api/status")
     def api_status(request: Request):
-        if not user(request):
+        """The last look at the machines: for the page's login and for a controller (the Android app).
+        Only reads, and is asked at every refresh: no line in the activity."""
+        if not (user(request) or bearer(request)):
             return JSONResponse({"error": "log in"}, status_code=401)
         return control.status() or {}
+
+    @app.get("/api/machines")
+    def api_machines(request: Request):
+        """What the fleet file says of the machines (`list --porcelain`), without the paths on this
+        machine that a phone has no use for. {} while the fleet is locked. Only reads, as /api/status."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        info = control.fleet_info()
+        if info is None:
+            return {}
+        out = {k: v for k, v in info.items() if k not in ("fleet", "output_dir")}
+        out["hosts"] = [{k: v for k, v in h.items() if k not in ("dir", "iso")} for h in info.get("hosts") or []]
+        if "module_sources" in out:
+            out["module_sources"] = [{k: v for k, v in x.items() if k != "path"} for x in out["module_sources"] or []]
+        return out
 
     # ---- devices ------------------------------------------------------------------------
     def devices_page(request, **kw):
@@ -2614,7 +2645,8 @@ def make_app(control: Control):
                     name = (p.get("name") or [""])[0]
                     people.append({"name": name, "display": (p.get("displayname") or [name])[0],
                                    "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or []),
-                                   "games": bool(PLAY_HOST) and any(g.startswith(PLAY_GROUP + "@") for g in p.get("memberof") or [])})
+                                   "games": bool(PLAY_HOST) and any(g.startswith(PLAY_GROUP + "@") for g in p.get("memberof") or []),
+                                   "admin": any(g.startswith("admins@") for g in p.get("memberof") or [])})
                 invites = control.accounts_read("invites") or []
                 requests = control.accounts_read("requests") or []
             except KiwiError as e:
@@ -2682,6 +2714,9 @@ def make_app(control: Control):
                                                      "note": "It works for a day, once. Nobody else should see it."})
             if what == "delete":
                 control.accounts("delete", name.strip().lower(), user=u)
+                return accounts_page(request)
+            if what == "admins":                        # the network's admins: Forgejo, Nextcloud, Immich
+                control.accounts("member", "admins", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
                 return accounts_page(request)
             if what == "games" and PLAY_HOST:          # who may use the game page: its group
                 control.accounts("member", PLAY_GROUP, name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)

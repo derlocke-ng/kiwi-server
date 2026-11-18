@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: immich
   title: Photos (Immich)
-  version: 1.1.0
+  version: 1.2.0
   description: "Immich, photos and videos from your phone, behind the reverse proxy at immich.<hostname>"
   category: productivity
   node_types: [node]

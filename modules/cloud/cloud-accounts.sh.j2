@@ -30,5 +30,8 @@ occ config:app:set --value=1 user_oidc allow_multiple_user_backends >/dev/null
 occ config:system:set user_oidc soft_auto_provision --type=boolean --value=false >/dev/null
 occ_secret user_oidc:provider accounts --clientid={{ accounts_client }} \
     --discoveryuri={{ accounts_issuer }}/.well-known/openid-configuration --scope="openid email profile" \
-    --mapping-uid=preferred_username --mapping-display-name=name --mapping-email=email --unique-uid=0 >/dev/null
+    --mapping-uid=preferred_username --mapping-display-name=name --mapping-email=email --unique-uid=0 \
+    --group-provisioning=1 --mapping-groups=kiwi_roles --group-whitelist-regex='/^admin$/' >/dev/null
+# the network's admins (the accounts' group admins) are in Nextcloud's group admin; only that group is
+# kept in step with the accounts, every other group stays Nextcloud's own
 echo "kiwi: Nextcloud signs people in with the network's accounts"

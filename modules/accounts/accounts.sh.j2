@@ -5,7 +5,8 @@
 #   accounts.sh list                         the accounts, one JSON object a line
 #   accounts.sh delete NAME
 #   accounts.sh jabber NAME on|off           whether Jabber takes this account (LDAP)
-#   accounts.sh member GROUP NAME on|off     whether the account is in a group (made when missing), e.g. games
+#   accounts.sh member GROUP NAME on|off     whether the account is in a group (made when missing), e.g. games;
+#                                            admins: an admin in Forgejo, Nextcloud and Immich at the next sign-in
 #   accounts.sh members GROUP                who is in it, as JSON
 #   accounts.sh oauth CLIENT NAME ORIGIN CALLBACK [CALLBACK…] [--pkce] [--group GROUP]
 #                                            a service that signs people in here (OpenID Connect); prints its secret.
@@ -25,12 +26,22 @@ pw=$($rt exec {{ container_prefix }}-accounts kanidmd recover-account idm_admin 
 [ -n "$pw" ] || { echo "accounts: Kanidm did not give its admin over (is it running?)" >&2; exit 1; }
 k() { $rt run --rm --network host -e KANIDM_URL=$url -e KANIDM_SKIP_HOSTNAME_VERIFICATION=true -e KANIDM_ACCEPT_INVALID_CERTS=true \
           -e KANIDM_NAME=idm_admin -e RUST_LOG=error ${KANIDM_PASSWORD:+-e KANIDM_PASSWORD} -v "$work:/root:z" "$tools" kanidm "$@" </dev/null; }
+# the network's admins (the group `admins`) are told to each service in its own words: kiwi_roles
+# [admin] (Forgejo's admin group, Nextcloud's group admin), immich_role admin (Immich's role). Only
+# the group's members get the claims; everyone else gets none of them
+admins_claims() {
+    k group get admins 2>&1 | grep -q "name: admins" || k group create admins >/dev/null 2>&1
+    k system oauth2 update-claim-map "$1" kiwi_roles admins admin >/dev/null 2>&1 || true
+    k system oauth2 update-claim-map-join "$1" kiwi_roles array >/dev/null 2>&1 || true
+    k system oauth2 update-claim-map "$1" immich_role admins admin >/dev/null 2>&1 || true
+    k system oauth2 update-claim-map-join "$1" immich_role ssv >/dev/null 2>&1 || true
+}
 KANIDM_PASSWORD=$pw; export KANIDM_PASSWORD
 k login >/dev/null 2>&1 || { echo "accounts: the admin could not log in to Kanidm" >&2; exit 1; }
 unset KANIDM_PASSWORD
 # the rules for everyone, set again when the settings change: what a person needs to sign in,
 # how long a password is at least, and (Jabber) that LDAP takes the same password as the pages
-policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }} look2 {{ brand or 'Kiwi' }}"
+policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }} look2 admins1 {{ brand or 'Kiwi' }}"
 mark={{ docker_dir }}/{{ container_prefix }}-accounts/data/.kiwi-policy
 if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
     k group account-policy enable idm_all_persons >/dev/null 2>&1 || true
@@ -43,6 +54,8 @@ if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
     k group account-policy enable jabber >/dev/null 2>&1 || true
     k group account-policy allow-primary-cred-fallback jabber true >/dev/null 2>&1
 {% endif %}
+    # the clients made before the network had admins: their claims too
+    for c in $(k system oauth2 list 2>/dev/null | sed -n 's/^name: *//p'); do admins_claims "$c"; done
     # Kanidm's own pages look like the network's: its name, and the kiwi as their logo. The domain
     # is Kanidm's `admin`'s to change, not idm_admin's: taken over the same way, for these two only
     apw=$($rt exec {{ container_prefix }}-accounts kanidmd recover-account admin -c /config/server.toml 2>&1 |
@@ -122,6 +135,7 @@ case "${1:-}" in
             k system oauth2 update-scope-map "$c" idm_all_persons openid email profile groups >/dev/null 2>&1
         fi
         k system oauth2 prefer-short-username "$c" >/dev/null 2>&1 || true
+        admins_claims "$c"
         # Forgejo, Paperless and Vaultwarden send no PKCE challenge; they sign in with their secret (a
         # confidential client), which is enough. A service that sends one (Immich) keeps Kanidm's check.
         [ "$pkce" = on ] || k system oauth2 warning-insecure-client-disable-pkce "$c" >/dev/null 2>&1 || true

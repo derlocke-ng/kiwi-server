@@ -45,6 +45,8 @@ emphasis, code), rendered by kiwi-server itself: no raw HTML from the repository
 
 ## Static files through a CDN
 
+Built in 2.207.0 (`website_cdn_hostname`).
+
 Optional: the CSS, images and fonts from another name (for dlhost.eu: `cdn.dlhost.eu`, a
 Cloudflare-proxied name), with long cache headers. Never the pages, the sign-up or anything over
 Tor. The site says that the CDN sees the address of whoever loads those files.

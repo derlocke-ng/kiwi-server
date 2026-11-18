@@ -11095,19 +11095,22 @@ class TestWebsite(WebBase):
         os.makedirs(os.path.join(folder, "assets"))
         write(os.path.join(folder, "site.yaml"), "name: dlhost\ntagline: Services for friends\naccent: '#3366cc'\npages: [home, terms, ../x]\n")
         write(os.path.join(folder, "pages", "home.md"), "# Welcome\n\nFree services. <script>alert(1)</script>\n\n- [Join](terms)\n")
-        write(os.path.join(folder, "pages", "terms.md"), "# Terms\n\nBe **nice**.\n")
+        write(os.path.join(folder, "pages", "terms.md"), "# Terms\n\nBe **nice**.\n\n![Our logo](assets/logo.png)\n")
         with open(os.path.join(folder, "assets", "logo.png"), "wb") as fh:
             fh.write(b"\x89PNG-not-really")
         for p in (mock.patch.object(sitemod, "settings", lambda: ("example.org", "https://example.org/site.git", "a" * 40)),
-                  mock.patch.object(sitemod, "fetch", lambda repo, commit, cache=None: sitemod.load(folder))):
+                  mock.patch.object(sitemod, "cdn", lambda: "cdn.example.org"),
+                  mock.patch.object(sitemod, "fetch", lambda repo, commit, cache=None, assets="/assets/": sitemod.load(folder, assets, "abc"))):
             p.start()
             self.addCleanup(p.stop)
         super().setUp()
 
-    def at(self, path, host="example.org", method="GET"):
+    def at(self, path, host="example.org", method="GET", headers=None):
         req = urllib.request.Request(self.url + path, headers={"Host": host}, method=method)
         try:
             with urllib.request.urlopen(req) as r:
+                if headers is not None:
+                    headers.update({k.lower(): v for k, v in r.headers.items()})
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
             with e:
@@ -11126,6 +11129,14 @@ class TestWebsite(WebBase):
         self.assertEqual(self.at("/", "www.example.org")[0], 200)
         code, body = self.at("/terms")
         self.assertIn("<strong>nice</strong>", body.decode())
+        self.assertIn('<img src="https://cdn.example.org/assets/logo.png?v=abc" alt="Our logo" loading="lazy">', body.decode())
+        self.assertIn("Images come through cdn.example.org, which sees your address for them", body.decode())
+        # the CDN's name: the files, kept a year when asked by their version, and nothing else
+        got = {}
+        self.assertEqual(self.at("/assets/logo.png?v=abc", "cdn.example.org", headers=got), (200, b"\x89PNG-not-really"))
+        self.assertIn("immutable", got.get("cache-control", ""))
+        for path in ("/", "/terms", "/status", "/login", "/api/registry"):
+            self.assertEqual(self.at(path, "cdn.example.org")[0], 404, path)
         self.assertEqual(self.at("/services")[0], 200)
         self.assertEqual(self.at("/status")[0], 200)                              # the public status page
         self.assertEqual(self.at("/assets/logo.png"), (200, b"\x89PNG-not-really"))

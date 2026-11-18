@@ -71,9 +71,9 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    a module more, or a master with a disk.
 7. **LANs and VLANs, as companies have them** (the owner, 18 November;
    docs/design/lans.md): groups of the home network (a subnet at home given what it
-   may reach, kept by each node) since 2.217.0. Left: the gateway's forwarding for
-   them, tagged interfaces per machine (`network.vlans`), a service on one VLAN
-   only, and the gateway's DHCP, DNS and routing per VLAN.
+   may reach, kept by each node and the gateway) since 2.217.0 and 2.218.0. Left:
+   tagged interfaces per machine (`network.vlans`), a service on one VLAN only, and
+   the gateway's DHCP, DNS and routing per VLAN.
 8. **Moving a whole network to another mesh or domain**, for just in case
    (docs/design/federation.md): it must pin every secret derived from a host name
    (passwords, data disk keys) first. Two networks of one mesh or domain link

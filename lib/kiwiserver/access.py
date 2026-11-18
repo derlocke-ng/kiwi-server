@@ -238,6 +238,38 @@ def lan_ports(lan, name, hostname):
     return out
 
 
+def gateway_lan(lan, machines):
+    """The gateway module's lan_groups: what each group of the home network may reach in the mesh
+    through a gateway (the machines it reaches only there: masters, machines at another site,
+    nodes by their mesh address). machines: [{name, hostname, ip, master}]."""
+    out = []
+    for g in (lan or {}).values():
+        g = g or {}
+        net = str(g.get("subnet") or "")
+        if not net:
+            continue
+        reach = [str(e).lower() for e in (g.get("reach", ["all"]) or [])]
+        if "all" in reach:
+            out.append("%s all" % net)
+            continue
+        for m in machines:
+            if not m.get("ip"):
+                continue
+            mine = {m["name"], m["hostname"]}
+            if not m.get("master") and ("nodes" in reach or mine & set(reach)):
+                out.append("%s to %s any" % (net, m["ip"]))
+                continue
+            ports = []
+            if not m.get("master") and ("apps" in reach or any(":" not in e and e.rsplit(".", 1)[-1] in mine for e in reach)
+                                        or any(":" not in e and e.endswith("." + m["hostname"]) for e in reach)):
+                ports += ["tcp:443", "tcp:80"]
+            ports += ["tcp:" + e.partition(":")[2] for e in reach if ":" in e and e.partition(":")[0] in mine]
+            if ports:
+                out.append("%s to %s %s" % (net, m["ip"], ",".join(dict.fromkeys(ports))))
+        out.append("%s drop" % net)
+    return out
+
+
 def node_rules(groups, name, hostname, admin=()):
     """reverse-proxy's `access` for one node: which client ranges it refuses where. names:
     site -> the ranges refused there; others: the ranges refused at every site not listed.

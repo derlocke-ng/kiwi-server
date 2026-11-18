@@ -29,10 +29,12 @@ defaults:
   range as much as a VLAN.
 - Enforced where the packets are: each node's nginx (the same allow and deny lines as for a VPN
   group, `reverse-proxy.access`), and each node's nftables table `kiwi_lan` (kiwi-stack) for the
-  ports, looked at before a published container port's DNAT. Not yet: the gateway's forwarding
-  for what it routes from the home network into the mesh (masters, machines at another site).
+  ports, looked at before a published container port's DNAT; and since 2.218.0 the gateway, for
+  what it routes from the home network into the mesh (machines at another site, nodes by their
+  mesh address): its chain `KIWI_GW_LAN` lets a group through to what it was given only.
 - Proven on a kernel by `tests/drills/lan-netns.py`: rootless namespaces, a node with the table
-  kiwi-stack writes, a client in a group and one in none, a published port.
+  kiwi-stack writes, a client in a group and one in none, a published port, and the gateway's
+  chain in front of a mesh.
 - `kiwi-server access FLEET iot cloud.papaya`, the page's and the app's *Who may reach what*:
   one more row per group, as for the VPN's groups. `tests/drills/access.py` gets a client in a
   group's range.

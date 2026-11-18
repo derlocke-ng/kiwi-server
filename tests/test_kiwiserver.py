@@ -3593,6 +3593,20 @@ class TestAccess(Base):
         rc, out, err = TestManage.run_cli(self, "access", f.path, "pub", "--new", "--lan", "8.8.8.0/24")
         self.assertIn("not a private IPv4 network", err)
 
+    def test_a_gateway_keeps_a_group_of_the_home_network_out_of_the_rest_of_the_mesh(self):
+        machines = [{"name": "gate", "hostname": "gate.home", "ip": "10.8.0.1", "master": True},
+                    {"name": "papaya", "hostname": "papaya.home", "ip": "10.8.0.25", "master": False},
+                    {"name": "kumquat", "hostname": "kumquat.home", "ip": "10.8.0.10", "master": False}]
+        lan = {"iot": {"subnet": "192.168.20.0/24", "reach": ["cloud.papaya", "kumquat:22"]},
+               "trusted": {"subnet": "192.168.30.0/24", "reach": ["all"]},
+               "cams": {"subnet": "192.168.40.0/24", "reach": ["nodes"]},
+               "shut": {"subnet": "192.168.50.0/24", "reach": []}}
+        self.assertEqual(accessmod.gateway_lan(lan, machines), [
+            "192.168.20.0/24 to 10.8.0.25 tcp:443,tcp:80", "192.168.20.0/24 to 10.8.0.10 tcp:22", "192.168.20.0/24 drop",
+            "192.168.30.0/24 all",
+            "192.168.40.0/24 to 10.8.0.25 any", "192.168.40.0/24 to 10.8.0.10 any", "192.168.40.0/24 drop",
+            "192.168.50.0/24 drop"])
+
     def test_a_linked_network_is_given_things_the_same_way(self):
         f = self.net()
         write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump({"other": {

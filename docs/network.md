@@ -320,7 +320,8 @@ kiwi-server access ~/kiwi/fleet.yaml iot --new --lan 192.168.20.0/24 cloud.papay
 It lands in the fleet file as `lan.groups` in the defaults. The master never
 sees that traffic, so each node keeps the rules itself: its web server refuses
 the names the group was not given, and its firewall (the nftables table
-`kiwi_lan`, which `kiwi-stack` writes) the ports. DNS, DHCP and ping stay open
+`kiwi_lan`, which `kiwi-stack` writes) the ports. A gateway node does the same for
+what it routes from the home network into the mesh. DNS, DHCP and ping stay open
 to everyone. A group of the home network has the admin switch, but not the VPN's
 "other devices" or "the Internet": the home's router decides those. Apply the
 nodes after a change. On the page and in the app, a new group with a subnet in

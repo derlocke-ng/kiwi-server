@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.208.0 — the console password out of the fleet file
+
+- **The machines' console password is no longer kept in the clear** (the owner's rule: no secret
+  unencrypted on a disk). `kiwi-server secrets admin-password FLEET` moves a `password:` of the
+  fleet file into the secret store and leaves its hash (`password_hash`); a password typed on the
+  control page or in the app is kept as a hash from the start. `validate` points to the command.
+- **`kiwi-server logins` lists every machine's screen login**: the admin user and its password,
+  from the secret store (or the fleet file while it is still written there). A bare machine has it
+  too.
+
 ## 2.207.0 — the website's images, through a CDN if wanted
 
 - **Images in the website's pages**: `![Our logo](assets/logo.png)`, the site's own files only;

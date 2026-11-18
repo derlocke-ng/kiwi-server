@@ -4615,8 +4615,9 @@ class TestForm(Base):
             "updates.days": "Sat  Sun", "admin.ssh_port": "2222", "updates.enabled": "no", "admin.password": "typed-secret",
             "node.cloud.shared_folders": "/mnt/a=/a\r\n/mnt/b=/b\r\n", "node.docker_dir": ""}))
         self.assertEqual(wrong, {})
+        self.assertTrue(got.pop(("admin", "password_hash")).startswith("$6$"))           # the console password: its hash only
         self.assertEqual(got, {("timezone",): "Europe/Vienna", ("network", "address"): None, ("updates", "days"): ["Sat", "Sun"],
-                               ("admin", "ssh_port"): 2222, ("updates", "enabled"): False, ("admin", "password"): "typed-secret",
+                               ("admin", "ssh_port"): 2222, ("updates", "enabled"): False, ("admin", "password"): None,
                                ("node", "cloud", "shared_folders"): {"/mnt/a": "/a", "/mnt/b": "/b"}})
         # what cannot be meant is said, with the field's name, and is no change
         got, wrong = formmod.changes(found, {"admin.ssh_port": "abc", "node.variables": "no equals sign", "target": "amiga",
@@ -8320,6 +8321,29 @@ class TestLogins(Base):
         self.assertEqual(rc, 0, err)
         return {h["name"]: h for h in json.loads(out)["hosts"]}, err
 
+    def test_the_admin_password_moves_into_the_store_and_its_hash_stays(self):
+        f = self.network()
+        os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
+        hosts, _err = self.logins(f.path)
+        screen = next(x for x in hosts["m1"]["logins"] if x["module"] == "console")
+        self.assertEqual((screen["user"], screen["password"]), ("core", "pw"))         # written in the fleet file: shown as it is
+        shut = types.SimpleNamespace(is_open=lambda: False, exists=lambda: True)
+        with self.assertRaisesRegex(KiwiError, "locked"):                              # never into a plain folder on the disk
+            cli.admin_password_into_store(f.path, shut)
+        cli.admin_password_into_store(f.path, types.SimpleNamespace(is_open=lambda: True, exists=lambda: True))
+        text = util.read_text(f.path)
+        self.assertNotIn("password: pw", text)
+        self.assertRegex(text, r"\n\s+password_hash: '\$6\$")
+        self.assertEqual(util.read_text(os.path.join(os.path.dirname(f.path), "secrets", "admin.password")), "pw\n")
+        hosts, _err = self.logins(f.path)
+        self.assertEqual(next(x for x in hosts["m1"]["logins"] if x["module"] == "console")["password"], "pw")   # from the store
+        h = config.Fleet.load(f.path).hosts["m1"]
+        self.assertTrue(h.password_hash().startswith("$6$"))
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertNotIn("admin.password is a literal", err)
+        rc, out, err = self.run_cli("secrets", "admin-password", f.path)               # once more: nothing left to move
+        self.assertNotIn("password_hash", util.read_text(f.path).replace("password_hash: '", "", 1))
+
     def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
         f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),
                              "network": {"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1"}})
@@ -8334,8 +8358,9 @@ class TestLogins(Base):
         hosts, _err = self.logins(f.path)
         self.assertEqual(list(hosts), ["gate", "m1", "sh3", "lab"])
         self.assertEqual(hosts["sh3"]["hostname"], "sh3.kiwi")
-        self.assertEqual(hosts["lab"]["logins"], [])                     # a bare machine: nothing to sign in to
-        rows = {n: [(x["module"], x["label"], x["address"], x["user"]) for x in h["logins"]] for n, h in hosts.items()}
+        self.assertEqual([x["module"] for x in hosts["lab"]["logins"]], ["console"])   # a bare machine: its screen only
+        rows = {n: [(x["module"], x["label"], x["address"], x["user"]) for x in h["logins"] if x["module"] != "console"]
+                for n, h in hosts.items()}
         self.assertEqual(rows["gate"], [("vpn-server", "VPN devices (wg-easy)", "https://wg.gate.kiwi", ""),
                                         ("dns", "Ad blocker (Pi-hole)", "https://pihole.gate.kiwi/admin", "")])
         self.assertEqual(rows["m1"], [("dns", "Ad blocker (Pi-hole)", "https://pihole.m1.kiwi/admin", ""),
@@ -8348,7 +8373,7 @@ class TestLogins(Base):
                                        ("portainer", "Containers (Portainer)", "https://portainer.sh3.kiwi", "admin")])
         # the passwords are the ones the machines' settings resolve to, written down or from the seed
         want = {n: self.settings(f.path, n) for n in ("gate", "m1", "sh3")}
-        got = {n: {x["label"]: x["password"] for x in h["logins"]} for n, h in hosts.items()}
+        got = {n: {x["label"]: x["password"] for x in h["logins"] if x["module"] != "console"} for n, h in hosts.items()}
         self.assertEqual(got["gate"], {"VPN devices (wg-easy)": want["gate"]["vpn-server"]["wg_password"],
                                        "Ad blocker (Pi-hole)": want["gate"]["dns"]["pihole_password"]})
         self.assertEqual(got["m1"], {"Ad blocker (Pi-hole)": want["m1"]["dns"]["pihole_password"],
@@ -8378,7 +8403,7 @@ class TestLogins(Base):
                 "download_dir": "/mnt/dl", "jdownloader": False, "transmission_user": "anna"})},
             sh3={"role": "node", "node": self.node_cloud(preset="cloud", modules=["vpn-client", "reverse-proxy", "cloud"])})
         hosts, _err = self.logins(f.path)
-        labels = {n: [x["label"] for x in h["logins"]] for n, h in hosts.items()}
+        labels = {n: [x["label"] for x in h["logins"] if x["module"] != "console"] for n, h in hosts.items()}
         self.assertEqual(labels["sh3"], ["Files (Nextcloud)"])           # no vault, no portainer on it
         self.assertNotIn("Downloads (JDownloader)", labels["m1"])
         self.assertEqual([x["user"] for x in hosts["m1"]["logins"] if x["label"] == "Downloads (Transmission)"], ["anna"])
@@ -8393,7 +8418,7 @@ class TestLogins(Base):
         rc, out, err = self.run_cli("logins", f.path)
         self.assertEqual(rc, 0, err)
         lines = out.splitlines()
-        self.assertEqual([x for x in lines if x and not x.startswith(" ")], ["gate", "m1", "sh3"])     # lab has nothing
+        self.assertEqual([x for x in lines if x and not x.startswith(" ")], ["gate", "m1", "sh3", "lab"])   # lab: its screen only
         at = lines.index("m1")
         head, row = lines[at + 1], next(x for x in lines[at:] if "Downloads (Transmission)" in x)
         self.assertEqual(head.split(), ["SERVICE", "ADDRESS", "USER", "NAME", "PASSWORD"])
@@ -8406,8 +8431,8 @@ class TestLogins(Base):
         vault = next(x for x in lines if "Passwords (Vaultwarden)" in x)
         self.assertEqual(vault.split()[-2:], ["-", "-"])
         self.assertIn(self.settings(f.path, "sh3")["cloud"]["admin_password"], out)
-        rc, out, _err = self.run_cli("logins", f.path, "lab")
-        self.assertEqual((rc, out.strip()), (0, ":: nothing to sign in to: lab runs no service with a login"))
+        hosts, _err = self.logins(f.path, "lab")                                         # no service: its screen still
+        self.assertEqual([x["module"] for x in hosts["lab"]["logins"]], ["console"])
 
     def test_a_machine_that_is_not_on_the_vpn_yet_is_left_out(self):
         f = self.network(new={"role": "node", "node": {"preset": "cloud", "vpn-client": {"wireguard_config": "secrets/new.kiwi.conf"}}})
@@ -8415,7 +8440,7 @@ class TestLogins(Base):
         self.assertEqual(hosts["new"]["logins"], [])
         self.assertIn("not enrolled yet", hosts["new"]["error"])
         self.assertIn("warning: left out: new: not enrolled yet", err)
-        self.assertEqual(len(hosts["sh3"]["logins"]), 3)                 # the others are still listed
+        self.assertEqual(len(hosts["sh3"]["logins"]), 4)                 # the others are still listed (with their screen)
         rc, out, err = self.run_cli("logins", f.path, "new")
         self.assertEqual((rc, out), (1, ""))
         self.assertIn("not enrolled yet", err)
@@ -8426,11 +8451,12 @@ class TestLogins(Base):
         rc, out, err = self.run_cli("list", f.path, "--porcelain")
         self.assertEqual(rc, 0, err)
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
-        self.assertEqual([(x["label"], x["address"], x["user"], x["has_password"]) for x in hosts["sh3"]["logins"]], [
+        self.assertEqual([(x["label"], x["address"], x["user"], x["has_password"]) for x in hosts["sh3"]["logins"]
+                          if x["module"] != "console"], [
             ("Files (Nextcloud)", "https://cloud.sh3.kiwi", "admin", True),
             ("Passwords (Vaultwarden)", "https://vault.sh3.kiwi", "", False),
             ("Containers (Portainer)", "https://portainer.sh3.kiwi", "admin", True)])
-        self.assertEqual(hosts["lab"]["logins"], [])
+        self.assertEqual([x["module"] for x in hosts["lab"]["logins"]], ["console"])
         for h in hosts.values():
             for x in h["logins"]:
                 self.assertNotIn("password", x)

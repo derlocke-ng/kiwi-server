@@ -24,7 +24,7 @@ insert into system_metadata (key, value)
 select 'system-config', jsonb_build_object('oauth', jsonb_build_object(
     'enabled', true, 'issuerUrl', :'issuer', 'clientId', :'client', 'clientSecret', :'secret',
     'scope', 'openid email profile', 'signingAlgorithm', 'ES256', 'tokenEndpointAuthMethod', 'client_secret_basic',
-    'buttonText', 'Sign in with accounts', 'autoRegister', true,
+    'buttonText', 'Sign in with accounts', 'autoRegister', true, 'roleClaim', 'immich_role',
     'mobileOverrideEnabled', true, 'mobileRedirectUri', :'mobile'))
 on conflict (key) do update
     set value = system_metadata.value || jsonb_build_object('oauth',

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drill: a person signs in to Forgejo with the network's account, in a real browser.
 
-    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless|--vault|--immich]
+    tests/drills/sso-browser.py FLEET ACCOUNTS_ADDRESS ID_NAME APP_ADDRESS APP_NAME [--nextcloud|--paperless|--vault|--immich] [--admin]
 
 APP_NAME is Forgejo's name (git.<host>), with --nextcloud Nextcloud's (cloud.<host>), with --paperless
 Paperless' (paperless.<host>), with --vault Vaultwarden's (vault.<host>): there the person's first
@@ -30,6 +30,9 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "UserKnow
 SCRIPT = "S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); sudo sh $S "
 name = "sso%s" % secrets.token_hex(3)
 made = json.loads(subprocess.run(SSH + [SCRIPT + "create %s SSO-Drill" % name], capture_output=True, text=True, check=True).stdout)
+admin = "--admin" in sys.argv          # in the network's admins: the service should make the person its admin
+if admin:
+    subprocess.run(SSH + [SCRIPT + "member admins %s on" % name], capture_output=True, text=True, check=True)
 pw = "kiwi-%s-%s" % (secrets.token_urlsafe(9), secrets.token_urlsafe(9))
 shots = os.path.expanduser("~/kiwi-dev/browser")
 os.makedirs(shots, exist_ok=True)
@@ -125,5 +128,6 @@ shows_person = name in res.get("text", "") or "SSO-Drill" in res.get("text", "")
 say(gitname in res.get("url", "") and shows_person,
     "back in %s as %s: %s" % (label, name, res.get("url", "")))
 subprocess.run(SSH + [SCRIPT + "delete %s" % name], capture_output=True)
+print("person: %s%s" % (name, " (in admins: look whether the service made it its admin)" if admin else ""))
 print("%d wrong" % bad)
 sys.exit(1 if bad else 0)

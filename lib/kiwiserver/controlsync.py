@@ -169,8 +169,7 @@ def pull(fleet, host, tgt, force=False, identity=None):
         raise KiwiError("%s holds no fleet yet: kiwi-server control push" % host.name)
     if there == then:       # the node did not change either: its stamp says so too, or a push is refused
         if changed_here:
-            raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
-                            "or pull --force to overwrite it")
+            return None         # nothing new there, only here: the push sends it (None: this copy is newer)
         if their_stamp != there:
             remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
         return 0
@@ -455,12 +454,9 @@ def _save_base(fleet_dir, fleet_name, st):
         merge.save_base(fleet_dir, st, _tree(fleet_dir, fleet_name))
 
 
-def _reconcile(fleet_dir, fleet_name, st, got, key, other):
-    """Both copies changed since they last agreed: this copy becomes the two together. `got`
-    is the other side's files as they travel. Returns the paths taken from there; raises when
-    a file changed on both sides, or when there is nothing to compare with."""
+def _there_tree(fleet_dir, got, key):
+    """The other side's copy as {path: bytes}, opened in memory: as `_tree` says this one."""
     from . import merge
-    base = merge.load_base(fleet_dir, key) if st.is_open() else None
     there = merge.store_tree(got["secrets.age"], key)
     tmp = os.path.join(fleet_dir, "control", ".merge.age")
     try:
@@ -474,6 +470,46 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other):
     for name in ("secrets.recipients", "control/salt"):
         if name in got:
             there[name] = got[name]
+    return there
+
+
+def compare(fleet_dir, fleet_name, got, key):
+    """What differs between this copy and the other side's (`got`, its files as they travel),
+    and who changed it since the last sync: merge.differences."""
+    from . import merge
+    st = storemod.Store(fleet_dir)         # (a synced folder's fleet has no control password: not _store)
+    if not st.exists():
+        raise KiwiError("this fleet has no encrypted store to compare: kiwi-server secrets init first")
+    st.sync()
+    if not key:
+        raise KiwiError("this computer has no key for the fleet in its keyring: --identity FILE")
+    base = merge.load_base(fleet_dir, key) if st.is_open() else None
+    return merge.differences(base, _tree(fleet_dir, fleet_name), _there_tree(fleet_dir, got, key))
+
+
+def other_copy(fleet_dir, fleet=None, host=None, tgt=None, key=None):
+    """The other side's files as they travel: from the control node's API, a synced folder, or
+    over SSH (`fleet`, `host`, `tgt`)."""
+    if tgt is not None:
+        return _fetch(tgt, remote_dir(host))
+    if remote_of(fleet_dir):
+        api, _key = api_for(fleet_dir, key)
+        status, out = api.call("GET", "/api/fleet")
+        if status != 200 or not out.get("files"):
+            raise KiwiError("the control node holds no fleet, or refused (%d)" % status)
+        return {n: base64.b64decode(b) for n, b in out["files"].items() if n in ON_NODE}
+    if folder_of(fleet_dir):
+        return _folder_files(folder_of(fleet_dir))
+    raise KiwiError("this fleet is not shared with a control node or a synced folder")
+
+
+def _reconcile(fleet_dir, fleet_name, st, got, key, other):
+    """Both copies changed since they last agreed: this copy becomes the two together. `got`
+    is the other side's files as they travel. Returns the paths taken from there; raises when
+    a file changed on both sides, or when there is nothing to compare with."""
+    from . import merge
+    base = merge.load_base(fleet_dir, key) if st.is_open() else None
+    there = _there_tree(fleet_dir, got, key)
     here = _tree(fleet_dir, fleet_name)
     if there == here:       # the same content, only encrypted anew there: nothing to merge
         return []
@@ -565,8 +601,7 @@ def pull_api(fleet_dir, fleet_name, force=False, key=None):
         raise KiwiError("the control node holds no fleet, or refused (%d)" % status)
     if out["revision"] == then and st.exists():
         if changed_here:
-            raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
-                            "or pull --force to overwrite it")
+            return None         # nothing new there, only here: the push sends it (None: this copy is newer)
         return 0
     got = {n: base64.b64decode(b) for n, b in out["files"].items() if n in ON_NODE}
     if changed_here:                    # both changed: push_api makes one copy of the two and sends it
@@ -675,8 +710,7 @@ def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None):
         raise KiwiError("%s holds no fleet yet: kiwi-server control push --dir, on a computer that has it" % folder)
     if there == then and os.path.isfile(_local(fleet_dir, fleet_name, "fleet.yaml")):
         if changed_here:
-            raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
-                            "or pull --force to overwrite it")
+            return None         # nothing new there, only here: the push sends it (None: this copy is newer)
         _remember_folder(fleet_dir, folder)
         return 0
     got = _folder_files(folder)

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: cloud
   title: Files (Nextcloud)
-  version: 2.0.0
+  version: 2.1.0
   description: "Nextcloud from the AIO project's containers, without the AIO master container: no docker socket, runs on podman, secrets generated at render, updates and backups through kiwi-stack. Collabora, Talk, Imaginary, ClamAV, full-text search and the whiteboard are switches."
   category: productivity
   node_types: [node]

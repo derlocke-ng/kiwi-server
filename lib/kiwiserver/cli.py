@@ -2547,6 +2547,32 @@ def cmd_control(args):
         util.say("%s asks to join as %s. On a computer that has the fleet, accept it (Kiwi Server shows the request, "
                  "or: kiwi-server control accept <fleet> %s). Then run this command again here." % (socket.gethostname(), me, me))
         return
+    if args.action == "diff":       # this copy against the other side's, before saying which counts
+        st = store.Store.for_fleet(fleet_path)
+        k = key or store.keyring_key(st.store_id())
+        if args.ssh or not (controlsync.remote_of(fleet_dir) or folder):
+            fleet, roles, ms = load(args)
+            for x in fleet.hosts.values():
+                if x.role in roles:
+                    rolesmod.resolve_settings(roles[x.role], x, ms)
+            h = controlsync.control_host(fleet, args.to)
+            got = controlsync.other_copy(fleet_dir, host=h, tgt=remote.reach(h, args.ssh))
+        else:
+            got = controlsync.other_copy(fleet_dir, key=k)
+        rows = controlsync.compare(fleet_dir, fleet_name, got, k)
+        if args.porcelain:
+            print(json.dumps({"differences": rows}, indent=2))
+            return
+        if not rows:
+            util.say("the two copies are the same")
+        words = {"here": "changed on this computer", "there": "changed there", "both": "changed on both sides",
+                 "unknown": "differs"}
+        for r in rows:
+            print("%s: %s%s" % (r["path"].replace("secrets/", "secret "), words[r["who"]],
+                                "" if r["state"] == "changed" else " (%s)" % r["state"]))
+            for line in r["lines"]:
+                print("    " + line)
+        return
     if args.action in ("requests", "accept", "deny"):
         if not folder:
             raise KiwiError("this fleet keeps no synced folder: kiwi-server control push <fleet> --dir FOLDER first")
@@ -2577,7 +2603,7 @@ def cmd_control(args):
                          % (r["name"], r["host"], args.fleet, r["name"]))
         else:
             n = controlsync.pull_dir(fleet_dir, fleet_name, folder, args.force, key)
-            util.say("%d files from %s: this copy is the folder's" % (n, folder) if n else "in step with %s" % folder)
+            util.say("nothing new there: this copy is newer, kiwi-server control push %s sends it" % fleet_name if n is None else "%d files from %s: this copy is the folder's" % (n, folder) if n else "in step with %s" % folder)
         return
     if args.action == "invite":
         from . import qr
@@ -2665,7 +2691,7 @@ def cmd_control(args):
                           % (old, VERSION, fleet_name))
         else:
             n = controlsync.pull_api(fleet_dir, fleet_name, args.force, key)
-            util.say("%d files from the control node: this copy is its" % n if n else "in step with the control node")
+            util.say("nothing new there: this copy is newer, kiwi-server control push %s sends it" % fleet_name if n is None else "%d files from the control node: this copy is its" % n if n else "in step with the control node")
         return
     fleet, roles, ms = load(args)                               # the first controller: over SSH
     for x in fleet.hosts.values():          # a host's modules are known once its role is resolved
@@ -2679,7 +2705,7 @@ def cmd_control(args):
         util.say("%s holds the fleet now (%d files): https://control.%s" % (h.name, n, h.hostname))
     else:
         n = controlsync.pull(fleet, h, tgt, args.force, key)
-        util.say("%d files from %s: this copy is the control node's" % (n, h.name))
+        util.say("nothing new there: this copy is newer, kiwi-server control push %s sends it" % fleet_name if n is None else "%d files from %s: this copy is the control node's" % (n, h.name))
 
 
 def cmd_serve(args):
@@ -4384,7 +4410,8 @@ def build_parser():
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
-    s.add_argument("action", choices=["push", "pull", "join", "invite", "requests", "accept", "deny", "ring", "activity"]); s.add_argument("fleet")
+    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity"])
+    s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")

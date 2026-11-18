@@ -55,7 +55,8 @@ accounts() {
     [ -n "$KIWI_OIDC_CLIENT" ] && [ -n "$oidc_secret" ] || return 0
     id=$(forgejo admin auth list 2>/dev/null | awk '$2 == "accounts" { print $1 }')
     set -- --name accounts --provider openidConnect --key "$KIWI_OIDC_CLIENT" --secret "$oidc_secret" \
-        --auto-discover-url "$KIWI_OIDC_ISSUER/.well-known/openid-configuration" --scopes openid --scopes email --scopes profile
+        --auto-discover-url "$KIWI_OIDC_ISSUER/.well-known/openid-configuration" --scopes openid --scopes email --scopes profile \
+        --group-claim-name kiwi_roles --admin-group admin        # the network's admins (accounts: group admins)
     if [ -z "$id" ]; then
         forgejo admin auth add-oauth "$@" >/dev/null && say "people sign in with the network's accounts now"
     else

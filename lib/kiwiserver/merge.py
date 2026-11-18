@@ -6,7 +6,9 @@ changed here, changed there, or on both sides. A file one side changed is taken 
 side. A file both changed is merged when it is a list that only grows (the machines' host
 keys), and named otherwise: then a person says which copy counts.
 """
+import difflib
 import os
+import re
 import shutil
 import tempfile
 
@@ -39,6 +41,45 @@ def merge(base, here, there):
         if pick is not None:
             merged[path] = pick
     return merged, theirs, both
+
+
+_SECRET_KEY = re.compile(r"(pass|secret|private|token|key|psk|salt|credential|hash)", re.I)
+_YAML_PAIR = re.compile(r"^(\s*(?:#\s*)?-?\s*)([A-Za-z0-9_.-]+)(\s*[:=]\s*)(.+)$")
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9+/=_-]{32,}")
+
+
+def masked(line):
+    """A line of the fleet file fit to show: the value of a key that sounds secret hidden, and
+    any long token (a key, a hash) wherever it stands."""
+    m = _YAML_PAIR.match(line)
+    if m and _SECRET_KEY.search(m.group(2)) and m.group(4).strip() not in ("|", "|-", ">", "{}", "[]", '""', "''"):
+        line = m.group(1) + m.group(2) + m.group(3) + "•••"
+    return _LONG_TOKEN.sub("•••", line)
+
+
+def differences(base, here, there):
+    """What differs between this copy and the other one, for a person to see before saying
+    which counts: [{path, who, state, lines}]. who: here, there or both (who changed it since
+    the last sync; unknown without a base). lines: of the fleet files a diff with every
+    secret value hidden; of the secrets only that they differ, never what they hold."""
+    out = []
+    for path in sorted(set(here) | set(there)):
+        h, t = here.get(path), there.get(path)
+        if h == t:
+            continue
+        if base is None:
+            who = "unknown"
+        else:
+            b = base.get(path)
+            who = "there" if h == b else "here" if t == b else "both"
+        row = {"path": path, "who": who, "state": "only here" if t is None else "only there" if h is None else "changed",
+               "lines": []}
+        if path in ("fleet.yaml", "federation.yaml"):
+            old = [masked(x) for x in (t or b"").decode(errors="replace").splitlines()]
+            new = [masked(x) for x in (h or b"").decode(errors="replace").splitlines()]
+            row["lines"] = list(difflib.unified_diff(old, new, "the other copy", "this computer", n=2, lineterm=""))[2:]
+        out.append(row)
+    return out
 
 
 def read_tree(root):

@@ -258,6 +258,21 @@ home, which the fleet file knows.
 **Remove** on the page takes its key out again: it reads nothing newer. What
 it read before, it knows: see the next section.
 
+**What a computer asks the control node.** A computer that joined logs in with its
+key (`POST /api/controller/hello`: the control node sends a challenge only that key
+opens, and the answer is a token) and then sends `Authorization: Bearer <token>`:
+
+| Route | What it gives |
+|---|---|
+| `GET /api/fleet`, `PUT /api/fleet`, `GET /api/fleet/revision` | the encrypted fleet, to fetch, to replace, its revision (in the activity log) |
+| `GET /api/status` | the last look at the machines: `time`, `error`, and per machine `host`, `state` (ok, warn, bad, down), `problems` (each with `text`, `hint`), `notes` |
+| `GET /api/machines` | what the fleet file says of the machines (`kiwi-server list --porcelain`), without the paths on the control node; `{}` while it is locked |
+| `GET /api/activity` | the newest tasks and who did what |
+
+`/api/status` and `/api/machines` also answer the page's login, only read, and are
+asked at every refresh: they leave no line in the activity log. The Android app
+(kiwi-app) reads its Home, Machines and Services from them.
+
 ## A computer was lost or stolen
 
 Remove it (above), then replace what it knew. On the page, under

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.190.0 — in step without a riddle, the differences, the network's admins, the API for the phone
+
+- **"Not in step: this copy changed since the last sync … push first"** came again and again
+  in the app (kiwi-2, 18 Nov 2026): a sync fetched first, the fetch refused because only this
+  computer had changed something, and the push that would have sent it never ran. Now the fetch
+  says there is nothing new there and the push follows; the CLI says so too.
+- **What differs** between this copy and the control node's or the synced folder's:
+  `kiwi-server control diff FLEET`, and in the app *Compare with the other copy…* in the menu
+  and *Show the differences* when both sides changed the same thing. Per file who changed it
+  since the last sync; of the settings the lines, every secret value shown as •••; of the
+  secrets only their names. Then *This computer's* or *The other one's*.
+- **Leave it out** takes the warning away at once, in the app and on the page, instead of
+  after the next look at every machine.
+- **The Android app reads the network** (kiwi-app): `GET /api/status` answers a controller's token
+  too, and the new `GET /api/machines` gives what `list --porcelain` says of the machines, without
+  the control node's own paths. Both only read and leave no line in the activity log.
+- **The network's admins** (kiwi-modules 0.86.1): *Make admin* at an account on the control
+  page, the *Admin* switch in the app's Accounts: an admin of Forgejo, Nextcloud and Immich
+  from the next sign-in there. Tried in a real browser on 18 Nov 2026: a test account in
+  `admins` became an admin of Forgejo (medlar), Nextcloud and Immich (papaya) at its first
+  sign-in; one outside it stayed a user.
+
 ## 2.189.0 — what to do, warnings on purpose, the app's messages, module sources on the page
 
 - **What to do**, with every problem a machine reports: on Home and a machine's page, in the

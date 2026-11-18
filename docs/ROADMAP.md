@@ -67,11 +67,24 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    95 % full with its own images). Since 2.209.0 (kiwi-stack 0.9.16) an update on a
    nearly full disk takes one image at a time, proven on crumble. Left: room for
    a module more, or a master with a disk.
-7. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
+7. **LANs and VLANs, as companies have them** (the owner, 18 November): a named LAN
+   subnet as a group in "who may reach what" (`iot: 192.168.20.0/24`), enforced on
+   the gateway and the nodes like the VPN's groups, which works without VLAN
+   hardware; then tagged interfaces per machine (`network.vlans`), a service on
+   one VLAN only, and the gateway's DHCP, DNS and routing per VLAN. Tested on a
+   Linux bridge with VLAN filtering and VMs, no managed switch needed. Design
+   first.
+8. **Federation of two networks with the same domain or mesh:** the link
+   translates (the partner's mesh 1:1 into a free range, NETMAP; its names under
+   an alias such as `papaya.kiwi2`, through a small DNS proxy; the alias in the
+   partner's certificates). Until then `federate` refuses both. A tool that moves
+   a whole fleet to another domain or /16 is the other way; it must pin every
+   secret derived from a host name (passwords, data disk keys) first.
+9. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
    kernel TLS instead of the SFTP container, backups of the desktop and the phone
    (not designed yet), the OpenWrt package, rootless podman for the minimal
    preset, managed masters (the orchard), the Bluefin client.
-8. **Later, when the network is stable:** the repositories move to the GitHub
+10. **Later, when the network is stable:** the repositories move to the GitHub
    organization kiwi-eco. The live v1 network moves only when its owner decides.
 
 Decided against: two masters that share the load (it splits the network in

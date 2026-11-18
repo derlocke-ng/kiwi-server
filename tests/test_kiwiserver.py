@@ -7701,6 +7701,10 @@ class TestPicture(unittest.TestCase):
         self.assertEqual(zone["label"], "kiwi2 · opened to you")
         self.assertEqual(sorted(b["name"] for b in lay["boxes"] if "kiwi2" in b["reached"]), ["lychee", "papaya"])
         self.assertEqual(picture.opened({"theirs": []}), [])
+        # narrow (a phone, the app at its smallest): what it opens right under the linked network
+        lay = self.lay([("papaya", "home"), ("kumquat", "away")], linked=[net], width=340, narrow=True)
+        y = {b["name"]: b["y"] for b in lay["boxes"]}
+        self.assertTrue(y["kiwi2"] < y["crumble"] < y["damson"] < y["papaya"] < y["kumquat"], y)
         self.assertGreaterEqual(picture.fit_width([{"name": "n%d" % i, "site": "home"} for i in range(12)]), 860)
 
 

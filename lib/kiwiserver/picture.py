@@ -20,7 +20,7 @@ Returns {w, h, boxes, lines, zones}:
          home: over the Internet), bar, drop, stub (into one machine; up while it answers),
          standby, link (the master to a linked network), reach (a linked network to a machine),
          fed (in the zone of what a linked network opens: its line down, bar, drops and stubs)
-  zones  {label, site, away, partner, x, y, w, h}
+  zones  {label, site, away, partner, x, y, w, h, lx (where the label starts, when not x + 14)}
 """
 
 BW, BH, MW, MH, SW, PAD, ZGAP = 172, 54, 260, 58, 190, 10, 16
@@ -265,15 +265,22 @@ def _wide(master, zones, standbys, linked, reach, width):
 
 
 def _narrow(master, zones, standbys, linked, width):
-    """One under the other: the master, its standbys and linked networks, then each site with its
-    machines; a line down from the master and a branch to each machine. The networks a machine
-    is reached by are named on it (`reached`), without lines."""
+    """One under the other: the master, its standbys and linked networks (what each opens to this
+    one right under it, indented), then each site with its machines; a line down from the master
+    and a branch to each machine. The networks a machine is reached by are named on it
+    (`reached`), without lines."""
     boxes, lines, zlist = [], [], []
     w = width - 2 * PAD
     x0 = PAD
     m = _box(boxes, master, "master", x0, 8, min(MW, w), MH)
     y = 8 + MH + 16
     tx = x0 + 22
+    theirs = {site[4:]: ms for site, ms in zones if site.startswith("fed:")}
+    zones = [(site, ms) for site, ms in zones if not site.startswith("fed:")]
+
+    def turn(x, cy, to):
+        # a quarter turn off a line down, as a cubic: the same in SVG and Cairo
+        return [["M", x, cy - 10], ["C", x, cy - 3.3, x + 3.3, cy, x + 10, cy], ["L", to, cy]]
     for kind, items in (("standby", standbys), ("linked", linked)):
         for s in items:
             b = _box(boxes, s, kind, x0 + 48, y, w - 48, MH - 10)
@@ -283,28 +290,34 @@ def _narrow(master, zones, standbys, linked, width):
             else:
                 _line(lines, d, "link", hosts=[m["name"]], nets=[b["name"]])
             y += MH - 10 + 10
+            ms = theirs.get(s["name"]) if kind == "linked" else None
+            if ms:                      # what it opens to this one: under it, its own line down
+                net, px, zx = s["name"], b["x"] + 20, b["x"] - 6
+                zy = y - 4
+                y = zy + 30
+                for mm in ms:
+                    pb = _box(boxes, mm, "partner", px + 26, y, x0 + w - (px + 26), BH)
+                    _line(lines, turn(px, y + BH / 2, pb["x"]), "fed", nets=[net])
+                    last = y + BH / 2 - 10
+                    y += BH + 10
+                _line(lines, [["M", px, b["y"] + b["h"]], ["L", px, last]], "fed", nets=[net])
+                zlist.append({"label": net + " · opened to you", "site": "fed:" + net, "away": False, "partner": net,
+                              "x": int(zx), "y": int(zy), "w": int(x0 + w + 6 - zx), "h": int(y - 10 + 14 - zy),
+                              "lx": int(px + 12)})          # the label right of the line down
+                y += 18
     last, everyone = 8 + MH, [m["name"]]
     for site, ms in zones:
-        net = site[4:] if site.startswith("fed:") else ""
-        away = not net and site not in ("", "home")
+        away = site not in ("", "home")
         zy = y + 6
         y = zy + 30
-        first = y
         for mm in ms:
-            b = _box(boxes, mm, "partner" if net else "machine", x0 + 48, y, w - 48, BH)
+            b = _box(boxes, mm, "machine", x0 + 48, y, w - 48, BH)
             cy = y + BH / 2
-            # a quarter turn off the line down, as a cubic: the same in SVG and Cairo
-            d = [["M", tx, cy - 10], ["C", tx, cy - 3.3, tx + 3.3, cy, tx + 10, cy], ["L", b["x"], cy]]
-            if net:
-                _line(lines, d, "fed", nets=[net])
-            else:
-                _line(lines, d, "away" if away else "stub", bool(mm.get("up")), [mm["name"]], mm.get("reached") or [])
-                everyone.append(mm["name"])
-                last = cy - 10
+            _line(lines, turn(tx, cy, b["x"]), "away" if away else "stub", bool(mm.get("up")), [mm["name"]], mm.get("reached") or [])
+            everyone.append(mm["name"])
+            last = cy - 10
             y += BH + 10
-        if net:                         # its own short line, not the master's
-            _line(lines, [["M", tx, first - 12], ["L", tx, y - 10 - BH / 2 - 10]], "fed", nets=[net])
-        zlist.append({"label": net + " · opened to you" if net else zone_label(site), "site": site, "away": away, "partner": net,
+        zlist.append({"label": zone_label(site), "site": site, "away": away, "partner": "",
                       "x": int(x0 - 6), "y": int(zy), "w": int(w + 12), "h": int(y - 10 + 14 - zy)})
         y += 14
     _line(lines, [["M", tx, 8 + MH], ["L", tx, last]], "trunk", hosts=everyone)

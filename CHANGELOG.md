@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.204.0 — the control part of this release, and the picture at its smallest
+
+- **An apply brings the control part of the kiwi-server that applies it**: the control module's
+  image is pinned to this release (`kiwi-server-control:2.204.0`) instead of `:2`. Since 2.198.0 an
+  apply pulls only images a machine does not have, and `:2` was always there: papaya still ran
+  2.200.0's page after 2.203.0 was applied, and dlhost.eu answered with the control page. An
+  image set by hand in the fleet file stays as it is.
+- **The narrow picture** (a phone, the app at its smallest) puts what a linked network opens right
+  under it, with its label beside its line, not after the last site.
+
 ## 2.203.0 — a linked network's names at home
 
 - **A node's Pi-hole knows the linked networks' domains** (kiwi-modules 0.90.1): it asks the

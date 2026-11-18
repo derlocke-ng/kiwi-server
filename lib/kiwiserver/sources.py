@@ -100,9 +100,15 @@ def fetch(src, cache=None):
         if not os.path.isdir(folder):
             raise KiwiError("module source %s: %s is not a folder on this computer" % (src["name"], folder))
         return _modules_in(folder)
+    return _modules_in(checkout(src["name"], src["url"], src["commit"], cache))
+
+
+def checkout(name, url, commit, cache=None):
+    """A repository at a commit, fetched into the cache once, without its history: the folder."""
     cache = cache or cache_dir()
-    key = hashlib.sha256(src["url"].encode()).hexdigest()[:10]
-    dest = os.path.join(cache, "%s-%s-%s" % (src["name"], key, src["commit"][:12]))
+    key = hashlib.sha256(url.encode()).hexdigest()[:10]
+    dest = os.path.join(cache, "%s-%s-%s" % (name, key, commit[:12]))
+    src = {"name": name, "url": url, "commit": commit}
     if not os.path.isdir(dest):
         os.makedirs(cache, exist_ok=True)
         work = tempfile.mkdtemp(prefix=".fetch-", dir=cache)
@@ -118,7 +124,7 @@ def fetch(src, cache=None):
         finally:
             if os.path.isdir(work):
                 shutil.rmtree(work, ignore_errors=True)
-    return _modules_in(dest)
+    return dest
 
 
 def folders(fleet, cache=None):

@@ -46,6 +46,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [A standby master](design/standby.md) | the same master on a second machine, which takes over when the first is gone |
 | [Encrypted disks by default](design/encryption.md) | every target encrypted, and how each opens at boot |
 | [Services for the public](design/public-services.md) | accounts, sign-up, landing page, status |
+| [A public website](design/website.md) | the front page from a pinned repository of pages |
 
 The source of these pages is the `docs/` folder of
 [derlocke-ng/kiwi-server](https://github.com/derlocke-ng/kiwi-server).

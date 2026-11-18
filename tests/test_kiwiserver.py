@@ -11060,6 +11060,58 @@ class TestNetworkCopy(StoreBase):
 
 
 @unittest.skipUnless(have("age") and have("age-keygen") and _have_web(), "age, fastapi or uvicorn not installed")
+class TestWebsite(WebBase):
+    """The network's website (site.py): at its name and www., pages from the pinned repository, the
+    services from the network, nothing else; a repository's HTML never reaches the page."""
+
+    def setUp(self):
+        from kiwiserver import site as sitemod
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        os.makedirs(os.path.join(folder, "pages"))
+        os.makedirs(os.path.join(folder, "assets"))
+        write(os.path.join(folder, "site.yaml"), "name: dlhost\ntagline: Services for friends\naccent: '#3366cc'\npages: [home, terms, ../x]\n")
+        write(os.path.join(folder, "pages", "home.md"), "# Welcome\n\nFree services. <script>alert(1)</script>\n\n- [Join](terms)\n")
+        write(os.path.join(folder, "pages", "terms.md"), "# Terms\n\nBe **nice**.\n")
+        with open(os.path.join(folder, "assets", "logo.png"), "wb") as fh:
+            fh.write(b"\x89PNG-not-really")
+        for p in (mock.patch.object(sitemod, "settings", lambda: ("example.org", "https://example.org/site.git", "a" * 40)),
+                  mock.patch.object(sitemod, "fetch", lambda repo, commit, cache=None: sitemod.load(folder))):
+            p.start()
+            self.addCleanup(p.stop)
+        super().setUp()
+
+    def at(self, path, host="example.org", method="GET"):
+        req = urllib.request.Request(self.url + path, headers={"Host": host}, method=method)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read()
+
+    def test_the_site_at_its_names_and_nothing_else(self):
+        code, body = self.at("/")
+        body = body.decode()
+        self.assertEqual(code, 200)
+        for words in ("<h1>Welcome</h1>", "dlhost", "Services for friends", '<a href="/terms">Join</a>', "<h2>Services</h2>",
+                      "--accent:#3366cc", 'href="/status"'):
+            self.assertIn(words, body)
+        self.assertNotIn("<script>alert", body)                                   # the repository's HTML stays text
+        self.assertIn("&lt;script&gt;", body)
+        self.assertNotIn("../x", body)
+        self.assertEqual(self.at("/", "www.example.org")[0], 200)
+        code, body = self.at("/terms")
+        self.assertIn("<strong>nice</strong>", body.decode())
+        self.assertEqual(self.at("/services")[0], 200)
+        self.assertEqual(self.at("/status")[0], 200)                              # the public status page
+        self.assertEqual(self.at("/assets/logo.png"), (200, b"\x89PNG-not-really"))
+        for path in ("/login", "/nope", "/assets/../site.yaml", "/assets/site.yaml", "/api/fleet"):
+            self.assertEqual(self.at(path)[0], 404, path)                          # nothing of the control page here
+        self.assertEqual(self.at("/", method="POST")[0], 404)
+        self.assertEqual(self.at("/login", "control.papaya.home")[0], 200)        # the control page's own name: as before
+
+
 class TestFirstRunPage(StoreBase):
     """A machine with nothing on it: its page asks the questions of `init`, behind a setup code."""
     PW = "a long enough password"

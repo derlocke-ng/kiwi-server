@@ -27,6 +27,8 @@ storage:
   bind_mounts:
     # fleet.yaml, secrets.age (encrypted), control/ (salt, audit log); kiwi-server control push fills it
     - { host: "${DOCKERDIR}/{{ container_prefix }}-control", type: dir, required: true }
+    # what the public pages' own container may show (written by the control part, read-only there)
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-control-public", type: dir, required: false }
 
 urls:
   - "Control: https://{{ control_hostname or 'control.' ~ hostname }} (from the mesh)"
@@ -91,27 +93,27 @@ nginx:
       when: status_page
       comment: Kiwi status page (no login; the control part's /start, /status and /api/registry only)
     # the same for strangers, under a public name: only what is open to the Internet, and whether it
-    # works. Whatever is asked for at this name, the control part is asked for /status/public.
+    # works. Served by the public pages' own container (no fleet, no key in it), not the control part.
     - server_name: "{{ public_status_hostname }}"
       # usable as a hidden service: the status page reads only; tried through Tor
       onion: true
       site: status-public
       # the status page for strangers: what is open to the Internet, whether it works, how to get an account
-      proxy_pass: "http://control/start/public"
+      proxy_pass: "http://{{ container_prefix }}-control-public:8741/start/public"
       extra_locations:
         - path: "= /status"
           config: >-
-            set $page http://{{ container_prefix }}-control:8740/status/public;
+            set $page http://{{ container_prefix }}-control-public:8741/status/public;
             proxy_pass $page;
             proxy_set_header Host $host;
         - path: "= /api/registry"
           config: >-
-            set $page http://{{ container_prefix }}-control:8740/api/registry/public;
+            set $page http://{{ container_prefix }}-control-public:8741/api/registry/public;
             proxy_pass $page;
             proxy_set_header Host $host;
         - path: "= /.well-known/kiwi"
           config: >-
-            set $page http://{{ container_prefix }}-control:8740/api/registry/public;
+            set $page http://{{ container_prefix }}-control-public:8741/api/registry/public;
             proxy_pass $page;
             proxy_set_header Host $host;
       when: public_status_hostname
@@ -129,19 +131,19 @@ nginx:
     # repository, rendered by the control part; the bare name and www. both
     - server_name: "{{ website_hostname }}"
       site: website
-      proxy_pass: "http://control"
+      proxy_pass: "http://{{ container_prefix }}-control-public:8741"
       when: website_hostname
       comment: Kiwi website for the Internet (pages from a pinned repository)
     - server_name: "www.{{ website_hostname }}"
       site: website-www
-      proxy_pass: "http://control"
+      proxy_pass: "http://{{ container_prefix }}-control-public:8741"
       when: website_hostname
       comment: Kiwi website for the Internet, at www.
     # its files (images, fonts) from a name a content delivery network fetches and keeps (Cloudflare's
     # proxy, say): only /assets/ answers there; the pages, the sign-up and Tor never go through it
     - server_name: "{{ website_cdn_hostname }}"
       site: website-cdn
-      proxy_pass: "http://control"
+      proxy_pass: "http://{{ container_prefix }}-control-public:8741"
       when: website_cdn_hostname
       comment: Kiwi website's files, for a content delivery network
 

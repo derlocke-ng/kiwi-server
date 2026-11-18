@@ -13,6 +13,9 @@ services:
 {% endif %}
       # the opened store, job logs and renders: in RAM, gone with the container
       - XDG_RUNTIME_DIR=/run/kiwi
+{% if public_status_hostname or website_hostname %}
+      - KIWI_PUBLIC_DIR=/public
+{% endif %}
       # the network's name, colour, words and contact on the pages for everyone
       # quoted: a sentence with ": " in it is no YAML map
       - {{ ("KIWI_BRAND=" ~ brand_name) | tojson }}
@@ -37,6 +40,10 @@ services:
     volumes:
       # fleet.yaml and the encrypted store (secrets.age): no secret is on this disk in the clear
       - {{ docker_dir }}/{{ container_prefix }}-control:/fleet:Z
+{% if public_status_hostname or website_hostname %}
+      # what the public pages may show, written after each look
+      - {{ docker_dir }}/{{ container_prefix }}-control-public:/public:z
+{% endif %}
     restart: unless-stopped
     networks:
       {{ network_name }}:
@@ -45,3 +52,38 @@ services:
       driver: json-file
       options:
         max-size: 10m
+{% if public_status_hostname or website_hostname %}
+  # the public pages (the website, the status page for the Internet, the public registry) in a
+  # container of their own: what they show comes read-only from the control part, and nothing of
+  # the network is in here, no fleet, no key; a fault in a page strangers reach finds nothing behind it
+  {{ container_prefix }}-control-public:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-control-public
+    command: ["serve-public", "/public", "--listen", "0.0.0.0:8741"]
+    environment:
+{% if proxy_ip %}
+      - KIWI_PROXY={{ proxy_ip }}
+{% endif %}
+      - {{ ("KIWI_BRAND=" ~ brand_name) | tojson }}
+      - {{ ("KIWI_ACCENT=" ~ brand_accent) | tojson }}
+      - {{ ("KIWI_ABOUT=" ~ (about | replace('\n', ' '))) | tojson }}
+      - {{ ("KIWI_CONTACT=" ~ contact) | tojson }}
+{% if website_hostname %}
+      - {{ ("KIWI_SITE_HOST=" ~ website_hostname) | tojson }}
+      - {{ ("KIWI_SITE_REPO=" ~ website_repo) | tojson }}
+      - {{ ("KIWI_SITE_COMMIT=" ~ website_commit) | tojson }}
+      - {{ ("KIWI_SITE_CDN=" ~ website_cdn_hostname) | tojson }}
+{% endif %}
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-control-public:/public:ro,z
+    restart: unless-stopped
+    networks:
+      {{ network_name }}: {}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endif %}

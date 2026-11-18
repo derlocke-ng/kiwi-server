@@ -8242,7 +8242,8 @@ class TestCli(Base):
         self.assertIn("vpn-client.wireguard_private_key, vpn-server.wg_password, dns.pihole_password: a password written in the fleet file", err)
         rc, out, err = self.run_cli("validate", self.unwritten_fleet().path)
         self.assertEqual(rc, 0, err)
-        self.assertNotIn("a password written in the fleet file", err)
+        self.assertNotIn("wg_password", err)                       # left out: generated
+        self.assertIn("vpn-client.wireguard_private_key: a password written in the fleet file", err)   # nothing makes that one
 
     def media_fleet(self):
         return self.fleet({"defaults": self.base_defaults(), "hosts": {
@@ -8379,8 +8380,9 @@ class TestLogins(Base):
         for gone in ("wg_password", "pihole_password", "transmission_password", "sftp_password", "wireguard_private_key"):
             self.assertNotIn(gone, text)
         pins = json.loads(util.read_text(os.path.join(os.path.dirname(f.path), "secrets", "pins.json")))
-        self.assertEqual((pins["gate.home/vpn-server/wg_password"], pins["gate.home/vpn-client/wireguard_private_key"],
-                          pins["m1.home/sftp/sftp_password"]), ("w", "k", "s"))
+        gate, m1 = (config.Fleet.load(f.path).hosts[n].hostname for n in ("gate", "m1"))
+        self.assertEqual((pins[gate + "/vpn-server/wg_password"], pins[gate + "/vpn-client/wireguard_private_key"],
+                          pins[m1 + "/sftp/sftp_password"]), ("w", "k", "s"))
         after = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
         self.assertEqual(after, before)                                                # the same passwords, generated ones too
         rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "wg_password")
@@ -8596,8 +8598,13 @@ class TestControl(StoreBase):
             c.settings("a")
         c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
                   "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
-        self.assertEqual(c.save_settings("a", {("timezone",): "Europe/Vienna", "admin.password": "a-new-s3cr3t"}, "anna"),
-                         ["timezone", "admin.password"])
+        ran = []
+        real_run = controlmod.subprocess.run
+        with mock.patch.object(controlmod.subprocess, "run", lambda argv, **kw: ran.append(list(argv)) or real_run(argv, **kw)):
+            self.assertEqual(c.save_settings("a", {("timezone",): "Europe/Vienna", "admin.password": "a-new-s3cr3t"}, "anna"),
+                             ["timezone", "admin.password"])
+        # a password typed into the form goes on into the secret store (`secrets keep`), not the fleet file
+        self.assertIn(["secrets", "keep", c.fleet_path, "--quiet"], [a[-4:] for a in ran])
         self.assertEqual(config.Fleet.load(self.f.path).hosts["a"].cfg["timezone"], "Europe/Vienna")
         last = c.audit_tail(1)[0]
         self.assertEqual((last["user"], last["what"], last["hosts"], last["keys"]),

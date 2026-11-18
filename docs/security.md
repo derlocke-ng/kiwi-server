@@ -73,7 +73,9 @@ it; it says so and keeps its changes in memory until you take the other copy.
   `kiwi-server logins fleet.yaml [host]` lists the ones a person types, with
   the address and the user name: see
   [Sign in to a service](machines.md#sign-in-to-a-service).
-  `validate` warns about those still written in the file.
+  `validate` warns about those still written in the file, and
+  `kiwi-server secrets keep fleet.yaml` moves them into the secret store,
+  unchanged (see [Fleet file](fleet.md)).
 - Taking one out on a running machine changes that password; Nextcloud's and
   Portainer's are only read at their first start.
 - The seed is made on first use and backed up with the fleet. A machine

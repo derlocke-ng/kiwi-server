@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.214.0 — no password in the fleet file
+
+- **`kiwi-server secrets keep FLEET`**: every password written in the fleet file for a machine's
+  module (Pi-hole's, Portainer's, Nextcloud's, the VPN server's, a VPN provider's key, a
+  router's password) moves into the secret store (`secrets/pins.json`, `hostname/module/key`)
+  and out of the file. The machines keep the same passwords: an apply afterwards changes
+  nothing. Before, taking one out of the file would have changed it, so they stayed there in
+  the clear on the disk of every computer that holds the fleet.
+- **A password typed on the control page or in the app goes into the secret store by itself**
+  when the settings are saved; the app's field then says it is kept there.
+- kiwi-modules 0.94.0: a password nothing can generate (a provider's key, a router's
+  password) comes from the secret store when the fleet file leaves it out.
+- `validate` names every module password still written in the file, generated or not, and
+  points to `secrets keep`.
+
 ## 2.213.0 — the control node's buttons for the apps
 
 - **What changes something, as JSON for a computer or phone that manages the network** (its key's

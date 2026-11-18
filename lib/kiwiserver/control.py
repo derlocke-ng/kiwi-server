@@ -1822,7 +1822,28 @@ class Control:
         for way in said.get("sent") or []:
             self.audit("control", ("told by %s: %s" % (way["channel"], "; ".join(e["text"] for e in said.get("events") or [])[:300]))
                        if way["ok"] else "could not tell by %s: %s" % (way["channel"], way["why"]))
+        self.write_public()
         return said
+
+    def write_public(self):
+        """What the public pages' own container may show (KIWI_PUBLIC_DIR, mounted there read-only):
+        the services open to the Internet and whether they work, the network's domain, its CA's
+        certificate. No fleet, no key, nothing about the machines: a page for strangers never runs
+        where the network is kept (the owner, 18 Nov 2026: "this whole thing is about security")."""
+        folder = os.environ.get("KIWI_PUBLIC_DIR", "")
+        if not folder or not os.path.isdir(folder):
+            return False
+        from . import health as healthmod
+        try:
+            self._put(os.path.join(folder, "health.json"), json.dumps(healthmod.for_strangers(self.health())))
+            self._put(os.path.join(folder, "info.json"), json.dumps({"domain": (self.fleet_info() or {}).get("domain") or ""}))
+            pem = self.ca_pem() or ""
+            if pem.startswith("-----BEGIN CERTIFICATE-----") and "PRIVATE" not in pem:
+                self._put(os.path.join(folder, "ca.pem"), pem)
+        except (OSError, KiwiError) as e:
+            util.warn("control: the public pages' data was not written: %s" % e)
+            return False
+        return True
 
     @property
     def health_file(self):

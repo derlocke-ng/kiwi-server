@@ -43,6 +43,16 @@ container, no PHP, no database, no editor on a machine: a change is a commit, a 
 apply. The pages are Markdown in a small, safe subset (headings, paragraphs, lists, links,
 emphasis, code), rendered by kiwi-server itself: no raw HTML from the repository reaches a page.
 
+## Apart from the control part
+
+The control part holds the network: the fleet, the secret store, the keys to every machine. A page
+strangers can reach does not run there (built in 2.211.0). A second container of the control
+module, `kiwi-server serve-public`, serves the website, the status page for the Internet and the
+public registry. It has no fleet and no key, its root is read-only, and what it shows comes from a
+folder the control part writes after each look: the services open to the Internet with their days
+and incidents, the network's domain, the CA's certificate. The website's repository it fetches
+itself. A fault in a public page finds nothing of the network behind it.
+
 ## Static files through a CDN
 
 Built in 2.207.0 (`website_cdn_hostname`).

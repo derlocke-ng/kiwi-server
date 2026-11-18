@@ -2937,6 +2937,19 @@ def cmd_control(args):
         util.say("nothing new there: this copy is newer, kiwi-server control push %s sends it" % fleet_name if n is None else "%d files from %s: this copy is the control node's" % (n, h.name))
 
 
+def cmd_serve_public(args):
+    """The website, the status page for the Internet and the public registry, in a container of
+    their own: from FOLDER (filled by the control part), with no fleet and no key."""
+    if not os.path.isdir(args.folder):
+        raise KiwiError("%s is not a folder: the control part fills it (KIWI_PUBLIC_DIR)" % args.folder)
+    try:
+        from . import web
+    except ImportError as e:
+        raise KiwiError("serve-public needs fastapi and uvicorn (%s): the control image has them" % e)
+    util.say("public pages from %s on http://%s" % (args.folder, args.listen))
+    web.serve_public(args.folder, args.listen)
+
+
 def cmd_serve(args):
     """The control node's pages and API (needs fastapi, uvicorn; the control image has them)."""
     from . import control as controlmod
@@ -4688,6 +4701,8 @@ def build_parser():
     s.add_argument("--uses", type=int, default=1, help="invite: how many accounts the code makes")
     s.add_argument("--days", type=int, default=14, help="invite: how long the code is good")
     s.add_argument("--note", default="", help="invite: for whom (shown on the control page)")
+    s = sub("serve-public", cmd_serve_public); s.add_argument("folder")
+    s.add_argument("--listen", default="0.0.0.0:8741", help="where the public pages answer")
     s = sub("serve", cmd_serve); s.add_argument("fleet")
     s.add_argument("--listen", default="127.0.0.1:8740", metavar="ADDR:PORT")
     s.add_argument("--status-minutes", type=int, default=10, metavar="N", help="how often it looks at every host")

@@ -252,6 +252,24 @@ def message(events, network=""):
     return title[:200], "\n".join(lines), level
 
 
+def for_strangers(state):
+    """The state cut down to what the page for the Internet may know: the services open to it,
+    their days, their incidents and hidden-service addresses, the sign-up page. What the public
+    pages' own container gets (control.Control.write_public): nothing about the machines, nothing
+    of a service on the VPN only, no window, no secret."""
+    rows = [dict(s) for s in state.get("services") or [] if s.get("public") and not s.get("admin")]
+    sites = {s["site"] for s in rows}
+    names = ["(%s)" % x for x in sites]
+    return {
+        "checked": state.get("checked") or 0,
+        "services": rows,
+        "days": {k: v for k, v in (state.get("days") or {}).items() if k in sites},
+        "incidents": [dict(i) for i in state.get("incidents") or [] if any(n in i.get("text", "") for n in names)],
+        "onion": {k: v for k, v in (state.get("onion") or {}).items() if k in sites},
+        "join": state.get("join") or "",
+    }
+
+
 def public(state, now=None, strangers=False):
     """What the status page shows: nothing but names people use and whether they work.
     `strangers`: the page for the Internet. Only what is open to it, nothing about the

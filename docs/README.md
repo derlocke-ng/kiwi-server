@@ -43,6 +43,9 @@ then sets up and maintains each machine over SSH. Its command is
 | [Keeping data across a reinstall](design/data-partition.md) | one-disk machines: a kept, encrypted data partition (not built; questions open) |
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
+| [A standby master](design/standby.md) | the same master on a second machine, which takes over when the first is gone |
+| [Encrypted disks by default](design/encryption.md) | every target encrypted, and how each opens at boot |
+| [Services for the public](design/public-services.md) | accounts, sign-up, landing page, status |
 
 The source of these pages is the `docs/` folder of
 [derlocke-ng/kiwi-server](https://github.com/derlocke-ng/kiwi-server).

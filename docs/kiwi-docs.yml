@@ -30,3 +30,8 @@ pages:
   - design/recovery.md: "Design: autonomy and recovery"
   - design/onion.md: "Design: hidden services"
   - design/starter.md: "Design: the starter image"
+  - design/standby.md: "Design: a standby master"
+  - design/encryption.md: "Design: encrypted disks by default"
+  - design/no-master.md: "Design: a network without a master"
+  - design/public-services.md: "Design: services for the public"
+  - design/data-partition.md: "Design: keeping the data across a reinstall"

@@ -94,6 +94,12 @@ nginx:
       comment: Pi-hole admin
 
 settings:
+  - key: partner_domains
+    type: list
+    group: Generated
+    label: Linked networks' domains
+    help: "The domains of the networks linked to this one (federation.yaml; kiwi-server fills it in): a node's Pi-hole asks the master for them, which asks the partner."
+    default: []
   - key: pihole_password
     type: secret
     generate: true

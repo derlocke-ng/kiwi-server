@@ -5375,7 +5375,8 @@ class Window(Adw.ApplicationWindow):
         changed = self.fleet_info.get("changed") or []
         if changed:             # settings saved and not applied, here or reaching other machines
             g = Adw.PreferencesGroup(title="Changes not applied yet")
-            row = plain_row(", ".join(changed), "Their settings changed, or something elsewhere that reaches them (a new "
+            row = plain_row(", ".join(changed), "Their settings changed, a new kiwi-server release changes what they get, or something "
+                                                "elsewhere that reaches them (a new "
                                                 "name the DNS must know, a public name the master hands on)")
             row.add_prefix(dot("warn"))
             b = Gtk.Button(label="Apply %s" % ("it" if len(changed) == 1 else "all %d" % len(changed)),

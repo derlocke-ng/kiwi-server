@@ -268,6 +268,7 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/status` | the last look at the machines: `time`, `error`, and per machine `host`, `state` (ok, warn, bad, down), `problems` (each with `text`, `hint`), `notes` |
 | `GET /api/machines` | what the fleet file says of the machines (`kiwi-server list --porcelain`), without the paths on the control node; `{}` while it is locked |
 | `GET /api/activity` | the newest tasks and who did what |
+| `GET /api/hosts/{name}/logins` | a machine's logins with their passwords (`label`, `module`, `address`, `user`, `password`, `note`), never cached; the activity log says which computer was shown them |
 
 `/api/status` and `/api/machines` also answer the page's login, only read, and are
 asked at every refresh: they leave no line in the activity log. The Android app

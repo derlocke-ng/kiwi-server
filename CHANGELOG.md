@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.194.0 — a machine's logins on the phone
+
+- **`GET /api/hosts/{name}/logins`** answers a controller's token too (kiwi-app shows a machine's
+  logins and passwords): the same body, never cached, and the activity log names the computer
+  that was shown them.
+- **"Changes not applied yet"** names a new kiwi-server release as a cause too: after an update
+  every machine whose files it changes is listed until it is applied.
+
 ## 2.193.0 — the network's registry, for the apps
 
 - **`/api/registry`**: the status page as data, without a login: every service with what it

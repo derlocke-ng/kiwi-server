@@ -51,6 +51,17 @@ hosts:
       cloud: { nextcloud_datadir: /mnt/nvme_2tb/docker/knnc-data, memory_limit: 8192M }
 ```
 
+The console password lives in the fleet file only as its hash. A password typed on the
+control page or in the app is kept that way; an older fleet file with `password:` in the clear
+moves it with
+
+```bash
+kiwi-server secrets admin-password ~/kiwi/fleet.yaml
+```
+
+which leaves `password_hash` in the fleet file and the password itself in the secret store,
+where `kiwi-server logins` shows it as *The machine's screen*.
+
 ## How settings combine
 
 - Hosts override defaults key by key.

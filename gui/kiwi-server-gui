@@ -113,7 +113,7 @@ BASE_GROUPS = [
         dict(path=("admin", "user"), type="string", label="User name", default="core",
              help="Passwordless sudo on every target; must not be root"),
         dict(path=("admin", "password"), type="secret", label="Password", default="",
-             help="Hashed at render time. For the console; SSH uses keys"),
+             help="For the machine's screen; SSH uses keys. Kept only as a hash: write it down"),
         dict(path=("admin", "password_hash"), type="string", label="…or a crypt hash", default="",
              help="$6$… — instead of a password"),
         dict(path=("admin", "ssh_keys"), type="lines", label="SSH public keys", default=[],
@@ -571,6 +571,18 @@ class Form:
 
     def write(self, field, value):
         if self.loading:
+            return
+        if field["path"] == ("admin", "password") and value:
+            # the console password: only its hash goes into the fleet file (no secret in the clear on a disk)
+            import secrets as pysecrets
+            r = subprocess.run(["openssl", "passwd", "-6", "-salt", pysecrets.token_hex(8), "-stdin"], input=str(value) + "\n",
+                               capture_output=True, text=True)
+            if r.returncode != 0 or not r.stdout.startswith("$6$"):
+                self.win.toast("Not saved: openssl hashes the password, and it did not work here")
+                return
+            self.doc.set(self.scope, ("admin", "password_hash"), r.stdout.strip())
+            self.doc.set(self.scope, ("admin", "password"), None)
+            self.win.mark_dirty()
             return
         self.doc.set(self.scope, field["path"], value)
         self.win.mark_dirty()

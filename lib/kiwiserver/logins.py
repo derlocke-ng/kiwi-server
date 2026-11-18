@@ -9,6 +9,8 @@ that was changed inside a service is not known here.
 The passwords are the answer of this command and of the control page's /api/hosts/<name>/logins,
 and of nothing else: never a log, the audit or an error message.
 """
+import os
+
 from . import luks, modules as modmod, roles as rolesmod
 from .util import KiwiError
 
@@ -22,9 +24,31 @@ def for_host(host, role, ms):
     off, is not in it. The address is that of a site (the names `list` gives as `sites`)
     with the login's path, or empty when nothing serves it."""
     if not role.stack:
-        return []
+        return console(host)
     found = modmod.Renderer(ms).logins(rolesmod.stack_spec(host, role))
-    return [dict(x, has_password=bool(x["password"])) for x in found] + at_home(host, role) + disk(host)
+    return [dict(x, has_password=bool(x["password"])) for x in found] + console(host) + at_home(host, role) + disk(host)
+
+
+def admin_password_file(host, own=False):
+    """Where the secret store keeps the readable admin password: the machine's own, else the
+    fleet's (`kiwi-server secrets admin-password` puts it there; the fleet file keeps its hash)."""
+    mine = host.fleet.resolve_path("secrets/admin.%s.password" % host.name)
+    return mine if own or os.path.isfile(mine) else host.fleet.resolve_path("secrets/admin.password")
+
+
+def console(host):
+    """The admin user's password, for the machine's screen: from the secret store, else as the
+    fleet file still has it written. SSH takes keys only."""
+    try:
+        with open(admin_password_file(host), encoding="utf-8") as fh:
+            pw = fh.read().strip()
+    except OSError:
+        pw = str((host.cfg.get("admin") or {}).get("password") or "")
+    if not pw:
+        return []
+    return [{"module": "console", "label": "The machine's screen", "address": "", "user": host.admin["user"], "password": pw,
+             "has_password": True, "note": "At the machine's own screen and keyboard. Over SSH the admin user signs in "
+                                           "with its key, never with this."}]
 
 
 def disk(host):

@@ -9,6 +9,7 @@ reads them from `kiwi-server roles --porcelain` ("base") instead.
 import re
 import yaml
 
+from . import util
 from .util import KiwiError
 
 # ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@ BASE_GROUPS = [
         dict(path=("admin", "user"), type="string", label="User name", default="core",
              help="Passwordless sudo on every target; must not be root"),
         dict(path=("admin", "password"), type="secret", label="Password", default="",
-             help="Hashed at render time. For the console; SSH uses keys"),
+             help="For the machine's screen; SSH uses keys. Kept only as a hash: write it down"),
         dict(path=("admin", "password_hash"), type="string", label="…or a crypt hash", default="",
              help="$6$… — instead of a password"),
         dict(path=("admin", "ssh_keys"), type="lines", label="SSH public keys", default=[],
@@ -587,6 +588,12 @@ def changes(found, posted):
                 new = None          # the usual list again
             if new != f["value"]:
                 out[path] = new
+            continue
+        if f["secret"] and path[-2:] == ("admin", "password") and got is not None and got.strip():
+            # the console password: only its hash goes into the fleet file (no secret in the clear on a disk)
+            import secrets as pysecrets
+            out[path[:-1] + ("password_hash",)] = util.sha512_crypt(got.strip(), pysecrets.token_hex(8))
+            out[path] = None
             continue
         if f["secret"]:
             if got is None:

@@ -293,6 +293,7 @@ class Renderer:
         self.ms = modset or modmod.discover(extra=sourcesmod.folders(fleet))
         self._scanned = False
         self._records = []
+        self._names = {}        # every name a host's sites answer for, its public ones too: {hostname: [name]}
         self._node_lan = []
         self._needs_ca = False
         self._master_ip = ""
@@ -390,6 +391,7 @@ class Renderer:
                 # the LAN and the VPN too, so that it always leads to the public service through the master
                 # and never to what the network keeps for itself (the owner, 18 Nov 2026: "public IP!")
                 inside = "." + h.domain
+                self._names[h.hostname] = [n for n in names if "*" not in n]
                 for n in names:
                     if "*" not in n and (n == h.hostname or n.endswith(inside)) and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
@@ -1068,9 +1070,11 @@ def cmd_list(args):
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
                      "vpn_ip": mesh_ip,
-                     "sites": [n for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname and n not in r.aliases],
+                     # its sites, the public names too (those are not in the network's own DNS, 2.202.0)
+                     "sites": [n for n in (r._names.get(h.hostname) or []) if mesh_ip and n != h.hostname and n not in r.aliases],
                      # what each site is, in words: the app and the page say the same
-                     "site_labels": {n: healthmod.label(n) for ip, n in records if mesh_ip and ip == mesh_ip and n != h.hostname and n not in r.aliases},
+                     "site_labels": {n: healthmod.label(n) for n in (r._names.get(h.hostname) or [])
+                                     if mesh_ip and n != h.hostname and n not in r.aliases},
                      "admin_sites": sorted(r._admin.get(h.hostname) or []),
                      "logins": [] if errs else loginsmod.listed(h, roles, ms),     # without the passwords
                      "games": [] if errs else game_servers(h),      # the game page lists them
@@ -2063,13 +2067,30 @@ def cmd_mtu(args):
         container = "%s-vpn-server" % modmod.PREFIX["master"]
     util.say("%s: measuring through the tunnel to %s (MTU %d)" % (args.target, addr, cap))
     largest, tried = mtu.search(lambda size: mtu.send(tgt, container, addr, size), cap, util.say)
+    # a node: the path outside the tunnel too, to the master's public address. Inside, nothing larger than
+    # the tunnel's MTU can be tried; outside says whether a larger one would fit
+    outside = could = None
+    if host is not None and largest is not None and largest + mtu.STEP > cap:
+        rolesmod.resolve_settings(roles[master.role], master, ms)
+        wg_host = str((master.module_settings.get("vpn-server") or {}).get("wg_host") or "")
+        if wg_host:
+            outside = mtu.path(tgt, wg_host, ipv6=":" in wg_host)
+            could = mtu.best(outside, ipv6=":" in wg_host) if outside else None
     if args.porcelain:
-        print(json.dumps({"target": args.target, "largest": largest, "wg_mtu": cap, "tried": tried}, indent=2))
+        print(json.dumps({"target": args.target, "largest": largest, "wg_mtu": cap, "tried": tried, "path": outside,
+                          "could": could}, indent=2))
         return
     if largest is None:
         raise KiwiError("%s: even 1280 bytes do not get through whole: this path needs a look by hand" % args.target)
     if largest + mtu.STEP > cap:
         util.say("%s: %d fits, the tunnel's MTU is right for this path" % (args.target, cap))
+        if outside:
+            util.say("%s: outside the tunnel its path to the master takes %d bytes, so the tunnel could be %d%s"
+                     % (args.target, outside, could, "" if could > cap else ": what it is" if could == cap else
+                        ": less than set, though the tunnel's own packets got through (the master's side may differ)"))
+            if could > cap:
+                util.say("  a larger MTU on the master reaches every node: measure each of them first; the gain is "
+                         "%d bytes a packet (%.1f %%)" % (could - cap, 100.0 * (could - cap) / cap))
         return
     if host is None:
         util.say("%s: use %d: set MTU = %d in this device's WireGuard config; nothing else has to change" % (args.target, largest, largest))
@@ -3247,7 +3268,10 @@ def cmd_enroll(args):
         with remote.Tunnel(remote.reach(master, args.ssh), 51821) as url:
             text = enroll(url)
     if args.split:
-        text = wgeasy.split_tunnel(text, mesh)
+        # the mesh, and the meshes of the networks linked to this one: what they open is reached
+        # through the master too (federation.yaml)
+        linked = [n["mesh"] for n in linked_networks(fleet) if n.get("mesh") and n["mesh"] != mesh]
+        text = wgeasy.split_tunnel(text, ", ".join([mesh] + linked))
     # a device roams, a machine stays where its path was measured: the device gets the size that fits everywhere
     mtu = args.mtu or (min(wgeasy.DEVICE_MTU, wg_mtu) if not host else None)
     if mtu:
@@ -3741,7 +3765,8 @@ def cmd_access(args):
         util.say("%s (linked network) may reach: %s" % (args.who, accessmod.words(have)))
     else:
         new = accessmod.change(groups, args.who, found, domain, mesh, reach=None if (args.add or args.remove) else what,
-                               add=what if args.add else (), remove=what if args.remove else (), new=args.new, flags=flags)
+                               add=what if args.add else (), remove=what if args.remove else (), new=args.new, flags=flags,
+                               partners=list(partners))
         pages = lambda m: ["%s.%s" % (s, m["hostname"]) for s in m["admin"]]      # noqa: E731
         touched = {m["name"] for m in found if not m["master"] and
                    accessmod.node_rules(groups, m["name"], m["hostname"], pages(m))

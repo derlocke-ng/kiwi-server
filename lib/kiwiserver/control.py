@@ -43,7 +43,7 @@ ACTIONS = {
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
-    "tell-test": ("notify", False),
+    "tell-test": ("notify", False), "mtu": ("mtu", True),
     "start-new": ("backups", True),     # a rebuilt machine whose backups wait: a new history instead
     "prune": ("prune", True),           # old snapshots off a backup machine, by its keep_* settings
     "doctor": ("doctor", False),        # are this node's own tools here (install media, checks)

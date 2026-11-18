@@ -61,9 +61,12 @@ def _address(text):
         return False
 
 
-def canon(entry, found, domain, group=True):
-    """One thing a rule gives, in its short form; KiwiError says what it could be instead."""
+def canon(entry, found, domain, group=True, partners=()):
+    """One thing a rule gives, in its short form; KiwiError says what it could be instead. A
+    group may also be given a linked network by its name (`partners`): what that one opens."""
     e = str(entry).strip().lower()
+    if group and e in partners:
+        return e
     if e in ("all", "nodes", "apps"):
         if e in ("all", "apps") and not group:
             raise KiwiError("a linked network is given machines and services, not %s: name them" % e)
@@ -123,12 +126,12 @@ def words(reach):
     return ", ".join({"nodes": "every node", "apps": "every app"}.get(e, e) for e in reach)
 
 
-def _loose(reach, found, domain, group):
+def _loose(reach, found, domain, group, partners=()):
     """What the file says, in short form where it can be read; the rest as written."""
     out = []
     for e in reach or []:
         try:
-            e = canon(e, found, domain, group)
+            e = canon(e, found, domain, group, partners)
         except KiwiError:
             e = str(e)
         if e not in out:
@@ -228,7 +231,7 @@ def next_range(groups, mesh):
     raise KiwiError("no free range left in %s" % mesh)
 
 
-def change(groups, name, found, domain, mesh, reach=None, add=(), remove=(), new=False, flags=None):
+def change(groups, name, found, domain, mesh, reach=None, add=(), remove=(), new=False, flags=None, partners=()):
     """The groups with one of them changed (a copy). `reach` replaces what it has; `add`
     and `remove` change it by entries; `new` makes the group with the next free range."""
     groups = {k: dict(v or {}) for k, v in (groups or {}).items()}
@@ -239,15 +242,15 @@ def change(groups, name, found, domain, mesh, reach=None, add=(), remove=(), new
             raise KiwiError("a group's name: small letters, digits and -")
         groups[name] = {"subnet": next_range(groups, mesh), "reach": [], "peers": False}
     g = groups[name]
-    have = _loose(g.get("reach", ["all"]), found, domain, True)
+    have = _loose(g.get("reach", ["all"]), found, domain, True, partners)
     if reach is not None:
         have = []
         add = reach
     for e in add:
-        e = canon(e, found, domain, True)
+        e = canon(e, found, domain, True, partners)
         if e not in have:
             have.append(e)
-    gone = [canon(e, found, domain, True) for e in remove]
+    gone = [canon(e, found, domain, True, partners) for e in remove]
     if gone and "all" in have:
         raise KiwiError("%s reaches everything: say what it may reach instead, e.g. access <fleet> %s nodes" % (name, name))
     have = [e for e in have if e not in gone]

@@ -73,6 +73,7 @@ iptables -A FORWARD -s {{ subnet }} -d {{ mesh_subnet }} -j DROP
 {% elif ip and '.' in full[:-(domain | length + 1)] %}{% set _ = parts.append((ip, '80')) %}{% set _ = parts.append((ip, '443')) %}
 {% elif ip %}{% set _ = allowed.append(ip) %}
 {% elif (rs | replace('.', '') | replace('/', '')).isdigit() %}{% set _ = allowed.append(rs) %}
+{% elif rs in (federation or {}) %}{# a linked network by its name: what it opens to this one #}
 {% else %}{% set _ = unknown.append(rs) %}{% endif %}
 {% endfor %}
 {% for u in unknown %}
@@ -93,6 +94,10 @@ iptables -A FORWARD -s {{ subnet }} -d {{ ip }} -j DROP
 {% else %}
 iptables -A FORWARD -s {{ subnet }} -d {{ mesh_subnet }} -j DROP
 {% endif %}
+{# the linked networks: only those the group's reach names (everything else stays theirs to refuse too) #}
+{% for pname, p in (federation or {}).items() if p.mesh %}
+iptables -A FORWARD -s {{ subnet }} -d {{ p.mesh }} -j {{ 'ACCEPT' if pname in reach else 'DROP' }}
+{% endfor %}
 {% endif %}
 {% if not internet %}
 iptables -A FORWARD -s {{ subnet }} ! -d {{ mesh_subnet }} -j DROP

@@ -209,7 +209,11 @@ kiwi-server mtu fleet.yaml phone --ssh core@<master>        # a device from secr
 ```
 
 It sends don't-fragment pings through the tunnel and reports the largest size
-that arrives whole.
+that arrives whole. For a node it then measures the path outside the tunnel, to
+the master's public address, and says how large the tunnel's MTU could be (the
+path less 60 bytes over IPv4, 80 over IPv6). A larger MTU on the master reaches
+every node, so measure each before raising it. A machine's page in the app and
+on the control page has the same measurement as a button.
 
 - A device's path is small: change that device's own config and leave
   everyone else alone.

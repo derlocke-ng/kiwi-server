@@ -13,6 +13,9 @@
       groups: {devices: 10.10.3.0/24}   # the partner's groups (kiwi-server federate fills them in)
       exit: true                     # this network leaves to the internet through that partner …
       internet: true                 # … which that partner allows with this, in its own file
+      seen_as:                       # only when its mesh or domain is this network's own:
+        mesh: 10.209.0.0/16          #   how it is seen here (federate picks a free /16) …
+        domain: kiwi2.home           #   … and its names (<its name>.<its domain>)
 
 The exit rides the link: the master is not a client of the partner's VPN server.
 
@@ -29,7 +32,7 @@ from . import util
 from .util import KiwiError
 
 FILE = "federation.yaml"
-KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet", "groups")
+KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet", "groups", "seen_as")
 
 _P = 2 ** 255 - 19
 
@@ -89,6 +92,7 @@ def partners(fleet_dir):
             if spec.get(k) not in (None, True, False):
                 raise KiwiError("%s: %s: %s is true or false" % (p, name, k))
             spec[k] = bool(spec.get(k))
+        spec["seen_as"] = _seen_as(p, name, spec.get("seen_as"))
         if spec["exit"] and spec["internet"]:
             raise KiwiError("%s: %s is both this network's way to the internet (exit) and let out through it (internet): "
                             "two networks cannot leave through each other" % (p, name))
@@ -98,6 +102,51 @@ def partners(fleet_dir):
         raise KiwiError("%s: only one partner can be this network's way to the internet (exit: true for %s)"
                         % (p, ", ".join(exits)))
     return out
+
+
+def _seen_as(p, name, got):
+    """How a partner whose mesh or domain is this network's own is seen here: {mesh, domain}, either
+    may be missing; None without one."""
+    if not got:
+        return None
+    if not isinstance(got, dict) or set(got) - {"mesh", "domain"}:
+        raise KiwiError("%s: %s: seen_as takes mesh and domain" % (p, name))
+    out = {}
+    if got.get("mesh"):
+        try:
+            net = ipaddress.ip_network(str(got["mesh"]), strict=True)
+        except ValueError:
+            raise KiwiError("%s: %s: seen_as.mesh %s is not a network like 10.209.0.0/16" % (p, name, got["mesh"]))
+        if net.version != 4 or net.prefixlen != 16:
+            raise KiwiError("%s: %s: seen_as.mesh is a /16 of IPv4, like 10.209.0.0/16" % (p, name))
+        out["mesh"] = str(net)
+    if got.get("domain"):
+        d = str(got["domain"]).strip(".").lower()
+        if not all(x and len(x) < 64 and all(c.isalnum() or c == "-" for c in x) for x in d.split(".")):
+            raise KiwiError("%s: %s: seen_as.domain %s is not a domain" % (p, name, got["domain"]))
+        out["domain"] = d
+    return out or None
+
+
+def seen(p):
+    """(mesh, domain) a partner has here: its alias where it has one, else its own."""
+    s = p.get("seen_as") or {}
+    return str(s.get("mesh") or p.get("mesh") or ""), str(s.get("domain") or p.get("domain") or "")
+
+
+def moved(addr, frm, to):
+    """An address of the network `frm` at the same place in `to` (10.9.0.1 in 10.9/16 -> 10.209.0.1)."""
+    a, f, t = ipaddress.ip_address(addr), ipaddress.ip_network(frm), ipaddress.ip_network(to)
+    if a not in f:              # not of that network: it stays where it is
+        return str(a)
+    return str(ipaddress.ip_address(int(t.network_address) + int(a) - int(f.network_address)))
+
+
+def our_alias(name, domain, found):
+    """How partners with this network's own domain see it: <its name>.<domain>; None when none has."""
+    if any(str(p.get("domain") or "").lower() == str(domain).lower() for p in found.values()):
+        return "%s.%s" % (name, domain)
+    return None
 
 
 def _source(p, name, spec, x):
@@ -201,7 +250,17 @@ def inject(fleet_dir, data):
         return
     defaults = data.get("defaults") or {}
     domain = defaults.get("domain") or "home"
-    with_addresses(found, (defaults.get("master") or {}).get("mesh_subnet") or "10.8.0.0/16")
+    mesh = (defaults.get("master") or {}).get("mesh_subnet") or "10.8.0.0/16"
+    with_addresses(found, mesh)
+    for p in found.values():                # what the master's link needs of a translated partner
+        if p.get("seen_as"):
+            sa = dict(p["seen_as"])
+            if sa.get("mesh") and p.get("dns"):
+                sa["dns"] = moved(p["dns"], p["mesh"], sa["mesh"])
+            # this master's own address on the link: one the partner does not have itself
+            sa["link"] = str(ipaddress.ip_address(int(ipaddress.ip_network(mesh, strict=False).broadcast_address) - 1))
+            p["seen_as"] = sa
+    alias = our_alias(os.path.basename(os.path.abspath(fleet_dir).rstrip("/")), domain, found)
     for name, cfg in (data.get("hosts") or {}).items():
         if not isinstance(cfg, dict):
             continue
@@ -215,6 +274,8 @@ def inject(fleet_dir, data):
             block["vpn-server"] = dict(block["vpn-server"] or {}, federation=found)
         else:
             rules = node_rules(found, name, domain)
+            if alias:                    # a partner sees this network as <its name>.<domain>: its nginx answers that too
+                rules = dict(rules or {}, alias={"domain": domain, "as": alias})
             if rules:
                 block["reverse-proxy"] = dict(block.get("reverse-proxy") or {}, federation=rules)
 
@@ -229,6 +290,8 @@ def write(fleet_dir, partner, entry):
         partner = next((n for n, x in data.items() if (x or {}).get("mesh") == entry.get("mesh")), partner)
     old = data.get(partner) or {}
     entry = dict(entry, share=old.get("share") or [], **{"from": old.get("from") or []})
+    if not entry.get("seen_as"):            # only when its mesh or domain is this network's own
+        entry.pop("seen_as", None)
     for k in ("exit", "internet"):          # the owner's, like share and from
         if old.get(k):
             entry[k] = True

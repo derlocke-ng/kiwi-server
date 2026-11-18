@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.216.0 — two networks of one mesh and one domain linked
+
+- **`federate` links two networks with the same mesh or the same domain** (the owner:
+  "translate is the best idea"). Each side sees the other under an alias it picks and keeps in
+  `federation.yaml` (`seen_as`: a free /16 at random, `<its name>.<its domain>`). The master
+  maps the alias onto the partner's real addresses at the link, its small DNS (kiwi-modules
+  0.95.0, `<prefix>-fed-dns`) gives the partner's names under the alias, and a shared machine
+  answers the name the partner gives it and carries it in its certificate
+  (`papaya.kiwi.home` beside `papaya.home`). Devices' split configs, `connect`, the nodes'
+  Pi-hole, the picture and who may reach what all use the alias. Before, `federate` refused it.
+- `tests/drills/translate-netns.py`: two masters of one mesh and one domain in throwaway network
+  namespaces of this computer (no root) over real WireGuard, running the link part of the
+  start.sh each would get: 10 checks, among them a client that reaches its own 10.9.0.5 and the
+  partner's at 10.209.0.5.
+- Two partners that have one mesh between them are refused: the link cannot tell them apart.
+
 ## 2.215.0 — ready to link: a mesh of its own, a domain of its own
 
 - **`kiwi-server secrets forget FLEET HOST module.key`** takes a password out of the secret store

@@ -41,10 +41,13 @@
 {% endif %}
 {# federation: a partner network's names from its own DNS, over the link #}
 {% for pname, p in ((module_config.get('vpn-server') or {}).get('federation') or {}).items() if node_type == 'master' and p.domain and p.dns %}
-{% set _ = lines.append('server=/' ~ p.domain ~ '/' ~ p.dns) %}
+{# a partner seen here under another domain or mesh: the link's DNS (fed-dns) translates #}
+{% set fd = (p.seen_as or {}).get('domain') or p.domain %}
+{% set up = '127.0.0.1#5353' if p.seen_as else p.dns %}
+{% set _ = lines.append('server=/' ~ fd ~ '/' ~ up) %}
 {# and every name under it: Pi-hole 6 keeps .internal and .home.arpa to itself (local=), which wins
    over the line above; a wildcard is more specific, and the partner's names get through #}
-{% set _ = lines.append('server=/*.' ~ p.domain ~ '/' ~ p.dns) %}
+{% set _ = lines.append('server=/*.' ~ fd ~ '/' ~ up) %}
 {% endfor %}
 {# and what this network opens to each of them, for their picture: a TXT record under this
    network's domain, named after the partner's mesh, that the partner's master asks for #}

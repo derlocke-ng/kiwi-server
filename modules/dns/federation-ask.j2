@@ -1,5 +1,5 @@
 {# what kiwi-server's status asks each linked network's DNS for: the partner's name, its
    domain, and this network's mesh as the label of the TXT record the partner keeps for it #}
 {% for pname, p in ((module_config.get('vpn-server') or {}).get('federation') or {}).items() if p.domain and p.dns %}
-{{ pname }} {{ p.domain }} {{ mesh_subnet | string | replace('.', '-') | replace('/', '-') }}
+{{ pname }} {{ (p.seen_as or {}).get('domain') or p.domain }} {{ mesh_subnet | string | replace('.', '-') | replace('/', '-') }}
 {% endfor %}

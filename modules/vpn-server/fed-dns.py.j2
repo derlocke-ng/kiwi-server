@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+{% raw %}# The link's DNS for a partner network seen under another name or mesh (kiwi-server's
+# docs/design/federation.md, "translated at the link"). Pi-hole sends a partner's alias domain
+# here; this asks the partner's DNS for the real name and gives the answer back under the alias:
+# names moved from the partner's domain into the alias, IPv4 addresses from the partner's mesh
+# into the /16 this network sees it as. Python's standard library only; no state, no cache.
+#
+#   fed-dns.py CONFIG.json      [{"alias": "kiwi2.home", "real": "home", "upstream": "10.209.0.1",
+#                                  "mesh": "10.9.0.0/16", "seen_as": "10.209.0.0/16"}, ...]
+import ipaddress
+import json
+import socket
+import struct
+import sys
+import threading
+
+LISTEN = ("0.0.0.0", 5353)
+TIMEOUT = 4.0
+NAMES_IN_RDATA = {2: "name", 5: "name", 12: "name", 15: "mx", 33: "srv", 6: "soa"}
+
+
+class Bad(Exception):
+    pass
+
+
+def read_name(msg, off):
+    """(labels, offset after the name), following compression pointers."""
+    labels, jumps, end = [], 0, None
+    while True:
+        if off >= len(msg):
+            raise Bad("name runs past the message")
+        n = msg[off]
+        if n & 0xC0 == 0xC0:
+            if off + 1 >= len(msg) or jumps > 32:
+                raise Bad("bad pointer")
+            if end is None:
+                end = off + 2
+            off = ((n & 0x3F) << 8) | msg[off + 1]
+            jumps += 1
+            continue
+        if n == 0:
+            return labels, (end if end is not None else off + 1)
+        labels.append(bytes(msg[off + 1:off + 1 + n]))
+        off += 1 + n
+
+
+def write_name(labels):
+    return b"".join(bytes([len(x)]) + x for x in labels) + b"\0"
+
+
+def parse(msg):
+    if len(msg) < 12:
+        raise Bad("short")
+    hid, flags, qd, an, ns, ar = struct.unpack("!6H", msg[:12])
+    off, qs, rrs = 12, [], []
+    for _ in range(qd):
+        name, off = read_name(msg, off)
+        qtype, qclass = struct.unpack("!2H", msg[off:off + 4])
+        off += 4
+        qs.append([name, qtype, qclass])
+    for section, count in ((1, an), (2, ns), (3, ar)):
+        for _ in range(count):
+            name, off = read_name(msg, off)
+            rtype, rclass, ttl, rdlen = struct.unpack("!2HIH", msg[off:off + 10])
+            off += 10
+            raw = msg[off:off + rdlen]
+            if len(raw) != rdlen:
+                raise Bad("rdata runs past the message")
+            rdata = _rdata_in(msg, off, rtype, raw)
+            off += rdlen
+            rrs.append([section, name, rtype, rclass, ttl, rdata])
+    return {"id": hid, "flags": flags, "qs": qs, "rrs": rrs}
+
+
+def _rdata_in(msg, off, rtype, raw):
+    kind = NAMES_IN_RDATA.get(rtype)
+    if kind == "name":
+        return ("name", read_name(msg, off)[0])
+    if kind == "mx":
+        return ("mx", raw[:2], read_name(msg, off + 2)[0])
+    if kind == "srv":
+        return ("srv", raw[:6], read_name(msg, off + 6)[0])
+    if kind == "soa":
+        m, o = read_name(msg, off)
+        r, o = read_name(msg, o)
+        return ("soa", m, r, msg[o:o + 20])
+    return ("raw", bytes(raw))
+
+
+def _rdata_out(rd):
+    if rd[0] == "name":
+        return write_name(rd[1])
+    if rd[0] in ("mx", "srv"):
+        return rd[1] + write_name(rd[2])
+    if rd[0] == "soa":
+        return write_name(rd[1]) + write_name(rd[2]) + rd[3]
+    return rd[1]
+
+
+def build(m):
+    out = [struct.pack("!6H", m["id"], m["flags"], len(m["qs"]),
+                       *[sum(1 for r in m["rrs"] if r[0] == s) for s in (1, 2, 3)])]
+    for name, qtype, qclass in m["qs"]:
+        out.append(write_name(name) + struct.pack("!2H", qtype, qclass))
+    for s in (1, 2, 3):
+        for _sec, name, rtype, rclass, ttl, rd in (r for r in m["rrs"] if r[0] == s):
+            data = _rdata_out(rd)
+            out.append(write_name(name) + struct.pack("!2HIH", rtype, rclass, ttl, len(data)) + data)
+    return b"".join(out)
+
+
+def _labels(domain):
+    return [x.encode() for x in domain.strip(".").lower().split(".") if x]
+
+
+def _move(name, frm, to):
+    """The labels under domain `frm` put under `to`; None when the name is not under `frm`."""
+    low = [x.lower() for x in name]
+    if len(low) < len(frm) or low[len(low) - len(frm):] != frm:
+        return None
+    return list(name[:len(name) - len(frm)]) + list(to)
+
+
+class Link:
+    """One partner as seen here: its alias domain, its real one, where its DNS answers from here,
+    its mesh and the /16 it is seen as (or none, when only the name differs)."""
+
+    def __init__(self, c):
+        self.alias, self.real = _labels(c["alias"]), _labels(c["real"])
+        self.upstream = str(c["upstream"])
+        self.mesh = ipaddress.ip_network(c["mesh"]) if c.get("seen_as") else None
+        self.seen_as = ipaddress.ip_network(c["seen_as"]) if c.get("seen_as") else None
+
+    def address(self, raw):
+        if not self.mesh or len(raw) != 4:
+            return raw
+        ip = ipaddress.ip_address(raw)
+        if ip not in self.mesh:
+            return raw
+        return (int(self.seen_as.network_address) + (int(ip) - int(self.mesh.network_address))).to_bytes(4, "big")
+
+    def question(self, m):
+        """The query with its names under the partner's real domain; False when it is not ours."""
+        for q in m["qs"]:
+            moved = _move(q[0], self.alias, self.real)
+            if moved is None:
+                return False
+            q[0] = moved
+        return True
+
+    def answer(self, m):
+        """The answer under the alias: names, and A records of the partner's mesh."""
+        def back(name):
+            moved = _move(name, self.real, self.alias)
+            return name if moved is None else moved
+        for q in m["qs"]:
+            q[0] = back(q[0])
+        for r in m["rrs"]:
+            r[1] = back(r[1])
+            rd = r[5]
+            if rd[0] == "name":
+                r[5] = ("name", back(rd[1]))
+            elif rd[0] in ("mx", "srv"):
+                r[5] = (rd[0], rd[1], back(rd[2]))
+            elif rd[0] == "soa":
+                r[5] = ("soa", back(rd[1]), back(rd[2]), rd[3])
+            elif rd[0] == "raw" and r[2] == 1 and r[3] == 1:
+                r[5] = ("raw", self.address(rd[1]))
+        return m
+
+
+def refused(m, rcode=5):
+    m["flags"] = (m["flags"] | 0x8000) & ~0xF | rcode
+    m["rrs"] = []
+    return build(m)
+
+
+def handle(links, query, ask):
+    """The answer to one query (bytes): through the partner whose alias it names, else refused.
+    `ask(upstream, bytes, tcp)` sends the rewritten query on and returns the partner's answer."""
+    try:
+        m = parse(query)
+    except (Bad, struct.error, IndexError):
+        return None
+    for link in links:
+        q = parse(query)
+        if not q["qs"] or not link.question(q):
+            continue
+        try:
+            got = ask(link.upstream, build(q))
+            return build(link.answer(parse(got)))
+        except (OSError, Bad, struct.error, IndexError):
+            return refused(m, 2)            # SERVFAIL: the partner did not answer
+    return refused(m)
+
+
+def ask_udp(upstream, data):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(TIMEOUT)
+        s.sendto(data, (upstream, 53))
+        got = s.recv(65535)
+    if got[2] & 0x02:                       # truncated: once more over TCP
+        return ask_tcp(upstream, data)
+    return got
+
+
+def ask_tcp(upstream, data):
+    with socket.create_connection((upstream, 53), timeout=TIMEOUT) as s:
+        s.sendall(struct.pack("!H", len(data)) + data)
+        n = struct.unpack("!H", _exactly(s, 2))[0]
+        return _exactly(s, n)
+
+
+def _exactly(s, n):
+    buf = b""
+    while len(buf) < n:
+        part = s.recv(n - len(buf))
+        if not part:
+            raise OSError("closed")
+        buf += part
+    return buf
+
+
+def serve(links):
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(LISTEN)
+    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp.bind(LISTEN)
+    tcp.listen(16)
+
+    def one_udp(data, peer):
+        out = handle(links, data, ask_udp)
+        if out:
+            udp.sendto(out, peer)
+
+    def one_tcp(conn):
+        with conn:
+            conn.settimeout(TIMEOUT)
+            try:
+                n = struct.unpack("!H", _exactly(conn, 2))[0]
+                out = handle(links, _exactly(conn, n), ask_tcp)
+                if out:
+                    conn.sendall(struct.pack("!H", len(out)) + out)
+            except (OSError, struct.error):
+                pass
+
+    def tcp_loop():
+        while True:
+            conn, _ = tcp.accept()
+            threading.Thread(target=one_tcp, args=(conn,), daemon=True).start()
+    threading.Thread(target=tcp_loop, daemon=True).start()
+    while True:
+        data, peer = udp.recvfrom(65535)
+        threading.Thread(target=one_udp, args=(data, peer), daemon=True).start()
+
+
+if __name__ == "__main__":
+    with open(sys.argv[1]) as fh:
+        serve([Link(c) for c in json.load(fh)])
+{% endraw %}

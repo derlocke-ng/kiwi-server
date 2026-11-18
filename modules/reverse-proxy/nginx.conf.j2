@@ -350,7 +350,11 @@ http {
         listen {{ tls_listen }};
 {% endif %}
         http2 on;
-        server_name {{ s.server_name }};
+{# a partner with this network's own domain sees it as <its name>.<domain> (federation, translated
+   at the link): the same site answers that name too #}
+{% set al = (federation or {}).get('alias') %}
+{% set suffix = '.' ~ al.domain if al else '' %}
+        server_name {{ s.server_name }}{{ (' ' ~ s.server_name[:-(suffix | length)] ~ '.' ~ al['as']) if al and s.server_name.endswith(suffix) else '' }};
 {% set fed = federation or {} %}
 {% set fn = (fed.names or {}).get(s.server_name) %}
 {% if fn %}

@@ -4217,9 +4217,12 @@ class TestFederation(Base):
         for d in ("secrets",):
             shutil.copytree(os.path.join(self.tmp, d), os.path.join(other, d), dirs_exist_ok=True) if os.path.isdir(os.path.join(self.tmp, d)) else None
         rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
-        self.assertNotEqual(rc, 0)
-        self.assertIn("they need a domain each", err)                                  # a name would be both networks'
-        self.assertFalse(os.path.exists(os.path.join(self.tmp, "federation.yaml")))
+        self.assertEqual(rc, 0, err)                                                   # one domain: translated at the link
+        same = a.defaults.get("domain")
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["seen_as"], {"domain": "other." + same})
+        self.assertEqual(fedmod.partners(other)[os.path.basename(self.tmp)]["seen_as"],
+                         {"domain": "%s.%s" % (re.sub(r"[^a-z0-9-]", "-", os.path.basename(self.tmp).lower()).strip("-"), same)})
+        self.assertIn("seen here as other.%s, translated at the link" % same, err + out)
         data["defaults"]["domain"] = "internal"
         write(b_path, yaml.safe_dump(data))
         rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
@@ -4228,6 +4231,7 @@ class TestFederation(Base):
             mine = yaml.safe_load(fh)
         partner = mine["other"]
         self.assertEqual((partner["mesh"], partner["domain"], partner["share"]), ("10.10.0.0/16", "internal", []))
+        self.assertNotIn("seen_as", partner)                                           # different now: no alias any more
         loaded = config.Fleet.load(a.path)
         self.assertEqual(loaded.hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]["as"], "10.9.255.1")
         self.assertFalse(loaded.hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]["exit"])
@@ -4281,6 +4285,47 @@ class TestFederation(Base):
             shutil.copytree(os.path.join(self.tmp, "secrets"), os.path.join(other, "secrets"), dirs_exist_ok=True)
         return a.path, os.path.join(other, "fleet.yaml"), other
 
+    def test_two_networks_of_one_mesh_and_one_domain_are_translated_at_the_link(self):
+        """docs/design/federation.md: each side sees the other under a free /16 and <its name>.<domain>;
+        the master gets what its link needs, a shared node answers the name the partner gives it."""
+        a, b, other = self.two_fleets()
+        with open(b) as fh:
+            data = yaml.safe_load(fh)
+        data["defaults"]["domain"] = config.Fleet.load(a).defaults["domain"]          # the same domain …
+        data["defaults"]["master"] = {"mesh_subnet": "10.9.0.0/16"}                   # … and the same mesh
+        data["hosts"]["gate"]["master"]["vpn-server"]["groups"] = {"devices": {"subnet": "10.9.3.0/24"}}
+        data["hosts"]["gate"]["master"]["vpn-server"]["server_ip"] = "10.9.0.1"
+        data["hosts"]["papaya"] = {"role": "node", "node": self.node_gw()}
+        write(b, yaml.safe_dump(data))
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        domain = data["defaults"]["domain"]
+        mine = fedmod.partners(self.tmp)["other"]["seen_as"]
+        self.assertEqual(mine["domain"], "other." + domain)
+        self.assertRegex(mine["mesh"], r"^10\.\d+\.0\.0/16$")
+        self.assertNotEqual(mine["mesh"], "10.9.0.0/16")
+        name_a = fedmod.partners(other)
+        self.assertEqual(list(name_a.values())[0]["seen_as"]["domain"].split(".", 1)[1], domain)
+        # federate again: the alias stays the one it was
+        self.assertEqual(TestManage.run_cli(self, "federate", a, b)[0], 0)
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["seen_as"], mine)
+        # the master's link: the alias, the partner's DNS in it, an address of its own on the link
+        fed = config.Fleet.load(a).hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]
+        self.assertEqual(fed["seen_as"]["dns"], mine["mesh"].replace(".0.0/16", ".0.1"))
+        self.assertEqual(fedmod.moved("10.8.0.1", "10.9.0.0/16", mine["mesh"]), "10.8.0.1")      # not of it: as it is
+        self.assertEqual(fed["seen_as"]["link"], "10.9.255.254")
+        # what A's people see: the alias (devices' split configs, connect, the picture)
+        linked = cli.linked_networks(config.Fleet.load(a))[0]
+        self.assertEqual((linked["mesh"], linked["domain"], linked["translated"]), (mine["mesh"], "other." + domain, True))
+        # B shares papaya with A: papaya answers the name A gives it, and its certificate has it
+        fedmod.set_share(other, list(name_a)[0], ["papaya"])
+        fb = config.Fleet.load(b)
+        rules = fb.hosts["papaya"].cfg["node"]["reverse-proxy"]["federation"]
+        self.assertEqual(rules["alias"], {"domain": domain, "as": "other." + domain})
+        h = fb.hosts["papaya"]
+        h.module_settings = {"reverse-proxy": {"federation": rules}}
+        self.assertEqual(cli.host_aliases(h), ["papaya.other." + domain])
+
     def test_from_takes_the_partners_groups_by_name_or_its_addresses(self):
         a, b, other = self.two_fleets()
         rc, out, err = TestManage.run_cli(self, "federate", a, b)
@@ -4308,6 +4353,14 @@ class TestFederation(Base):
         found = fedmod.partners(self.tmp)
         self.assertEqual(list(found), ["old-name"])                 # not a second entry for the same network
         self.assertEqual(found["old-name"]["share"], ["cloud.gate"])
+        # another network of that mesh (its own endpoint and key): the link could not tell them apart
+        fedmod.write(self.tmp, "third", {"endpoint": "203.0.113.5", "public_key": "k3", "mesh": "10.11.0.0/16"})
+        data = yaml.safe_load(util.read_text(os.path.join(self.tmp, "federation.yaml")))
+        data["third"]["mesh"] = "10.10.0.0/16"
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(data))
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("two partners of one mesh cannot share the link", err)
 
     def test_two_operators_link_their_networks_with_cards(self):
         a, b, other = self.two_fleets()
@@ -7389,6 +7442,20 @@ class TestCerts(Base):
         crt = os.path.join(ca, "hosts", "sh3.kiwi", "cert.pem")
         self.assertTrue(certs.cert_valid(crt, 800))     # 825 days, not the CA's ten years
         self.assertFalse(certs.cert_valid(crt, 830))
+
+    def test_a_host_cert_carries_the_name_a_partner_gives_the_machine(self):
+        """Federation translated at the link: a partner with the same domain calls papaya.home
+        papaya.kiwi.home; the certificate is issued again with that name, inside the CA's constraint."""
+        ca = os.path.join(self.tmp, "ca-alias")
+        _k, ca_pem = certs.ensure_ca(ca, name_constraints=["home"])
+        certs.ensure_host_cert(ca, "papaya.home", name_constraints=["home"])
+        crt = os.path.join(ca, "hosts", "papaya.home", "cert.pem")
+        first = util.read_text(crt)
+        certs.ensure_host_cert(ca, "papaya.home", name_constraints=["home"], aliases=["papaya.kiwi.home"])
+        self.assertNotEqual(util.read_text(crt), first)                              # issued again
+        self.assertEqual(set(certs.cert_names(crt)), {"papaya.home", "*.papaya.home", "papaya.kiwi.home", "*.papaya.kiwi.home"})
+        r = subprocess.run(["openssl", "verify", "-CAfile", ca_pem, crt], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_name_constraints(self):
         ca = os.path.join(self.tmp, "ca2")

@@ -49,9 +49,9 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
 ## Open, in order
 
 1. **The Android app.** Since 2.213.0 the control node answers as JSON for
-   actions (jobs), devices, accounts, settings, who may reach what and the linked
-   networks, each through the same function as the page. Left: module sources and
-   game servers; the app (kiwi-app) has to use the routes.
+   actions (jobs), devices, accounts, settings, who may reach what, the linked
+   networks and module sources, each through the same function as the page. Left:
+   the app (kiwi-app) has to use the routes.
 2. **An encrypted machine at another site.** The offsite drill passed with a plain
    node (kumquat, 18 November); next, one whose disk opens through the master's
    ring. Since 2.212.0 the drill leaves `run.sh` beside its VM, which starts it

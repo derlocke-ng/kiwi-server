@@ -124,4 +124,5 @@ A controller like a second computer: it joins with the invite link and reads the
 | Settings: every machine's and the defaults', Save and Save & apply | `/api/settings` (2.213.0) | for the app |
 | Who may reach what, and what the linked networks may reach | `/api/access`, `/api/federation` (2.213.0) | for the app |
 | Backups (save now, restore, prune, a new history) and a service's container (restart, stop, start, logs) | `POST /api/jobs` with `save`, `restore`, `prune`, `start-new`, `service` | for the app |
-| Module sources, game servers | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |
+| Module sources | `/api/modules` (2.213.0) | for the app |
+| Game servers | the play page is for the people who play; for an admin, a game server's container is a `service` job | nothing left |

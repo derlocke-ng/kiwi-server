@@ -9587,6 +9587,33 @@ class TestWeb(WebBase):
             self.assertIn(why, body)
             self.assertNotIn("ran sources", body)
         self.assertEqual(self.ask("/modules/add", {"url": "https://example.org/x"})[0], 303)    # no form of this session: no
+        # the same for a controller, as JSON
+        import urllib.request
+        import urllib.error
+
+        def api(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        self.assertEqual(api("GET", "/api/modules")[0], 401)
+        self.assertEqual(api("POST", "/api/modules", body={"op": "update", "name": "personal"})[0], 401)
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None):
+            code, out = api("GET", "/api/modules", "tok")
+            self.assertEqual((code, out["sources"][0]["name"], out["news"]), (200, "personal", {}))
+            code, out = api("POST", "/api/modules", "tok", {"op": "update", "name": "personal", "ref": "v0.3.0"})
+            self.assertEqual(code, 200)
+            self.assertIn("ran sources %s update personal --ref v0.3.0" % self.c.fleet_path, out["said"])
+            code, out = api("POST", "/api/modules", "tok", {"op": "add", "url": "--path=/etc"})
+            self.assertEqual(code, 400)
+            self.assertIn("https address", out["error"])
+            self.assertEqual(api("POST", "/api/modules", "tok", {"op": "drop", "name": "personal"})[0], 400)
 
     def test_the_control_part_writes_only_public_data_for_the_public_pages(self):
         folder = tempfile.mkdtemp()

@@ -13,7 +13,8 @@
     secrets say only whether they are set. Save, or Save & apply as a job.
   - `GET/POST /api/access`, `GET/POST /api/federation`: who may reach what, and what a linked
     network may reach here.
-- The Accounts page and the settings form were split into one part that reads or does and one
+  - `GET/POST /api/modules`: the module sources, their newest tags; add, update, remove.
+- The Accounts page, the settings form and the module sources were split into one part that reads or does and one
   that shows it; nothing changes on the page.
 - Docs: the split choice for devices and its DNS line (network, control page, app).
 

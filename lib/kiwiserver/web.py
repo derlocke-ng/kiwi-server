@@ -3454,12 +3454,10 @@ def make_app(control: Control):
         return page("controllers.html", request, "/controllers", ways=control.controllers(), rot=control.rotation(),
                     ca=control.sshca(), **kw)
 
-    @app.get("/modules")
-    def sources_page(request: Request, check: int = 0, said: str = "", error: str = ""):
-        """The module sources of the fleet: which, at what version, their modules; add, update, remove."""
-        if not user(request):
-            return login_page()
-        found = list(((control.fleet_info() or {}).get("module_sources")) or [])
+    def sources_found(check=False):
+        """The fleet's module sources (without paths on this machine); with `check`, each repository
+        asked for its newest version tag: (sources, news)."""
+        found = [{k: v for k, v in x.items() if k != "path"} for x in ((control.fleet_info() or {}).get("module_sources")) or []]
         news = {}
         if check:                               # each repository asked for its newest version tag
             from . import sources as sourcesmod
@@ -3470,6 +3468,37 @@ def make_app(control: Control):
                         news[x["name"]] = {"tag": got[0], "commit": got[1]} if got else {"tag": "", "commit": x.get("commit")}
                     except KiwiError as e:
                         news[x["name"]] = {"error": str(e)}
+        return found, news
+
+    def sources_change(what, url, name, ref, u):
+        """Add, update or remove a module source, for the page and a controller: what it said.
+        KiwiError says why not."""
+        from . import sources as sourcesmod
+        url, name, ref = url.strip().rstrip("/"), name.strip(), ref.strip()
+        # nothing typed here may pass for an option of the command
+        if (name and not sourcesmod.NAME.match(name)) or (ref and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}", ref)):
+            raise KiwiError("A name is lowercase letters, digits and dashes; a version is a tag or a branch.")
+        if what == "add":
+            if not url.startswith("https://") or not sourcesmod.URL.match(url):
+                raise KiwiError("The link is the https address of a git repository.")
+            args = ["add", url] + (["--name", name] if name else []) + (["--ref", ref] if ref else [])
+        elif what in ("update", "remove") and name:
+            args = [what, name] + (["--ref", ref] if ref and what == "update" else [])
+        else:
+            raise KiwiError("Which module source?")
+        ok, said = control.sources_run(args, u)
+        if not ok:
+            raise KiwiError(said)
+        if what in ("add", "update") and " already" not in said:
+            said += "\nThe machines that use its modules take the change with their next apply (Home: Changes not applied yet)."
+        return said
+
+    @app.get("/modules")
+    def sources_page(request: Request, check: int = 0, said: str = "", error: str = ""):
+        """The module sources of the fleet: which, at what version, their modules; add, update, remove."""
+        if not user(request):
+            return login_page()
+        found, news = sources_found(bool(check))
         return page("sources.html", request, "/modules", sources=found, news=news, checked=bool(check), said=said, error=error)
 
     @app.post("/modules/{what}")
@@ -3478,26 +3507,34 @@ def make_app(control: Control):
         u = posted(request, csrf)
         if not u:
             return login_page()
-        from . import sources as sourcesmod
-        url, name, ref = url.strip().rstrip("/"), name.strip(), ref.strip()
-        # nothing typed here may pass for an option of the command
-        if (name and not sourcesmod.NAME.match(name)) or (ref and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}", ref)):
-            return sources_page(request, error="A name is lowercase letters, digits and dashes; a version is a tag or a branch.")
-        if what == "add":
-            if not url.startswith("https://") or not sourcesmod.URL.match(url):
-                return sources_page(request, error="The link is the https address of a git repository.")
-            args = ["add", url] + (["--name", name] if name else []) + (["--ref", ref] if ref else [])
-        elif what in ("update", "remove") and name:
-            args = [what, name] + (["--ref", ref] if ref and what == "update" else [])
-        else:
-            return sources_page(request, error="Which module source?")
         try:
-            ok, said = control.sources_run(args, u)
+            return sources_page(request, said=sources_change(what, url, name, ref, u))
         except KiwiError as e:
-            ok, said = False, str(e)
-        if ok and what in ("add", "update") and " already" not in said:
-            said += "\nThe machines that use its modules take the change with their next apply (Home: Changes not applied yet)."
-        return sources_page(request, said=said if ok else "", error="" if ok else said)
+            return sources_page(request, error=str(e))
+
+    @app.get("/api/modules")
+    def api_sources(request: Request, check: int = 0):
+        """The module sources: {sources, news}; ?check=1 asks each repository for its newest tag."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        found, news = sources_found(bool(check))
+        return {"sources": found, "news": news}
+
+    @app.post("/api/modules")
+    async def api_sources_do(request: Request):
+        """{op: add|update|remove, url, name, ref} -> {said}: a module source, as on the page."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        body = await api_body(request)
+        if body is None:
+            return JSONResponse({"error": "a JSON object: {op, url, name, ref}"}, status_code=400)
+        try:
+            said = await run_in_threadpool(sources_change, str(body.get("op") or ""), str(body.get("url") or ""),
+                                           str(body.get("name") or ""), str(body.get("ref") or ""), who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"said": said}
 
     @app.get("/controllers")
     def controllers(request: Request):

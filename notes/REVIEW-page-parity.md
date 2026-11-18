@@ -114,5 +114,7 @@ A controller like a second computer: it joins with the invite link and reads the
 | What | API | Android |
 |---|---|---|
 | Home, Machines, Services, read only | `/api/status`, `/api/machines` (2.190.0) | in work |
-| Activity | `/api/activity` | not yet |
+| Activity | `/api/activity` | built |
+| A machine's logins and passwords | `/api/hosts/{name}/logins` (a controller too: 2.194.0) | built, waits for that release |
+| The registry, for the people who use the network | `/api/registry`, `/.well-known/kiwi` (2.193.0) | the app's user side, not yet |
 | Everything that changes something (apply, settings, devices, accounts, who may reach what, backups, services, module sources, game servers) | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |

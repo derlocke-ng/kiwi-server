@@ -9619,6 +9619,20 @@ class TestWeb(WebBase):
         with mock.patch.object(self.c, "controller", lambda t: "phone"), mock.patch.object(self.c, "fleet_info", lambda fresh=False: None):
             self.assertEqual(get("/api/machines", "tok-phone"), (200, {}))       # the fleet is locked
         self.assertEqual((util.read_text(audit) if os.path.isfile(audit) else ""), before)     # reads: no line per call
+        # a machine's logins: the phone too, and the audit says the phone was shown them
+        shown = [{"label": "Files", "module": "cloud", "address": "https://cloud.papaya.home", "user": "admin",
+                  "password": "pw-of-the-test", "note": ""}]
+        self.assertEqual(get("/api/hosts/papaya/logins")[0], 401)
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok-phone" else None), \
+                mock.patch.object(self.c, "logins", lambda name: shown if name == "papaya" else []):
+            req = urllib.request.Request(self.url + "/api/hosts/papaya/logins", headers={"Authorization": "Bearer tok-phone"})
+            with urllib.request.urlopen(req) as r:
+                self.assertEqual(r.headers.get("Cache-Control"), "no-store")
+                self.assertEqual(json.loads(r.read()), {"host": "papaya", "logins": shown})
+            self.assertEqual(get("/api/hosts/papaya/logins", "not-a-token")[0], 401)
+        line = json.loads(util.read_text(audit).splitlines()[-1])
+        self.assertEqual((line["user"], line["what"], line["hosts"]), ("phone", "logins shown", ["papaya"]))
+        self.assertNotIn("pw-of-the-test", util.read_text(audit))                # which machine, never what was shown
         self.ask("/login", {"password": self.PW})                                  # the page's login reads them too
         self.assertEqual(self.ask("/api/status")[0], 200)
 

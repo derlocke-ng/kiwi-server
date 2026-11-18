@@ -457,7 +457,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 <form class="inline" method="post" action="/run-many" onsubmit="return confirm('Apply {{ changed|join(", ") }} now? Services that changed restart for a moment.')">{{ tok }}
 <input type="hidden" name="action" value="apply">{% for h in changed %}<input type="hidden" name="host" value="{{ h }}">{% endfor %}
 <button class="primary">Apply {{ "it" if changed|length == 1 else "all " ~ changed|length }}</button></form></div>
-<p>{{ changed|join(", ") }}: {{ "its" if changed|length == 1 else "their" }} settings changed, or something elsewhere that reaches
+<p>{{ changed|join(", ") }}: {{ "its" if changed|length == 1 else "their" }} settings changed, a new kiwi-server release changes what {{ "it gets" if changed|length == 1 else "they get" }}, or something elsewhere that reaches
 {{ "it" if changed|length == 1 else "them" }} (a new name the DNS must know, a public name the master hands on). Until applied,
 {{ "it keeps" if changed|length == 1 else "they keep" }} the old.</p></div>{% endif %}
 {% set todo = machines|selectattr("problems")|list %}{% if todo %}<h2>Needs a look</h2>
@@ -2417,8 +2417,9 @@ def make_app(control: Control):
     def api_logins(request: Request, name: str):
         """A machine's logins with their passwords, for "Show password" on its page: the one
         place a page hands a password out. The audit says that it did, with the machine's
-        name and nothing of what was shown."""
-        u = user(request)
+        name and nothing of what was shown. A controller (kiwi-app, with its token) may ask too: the
+        audit then names the controller."""
+        u = user(request) or bearer(request)
         if not u:
             return JSONResponse({"error": "log in"}, status_code=401)
         try:

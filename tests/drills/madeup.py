@@ -32,6 +32,8 @@ MACHINES = [
        "hint": "Backups: Save it now, and look whether the backup machine answers."}], facts(0.4, 2, (4, 3.5), [("/var", 60, 51)], 5, 3 * 86400 + 4000)),
     ("medlar", "node", ["vpn-client", "reverse-proxy", "git", "onion", "tang"], ["git"], "down",
      [{"level": "bad", "text": "It does not answer."}], {}),
+    ("kumquat", "node", ["vpn-client", "reverse-proxy", "backup"], [], "ok", [],
+     facts(0.2, 2, (2, 0.9), [("/var", 40, 12)], 3, 4 * 3600)),
     ("lime", "node", ["vpn-client", "dns", "reverse-proxy", "gateway", "tang", "backup"], ["pihole"], "warn",
      [{"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it", "key": "disk-plain",
        "hint": "Install it again with encryption when it suits you, or leave this warning out in its settings."}],
@@ -62,9 +64,16 @@ def answers():
                                         "health": "", "stack": True},
                                        {"name": "kn-game-doom", "state": "inactive", "running": False, "asleep": True, "status": "", "image": "",
                                         "health": "", "stack": True}]
+    # kumquat stands at a friend's (another site); sorbet has a standby; a second network is linked
+    for h in hosts:
+        h["site"] = "friend" if h["name"] == "kumquat" else "home"
+    hosts.append(dict(next(h for h in hosts if h["name"] == "sorbet"), name="sorbet-b", standby_of="sorbet", address="192.168.1.70"))
+    said.append(dict(next(w for w in said if w["host"] == "sorbet"), host="sorbet-b", target="core@192.168.1.70"))
+    linked = [{"name": "kiwi2", "mesh": "10.10.0.0/16", "exit": False, "internet": False, "shared": 1}]
     sources = [{"name": "kiwi-modules-personal", "url": "https://github.com/someone/kiwi-modules-personal",
                 "commit": "d8464b8b8ffbe0ba9848fe1e2009c0e6f252204f", "tag": "v0.1.0", "modules": ["smartfritz"]}]
-    return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts, "module_sources": sources},
+    return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts, "module_sources": sources,
+             "linked": linked},
             {"hosts": said})
 
 
@@ -113,6 +122,10 @@ def fleet_yaml():
     lines = ["defaults:", "  domain: home", "hosts:"]
     for name, role, modules, _sites, _state, _problems, _f in MACHINES:
         lines += ["  %s:" % name, "    role: %s" % role, "    target: ucore", "    modules: [%s]" % ", ".join(modules)]
+        if name == "sorbet":                    # its standby: the same master on a second machine
+            lines += ["    standby:", "      sorbet-b: {address: 192.168.1.70}"]
+        if name == "kumquat":                   # at a friend's
+            lines += ["    network: {dhcp: true, site: friend}"]
     return "\n".join(lines) + "\n"
 
 

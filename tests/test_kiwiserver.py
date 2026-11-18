@@ -7550,6 +7550,47 @@ peers=4 3
         self.assertIn("latest-handshakes", facts.SCRIPT)
 
 
+class TestPicture(unittest.TestCase):
+    """Where things stand in the picture of the network (picture.layout): the page and the app draw it."""
+
+    @staticmethod
+    def overlap(a, b):
+        return a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"] and a["y"] < b["y"] + b["h"] and b["y"] < a["y"] + a["h"]
+
+    def lay(self, nodes, standbys=(), linked=(), width=860, narrow=False):
+        from kiwiserver import picture
+        master = {"name": "sorbet", "state": "ok", "cap": "master"}
+        machines = [{"name": n, "state": "ok", "cap": "node", "up": True, "site": site} for n, site in nodes]
+        return picture.layout(master, machines, [{"name": s, "state": "ok", "cap": "standby"} for s in standbys],
+                              [{"name": n, "state": "", "cap": "linked network"} for n in linked], width, narrow)
+
+    def test_each_site_has_its_zone_and_nothing_overlaps(self):
+        for narrow in (False, True):
+            lay = self.lay([("papaya", "home"), ("lychee", "home"), ("quince", "home"), ("kumquat", "away")],
+                           standbys=["sorbet-b"], linked=["kiwi2"], width=860 if not narrow else 340, narrow=narrow)
+            self.assertEqual([z["label"] for z in lay["zones"]], ["At home", "Away"])
+            kinds = {b["name"]: b["kind"] for b in lay["boxes"]}
+            self.assertEqual((kinds["sorbet"], kinds["sorbet-b"], kinds["kiwi2"], kinds["kumquat"]),
+                             ("master", "standby", "linked", "machine"))
+            self.assertEqual(sorted(k for *_p, k in lay["sides"]), ["linked", "standby"])
+            away = next(z for z in lay["zones"] if z["label"] == "Away")
+            k = next(b for b in lay["boxes"] if b["name"] == "kumquat")
+            self.assertTrue(away["x"] <= k["x"] and k["x"] + k["w"] <= away["x"] + away["w"]
+                            and away["y"] <= k["y"] and k["y"] + k["h"] <= away["y"] + away["h"], (away, k))
+            boxes = lay["boxes"]
+            for i, a in enumerate(boxes):
+                for b in boxes[i + 1:]:
+                    self.assertFalse(self.overlap(a, b), (a["name"], b["name"], narrow))
+            self.assertTrue(all(b["x"] >= 0 and b["x"] + b["w"] <= lay["w"] for b in boxes))
+            n_machines = len([b for b in boxes if b["kind"] == "machine"])
+            self.assertEqual(len(lay["tunnels"]) + len(lay["branches"]), n_machines)    # every machine its tunnel
+
+    def test_too_many_for_the_width_make_a_list(self):
+        lay = self.lay([("n%d" % i, "home") for i in range(9)] + [("far", "office")], width=500)
+        self.assertIsNotNone(lay["trunk"])
+        self.assertEqual(len(lay["branches"]), 10)
+
+
 class TestLanAddresses(Base):
     @staticmethod
     def host(**network):
@@ -8980,7 +9021,8 @@ class TestMadeUpNetwork(unittest.TestCase):
             self.assertEqual(set(facts.parse("")) - set(h["facts"]), set(), h["host"])
         for h in status["hosts"]:
             self.assertEqual({"host", "target", "ok", "output", "state", "problems", "notes", "facts"} - set(h), set())
-        self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]), sorted(h["name"] for h in listed["hosts"]))
+        self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]),
+                         sorted(h["name"] for h in listed["hosts"] if not h.get("standby_of")))     # a standby is its master's block
         r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "drills", "madeup.py"), "status", "x", "--porcelain"],
                            capture_output=True, text=True)
         self.assertEqual(json.loads(r.stdout), status)

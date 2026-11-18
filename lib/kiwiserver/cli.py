@@ -90,6 +90,17 @@ def site_of(host):
     return str((host.cfg.get("network") or {}).get("site") or "home")
 
 
+def linked_networks(fleet):
+    """[{name, mesh, exit, internet, shared}] of the networks linked to this one, nothing secret:
+    for the picture of the network. [] when there are none, or the file cannot be read."""
+    try:
+        found = fedmod.partners(os.path.dirname(os.path.abspath(fleet.path)))
+    except KiwiError:
+        return []
+    return [{"name": n, "mesh": str(x.get("mesh") or ""), "exit": bool(x.get("exit")), "internet": bool(x.get("internet")),
+             "shared": len(x.get("share") or [])} for n, x in sorted(found.items())]
+
+
 def has_master(fleet, roles):
     return any(h.role in roles and roles[h.role].node_type == "master" and not h.standby_of for h in fleet.hosts.values())
 
@@ -1022,6 +1033,7 @@ def cmd_list(args):
             master_ip if h.role in roles and roles[h.role].node_type == "master" else "")
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
+                     "site": site_of(h),
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
@@ -1061,6 +1073,8 @@ def cmd_list(args):
                           # modules beyond the built-in ones, and which source each came from
                           "module_sources": [dict(x, modules=sorted(m.name for m in r.ms.modules.values() if m.source == x["name"]))
                                              for x in fleet.module_sources],
+                          # the networks linked to this one (federation.yaml): what the picture shows of them
+                          "linked": linked_networks(fleet),
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"

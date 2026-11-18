@@ -128,6 +128,8 @@ text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82
 .pic text{fill:var(--fg);font:600 14px system-ui,sans-serif}.pic text.c{fill:var(--muted);font-weight:400;font-size:11px}
 .pic path{fill:none;stroke:var(--line2);stroke-width:1.8;stroke-linecap:round}.pic path.up{stroke:var(--ok);stroke-opacity:.75}
 .pic path.off{stroke:var(--off);stroke-dasharray:5 5}
+.pic path.side{stroke:var(--muted);stroke-dasharray:6 5;stroke-width:1.4}.pic rect.sb{stroke-dasharray:6 4}
+.pic rect.ln{stroke:var(--accent);stroke-dasharray:2 3}.pic circle.lk{fill:var(--accent)}
 .pic circle{fill:var(--off)}.pic circle.ok{fill:var(--ok)}.pic circle.warn{fill:var(--warn)}.pic circle.bad,.pic circle.down{fill:var(--bad)}
 .what{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:start;margin-top:8px}
 .what p{margin:0}ul{margin:6px 0;padding-left:20px}li{margin:3px 0}
@@ -1541,74 +1543,59 @@ def stats(machines, devices):
     return out
 
 
-def picture(machines, devices=0, per_row=4):
-    """The network as it is (SVG, drawn here; the app draws the same): the master out on the
-    Internet, the machines at home, and the tunnel each holds to the master, green while it
-    answers. `per_row=1` is the narrow one for a phone: a list with a branch to each machine."""
-    masters = [m for m in machines if m["role"] == "master"]
+def picture(machines, devices=0, per_row=4, linked=()):
+    """The network as it is (SVG; the app draws the same, both from picture.layout): the master out
+    on the Internet with its standby and the networks linked to it, the machines in a zone per site,
+    and the tunnel each holds to the master, green while it answers. `per_row=1` is the narrow one
+    for a phone: a list with a branch to each machine."""
+    from . import picture as picmod
+    masters = [m for m in machines if m["role"] == "master" and not m.get("standby_of")]
     rest = [m for m in machines if m["role"] and m["role"] != "master"]
     if not masters or not rest:
         return ""
     esc = markupsafe.escape
-    lines, boxes = [], []
-
-    def box(m, x, y, w, h, cap, cls=""):
-        boxes.append('<a href="/hosts/%s"><rect %sx="%d" y="%d" width="%d" height="%d" rx="12"/>'
-                     '<circle class="ring %s" cx="%d" cy="%d" r="9"/><circle class="%s" cx="%d" cy="%d" r="5"/>'
-                     '<text x="%d" y="%d">%s</text><text class="c" x="%d" y="%d">%s</text></a>'
-                     % (esc(m["name"]), 'class="%s" ' % cls if cls else "", x, y, w, h, esc(m["state"]), x + 20, y + h // 2,
-                        esc(m["state"]), x + 20, y + h // 2, x + 36, y + h // 2 - 4, esc(m["name"]), x + 36, y + h // 2 + 13, esc(cap)))
-
-    def line(d, m=None):
-        cls = "" if m is None else ' class="%s"' % ("up" if m["state"] in ("ok", "warn", "bad") else "off")
-        lines.append('<path%s d="%s"/>' % (cls, d))
     master = masters[0]
-    mcap = "master" + (" · %d %s on its VPN" % (devices, "device" if devices == 1 else "devices") if devices else "")
     cap = lambda m: ", ".join(tags(m["modules"])[:2]) or ("master" if m["role"] == "master" else "node")   # noqa: E731
-    bh, mh, gap, zp = 54, 58, 18, 34
-    rest = masters[1:] + rest
-    if per_row == 1:
-        w = 340
-        box(master, 10, 8, 260, mh, mcap, "m")
-        zy, tx, y = 8 + mh + 30, 32, 8 + mh + 60
-        for m in rest:
-            line("M%d %d Q%d %d %d %d H%d" % (tx, y + bh // 2 - 10, tx, y + bh // 2, tx + 10, y + bh // 2, 58), m)
-            box(m, 58, y, w - 68, bh, cap(m))
-            y += bh + 10
-        lines.insert(0, '<path d="M%d %d V%d"/>' % (tx, 8 + mh, y - 10 - bh // 2))
-        zone = (4, zy, w - 8, y - 10 + 18 - zy)
-    else:
-        bw = 172
-        if len(rest) > 2 * per_row - 1:         # two rows hold them when narrower
-            bw, per_row = 140, per_row + 1
-        rows, left = [], list(rest)
-        while left:                             # later rows: one less, between the ones above
-            take = per_row if not rows else per_row - 1
-            rows.append(left[:take])
-            left = left[take:]
-        w = per_row * bw + (per_row - 1) * gap + 2 * zp + 20
-        mw, mx = 260, (w - 260) // 2
-        box(master, mx, 8, mw, mh, mcap, "m")
-        zy, y, placed = 8 + mh + 58, 8 + mh + 88, []
-        for row in rows:
-            x = (w - (len(row) * bw + (len(row) - 1) * gap)) // 2
-            for m in row:
-                placed.append((x, y, m))
-                box(m, x, y, bw, bh, cap(m))
-                x += bw + gap
-            y += bh + gap
-        placed.sort(key=lambda p: (p[0], p[1]))
-        for i, (x, by, m) in enumerate(placed):
-            sx = mx + 24 + (mw - 48) * (i + 0.5) / len(placed)
-            ex, ez, sy = x + bw // 2, zy + 12, 8 + mh
-            mid = (sy + ez) / 2
-            line("M%.1f %d C%.1f %.1f %d %.1f %d %d V%d" % (sx, sy, sx, mid, ex, mid, ex, ez, by), m)
-        zone = (10, zy, w - 20, y - gap + 22 - zy)
-    h = zone[1] + zone[3] + 8
-    ground = '<rect class="zone" x="%d" y="%d" width="%d" height="%d" rx="14"/><text class="zl" x="%d" y="%d">At home</text>' % (
-        zone[0], zone[1], zone[2], zone[3], zone[0] + 14, zone[1] + 18)
+    mcap = "master" + (" · %d %s on its VPN" % (devices, "device" if devices == 1 else "devices") if devices else "")
+    standbys = [dict(name=m["name"], state=m["state"], cap="standby: takes over when %s is gone" % master["name"])
+                for m in machines if m.get("standby_of") == master["name"]]
+    nets = [dict(name=n["name"], state="", cap="linked network · %s%s" % (n.get("mesh") or "", " · its way out" if n.get("exit") else ""))
+            for n in linked or []]
+    others = [m for m in masters[1:]] + rest
+    lay = picmod.layout(dict(name=master["name"], state=master["state"], cap=mcap),
+                        [dict(name=m["name"], state=m["state"], cap=cap(m), site=m.get("site") or "home",
+                              up=m["state"] in ("ok", "warn", "bad")) for m in others],
+                        standbys, nets, width=340 if per_row == 1 else per_row * (picmod.BW + picmod.GAP) + 120,
+                        narrow=per_row == 1)
+    out = []
+    for z in lay["zones"]:
+        out.append('<rect class="zone" x="%d" y="%d" width="%d" height="%d" rx="14"/><text class="zl" x="%d" y="%d">%s</text>'
+                   % (z["x"], z["y"], z["w"], z["h"], z["x"] + 14, z["y"] + 18, esc(z["label"])))
+    if lay["trunk"]:
+        tx, y1, y2 = lay["trunk"]
+        out.append('<path d="M%.1f %.1f V%.1f"/>' % (tx, y1, y2))
+    for x1, y1, x2, y2, _kind in lay["sides"]:
+        out.append('<path class="side" d="M%.1f %.1f L%.1f %.1f"/>' % (x1, y1, x2, y2))
+    for sx, sy, ex, ez, ey, up in lay["tunnels"]:
+        mid = (sy + ez) / 2
+        out.append('<path class="%s" d="M%.1f %.1f C%.1f %.1f %.1f %.1f %.1f %.1f V%.1f"/>'
+                   % ("up" if up else "off", sx, sy, sx, mid, ex, mid, ex, ez, ey))
+    for tx, y, ex, up in lay["branches"]:
+        out.append('<path class="%s" d="M%.1f %.1f Q%.1f %.1f %.1f %.1f H%.1f"/>'
+                   % ("up" if up else "off", tx, y - 10, tx, y, tx + 10, y, ex))
+    for b in lay["boxes"]:
+        cls = {"master": "m", "standby": "sb", "linked": "ln"}.get(b["kind"], "")
+        href = "/federation" if b["kind"] == "linked" else "/hosts/%s" % esc(b["name"])
+        dot = ('<circle class="ring %s" cx="%d" cy="%d" r="9"/><circle class="%s" cx="%d" cy="%d" r="5"/>'
+               % (esc(b["state"]), b["x"] + 20, b["y"] + b["h"] // 2, esc(b["state"]), b["x"] + 20, b["y"] + b["h"] // 2)
+               if b["kind"] != "linked" else
+               '<circle class="lk" cx="%d" cy="%d" r="5"/>' % (b["x"] + 20, b["y"] + b["h"] // 2))
+        out.append('<a href="%s"><rect %sx="%d" y="%d" width="%d" height="%d" rx="12"/>%s'
+                   '<text x="%d" y="%d">%s</text><text class="c" x="%d" y="%d">%s</text></a>'
+                   % (href, 'class="%s" ' % cls if cls else "", b["x"], b["y"], b["w"], b["h"], dot,
+                      b["x"] + 36, b["y"] + b["h"] // 2 - 4, esc(b["name"]), b["x"] + 36, b["y"] + b["h"] // 2 + 13, esc(b["cap"])))
     return markupsafe.Markup('<svg viewBox="0 0 %d %d" style="max-width:%dpx" role="img" aria-label="Your network: the master and '
-                             'the machines linked to it">%s%s%s</svg>' % (w, h, w, ground, "".join(lines), "".join(boxes)))
+                             'the machines linked to it">%s</svg>' % (lay["w"], lay["h"], lay["w"], "".join(out)))
 
 # a service by the first part of its name: the module whose settings it has, and the page in the
 # app where its admin changes what is inside it (users, rooms, repositories)
@@ -1729,7 +1716,8 @@ def make_app(control: Control):
         out = []
         for h in info.get("hosts") or []:
             s = said.get(h["name"])
-            out.append({"name": h["name"], "hostname": h["hostname"], "role": h["role"], "standby_of": h.get("standby_of") or "", "modules": h.get("modules") or [],
+            out.append({"name": h["name"], "hostname": h["hostname"], "role": h["role"], "standby_of": h.get("standby_of") or "",
+                        "site": h.get("site") or "home", "modules": h.get("modules") or [],
                         "sites": h.get("sites") or [], "vpn_ip": h.get("vpn_ip") or "", "next": h.get("next") or "",
                         "phase": h.get("phase") or "", "provider": h.get("provider") or "", "address": h.get("address") or "",
                         "here": bool(h.get("here")),
@@ -2205,7 +2193,8 @@ def make_app(control: Control):
         return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
                     changed=[n for n in (_info or {}).get("changed") or [] if n != os.environ.get("KIWI_CONTROL_HOST")]
                             + [n for n in (_info or {}).get("changed") or [] if n == os.environ.get("KIWI_CONTROL_HOST")],
-                    stats=stats(ms, devs), wide=picture(ms, len(devs), 4), narrow=picture(ms, len(devs), 1), silent=silent, now=time.time(),
+                    stats=stats(ms, devs), wide=picture(ms, len(devs), 4, (_info or {}).get("linked")),
+                    narrow=picture(ms, len(devs), 1, (_info or {}).get("linked")), silent=silent, now=time.time(),
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
                     add_error=request.query_params.get("add_error"))
 

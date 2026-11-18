@@ -104,5 +104,11 @@ sidebar locks it again.
 *Apply*, *Build* and *Render* run the CLI and stream its output. *Build* lists
 every host with the disk it will wipe before it starts.
 
+*Add a phone or laptop…* (in the menu) asks for a name and a group and shows the QR code
+and the file to import. *Only the network
+through the VPN* makes a split config, as `enroll --split` does; the dialog then shows the
+NetworkManager line that keeps the computer's own names (see
+[Joining the mesh](network.md#joining-the-mesh)).
+
 The GUI writes plain YAML: comments in a hand-written fleet file are not kept
 when it saves.

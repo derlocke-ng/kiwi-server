@@ -13,7 +13,7 @@ that booted. The page:
 | **Machines** | every machine with its load, memory and disk; add a machine; update everything |
 | **Services** | every service in one table: whether it works and its last 90 days, how fast it answers, where it is open (VPN, Internet, Tor: the badge copies the address), and under its name **Settings** (what kiwi-server sets for it) and **Admin page** (the app's own, for what is inside it) |
 | **A machine** | what it is, how busy and how full it is, what runs on it; Check now, Preview, Apply, each with what it does |
-| **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app |
+| **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app and the config to download; *Only the network through the VPN* makes a split config (see [Joining the mesh](network.md#joining-the-mesh)) |
 | **Accounts** | with the accounts module: requests to accept or deny, invite codes, the accounts and their password links, which services sign people in with them; Jabber's sign-up page too |
 | **Linked networks** | from Home: what other networks may reach here, and whether this network leaves to the Internet through one of them |
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
@@ -270,6 +270,19 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/activity` | the newest tasks and who did what |
 | `POST /api/jobs` | starts an action as a job, as the page's buttons do: `{action, hosts}` (apply, update, status, plan, check, backup …) gives `{job}`; the History names the computer |
 | `GET /api/jobs/{job}/log?offset=N` | the job's log from `offset` on: `text`, `offset`, `state` (waiting, running, ok, failed) |
+| `GET /api/devices` | the phones and laptops on the VPN by name, the groups, the group a new one goes into |
+| `POST /api/devices` | a new device, as the Devices page adds one: `{name, group, split}` gives `{name, config, qr, dns_search}`. `config` holds the device's private key and is shown this once; `dns_search` is the NetworkManager line's domains for a split config |
+| `DELETE /api/devices/{name}` | takes a device off the VPN (a lost phone); the master forgets its key at once |
+| `GET /api/settings?host=NAME` | the settings form of a machine, or without `host` of the defaults: its groups and fields as the page shows them (`name`, `type`, `label`, `value`, `inherited`, `set`, `options`, `help`); a secret field says only whether it is set |
+| `POST /api/settings` | `{host, values: {field: value}, clear: [secret fields], apply}` gives `{saved, job}`: the same checks as the page, only what changed is written, `""` puts a field back to the defaults, a module list is a list of names; with `apply: true` the machines the change reaches are applied as a job. A wrong value gives 400 with `wrong: {field: why}` |
+| `GET /api/access` | who may reach what, as the page shows it: `master`, `who` (each group and linked network with `kind`, `reach`, `peers`, `internet`, `admin`), `machines` |
+| `POST /api/access` | `{who: {name: {reach, peers, internet, admin}}, new, new_as}` gives `{saved}`. What a name leaves out stays as it is; `reach` lists machines, services like `cloud.papaya`, ports like `papaya:22`, `apps` or `all`; `new` makes a group that starts with `new_as` (nothing, apps, all) |
+| `GET /api/federation` | the linked networks: per name `domain`, `mesh`, `share`, `from`, `exit`, `internet` |
+| `POST /api/federation` | `{name: {share, from, exit, internet}}`: what this network opens to a linked one, whom of it it lets in, whether it leaves to the Internet through it. Linking a network needs both fleets and stays with `kiwi-server federate` |
+| `GET /api/modules?check=1` | the module sources (`name`, `url`, `tag`, `commit`, `modules`); with `check`, `news`: each repository's newest version tag |
+| `POST /api/modules` | `{op: add, update or remove, url, name, ref}` gives `{said}`: a module source, as on the Module sources page |
+| `GET /api/accounts` | with the accounts module: `people` (name, display name, admin, Jabber), `invites` (never a code: a code is shown once when made), `waiting` (requests to accept or deny), `jabber`, and `error` when the accounts machine did not answer |
+| `POST /api/accounts` | the Accounts page's buttons: `{op, name, hint, note, uses, days}` with `op` one of invite, accept, deny, revoke, create, link, delete, admins, games, connect (and `jabber-invite`, `jabber-accept`, `jabber-deny`, `jabber-revoke`) gives `{done, shown}`; `shown` is a new invite code or password link, given this once |
 | `GET /api/hosts/{name}/logins` | a machine's logins with their passwords (`label`, `module`, `address`, `user`, `password`, `note`), never cached; the activity log says which computer was shown them |
 
 `/api/status` and `/api/machines` also answer the page's login, only read, and are

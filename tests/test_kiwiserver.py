@@ -9587,6 +9587,33 @@ class TestWeb(WebBase):
             self.assertIn(why, body)
             self.assertNotIn("ran sources", body)
         self.assertEqual(self.ask("/modules/add", {"url": "https://example.org/x"})[0], 303)    # no form of this session: no
+        # the same for a controller, as JSON
+        import urllib.request
+        import urllib.error
+
+        def api(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        self.assertEqual(api("GET", "/api/modules")[0], 401)
+        self.assertEqual(api("POST", "/api/modules", body={"op": "update", "name": "personal"})[0], 401)
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None):
+            code, out = api("GET", "/api/modules", "tok")
+            self.assertEqual((code, out["sources"][0]["name"], out["news"]), (200, "personal", {}))
+            code, out = api("POST", "/api/modules", "tok", {"op": "update", "name": "personal", "ref": "v0.3.0"})
+            self.assertEqual(code, 200)
+            self.assertIn("ran sources %s update personal --ref v0.3.0" % self.c.fleet_path, out["said"])
+            code, out = api("POST", "/api/modules", "tok", {"op": "add", "url": "--path=/etc"})
+            self.assertEqual(code, 400)
+            self.assertIn("https address", out["error"])
+            self.assertEqual(api("POST", "/api/modules", "tok", {"op": "drop", "name": "personal"})[0], 400)
 
     def test_the_control_part_writes_only_public_data_for_the_public_pages(self):
         folder = tempfile.mkdtemp()
@@ -9807,6 +9834,211 @@ class TestWeb(WebBase):
             code, out = ask("GET", "/api/jobs/j1/log?offset=0", "tok")
             self.assertEqual((code, out["text"], out["state"]), (200, "applied\n", "ok"))
             self.assertEqual(ask("GET", "/api/jobs/j1/log", "nope")[0], 401)
+
+    def test_a_controller_adds_and_removes_a_device(self):
+        """The Android app puts its phone on the VPN by the API: one function with the page."""
+        import urllib.request
+        import urllib.error
+
+        def ask(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}"), r.headers.get("Cache-Control")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}"), None
+        self.assertEqual(ask("GET", "/api/devices")[0], 401)
+        self.assertEqual(ask("POST", "/api/devices", body={"name": "phone"})[0], 401)
+        self.assertEqual(ask("DELETE", "/api/devices/phone")[0], 401)
+        made, gone = [], []
+        conf = "[Interface]\nPrivateKey = test-not-a-key\nAddress = 10.8.3.2/32\n"
+
+        def add(name, group="", user="admin", split=False):
+            if name in made:
+                raise KiwiError("a device called %s exists already" % name)
+            made.append(name)
+            return conf
+        info = {"domain": "home", "groups": {"devices": {}, "guests": {}}, "default_group": "devices",
+                "linked": [{"name": "kiwi2", "domain": "internal"}]}
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None), \
+                mock.patch.object(self.c, "devices", lambda: list(made)), \
+                mock.patch.object(self.c, "add_device", add), \
+                mock.patch.object(self.c, "remove_device", lambda name, user="admin": gone.append((name, user))), \
+                mock.patch.object(self.c, "fleet_info", lambda fresh=False: info):
+            code, out, _ = ask("GET", "/api/devices", "tok")
+            self.assertEqual((code, out), (200, {"devices": [], "groups": ["devices", "guests"], "default_group": "devices"}))
+            code, out, cache = ask("POST", "/api/devices", "tok", {"name": "Annas-Phone", "group": "devices", "split": True})
+            self.assertEqual((code, out["name"], out["config"], cache), (200, "annas-phone", conf, "no-store"))
+            self.assertIn("<svg", out["qr"])
+            self.assertEqual(out["dns_search"], "~home,~internal")                # only the network's names
+            self.assertEqual(ask("POST", "/api/devices", "tok", {"name": "annas-phone"})[0], 409)
+            self.assertEqual(ask("POST", "/api/devices", "tok", {"name": "laptop"})[1]["dns_search"], "")   # full tunnel
+            self.assertEqual(ask("POST", "/api/devices", "tok", ["laptop"])[0], 400)
+            self.assertEqual(ask("DELETE", "/api/devices/annas-phone", "tok")[:2], (200, {"removed": "annas-phone"}))
+            self.assertEqual(gone, [("annas-phone", "phone")])                    # in its name, in the History
+            self.assertEqual(ask("POST", "/api/devices", "nope", {"name": "x"})[0], 401)
+
+    def test_the_accounts_buttons_on_the_page_and_for_a_controller(self):
+        """The Accounts page's buttons and the API do the same, through one function."""
+        import urllib.request
+        import urllib.error
+
+        def api(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        asked = []
+
+        def accounts(*argv, user="admin"):
+            asked.append((tuple(str(a) for a in argv), user))
+            w = argv[0]
+            if w == "list":
+                return [{"name": ["anna"], "displayname": ["Anna"], "memberof": ["admins@id.home"]}]
+            if w == "invites":
+                return [{"hint": "ab12", "live": True, "note": "for bob", "uses": 1, "used": 0, "until": 2000000000}]
+            if w == "requests":
+                return [{"hint": "r1", "state": "waiting", "name": "carl", "at": 1000, "note": ""}, {"hint": "r0", "state": "accepted", "at": 900}]
+            if w == "invite":
+                return {"code": "CODE-OF-THE-TEST"}
+            if w in ("create", "link"):
+                return {"name": argv[1], "link": "https://id.home/reset/LINK-OF-THE-TEST"}
+            return {}
+        self.assertEqual(api("GET", "/api/accounts")[0], 401)
+        self.assertEqual(api("POST", "/api/accounts", body={"op": "invite"})[0], 401)
+        with mock.patch.object(self.c, "accounts", accounts), mock.patch.object(self.c, "has_accounts", lambda: True), \
+                mock.patch.object(self.c, "has_jabber_join", lambda: False), \
+                mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None):
+            code, out = api("GET", "/api/accounts", "tok")
+            self.assertEqual(code, 200)
+            self.assertEqual((out["people"][0]["name"], out["people"][0]["admin"]), ("anna", True))
+            self.assertEqual([r["hint"] for r in out["waiting"]], ["r1"])             # waiting ones only
+            self.assertEqual(out["invites"][0]["hint"], "ab12")
+            code, out = api("POST", "/api/accounts", "tok", {"op": "invite", "uses": 2, "days": 7, "note": "for dora"})
+            self.assertEqual((code, out["done"], out["shown"]["value"]), (200, "invite", "CODE-OF-THE-TEST"))
+            self.assertIn((("invite", "--uses", "2", "--days", "7", "--note", "for dora"), "phone"), asked)
+            self.assertEqual(api("POST", "/api/accounts", "tok", {"op": "accept", "hint": "r1"}), (200, {"done": "accept", "shown": None}))
+            self.assertIn((("accept", "r1"), "phone"), asked)
+            code, out = api("POST", "/api/accounts", "tok", {"op": "link", "name": "Anna"})
+            self.assertEqual(out["shown"]["value"], "https://id.home/reset/LINK-OF-THE-TEST")
+            self.assertEqual(api("POST", "/api/accounts", "tok", {"op": "rm"})[0], 400)
+            self.assertEqual(api("POST", "/api/accounts", "tok", {"op": "invite", "uses": "many"})[0], 400)
+            self.assertEqual(api("POST", "/api/accounts", "tok", ["invite"])[0], 400)
+            # the page: the same button, the same call, the code shown once
+            self.ask("/login", {"password": self.PW})
+            tok = re.search(r'name="csrf" value="([0-9a-f]{64})"', self.ask("/")[1]).group(1)
+            code, body = self.ask("/accounts/invite", {"csrf": tok, "uses": "1", "days": "14", "note": "for eve"})
+            self.assertIn("CODE-OF-THE-TEST", body)
+            self.assertIn((("invite", "--uses", "1", "--days", "14", "--note", "for eve"), "admin"), asked)
+            code, body = self.ask("/accounts/deny", {"csrf": tok, "hint": "r1"})
+            self.assertIn((("deny", "r1"), "admin"), asked)
+            self.assertIn("carl", body)
+            self.assertIn("not a thing to do here", self.ask("/accounts/rm", {"csrf": tok})[1])
+
+    def test_a_controller_reads_and_changes_the_settings(self):
+        """The settings form as JSON for the Android app: the same fields, the same checks, secrets never."""
+        import urllib.request
+        import urllib.error
+
+        def api(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        self.assertEqual(api("GET", "/api/settings?host=a")[0], 401)
+        self.assertEqual(api("POST", "/api/settings", body={"host": "a", "values": {}})[0], 401)
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)      # the fleet opens
+        self.c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
+                       "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
+        saved = []
+        real = self.c.save_settings
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None), \
+                mock.patch.object(self.c, "save_settings", lambda host, changes, user="admin": saved.append((host, changes, user)) or real(host, changes, user)):
+            code, out = api("GET", "/api/settings?host=a", "tok")
+            self.assertEqual(code, 200, out)
+            self.assertEqual(out["host"], "a")
+            fields = {f["name"]: f for g in out["groups"] for f in g["fields"]}
+            self.assertIn("admin.password", fields)
+            self.assertIsNone(fields["admin.password"]["value"])                   # a secret: whether it is set, never what
+            self.assertEqual(fields["updates.enabled"]["type"], "bool")
+            self.assertEqual(api("GET", "/api/settings?host=nobody", "tok")[0], 404)
+            code, out = api("POST", "/api/settings", "tok", {"host": "a", "values": {"updates.enabled": False}})
+            self.assertEqual(code, 200, out)
+            self.assertIsNone(out["job"])
+            self.assertEqual(saved[-1][0::2], ("a", "phone"))                      # in the controller's name
+            self.assertIn("enabled: false", util.read_text(self.c.fleet_path))
+            code, out = api("POST", "/api/settings", "tok", {"host": "a", "values": {"no.such": "x"}})
+            self.assertEqual((code, out["wrong"]), (400, {"no.such": "no such setting"}))
+            code, out = api("POST", "/api/settings", "tok", {"host": "a", "values": {"updates.length_minutes": "ninety"}})
+            self.assertEqual(code, 400)
+            self.assertIn("updates.length_minutes", out["wrong"])
+            self.assertEqual(api("POST", "/api/settings", "tok", ["a"])[0], 400)
+            code, out = api("GET", "/api/settings", "tok")                         # the defaults
+            self.assertEqual((code, out["host"]), (200, None))
+
+    def test_a_controller_changes_who_may_reach_what(self):
+        """Who may reach what and the linked networks, by the API: what a name leaves out stays."""
+        import urllib.request
+        import urllib.error
+
+        def api(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        for path in ("/api/access", "/api/federation"):
+            self.assertEqual(api("GET", path)[0], 401)
+            self.assertEqual(api("POST", path, body={})[0], 401)
+        rules = {"master": "sorbet", "machines": [{"name": "papaya", "master": False, "services": ["cloud"]}],
+                 "who": [{"name": "family", "kind": "group", "reach": ["apps"], "peers": True, "internet": True, "admin": False},
+                         {"name": "kiwi2", "kind": "network", "reach": ["papaya"], "peers": False, "internet": False, "admin": False}]}
+        fed = {"kiwi2": {"domain": "internal", "mesh": "10.10.0.0/16", "endpoint": "198.51.100.7:51822",
+                         "public_key": "pk", "share": ["cloud.papaya"], "from": [], "exit": False}}
+        saved, fsaved = [], []
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None), \
+                mock.patch.object(self.c, "access", lambda: rules), \
+                mock.patch.object(self.c, "save_access", lambda changes, new="", new_as="nothing", user="admin":
+                                  saved.append((changes, new, new_as, user)) or list(changes) + ([new] if new else [])), \
+                mock.patch.object(self.c, "federation", lambda: fed), \
+                mock.patch.object(self.c, "save_federation", lambda changes, user="admin": fsaved.append((changes, user))):
+            self.assertEqual(api("GET", "/api/access", "tok"), (200, rules))
+            code, out = api("POST", "/api/access", "tok", {"who": {"family": {"reach": ["apps", "papaya:22"]}}, "new": "Kids"})
+            self.assertEqual((code, out), (200, {"saved": ["family", "kids"]}))
+            self.assertEqual(saved[-1], ({"family": {"reach": ["apps", "papaya:22"], "peers": True, "internet": True, "admin": False}},
+                                         "kids", "nothing", "phone"))                       # the flags as they were
+            self.assertEqual(api("POST", "/api/access", "tok", {"who": {"nobody": {}}})[0], 400)
+            self.assertEqual(api("POST", "/api/access", "tok", {"who": {"family": {"reach": "all"}}})[0], 400)
+            code, out = api("GET", "/api/federation", "tok")
+            self.assertEqual(out, {"kiwi2": {"domain": "internal", "mesh": "10.10.0.0/16", "share": ["cloud.papaya"],
+                                             "from": [], "exit": False, "internet": None}})
+            self.assertNotIn("public_key", json.dumps(out))
+            self.assertEqual(api("POST", "/api/federation", "tok", {"kiwi2": {"from": ["10.10.3.0/24"]}}), (200, {"saved": True}))
+            self.assertEqual(fsaved[-1], ({"kiwi2": {"share": ["cloud.papaya"], "from": ["10.10.3.0/24"], "exit": False,
+                                                     "internet": False}}, "phone"))
+            self.assertEqual(api("POST", "/api/federation", "tok", {"elsewhere": {}})[0], 400)
+            self.assertEqual(api("POST", "/api/federation", "tok", {"kiwi2": {"share": "cloud"}})[0], 400)
 
     def test_a_controller_reads_the_status_and_the_machines(self):
         """The Android app is a controller: it reads with its token what the page reads with its login."""

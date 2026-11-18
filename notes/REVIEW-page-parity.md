@@ -65,7 +65,7 @@ Since 2.95.0, in all three: "If something breaks" (`recovery`): could the networ
 each case; and "This machine is lost or was replaced" on a set-up machine (the first install's steps again).
 
 Since 2.96.0, in all three: hidden services (`onion`; on the page and in the app under "Who may reach what").
-The app does not show a person's key yet (`onion … --show NAME` in a terminal, or the page).
+A person's key: "Show key" in the app's list (2.213.0), on the page, `onion … --show NAME` in a terminal.
 
 Since 2.98.0, in all three: admin pages as a class of their own and the level "every app" (`access … apps`).
 
@@ -118,4 +118,11 @@ A controller like a second computer: it joins with the invite link and reads the
 | A machine's logins and passwords | `/api/hosts/{name}/logins` (a controller too: 2.194.0) | built (kiwi-app 0.1.29) |
 | The registry, for the people who use the network | `/api/registry`, `/.well-known/kiwi` (2.193.0) | built (kiwi-app 0.1.29): services, game servers, sign-up and status page, in a web view that checks certificates against the fleet's CA |
 | The CA's mark and each service's Android app | `ca_mark`, `services[].android` in the registry (2.196.0); the mark on the status page | for the app to show and use |
-| Everything that changes something (apply, settings, devices, accounts, who may reach what, backups, services, module sources, game servers) | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |
+| Devices: list, add (config, QR code, a split config's DNS line), remove | `/api/devices`, `DELETE /api/devices/{name}` (2.213.0) | for the app: the phone puts itself on the VPN |
+| Actions as jobs (apply, update, check, plan, backup …) and their logs | `POST /api/jobs`, `/api/jobs/{job}/log` | for the app |
+| Accounts: the lists and every button of the Accounts page | `/api/accounts` (2.213.0) | for the app |
+| Settings: every machine's and the defaults', Save and Save & apply | `/api/settings` (2.213.0) | for the app |
+| Who may reach what, and what the linked networks may reach | `/api/access`, `/api/federation` (2.213.0) | for the app |
+| Backups (save now, restore, prune, a new history) and a service's container (restart, stop, start, logs) | `POST /api/jobs` with `save`, `restore`, `prune`, `start-new`, `service` | for the app |
+| Module sources | `/api/modules` (2.213.0) | for the app |
+| Game servers | the play page is for the people who play; for an admin, a game server's container is a `service` job | nothing left |

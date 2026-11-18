@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.213.0 — the control node's buttons for the apps
+
+- **What changes something, as JSON for a computer or phone that manages the network** (its key's
+  token; ROADMAP: the control node as the one admin, the Android app as its controller). Each route
+  runs the same function as the control page's button, so the page and the apps cannot drift apart:
+  - `GET/POST /api/devices`, `DELETE /api/devices/{name}`: list, add (its config, QR code and, for
+    a split config, the NetworkManager line's domains), remove. The phone can put itself on the VPN.
+  - `GET/POST /api/accounts`: the people, invite codes and requests; every button of the Accounts
+    page (invite, accept, deny, create, link, delete, admins …).
+  - `GET/POST /api/settings`: the settings form of a machine or the defaults, with the page's checks;
+    secrets say only whether they are set. Save, or Save & apply as a job.
+  - `GET/POST /api/access`, `GET/POST /api/federation`: who may reach what, and what a linked
+    network may reach here.
+  - `GET/POST /api/modules`: the module sources, their newest tags; add, update, remove.
+- The Accounts page, the settings form and the module sources were split into one part that reads or does and one
+  that shows it; nothing changes on the page.
+- **The app shows a person's key for a hidden service** (*Show key* under Who may reach what), as the
+  control page does; before, it sent you to `onion … --show NAME` in a terminal.
+- Docs: the split choice for devices and its DNS line (network, control page, app).
+- The offsite drill takes `ENCRYPT=RING`: an encrypted machine at another site, its first boot opened
+  through the initramfs's SSH, every later one by a ring on the master.
+
 ## 2.212.0 — a laptop that keeps its own Internet and names
 
 - **Only the network through the VPN, from the app and the control page** (the owner: "does the

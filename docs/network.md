@@ -25,7 +25,14 @@ kiwi-server enroll fleet.yaml sh3 --existing          # the config of a client t
 - A fleet host's client is named after its hostname, so the wg-easy page and
   the fleet agree.
 - Nodes keep everything in the tunnel; `--split` is for devices that should
-  reach the network but keep their own exit.
+  reach the network but keep their own exit. Such a config carries this mesh and the meshes of
+  the linked networks, nothing else.
+- A split config still names the master as its DNS server. Imported as it is into
+  NetworkManager, every name the computer looks up goes there, the computer's own LAN names
+  included. `enroll --split` prints the line that changes this:
+  `nmcli connection modify laptop ipv4.dns-search ~home,~internal ipv4.never-default yes`
+  (your domain and the linked networks' domains). After it, only those names go through the
+  tunnel. `kiwi-server connect` does the same for the computer it runs on.
 - `vpn-server.wg_password` is what the API logs in with.
 
 Routers join the mesh with `kiwi-server openwrt` or the steps in

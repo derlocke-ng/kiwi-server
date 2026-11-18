@@ -2640,6 +2640,35 @@ def make_app(control: Control):
                     open=[g["id"] for g in groups if any(f["name"] in touched for f in g["fields"])],
                     same="as inherited" if host else "the usual")
 
+    def settings_change(host, groups, typed, secrets, u, apply=False):
+        """Values against the form's fields (form.changes): only what changed is written; with `apply`,
+        this machine (or, for the defaults, every one) and every machine the change reaches are applied
+        as a job. For the page's Save and Save & apply, and for a controller. -> {saved, wrong, error,
+        job, touched}."""
+        changes, wrong = formmod.changes(groups, dict(typed, **secrets))
+        done = {"saved": 0, "wrong": wrong, "error": "", "job": "",
+                "touched": set(wrong) | {".".join(path) for path in changes}}
+        if wrong:
+            return done
+        try:
+            done["saved"] = control.save_settings(host, changes, u)
+        except KiwiError as e:
+            done["error"] = "Not saved: %s" % e
+            return done
+        if apply:
+            # this machine (or, for the defaults, every one) and every other machine the change
+            # reaches: those whose role script is another now (`list`'s changed)
+            info = control.fleet_info(fresh=True) or {}
+            names = [h["name"] for h in info.get("hosts") or [] if h.get("phase") == "applied"]
+            todo = ([host] if host else names) + [n for n in info.get("changed") or [] if n != host]
+            todo = [n for n in dict.fromkeys(todo) if n in names]
+            if todo:
+                try:
+                    done["job"] = control.start("apply", todo, user=u)
+                except KiwiError as e:
+                    done["error"] = "Saved, not applied: %s" % e
+        return done
+
     def settings_save(request, host, sent, u):
         """The posted form against what the form showed: only what was changed is written."""
         try:
@@ -2662,27 +2691,14 @@ def make_app(control: Control):
                     typed[name] = ""
                 elif "f:" + name in sent:
                     typed[name] = str(sent.get("f:" + name)).replace("\r\n", "\n")
-        changes, wrong = formmod.changes(groups, dict(typed, **secrets))
-        touched = set(wrong) | {".".join(path) for path in changes}
-        if wrong:
-            return settings_page(request, host, typed, wrong, "Not saved: %s" % next(iter(wrong.values())), touched)
-        try:
-            keys = control.save_settings(host, changes, u)
-        except KiwiError as e:
-            return settings_page(request, host, typed, None, "Not saved: %s" % e, touched)
-        if str(sent.get("then") or "") == "apply":
-            # Save & apply: this machine (or, for the defaults, every one) and every other machine the
-            # change reaches: those whose role script is another now (`list`'s changed)
-            info = control.fleet_info(fresh=True) or {}
-            names = [h["name"] for h in info.get("hosts") or [] if h.get("phase") == "applied"]
-            todo = ([host] if host else names) + [n for n in info.get("changed") or [] if n != host]
-            todo = [n for n in dict.fromkeys(todo) if n in names]
-            if todo:
-                try:
-                    jid = control.start("apply", todo, user=u)
-                except KiwiError as e:
-                    return settings_page(request, host, typed, None, "Saved, not applied: %s" % e, touched)
-                return RedirectResponse("/jobs/" + jid, status_code=303)
+        done = settings_change(host, groups, typed, secrets, u, apply=str(sent.get("then") or "") == "apply")
+        if done["wrong"]:
+            return settings_page(request, host, typed, done["wrong"], "Not saved: %s" % next(iter(done["wrong"].values())), done["touched"])
+        if done["error"]:
+            return settings_page(request, host, typed, None, done["error"], done["touched"])
+        if done["job"]:
+            return RedirectResponse("/jobs/" + done["job"], status_code=303)
+        keys = done["saved"]
         where = "/hosts/%s/settings" % host if host else "/settings"
         return RedirectResponse("%s?saved=%d" % (where, 1 if keys else 0), status_code=303)
 
@@ -2712,6 +2728,75 @@ def make_app(control: Control):
     @app.post("/hosts/{name}/settings")
     async def host_settings_do(request: Request, name: str):
         return await settings_post(request, name)
+
+    def api_fields(groups):
+        """The form's groups for a controller: a secret field says only whether it is set."""
+        out = []
+        for g in groups:
+            g = dict(g)
+            g["fields"] = [dict(f, value=None, inherited=None) if f.get("secret") else f for f in g.get("fields") or []]
+            out.append(g)
+        return out
+
+    @app.get("/api/settings")
+    def api_settings(request: Request, host: str = ""):
+        """The settings form of one machine (?host=NAME) or of the defaults: its groups and fields, as the
+        page shows them (name, type, label, value, inherited, set, options, help …). Secrets never."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            got = control.settings(host or None)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=404 if "no such" in str(e) or "not a host" in str(e) else 409)
+        return JSONResponse({"host": got["host"], "groups": api_fields(got["groups"])}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/settings")
+    async def api_settings_do(request: Request):
+        """{host, values: {field: value}, clear: [secret fields], apply} -> {saved, job}, or 400 with
+        {error, wrong: {field: why}}. A value of "" puts a field back to what every machine has; a
+        module list is a list of names. Only what changed is written, in the controller's name."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or not isinstance(body.get("values") or {}, dict):
+            return JSONResponse({"error": "a JSON object: {host, values, clear, apply}"}, status_code=400)
+        host = str(body.get("host") or "") or None
+        try:
+            groups = control.settings(host)["groups"]
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=404 if "no such" in str(e) or "not a host" in str(e) else 409)
+        fields = {f["name"]: f for g in groups for f in g["fields"]}
+        values = body.get("values") or {}
+        unknown = [k for k in list(values) + list(body.get("clear") or []) if k not in fields]
+        if unknown:
+            return JSONResponse({"error": "no such setting: %s" % unknown[0], "wrong": {k: "no such setting" for k in unknown}},
+                                status_code=400)
+        typed, secrets = {}, {}
+        for k, v in values.items():
+            f = fields[k]
+            if f["type"] == "modules":
+                typed[k] = [str(x) for x in v] if isinstance(v, list) else None
+                if typed[k] is None:
+                    return JSONResponse({"error": "%s: a list of module names" % k, "wrong": {k: "a list"}}, status_code=400)
+            elif f["secret"]:
+                if str(v or "").strip():
+                    secrets[k] = str(v)
+            elif isinstance(v, bool):
+                typed[k] = "yes" if v else "no"
+            else:
+                typed[k] = "" if v is None else str(v)
+        for k in body.get("clear") or []:
+            if fields[k]["secret"]:
+                secrets[k] = None
+        done = await run_in_threadpool(settings_change, host, groups, typed, secrets, who, body.get("apply") is True)
+        if done["wrong"] or (done["error"] and not done["saved"]):
+            return JSONResponse({"error": done["error"] or "Not saved: %s" % next(iter(done["wrong"].values())),
+                                 "wrong": done["wrong"]}, status_code=400)
+        return {"saved": done["saved"], "job": done["job"] or None, "error": done["error"] or None}
 
     @app.post("/hosts/{name}/quiet")
     def host_quiet(request: Request, name: str, key: str = Form(""), csrf: str = Form("")):
@@ -2880,8 +2965,11 @@ def make_app(control: Control):
             return login_page()
         return devices_page(request)
 
-    def accounts_page(request, **kw):
-        available, people, invites, requests, id_host, error = control.has_accounts(), [], [], [], "", kw.pop("error", None)
+    def accounts_view():
+        """What the Accounts page shows, for the page and for a controller: the people, the invite
+        codes (never a code itself: shown once when made), the requests, Jabber's; `error` when the
+        accounts machine did not answer."""
+        available, people, invites, requests, error = control.has_accounts(), [], [], [], None
         if available:
             try:
                 for p in control.accounts_read("list") or []:
@@ -2893,12 +2981,7 @@ def make_app(control: Control):
                 invites = control.accounts_read("invites") or []
                 requests = control.accounts_read("requests") or []
             except KiwiError as e:
-                error = error or str(e)
-        info = control.fleet_info() or {}
-        holder = next((h for h in info.get("hosts") or [] if "accounts" in (h.get("modules") or [])), None) or {}
-        id_host = next((s for s, label in (holder.get("site_labels") or {}).items() if label == "Accounts"),
-                       "id.%s" % holder.get("hostname", ""))
-        now = time.time()
+                error = str(e)
         jabber = None
         if control.has_jabber_join():
             try:
@@ -2906,13 +2989,24 @@ def make_app(control: Control):
                 jabber = {"waiting": [r for r in jr if r.get("state") == "waiting"], "invites": control.accounts_read("invites", "--jabber") or []}
             except KiwiError as e:
                 error = error or str(e)
+        return {"available": available, "people": sorted(people, key=lambda p: p["name"]), "invites": invites,
+                "waiting": [r for r in requests if r.get("state") == "waiting"], "jabber": jabber, "error": error}
+
+    def accounts_page(request, **kw):
+        v = accounts_view()
+        error = kw.pop("error", None) or v["error"]
+        info = control.fleet_info() or {}
+        holder = next((h for h in info.get("hosts") or [] if "accounts" in (h.get("modules") or [])), None) or {}
+        id_host = next((s for s, label in (holder.get("site_labels") or {}).items() if label == "Accounts"),
+                       "id.%s" % holder.get("hostname", ""))
+        now = time.time()
         connectable = [{"host": h["name"], "module": m, "label": label,
                         "connected": os.path.isfile(os.path.join(control.fleet_dir, "secrets", "accounts", "%s-%s.json" % (h["name"], m)))}
                        for h in info.get("hosts") or [] for m, label in (("git", "Forgejo (git)"), ("cloud", "Nextcloud (files)"), ("paperless", "Paperless (documents)"), ("vault", "Vaultwarden (passwords)"), ("immich", "Immich (photos)"), ("control", "Game page (play)"))
                        if m in (h.get("modules") or [])]
-        return page("accounts.html", request, "/accounts", available=available, connectable=connectable, jabber=jabber, people=sorted(people, key=lambda p: p["name"]),
-                    play_group=PLAY_GROUP if PLAY_HOST else "",
-                    invites=invites, live=[i for i in invites if i.get("live")], waiting=[r for r in requests if r.get("state") == "waiting"],
+        return page("accounts.html", request, "/accounts", available=v["available"], connectable=connectable, jabber=v["jabber"],
+                    people=v["people"], play_group=PLAY_GROUP if PLAY_HOST else "",
+                    invites=v["invites"], live=[i for i in v["invites"] if i.get("live")], waiting=v["waiting"],
                     id_host=id_host, now=now, error=error, **kw)
 
     @app.get("/accounts")
@@ -2921,6 +3015,56 @@ def make_app(control: Control):
             return login_page()
         return accounts_page(request)
 
+    def accounts_act(what, u, hint="", name="", note="", uses=1, days=14):
+        """One of the Accounts page's buttons, for the page and for a controller: {} when done, or what
+        to show once (a code, a link: title, value, text, note). KiwiError says why not."""
+        if what.startswith("jabber-"):
+            op = what[7:]
+            if op == "invite":
+                code = control.accounts("invite", "--jabber", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
+                                        "--note", note.strip()[:80], user=u)["code"]
+                return {"title": "A Jabber invite code", "value": code,
+                        "text": "Give it to %s. It makes %d Jabber address%s, for %d days:" % (
+                            note.strip() or "the person", uses, "" if uses == 1 else "es", days),
+                        "note": "Shown this once. They enter it at /join on Jabber's page, with a name and a password."}
+            if op in ("accept", "deny", "revoke"):
+                control.accounts(op, hint.strip(), "--jabber", user=u)
+                return {}
+        if what == "invite":
+            code = control.accounts("invite", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
+                                    "--note", note.strip()[:80], user=u)["code"]
+            return {"title": "An invite code", "value": code,
+                    "text": "Give it to %s. It makes %d account%s, for %d days:" % (
+                        note.strip() or "the person", uses, "" if uses == 1 else "s", days),
+                    "note": "It is shown this once. They enter it at the sign-up page with a name of their choice."}
+        if what in ("accept", "deny", "revoke"):
+            control.accounts(what, hint.strip(), user=u)
+            return {}
+        if what in ("create", "link"):
+            answer = control.accounts(what, name.strip().lower(), user=u)
+            return {"title": "The account %s" % answer["name"] if what == "create" else "A new password link for %s" % answer["name"],
+                    "value": answer["link"], "text": "Hand this link to its person: it sets the password or a passkey.",
+                    "note": "It works for a day, once. Nobody else should see it."}
+        if what == "delete":
+            control.accounts("delete", name.strip().lower(), user=u)
+            return {}
+        if what == "admins":                        # the network's admins: Forgejo, Nextcloud, Immich
+            control.accounts("member", "admins", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
+            return {}
+        if what == "games" and PLAY_HOST:          # who may use the game page: its group
+            control.accounts("member", PLAY_GROUP, name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
+            return {}
+        if what == "connect":
+            labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "immich": "Immich",
+                      "control": "the game page"}
+            module = note.strip() if note.strip() in labels else "git"
+            label = labels[module]
+            control.accounts("connect", name.strip(), module, user=u)
+            return {"title": "%s on %s is connected" % (label, name.strip()), "value": "kiwi-server apply %s" % name.strip(),
+                    "text": "Apply that machine now (Machines, %s, Apply): then its %s signs people in with these accounts." % (name.strip(), label),
+                    "note": "Nothing changes for people who already have a Forgejo user of the same name: they are linked on their first sign-in."}
+        raise KiwiError("not a thing to do here")
+
     @app.post("/accounts/{what}")
     def accounts_do(request: Request, what: str, hint: str = Form(""), name: str = Form(""), note: str = Form(""),
                     uses: int = Form(1), days: int = Form(14), csrf: str = Form("")):
@@ -2928,54 +3072,42 @@ def make_app(control: Control):
         if not u:
             return login_page()
         try:
-            if what.startswith("jabber-"):
-                op = what[7:]
-                if op == "invite":
-                    code = control.accounts("invite", "--jabber", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
-                                            "--note", note.strip()[:80], user=u)["code"]
-                    return accounts_page(request, shown={"title": "A Jabber invite code", "value": code,
-                                                         "text": "Give it to %s. It makes %d Jabber address%s, for %d days:" % (
-                                                             note.strip() or "the person", uses, "" if uses == 1 else "es", days),
-                                                         "note": "Shown this once. They enter it at /join on Jabber's page, with a name and a password."})
-                if op in ("accept", "deny", "revoke"):
-                    control.accounts(op, hint.strip(), "--jabber", user=u)
-                    return accounts_page(request)
-            if what == "invite":
-                code = control.accounts("invite", "--uses", max(1, min(50, uses)), "--days", max(1, min(90, days)),
-                                        "--note", note.strip()[:80], user=u)["code"]
-                return accounts_page(request, shown={"title": "An invite code", "value": code,
-                                                     "text": "Give it to %s. It makes %d account%s, for %d days:" % (
-                                                         note.strip() or "the person", uses, "" if uses == 1 else "s", days),
-                                                     "note": "It is shown this once. They enter it at the sign-up page with a name of their choice."})
-            if what in ("accept", "deny", "revoke"):
-                control.accounts(what, hint.strip(), user=u)
-                return accounts_page(request)
-            if what in ("create", "link"):
-                answer = control.accounts(what, name.strip().lower(), user=u)
-                return accounts_page(request, shown={"title": "The account %s" % answer["name"] if what == "create" else "A new password link for %s" % answer["name"],
-                                                     "value": answer["link"], "text": "Hand this link to its person: it sets the password or a passkey.",
-                                                     "note": "It works for a day, once. Nobody else should see it."})
-            if what == "delete":
-                control.accounts("delete", name.strip().lower(), user=u)
-                return accounts_page(request)
-            if what == "admins":                        # the network's admins: Forgejo, Nextcloud, Immich
-                control.accounts("member", "admins", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
-                return accounts_page(request)
-            if what == "games" and PLAY_HOST:          # who may use the game page: its group
-                control.accounts("member", PLAY_GROUP, name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
-                return accounts_page(request)
-            if what == "connect":
-                labels = {"git": "Forgejo", "cloud": "Nextcloud", "paperless": "Paperless", "vault": "Vaultwarden", "immich": "Immich",
-                          "control": "the game page"}
-                module = note.strip() if note.strip() in labels else "git"
-                label = labels[module]
-                control.accounts("connect", name.strip(), module, user=u)
-                return accounts_page(request, shown={"title": "%s on %s is connected" % (label, name.strip()), "value": "kiwi-server apply %s" % name.strip(),
-                                                     "text": "Apply that machine now (Machines, %s, Apply): then its %s signs people in with these accounts." % (name.strip(), label),
-                                                     "note": "Nothing changes for people who already have a Forgejo user of the same name: they are linked on their first sign-in."})
+            shown = accounts_act(what, u, hint, name, note, uses, days)
         except KiwiError as e:
             return accounts_page(request, error=str(e))
-        return accounts_page(request, error="not a thing to do here")
+        return accounts_page(request, shown=shown) if shown else accounts_page(request)
+
+    @app.get("/api/accounts")
+    def api_accounts(request: Request):
+        """The Accounts page for a controller (the Android app): people, invite codes, requests."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        return accounts_view()
+
+    @app.post("/api/accounts")
+    async def api_accounts_do(request: Request):
+        """{op, name, hint, note, uses, days} -> {done, shown}: the Accounts page's buttons (invite, accept,
+        deny, revoke, create, link, delete, admins, games, connect; jabber-invite, jabber-accept …).
+        `shown` is a code or a password link, given this once."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or not isinstance(body.get("op"), str):
+            return JSONResponse({"error": "a JSON object: {op, name, hint, note, uses, days}"}, status_code=400)
+        try:
+            uses, days = int(body.get("uses") or 1), int(body.get("days") or 14)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "uses and days are numbers"}, status_code=400)
+        try:
+            shown = accounts_act(body["op"], who, str(body.get("hint") or ""), str(body.get("name") or ""),
+                                 str(body.get("note") or ""), uses, days)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"done": body["op"], "shown": shown or None}, headers={"Cache-Control": "no-store"})
 
     @app.post("/devices/{what}")
     def devices_do(request: Request, what: str, name: str = Form(""), group: str = Form(""), csrf: str = Form(""),
@@ -2997,10 +3129,64 @@ def make_app(control: Control):
             safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "device"
             return Response(config, media_type="text/plain; charset=utf-8", headers={
                 "Content-Disposition": 'attachment; filename="%s.conf"' % safe, "Cache-Control": "no-store"})
-        domains = ["~" + str((control.fleet_info() or {}).get("domain") or "home")] + \
-            ["~" + str(n["domain"]) for n in ((control.fleet_info() or {}).get("linked") or []) if n.get("domain")]
         return devices_page(request, config=config, shown=name, qr=markupsafe.Markup(control.qr_svg(config)),
-                            dns_domains=",".join(dict.fromkeys(domains)))
+                            dns_domains=split_domains())
+
+    def split_domains():
+        """The names a split config's computer asks the network for: its domain and the linked networks'
+        (NetworkManager's ipv4.dns-search, `~` = only these)."""
+        info = control.fleet_info() or {}
+        domains = ["~" + str(info.get("domain") or "home")] + \
+            ["~" + str(n["domain"]) for n in (info.get("linked") or []) if n.get("domain")]
+        return ",".join(dict.fromkeys(domains))
+
+    # the same for a computer that manages the network (its key's token): the Android app adds the phone
+    # it runs on, the desktop app a laptop; one function with the page (control.add_device / remove_device)
+    @app.get("/api/devices")
+    def api_devices(request: Request):
+        """The phones and laptops on the VPN, and the groups a new one may go into. Names only."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        info = control.fleet_info() or {}
+        return {"devices": control.devices(), "groups": sorted(info.get("groups") or {}),
+                "default_group": info.get("default_group") or ""}
+
+    @app.post("/api/devices")
+    async def api_device_add(request: Request):
+        """{name, group, split} -> {name, config, qr, dns_search}: the new device's WireGuard config (its
+        private key inside: shown once to the one who asked, never logged), its QR code as SVG, and for a
+        split config the NetworkManager line's domains."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "a JSON object: {name, group, split}"}, status_code=400)
+        name = str(body.get("name") or "").strip().lower()
+        split = body.get("split") is True
+        try:
+            config = control.add_device(name, str(body.get("group") or ""), who, split=split)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=409 if "exists already" in str(e) else 400)
+        if not config:
+            return JSONResponse({"error": "the master made no config for %s" % name}, status_code=502)
+        return JSONResponse({"name": name, "config": config, "qr": control.qr_svg(config),
+                             "dns_search": split_domains() if split else ""}, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/devices/{name}")
+    def api_device_remove(request: Request, name: str):
+        """A device off the VPN (a lost phone): the master forgets its key at once."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            control.remove_device(name.strip().lower(), who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=404 if "no device called" in str(e) else 400)
+        return {"removed": name.strip().lower()}
 
     @app.get("/backups/network.tar")
     def network_copy(request: Request):
@@ -3123,6 +3309,92 @@ def make_app(control: Control):
             return access_page(request, error=str(e))
         return RedirectResponse("/access?saved=" + urllib.parse.quote(", ".join(done)) if done else "/access", status_code=303)
 
+    async def api_body(request):
+        try:
+            body = await request.json()
+        except ValueError:
+            return None
+        return body if isinstance(body, dict) else None
+
+    @app.get("/api/access")
+    def api_access(request: Request):
+        """Who may reach what, as the page shows it: {master, who, machines} (`access --porcelain`)."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            return control.access()
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+
+    @app.post("/api/access")
+    async def api_access_do(request: Request):
+        """{who: {name: {reach, peers, internet, admin}}, new, new_as} -> {saved: [names]}. What a
+        name leaves out stays as it is; `reach` is a list (machines, services like cloud.papaya,
+        ports like papaya:22, "apps", "all"); `new` makes a group starting with `new_as` (nothing,
+        apps, all)."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        body = await api_body(request)
+        if body is None or not isinstance(body.get("who") or {}, dict):
+            return JSONResponse({"error": "a JSON object: {who: {name: {reach, peers, internet, admin}}, new, new_as}"},
+                                status_code=400)
+        try:
+            now = {x["name"]: x for x in control.access()["who"]}
+            changes = {}
+            for name, c in (body.get("who") or {}).items():
+                if name not in now:
+                    raise KiwiError("no group or linked network called %s" % name)
+                if not isinstance(c, dict) or not isinstance(c.get("reach", []), list):
+                    raise KiwiError("%s: {reach: [...], peers, internet, admin}" % name)
+                changes[name] = dict({"reach": [str(e) for e in c["reach"]] if "reach" in c else now[name]["reach"]},
+                                     **{k: (c[k] is True) if k in c else bool(now[name].get(k)) for k in ("peers", "internet", "admin")})
+            done = await run_in_threadpool(control.save_access, changes, str(body.get("new") or "").strip().lower(),
+                                           str(body.get("new_as") or "nothing"), who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"saved": list(done or [])}
+
+    FED_KEYS = ("domain", "mesh", "share", "from", "exit", "internet")
+
+    @app.get("/api/federation")
+    def api_federation(request: Request):
+        """The linked networks: {name: {domain, mesh, share, from, exit, internet}}. Linking one needs
+        both fleets: that stays with `kiwi-server federate`."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            return {n: {k: e.get(k) for k in FED_KEYS} for n, e in control.federation().items()}
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+
+    @app.post("/api/federation")
+    async def api_federation_do(request: Request):
+        """{name: {share, from, exit, internet}} -> {saved: true}: what this network opens to a linked
+        one, whom of it it lets in, and whether it leaves to the Internet through it. Left out: as now."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        body = await api_body(request)
+        if body is None:
+            return JSONResponse({"error": "a JSON object: {name: {share, from, exit, internet}}"}, status_code=400)
+        try:
+            had = control.federation()
+            changes = {}
+            for name, c in body.items():
+                if name not in had:
+                    raise KiwiError("no linked network called %s" % name)
+                if not isinstance(c, dict) or any(not isinstance(c.get(k, []), list) for k in ("share", "from")):
+                    raise KiwiError("%s: {share: [...], from: [...], exit, internet}" % name)
+                changes[name] = {"share": [str(x) for x in c["share"]] if "share" in c else had[name].get("share") or [],
+                                 "from": [str(x) for x in c["from"]] if "from" in c else had[name].get("from") or [],
+                                 "exit": (c["exit"] is True) if "exit" in c else bool(had[name].get("exit")),
+                                 "internet": (c["internet"] is True) if "internet" in c else bool(had[name].get("internet"))}
+            await run_in_threadpool(control.save_federation, changes, who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"saved": True}
+
     @app.get("/federation")
     def federation(request: Request):
         if not user(request):
@@ -3182,12 +3454,10 @@ def make_app(control: Control):
         return page("controllers.html", request, "/controllers", ways=control.controllers(), rot=control.rotation(),
                     ca=control.sshca(), **kw)
 
-    @app.get("/modules")
-    def sources_page(request: Request, check: int = 0, said: str = "", error: str = ""):
-        """The module sources of the fleet: which, at what version, their modules; add, update, remove."""
-        if not user(request):
-            return login_page()
-        found = list(((control.fleet_info() or {}).get("module_sources")) or [])
+    def sources_found(check=False):
+        """The fleet's module sources (without paths on this machine); with `check`, each repository
+        asked for its newest version tag: (sources, news)."""
+        found = [{k: v for k, v in x.items() if k != "path"} for x in ((control.fleet_info() or {}).get("module_sources")) or []]
         news = {}
         if check:                               # each repository asked for its newest version tag
             from . import sources as sourcesmod
@@ -3198,6 +3468,37 @@ def make_app(control: Control):
                         news[x["name"]] = {"tag": got[0], "commit": got[1]} if got else {"tag": "", "commit": x.get("commit")}
                     except KiwiError as e:
                         news[x["name"]] = {"error": str(e)}
+        return found, news
+
+    def sources_change(what, url, name, ref, u):
+        """Add, update or remove a module source, for the page and a controller: what it said.
+        KiwiError says why not."""
+        from . import sources as sourcesmod
+        url, name, ref = url.strip().rstrip("/"), name.strip(), ref.strip()
+        # nothing typed here may pass for an option of the command
+        if (name and not sourcesmod.NAME.match(name)) or (ref and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}", ref)):
+            raise KiwiError("A name is lowercase letters, digits and dashes; a version is a tag or a branch.")
+        if what == "add":
+            if not url.startswith("https://") or not sourcesmod.URL.match(url):
+                raise KiwiError("The link is the https address of a git repository.")
+            args = ["add", url] + (["--name", name] if name else []) + (["--ref", ref] if ref else [])
+        elif what in ("update", "remove") and name:
+            args = [what, name] + (["--ref", ref] if ref and what == "update" else [])
+        else:
+            raise KiwiError("Which module source?")
+        ok, said = control.sources_run(args, u)
+        if not ok:
+            raise KiwiError(said)
+        if what in ("add", "update") and " already" not in said:
+            said += "\nThe machines that use its modules take the change with their next apply (Home: Changes not applied yet)."
+        return said
+
+    @app.get("/modules")
+    def sources_page(request: Request, check: int = 0, said: str = "", error: str = ""):
+        """The module sources of the fleet: which, at what version, their modules; add, update, remove."""
+        if not user(request):
+            return login_page()
+        found, news = sources_found(bool(check))
         return page("sources.html", request, "/modules", sources=found, news=news, checked=bool(check), said=said, error=error)
 
     @app.post("/modules/{what}")
@@ -3206,26 +3507,34 @@ def make_app(control: Control):
         u = posted(request, csrf)
         if not u:
             return login_page()
-        from . import sources as sourcesmod
-        url, name, ref = url.strip().rstrip("/"), name.strip(), ref.strip()
-        # nothing typed here may pass for an option of the command
-        if (name and not sourcesmod.NAME.match(name)) or (ref and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}", ref)):
-            return sources_page(request, error="A name is lowercase letters, digits and dashes; a version is a tag or a branch.")
-        if what == "add":
-            if not url.startswith("https://") or not sourcesmod.URL.match(url):
-                return sources_page(request, error="The link is the https address of a git repository.")
-            args = ["add", url] + (["--name", name] if name else []) + (["--ref", ref] if ref else [])
-        elif what in ("update", "remove") and name:
-            args = [what, name] + (["--ref", ref] if ref and what == "update" else [])
-        else:
-            return sources_page(request, error="Which module source?")
         try:
-            ok, said = control.sources_run(args, u)
+            return sources_page(request, said=sources_change(what, url, name, ref, u))
         except KiwiError as e:
-            ok, said = False, str(e)
-        if ok and what in ("add", "update") and " already" not in said:
-            said += "\nThe machines that use its modules take the change with their next apply (Home: Changes not applied yet)."
-        return sources_page(request, said=said if ok else "", error="" if ok else said)
+            return sources_page(request, error=str(e))
+
+    @app.get("/api/modules")
+    def api_sources(request: Request, check: int = 0):
+        """The module sources: {sources, news}; ?check=1 asks each repository for its newest tag."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        found, news = sources_found(bool(check))
+        return {"sources": found, "news": news}
+
+    @app.post("/api/modules")
+    async def api_sources_do(request: Request):
+        """{op: add|update|remove, url, name, ref} -> {said}: a module source, as on the page."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        body = await api_body(request)
+        if body is None:
+            return JSONResponse({"error": "a JSON object: {op, url, name, ref}"}, status_code=400)
+        try:
+            said = await run_in_threadpool(sources_change, str(body.get("op") or ""), str(body.get("url") or ""),
+                                           str(body.get("name") or ""), str(body.get("ref") or ""), who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"said": said}
 
     @app.get("/controllers")
     def controllers(request: Request):

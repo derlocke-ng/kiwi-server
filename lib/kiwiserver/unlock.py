@@ -393,6 +393,11 @@ def _lan(host):
         return None
 
 
+def _site(host):
+    """Where a machine stands (`network.site`): a LAN with the same numbers at another site is not this one."""
+    return str(((getattr(host, "cfg", None) or {}).get("network") or {}).get("site") or "home")
+
+
 def url(client, ring, server, port):
     """Where this machine's initramfs finds the ring: it has plain network and nothing else.
     `unlock.via` names the way when it is not the LAN: a relay, a forwarded port."""
@@ -400,15 +405,15 @@ def url(client, ring, server, port):
     if via.get(ring):
         return str(via[ring])
     mine, theirs = _lan(client), _lan(server)
-    if mine and theirs and theirs.ip in mine.network:
+    if mine and theirs and theirs.ip in mine.network and _site(client) == _site(server):
         return "http://%s:%d" % (theirs.ip, port)
     mods = getattr(server, "modules", None) or []
     if "vpn-server" in mods and "tang" in mods:      # a ring on the master (away): its public address, gated
         public = (server.module_settings.get("vpn-server") or {}).get("wg_host")
         if public:
             return "http://%s:%d" % (public, port)
-    raise KiwiError("%s cannot reach the ring on %s at boot: they are not on one LAN with static addresses "
-                    "(unlock.via says where else to find it)" % (client.name, server.name))
+    raise KiwiError("%s cannot reach the ring on %s at boot: they are not on one LAN with static addresses at one "
+                    "site (unlock.via says where else to find it, or a ring on the master)" % (client.name, server.name))
 
 
 def thumbprint(server, ring, port):

@@ -169,6 +169,11 @@ Without `site` every machine is at `home`. It matters when the other place's LAN
 the same numbers as the home's (two routers of one make give out the same range):
 without it, home would send the machine's name to an address in its own LAN.
 
+An encrypted machine there opens its disk at boot from a ring at its own site, or
+from a ring on the master (`tang` on the master): the master lets in the addresses
+the network's machines last connected from, wherever they are. A ring at home is no
+help to it: its initramfs has no VPN yet.
+
 ## Phones and laptops: 1280
 
 A phone or laptop is in a different network every day: mobile data, a hotel, another

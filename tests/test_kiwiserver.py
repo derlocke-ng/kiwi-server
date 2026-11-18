@@ -5096,6 +5096,15 @@ class TestUnlock(Base):
         h.cfg["unlock"]["via"] = {"infra": "http://127.0.0.1:7500"}
         self.assertEqual(unlock.url(h, "infra", srv, 7500), "http://127.0.0.1:7500")
 
+    def test_a_ring_at_another_site_is_not_looked_for_on_this_lan(self):
+        f = self.unlock_fleet()
+        h, srv = f.hosts["lychee"], f.hosts["papaya"]
+        url = unlock.url(h, "infra", srv, 7500)                                   # one site, one LAN: its address there
+        self.assertTrue(url.startswith("http://192.168."), url)
+        h.cfg["network"]["site"] = "friend"                                    # the same numbers at a friend's
+        with self.assertRaisesRegex(KiwiError, "not on one LAN with static addresses at one site"):
+            unlock.url(h, "infra", srv, 7500)
+
     def tunnel_host(self):
         f = self.unlock_fleet()
         h = f.hosts["lychee"]

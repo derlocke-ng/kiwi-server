@@ -569,6 +569,31 @@ class Form:
     def current(self, field):
         return self.doc.get(self.scope, field["path"])
 
+    def forget_kept(self, field):
+        """A kept password out of the secret store again (`secrets forget`)."""
+        path = tuple(field["path"])
+        host, setting = ("defaults", ".".join(path)) if self.scope in (None, "defaults") else (self.scope, ".".join(path[1:]))
+        dlg = Adw.AlertDialog(heading="Forget %s?" % field["label"].strip("…"),
+                              body="With its next apply the machine gets a generated password instead. A password that "
+                                   "a database or an account keeps then no longer fits it: change it there too.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("forget", "Forget")
+        dlg.set_response_appearance("forget", Adw.ResponseAppearance.DESTRUCTIVE)
+        doc_path = self.doc.path
+
+        def answer(_d, r):
+            if r != "forget":
+                return
+            rc, out, err = run_cli(self.win.cli, ["secrets", "forget", doc_path, host, setting])
+            if rc != 0:
+                self.win.alert("Not forgotten", ((err or out).strip().replace("error: ", "").splitlines() or ["?"])[-1])
+                return
+            self.win.toast("%s %s: out of the secret store" % (host, setting))
+            if self.win.current_scope is not None:
+                self.win.show_scope(self.win.current_scope)
+        dlg.connect("response", answer)
+        dlg.present(self.win)
+
     def kept(self, field):
         """Is this module password kept in the secret store (`secrets keep`, its pins)?"""
         path = tuple(field["path"])
@@ -670,6 +695,11 @@ class Form:
                 hint.add_css_class("dim-label")
                 hint.add_css_class("caption")
                 row.add_suffix(hint)
+        if field["type"] == "secret" and cur is None and self.kept(field):
+            forget = Gtk.Button(label="Forget", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                tooltip_text="Take it out of the secret store: the next apply gives the machine a generated one")
+            forget.connect("clicked", lambda *_: self.forget_kept(field))
+            row.add_suffix(forget)
         if field["type"] == "file":
             btn = Gtk.Button(icon_name="document-open-symbolic", valign=Gtk.Align.CENTER,
                              tooltip_text="Choose a file")

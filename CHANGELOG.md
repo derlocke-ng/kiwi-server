@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.215.0 — a kept password forgotten again
+
+- **`kiwi-server secrets forget FLEET HOST module.key`** takes a password out of the secret store
+  (what `secrets keep`, the page or the app put there): the machine gets a generated one with
+  its next apply. The app's kept password field has *Forget* for it, as the page has its
+  *clear* box.
+
 ## 2.214.1 — secrets keep with a standby
 
 - `secrets keep` stopped at a master's standby ("no such machine: crumble-b"): a standby is not

@@ -8394,6 +8394,17 @@ class TestLogins(Base):
         with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()) as said:
             cli.secrets_keep(f.path, open_store)                                       # once more: nothing to move
         self.assertIn("nothing to move", said.getvalue())
+        # taken out again: the next render generates it
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.secrets_forget(f.path, open_store, "gate", "vpn-server.wg_password")
+        self.assertNotEqual(self.settings(f.path, "gate")["vpn-server"]["wg_password"], "w")
+        self.assertEqual(self.settings(f.path, "m1")["sftp"]["sftp_password"], "s")      # the others stay
+        with self.assertRaisesRegex(KiwiError, "not kept"):
+            cli.secrets_forget(f.path, open_store, "gate", "vpn-server.wg_password")
+        with self.assertRaisesRegex(KiwiError, "like vpn-server.wg_password"):
+            cli.secrets_forget(f.path, open_store, "gate", "wg_password")
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            cli.secrets_forget(f.path, shut, "m1", "sftp.sftp_password")
 
     def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
         f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),

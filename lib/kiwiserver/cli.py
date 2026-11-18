@@ -290,6 +290,7 @@ class Renderer:
         self._needs_ca = False
         self._master_ip = ""
         self._turn = {}         # the master's turn module as a hub elsewhere names it (ice, its login)
+        self._status_page = ""  # the network's status page (the control node's), where each machine's own name leads
         self._groups = {}
         self._partners = {}
         self._admin = {}        # hostname -> the full names of its admin pages
@@ -344,6 +345,10 @@ class Renderer:
                 spec = rolesmod.stack_spec(h, role)
                 if not spec.vpn_ip:
                     continue
+                if "control" in h.modules and not self._status_page:
+                    c = h.module_settings.get("control") or {}
+                    if c.get("status_page", True):
+                        self._status_page = "https://%s/" % (c.get("status_hostname") or "status." + h.hostname)
                 if role.node_type == "master" and not master_ip:
                     master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
                     self._groups = (h.module_settings.get("vpn-server") or {}).get("groups") or {}
@@ -522,6 +527,9 @@ class Renderer:
                 a = json.loads(util.read_text(path))
                 host.module_settings[module].update(accounts_client=a["client"], accounts_issuer=a["issuer"],
                                                     accounts_secret=a["secret"])
+        if "reverse-proxy" in host.modules and self._status_page:
+            # the machine's own name (https://papaya.home) leads to its part of the network's status page
+            host.module_settings["reverse-proxy"]["machine_page"] = "%s?machine=%s" % (self._status_page, host.name)
         if role.node_type != "master" and "hub" in host.modules and self._turn and not host.module_settings["hub"].get("ice"):
             # a hub on a node: its calls go through the master's turn server, as a hub on the master's would
             host.module_settings["hub"].update(self._turn)

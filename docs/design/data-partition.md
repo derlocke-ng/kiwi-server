@@ -33,7 +33,7 @@ the last partition.
 3. **Machines without unlock rings** have a root that is not encrypted (no TPM, by decision). Their
    data partition would be plain too, as the root is today. Same rule as now, or refuse the
    layout there?
-4. **Debian:** its installer cannot keep a partition as simply (partman recipes). Only
+4. **Debian:** its installer cannot keep a partition in the same way (partman recipes). Only
    CoreOS/uCore first?
 
 ## How it would be tried

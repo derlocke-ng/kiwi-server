@@ -1090,26 +1090,27 @@ onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done 
 <p>Nothing more to do here. In a few minutes this page goes away, and the machine shows up on the control page of
 your network, under Machines.</p>
 {% endblock %}""",
-    "status.html": """{% extends "base.html" %}{% block title %}{{ (brand_name if h.strangers else "") or "Kiwi" }}: status{% endblock %}{% block main %}
+    "status.html": """{% extends "base.html" %}{% block title %}{{ (brand_name if h.strangers else "") or "Kiwi" }}: {{ one.name if one else "status" }}{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120;url=?auto=1"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}
 .cta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.about{color:var(--muted);font-size:.86rem}</style>
-<div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{{ (brand_name if h.strangers else "") or "Kiwi" }}</h1>
-<div class="cta">{% if play_host %}<a class="btn" href="https://{{ play_host }}/">Game servers</a>{% endif %}
+<div class="row" style="margin-top:8px"><h1 style="display:flex;align-items:center;gap:10px;margin:0"><span style="width:26px;height:26px;display:inline-flex">{{ icon("kiwi") }}</span>{% if one %}{{ one.name }}{% else %}{{ (brand_name if h.strangers else "") or "Kiwi" }}{% endif %}</h1>
+<div class="cta">{% if one %}<a class="btn" href="/">The whole network</a>{% endif %}{% if play_host %}<a class="btn" href="https://{{ play_host }}/">Game servers</a>{% endif %}
 {% if h.join and (not h.strangers or h.join_public) %}<a class="btn primary" href="{{ h.join }}">Get an account</a>{% endif %}</div></div>
-<p class="sub">{% if h.strangers and about_text %}{{ about_text }} {% endif %}{{ "The services that are open to the Internet, asked the way you reach them." if h.strangers else "Every service of the network, asked from the network itself." }}{% if h.checked %}
+<p class="sub">{% if one %}{% set w = {"ok": "This machine answers.", "warn": "This machine answers, and something on it wants a look.", "bad": "This machine answers, and something on it does not work.", "down": "This machine does not answer."} %}{{ w.get(one.state, "This machine has not been asked yet.") }}
+Its services, asked from the network itself.{% else %}{% if h.strangers and about_text %}{{ about_text }} {% endif %}{{ "The services that are open to the Internet, asked the way you reach them." if h.strangers else "Every service of the network, asked from the network itself." }}{% endif %}{% if h.checked %}
 <span class="muted small">Checked {{ age(now - h.checked) }} ago, every ten minutes.</span>{% endif %}</p>
 {% set down = h.services|rejectattr("ok")|list %}{% set off = (h.machines.of or 0) - (h.machines.on or 0) %}
 {% if not h.checked %}<div class="banner warn">Nothing has been checked yet.</div>
 {% elif stale %}<div class="banner warn">Not checked for {{ age(now - h.checked) }}. The machine that checks is off, or waits for
 the people who run this network to unlock it.</div>
 {% elif down %}<div class="banner bad">{{ down|length }} {{ "service does" if down|length == 1 else "services do" }} not answer</div>
-{% elif off > 0 %}<div class="banner warn">The services answer. {{ off }} {{ "machine does" if off == 1 else "machines do" }} not.</div>
+{% elif off > 0 and not one %}<div class="banner warn">The services answer. {{ off }} {{ "machine does" if off == 1 else "machines do" }} not.</div>
 {% else %}<div class="banner ok">Everything works</div>{% endif %}
 {% if h.services %}{% set known = h.services|selectattr("uptime", "ne", none)|map(attribute="uptime")|list %}
 <div class="stats"><div class="stat ok"><span class="lbl">Up</span><b>{{ h.services|selectattr("ok")|list|length }}</b></div>
 <div class="stat {{ "bad" if down else "" }}"><span class="lbl">Down</span><b>{{ down|length }}</b></div>
 <div class="stat"><span class="lbl">Worked, 90 days</span><b>{% if known %}{{ "%.2f"|format(known|sum / known|length) }}<small> %</small>{% else %}–{% endif %}</b></div>
-{% if h.machines.of %}<div class="stat {{ "warn" if off > 0 else "" }}"><span class="lbl">Machines</span><b>{{ h.machines.on }}<small> of {{ h.machines.of }}</small></b></div>{% endif %}</div>
+{% if h.machines.of and not one %}<div class="stat {{ "warn" if off > 0 else "" }}"><span class="lbl">Machines</span><b>{{ h.machines.on }}<small> of {{ h.machines.of }}</small></b></div>{% endif %}</div>
 <table class="tbl"><thead><tr><th>Service</th><th>Now</th><th class="wide">The last 90 days</th><th>Worked</th><th class="wide">Answers in</th></tr></thead><tbody>
 {% for s in h.services %}<tr><td><b>{{ s.label }}</b>{% if s.about %}<br><span class="about">{{ s.about }}</span>{% endif %}<br><a class="sm" href="https://{{ s.site }}" rel="noopener">{{ s.site }}</a></td>
 <td><span class="badge {{ "ok" if s.ok else "bad" }}">{{ "Up" if s.ok else "Down" }}</span><br><span class="sm">for {{ age(now - s.since) }}</span></td>
@@ -1752,13 +1753,22 @@ def make_app(control: Control):
 
     @app.get("/status")
     @app.get("/start")
-    def status_page():
+    def status_page(machine: str = ""):
         """How the network is, for everyone on it: no login, every service people use, what it is for and
-        whether it works, the game servers, and how to get an account. status.<host> answers with it."""
+        whether it works, the game servers, and how to get an account. status.<host> answers with it.
+        `?machine=NAME`: one machine's part of it, where its own name (https://NAME.<domain>) leads."""
         now = time.time()
         h = healthmod.public(control.health(), now)
         h["services"] = [s for s in h["services"] if not s["site"].startswith("status.")]
-        return page("status.html", h=h, now=now, tor=tor_checks(), games=games(), play_host=PLAY_HOST,
+        found, one = games(), None
+        if machine and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", machine):
+            mine = {s["site"] for s in h["services"] if s.get("host") == machine}
+            h["services"] = [s for s in h["services"] if s["site"] in mine]
+            h["incidents"] = [i for i in h["incidents"] if i.get("key") in ["machine:" + machine] + ["service:" + x for x in mine]]
+            said = next((x for x in (control.status() or {}).get("hosts") or [] if x.get("host") == machine), None)
+            one = {"name": machine, "state": (said or {}).get("state") or ("down" if said and not said.get("ok") else "unknown")}
+            found = [g for g in found if g["machine"] == machine]
+        return page("status.html", h=h, now=now, tor=tor_checks(), games=found, play_host=PLAY_HOST, one=one,
                     stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
     @app.get("/status/public")

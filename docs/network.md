@@ -314,7 +314,7 @@ it asks. Without a key the service cannot even be found.
 - `--remove --client anna` takes anna's key away; `--remove` alone takes the
   hidden service away.
 
-**A new address.** An address was given out too widely, or should simply change:
+**A new address.** An address was given out too widely, or should change for another reason:
 
 ```bash
 kiwi-server onion ~/kiwi/fleet.yaml git.medlar --new-address

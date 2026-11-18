@@ -1118,6 +1118,8 @@ class Control:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):
             pass
+        if meta["action"] == "remove" and rc == 0:      # gone from the network: from the last look too, at once
+            self._forget_in_status(meta["hosts"])
         if meta["action"] == "setup" and rc == 0:       # set up: its install media have done their work
             row = next((h for h in (self.fleet_info() or {}).get("hosts") or [] if h["name"] in meta["hosts"]), None)
             if row and row.get("phase") == "applied" and self.media(row["name"]):
@@ -1759,6 +1761,19 @@ class Control:
         self.audit(user, "settings changed", hosts=[host] if host else [], keys=keys)
         self.fleet_info(fresh=True)
         return keys
+
+    def _forget_in_status(self, names):
+        """A removed machine out of the last look (status.json): the pages showed it until the next
+        look, and its Remove then said "no such machine" (the owner, 19 Nov: "still half there")."""
+        st = self.status() or {}
+        left = [h for h in st.get("hosts") or [] if h.get("host") not in set(names)]
+        if len(left) != len(st.get("hosts") or []):
+            st["hosts"] = left
+            self._put(os.path.join(self.run, "status.json"), json.dumps(st))
+        gone = self.gone()                  # and "has not answered for 50 minutes" of the recovery watch
+        kept = [e for e in gone if e.get("host") not in set(names)]
+        if len(kept) != len(gone):
+            self._put(os.path.join(self.run, "recover.json"), json.dumps(kept))
 
     def _write(self, meta):
         os.makedirs(self.jobs_dir, mode=0o700, exist_ok=True)

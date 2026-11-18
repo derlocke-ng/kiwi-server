@@ -9525,6 +9525,28 @@ class TestWeb(WebBase):
             code, where = self.ask("/hosts/papaya/settings", {"csrf": csrf, "then": ""})[:2]
             self.assertEqual(where, "/hosts/papaya/settings?saved=0")              # Save alone applies nothing
 
+    def test_a_removed_machine_leaves_the_last_look_at_once(self):
+        """The owner, 19 Nov: kumquat removed on the page stayed "half there" until the next look,
+        and a second Remove said "no such machine"."""
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        for _ in range(200):                # the login's look writes status.json too: let it end first
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1, "hosts": [
+            {"host": "a", "ok": True, "state": "ok", "problems": [], "notes": []},
+            {"host": "kumquat", "ok": False, "state": "down", "problems": [], "notes": []}]}))
+        util.write_text(os.path.join(self.c.run, "recover.json"), json.dumps([
+            {"host": "a", "kind": "told", "text": "a has not answered for 50 minutes."}]))
+        jid = self.c.start("remove", ["a"])
+        for _ in range(200):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.c.job(jid)["state"], "ok")
+        self.assertEqual([h["host"] for h in self.c.status()["hosts"]], ["kumquat"])     # a is gone, the rest stays
+        self.assertEqual(self.c.gone(), [])                                                  # no "has not answered" for it
+
     def test_the_page_changes_its_password_and_replaces_the_keys(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
         code, body = self.ask("/controllers")

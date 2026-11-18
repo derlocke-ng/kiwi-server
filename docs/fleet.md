@@ -77,6 +77,15 @@ control page or in the app goes there by itself when the settings are saved. A p
 written in the defaults, for every machine of a role, is not moved: give each machine its
 own, or leave it out to have one generated, which changes it.
 
+To take a kept password out again, so that the machine gets a generated one with its next
+apply: the page's *clear* box, *Forget* in the app, or
+
+```bash
+kiwi-server secrets forget ~/kiwi/fleet.yaml papaya portainer.admin_password
+```
+
+A password that a database or an account keeps no longer fits after that: change it there too.
+
 ## How settings combine
 
 - Hosts override defaults key by key.

@@ -12,6 +12,7 @@ import ipaddress
 import argparse
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -2631,6 +2632,35 @@ class TestSetup(Base):
         self.assertIn("none of these machines answers for the names", err)
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_new_network_takes_a_mesh_of_its_own_at_random(self):
+        """The owner, 18 Nov: 10.X at random, so that two networks that link one day differ."""
+        from kiwiserver import setup as setupmod
+        rnd = random.Random(7)
+        seen = {setupmod.free_mesh("192.168.2.0/24", taken={9, 10}, rnd=rnd) for _ in range(40)}
+        self.assertGreater(len(seen), 20)                                              # not one for everyone
+        for mesh in seen:
+            x = int(mesh.split(".")[1])
+            self.assertTrue(setupmod.MESH_LOW <= x <= setupmod.MESH_HIGH and x not in (9, 10), mesh)
+        self.assertEqual(setupmod.free_mesh("10.0.0.0/9", taken=set(), rnd=rnd).split(".")[1] >= "128", True)   # not the LAN
+        made = setupmod.mesh_settings("10.37.0.0/16")
+        self.assertEqual((made["master"]["vpn-server"]["server_ip"], made["node"]["master_ip"], made["node"]["mesh_subnet"]),
+                         ("10.37.0.1", "10.37.0.1", "10.37.0.0/16"))
+        # the groups are the module's own, moved into this mesh
+        vs = next(st for st in self.ms.get("vpn-server").settings if st.key == "groups").default
+        self.assertEqual({n: dict(g, subnet=g["subnet"].replace("10.8.", "10.37.")) for n, g in vs.items()},
+                         made["master"]["vpn-server"]["groups"])
+        data, _made = setupmod.make(dict(self.ANSWERS, admin_key="~/.ssh/x.pub", mesh="10.37.0.0/16"), self.tmp)
+        self.assertEqual(data["defaults"]["master"]["mesh_subnet"], "10.37.0.0/16")
+        self.assertEqual(setupmod.check(dict(self.ANSWERS, mesh="10.8.1.0/24")).get("mesh"),
+                         "Like 10.37.0.0/16: 10, a number from 1 to 254, then 0.0/16.")
+        self.assertIn("home network", setupmod.check(dict(self.ANSWERS, mesh="10.5.0.0/16", lan_subnet="10.5.0.0/24"))["mesh"])
+        q = {q["id"]: q for st in setupmod.questions({"subnet": "192.168.2.0/24", "gateway": "192.168.2.1", "timezone": "UTC",
+                                                       "keyboard": "us", "locale": "en_US.UTF-8", "ssh_key": "", "addresses": []})
+             for q in st["questions"]}
+        self.assertRegex(q["mesh"]["default"], r"^10\.\d+\.0\.0/16$")
+        self.assertTrue(q["mesh"]["advanced"])
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
     def test_a_master_at_home_runs_tor_only_through_a_vpn_exit(self):
         """A master at home: its own connection is the home line. Tor runs there only through its VPN
         exit, or where the owner chose Tor without a VPN."""
@@ -3085,6 +3115,16 @@ class TestSshCa(Base):
             with mock.patch.object(remote, "_certified", lambda tgt: False):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
 
+
+    def test_a_node_is_reached_at_its_mesh_address_before_the_dns_knows_its_name(self):
+        """A machine at another site, right after its first apply: no DNS name yet, its mesh address
+        from the WireGuard config the master gave it, before anything resolves its settings."""
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "away": {"role": "node", "node": {"vpn-client": {"wireguard_config": "secrets/away.conf"}}},
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        write(os.path.join(os.path.dirname(f.path), "secrets", "away.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.9.0.14/24\n")
+        self.assertEqual(remote.addresses(f.hosts["away"]), [f.hosts["away"].hostname, "10.9.0.14"])
+        self.assertNotIn("10.66.1.2", remote.addresses(f.hosts["gate"]))      # a master's client config is another network's
 
 class TestSshPort(Base):
     def test_targets_carry_the_port(self):
@@ -4168,7 +4208,7 @@ class TestFederation(Base):
         b_path = os.path.join(other, "fleet.yaml")
         with open(a.path) as fh:
             data = yaml.safe_load(fh)
-        data["defaults"]["domain"] = "internal"
+        data["defaults"]["domain"] = a.defaults.get("domain")         # first the same domain as the other network
         data["defaults"]["master"] = {"mesh_subnet": "10.10.0.0/16"}
         data["hosts"]["gate"]["master"]["vpn-server"]["wg_host"] = "198.51.100.9"
         for k in ("admin",):
@@ -4176,6 +4216,12 @@ class TestFederation(Base):
         write(b_path, yaml.safe_dump(data))
         for d in ("secrets",):
             shutil.copytree(os.path.join(self.tmp, d), os.path.join(other, d), dirs_exist_ok=True) if os.path.isdir(os.path.join(self.tmp, d)) else None
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("they need a domain each", err)                                  # a name would be both networks'
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "federation.yaml")))
+        data["defaults"]["domain"] = "internal"
+        write(b_path, yaml.safe_dump(data))
         rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
         self.assertEqual(rc, 0, err)
         with open(os.path.join(self.tmp, "federation.yaml")) as fh:
@@ -8394,6 +8440,17 @@ class TestLogins(Base):
         with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()) as said:
             cli.secrets_keep(f.path, open_store)                                       # once more: nothing to move
         self.assertIn("nothing to move", said.getvalue())
+        # taken out again: the next render generates it
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.secrets_forget(f.path, open_store, "gate", "vpn-server.wg_password")
+        self.assertNotEqual(self.settings(f.path, "gate")["vpn-server"]["wg_password"], "w")
+        self.assertEqual(self.settings(f.path, "m1")["sftp"]["sftp_password"], "s")      # the others stay
+        with self.assertRaisesRegex(KiwiError, "not kept"):
+            cli.secrets_forget(f.path, open_store, "gate", "vpn-server.wg_password")
+        with self.assertRaisesRegex(KiwiError, "like vpn-server.wg_password"):
+            cli.secrets_forget(f.path, open_store, "gate", "wg_password")
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            cli.secrets_forget(f.path, shut, "m1", "sftp.sftp_password")
 
     def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
         f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),
@@ -12434,9 +12491,12 @@ class TestFirstRunPage(StoreBase):
         status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on", "new": "kids", "new_as": "apps"}),
                                     cookie=cookie)
         self.assertEqual((status, where), (303, "/access?saved=kids%2C%20guests"))
-        groups = self.data()["hosts"][master]["master"]["vpn-server"]["groups"]
-        self.assertEqual(groups["guests"], {"subnet": "10.8.1.0/24", "reach": ["cloud.%s" % node], "peers": False})
-        self.assertEqual(groups["kids"], {"subnet": "10.8.6.0/24", "reach": ["apps"], "peers": True})
+        data = self.data()       # a new network's groups live in the defaults, in its own mesh (2.215.0)
+        self.assertNotIn("groups", (data["hosts"][master].get("master") or {}).get("vpn-server") or {})
+        groups = data["defaults"]["master"]["vpn-server"]["groups"]
+        p = data["defaults"]["master"]["mesh_subnet"].rsplit(".", 2)[0] + "."
+        self.assertEqual(groups["guests"], {"subnet": p + "1.0/24", "reach": ["cloud.%s" % node], "peers": False})
+        self.assertEqual(groups["kids"], {"subnet": p + "6.0/24", "reach": ["apps"], "peers": True})
         self.assertEqual(groups["family"]["reach"], ["apps"])
         self.assertEqual(groups["devices"]["reach"], ["all"])
         self.assertTrue(os.path.islink(path))                           # still a link into memory
@@ -12450,7 +12510,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((status, where), (303, "/access"))
         body = self.ask("/access", dict(shown, **{"p.guests": "grape:22"}), cookie=cookie)[1]
         self.assertIn("no machine called grape", body)
-        self.assertEqual(self.data()["hosts"][master]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
+        self.assertEqual(self.data()["defaults"]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
         self.assertEqual(self.ask("/access")[:2], (303, "/login"))
         self.assertIn('href="/access"', self.ask("/", cookie=cookie)[1])
         # hidden services: only sites marked as usable over Tor are offered; one for a named person, the key on asking

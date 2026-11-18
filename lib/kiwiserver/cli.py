@@ -2242,6 +2242,36 @@ def secrets_keep(path, st):
              "nothing on the machines" % os.path.basename(path))
 
 
+def secrets_forget(path, st, host, setting):
+    """A password kept in the secret store (`secrets keep`, the page's or the app's field) taken out
+    again: the machine gets a generated one with its next apply, or the one written in the fleet
+    file. HOST "defaults" with notify.mail.password or notify.ntfy.token."""
+    if not st.is_open():
+        raise KiwiError("the secret store is %s: kiwi-server secrets %s %s first" % (
+            "locked" if st.exists() else "not set up", "unlock" if st.exists() else "init", path))
+    fleet = config.Fleet.load(path)
+    parts = str(setting or "").split(".")
+    if host == "defaults":
+        if len(parts) != 3 or parts[0] != "notify" or tuple(parts[1:]) not in NOTIFY_SECRETS:
+            raise KiwiError("for every machine: notify.mail.password or notify.ntfy.token")
+        key = "notify/%s/%s" % (parts[1], parts[2])
+    else:
+        h = fleet.hosts.get(host or "")
+        if h is None:
+            raise KiwiError("no such machine: %s" % host)
+        if len(parts) != 2:
+            raise KiwiError("a module's setting, like vpn-server.wg_password")
+        key = "%s/%s/%s" % (h.hostname, parts[0], parts[1])
+    pins_path = fleet.resolve_path("secrets/pins.json")
+    pins = json.loads(util.read_text(pins_path)) if os.path.isfile(pins_path) else {}
+    if key not in pins:
+        raise KiwiError("%s %s is not kept in the secret store" % (host, setting))
+    del pins[key]
+    util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
+    util.say("%s %s: out of the secret store; with the next apply the machine gets the one written in the fleet "
+             "file, or a generated one" % (host, setting))
+
+
 def secrets_store(args):
     if args.action == "autolock":     # this computer's, for every network on it
         screen = {"on": True, "off": False}.get(args.screen) if args.screen else None
@@ -2263,6 +2293,8 @@ def secrets_store(args):
         return admin_password_into_store(args.fleet, st)
     if args.action == "keep":
         return secrets_keep(args.fleet, st)
+    if args.action == "forget":
+        return secrets_forget(args.fleet, st, args.host, args.setting)
     if args.action == "init":
         recovery, saved = st.init()
         util.say("secrets/ is now %s, and open in memory" % store.FILE)
@@ -4246,6 +4278,14 @@ def _federation_side(args, path):
         "domain": h.domain, "dns": vs.get("server_ip") or "", "groups": groups}
 
 
+def _different_domains(mine, theirs):
+    """Each side's DNS sends the other's domain to the other: with one domain for both, a name
+    like papaya.home would be both networks' and the partner's names would not resolve."""
+    if mine and theirs and str(mine).lower().rstrip(".") == str(theirs).lower().rstrip("."):
+        raise KiwiError("both networks use the domain %s: each side's DNS sends the other's names to the other, so "
+                        "they need a domain each (home, internal, corp, mail …); a network's domain is set at init" % mine)
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
     mesh and DNS into the other's federation.yaml. What each shares stays empty until written.
@@ -4262,6 +4302,7 @@ def cmd_federate(args):
                 raise KiwiError("%s: the card is of a network called %s, as this one: one of them renames its folder" % (args.accept, them))
             if theirs["mesh"] == entry["mesh"]:
                 raise KiwiError("the two meshes are the same (%s): every network has its own /16" % entry["mesh"])
+            _different_domains(entry.get("domain"), theirs.get("domain"))
             fedmod.write(fleet.dir, them, theirs)
             fedmod.partners(fleet.dir)
             util.say("%s is a partner of %s now; nothing is shared yet: share and from in %s, then apply the master"
@@ -4281,6 +4322,7 @@ def cmd_federate(args):
         raise KiwiError("both fleets are called %s: rename one folder" % na)
     if not ea["mesh"] or not eb["mesh"] or ea["mesh"] == eb["mesh"]:
         raise KiwiError("the two meshes must be set and differ (%s, %s): every network has its own /16" % (ea["mesh"], eb["mesh"]))
+    _different_domains(ea.get("domain"), eb.get("domain"))
     nb = fedmod.write(fa.dir, nb, eb)        # the names each side knows the other by
     na = fedmod.write(fb.dir, na, ea)
     if args.exit or args.no_exit:
@@ -4705,7 +4747,7 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password", "admin-password", "keep"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password", "admin-password", "keep", "forget"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s.add_argument("--for", default=None, metavar="TIME", help="unlock: lock again after this long unused (default: autolock's idle, 30m; 0: stay open)")
     s.add_argument("--idle", metavar="TIME", help="autolock: lock after this long unused, e.g. 15m, 1h; 0: never")

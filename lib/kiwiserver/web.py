@@ -801,8 +801,7 @@ Away from home they do not open: a master gives your devices the VPN.</p></div>{
 <li>In the app: <strong>+</strong>, then <strong>Scan from QR code</strong>. Scan this:</li></ol>
 {% if qr %}<div class="qr">{{ qr }}</div>{% else %}<p class="warn">No QR code could be made here; use the file.</p>{% endif %}
 <p class="muted">On a laptop, import the file instead:</p>
-<button onclick="const b=new Blob([document.getElementById('conf').textContent],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='{{ shown }}.conf';a.click()">Download {{ shown }}.conf</button>
-<pre id="conf" hidden>{{ config }}</pre>
+<form method="post" action="/devices/download">{{ tok }}<input type="hidden" name="name" value="{{ shown }}"><button>Download {{ shown }}.conf</button></form>
 <p class="warn small">Whoever has this code or file is on your VPN as this device. Do not send it around.</p></div>{% endif %}
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
 <h2>Add a phone or laptop</h2><form method="post" action="/devices/add" class="card">{{ tok }}
@@ -2986,6 +2985,10 @@ def make_app(control: Control):
             return devices_page(request, error=str(e))
         if not config:
             return devices_page(request, error="There is no device called %s." % name)
+        if what == "download":          # the file itself, as a download: works in every browser, no script
+            safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "device"
+            return Response(config, media_type="text/plain; charset=utf-8", headers={
+                "Content-Disposition": 'attachment; filename="%s.conf"' % safe, "Cache-Control": "no-store"})
         return devices_page(request, config=config, shown=name, qr=markupsafe.Markup(control.qr_svg(config)))
 
     @app.get("/backups/network.tar")

@@ -6,6 +6,9 @@
   one, restarts what runs it and drops the old copy before the next. A master in RAM has its
   images in half its memory, and `podman auto-update` pulled all new images first (crumble had an
   nginx update waiting with 51 MB free).
+- **A device's config downloads on the control page** (the owner: "Download lime-pc.conf doesn't
+  work"): the button asks the control node for the file. It was made in the page by a script that
+  some browsers ignore, and the private key stood hidden in the page.
 - The access drill finds the linked network by its mesh, not by its folder's name.
 - The roadmap's top says where things stand at 2.208.0.
 

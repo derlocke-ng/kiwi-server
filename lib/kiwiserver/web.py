@@ -2689,9 +2689,35 @@ def make_app(control: Control):
                 else "/hosts/" + j["hosts"][0] if j["hosts"] else "/")
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
 
+    @app.post("/api/jobs")
+    async def api_jobs(request: Request):
+        """An action as a job, for a computer that manages the network (its key's token): the same
+        actions as the page's buttons, so that the app on a computer sends its applies here instead
+        of running them itself. {action, hosts, at, module} -> {job}; its log at /api/jobs/{job}/log."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "a JSON object: {action, hosts}"}, status_code=400)
+        action = str(body.get("action") or "")
+        hosts = [str(h) for h in body.get("hosts") or []][:50]
+        if action not in ACTIONS:
+            return JSONResponse({"error": "unknown action"}, status_code=400)
+        at, module = str(body.get("at") or ""), str(body.get("module") or "")
+        try:
+            jid = control.start(action, hosts, user=who, at=at if action in ("setup", "restore", "service") else "",
+                                module=module if action in ("restore", "service") else "")
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"job": jid}
+
     @app.get("/api/jobs/{jid}/log")
     def job_log(request: Request, jid: str, offset: int = 0):
-        if not user(request):
+        if not user(request) and not bearer(request):
             return JSONResponse({"error": "log in"}, status_code=401)
         j = control.job(jid)
         if not j:

@@ -1987,6 +1987,14 @@ class PreferencesDialog(Adw.PreferencesDialog):
         row.add_suffix(clear)
         g.add(row)
         page.add(g)
+        g = Adw.PreferencesGroup(title="Applying", description="Where the machines are applied when this network has a "
+                                 "control node this computer belongs to.")
+        on_node = Adw.SwitchRow(title="On the control node", active=bool(gui_conf().get("apply_on_node", True)),
+                                subtitle="This copy goes there first, the job runs there and its log shows here. Off: "
+                                         "this computer applies them itself.")
+        on_node.connect("notify::active", lambda r, _p: gui_conf_set(apply_on_node=r.get_active()))
+        g.add(on_node)
+        page.add(g)
         return page
 
     def _show_icon(self):
@@ -6368,9 +6376,29 @@ class Window(Adw.ApplicationWindow):
             return
         Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(d).get_uri(), None)
 
+    def via_control_node(self, args):
+        """An apply this computer would run itself, as a job on the control node instead, when this copy
+        belongs to one and the preference says so: one admin, the node; its log comes here the same.
+        None: run it here (a first apply over SSH, no control node, or the preference off)."""
+        if not args or args[0] != "apply" or "--ssh" in args or not gui_conf().get("apply_on_node", True):
+            return None
+        if not os.path.isfile(os.path.join(os.path.dirname(self.doc.path or ""), "control", "remote")):
+            return None
+        hosts = [a for a in args[2:] if not a.startswith("-")]
+        flags = {a for a in args[2:] if a.startswith("-")}
+        if flags - {"--changed", "--update"}:
+            return None
+        if "--changed" in flags:
+            hosts += [h for h in (self.fleet_info or {}).get("changed") or [] if h not in hosts]
+        if "--update" in flags:             # the node's update is every machine, its own last
+            every = {h["name"] for h in (self.fleet_info or {}).get("hosts") or []}
+            return ["control", "run", self.doc.path, "update"] if every and set(hosts) >= every else None
+        return ["control", "run", self.doc.path, "apply"] + hosts if hosts else None
+
     def spawn(self, args, msg):
         if self.busy:
             return
+        args = self.via_control_node(args) or args
         self.set_busy(True, msg)
         self.b_log.set_active(True)
         agent_ask({"forget": True}, 2)      # what runs now may change what the resident kiwi-server keeps

@@ -268,6 +268,8 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/status` | the last look at the machines: `time`, `error`, and per machine `host`, `state` (ok, warn, bad, down), `problems` (each with `text`, `hint`), `notes` |
 | `GET /api/machines` | what the fleet file says of the machines (`kiwi-server list --porcelain`), without the paths on the control node; `{}` while it is locked |
 | `GET /api/activity` | the newest tasks and who did what |
+| `POST /api/jobs` | starts an action as a job, as the page's buttons do: `{action, hosts}` (apply, update, status, plan, check, backup …) gives `{job}`; the History names the computer |
+| `GET /api/jobs/{job}/log?offset=N` | the job's log from `offset` on: `text`, `offset`, `state` (waiting, running, ok, failed) |
 | `GET /api/hosts/{name}/logins` | a machine's logins with their passwords (`label`, `module`, `address`, `user`, `password`, `note`), never cached; the activity log says which computer was shown them |
 
 `/api/status` and `/api/machines` also answer the page's login, only read, and are
@@ -374,6 +376,20 @@ kiwi-server control activity ~/kiwi/fleet.yaml
 ```
 
 It holds names and times, no output and no secret.
+
+## One admin: applies run on the control node
+
+A computer that joined lets the control node apply the machines: the app does so by
+itself (*Preferences*, *General*, *Applying*), and in a terminal:
+
+```bash
+kiwi-server control run ~/kiwi/fleet.yaml apply papaya lychee
+```
+
+This copy goes to the control node first, the job runs there with the node's own
+access to the machines, its log comes here as it is written, and what the job
+changed comes back. Without a control node, or for a first apply over SSH, the
+computer applies itself as before.
 
 ## When a machine does not answer
 

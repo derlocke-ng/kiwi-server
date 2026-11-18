@@ -21,6 +21,7 @@ import re
 import shlex
 import socket
 import ssl
+import sys
 import tarfile
 import urllib.parse
 
@@ -557,6 +558,44 @@ def activity_api(fleet_dir, key=None):
     if status != 200:
         raise KiwiError("the control node refused (%d)" % status)
     return out
+
+
+def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=1.0):
+    """An action as a job on the control node, as the page's buttons start one: this copy goes there
+    first (the node applies what it has), then the job's log comes here as it is written, and what
+    the job changed comes back. True when the job ended well."""
+    def say(text):
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    write = write or say
+    push_api(fleet_dir, fleet_name, key=key)
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("POST", "/api/jobs", {"action": action, "hosts": list(hosts)})
+    if status in (404, 405):
+        raise KiwiError("the control node is too old to run a job for a computer: update it first "
+                        "(kiwi-server apply <fleet> <its machine> --update)")
+    if status != 200 or not out.get("job"):
+        raise KiwiError("the control node refused: %s" % (out.get("error") or status))
+    jid, offset, state = out["job"], 0, "waiting"
+    util.say("on the control node, as job %s" % jid)
+    while True:
+        status, out = api.call("GET", "/api/jobs/%s/log?offset=%d" % (jid, offset))
+        if status == 401:                       # a long job outlives the token: log in again
+            api, _key = api_for(fleet_dir, key)
+            continue
+        if status != 200:
+            raise KiwiError("the control node lost job %s (%d)" % (jid, status))
+        if out.get("text"):
+            write(out["text"])
+        offset, state = out.get("offset", offset), out.get("state") or state
+        if state in ("ok", "failed") and not out.get("text"):
+            break
+        time.sleep(wait)
+    try:                                        # host keys it learned, what it wrote: here too
+        pull_api(fleet_dir, fleet_name, key=key)
+    except KiwiError as e:
+        util.warn("the job's changes did not come back here yet: %s (kiwi-server control pull)" % e)
+    return state == "ok"
 
 
 def push_api(fleet_dir, fleet_name, force=False, key=None):

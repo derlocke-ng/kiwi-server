@@ -108,6 +108,10 @@ def has_master(fleet, roles):
     return any(h.role in roles and roles[h.role].node_type == "master" and not h.standby_of for h in fleet.hosts.values())
 
 
+# the control module's image as its settings name it by default; an apply pins it to this release
+CONTROL_IMAGE_MAJOR = "ghcr.io/derlocke-ng/kiwi-server-control:2"
+
+
 class Outputs:
     """Where a host's files go and which of them exist."""
 
@@ -542,6 +546,10 @@ class Renderer:
         if role.node_type != "master" and "hub" in host.modules and self._turn and not host.module_settings["hub"].get("ice"):
             # a hub on a node: its calls go through the master's turn server, as a hub on the master's would
             host.module_settings["hub"].update(self._turn)
+        if "control" in host.modules and host.module_settings["control"].get("image") == CONTROL_IMAGE_MAJOR:
+            # the control part of this very kiwi-server: its exact image, so that an apply brings the
+            # page of the release that applies it (an image already there is not pulled again)
+            host.module_settings["control"]["image"] = CONTROL_IMAGE_MAJOR.rsplit(":", 1)[0] + ":" + VERSION
         if role.node_type != "master" and "dns" in host.modules and self._partners:
             # a node's Pi-hole asks its master for the linked networks' names (the master asks the partner)
             host.module_settings["dns"]["partner_domains"] = sorted({str(p["domain"]) for p in self._partners.values() if p.get("domain")})

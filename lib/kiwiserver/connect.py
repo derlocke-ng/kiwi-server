@@ -45,8 +45,11 @@ def exists(domain, runner=subprocess.run):
     return connection_name(domain) in (r.stdout or "").splitlines()
 
 
-def up(conf_path, domain, runner=subprocess.run):
-    """The config as a NetworkManager connection that is up and comes up by itself. Returns its name."""
+def up(conf_path, domain, runner=subprocess.run, names=()):
+    """The config as a NetworkManager connection that is up and comes up by itself. Returns its name.
+    `names`: the network's public names its DNS answers with addresses on the VPN (a hub, a relay at
+    the master): asked there too, or this computer reaches them at the public address and counts as
+    the Internet (the relay refused the hub's posts, 18 Nov 2026)."""
     name = connection_name(domain)
     base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
     tmp = tempfile.mkdtemp(prefix="kiwi-connect-", dir=base)        # nmcli names the connection after the file
@@ -58,7 +61,8 @@ def up(conf_path, domain, runner=subprocess.run):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     # only this network's names go to its DNS, and it is never the way to the Internet
-    _nm("connection", "modify", name, "ipv4.dns-search", "~" + domain, "ipv4.never-default", "yes",
+    search = ",".join(["~" + domain] + ["~" + n for n in sorted(set(names)) if n and not n.endswith("." + domain)])
+    _nm("connection", "modify", name, "ipv4.dns-search", search, "ipv4.never-default", "yes",
         "ipv6.method", "disabled", "connection.autoconnect", "yes", runner=runner)
     _nm("connection", "up", name, runner=runner)
     return name

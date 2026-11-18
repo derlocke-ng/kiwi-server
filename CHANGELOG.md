@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.186.0 — the network's public names on the VPN; versioned module sources
+
+- **This computer on the VPN asks the network's DNS for its public names too**
+  (`kiwi-server connect`, the app's Connect this computer…): `hub.kiwi-network.eu` was answered
+  by the home router with the master's public address, so the relay took this computer for the
+  Internet and refused the hub's posts (18 Nov 2026). Run Connect again once to get it.
+- **Module sources by version**: `sources add` and `update` pin a repository's newest version tag
+  (`v0.2.0`), `--ref` follows a branch. A source from `sources new` has a `VERSION`, tags it when
+  merged, and checks that a changed module bumps its version (kiwi-modules-community and
+  -personal have it, both at v0.1.0).
+- **`control push --ssh` refused** whenever the control node had changed anything since the
+  last sync ("the control node's copy changed"), even only a host key it learned; after every
+  release here (17-18 Nov 2026). Over SSH push and pull now make one copy of the two like the
+  control node's API always did; only a file both sides changed stops them.
+- **`turn`** (kiwi-modules 0.84.0, from the pull request of 10 November): coturn on a master for
+  the calls in a hub's chat when two networks allow no direct path; it relays and keeps nothing.
+  A hub on the same master finds it by itself, a hub on a node names it in `ice`.
+
 ## 2.185.0 — save & apply, and every machine a change reaches
 
 - **Changes not applied yet**: kiwi-server remembers a fingerprint of what each apply sent and

@@ -1,0 +1,15 @@
+# turn (coturn) — relays a hub's calls where two browsers find no direct path; turnserver.conf says how
+services:
+  {{ container_prefix }}-turn:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-turn
+    # the host's own network: the relay ports are the host's, and its address is the one coturn tells the browsers
+    network_mode: host
+    command: "-c /etc/coturn/turnserver.conf"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-turn/turnserver.conf:/etc/coturn/turnserver.conf:ro,z

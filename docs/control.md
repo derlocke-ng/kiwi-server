@@ -314,7 +314,7 @@ kiwi-server control pull ~/kiwi/fleet.yaml    # before working here
 kiwi-server control push ~/kiwi/fleet.yaml    # after changing the fleet here
 ```
 
-Both merge the same way; when a file changed on both sides they name it and
+Both merge the same way, also over `--ssh`; when a file changed on both sides they name it and
 stop, and `pull --force` or `push --force` says which copy counts. The node
 takes a push while it is open. A new password
 (`--set-password`, then push) locks it until that password logs in.

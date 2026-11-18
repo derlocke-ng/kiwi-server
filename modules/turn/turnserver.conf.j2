@@ -1,0 +1,44 @@
+# coturn for {{ hostname }}: the TURN server of the hub's calls (kiwi-modules' turn module; generated)
+listening-port={{ port }}
+min-port={{ relay_min }}
+max-port={{ relay_max }}
+{% if external_ip %}
+# behind NAT: the address the browsers are told to send to
+external-ip={{ external_ip }}
+{% endif %}
+realm={{ turn_host }}
+server-name={{ turn_host }}
+
+# one login, which the hub's pages are given (HUB_ICE_USERNAME, HUB_ICE_CREDENTIAL)
+lt-cred-mech
+user={{ username }}:{{ password }}
+fingerprint
+user-quota={{ user_quota }}
+total-quota={{ user_quota }}
+stale-nonce=600
+
+# plain UDP and TCP only: the media inside are encrypted end to end by the browsers (DTLS-SRTP)
+no-tls
+no-dtls
+no-cli
+no-software-attribute
+no-multicast-peers
+log-file=stdout
+simple-log
+
+# never a way into this machine's own networks: relay to the internet only
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=224.0.0.0-255.255.255.255
+# this stack's container network
+denied-peer-ip={{ stack_range }}
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff

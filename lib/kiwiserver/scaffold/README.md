@@ -35,3 +35,10 @@ settings:
 ```
 
 The same check runs on every push and pull request (`.github/workflows/check.yml`).
+
+## Versions
+
+Every module has its `version:` in its module.yaml, and the source has one in `VERSION`. A
+change to a module bumps both (`tools/check-versions.py` checks it in a pull request); merged
+to main, `VERSION` becomes a tag (`v0.2.0`), and that is what `kiwi-server sources … update`
+pins. Without tags a fleet follows the default branch.

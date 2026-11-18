@@ -27,6 +27,16 @@ services:
 {% if space_relays %}
       - HUB_SPACE_RELAYS={{ space_relays | join(';') }}
 {% endif %}
+{# the calls' servers: what is named under ice, else this host's turn module #}
+{% if ice_effective %}
+      - HUB_ICE={{ ice_effective }}
+{% if ice_username_effective %}
+      - HUB_ICE_USERNAME={{ ice_username_effective }}
+{% endif %}
+{% if ice_credential_effective %}
+      - HUB_ICE_CREDENTIAL={{ ice_credential_effective }}
+{% endif %}
+{% endif %}
     networks:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}

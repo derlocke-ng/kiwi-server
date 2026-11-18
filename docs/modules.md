@@ -441,13 +441,17 @@ kiwi-server sources ~/kiwi/fleet.yaml remove kiwi-modules-community
 kiwi-server sources ~/kiwi/fleet.yaml add --path ~/src/my-modules --name mine
 ```
 
-`add` pins the repository to the commit it is at now (`--ref` takes a branch or tag instead):
+`add` pins the repository to its newest version tag (`v0.2.0`), or to the commit its default
+branch is at when it has none; `--ref` takes a branch or tag instead. A source made with
+`sources new` tags every `VERSION` merged to its main branch by itself, and its check asks a
+changed module to bump its version and the source's:
 
 ```yaml
 module_sources:
   - name: kiwi-modules-community
     url: https://github.com/derlocke-ng/kiwi-modules-community
     commit: 73b7c54…                # 40 hex digits
+    tag: v0.1.0                     # what the commit is, for people
 ```
 
 Whatever renders the fleet fetches that commit into its cache (`~/.cache/kiwi-server/module-sources`):

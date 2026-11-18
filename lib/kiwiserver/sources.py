@@ -51,7 +51,7 @@ def check(raw):
         if name in names:
             errs.append("module_sources: two are called %s" % name)
         names.add(name)
-        unknown = sorted(set(s) - {"name", "url", "commit", "path", "note"})
+        unknown = sorted(set(s) - {"name", "url", "commit", "path", "note", "tag"})
         if unknown:
             errs.append("%s (%s): unknown key %s" % (where, name, ", ".join(unknown)))
         if s.get("path") and s.get("url"):
@@ -65,7 +65,8 @@ def check(raw):
                 errs.append("%s (%s): commit is the 40 hex digits of the commit to take "
                             "(kiwi-server sources FLEET add writes it)" % (where, name))
             else:
-                out.append({"name": name, "url": str(s["url"]), "commit": str(s["commit"])})
+                out.append(dict({"name": name, "url": str(s["url"]), "commit": str(s["commit"])},
+                                **({"tag": str(s["tag"])} if s.get("tag") else {})))
         else:
             errs.append("%s (%s): url with commit, or path" % (where, name))
     return out, errs
@@ -123,6 +124,41 @@ def fetch(src, cache=None):
 def folders(fleet, cache=None):
     """[(name, folder)] of a fleet's module sources, fetched where needed: for kiwimodules' discover()."""
     return [(s["name"], fetch(s, cache)) for s in getattr(fleet, "module_sources", None) or []]
+
+
+def _semver(tag):
+    m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def latest(url):
+    """(tag, commit) of a repository's newest version tag (v1.2.3), or None when it has none."""
+    out = _git("ls-remote", "--tags", url, "v*", timeout=60)
+    found = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not parts[1].startswith("refs/tags/"):
+            continue
+        name = parts[1][len("refs/tags/"):]
+        peeled = name.endswith("^{}")
+        name = name[:-3] if peeled else name
+        if _semver(name) and (peeled or name not in found):     # an annotated tag's commit wins over the tag object
+            found[name] = parts[0]
+    if not found:
+        return None
+    tag = max(found, key=_semver)
+    return tag, found[tag]
+
+
+def pin(url, ref=None):
+    """(commit, tag or "") to pin: the newest version tag when the repository has some and nothing
+    else is asked for, else what `ref` (a branch, tag or commit) or the default branch is now."""
+    if not ref:
+        got = latest(url)
+        if got:
+            return got[1], got[0]
+    commit = resolve(url, ref)
+    return commit, (ref if ref and _semver(ref) else "")
 
 
 def resolve(url, ref=None):

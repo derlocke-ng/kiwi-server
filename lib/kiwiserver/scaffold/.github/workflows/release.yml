@@ -1,0 +1,21 @@
+name: release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: tag VERSION when it is new (what `kiwi-server sources … update` pins)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="v$(tr -d ' \n' < VERSION)"
+          if git rev-parse -q --verify "refs/tags/$v" >/dev/null; then echo "$v exists"; exit 0; fi
+          git tag "$v" && git push origin "$v"
+          gh release create "$v" --title "$v" --notes "Pin it: kiwi-server sources FLEET update $(basename "$GITHUB_REPOSITORY")"

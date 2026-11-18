@@ -295,7 +295,17 @@ http {
         listen {{ tls_listen }} default_server;
         http2 on;
         server_name _;
+{% if machine_registry %}
+        # an app scanning the LAN asks this machine's address: the network's registry is over there
+        location = /.well-known/kiwi {
+            return 302 {{ machine_registry }};
+        }
+        location / {
+            return 444;
+        }
+{% else %}
         return 444;
+{% endif %}
     }
 {% if machine_page %}
 
@@ -304,6 +314,11 @@ http {
         listen {{ tls_listen }};
         http2 on;
         server_name {{ hostname }};
+{% if machine_registry %}
+        location = /.well-known/kiwi {
+            return 302 {{ machine_registry }};
+        }
+{% endif %}
         location / {
             return 302 {{ machine_page }};
         }

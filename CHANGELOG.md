@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.193.0 — the network's registry, for the apps
+
+- **`/api/registry`**: the status page as data, without a login: every service with what it
+  is for, where it is and whether it works, the game servers, the sign-up and game pages, the
+  network's CA. `?machine=NAME` for one machine; the public name gives the strangers' part.
+- **`/.well-known/kiwi`** at every machine's own name and at its address on the LAN leads
+  there: kiwi-app's user side finds the network from a name typed in or by asking the LAN
+  (kiwi-modules 0.88.0). [control.md](docs/control.md#more-computers) has the fields.
+- `tests/drills/offsite-vm.sh` waits longer, keeps a machine that failed a check, and reads
+  what the machine itself says when it does not join; `status` that cannot reach it is a fail.
+
 ## 2.192.0 — every machine's own name has a page, and the roadmap is current
 
 - **`https://papaya.home`**, a machine's own name, leads to its part of the status page: its

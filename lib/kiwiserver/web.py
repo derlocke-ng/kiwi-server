@@ -1771,6 +1771,45 @@ def make_app(control: Control):
         return page("status.html", h=h, now=now, tor=tor_checks(), games=found, play_host=PLAY_HOST, one=one,
                     stale=bool(h["checked"]) and now - h["checked"] > 45 * 60)
 
+    def registry(request, strangers=False, machine=""):
+        """The network as a person on it uses it, as data for an app (kiwi-app's user side): its name,
+        every service with what it is for, where it is and whether it works, the game servers, how to
+        get an account, and where the status page and the network's CA are. No login, no admin page,
+        no setting: what the status page shows. `machine`: one machine's part."""
+        now = time.time()
+        h = healthmod.public(control.health(), now, strangers=strangers)
+        found = [] if strangers else games()
+        one = None
+        if machine and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", machine) and not strangers:
+            said = next((x for x in (control.status() or {}).get("hosts") or [] if x.get("host") == machine), None)
+            one = {"name": machine, "state": (said or {}).get("state") or "unknown"}
+            h["services"] = [x for x in h["services"] if x.get("host") == machine]
+            found = [g for g in found if g["machine"] == machine]
+        info = control.fleet_info() or {}
+        base = "https://%s/" % (request.headers.get("host") or "").split(",")[0].strip()
+        return {"kind": "kiwi-registry", "version": 1, "network": (os.environ.get("KIWI_BRAND") if strangers else "") or "Kiwi",
+                "domain": "" if strangers else info.get("domain") or "", "checked": h.get("checked") or 0,
+                "status": base, "machine": one,
+                "join": h.get("join") if (not strangers or h.get("join_public")) else "",
+                "play": ("https://%s/" % PLAY_HOST) if PLAY_HOST and not strangers else "",
+                "ca": "" if strangers else base + "api/ca",
+                "services": [{"label": x["label"], "about": x.get("about") or "", "url": "https://%s/" % x["site"], "ok": bool(x["ok"]),
+                              "uptime": x.get("uptime"), "onion": x.get("onion") or ""}
+                             for x in h["services"] if not x["site"].startswith("status.")],
+                "games": [{"name": g["name"], "title": g["title"], "address": g["address"], "state": g["state"]} for g in found]}
+
+    @app.get("/api/registry")
+    def api_registry(request: Request, machine: str = ""):
+        return registry(request, machine=machine)
+
+    @app.get("/api/registry/public")
+    def api_registry_public(request: Request):
+        r = registry(request, strangers=True)
+        h = healthmod.public(control.health(), time.time(), strangers=True)
+        join = h.get("join") or ""
+        r["join"] = join if join and not join.split("/")[2].endswith("." + str((control.fleet_info() or {}).get("domain") or "home")) else ""
+        return r
+
     @app.get("/status/public")
     @app.get("/start/public")
     def status_public():

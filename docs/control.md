@@ -273,6 +273,26 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 asked at every refresh: they leave no line in the activity log. The Android app
 (kiwi-app) reads its Home, Machines and Services from them.
 
+**The registry, for everyone on the network.** A person who does not run the
+network still wants to know what is in it for them. `https://status.<host>/api/registry`
+gives, without a login, what the status page shows, as data for an app:
+
+| Field | What it is |
+|---|---|
+| `kind`, `version` | `kiwi-registry`, 1 |
+| `network`, `domain` | the network's name, its private domain (`home`) |
+| `services` | each with `label`, `about`, `url`, `ok`, `uptime`, `onion` |
+| `games` | each game server with `name`, `title`, `address`, `state` |
+| `join`, `play`, `status` | the sign-up page, the game page, the status page |
+| `ca` | the network's CA (`/api/ca`), from which the `.home` names' certificates come |
+| `machine` | with `?machine=NAME`: that machine and whether it answers |
+
+Every machine with a proxy leads there from `https://<its name>/.well-known/kiwi`
+and from its LAN address (`https://192.168.2.61/.well-known/kiwi`): an app finds the
+network from a name typed in, or by asking the addresses of the LAN. Under the
+public name (`public_status_hostname`) the registry holds only what is open to the
+Internet. kiwi-app's user side reads it.
+
 ## A computer was lost or stolen
 
 Remove it (above), then replace what it knew. On the page, under

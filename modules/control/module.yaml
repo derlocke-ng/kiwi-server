@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: control
   title: Control page
-  version: 1.1.1
+  version: 1.2.0
   description: "The control node (design/control-plane.md in kiwi-server): kiwi-server with web pages at control.<hostname>, for the mesh only. It keeps the fleet file and the secrets as the encrypted store, which its password opens into RAM; then it looks at every machine by itself, sends the role to RAM masters, and applies from a phone."
   category: system
   node_types: [node]
@@ -71,8 +71,25 @@ nginx:
             set $page http://{{ container_prefix }}-control:8740/status;
             proxy_pass $page;
             proxy_set_header Host $host;
+        # the same as data, for the apps (kiwi-app): what a person on the network uses, and where
+        - path: "= /api/registry"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/api/registry$is_args$args;
+            proxy_pass $page;
+            proxy_set_header Host $host;
+        - path: "= /.well-known/kiwi"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/api/registry$is_args$args;
+            proxy_pass $page;
+            proxy_set_header Host $host;
+        # the network's CA, which the .home names' certificates come from: for an app to trust them
+        - path: "= /api/ca"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/api/ca;
+            proxy_pass $page;
+            proxy_set_header Host $host;
       when: status_page
-      comment: Kiwi start and status pages (no login; the control part's /start and /status only)
+      comment: Kiwi status page (no login; the control part's /start, /status and /api/registry only)
     # the same for strangers, under a public name: only what is open to the Internet, and whether it
     # works. Whatever is asked for at this name, the control part is asked for /status/public.
     - server_name: "{{ public_status_hostname }}"
@@ -87,8 +104,18 @@ nginx:
             set $page http://{{ container_prefix }}-control:8740/status/public;
             proxy_pass $page;
             proxy_set_header Host $host;
+        - path: "= /api/registry"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/api/registry/public;
+            proxy_pass $page;
+            proxy_set_header Host $host;
+        - path: "= /.well-known/kiwi"
+          config: >-
+            set $page http://{{ container_prefix }}-control:8740/api/registry/public;
+            proxy_pass $page;
+            proxy_set_header Host $host;
       when: public_status_hostname
-      comment: Kiwi front page and status for the Internet (the services with a public name only)
+      comment: Kiwi status page for the Internet (the services with a public name only; its registry too)
     # the game page: people of the network's accounts in one group start, stop and wake the game
     # servers and read their logs. Whatever is asked for at this name, the control part is asked
     # for /play/… and nothing else. No admin page: who may reach this machine's web pages gets the

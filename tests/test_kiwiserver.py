@@ -12147,7 +12147,11 @@ class TestFirstRunPage(StoreBase):
         cookie, _csrf = self.made()
         node, page = self.node(), "/hosts/%s/settings" % self.node()
         self.assertEqual(self.change(page, cookie, {"f:node.cloud.admin_password": "nextcloud-s3cr3t"})[:2], (303, page + "?saved=1"))
-        self.assertEqual(self.data()["hosts"][node]["node"]["cloud"], {"admin_password": "nextcloud-s3cr3t"})
+        # into the secret store, not the fleet file (`secrets keep`): every computer that joins keeps that file
+        self.assertNotIn("cloud", self.data()["hosts"][node]["node"])
+        pins = os.path.join(self.dir, "secrets", "pins.json")
+        hostname = next(h["hostname"] for h in self.c.fleet_info()["hosts"] if h["name"] == node)
+        self.assertEqual(json.loads(util.read_text(pins))[hostname + "/cloud/admin_password"], "nextcloud-s3cr3t")
         body = self.ask(page, cookie=cookie)[1]
         self.assertNotIn("s3cr3t", body)
         self.assertRegex(body, r'type="password" name="f:node.cloud.admin_password" autocomplete="new-password"\s+'
@@ -12159,9 +12163,10 @@ class TestFirstRunPage(StoreBase):
                 self.assertNotIn(b"s3cr3t", util.read_bytes(os.path.join(self.dir, name)))
         # left empty it stays; ticked away it goes
         self.assertEqual(self.change(page, cookie, {"f:keyboard": "fr"})[0], 303)
-        self.assertEqual(self.data()["hosts"][node]["node"]["cloud"], {"admin_password": "nextcloud-s3cr3t"})
+        self.assertIn(hostname + "/cloud/admin_password", json.loads(util.read_text(pins)))
         self.assertEqual(self.change(page, cookie, {"clear:node.cloud.admin_password": "1"})[0], 303)
-        self.assertNotIn("cloud", self.data()["hosts"][node]["node"])
+        self.assertNotIn(hostname + "/cloud/admin_password", json.loads(util.read_text(pins)))
+        self.assertEqual(self.c.audit_tail(1)[0]["keys"], ["node.cloud.admin_password"])
         self.at_rest()
 
     def test_the_settings_for_every_machine(self):

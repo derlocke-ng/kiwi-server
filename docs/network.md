@@ -151,6 +151,24 @@ that nobody else has the address, and takes back what it had when that fails. Wh
 the address cannot be changed after the install (CoreOS, uCore, Debian), the apply
 says what the machine has and what the fleet file wants.
 
+## A machine at another site
+
+A node need not stand at home: at a friend's, in an office, behind someone else's
+router. It joins the mesh like any node, through the master, and the others reach it
+over the VPN. Machines with fixed addresses in one LAN reach each other there
+directly (their DNS answers with the LAN address); one at another site is never taken
+for a neighbour. Give it its site in the fleet file, or "Site" in its settings:
+
+```yaml
+hosts:
+  medlar:
+    network: { dhcp: false, address: 192.168.178.20/24, gateway: 192.168.178.1, site: friend }
+```
+
+Without `site` every machine is at `home`. It matters when the other place's LAN has
+the same numbers as the home's (two routers of one make give out the same range):
+without it, home would send the machine's name to an address in its own LAN.
+
 ## Phones and laptops: 1280
 
 A phone or laptop is in a different network every day: mobile data, a hotel, another

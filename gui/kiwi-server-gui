@@ -130,6 +130,10 @@ BASE_GROUPS = [
              help="192.168.1.20/24 — or leave empty and set an address range in the defaults"),
         dict(path=("network", "gateway"), type="string", label="Gateway", default="", help="The router's address, e.g. 192.168.1.1. Only without DHCP"),
         dict(path=("network", "dns"), type="list", label="DNS servers", default=[], help="Space separated"),
+        dict(path=("network", "site"), type="string", label="Site", default="home",
+             help="Where the machine stands. Machines of one site with fixed addresses reach each other on their LAN; "
+                  "a machine at another site (a friend's, an office) over the VPN, also when its LAN has the same numbers "
+                  "as home's. A name of your choice, e.g. office"),
         dict(path=("network", "interface"), type="string", label="Interface", default="",
              help="Empty: the first wired interface"),
         dict(path=("network", "iprange"), type="string", label="Address range", scope="defaults", default="",

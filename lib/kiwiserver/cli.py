@@ -85,6 +85,11 @@ def static_lan(host):
         return None
 
 
+def site_of(host):
+    """Where a machine stands (`network.site`, "home" unless said): LANs are one only within a site."""
+    return str((host.cfg.get("network") or {}).get("site") or "home")
+
+
 def has_master(fleet, roles):
     return any(h.role in roles and roles[h.role].node_type == "master" and not h.standby_of for h in fleet.hosts.values())
 
@@ -314,7 +319,7 @@ class Renderer:
             return
         self._scanned = True
         recs, needs_ca, master_ip, node_lan = [], False, "", []
-        self._caches = []       # (LAN interface, hostname, registries, apt) of the nodes that run the cache module
+        self._caches = []       # (LAN interface, hostname, registries, apt, site) of the nodes that run the cache module
         open_nodes = []         # (name, mesh address, public names, ports) of the nodes open to the internet
         mesh_only = []          # names whose service answers at the mesh address only: never a home address for them
         for h in self.fleet.hosts.values():
@@ -342,10 +347,10 @@ class Renderer:
                                       "ice_credential": str(t.get("password") or "")}
                 lan = static_lan(h)
                 if lan and role.node_type != "master":      # a master's stack lives on the mesh, not its LAN
-                    node_lan.append((spec.vpn_ip, lan.ip))
+                    node_lan.append((spec.vpn_ip, lan.ip, site_of(h)))
                     if "cache" in h.modules:
                         c = h.module_settings["cache"]
-                        self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt"))))
+                        self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt")), site_of(h)))
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
                 # a VPN name that sends on to a public one: in the DNS and the certificate, but no service of its own
@@ -395,10 +400,10 @@ class Renderer:
         own = static_lan(host)
         if not own or not role.stack or role.node_type == "master":
             return
-        cache = next((c for c in self._caches if c[0].ip in own.network), None)
+        cache = next((c for c in self._caches if c[0].ip in own.network and c[4] == site_of(host)), None)
         if not cache:
             return
-        lan, name, registries, apt = cache
+        lan, name, registries, apt, _site = cache
         rs = host.role_settings
         if not rs.get("registry_mirrors") and registries:
             rs["registry_mirrors"] = {r: "cache.%s/%s" % (name, r) for r in registries}
@@ -414,7 +419,8 @@ class Renderer:
         own = static_lan(host)
         if not own or role.node_type == "master":
             return {}
-        return {mesh: str(ip) for mesh, ip in self._node_lan if ip in own.network}
+        here = site_of(host)
+        return {mesh: str(ip) for mesh, ip, site in self._node_lan if ip in own.network and site == here}
 
     def ca_dir(self, host):
         tls = host.cfg.get("tls") or {}

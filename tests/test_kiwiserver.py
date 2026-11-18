@@ -3308,6 +3308,22 @@ class TestAccess(Base):
         self.assertEqual(rules["names"]["cloud.papaya.home"]["allow"], ["10.9.255.2"])       # as before
         self.assertEqual(fedmod.admin_rules(plain, {}, "papaya", ["control.papaya.home"], "home"), plain)
 
+    def test_a_machines_own_name_leads_to_its_page_on_the_status_page(self):
+        f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "papaya": {"role": "node", "node": {"vpn_ip": "10.8.0.25", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
+                                                "modules": ["vpn-client", "reverse-proxy", "control"]}},
+            "lychee": {"role": "node", "node": {"vpn_ip": "10.8.0.26", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
+                                                "preset": "minimal"}}}})
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        node = fleet.hosts["lychee"]
+        files = r.bundle(node, r.prepare(node)).files
+        self.assertEqual(node.module_settings["reverse-proxy"]["machine_page"], "https://status.papaya.home/?machine=lychee")
+        nginx = files["kn-nginx/nginx.conf"][0]
+        self.assertIn("server_name lychee.home;", nginx)
+        self.assertIn("return 302 https://status.papaya.home/?machine=lychee;", nginx)
+
     def test_a_hub_on_a_node_calls_through_the_masters_turn(self):
         hub = {"vpn_ip": "10.8.0.25", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
                "modules": ["vpn-client", "reverse-proxy", "nostr-relay", "hub"]}
@@ -9458,6 +9474,18 @@ class TestWeb(WebBase):
             self.assertIn(words, body)
         for words in ("Vaultwarden", "Nextcloud", "papaya", "not on the VPN yet"):
             self.assertNotIn(words, body)
+        # one machine's part, where its own name leads (https://papaya.home)
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": now, "hosts": [
+            {"host": "papaya", "ok": True, "state": "warn", "problems": [], "notes": [], "facts": {}}]}))
+        body = self.ask("/status?machine=papaya")[1]
+        for words in ("Kiwi: papaya", "something on it wants a look", "Files (Nextcloud)", "Passwords (Vaultwarden)", "The whole network"):
+            self.assertIn(words, body)
+        self.assertIn("chat.example.org", body)                                # its public site too: it runs there
+        self.assertNotIn("Machines</span>", body)
+        body = self.ask("/status?machine=lychee")[1]
+        self.assertIn("This machine has not been asked yet.", body)
+        self.assertNotIn("Files (Nextcloud)", body)
+        self.assertIn("Kiwi: status", self.ask("/status?machine=%3Cscript%3E")[1])      # no such name: the whole page
         # over Tor: each hidden service as its machine last asked it through Tor
         addr = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
         body = self.ask("/status")[1]

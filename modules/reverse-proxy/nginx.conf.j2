@@ -297,6 +297,18 @@ http {
         server_name _;
         return 444;
     }
+{% if machine_page %}
+
+    # the machine's own name: its page on the network's status page (kiwi-server names it)
+    server {
+        listen {{ tls_listen }};
+        http2 on;
+        server_name {{ hostname }};
+        location / {
+            return 302 {{ machine_page }};
+        }
+    }
+{% endif %}
 {% if via and public_names %}
     server {
         listen 8443 ssl proxy_protocol default_server;

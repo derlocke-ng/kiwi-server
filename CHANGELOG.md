@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.192.0 — every machine's own name has a page, and the roadmap is current
+
+- **`https://papaya.home`**, a machine's own name, leads to its part of the status page: its
+  services, whether they work, whether it answers, and a link to the whole network. It
+  answered nothing before. `status.<host>` stays the network's page, and the page for the
+  Internet stays at its public name (kiwi-modules 0.87.0).
+- **The roadmap** ([docs/ROADMAP.md](docs/ROADMAP.md)) opens with where kiwi-server stands and
+  what is open, in order; the history stays below. Five design pages are listed for the site.
+- `tests/drills/offsite-vm.sh` is in the repository now (2.191.0 named it without it).
+
 ## 2.191.0 — Preferences and a short menu, sites, and the whole network in the picture
 
 - **Preferences** in the app (the gear, Ctrl+,): its icon from kiwi-icons in any colourway and

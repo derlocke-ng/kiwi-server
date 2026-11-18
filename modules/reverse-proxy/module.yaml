@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: reverse-proxy
   title: Web addresses (nginx)
-  version: 1.1.0
+  version: 1.2.0
   description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own. On a master it lives inside the WireGuard server's network namespace: the admin pages get names, reachable from the mesh only"
   category: core
   node_types: [master, node]
@@ -92,6 +92,12 @@ settings:
     label: Handed on to nodes
     help: "Filled in by kiwi-server on a master, from the nodes whose proxy is open to the internet. names: public name -> the node's mesh address (the connection goes there still encrypted; the node holds the certificate). ports: port, to (address:port on the node), proxy_protocol."
     default: {}
+  - key: machine_page
+    group: Generated
+    label: The machine's own page
+    help: "Filled in by kiwi-server when the network has a status page: where the machine's own name (https://<hostname>) sends a visitor, the status page of this machine."
+    default: ""
+    pattern: '(https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._/?=&-]*)?'
   - key: via
     group: Generated
     label: The master that hands on

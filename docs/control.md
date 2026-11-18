@@ -418,7 +418,9 @@ that); the question finds it. What is wrong is kept with its time.
 - "Get an account", to the sign-up page when the network has the
   [accounts module](roles.md#accounts).
 
-It shows no admin page and no setting, and says Kiwi: `brand_name` names the page for
+Each machine's own name leads to its part of the page: `https://lychee.home` shows
+lychee's services, whether they work, and whether lychee answers, with a link to
+the whole network. It shows no admin page and no setting, and says Kiwi: `brand_name` names the page for
 the Internet only. Who may open it is set like for any service
 ([Who may reach what](network.md#who-may-reach-what)); `status_page: false` in the node's
 `control:` block switches it off. Home shows the same to the people

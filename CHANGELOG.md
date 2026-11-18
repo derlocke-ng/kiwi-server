@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.218.0 — the gateway keeps the groups of the home network; a removed machine is gone at once
+
+- **A gateway node keeps the groups of the home network too**, for what it routes from the home
+  into the mesh (machines at another site, nodes by their mesh address): kiwi-modules 0.97.0's
+  chain `KIWI_GW_LAN` lets a group through to what it was given and no further; a client in no
+  group reaches the mesh as before. `tests/drills/lan-netns.py` covers it (13 checks).
+- **A machine removed on the control page is gone from it at once** (the owner: kumquat was
+  "still half there", and its Remove then said "no such machine"): the remove takes it out of the
+  last look and of the recovery watch's notes, which kept it until the next look.
+
 ## 2.217.0 — groups of the home network
 
 - **A part of the home network can be a group in *who may reach what*** (the owner: VLANs "kinda

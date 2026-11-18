@@ -2189,6 +2189,8 @@ def literal_module_secrets(fleet, ms):
     module: written_in is the host's name, or None for the defaults (every machine of that role)."""
     out = []
     for h in fleet.hosts.values():
+        if h.standby_of:        # its master's settings, under the same host name: the master's pins are its own
+            continue
         for where, block in ((h.name, (h.overrides or {}).get(h.role)), (None, (fleet.defaults or {}).get(h.role))):
             for m, given in (block or {}).items():
                 mod = ms.get(m) if isinstance(given, dict) else None

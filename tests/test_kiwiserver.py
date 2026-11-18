@@ -8366,9 +8366,10 @@ class TestLogins(Base):
 
     def test_module_passwords_move_into_the_store_and_stay_the_same(self):
         """`secrets keep`: no password left in the fleet file, every machine renders the same values."""
-        f = self.network()
+        f = self.network(gate={"role": "master", "target": "debian", "master": self.master(),
+                               "standby": {"gate-b": {"network": {"dhcp": False, "address": "192.168.2.70/24", "gateway": "192.168.2.1"}}}})
         os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
-        before = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
+        before = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "gate-b", "m1", "sh3")}
         shut = types.SimpleNamespace(is_open=lambda: False, exists=lambda: True)
         with self.assertRaisesRegex(KiwiError, "locked"):                              # never into a plain folder on the disk
             cli.secrets_keep(f.path, shut)
@@ -8383,7 +8384,7 @@ class TestLogins(Base):
         gate, m1 = (config.Fleet.load(f.path).hosts[n].hostname for n in ("gate", "m1"))
         self.assertEqual((pins[gate + "/vpn-server/wg_password"], pins[gate + "/vpn-client/wireguard_private_key"],
                           pins[m1 + "/sftp/sftp_password"]), ("w", "k", "s"))
-        after = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
+        after = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "gate-b", "m1", "sh3")}   # its standby too
         self.assertEqual(after, before)                                                # the same passwords, generated ones too
         rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "wg_password")
         self.assertEqual((rc, out.strip()), (0, "w"), err)

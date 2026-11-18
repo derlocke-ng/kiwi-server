@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.214.1 — secrets keep with a standby
+
+- `secrets keep` stopped at a master's standby ("no such machine: crumble-b"): a standby is not
+  written in the fleet file of its own, it renders with its master's settings under the same
+  host name. It is left out now; its master's passwords in the store are its own as well.
+
 ## 2.214.0 — no password in the fleet file
 
 - **`kiwi-server secrets keep FLEET`**: every password written in the fleet file for a machine's

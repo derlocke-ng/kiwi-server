@@ -4552,7 +4552,8 @@ class TestForm(Base):
         ids = [g["id"] for g in found]
         self.assertIn("mod:cloud", ids)                             # one group per module it runs
         self.assertIn("mod:vpn-client", ids)
-        self.assertNotIn("mod:immich", ids)
+        self.assertTrue(next(g for g in found if g["id"] == "mod:immich")["off"])   # offered: its group there, hidden
+        self.assertFalse(next(g for g in found if g["id"] == "mod:cloud")["off"])
         self.assertIn("base:uCore", ids)                            # its own target's group only
         self.assertNotIn("base:Debian", ids)
         self.assertIn("base:Debian", [g["id"] for g in self.groups(data, "gate")])
@@ -11492,13 +11493,17 @@ class TestFirstRunPage(StoreBase):
         on = [v for n, v in self.shown(body) if n == "f:node.modules"]
         self.assertEqual(sorted(on), ["cloud", "portainer", "reverse-proxy", "tang", "vault", "vpn-client"])    # the preset's, and the ring
 
-        self.assertIn('name="f:node.modules" value="immich">', body)                       # offered, not ticked
-        self.assertNotIn("f:node.immich.library_dir", body)
+        self.assertRegex(body, r'name="f:node\.modules" value="immich" onchange="[^"]*">')    # offered, not ticked
+        self.assertIn('data-module="immich" hidden', body)                                  # its settings wait, hidden
+        self.assertLess(body.index('data-module="immich" hidden'), body.index("f:node.immich.library_dir"))
         self.assertIn('<option value="cloud" selected>Cloud (cloud)</option>', body)
-        self.assertEqual(self.change(page, cookie, {"f:node.modules": on + ["immich"]})[:2], (303, page + "?saved=1"))
+        self.assertEqual(self.change(page, cookie, {"f:node.modules": on, "f:node.immich.library_dir": "/mnt/x"})[0], 303)
+        self.assertNotIn("immich", self.data()["hosts"][node]["node"])      # not ticked: its settings are not written
+        self.assertEqual(self.change(page, cookie, {"f:node.modules": on + ["immich"], "f:node.immich.library_dir": "/mnt/photos"})[:2],
+                         (303, page + "?saved=1"))                            # ticked and set in one go
         self.assertEqual(self.data()["hosts"][node]["node"]["modules"], ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer", "tang", "immich"])
         body = self.ask(page, cookie=cookie)[1]
-        self.assertIn('name="f:node.modules" value="immich" checked>', body)
+        self.assertRegex(body, r'name="f:node\.modules" value="immich" onchange="[^"]*" checked>')
         self.assertIn("<summary>Photos (Immich)</summary>", body)
         self.assertIn('name="f:node.immich.library_dir"', body)
         self.assertEqual(self.change(page, cookie, {"f:node.immich.library_dir": "/mnt/photos", "f:node.immich.machine_learning": "no"})[0], 303)
@@ -11524,7 +11529,7 @@ class TestFirstRunPage(StoreBase):
         self.assertIn('name="f:updates.time" value="25:00"', body)                         # what was typed stays
         self.assertIn('name="f:keyboard" value="fr"', body)
         self.assertNotIn("typed-s3cr3t", body)                                              # but never a secret
-        self.assertNotIn("Saved", body)
+        self.assertNotIn('banner ok">Saved', body)
         # the form says no before the check is asked
         status, body, _ = self.change(page, cookie, {"f:admin.ssh_port": "abc", "f:keyboard": "fr"})
         self.assertEqual(status, 200)

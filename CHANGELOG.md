@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.197.0 — a module ticked shows its settings at once
+
+- **The control page shows a module's settings as soon as it is ticked**, as the app does (the
+  owner: "need to save first it seems and refresh"). Every module the machine may run has its
+  settings on the page, hidden until it is ticked; tick it, fill them in, save once. The settings
+  of a module that is not ticked are not written.
+
 ## 2.196.0 — the app asks one kiwi-server that stays
 
 - **`kiwi-server agent`**: a kiwi-server that the app starts and that ends with it, on a socket

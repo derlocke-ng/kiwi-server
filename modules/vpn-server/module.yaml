@@ -25,9 +25,17 @@ firewall:
 templates:
   compose: docker-compose.yml.j2
   start_script: start.sh.j2
+  fed_dns: fed-dns.py.j2
+  fed_dns_conf: fed-dns.json.j2
+
+derived:
+  # a partner seen under another domain or mesh here (kiwi-server: federation.yaml seen_as)
+  translated: "{{ 'yes' if (federation or {}).values() | selectattr('seen_as') | list else '' }}"
 
 outputs:
   start_script: { path: "{{ container_prefix }}-vpn-server/start.sh", mode: 0755 }
+  fed_dns: { path: "{{ container_prefix }}-vpn-server/fed-dns/fed-dns.py", mode: 0644, when: translated }
+  fed_dns_conf: { path: "{{ container_prefix }}-vpn-server/fed-dns/fed-dns.json", mode: 0644, when: translated }
 
 storage:
   bind_mounts:
@@ -168,6 +176,11 @@ settings:
     label: Extra environment variables
     help: KEY=value, passed to the container as they are.
     default: {}
+  - key: fed_dns_image
+    group: Advanced
+    label: The link's DNS (image)
+    help: "Python for the small DNS of a partner seen under another domain or mesh (fed-dns.py): only with such a partner."
+    default: docker.io/library/python:3.13-alpine
   - key: image
     group: Advanced
     help: "weejewel/wg-easy is the last line that takes WG_POST_UP and PASSWORD; ghcr.io/wg-easy/wg-easy:15 needs the INIT_* setup instead."

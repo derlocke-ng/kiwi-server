@@ -222,15 +222,54 @@ iptables -I INPUT 1 -i wg-fed -m conntrack --ctstate ESTABLISHED,RELATED -j ACCE
 iptables -I INPUT 2 -i wg-fed -p udp --dport 53 -j ACCEPT
 iptables -I INPUT 3 -i wg-fed -p tcp --dport 53 -j ACCEPT
 iptables -I INPUT 4 -i wg-fed -j DROP
+{% if translated %}
+# the link's DNS (fed-dns) answers Pi-hole in this namespace, nobody on the VPN
+iptables -I INPUT 1 -i wg0 -p udp --dport 5353 -j DROP
+iptables -I INPUT 1 -i wg0 -p tcp --dport 5353 -j DROP
+{% endif %}
 {% for pname, p in federation.items() %}
 {% set ep = p.endpoint ~ ('' if ':' in (p.endpoint | string) else ':' ~ federation_port) %}
-# {{ pname }}: {{ p.mesh }} at {{ ep }}
+{% set seen = (p.seen_as or {}).get('mesh') %}
+{% set mark = 300 + loop.index %}
+# {{ pname }}: {{ p.mesh }} at {{ ep }}{{ ', seen here as ' ~ seen if seen else '' }}
 wg set wg-fed peer {{ p.public_key }} endpoint {{ ep }} allowed-ips {{ p.mesh }}{{ ',0.0.0.0/0' if p.exit else '' }} persistent-keepalive 25
+{% if seen %}
+# Its mesh is this network's own, so it is seen here as {{ seen }} (docs/design/federation.md,
+# "translated at the link"): what is sent to {{ seen }} is mapped 1:1 onto its real mesh and
+# marked {{ mark }}; marked packets take table {{ mark }}, out over the link. What it opens here is
+# marked too, so the answers go back over the link and not to this network's own {{ p.mesh }}.
+# On the link both sides' addresses are real; each side translates only what it sees.
+ip route flush table {{ mark }} 2>/dev/null
+ip route add default dev wg-fed table {{ mark }}
+# the alias is reached over the link too: this master's own lookups find a way before NETMAP
+ip route replace {{ seen }} dev wg-fed
+while ip rule del fwmark {{ mark }} table {{ mark }} 2>/dev/null; do :; done
+ip rule add pref 90 fwmark {{ mark }} table {{ mark }}
+# the partner's DNS has this master's own address: the local table must not answer for a marked
+# packet first, so it moves behind the marks
+if ! ip rule show pref 100 | grep -q 'lookup local'; then ip rule add pref 100 lookup local && ip rule del pref 0 lookup local; fi
+echo 2 > /proc/sys/net/ipv4/conf/wg-fed/rp_filter 2>/dev/null || true
+# its master answers from {{ server_ip }}, this one's own address: taken in from the link
+echo 1 > /proc/sys/net/ipv4/conf/wg-fed/accept_local 2>/dev/null || true
+for hook in PREROUTING OUTPUT; do
+  iptables -t mangle -A $hook -d {{ seen }} -j CONNMARK --set-mark {{ mark }}
+  iptables -t nat -A $hook -d {{ seen }} -j NETMAP --to {{ p.mesh }}
+done
+iptables -t mangle -A PREROUTING -i wg-fed -s {{ p.mesh }} -m conntrack --ctstate NEW -j CONNMARK --set-mark {{ mark }}
+iptables -t mangle -A PREROUTING ! -i wg-fed -m connmark --mark {{ mark }} -j MARK --set-mark {{ mark }}
+iptables -t mangle -A OUTPUT -m connmark --mark {{ mark }} -j MARK --set-mark {{ mark }}
+# this master's own packets leave from an address the partner does not have itself
+iptables -t nat -A POSTROUTING -o wg-fed -m mark --mark {{ mark }} -s {{ server_ip }} -j SNAT --to-source {{ p.seen_as.link }}
+{% if p['as'] %}
+iptables -t nat -A POSTROUTING -o wg0 -m connmark --mark {{ mark }} -j SNAT --to-source {{ p['as'] }}
+{% endif %}
+{% else %}
 ip route replace {{ p.mesh }} dev wg-fed
 {% if p['as'] %}
 # its connections reach the mesh from {{ p['as'] }}, an address of this mesh: a node routes
 # only its own mesh back through its VPN client, and its nginx tells the partners apart by it
 iptables -t nat -A POSTROUTING -s {{ p.mesh }} -o wg0 -j SNAT --to-source {{ p['as'] }}
+{% endif %}
 {% endif %}
 {% for src in (p['from'] or [p.mesh]) %}
 {% for e in (p.share or []) %}

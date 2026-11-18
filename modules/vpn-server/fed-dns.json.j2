@@ -1,0 +1,8 @@
+{# the partners seen here under another domain or mesh: what the link's DNS translates #}
+[
+{%- for pname, p in (federation or {}).items() if p.seen_as %}
+  {"name": {{ pname | tojson }}, "alias": {{ (p.seen_as.domain or p.domain) | tojson }}, "real": {{ p.domain | tojson }},
+   "upstream": {{ (p.seen_as.dns or p.dns) | tojson }}, "mesh": {{ p.mesh | tojson }},
+   "seen_as": {{ (p.seen_as.mesh or none) | tojson }}}{{ ',' if not loop.last }}
+{%- endfor %}
+]

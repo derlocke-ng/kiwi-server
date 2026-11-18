@@ -69,3 +69,19 @@ services:
         max-size: 10m
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-vpn-server:/etc/wireguard:z
+{% if translated %}
+  # the link's DNS: a partner's names under the alias it has here (fed-dns.py; Pi-hole asks it)
+  {{ container_prefix }}-fed-dns:
+    image: {{ fed_dns_image }}
+    container_name: {{ container_prefix }}-fed-dns
+    network_mode: "service:{{ container_prefix }}-vpn-server"
+    command: ["python3", "/app/fed-dns.py", "/app/fed-dns.json"]
+    read_only: true
+    cap_drop: [ALL]
+    user: "65534:65534"
+    depends_on:
+      - {{ container_prefix }}-vpn-server
+    restart: unless-stopped
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-vpn-server/fed-dns:/app:ro,z
+{% endif %}

@@ -11277,6 +11277,38 @@ class TestPublicPages(unittest.TestCase):
         self.assertEqual(self.at("/start/public", "POST")[0], 404)
 
 
+class TestPublicWebsite(TestPublicPages):
+    """The website from the public pages' own container, as from the control part before."""
+
+    def setUp(self):
+        site = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, site, True)
+        os.makedirs(os.path.join(site, "pages"))
+        write(os.path.join(site, "site.yaml"), "name: dlhost\npages: [home]\n")
+        write(os.path.join(site, "pages", "home.md"), "# Welcome\n\nHello.\n")
+        env = mock.patch.dict(os.environ, {"KIWI_SITE_HOST": "example.org", "KIWI_SITE_DIR": site})
+        env.start()
+        self.addCleanup(env.stop)
+        super().setUp()
+
+    def site(self, path, host="example.org"):
+        req = urllib.request.Request(self.url + path, headers={"Host": host})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read().decode()
+
+    def test_the_website_answers_and_nothing_else(self):
+        code, body = self.site("/")
+        self.assertEqual(code, 200)
+        self.assertIn("<h1>Welcome</h1>", body)
+        self.assertIn("chat.example.org", body)                                   # the public services, from the snapshot
+        for path in ("/login", "/api/fleet", "/machines"):
+            self.assertEqual(self.site(path)[0], 404, path)
+
+
 class TestFirstRunPage(StoreBase):
     """A machine with nothing on it: its page asks the questions of `init`, behind a setup code."""
     PW = "a long enough password"

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.212.0 — a laptop that keeps its own Internet and names
+
+- **Only the network through the VPN, from the app and the control page** (the owner: "does the
+  GUI show the same?"): *Add a phone or laptop* has the choice, as `enroll --split` has; the
+  linked networks' meshes go through it too. Such a config imported as it is would send every name
+  of the computer to the network's DNS (the owner: "I can't use my local DNS stuff anymore"):
+  the app, the page and `enroll --split` say the one NetworkManager line that keeps the
+  computer's own names (`ipv4.dns-search ~home,~internal`).
+- **`kiwi-server connect` asks the master for the linked networks' names too** (`~internal`).
+- **`www.` of the website leads to its bare name** (one address for the site).
+- The offsite drill leaves `run.sh` beside its VM: after this computer restarts, it starts the
+  machine at the other site again.
+
 ## 2.211.0 — the public pages apart from the network
 
 - **The website, the status page for the Internet and the public registry run in a container of

@@ -2997,10 +2997,64 @@ def make_app(control: Control):
             safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "device"
             return Response(config, media_type="text/plain; charset=utf-8", headers={
                 "Content-Disposition": 'attachment; filename="%s.conf"' % safe, "Cache-Control": "no-store"})
-        domains = ["~" + str((control.fleet_info() or {}).get("domain") or "home")] + \
-            ["~" + str(n["domain"]) for n in ((control.fleet_info() or {}).get("linked") or []) if n.get("domain")]
         return devices_page(request, config=config, shown=name, qr=markupsafe.Markup(control.qr_svg(config)),
-                            dns_domains=",".join(dict.fromkeys(domains)))
+                            dns_domains=split_domains())
+
+    def split_domains():
+        """The names a split config's computer asks the network for: its domain and the linked networks'
+        (NetworkManager's ipv4.dns-search, `~` = only these)."""
+        info = control.fleet_info() or {}
+        domains = ["~" + str(info.get("domain") or "home")] + \
+            ["~" + str(n["domain"]) for n in (info.get("linked") or []) if n.get("domain")]
+        return ",".join(dict.fromkeys(domains))
+
+    # the same for a computer that manages the network (its key's token): the Android app adds the phone
+    # it runs on, the desktop app a laptop; one function with the page (control.add_device / remove_device)
+    @app.get("/api/devices")
+    def api_devices(request: Request):
+        """The phones and laptops on the VPN, and the groups a new one may go into. Names only."""
+        if not bearer(request) and not user(request):
+            return JSONResponse({"error": "who?"}, status_code=401)
+        info = control.fleet_info() or {}
+        return {"devices": control.devices(), "groups": sorted(info.get("groups") or {}),
+                "default_group": info.get("default_group") or ""}
+
+    @app.post("/api/devices")
+    async def api_device_add(request: Request):
+        """{name, group, split} -> {name, config, qr, dns_search}: the new device's WireGuard config (its
+        private key inside: shown once to the one who asked, never logged), its QR code as SVG, and for a
+        split config the NetworkManager line's domains."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "a JSON object: {name, group, split}"}, status_code=400)
+        name = str(body.get("name") or "").strip().lower()
+        split = body.get("split") is True
+        try:
+            config = control.add_device(name, str(body.get("group") or ""), who, split=split)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=409 if "exists already" in str(e) else 400)
+        if not config:
+            return JSONResponse({"error": "the master made no config for %s" % name}, status_code=502)
+        return JSONResponse({"name": name, "config": config, "qr": control.qr_svg(config),
+                             "dns_search": split_domains() if split else ""}, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/devices/{name}")
+    def api_device_remove(request: Request, name: str):
+        """A device off the VPN (a lost phone): the master forgets its key at once."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            control.remove_device(name.strip().lower(), who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=404 if "no device called" in str(e) else 400)
+        return {"removed": name.strip().lower()}
 
     @app.get("/backups/network.tar")
     def network_copy(request: Request):

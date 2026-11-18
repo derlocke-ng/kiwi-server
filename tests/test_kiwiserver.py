@@ -9808,6 +9808,53 @@ class TestWeb(WebBase):
             self.assertEqual((code, out["text"], out["state"]), (200, "applied\n", "ok"))
             self.assertEqual(ask("GET", "/api/jobs/j1/log", "nope")[0], 401)
 
+    def test_a_controller_adds_and_removes_a_device(self):
+        """The Android app puts its phone on the VPN by the API: one function with the page."""
+        import urllib.request
+        import urllib.error
+
+        def ask(method, path, token=None, body=None):
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            data = None
+            if body is not None:
+                data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+            req = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}"), r.headers.get("Cache-Control")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}"), None
+        self.assertEqual(ask("GET", "/api/devices")[0], 401)
+        self.assertEqual(ask("POST", "/api/devices", body={"name": "phone"})[0], 401)
+        self.assertEqual(ask("DELETE", "/api/devices/phone")[0], 401)
+        made, gone = [], []
+        conf = "[Interface]\nPrivateKey = test-not-a-key\nAddress = 10.8.3.2/32\n"
+
+        def add(name, group="", user="admin", split=False):
+            if name in made:
+                raise KiwiError("a device called %s exists already" % name)
+            made.append(name)
+            return conf
+        info = {"domain": "home", "groups": {"devices": {}, "guests": {}}, "default_group": "devices",
+                "linked": [{"name": "kiwi2", "domain": "internal"}]}
+        with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None), \
+                mock.patch.object(self.c, "devices", lambda: list(made)), \
+                mock.patch.object(self.c, "add_device", add), \
+                mock.patch.object(self.c, "remove_device", lambda name, user="admin": gone.append((name, user))), \
+                mock.patch.object(self.c, "fleet_info", lambda fresh=False: info):
+            code, out, _ = ask("GET", "/api/devices", "tok")
+            self.assertEqual((code, out), (200, {"devices": [], "groups": ["devices", "guests"], "default_group": "devices"}))
+            code, out, cache = ask("POST", "/api/devices", "tok", {"name": "Annas-Phone", "group": "devices", "split": True})
+            self.assertEqual((code, out["name"], out["config"], cache), (200, "annas-phone", conf, "no-store"))
+            self.assertIn("<svg", out["qr"])
+            self.assertEqual(out["dns_search"], "~home,~internal")                # only the network's names
+            self.assertEqual(ask("POST", "/api/devices", "tok", {"name": "annas-phone"})[0], 409)
+            self.assertEqual(ask("POST", "/api/devices", "tok", {"name": "laptop"})[1]["dns_search"], "")   # full tunnel
+            self.assertEqual(ask("POST", "/api/devices", "tok", ["laptop"])[0], 400)
+            self.assertEqual(ask("DELETE", "/api/devices/annas-phone", "tok")[:2], (200, {"removed": "annas-phone"}))
+            self.assertEqual(gone, [("annas-phone", "phone")])                    # in its name, in the History
+            self.assertEqual(ask("POST", "/api/devices", "nope", {"name": "x"})[0], 401)
+
     def test_a_controller_reads_the_status_and_the_machines(self):
         """The Android app is a controller: it reads with its token what the page reads with its login."""
         import urllib.request

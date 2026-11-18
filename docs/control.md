@@ -270,6 +270,9 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/activity` | the newest tasks and who did what |
 | `POST /api/jobs` | starts an action as a job, as the page's buttons do: `{action, hosts}` (apply, update, status, plan, check, backup …) gives `{job}`; the History names the computer |
 | `GET /api/jobs/{job}/log?offset=N` | the job's log from `offset` on: `text`, `offset`, `state` (waiting, running, ok, failed) |
+| `GET /api/devices` | the phones and laptops on the VPN by name, the groups, the group a new one goes into |
+| `POST /api/devices` | a new device, as the Devices page adds one: `{name, group, split}` gives `{name, config, qr, dns_search}`. `config` holds the device's private key and is shown this once; `dns_search` is the NetworkManager line's domains for a split config |
+| `DELETE /api/devices/{name}` | takes a device off the VPN (a lost phone); the master forgets its key at once |
 | `GET /api/hosts/{name}/logins` | a machine's logins with their passwords (`label`, `module`, `address`, `user`, `password`, `note`), never cached; the activity log says which computer was shown them |
 
 `/api/status` and `/api/machines` also answer the page's login, only read, and are

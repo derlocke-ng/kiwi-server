@@ -118,4 +118,6 @@ A controller like a second computer: it joins with the invite link and reads the
 | A machine's logins and passwords | `/api/hosts/{name}/logins` (a controller too: 2.194.0) | built (kiwi-app 0.1.29) |
 | The registry, for the people who use the network | `/api/registry`, `/.well-known/kiwi` (2.193.0) | built (kiwi-app 0.1.29): services, game servers, sign-up and status page, in a web view that checks certificates against the fleet's CA |
 | The CA's mark and each service's Android app | `ca_mark`, `services[].android` in the registry (2.196.0); the mark on the status page | for the app to show and use |
-| Everything that changes something (apply, settings, devices, accounts, who may reach what, backups, services, module sources, game servers) | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |
+| Devices: list, add (config, QR code, a split config's DNS line), remove | `/api/devices`, `DELETE /api/devices/{name}` (2.213.0) | for the app: the phone puts itself on the VPN |
+| Actions as jobs (apply, update, check, plan, backup …) and their logs | `POST /api/jobs`, `/api/jobs/{job}/log` | for the app |
+| Everything else that changes something (settings, accounts, who may reach what, backups, services, module sources, game servers) | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |

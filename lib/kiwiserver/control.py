@@ -1766,19 +1766,21 @@ class Control:
             with self.lock:                 # after the running job: every command saves the store when it ends
                 r = subprocess.run(list(self.kiwi) + ["status", self.fleet_path, "--porcelain"], capture_output=True,
                                    text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+            try:
+                data = json.loads(r.stdout)
+            except ValueError:
+                data = {"hosts": [], "error": (r.stderr or r.stdout or "no output").strip()[-500:]}
+            data["time"] = self.clock()
+            self._put(os.path.join(self.run, "status.json"), json.dumps(data))
+            try:
+                self.fleet_info(fresh=True)
+            except (OSError, ValueError):
+                pass
+            return data
         finally:
+            # over only once what it found is written: a page that says "checking" until then never
+            # shows the look before as the new one
             self.looking = False
-        try:
-            data = json.loads(r.stdout)
-        except ValueError:
-            data = {"hosts": [], "error": (r.stderr or r.stdout or "no output").strip()[-500:]}
-        data["time"] = self.clock()
-        self._put(os.path.join(self.run, "status.json"), json.dumps(data))
-        try:
-            self.fleet_info(fresh=True)
-        except (OSError, ValueError):
-            pass
-        return data
 
     def recover(self):
         """After a look: what the fleet's `recovery:` allows done about a machine that is gone

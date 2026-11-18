@@ -10,6 +10,10 @@
 - **The app's messages**: a bell at the top right keeps everything the app said, with its time,
   after its short messages vanish; new and gone warnings of the machines too, and a count of
   what is new.
+- **Kanidm's pages kept "Kanidm id.quince.home"** after 2.188.0: their name and logo are Kanidm's
+  `admin`'s to set, not `idm_admin`'s (kiwi-modules 0.85.1).
+- **A look at the machines said it was done** a moment before what it found was written: the
+  page could show the look before as the new one.
 - **The status page linked the game page wrong** (`play.<host>/play/`, which does not answer):
   it is `play.<host>/` now.
 - **Module sources** without a terminal: *Module sources* on the control page (More) and

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: accounts
   title: Accounts (Kanidm)
-  version: 1.1.0
+  version: 1.1.1
   description: "One account for the network's services: Kanidm keeps the people, their passwords and passkeys, and lets Forgejo, Nextcloud and the others sign them in (OpenID Connect); Jabber can check its passwords too (LDAP). People get an account with an invite code or by asking, as the network's sign-up page says, and set their password with a link: no email. At id.<hostname>"
   category: security
   node_types: [master, node]

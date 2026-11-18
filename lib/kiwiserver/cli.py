@@ -4295,8 +4295,12 @@ def _seen_as(fleet, entry, them, theirs):
     federation.md, "translated at the link"): {mesh, domain}, or None when nothing collides.
     The alias it had is kept; a new mesh is a free /16 at random, the domain <its name>.<domain>."""
     from . import setup as setupmod
-    others = {n: x for n, x in fedmod.partners(fleet.dir).items() if n != them}
-    had = (fedmod.partners(fleet.dir).get(them) or {}).get("seen_as") or {}
+    found = fedmod.partners(fleet.dir)
+    # the same network under the name it had (its folder renamed): its endpoint or link key is
+    seen_before = next((n for n, x in found.items() if n != them and x.get("mesh") == theirs.get("mesh") and
+                        (x.get("endpoint") == theirs.get("endpoint") or x.get("public_key") == theirs.get("public_key"))), None)
+    others = {n: x for n, x in found.items() if n not in (them, seen_before)}
+    had = (found.get(them) or found.get(seen_before) or {}).get("seen_as") or {}
     for n, x in others.items():
         if x.get("mesh") == theirs.get("mesh"):
             raise KiwiError("%s has the mesh %s, as %s, a partner already: two partners of one mesh cannot share the "

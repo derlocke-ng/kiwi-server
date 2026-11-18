@@ -4353,6 +4353,14 @@ class TestFederation(Base):
         found = fedmod.partners(self.tmp)
         self.assertEqual(list(found), ["old-name"])                 # not a second entry for the same network
         self.assertEqual(found["old-name"]["share"], ["cloud.gate"])
+        # another network of that mesh (its own endpoint and key): the link could not tell them apart
+        fedmod.write(self.tmp, "third", {"endpoint": "203.0.113.5", "public_key": "k3", "mesh": "10.11.0.0/16"})
+        data = yaml.safe_load(util.read_text(os.path.join(self.tmp, "federation.yaml")))
+        data["third"]["mesh"] = "10.10.0.0/16"
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(data))
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("two partners of one mesh cannot share the link", err)
 
     def test_two_operators_link_their_networks_with_cards(self):
         a, b, other = self.two_fleets()

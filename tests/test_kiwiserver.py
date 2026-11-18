@@ -3593,6 +3593,20 @@ class TestAccess(Base):
         rc, out, err = TestManage.run_cli(self, "access", f.path, "pub", "--new", "--lan", "8.8.8.0/24")
         self.assertIn("not a private IPv4 network", err)
 
+    def test_a_gateway_keeps_a_group_of_the_home_network_out_of_the_rest_of_the_mesh(self):
+        machines = [{"name": "gate", "hostname": "gate.home", "ip": "10.8.0.1", "master": True},
+                    {"name": "papaya", "hostname": "papaya.home", "ip": "10.8.0.25", "master": False},
+                    {"name": "kumquat", "hostname": "kumquat.home", "ip": "10.8.0.10", "master": False}]
+        lan = {"iot": {"subnet": "192.168.20.0/24", "reach": ["cloud.papaya", "kumquat:22"]},
+               "trusted": {"subnet": "192.168.30.0/24", "reach": ["all"]},
+               "cams": {"subnet": "192.168.40.0/24", "reach": ["nodes"]},
+               "shut": {"subnet": "192.168.50.0/24", "reach": []}}
+        self.assertEqual(accessmod.gateway_lan(lan, machines), [
+            "192.168.20.0/24 to 10.8.0.25 tcp:443,tcp:80", "192.168.20.0/24 to 10.8.0.10 tcp:22", "192.168.20.0/24 drop",
+            "192.168.30.0/24 all",
+            "192.168.40.0/24 to 10.8.0.25 any", "192.168.40.0/24 to 10.8.0.10 any", "192.168.40.0/24 drop",
+            "192.168.50.0/24 drop"])
+
     def test_a_linked_network_is_given_things_the_same_way(self):
         f = self.net()
         write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump({"other": {
@@ -9510,6 +9524,28 @@ class TestWeb(WebBase):
                 time.sleep(0.05)
             code, where = self.ask("/hosts/papaya/settings", {"csrf": csrf, "then": ""})[:2]
             self.assertEqual(where, "/hosts/papaya/settings?saved=0")              # Save alone applies nothing
+
+    def test_a_removed_machine_leaves_the_last_look_at_once(self):
+        """The owner, 19 Nov: kumquat removed on the page stayed "half there" until the next look,
+        and a second Remove said "no such machine"."""
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        for _ in range(200):                # the login's look writes status.json too: let it end first
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1, "hosts": [
+            {"host": "a", "ok": True, "state": "ok", "problems": [], "notes": []},
+            {"host": "kumquat", "ok": False, "state": "down", "problems": [], "notes": []}]}))
+        util.write_text(os.path.join(self.c.run, "recover.json"), json.dumps([
+            {"host": "a", "kind": "told", "text": "a has not answered for 50 minutes."}]))
+        jid = self.c.start("remove", ["a"])
+        for _ in range(200):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.c.job(jid)["state"], "ok")
+        self.assertEqual([h["host"] for h in self.c.status()["hosts"]], ["kumquat"])     # a is gone, the rest stays
+        self.assertEqual(self.c.gone(), [])                                                  # no "has not answered" for it
 
     def test_the_page_changes_its_password_and_replaces_the_keys(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)

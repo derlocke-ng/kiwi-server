@@ -23,6 +23,8 @@ import time
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--lib", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "common", "lib.sh"))
+ap.add_argument("--modules", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "modules"),
+                help="the modules folder whose gateway/gw.sh.j2 makes the gateway's chain")
 opts = ap.parse_args()
 lib = os.path.abspath(opts.lib)
 
@@ -58,7 +60,7 @@ def rules(*lan):
 
 
 sh("mount -t tmpfs none /run && mkdir -p /run/netns")
-for ns in ("node", "ct", "iot", "pc"):
+for ns in ("node", "ct", "iot", "pc", "mesh"):
     sh("ip netns add %s && ip netns exec %s ip link set lo up" % (ns, ns))
 # the home network: one switch (a bridge in the node's namespace stands for it), the node on it
 sh("ip link add name br0 netns node type bridge")
@@ -73,6 +75,11 @@ sh("ip link add name ct0 netns node type veth peer name eth0 netns ct")
 sh("ip addr add 10.88.0.1/24 dev ct0 && ip link set ct0 up && "
    "iptables -t nat -A PREROUTING -p tcp --dport 9443 -j DNAT --to-destination 10.88.0.2:443", "node")
 sh("ip addr add 10.88.0.2/24 dev eth0 && ip link set eth0 up && ip route add default via 10.88.0.1", "ct")
+# the mesh behind the node, as a gateway reaches it: two machines' addresses on one far side
+sh("ip link add name wg0 netns node type veth peer name eth0 netns mesh")
+sh("ip addr add 10.8.0.30/32 dev wg0 && ip link set wg0 up && ip route add 10.8.0.0/16 dev wg0", "node")
+sh("ip addr add 10.8.0.25/32 dev eth0 && ip addr add 10.8.0.10/32 dev eth0 && ip link set eth0 up && "
+   "ip route add 10.8.0.30/32 dev eth0 && ip route add default via 10.8.0.30", "mesh")
 
 listen = textwrap.dedent('''
     import socket, sys, threading
@@ -90,7 +97,8 @@ listen = textwrap.dedent('''
     import time; time.sleep(600)
 ''')
 procs = [subprocess.Popen(["ip", "netns", "exec", "node", sys.executable, "-c", listen, "tcp:22", "tcp:443", "udp:53"]),
-         subprocess.Popen(["ip", "netns", "exec", "ct", sys.executable, "-c", listen, "tcp:443"])]
+         subprocess.Popen(["ip", "netns", "exec", "ct", sys.executable, "-c", listen, "tcp:443"]),
+         subprocess.Popen(["ip", "netns", "exec", "mesh", sys.executable, "-c", listen, "tcp:22", "tcp:443"])]
 time.sleep(1)
 
 probe = textwrap.dedent('''
@@ -107,8 +115,9 @@ probe = textwrap.dedent('''
 ''')
 
 
-def opens(ns, kind, port):
-    return sh("%s -c '%s' %s %s" % (sys.executable, probe.replace("'", "'\"'\"'"), kind, port), ns, check_rc=False).stdout.strip() == "ok"
+def opens(ns, kind, port, host="192.168.2.30"):
+    code = probe.replace('"192.168.2.30"', repr(host))
+    return sh("%s -c '%s' %s %s" % (sys.executable, code.replace("'", "'\"'\"'"), kind, port), ns, check_rc=False).stdout.strip() == "ok"
 
 
 everything = [("tcp", 22), ("tcp", 443), ("udp", 53), ("tcp", 9443)]
@@ -123,6 +132,23 @@ sh("nft -f %s" % rules("192.168.20.0/24 none"), "node")
 check(not opens("iot", "tcp", 443) and opens("iot", "udp", 53), "nothing for iot: not even 443, DNS still")
 sh("nft -f %s" % rules("192.168.20.0/24 all"), "node")
 check(all(opens("iot", k, p) for k, p in everything), "all for iot: everything again (the table replaced in place)")
+
+# ---- the gateway: what a group may reach in the mesh through it (gateway/gw.sh.j2's chain) -------
+import jinja2  # noqa: E402
+tpl = open(os.path.join(os.path.abspath(opts.modules), "gateway", "gw.sh.j2")).read()
+part = tpl[tpl.index("{% if lan_groups %}"):]
+part = part[:part.index('iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j KIWI_GW_LAN\n{% endif %}') +
+            len('iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j KIWI_GW_LAN\n{% endif %}')]
+chain = jinja2.Environment(trim_blocks=True, lstrip_blocks=True).from_string(part).render(
+    lan_groups=["192.168.20.0/24 to 10.8.0.25 tcp:443,tcp:80", "192.168.20.0/24 drop"])
+with open(os.path.join(work, "gw.sh"), "w") as fh:
+    fh.write('PUB_IFACE=br0\nVPN_SUBNET=10.8.0.0/16\niptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT\n' + chain)
+r = sh("bash %s" % os.path.join(work, "gw.sh"), "node", check_rc=False)
+check(r.returncode == 0, "the gateway's chain loads%s" % ((": " + r.stderr.strip()[:120]) if r.returncode else ""))
+check(opens("iot", "tcp", 443, "10.8.0.25"), "through the gateway iot reaches cloud.papaya (10.8.0.25:443)")
+check(not opens("iot", "tcp", 22, "10.8.0.25"), "but not papaya's 22")
+check(not opens("iot", "tcp", 443, "10.8.0.10"), "and not another machine (10.8.0.10)")
+check(opens("pc", "tcp", 22, "10.8.0.10"), "pc, in no group, reaches the mesh as before")
 
 for p in procs:
     p.kill()

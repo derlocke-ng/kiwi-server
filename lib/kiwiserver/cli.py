@@ -591,6 +591,13 @@ class Renderer:
         if role.node_type != "master" and self._lan:
             # what each group of the home network may open here: kiwi-stack's nftables kiwi_lan
             host.role_settings["lan_rules"] = accessmod.lan_ports(self._lan, host.name, host.hostname)
+        if "gateway" in host.modules and self._lan:
+            # and what it may reach in the mesh through this gateway
+            ips = {n: ip for ip, n in self.dns_records()}
+            machines = [{"name": h.name, "hostname": h.hostname, "ip": ips.get(h.hostname),
+                         "master": h.role in self.roles and self.roles[h.role].node_type == "master"}
+                        for h in self.fleet.hosts.values() if not h.standby_of]
+            host.module_settings["gateway"]["lan_groups"] = accessmod.gateway_lan(self._lan, machines)
         if role.node_type != "master" and "vpn-client" in host.modules and self._master_ip:
             # its master has a standby: the tunnel moves there when the master is gone (docs/design/standby.md)
             vc = host.module_settings["vpn-client"]

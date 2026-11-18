@@ -30,6 +30,9 @@ rules_del() {
     iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP 2>/dev/null || true   # the rule of earlier versions
     iptables -D FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j KIWI_GW_LAN 2>/dev/null || true
+    iptables -F KIWI_GW_LAN 2>/dev/null || true
+    iptables -X KIWI_GW_LAN 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
     iptables -D INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
@@ -108,6 +111,31 @@ iptables -I INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT
 iptables -I FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
 iptables -I FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT
 iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT
+{% if lan_groups %}
+# The groups of the home network (kiwi-server docs/design/lans.md): what each may reach in the
+# mesh through here. Checked before the ACCEPT above; what a group was not given is dropped,
+# a client in no group goes on as before.
+iptables -N KIWI_GW_LAN 2>/dev/null || iptables -F KIWI_GW_LAN
+{% for r in lan_groups %}
+{% set w = (r | string).split() %}
+{% if w | length == 2 and w[1] == 'all' %}
+iptables -A KIWI_GW_LAN -s {{ w[0] }} -j RETURN
+{% elif w | length == 2 and w[1] == 'drop' %}
+iptables -A KIWI_GW_LAN -s {{ w[0] }} -j DROP
+{% elif w | length == 4 and w[1] == 'to' %}
+{% for p in w[3].split(',') %}
+{% if p == 'any' %}
+iptables -A KIWI_GW_LAN -s {{ w[0] }} -d {{ w[2] }} -j RETURN
+{% else %}
+iptables -A KIWI_GW_LAN -s {{ w[0] }} -d {{ w[2] }} -p {{ p.split(':')[0] }} --dport {{ p.split(':')[1] }} -j RETURN
+{% endif %}
+{% endfor %}
+{% else %}
+# lan group rule {{ r }}: not understood, left out
+{% endif %}
+{% endfor %}
+iptables -I FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j KIWI_GW_LAN
+{% endif %}
 # LAN clients must not reach the containers' own addresses — but this rule sits above
 # everything else, so it must spare the replies to what the containers themselves
 # started (the VPN client's WireGuard handshake came in on the LAN side and died here)

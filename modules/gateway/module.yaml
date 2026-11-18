@@ -45,6 +45,12 @@ settings:
     label: Mesh subnet LAN clients may reach
     help: "Empty: the stack's mesh_subnet."
     default: ""
+  - key: lan_groups
+    group: Generated
+    type: list
+    label: Groups of the home network
+    help: "Filled in by kiwi-server from the fleet's lan.groups (docs/design/lans.md there): what each group of the home network may reach in the mesh through this gateway, as 'SUBNET all', 'SUBNET to ADDRESS PORTS' (PORTS any or tcp:443,tcp:22 …) and 'SUBNET drop'. Without groups the whole home network reaches the mesh, as before."
+    default: []
   - key: lan_subnet
     label: LAN subnet
     help: "Optional, for documentation and future DHCP; routing keys on the LAN interface, not the subnet."

@@ -244,10 +244,10 @@ through Tor and its page. Not tried: an app, rooms, files, another server
 writing in.
 
 On a node Jabber answers at the machine's VPN address: a device at home reaches
-it through the VPN or the home's gateway. With two apart on a node, a device on
-the VPN that asks for the public name is led to the node, where the internal
-service answers on Jabber's ports: for the public one, use it from outside the
-VPN, or through its hidden service.
+it through the VPN or the home's gateway. A public name is the Internet's
+everywhere, the VPN and the home included: it leads to the master's public
+address, so the public service answers it, and the internal one only its name on
+the VPN.
 
 
 **How people get an address** is chosen per network, any mix of three, all on `/join`:

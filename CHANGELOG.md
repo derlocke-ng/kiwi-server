@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.202.0 — a public name is public everywhere
+
+- **A public name resolves to the master's public address at home and on the VPN too** (the
+  owner: "for dlhost.eu, an only external domain, we want no internal one"): the network's
+  Pi-holes and hosts files keep only its own names. `status.dlhost.eu` shows the status page for
+  the Internet from everywhere; what is public is reached the way strangers reach it, through
+  the master. A service wanted both ways is better two: a public one and an internal one.
+
 ## 2.201.0 — a website for strangers, and a partner's names under .internal
 
 - **The network's website** (docs/design/website.md): the control node serves it at its name and

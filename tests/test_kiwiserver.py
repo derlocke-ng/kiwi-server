@@ -3623,9 +3623,9 @@ class TestOnion(Base):
         self.assertIn("listen 10666 udp;\n        proxy_pass %s:10666;" % there, nginx)      # a public game server: its port as it is
         for want in ("443:443/tcp", "5222:5222/tcp", "5223:5223/tcp", "5269:5269/tcp", "10666:10666/udp"):
             self.assertTrue(any(p.endswith(want) for p in ports), (want, ports))
-        # on the VPN the public name is the node's own: a device comes straight to it
-        self.assertIn((there, "chat.example.org"), r.dns_records())
-        self.assertNotIn((here, "chat.example.org"), r.dns_records())
+        # a public name is the Internet's on the VPN too: no record of the network's own for it, so a
+        # device reaches the public service through the master, as a stranger does
+        self.assertFalse([rec for rec in r.dns_records() if rec[1] == "chat.example.org"])
         self.assertIn("listen 443 ssl;\n        # open to the internet through the master", b.files["kn-nginx/nginx.conf"][0])
         self.assertIn((there, "jabber.papaya.home"), r.dns_records())
         # Jabber's ports are at the node's VPN address only: no machine answers its names with a home address

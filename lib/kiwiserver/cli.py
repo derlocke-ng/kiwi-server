@@ -382,15 +382,19 @@ class Renderer:
                     public, ports = modmod.Renderer(self.ms).exposure(spec)
                     if public or ports:
                         open_nodes.append((h.name, spec.vpn_ip, public, ports))
+                # only the network's own names: a public name (status.example.org) is the Internet's, on
+                # the LAN and the VPN too, so that it always leads to the public service through the master
+                # and never to what the network keeps for itself (the owner, 18 Nov 2026: "public IP!")
+                inside = "." + h.domain
                 for n in names:
-                    if "*" not in n and (spec.vpn_ip, n) not in recs:
+                    if "*" not in n and (n == h.hostname or n.endswith(inside)) and (spec.vpn_ip, n) not in recs:
                         recs.append((spec.vpn_ip, n))
             except KiwiError as e:
                 if not re.search(r"vpn-client\.wireguard_config: file not found", str(e)):   # not enrolled yet: no mesh name yet
                     util.warn("dns records: skipping %s: %s" % (h.name, e))
-        # a node open to the internet: the master hands its public names and ports on. On the
-        # VPN those names stay the node's own (the records above): a device reaches the service
-        # there directly, when its group may reach that machine
+        # a node open to the internet: the master hands its public names and ports on. They are
+        # not in the records above: on the VPN and at home too they lead to the master's public
+        # address, as for everyone
         exposed = {"names": {}, "ports": []}
         for name, ip, public, ports in open_nodes if master_ip else []:
             for n in public:

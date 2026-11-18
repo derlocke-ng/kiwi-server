@@ -103,6 +103,13 @@ address wherever it is, so a device with its tunnel on at home still goes
 through the master. Names of masters, and of nodes on DHCP or another LAN,
 stay at their mesh addresses.
 
+A public name (`status.example.org`, `cloud.example.org`) is never one of the
+network's own: the Pi-holes and hosts files do not know it, so it resolves to
+the master's public address at home and on the VPN as on the Internet. What is
+public is reached the way strangers reach it, through the master; what the
+network keeps for itself has a name under the fleet's domain. A service you
+want both ways is better two: a public one and an internal one.
+
 ### Mullvad's SOCKS5 proxies
 
 Every Mullvad server runs a SOCKS5 proxy, reachable through the master's

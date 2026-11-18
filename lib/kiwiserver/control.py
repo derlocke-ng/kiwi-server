@@ -1647,7 +1647,7 @@ class Control:
         """The secret store's pins and this machine's host name: {"pins", "hostname"}."""
         pins = {}
         path = os.path.join(self.fleet_dir, "secrets", "pins.json")
-        if host is not None and os.path.isfile(path):
+        if os.path.isfile(path):
             try:
                 pins = json.loads(util.read_text(path))
             except ValueError:
@@ -1659,8 +1659,11 @@ class Control:
 
     @staticmethod
     def _pin_key(host, path, kept):
-        """hostname/module/key of a module's setting (role, module, key), or None."""
+        """hostname/module/key of a module's setting (role, module, key), notify/channel/key of the
+        messages' password or token (the defaults), or None."""
         path = tuple(path.split(".")) if isinstance(path, str) else tuple(path)
+        if host is None and len(path) == 3 and path[0] == "notify":
+            return "notify/%s/%s" % (path[1], path[2])
         if host is None or len(path) != 3 or not kept["hostname"]:
             return None
         return "%s/%s/%s" % (kept["hostname"], path[1], path[2])

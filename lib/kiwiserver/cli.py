@@ -1037,6 +1037,9 @@ def cmd_validate(args):
         for e in steps:
             util.say("still to do: %s" % e)
         if not errs:
+            for channel, key, _v in literal_notify_secrets(fleet):
+                util.warn("notify.%s.%s: a password written in the fleet file: kiwi-server secrets keep <fleet> moves it "
+                          "into the secret store, unchanged" % (channel, key))
             util.say("%s: %d host(s) valid" % (os.path.basename(fleet.path), len(hosts)))
             for name, x in fedmod.partners(fleet.dir).items():
                 if x["exit"]:
@@ -1939,7 +1942,7 @@ def cmd_notify(args):
     from . import health, notify
     fleet, _roles, _ms = load(args)
     roles, ms = _roles, _ms
-    cfg = fleet.defaults.get("notify") or {}
+    cfg = notify_config(fleet)
     network = str(fleet.defaults.get("domain") or "")
     if args.test:
         ways = notify.channels(cfg)
@@ -2160,6 +2163,27 @@ def admin_password_into_store(path, st):
              "kiwi-server logins shows it" % os.path.basename(path))
 
 
+NOTIFY_SECRETS = (("mail", "password"), ("ntfy", "token"))
+
+
+def notify_config(fleet):
+    """The defaults' notify settings, a password or token kept in the secret store (`secrets keep`,
+    pins notify/mail/password, notify/ntfy/token) filled in where the fleet file leaves it out."""
+    cfg = json.loads(json.dumps(fleet.defaults.get("notify") or {}))
+    pins = fleet.pins()
+    for channel, key in NOTIFY_SECRETS:
+        kept = pins.get("notify/%s/%s" % (channel, key))
+        if kept and isinstance(cfg.get(channel), dict) and not cfg[channel].get(key):
+            cfg[channel][key] = kept
+    return cfg
+
+
+def literal_notify_secrets(fleet):
+    """[(channel, key, value)] written in the fleet file's notify settings."""
+    n = fleet.defaults.get("notify") or {}
+    return [(c, k, str(n[c][k])) for c, k in NOTIFY_SECRETS if isinstance(n.get(c), dict) and n[c].get(k) not in (None, "")]
+
+
 def literal_module_secrets(fleet, ms):
     """[(host, module, key, value, written_in)] for every password written in the fleet file for a
     module: written_in is the host's name, or None for the defaults (every machine of that role)."""
@@ -2191,7 +2215,8 @@ def secrets_keep(path, st):
     if shared:
         util.warn("written in the defaults, for every machine: %s. Not moved: give each machine its own, or leave "
                   "it out to have one generated (that changes the password)" % ", ".join(shared))
-    if not mine:
+    notes = literal_notify_secrets(fleet)
+    if not mine and not notes:
         util.say("no module password is written for a machine in %s: nothing to move" % os.path.basename(path))
         return
     pins_path = fleet.resolve_path("secrets/pins.json")
@@ -2201,11 +2226,16 @@ def secrets_keep(path, st):
     for h, m, key, value, _w in mine:
         pins["%s/%s/%s" % (h.hostname, m, key)] = value
         doc.set(h.name, (h.role, m, key), None)
+    for channel, key, value in notes:       # the messages' mail password, ntfy's token
+        pins["notify/%s/%s" % (channel, key)] = value
+        doc.set(None, ("notify", channel, key), None)
     util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
     st.sync()                   # in secrets.age before the file loses them
     util.write_text(os.path.realpath(path), doc.dump(), 0o600)
     for h, m, key, _v, _w in mine:
         util.say("%s: %s.%s is in the secret store now (secrets/pins.json), out of the fleet file" % (h.name, m, key))
+    for channel, key, _v in notes:
+        util.say("every machine: notify.%s.%s is in the secret store now (secrets/pins.json), out of the fleet file" % (channel, key))
     util.say("the same passwords as before: kiwi-server secrets show %s HOST SETTING prints one; an apply changes "
              "nothing on the machines" % os.path.basename(path))
 

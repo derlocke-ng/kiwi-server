@@ -9211,6 +9211,25 @@ class TestHealth(Base):
             cli.cmd_notify(argparse.Namespace(fleet=f.path, test=True, output=None, media=None))
 
 
+    def test_the_messages_password_and_token_live_in_the_secret_store(self):
+        """`secrets keep` takes notify's mail password and ntfy token out of the fleet file too; the
+        messages still go out with them."""
+        f = self.fleet({"defaults": self.base_defaults(notify={
+            "mail": {"host": "smtp.example.org", "user": "u", "password": "mail-pw-of-the-test", "to": "a@example.org"},
+            "ntfy": {"url": "https://ntfy.example.org/topic", "token": "tk-of-the-test"}}), "hosts": {"a": {}}})
+        os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["validate", f.path])
+        self.assertIn("notify.mail.password: a password written in the fleet file", err.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cli.secrets_keep(f.path, types.SimpleNamespace(is_open=lambda: True, exists=lambda: True, sync=lambda: None))
+        text = util.read_text(f.path)
+        self.assertNotIn("of-the-test", text)
+        self.assertIn("smtp.example.org", text)                                        # the rest stays
+        cfg = cli.notify_config(config.Fleet.load(f.path))
+        self.assertEqual((cfg["mail"]["password"], cfg["ntfy"]["token"]), ("mail-pw-of-the-test", "tk-of-the-test"))
+
 class TestBanned(unittest.TestCase):
     def test_a_machine_says_how_many_addresses_fail2ban_keeps_out(self):
         from kiwiserver import facts

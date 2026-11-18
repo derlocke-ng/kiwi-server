@@ -15,6 +15,10 @@
   password) comes from the secret store when the fleet file leaves it out.
 - `validate` names every module password still written in the file, generated or not, and
   points to `secrets keep`.
+- The messages' mail password and ntfy token (`notify.mail.password`, `notify.ntfy.token`) go
+  the same way: `secrets keep` moves them, the messages still go out with them.
+- ROADMAP: restore on first boot (2.43.0) and port ranges were done; the RAM master's
+  one-image-at-a-time update (2.209.0) noted.
 
 ## 2.213.0 — the control node's buttons for the apps
 

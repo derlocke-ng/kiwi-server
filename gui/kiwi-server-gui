@@ -572,13 +572,19 @@ class Form:
     def kept(self, field):
         """Is this module password kept in the secret store (`secrets keep`, its pins)?"""
         path = tuple(field["path"])
-        if self.scope in (None, "defaults") or len(path) != 3 or not self.doc.path:
+        if len(path) != 3 or not self.doc.path:
             return False
-        domain = self.doc.get(self.scope, ("domain",)) or self.doc.get("defaults", ("domain",))
-        hostname = self.doc.get(self.scope, ("hostname",)) or (self.scope + ("." + domain if domain else ""))
+        if self.scope in (None, "defaults"):
+            if path[0] != "notify":         # the messages' mail password, ntfy's token
+                return False
+            key = "notify/%s/%s" % (path[1], path[2])
+        else:
+            domain = self.doc.get(self.scope, ("domain",)) or self.doc.get("defaults", ("domain",))
+            hostname = self.doc.get(self.scope, ("hostname",)) or (self.scope + ("." + domain if domain else ""))
+            key = "%s/%s/%s" % (hostname, path[1], path[2])
         try:
             with open(os.path.join(os.path.dirname(self.doc.path), "secrets", "pins.json"), encoding="utf-8") as fh:
-                return bool(json.load(fh).get("%s/%s/%s" % (hostname, path[1], path[2])))
+                return bool(json.load(fh).get(key))
         except (OSError, ValueError, AttributeError):
             return False
 

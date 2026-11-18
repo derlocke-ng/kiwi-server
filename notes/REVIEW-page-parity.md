@@ -65,7 +65,7 @@ Since 2.95.0, in all three: "If something breaks" (`recovery`): could the networ
 each case; and "This machine is lost or was replaced" on a set-up machine (the first install's steps again).
 
 Since 2.96.0, in all three: hidden services (`onion`; on the page and in the app under "Who may reach what").
-The app does not show a person's key yet (`onion … --show NAME` in a terminal, or the page).
+A person's key: "Show key" in the app's list (2.213.0), on the page, `onion … --show NAME` in a terminal.
 
 Since 2.98.0, in all three: admin pages as a class of their own and the level "every app" (`access … apps`).
 

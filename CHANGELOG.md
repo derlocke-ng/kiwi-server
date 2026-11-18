@@ -16,6 +16,8 @@
   - `GET/POST /api/modules`: the module sources, their newest tags; add, update, remove.
 - The Accounts page, the settings form and the module sources were split into one part that reads or does and one
   that shows it; nothing changes on the page.
+- **The app shows a person's key for a hidden service** (*Show key* under Who may reach what), as the
+  control page does; before, it sent you to `onion … --show NAME` in a terminal.
 - Docs: the split choice for devices and its DNS line (network, control page, app).
 - The offsite drill takes `ENCRYPT=RING`: an encrypted machine at another site, its first boot opened
   through the initramfs's SSH, every later one by a ring on the master.

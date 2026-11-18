@@ -142,6 +142,9 @@ def hidden():
 if __name__ == "__main__":          # as a stand-in for kiwi-server: madeup.py list|status|secrets|onion ...
     what = sys.argv[1] if len(sys.argv) > 1 else ""
     listed, status = answers()
+    if what == "onion" and "--show" in sys.argv:        # a person's key, made up: what Tor Browser asks for
+        print("MADEUPKEYFORPREVIEWONLY" + "A" * 29)
+        sys.exit(0)
     print(json.dumps(listed if what == "list" else status if what == "status" else hidden() if what == "onion" else
                      {"store": True, "open": True} if what == "secrets" else {}))
 

@@ -1676,8 +1676,8 @@ class AccessDialog(Adw.Dialog):
         self.onion = {}
         tor = Adw.PreferencesGroup(title="Hidden services", description=(
             "An address that anyone opens with Tor Browser, without your VPN: for people you do not know. No names: "
-            "anyone with the address gets in. With names, only who holds a key finds it (kiwi-server onion … --show NAME "
-            "prints a person's key). Tor never leaves through a home connection: it leaves at the master."))
+            "anyone with the address gets in. With names, only who holds a key finds it: Show key gives what a person types "
+            "into Tor Browser. Tor never leaves through a home connection: it leaves at the master."))
         for m in [x for x in (data.get("machines") or []) if x["services"]]:
             exp = Adw.ExpanderRow(title=m["name"], subtitle=", ".join(
                 sv for sv in m["services"] if "%s.%s" % (sv, m["name"]) in self.hidden) or "none")
@@ -1696,6 +1696,12 @@ class AccessDialog(Adw.Dialog):
                     on.add_suffix(renew)
                 exp.add_row(on)
                 exp.add_row(who)
+                for person in (has or {}).get("clients") or []:
+                    kr = Adw.ActionRow(use_markup=False, title=person, subtitle="%s: may open it with a key" % sv)
+                    show = Gtk.Button(label="Show key", valign=Gtk.Align.CENTER, css_classes=["flat"])
+                    show.connect("clicked", lambda _b, w=what, p=person: self.show_key(w, p))
+                    kr.add_suffix(show)
+                    exp.add_row(kr)
                 self.onion[what] = (on, who)
             tor.add(exp)
         if data and self.onion:
@@ -1729,6 +1735,31 @@ class AccessDialog(Adw.Dialog):
                     reach += ["%s.%s" % (s, m["name"]) for s, row in svc.items() if row.get_active()]
             reach += [e for e in r["extra"].get_text().split() if e not in reach]
         return reach, {k: row.get_active() for k, row in r["flags"].items()}
+
+    def show_key(self, what, person):
+        """What one person types into Tor Browser for a hidden service (`onion … --show NAME`)."""
+        path = self.win.doc.path
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["onion", path, what, "--show", person])
+            lines = [x.strip() for x in out.strip().splitlines() if x.strip()]
+
+            def done():
+                if rc != 0 or not lines:
+                    self.win.alert("No key", ((err or out).strip().replace("error: ", "").splitlines() or ["?"])[-1])
+                    return False
+                key = lines[-1]
+                dlg = Adw.AlertDialog(heading="%s's key for %s" % (person, what),
+                                      body="Tor Browser asks for it when %s opens the address. Give it to %s only." % (person, person))
+                dlg.set_extra_child(Gtk.Label(label=key, selectable=True, wrap=True, wrap_mode=Pango.WrapMode.CHAR,
+                                              css_classes=["monospace"]))
+                dlg.add_response("close", "Close")
+                dlg.add_response("copy", "Copy")
+                dlg.connect("response", lambda _d, r: r == "copy" and self.get_clipboard().set(key))
+                dlg.present(self)
+                return False
+            GLib.idle_add(done)
+        threading.Thread(target=work, daemon=True).start()
 
     def new_address(self, what, row):
         dlg = Adw.AlertDialog(heading="A new address for %s?" % what,

@@ -30,6 +30,9 @@ rules_del() {
     iptables -D FORWARD -i "$PUB_IFACE" -d "$DOCKER_SUBNET" -j DROP 2>/dev/null || true   # the rule of earlier versions
     iptables -D FORWARD -i "$PUB_IFACE" -o "$PUB_IFACE" -j DROP 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i "$PUB_IFACE" -d "$VPN_SUBNET" -j KIWI_GW_LAN 2>/dev/null || true
+    iptables -F KIWI_GW_LAN 2>/dev/null || true
+    iptables -X KIWI_GW_LAN 2>/dev/null || true
     iptables -D FORWARD -i "$PUB_IFACE" -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -i "$BRIDGE" -o "$PUB_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
     iptables -D INPUT -i "$BRIDGE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true

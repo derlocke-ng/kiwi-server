@@ -9484,6 +9484,10 @@ class TestGamePage(WebBase):
         self.assertIn("waits for its admin", self.play("/play/")[1])                    # locked: nothing to do yet
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)              # the admin opens the store
         self.assertIn("not connected to the network", self.play("/play/")[1])
+        for _ in range(200):                # the login's look at every machine writes status.json too: let it end first
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
         os.makedirs(os.path.join(self.c.fleet_dir, "secrets", "accounts"), exist_ok=True)
         util.write_text(os.path.join(self.c.fleet_dir, "secrets", "accounts", "papaya-control.json"),
                         json.dumps({"client": "control-papaya", "secret": "s3cret", "issuer": "https://id.papaya.home/oauth2/openid/control-papaya"}))

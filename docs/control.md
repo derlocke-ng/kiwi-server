@@ -532,6 +532,15 @@ true` on that machine, and apply the master and the machine. A change to the sit
 new `website_commit` and an apply. The pages are Markdown in a small, safe subset: HTML in them
 is shown as text.
 
+Images in a page are the site's own files: `![Our logo](assets/logo.png)`. An image from
+elsewhere stays a link, so that no other server learns who reads the page. To serve the
+files through a content delivery network (Cloudflare's proxy, say), point a name at the
+master through it and set `website_cdn_hostname: cdn.example.org`: the pages then load their
+images from there, only `/assets/` answers at that name, and each file's address carries the
+pinned commit, so the CDN may keep it for good. The site says that the CDN sees the address
+of whoever loads those files. With Cloudflare, its SSL mode *Full* takes the master's
+certificate as it is.
+
 To look at a site while writing it, run the page with `KIWI_SITE_HOST=localhost` and
 `KIWI_SITE_DIR=<the folder>` in its environment and open `http://localhost:8740/`.
 

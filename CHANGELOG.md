@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.207.0 — the website's images, through a CDN if wanted
+
+- **Images in the website's pages**: `![Our logo](assets/logo.png)`, the site's own files only;
+  an image from elsewhere stays a link that loads nothing by itself.
+- **The website's files through a content delivery network** (the owner: "use cdn.dlhost.eu
+  properly"): the control module's `website_cdn_hostname` (kiwi-modules 0.92.0). The pages load
+  their images from that name, which answers `/assets/` and nothing else; each address carries the
+  pinned commit, so the CDN keeps a file for good. The site says that the CDN sees the address of
+  whoever loads those files.
+
 ## 2.206.0 — a group and a linked network, on the page and in the app
 
 - *Who may reach what* on the control page and in the app says that a group can be given a

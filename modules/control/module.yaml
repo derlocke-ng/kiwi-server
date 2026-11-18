@@ -137,6 +137,13 @@ nginx:
       proxy_pass: "http://control"
       when: website_hostname
       comment: Kiwi website for the Internet, at www.
+    # its files (images, fonts) from a name a content delivery network fetches and keeps (Cloudflare's
+    # proxy, say): only /assets/ answers there; the pages, the sign-up and Tor never go through it
+    - server_name: "{{ website_cdn_hostname }}"
+      site: website-cdn
+      proxy_pass: "http://control"
+      when: website_cdn_hostname
+      comment: Kiwi website's files, for a content delivery network
 
 backup:
   # the fleet itself, its secrets encrypted: without it the network has no CA, no seed and no secrets
@@ -145,6 +152,8 @@ backup:
 validate:
   - when: "public_status_hostname and (public_status_hostname ~ '.').endswith('.' ~ domain ~ '.')"
     error: "control.public_status_hostname is for a public name (status.example.org). On the VPN the status page is status.<hostname>"
+  - when: "website_cdn_hostname and not website_hostname"
+    error: "control.website_cdn_hostname serves the website's files: set website_hostname too"
   - when: "website_hostname and not (website_repo and website_commit)"
     error: "control.website_hostname needs website_repo (an https git address) and website_commit (the commit the site is pinned to)"
   - when: "website_hostname and (website_hostname ~ '.').endswith('.' ~ domain ~ '.')"
@@ -202,6 +211,11 @@ settings:
     help: "An https address of a git repository with site.yaml and pages/*.md, like the template dlhost-eu."
     default: ""
     pattern: '(https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+)?'
+  - key: website_cdn_hostname
+    label: Website's files from
+    help: "A name a content delivery network serves the website's files from, like cdn.example.org (a Cloudflare-proxied name pointing at the master). The pages then load their images and fonts from there; only /assets/ answers at that name. The network keeps the pages, the sign-up and Tor to itself, and the site says that the CDN sees the address of whoever loads those files. Empty: the files come from the website's own name."
+    default: ""
+    pattern: '[a-z0-9.-]*'
   - key: website_commit
     label: Website's commit
     help: "The commit of website_repo the site shows (40 hexadecimal digits): a new one is a new pin and an apply."

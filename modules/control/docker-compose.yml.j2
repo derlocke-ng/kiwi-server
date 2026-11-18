@@ -24,6 +24,7 @@ services:
       - {{ ("KIWI_SITE_HOST=" ~ website_hostname) | tojson }}
       - {{ ("KIWI_SITE_REPO=" ~ website_repo) | tojson }}
       - {{ ("KIWI_SITE_COMMIT=" ~ website_commit) | tojson }}
+      - {{ ("KIWI_SITE_CDN=" ~ website_cdn_hostname) | tojson }}
 {% endif %}
 {% if play_page %}
       # the game page: its name (only /play/ answers there), who may, and what more it lists

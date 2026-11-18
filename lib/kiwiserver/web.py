@@ -1123,7 +1123,7 @@ your network, under Machines.</p>
 {% else %}<p class="muted">No service is open to the Internet yet.</p>{% endif %}
 {% if join_url %}<div class="card"><div class="row"><div><b>Want an account?</b><p class="muted" style="margin:4px 0 0">One account for every service that needs one.</p></div>
 <a class="btn primary" href="{{ join_url }}">Get an account</a></div></div>{% endif %}{% endif %}
-<p class="muted small" style="margin-top:24px">{% if contact %}Contact: {{ contact }} · {% endif %}Made with Kiwi Network</p>
+<p class="muted small" style="margin-top:24px">{% if contact %}Contact: {{ contact }} · {% endif %}{% if cdn %}Images come through {{ cdn }}, which sees your address for them. · {% endif %}Made with Kiwi Network</p>
 {% endblock %}""",
     "status.html": """{% extends "base.html" %}{% block title %}{{ (brand_name if h.strangers else "") or "Kiwi" }}: {{ one.name if one else "status" }}{% endblock %}{% block main %}
 <meta http-equiv="refresh" content="120;url=?auto=1"><style>main{max-width:1120px}.tbl td:first-child{min-width:190px}
@@ -1920,13 +1920,15 @@ def make_app(control: Control):
 
     # ---- the website (site.py): at its name and www., where only the site's pages answer ------------
     SITE_HOST, SITE_REPO, SITE_COMMIT = sitemod.settings()
+    SITE_CDN = sitemod.cdn() if SITE_HOST else ""
     SITE = {}
 
     def the_site():
         """The site at its pin: fetched once, kept; None while it cannot be had (said in the log)."""
         if "got" not in SITE or SITE_COMMIT == "dir":       # a folder being written: read anew each time
             try:
-                SITE["got"] = sitemod.fetch(SITE_REPO, SITE_COMMIT, os.path.join(control.run, "site"))   # fetched again after a restart
+                SITE["got"] = sitemod.fetch(SITE_REPO, SITE_COMMIT, os.path.join(control.run, "site"),   # fetched again after a restart
+                                            sitemod.assets_base(SITE_CDN))
             except (KiwiError, OSError) as e:
                 util.warn("the website %s at %s: %s" % (SITE_REPO, SITE_COMMIT[:12], e))
                 return None
@@ -1954,8 +1956,9 @@ def make_app(control: Control):
             found = sitemod.asset(site, path[len("/assets/"):])
             if not found:
                 return Response("Not here.", status_code=404, media_type="text/plain")
-            with open(found[0], "rb") as fh:
-                return Response(fh.read(), media_type=found[1], headers={"Cache-Control": "public, max-age=86400"})
+            with open(found[0], "rb") as fh:       # a pinned commit's file never changes: kept a year when asked with ?v=
+                keep = "public, max-age=31536000, immutable" if request.query_params.get("v") else "public, max-age=86400"
+                return Response(fh.read(), media_type=found[1], headers={"Cache-Control": keep})
         home = site["pages"][0]["slug"] if site["pages"] else ""
         slug = path.strip("/") or home
         pg = next((p for p in site["pages"] if p["slug"] == slug), None)
@@ -1971,11 +1974,16 @@ def make_app(control: Control):
         return page("site.html", nav="/" + ("" if not pg or pg["slug"] == home else pg["slug"]) if pg else "/services",
                     navitems=site_nav(site, home, status_url), open_frame={"name": site["name"] or os.environ.get("KIWI_BRAND") or "Kiwi",
                                                                          "home": "/"},
-                    site=site, pg=pg, home=home, h=h, status_url=status_url, join_url=join_url, contact=os.environ.get("KIWI_CONTACT", ""))
+                    site=site, pg=pg, home=home, h=h, status_url=status_url, join_url=join_url, contact=os.environ.get("KIWI_CONTACT", ""),
+                    cdn=SITE_CDN if any("<img " in p["html"] for p in site["pages"]) else "")
 
     @app.middleware("http")
     async def site_only(request: Request, call_next):
         host = (request.headers.get("host") or "").split(":")[0].lower()
+        if SITE_CDN and host == SITE_CDN:               # a CDN's name: the site's files and nothing else
+            if request.method not in ("GET", "HEAD") or not request.url.path.startswith("/assets/") or "/.." in request.url.path:
+                return Response("Not here.", status_code=404, media_type="text/plain")
+            return site_answer(request)
         if SITE_HOST and host in sitemod.hosts(SITE_HOST):
             if "/.." in request.url.path or "//" in request.url.path or request.method not in ("GET", "HEAD"):
                 return Response("Not here.", status_code=404, media_type="text/plain")

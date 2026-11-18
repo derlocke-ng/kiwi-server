@@ -11,6 +11,9 @@
 #       CONTROL_ADDR: the control node's LAN address; HOME_DNS: a DNS server at home (the gateway's)
 #       NAME: kumquat by default; WORKDIR: ~/kiwi-vm/offsite         (~30 to 60 minutes, most of it Debian's install)
 #   After a failed check the machine stays: kiwi-server remove FLEET NAME --yes takes it out again
+#   ENCRYPT=RING: its disk encrypted (LUKS), opened at boot by RING, a ring on the master (`tang` there):
+#       the first boot gets its one-time key through the initramfs's SSH from a computer at its site,
+#       the first apply binds the ring, and a restart must open the disk by itself
 set -u
 {
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -34,8 +37,8 @@ vm() {      # LOG BOOT(cd|disk)
     qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 2048 \
         -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.fd" -drive if=pflash,format=raw,file=vars.fd \
         "${boot[@]}" -drive if=none,id=disk,format=qcow2,file=disk.qcow2 -device virtio-blk-pci,drive=disk,bootindex=1 \
-        -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${P_SSH:-2290}-:22 -display none -serial file:"$1" \
-        -daemonize -pidfile qemu.pid
+        -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${P_SSH:-2290}-:22,hostfwd=tcp:127.0.0.1:${P_DROP:-2292}-:2222 \
+        -display none -serial file:"$1" -daemonize -pidfile qemu.pid
 }
 # what the machine itself says, through QEMU's forwarded port (only this computer reaches it)
 inside() { ssh -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -46,6 +49,11 @@ trap 'if [ "${KEEP:-0}" != 1 ] && [ "$fails" = 0 ]; then stop; fi' EXIT
 "${ks[@]}" add "$F" node "$N" --preset minimal --target debian >add.log 2>&1; check $? "$N added to the fleet (a node, Debian)"
 python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" 'network.dhcp=true' 'network.site="away"' 'disk="/dev/vda"' \
     'install.on_done="poweroff"' >/dev/null; check $? "$N stands at the site away, its address from the router there"
+if [ -n "${ENCRYPT:-}" ]; then
+    python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" 'debian.encrypt=true' \
+        "unlock={\"rings\": [\"$ENCRYPT\"], \"threshold\": 1, \"ssh\": true}" >/dev/null
+    check $? "its disk encrypted, opened at boot by the ring $ENCRYPT"
+fi
 "${ks[@]}" enroll "$F" "$N" >enroll.log 2>&1; check $? "$N enrolled: its place on the VPN"
 mesh=$("${ks[@]}" list "$F" --porcelain 2>/dev/null | python3 -c "import json,sys; print(next(h['vpn_ip'] for h in json.load(sys.stdin)['hosts'] if h['name']=='$N'))")
 say "its mesh address: $mesh"
@@ -70,11 +78,16 @@ if [ -f qemu.pid ] && kill -0 "\$(cat qemu.pid)" 2>/dev/null; then echo "$N runs
 exec qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 2048 \\
     -drive if=pflash,format=raw,readonly=on,file=$OVMF/OVMF_CODE.fd -drive if=pflash,format=raw,file=vars.fd \\
     -drive if=none,id=disk,format=qcow2,file=disk.qcow2 -device virtio-blk-pci,drive=disk,bootindex=1 \\
-    -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${P_SSH:-2290}-:22 -display none -serial file:boot-run.log \\
-    -daemonize -pidfile qemu.pid
+    -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${P_SSH:-2290}-:22,hostfwd=tcp:127.0.0.1:${P_DROP:-2292}-:2222 \\
+    -display none -serial file:boot-run.log -daemonize -pidfile qemu.pid
 RUN
 chmod +x run.sh
 
+if [ -n "${ENCRYPT:-}" ]; then
+    # nothing is bound yet: the one-time key, from a computer at its site (QEMU's port stands for it)
+    "${ks[@]}" unlock "$F" "$N" --manual --address 127.0.0.1 --port "${P_DROP:-2292}" --timeout 900 >unlock-first.log 2>&1
+    check $? "its first boot: the one-time key through the initramfs's SSH"
+fi
 # ---- its first apply comes from a computer at its site: home cannot reach it before it is on the VPN ----
 # (here QEMU's forwarded port stands for a laptop on that LAN; later the join token makes this unneeded)
 for _ in $(seq 1 60); do inside true && break; sleep 10; done
@@ -111,6 +124,20 @@ case "$got" in
 esac
 code=$(curl -sk -o /dev/null -w '%{http_code}' -m 15 --resolve "$N.home:443:$mesh" "https://$N.home/" 2>/dev/null)
 [ -n "$code" ] && [ "$code" != 000 ]; check $? "its proxy answers over the mesh (https $code)"
+
+# ---- an encrypted one: the ring on the master opens it after a restart, nobody types anything ------
+if [ -n "${ENCRYPT:-}" ]; then
+    dev=$(ssh_to "core@$mesh" "sudo blkid -t TYPE=crypto_LUKS -o device | head -1" 2>/dev/null)
+    [ -n "$dev" ]; check $? "its disk is LUKS ($dev)"
+    ssh_to "core@$mesh" "sudo clevis luks list -d $dev" >clevis.txt 2>&1
+    grep -q tang clevis.txt; check $? "bound to a ring: $(tr '\n' ' ' <clevis.txt | cut -c1-160)"
+    ssh_to "core@$mesh" "sudo systemctl reboot" >/dev/null 2>&1
+    sleep 20
+    back=1
+    for _ in $(seq 1 60); do ssh_to "core@$mesh" true >/dev/null 2>&1 && { back=0; break; }; sleep 10; done
+    check $back "after a restart it opened its disk by itself and is on the mesh again (the ring $ENCRYPT on the master)"
+    ssh_to "core@$mesh" "sudo journalctl -b -o cat --no-pager | grep -i -m3 -E 'clevis|tang'" >reboot-unlock.txt 2>/dev/null
+fi
 
 # ---- the control node at home reaches it too ----------------------------------------------------
 "${ks[@]}" control push "$F" >push.log 2>&1; check $? "the control node has the fleet with $N"

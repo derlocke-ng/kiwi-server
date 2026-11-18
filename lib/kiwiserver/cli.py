@@ -100,7 +100,8 @@ def linked_networks(fleet):
     except KiwiError:
         return []
     return [{"name": n, "mesh": str(x.get("mesh") or ""), "exit": bool(x.get("exit")), "internet": bool(x.get("internet")),
-             "shared": len(x.get("share") or []), "reach": [str(e) for e in x.get("share") or []]}
+             "shared": len(x.get("share") or []), "reach": [str(e) for e in x.get("share") or []],
+             "domain": str(x.get("domain") or "")}
             for n, x in sorted(found.items())]
 
 

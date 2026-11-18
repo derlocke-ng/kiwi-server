@@ -9735,6 +9735,14 @@ class TestWeb(WebBase):
         self.assertIn('action="/devices/download"', body)
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone", "csrf": tok}), (200, conf))
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone"})[0], 303)   # no token: nothing
+        # a laptop at home: only the network through the tunnel, and what to do so that its own names still work
+        self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
+                       "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write("
+                       "'[Interface]\\n# ' + ' '.join(sys.argv[3:]) + '\\nAllowedIPs = 10.8.0.0/16\\n')"]
+        code, body = self.ask("/devices/add", {"name": "work-laptop", "split": "yes", "csrf": tok})
+        self.assertIn("work-laptop is ready", body)
+        self.assertIn("ipv4.dns-search ~", body)
+        self.assertIn("--split", util.read_text(os.path.join(self.c.fleet_dir, "secrets", "devices", "work-laptop.conf")))
         if shutil.which("qrencode"):
             self.assertIn("<svg", body)
         self.assertIn("exists already", self.ask("/devices/add", {"name": "annas-phone", "csrf": tok})[1])

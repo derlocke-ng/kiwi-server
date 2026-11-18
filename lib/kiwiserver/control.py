@@ -1942,16 +1942,17 @@ class Control:
         path = os.path.join(self.fleet_dir, "secrets", "devices", name + ".conf")
         return util.read_text(path) if os.path.isfile(path) else None
 
-    def add_device(self, name, group="", user="admin"):
+    def add_device(self, name, group="", user="admin", split=False):
         """A new phone or laptop on the VPN: the master makes its key and address
-        (`enroll`). Returns its config; KiwiError says why not."""
+        (`enroll`). `split`: only the network (and the linked networks) through the tunnel, not
+        everything. Returns its config; KiwiError says why not."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
         if not HOST.match(name or ""):
             raise KiwiError("a name for the device: lowercase letters, digits and dashes, like annas-phone")
         if name in self.devices():
             raise KiwiError("a device called %s exists already" % name)
-        argv = list(self.kiwi) + ["enroll", self.fleet_path, name] + (["--group", group] if group else [])
+        argv = list(self.kiwi) + ["enroll", self.fleet_path, name] + (["--group", group] if group else []) + (["--split"] if split else [])
         with self.lock:
             r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
             if not self._pushed():

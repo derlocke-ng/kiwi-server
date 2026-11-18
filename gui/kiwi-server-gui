@@ -246,7 +246,54 @@ def find_cli():
     return shutil.which("kiwi-server")
 
 
+# the commands that only read, which the resident kiwi-server (`kiwi-server agent`) answers without
+# starting a new one; its socket is only this user's
+AGENT_READS = {("list",), ("logins",), ("version",), ("names",), ("validate",), ("secrets", "status"), ("sources", "list")}
+
+
+def agent_socket():
+    return os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "kiwi-server-agent.sock")
+
+
+def agent_reads(args):
+    if not args:
+        return False
+    two = tuple(args[:1]) + tuple(a for a in args[2:3] if not a.startswith("-"))
+    return (args[0],) in AGENT_READS or (len(args) >= 3 and two in AGENT_READS)
+
+
+def agent_ask(message, timeout):
+    """One question to the agent: its answer as a dict, or None when none runs."""
+    import socket as _socket
+    try:
+        c = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        c.settimeout(timeout)
+        c.connect(agent_socket())
+        with c:
+            c.sendall((json.dumps(message) + "\n").encode())
+            return json.loads(c.makefile("r").readline())
+    except (OSError, ValueError):
+        return None
+
+
+def start_agent(cli):
+    """The resident kiwi-server, for as long as the app runs (an older one without `agent` just ends)."""
+    if not cli or agent_ask({"argv": ["version"]}, 2):
+        return
+    try:
+        subprocess.Popen([cli, "agent", "--parent", str(os.getpid())], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
 def run_cli(cli, args, timeout=120, input=None):
+    if input is None and agent_reads(list(args)):
+        got = agent_ask({"argv": [str(a) for a in args]}, timeout)
+        if got and "rc" in got:
+            return got["rc"], got.get("out", ""), got.get("err", "")
+    else:
+        agent_ask({"forget": True}, 2)          # a command that may change what the agent keeps
     try:
         r = subprocess.run([cli] + list(args), capture_output=True, text=True, timeout=timeout,
                            **({"input": input} if input is not None else {"stdin": subprocess.DEVNULL}))
@@ -4182,6 +4229,7 @@ class Window(Adw.ApplicationWindow):
         super().__init__(application=app, title="Kiwi Server")
         self.set_icon_name(APP_ID)
         self.cli = cli
+        start_agent(cli)            # a kiwi-server that stays running: the app's reading commands without a new one each
         self.doc = FleetDoc()
         self.roles, self.targets = [], {}
         self.module_schemas = {}
@@ -6263,6 +6311,7 @@ class Window(Adw.ApplicationWindow):
             return
         self.set_busy(True, msg)
         self.b_log.set_active(True)
+        agent_ask({"forget": True}, 2)      # what runs now may change what the resident kiwi-server keeps
         cmd = [self.cli] + list(args)
 
         def worker():

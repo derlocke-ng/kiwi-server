@@ -43,6 +43,13 @@ time and fleet, also after the app is closed: its short messages at the bottom
 vanish after a few seconds. New and gone warnings of the machines go there too.
 A number on the bell counts what came since it was last opened.
 
+## How it talks to kiwi-server
+
+The app runs `kiwi-server` for everything it does. What only reads (the list of machines,
+a machine's logins, the store's state) goes to one `kiwi-server agent` that the app starts
+and that ends with it: no new process for each click, and the list of machines is kept until
+the fleet's folder changes. Everything that changes something runs as a command of its own.
+
 ## Preferences
 
 The gear at the top of the list, or *Preferences* in the menu (Ctrl+,):

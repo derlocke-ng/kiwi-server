@@ -10,7 +10,8 @@ Multi-hop (one network leaving the internet through another) rides the same link
 One WireGuard tunnel between the two masters, its own interface beside wg-easy (wg-easy routes
 only a client's own address to it; the link carries the other mesh's /16). A small
 `federation` module: per partner a key pair, the partner's master as endpoint, `AllowedIPs` its
-mesh. Meshes never overlap: every network has its own /16 (10.9, 10.10, 10.11 …).
+mesh. Meshes never overlap: every network has its own /16 (10.9, 10.10, 10.11 …), and its own
+domain, since each side's DNS sends the other's domain to the other (`federate` refuses both).
 
 ## What is shared
 

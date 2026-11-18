@@ -411,7 +411,12 @@ kiwi-server access ~/kiwi/fleet.yaml kiwi2 cloud.papaya     # what the partner m
 kiwi-server plan ~/kiwi/fleet.yaml && kiwi-server apply ~/kiwi/fleet.yaml
 ```
 
-Each network keeps its fleet, seed, CA and mesh (every network its own /16).
+Each network keeps its fleet, seed, CA and mesh. Two networks that link need
+their own mesh (every network its own /16) and their own domain (`home`,
+`internal`, …): `federate` refuses them otherwise. Both are set when a network
+is made, and changing either later touches every machine, so a network that may
+link with another one day takes a free /16 and domain from the start. The home
+LANs behind them do not matter: only the meshes go over the link.
 The masters are linked by WireGuard on UDP 51822, each Pi-hole asks the other
 for the other's domain, and a partner reaches only what it is given, in the
 same words as a group ([above](#who-may-reach-what)). `federation.yaml` next to

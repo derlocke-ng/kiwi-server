@@ -126,8 +126,29 @@ def addresses(host):
     if not net.get("dhcp", True) and net.get("address"):
         found.append(str(net["address"]).split("/", 1)[0])
     found.append((host.role_settings_raw.get("vpn-server") or {}).get("wg_host"))
-    found.append((host.role_settings or {}).get("vpn_ip"))
+    found.append((host.role_settings or {}).get("vpn_ip") or _mesh_address(host))
     return [a for i, a in enumerate(found) if a and a not in found[:i]]
+
+
+def _mesh_address(host):
+    """A node's mesh address before its settings are resolved: the one written, else the Address
+    of the WireGuard config the master gave it. A machine at another site is reached there before
+    the home's DNS knows its name (`status` right after its first apply)."""
+    raw = host.role_settings_raw or {}
+    if raw.get("vpn_ip"):
+        return str(raw["vpn_ip"])
+    if "vpn-server" in raw or "vpn-server" in (raw.get("modules") or []) or not getattr(host, "fleet", None):
+        return None         # a master's own client config is another network's (multi-hop)
+    conf = (raw.get("vpn-client") or {}).get("wireguard_config") or "secrets/%s.conf" % host.hostname
+    try:
+        with open(host.fleet.resolve_path(conf), encoding="utf-8") as fh:
+            for line in fh:
+                key, _, value = line.partition("=")
+                if key.strip() == "Address":
+                    return value.strip().split(",")[0].split("/")[0].strip() or None
+    except OSError:
+        return None
+    return None
 
 
 def reach(host, override=None):

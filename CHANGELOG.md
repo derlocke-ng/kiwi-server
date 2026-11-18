@@ -6,6 +6,15 @@
   (what `secrets keep`, the page or the app put there): the machine gets a generated one with
   its next apply. The app's kept password field has *Forget* for it, as the page has its
   *clear* box.
+- **`federate` refuses two networks with one domain** (the owner: "can we federate with the same
+  subnet and tld?"). Each side's DNS sends the other's domain to the other: with `home` on both,
+  `papaya.home` would be both networks' and the partner's names would not resolve. The same
+  mesh was refused already. docs/network.md says to pick a free /16 and domain from the start.
+- **A machine at another site is reached at its mesh address before the home's DNS knows its
+  name**: `status`, the control node and every other command take the Address of the WireGuard
+  config the master gave it (the encrypted offsite drill: "Could not resolve hostname
+  nashi.home" right after its first apply). That drill passed otherwise: its disk, bound to the
+  ring `away` on the master, opened by itself after a restart.
 
 ## 2.214.1 — secrets keep with a standby
 

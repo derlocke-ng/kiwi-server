@@ -3086,6 +3086,16 @@ class TestSshCa(Base):
                 self.assertTrue(remote.reach(h).endswith("@gate.kiwi"))
 
 
+    def test_a_node_is_reached_at_its_mesh_address_before_the_dns_knows_its_name(self):
+        """A machine at another site, right after its first apply: no DNS name yet, its mesh address
+        from the WireGuard config the master gave it, before anything resolves its settings."""
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "away": {"role": "node", "node": {"vpn-client": {"wireguard_config": "secrets/away.conf"}}},
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        write(os.path.join(os.path.dirname(f.path), "secrets", "away.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.9.0.14/24\n")
+        self.assertEqual(remote.addresses(f.hosts["away"]), [f.hosts["away"].hostname, "10.9.0.14"])
+        self.assertNotIn("10.66.1.2", remote.addresses(f.hosts["gate"]))      # a master's client config is another network's
+
 class TestSshPort(Base):
     def test_targets_carry_the_port(self):
         self.assertEqual(remote.with_port("core@203.0.113.7", 41022), "ssh://core@203.0.113.7:41022")
@@ -4168,7 +4178,7 @@ class TestFederation(Base):
         b_path = os.path.join(other, "fleet.yaml")
         with open(a.path) as fh:
             data = yaml.safe_load(fh)
-        data["defaults"]["domain"] = "internal"
+        data["defaults"]["domain"] = a.defaults.get("domain")         # first the same domain as the other network
         data["defaults"]["master"] = {"mesh_subnet": "10.10.0.0/16"}
         data["hosts"]["gate"]["master"]["vpn-server"]["wg_host"] = "198.51.100.9"
         for k in ("admin",):
@@ -4176,6 +4186,12 @@ class TestFederation(Base):
         write(b_path, yaml.safe_dump(data))
         for d in ("secrets",):
             shutil.copytree(os.path.join(self.tmp, d), os.path.join(other, d), dirs_exist_ok=True) if os.path.isdir(os.path.join(self.tmp, d)) else None
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("they need a domain each", err)                                  # a name would be both networks'
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "federation.yaml")))
+        data["defaults"]["domain"] = "internal"
+        write(b_path, yaml.safe_dump(data))
         rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path)
         self.assertEqual(rc, 0, err)
         with open(os.path.join(self.tmp, "federation.yaml")) as fh:

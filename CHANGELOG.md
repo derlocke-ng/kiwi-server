@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.187.0 — a hub on a node calls through the master's turn
+
+- A hub on a node with no `ice` of its own is told the master's `turn` server and its login,
+  as a hub on the master always was: calls between two strict networks get through without
+  copying the address and password by hand ([roles.md](docs/roles.md)). kiwi-modules 0.84.1.
+
 ## 2.186.0 — the network's public names on the VPN; versioned module sources
 
 - **This computer on the VPN asks the network's DNS for its public names too**

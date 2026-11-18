@@ -273,6 +273,7 @@ class Renderer:
         self._node_lan = []
         self._needs_ca = False
         self._master_ip = ""
+        self._turn = {}         # the master's turn module as a hub elsewhere names it (ice, its login)
         self._groups = {}
         self._partners = {}
         self._admin = {}        # hostname -> the full names of its admin pages
@@ -331,6 +332,14 @@ class Renderer:
                     master_ip = spec.vpn_ip   # the nodes' DNS upstream and the mesh route's far end
                     self._groups = (h.module_settings.get("vpn-server") or {}).get("groups") or {}
                     self._partners = (h.module_settings.get("vpn-server") or {}).get("federation") or {}
+                    if "turn" in h.modules:
+                        t = h.module_settings["turn"]
+                        name = t.get("turn_domain") or (h.module_settings.get("vpn-server") or {}).get("wg_host") or h.hostname
+                        port = int(t.get("port") or 3478)
+                        self._turn = {"ice": ["stun:%s:%d" % (name, port), "turn:%s:%d?transport=udp" % (name, port),
+                                              "turn:%s:%d?transport=tcp" % (name, port)],
+                                      "ice_username": str(t.get("username") or "kiwi"),
+                                      "ice_credential": str(t.get("password") or "")}
                 lan = static_lan(h)
                 if lan and role.node_type != "master":      # a master's stack lives on the mesh, not its LAN
                     node_lan.append((spec.vpn_ip, lan.ip))
@@ -496,6 +505,9 @@ class Renderer:
                 a = json.loads(util.read_text(path))
                 host.module_settings[module].update(accounts_client=a["client"], accounts_issuer=a["issuer"],
                                                     accounts_secret=a["secret"])
+        if role.node_type != "master" and "hub" in host.modules and self._turn and not host.module_settings["hub"].get("ice"):
+            # a hub on a node: its calls go through the master's turn server, as a hub on the master's would
+            host.module_settings["hub"].update(self._turn)
         if role.node_type == "master" and "tang" in host.modules and "vpn-server" in host.modules:
             # a ring here (away): the VPN server publishes it, to the home's addresses only
             host.module_settings["vpn-server"]["local_rings"] = dict(host.module_settings["tang"].get("rings") or {})

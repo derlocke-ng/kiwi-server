@@ -12,6 +12,7 @@ import ipaddress
 import argparse
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -2629,6 +2630,35 @@ class TestSetup(Base):
         self.assertEqual((rc, asked), (0, ["mango"]), err)                       # the machine with the names
         rc, out, err = self.run_cli("check", dest, "quince")
         self.assertIn("none of these machines answers for the names", err)
+
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_new_network_takes_a_mesh_of_its_own_at_random(self):
+        """The owner, 18 Nov: 10.X at random, so that two networks that link one day differ."""
+        from kiwiserver import setup as setupmod
+        rnd = random.Random(7)
+        seen = {setupmod.free_mesh("192.168.2.0/24", taken={9, 10}, rnd=rnd) for _ in range(40)}
+        self.assertGreater(len(seen), 20)                                              # not one for everyone
+        for mesh in seen:
+            x = int(mesh.split(".")[1])
+            self.assertTrue(setupmod.MESH_LOW <= x <= setupmod.MESH_HIGH and x not in (9, 10), mesh)
+        self.assertEqual(setupmod.free_mesh("10.0.0.0/9", taken=set(), rnd=rnd).split(".")[1] >= "128", True)   # not the LAN
+        made = setupmod.mesh_settings("10.37.0.0/16")
+        self.assertEqual((made["master"]["vpn-server"]["server_ip"], made["node"]["master_ip"], made["node"]["mesh_subnet"]),
+                         ("10.37.0.1", "10.37.0.1", "10.37.0.0/16"))
+        # the groups are the module's own, moved into this mesh
+        vs = next(st for st in self.ms.get("vpn-server").settings if st.key == "groups").default
+        self.assertEqual({n: dict(g, subnet=g["subnet"].replace("10.8.", "10.37.")) for n, g in vs.items()},
+                         made["master"]["vpn-server"]["groups"])
+        data, _made = setupmod.make(dict(self.ANSWERS, admin_key="~/.ssh/x.pub", mesh="10.37.0.0/16"), self.tmp)
+        self.assertEqual(data["defaults"]["master"]["mesh_subnet"], "10.37.0.0/16")
+        self.assertEqual(setupmod.check(dict(self.ANSWERS, mesh="10.8.1.0/24")).get("mesh"),
+                         "Like 10.37.0.0/16: 10, a number from 1 to 254, then 0.0/16.")
+        self.assertIn("home network", setupmod.check(dict(self.ANSWERS, mesh="10.5.0.0/16", lan_subnet="10.5.0.0/24"))["mesh"])
+        q = {q["id"]: q for st in setupmod.questions({"subnet": "192.168.2.0/24", "gateway": "192.168.2.1", "timezone": "UTC",
+                                                       "keyboard": "us", "locale": "en_US.UTF-8", "ssh_key": "", "addresses": []})
+             for q in st["questions"]}
+        self.assertRegex(q["mesh"]["default"], r"^10\.\d+\.0\.0/16$")
+        self.assertTrue(q["mesh"]["advanced"])
 
     @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
     def test_a_master_at_home_runs_tor_only_through_a_vpn_exit(self):

@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.215.0 — a kept password forgotten again
+## 2.215.0 — ready to link: a mesh of its own, a domain of its own
 
 - **`kiwi-server secrets forget FLEET HOST module.key`** takes a password out of the secret store
   (what `secrets keep`, the page or the app put there): the machine gets a generated one with
@@ -10,6 +10,12 @@
   subnet and tld?"). Each side's DNS sends the other's domain to the other: with `home` on both,
   `papaya.home` would be both networks' and the partner's names would not resolve. The same
   mesh was refused already. docs/network.md says to pick a free /16 and domain from the start.
+- **A new network takes its VPN's /16 at random** (the owner: "give a random 10.X.0.0 subnet, so
+  the chances that X is the same are lower"): `init`, the app's and the page's first run write
+  10.X.0.0/16 with X from 10 to 250, not the home's LAN and not a mesh of the fleets in
+  `~/kiwi*`, with everything that goes with it (the VPN server and its groups, Tor's allow list,
+  every node's mesh and master). Before, every network took 10.8. *The VPN's addresses* is an
+  advanced question to change it.
 - **A machine at another site is reached at its mesh address before the home's DNS knows its
   name**: `status`, the control node and every other command take the Address of the WireGuard
   config the master gave it (the encrypted offsite drill: "Could not resolve hostname

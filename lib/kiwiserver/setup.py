@@ -326,6 +326,61 @@ def detect(probe=True):
     return found
 
 
+MESH_LOW, MESH_HIGH = 10, 250      # 10.X: below 10 sit wg-easy's 10.8 and many routers' 10.0, 10.1
+
+
+def meshes_in_use(home=None):
+    """The 10.X of the meshes of the fleets in this user's ~/kiwi* folders (one may link with the new one)."""
+    home = home or os.path.expanduser("~")
+    out = set()
+    try:
+        names = os.listdir(home)
+    except OSError:
+        return out
+    for d in names:
+        if not d.startswith("kiwi"):
+            continue
+        try:
+            data = yaml.safe_load(util.read_text(os.path.join(home, d, "fleet.yaml"))) or {}
+            mesh = (((data.get("defaults") or {}).get("master") or {}).get("mesh_subnet")) or "10.8.0.0/16"
+            out.add(int(str(mesh).split(".")[1]))
+        except (OSError, ValueError, IndexError, AttributeError, yaml.YAMLError):
+            continue
+    return out
+
+
+def free_mesh(lan="", taken=None, rnd=random):
+    """A /16 for a new network's VPN, 10.X.0.0/16 with X at random: two networks that link one day
+    must not have the same one (`federate` refuses it), and almost every network once took 10.8.
+    Not this home's LAN, not a mesh of the fleets on this computer."""
+    used = set(meshes_in_use() if taken is None else taken)
+    try:
+        net = ipaddress.ip_network(lan, strict=False) if lan else None
+    except ValueError:
+        net = None
+    if net is not None and net.version == 4:
+        used |= {x for x in range(256) if ipaddress.ip_network("10.%d.0.0/16" % x).overlaps(net)}
+    free = [x for x in range(MESH_LOW, MESH_HIGH + 1) if x not in used]
+    return "10.%d.0.0/16" % rnd.choice(free or list(range(MESH_LOW, MESH_HIGH + 1)))
+
+
+def mesh_settings(mesh):
+    """What a network on the mesh 10.X.0.0/16 writes into its defaults: the master's VPN server and
+    its groups, Tor's allow list, every node's mesh and master. 10.8 is what the modules assume."""
+    x = mesh.split(".")[1]
+    p = "10.%s." % x
+    groups = {"guests": {"subnet": p + "1.0/24", "reach": ["nodes"], "peers": False},
+              "pentest": {"subnet": p + "2.0/24", "reach": [], "peers": False},
+              "devices": {"subnet": p + "3.0/24", "reach": ["all"], "admin": True},
+              "routers": {"subnet": p + "4.0/24", "reach": ["all"]},
+              "family": {"subnet": p + "5.0/24", "reach": ["apps"]}}
+    return {"master": {"mesh_subnet": mesh,
+                       "vpn-server": {"server_ip": p + "0.1", "wg_subnet": p + "0.0/24", "wg_default_address": p + "0.x",
+                                      "groups": groups},
+                       "tor": {"socks_policy_accept": mesh}},
+            "node": {"mesh_subnet": mesh, "master_ip": p + "0.1"}}
+
+
 def suggest(subnet, n, gateway=""):
     """A fixed address to suggest for the n-th machine: .30 and up in the router's own /24,
     which routers rarely hand out."""
@@ -369,6 +424,9 @@ def questions(found=None):
             {"id": "domain", "label": "Name ending", "default": "home", "advanced": True,
              "help": "Your machines are called <name>.home. Keep home unless you know you need another; internal, corp "
                      "and mail are the other safe ones (not local)."},
+            {"id": "mesh", "label": "The VPN's addresses", "default": free_mesh(found["subnet"]), "advanced": True,
+             "help": "10.X.0.0/16, X chosen at random: a network you link with one day needs another one. "
+                     "Change it only if X is in use where you are."},
             {"id": "admin_key", "label": "Key to your machines", "type": "choice", "options": keys, "default": "generate",
              "advanced": True,
              "help": "This computer reaches your machines with a key file instead of a password. One of the network's "
@@ -484,6 +542,18 @@ def check(a):
         adv = config.domain_advice(d)
         if adv and adv[0] == "error":
             bad["domain"] = adv[1]
+    mesh = str(a.get("mesh") or "").strip()
+    if mesh:
+        m = re.fullmatch(r"10\.(\d{1,3})\.0\.0/16", mesh)
+        if not m or not (1 <= int(m.group(1)) <= 254):
+            bad["mesh"] = "Like 10.37.0.0/16: 10, a number from 1 to 254, then 0.0/16."
+        else:
+            try:
+                lan = ipaddress.ip_network(str(a.get("lan_subnet") or ""), strict=False) if a.get("lan_subnet") else None
+            except ValueError:
+                lan = None
+            if lan and lan.version == 4 and lan.overlaps(ipaddress.ip_network(mesh)):
+                bad["mesh"] = "%s is your home network's: take another number." % mesh
     addr = str(a.get("master_address") or "").strip()
     if a.get("master_where") == "none":     # a network without a master (yet): docs/design/no-master.md
         if not [n for n in a.get("nodes") or [] if n.get("address")]:
@@ -612,6 +682,8 @@ def make(answers, fleet_dir):
         "install": {"on_done": "poweroff"},
         "tls": {"auto": True, "ca_dir": "secrets/ca", "name_constraints": [domain]},
     }
+    # the VPN's /16, at random unless chosen: two networks that link need their own
+    defaults.update(mesh_settings(str(a.get("mesh") or "").strip() or free_mesh(str(a.get("lan_subnet") or ""))))
     m = a["master_name"]
     addr = str(a.get("master_address") or "").strip()
     master = {"modules": ["vpn-server", "dns", "tor", "reverse-proxy"], "dns": {"mullvad_socks": False},

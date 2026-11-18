@@ -414,8 +414,10 @@ kiwi-server plan ~/kiwi/fleet.yaml && kiwi-server apply ~/kiwi/fleet.yaml
 Each network keeps its fleet, seed, CA and mesh. Two networks that link need
 their own mesh (every network its own /16) and their own domain (`home`,
 `internal`, …): `federate` refuses them otherwise. Both are set when a network
-is made, and changing either later touches every machine, so a network that may
-link with another one day takes a free /16 and domain from the start. The home
+is made, and changing either later touches every machine. `init` gives a new
+network a /16 at random, 10.X.0.0/16 with X from 10 to 250, not the home's LAN
+and not a mesh of the other fleets on that computer (its advanced question
+*The VPN's addresses* shows it); the domain stays yours to choose. The home
 LANs behind them do not matter: only the meshes go over the link.
 The masters are linked by WireGuard on UDP 51822, each Pi-hole asks the other
 for the other's domain, and a partner reaches only what it is given, in the

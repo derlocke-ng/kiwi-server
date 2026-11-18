@@ -9742,7 +9742,9 @@ class TestWeb(WebBase):
         code, body = self.ask("/devices/add", {"name": "work-laptop", "split": "yes", "csrf": tok})
         self.assertIn("work-laptop is ready", body)
         self.assertIn("ipv4.dns-search ~", body)
-        self.assertIn("--split", util.read_text(os.path.join(self.c.fleet_dir, "secrets", "devices", "work-laptop.conf")))
+        laptop = os.path.join(self.c.fleet_dir, "secrets", "devices", "work-laptop.conf")
+        self.assertIn("--split", util.read_text(laptop))
+        os.remove(laptop)                                                         # the rest of this test counts phones
         if shutil.which("qrencode"):
             self.assertIn("<svg", body)
         self.assertIn("exists already", self.ask("/devices/add", {"name": "annas-phone", "csrf": tok})[1])

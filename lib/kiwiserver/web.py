@@ -168,22 +168,22 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 @media (max-width:700px){.tbl .wide{display:none}.tbl td,.tbl th{padding:10px}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
-{% if nav %}{% set h = shell %}{% macro links(items, cls) %}{% set seen = namespace(group="") %}{% for href, label, pic, group in items %}
+{% if nav %}{% set sh = shell %}{% macro links(items, cls) %}{% set seen = namespace(group="") %}{% for href, label, pic, group in items %}
 {% if cls == "nav" and group != seen.group %}{% set seen.group = group %}<span class="grp">{{ group }}</span>{% endif %}
-<a class="{{ cls }}{% if nav == href %} on{% endif %}" href="{{ href }}">{{ icon(pic) }}<span>{{ label }}</span>{% if cls == "nav" and h.counts.get(href) %}<span class="count">{{ h.counts[href] }}</span>{% endif %}</a>{% endfor %}{% endmacro %}
+<a class="{{ cls }}{% if nav == href %} on{% endif %}" href="{{ href }}">{{ icon(pic) }}<span>{{ label }}</span>{% if cls == "nav" and sh.counts.get(href) %}<span class="count">{{ sh.counts[href] }}</span>{% endif %}</a>{% endfor %}{% endmacro %}
 {% macro theme() %}<button type="button" class="icon" title="Light or dark" aria-label="Light or dark" onclick="var d=document.documentElement,t=(d.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark';d.dataset.theme=t;document.cookie='kiwi_theme='+t+';path=/;max-age=31536000;samesite=strict'">{{ icon("moon") }}</button>{% endmacro %}
-{% macro brand() %}<a class="brand" href="{{ open_frame.home if open_frame else "/" }}">{{ icon("kiwi") }}<span>{% if open_frame %}{{ open_frame.name }}{% else %}Kiwi <small>{{ h.domain }}</small>{% endif %}</span></a>{% endmacro %}
+{% macro brand() %}<a class="brand" href="{{ open_frame.home if open_frame else "/" }}">{{ icon("kiwi") }}<span>{% if open_frame %}{{ open_frame.name }}{% else %}Kiwi <small>{{ sh.domain }}</small>{% endif %}</span></a>{% endmacro %}
 <div class="shell"><aside class="side">{{ brand() }}
 {{ links(navitems, "nav") }}
-<div class="foot">{% if open_frame %}<div class="row2">{{ theme() }}</div>{% elif h.total %}<div class="health"><span class="t">Your machines</span>
-<span><span class="dot ok"></span>fine</span><b>{{ h.ok }}</b>
-{% if h.warn %}<span><span class="dot warn"></span>want a look</span><b>{{ h.warn }}</b>{% endif %}
-{% if h.bad %}<span><span class="dot bad"></span>with a problem</span><b>{{ h.bad }}</b>{% endif %}
-{% if h.down %}<span><span class="dot down"></span>not reachable</span><b>{{ h.down }}</b>{% endif %}
+<div class="foot">{% if open_frame %}<div class="row2">{{ theme() }}</div>{% elif sh.total %}<div class="health"><span class="t">Your machines</span>
+<span><span class="dot ok"></span>fine</span><b>{{ sh.ok }}</b>
+{% if sh.warn %}<span><span class="dot warn"></span>want a look</span><b>{{ sh.warn }}</b>{% endif %}
+{% if sh.bad %}<span><span class="dot bad"></span>with a problem</span><b>{{ sh.bad }}</b>{% endif %}
+{% if sh.down %}<span><span class="dot down"></span>not reachable</span><b>{{ sh.down }}</b>{% endif %}
 <a class="t" href="/status">What everyone sees: the status page</a></div>{% endif %}
 {% if not open_frame %}<div class="row2">{{ theme() }}<form class="inline" method="post" action="/logout" style="flex:3;display:flex">{{ tok }}<button>Log out</button></form></div>{% endif %}</div></aside>
 <div><header class="top">{{ brand() }}
-{% if h.total and not open_frame %}<span class="pill {{ h.level }}">{{ h.word }}</span>{% endif %}{{ theme() }}</header>
+{% if sh.total and not open_frame %}<span class="pill {{ sh.level }}">{{ sh.word }}</span>{% endif %}{{ theme() }}</header>
 <main>{% block main %}{% endblock %}</main></div>
 <nav class="bar">{{ links(navitems[:3], "") }}{% if navitems|length > 3 or not open_frame %}<details><summary>{{ icon("more") }}<span>More</span></summary>
 <div class="sheet">{{ links(navitems[3:], "nav") }}{% if not open_frame %}<form method="post" action="/logout">{{ tok }}<button>Log out</button></form>{% endif %}</div></details>{% endif %}</nav></div>

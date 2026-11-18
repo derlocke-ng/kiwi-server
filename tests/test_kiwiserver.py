@@ -6483,10 +6483,12 @@ class TestMtu(Base):
             "n": {"role": "node", "target": "debian", "node": {"modules": ["vpn-client"], "vpn-client": {"wireguard_config": "secrets/n.conf"}}}}})
         return f
 
-    def measure(self, f, *args, whole_up_to=1376, split_above=None, answers=True):
+    def measure(self, f, *args, whole_up_to=1376, split_above=None, answers=True, outside=1452):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
+            if 'echo "path=$lo"' in script:          # the path outside the tunnel, to the master's public address
+                return ("path=%s\n" % (outside or "none")).encode()
             size = int(re.search(r"-s (\d+) ", script).group(1)) + 28
             calls.append((tgt, script, size))
             if not answers or size > whole_up_to:
@@ -6520,6 +6522,9 @@ class TestMtu(Base):
     def test_a_node_is_measured_from_its_own_side(self):
         rc, out, err, calls = self.measure(self.mtu_fleet(), "n", "--ssh", "core@5.6.7.8")
         self.assertEqual(rc, 0, err)
+        self.assertIn("path to the master takes 1452 bytes, so the tunnel could be 1392", out)    # outside the tunnel too
+        self.assertEqual(mtu.best(1452), 1392)
+        self.assertEqual(mtu.best(1452, ipv6=True), 1360)                                      # 80 bytes over IPv6, by 16
         tgt, script, _size = calls[0]
         self.assertEqual(tgt, "core@5.6.7.8")
         self.assertIn("kn-vpn-client", script)
@@ -9564,8 +9569,9 @@ class TestWeb(WebBase):
         for words in ("1 service does not answer", "Files (Nextcloud)", "does not answer", "for 40 minutes", "Passwords (Vaultwarden)",
                       "<b>2<small> of 2</small></b>", "Sun 03:30", "so far", "This page needs no login"):
             self.assertIn(words, body)
-        for words in ("control.papaya.home", "csrf", '<aside class="side">', "Log out"):
-            self.assertNotIn(words, body)                                          # no admin page, no menu, nothing to post
+        for words in ("control.papaya.home", "csrf", 'href="/machines"', "Log out"):
+            self.assertNotIn(words, body)                                          # no admin page, no admin menu, nothing to post
+        self.assertIn('<aside class="side">', body)                                # the control page's frame, with its own menu
         # the page for the Internet: the services open to it, and nothing of the rest
         code, body = self.ask("/status/public")
         self.assertEqual(code, 200)

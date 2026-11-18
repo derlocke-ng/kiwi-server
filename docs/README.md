@@ -36,6 +36,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [The control plane](design/control-plane.md) | where kiwi-server is going |
 | [A master in RAM](design/ram-master.md) | `target: coreos-ram` |
 | [Federation](design/federation.md) | two networks sharing services |
+| [Groups of the home network](design/lans.md) | a subnet or VLAN at home given what it may reach |
 | [Recovery](design/recovery.md) | what runs by itself when something breaks, and what is planned |
 | [Hidden services](design/onion.md) | services for strangers over Tor, never through a home connection |
 | [The starter image](design/starter.md) | a network from a phone: one image, the rest in a browser |

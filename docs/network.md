@@ -306,6 +306,27 @@ To see that the rules hold, with a real VPN client per group:
 python3 tests/drills/access.py ~/kiwi/fleet.yaml sorbet
 ```
 
+### Groups of the home network
+
+At home, the network trusts the whole LAN: a client there reaches every node
+across the switch. A part of the home network can be a group too: a guest Wi-Fi,
+a camera network, a VLAN, anything with a subnet of its own. It is given things
+in the same words as a VPN group:
+
+```bash
+kiwi-server access ~/kiwi/fleet.yaml iot --new --lan 192.168.20.0/24 cloud.papaya
+```
+
+It lands in the fleet file as `lan.groups` in the defaults. The master never
+sees that traffic, so each node keeps the rules itself: its web server refuses
+the names the group was not given, and its firewall (the nftables table
+`kiwi_lan`, which `kiwi-stack` writes) the ports. DNS, DHCP and ping stay open
+to everyone. A group of the home network has the admin switch, but not the VPN's
+"other devices" or "the Internet": the home's router decides those. Apply the
+nodes after a change. On the page and in the app, a new group with a subnet in
+*At home* is a group of the home network. Plans for VLANs on the machines
+themselves: [design/lans.md](design/lans.md).
+
 ## Hidden services
 
 A hidden service gives one service of a machine an address that anyone opens with

@@ -62,6 +62,12 @@ settings:
     label: Mesh subnet
     help: "The whole WireGuard mesh. The host routes it through its VPN client (the WireGuard server on a master), so the host and its containers reach the other nodes and the master's Pi-hole."
     default: 10.8.0.0/16
+  - key: lan_rules
+    group: Generated
+    type: list
+    label: Groups of the home network
+    help: "Filled in by kiwi-server from the fleet's lan.groups (docs/design/lans.md): per group of the home network what it may open on this machine, as 'SUBNET PORTS' with PORTS all, none, or tcp:443,tcp:22 … kiwi-stack keeps them in the nftables table kiwi_lan; DNS, DHCP and ping stay open to everyone."
+    default: []
   - key: pub_iface
     group: Stack
     label: LAN interface

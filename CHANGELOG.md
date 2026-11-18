@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.217.0 — groups of the home network
+
+- **A part of the home network can be a group in *who may reach what*** (the owner: VLANs "kinda
+  like the subnet-group filter"; docs/design/lans.md): a guest Wi-Fi, a camera network, a VLAN,
+  any subnet at home, given things in the same words as a VPN group.
+  `kiwi-server access FLEET iot --new --lan 192.168.20.0/24 cloud.papaya`; on the page and in
+  the app a new group with a subnet in *At home*. It lives in the fleet file as `lan.groups`. A
+  fleet without it changes nothing: the home network reaches everything, as before.
+- **Each node keeps it itself**, since the home network reaches a node across the switch and not
+  through the master: its web server refuses the names the group was not given (as for a VPN
+  group), and its nftables table `kiwi_lan` the ports (kiwi-stack 0.9.17, kiwi-modules 0.96.0:
+  `lan_rules`), before a published container port's DNAT. DNS, DHCP and ping stay open.
+- `tests/drills/lan-netns.py` proves the node side on this computer's kernel (rootless
+  namespaces): a client in a group opens only what it was given, a published port included; one
+  in no group everything; 8 checks.
+
 ## 2.216.0 — two networks of one mesh and one domain linked
 
 - **`federate` links two networks with the same mesh or the same domain** (the owner:

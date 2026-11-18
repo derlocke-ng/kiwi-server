@@ -1206,7 +1206,7 @@ class Control:
         except ValueError:
             raise KiwiError((r.stderr.strip().splitlines() or ["the rules could not be read"])[-1].replace("error: ", ""))
 
-    def save_access(self, changes, new="", new_as="nothing", user="admin"):
+    def save_access(self, changes, new="", new_as="nothing", user="admin", new_lan=""):
         """{who: {reach: [...], peers, internet, admin}} into the fleet file (a group) or
         federation.yaml (a linked network), through `kiwi-server access`, which says no to
         a name that is none. Only what differs from now is written. `new`: a group to make.
@@ -1218,8 +1218,11 @@ class Control:
             if not accessmod.NAME.match(new) or new in now:
                 raise KiwiError("a new group needs a name of its own: small letters, digits and -")
             # what a new group starts with: nothing, every app, or everything with the admin pages
-            todo.append((new, [new, "--new"] + {"apps": ["apps", "--peers", "yes"],
-                                                 "all": ["all", "--peers", "yes", "--admin", "yes"]}.get(new_as, [])))
+            if new_lan:             # a group of the home network: a subnet at home (docs/design/lans.md)
+                todo.append((new, [new, "--new", "--lan", new_lan] + {"apps": ["apps"], "all": ["all", "--admin", "yes"]}.get(new_as, [])))
+            else:
+                todo.append((new, [new, "--new"] + {"apps": ["apps", "--peers", "yes"],
+                                                     "all": ["all", "--peers", "yes", "--admin", "yes"]}.get(new_as, [])))
         for name, c in changes.items():
             x = now.get(name)
             if x is None:
@@ -1231,8 +1234,9 @@ class Control:
             argv = []
             if sorted(reach) != sorted(x["reach"]):
                 argv = [name] + (reach or ["nothing"])
-            if x["kind"] == "group":
-                flags = [("--%s" % k, "yes" if c.get(k) else "no") for k in accessmod.FLAGS if bool(c.get(k)) != bool(x[k])]
+            if x["kind"] in ("group", "lan"):
+                keys = accessmod.FLAGS if x["kind"] == "group" else ("admin",)       # the home's router decides the rest
+                flags = [("--%s" % k, "yes" if c.get(k) else "no") for k in keys if bool(c.get(k)) != bool(x[k])]
                 if flags:
                     argv = (argv or [name, "--add"]) + [w for f in flags for w in f]
             if argv:

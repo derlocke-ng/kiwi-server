@@ -1681,9 +1681,9 @@ class AccessDialog(Adw.Dialog):
         page.add(intro)
         self.rows = {}
         for w in self.who:
-            group = w["kind"] == "group"
+            group = w["kind"] in ("group", "lan")       # a group of the home network is given things as a VPN group
             g = Adw.PreferencesGroup(title=w["name"], description="%s · %s%s. Now: %s." % (
-                "group" if group else "linked network", w["range"],
+                {"group": "group", "lan": "group of the home network"}.get(w["kind"], "linked network"), w["range"],
                 (" · " + ", ".join(w["devices"])) if w["devices"] else "", w["says"]))
             r = {"all": None, "machines": {}, "flags": {}}
             r["apps"] = None
@@ -1714,6 +1714,8 @@ class AccessDialog(Adw.Dialog):
             if group:
                 for key, title in (("peers", "Other devices on the VPN"), ("internet", "The Internet through the VPN"),
                                    ("admin", "The admin pages (control page, Portainer, Pi-hole, backups)")):
+                    if w["kind"] == "lan" and key != "admin":       # the home's router decides those
+                        continue
                     r["flags"][key] = Adw.SwitchRow(title=title, active=bool(w[key]))
                     g.add(r["flags"][key])
             self.rows[w["name"]] = r
@@ -1761,6 +1763,8 @@ class AccessDialog(Adw.Dialog):
                                                                       "“Add a phone or laptop…”.")
         self.new = Adw.EntryRow(title="Its name, like family")
         more.add(self.new)
+        self.new_lan = Adw.EntryRow(title="At home: its subnet, like 192.168.20.0/24 (empty: a group of the VPN)")
+        more.add(self.new_lan)
         if data:
             page.add(more)
         save = Gtk.Button(label="Save", css_classes=["suggested-action"], sensitive=bool(data))
@@ -1844,8 +1848,9 @@ class AccessDialog(Adw.Dialog):
     def save(self):
         calls = []
         new = self.new.get_text().strip().lower()
+        lan = self.new_lan.get_text().strip()
         if new:
-            calls.append([new, "--new"])
+            calls.append([new, "--new"] + (["--lan", lan] if lan else []))
         for w in self.who:
             reach, flags = self.wanted(w)
             args = []

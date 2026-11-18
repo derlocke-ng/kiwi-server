@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.209.0 — an update with little room
+
+- **An image update on a nearly full disk takes one image at a time** (kiwi-stack 0.9.16): it pulls
+  one, restarts what runs it and drops the old copy before the next. A master in RAM has its
+  images in half its memory, and `podman auto-update` pulled all new images first (crumble had an
+  nginx update waiting with 51 MB free).
+- The access drill finds the linked network by its mesh, not by its folder's name.
+- The roadmap's top says where things stand at 2.208.0.
+
 ## 2.208.0 — the console password out of the fleet file
 
 - **The machines' console password is no longer kept in the clear** (the owner's rule: no secret

@@ -192,13 +192,33 @@ vpn_restart() {
         docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
     fi
 }
+# the images' disk, nearly full: a master in RAM keeps them in half its memory (crumble, 18 Nov 2026:
+# 95 %). podman auto-update pulls every new image before an old one goes; then there is no room.
+tight() {
+    local root use
+    root=$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null) || return 1
+    use=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc 0-9)
+    (( ${use:-0} >= 75 ))
+}
+# one image at a time: pull it, restart what runs it, drop the old copy; room for one new image is enough
+update_one_by_one() {
+    local unit image state
+    while read -r unit image state; do
+        [[ $state == pending ]] || continue
+        echo "update: $image (for $unit), one at a time: the disk is nearly full"
+        podman pull -q "$image" </dev/null >/dev/null && systemctl restart "$unit" </dev/null
+        podman image prune -f </dev/null >/dev/null
+    done < <(podman auto-update --dry-run --format '{{.Unit}} {{.Image}} {{.Updated}}' 2>/dev/null)
+}
 if [[ $STACK_RUNTIME == podman ]]; then
     case "${1:-}" in
         start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on; host_units restart --no-block ;;
         up)      systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on ;;
         stop)    own_dns off; host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
-        update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then podman auto-update; podman image prune -f >/dev/null; else echo "auto_update is off: images change with an apply"; fi; mesh_route; host_units restart --no-block ;;
+        update)  if [[ ${STACK_AUTO_UPDATE:-registry} != registry ]]; then echo "auto_update is off: images change with an apply"
+                 elif tight; then podman image prune -f >/dev/null; update_one_by_one
+                 else podman auto-update; podman image prune -f >/dev/null; fi; mesh_route; host_units restart --no-block ;;
         status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; host_units status --no-pager; verify || true ;;
         verify)  verify ;;
         logs)    if [[ -n ${2:-} ]]; then journalctl -f -u "$2.service"; else mapfile -t u < <(units); journalctl -f "${u[@]/#/-u}"; fi ;;

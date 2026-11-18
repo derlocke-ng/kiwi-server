@@ -19,8 +19,8 @@ that booted. The page:
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
 | **Computers** | who may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
-| **The start page** | for everyone on the network, without a login, at `https://status.<host>`: every service with what it is for, its addresses and whether it works; the status page is at `/status` |
-| **The front page for strangers** | under a public name (`control: { public_status_hostname: … }`): the services open to the Internet, how to get an account, and their status at `/status` |
+| **The status page** | for everyone on the network, without a login, at `https://status.<host>`: every service with what it is for and whether it works, the game servers, how to get an account |
+| **The status page for strangers** | under a public name (`control: { public_status_hostname: … }`): the services open to the Internet, whether they work, how to get an account |
 
 The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
 what, Linked networks); *Safety* (Backups, If something breaks, Computers); *More*.
@@ -382,21 +382,22 @@ device on the network does. A machine can say that all its containers run while
 a service answers nobody (a database that lost its settings in a power cut does
 that); the question finds it. What is wrong is kept with its time.
 
-**The start page** is what everyone on the network opens first, without a login:
-`https://status.<host>`. Every service people use is a tile:
-- what the service is for, and its address;
-- its Tor address, when it has one anyone may open;
-- whether it works, with its last 30 days.
+**The status page** is what everyone on the network opens first, without a login:
+`https://status.<host>`. One page:
+- every service people use by the name they know, what it is for and its address;
+- "works" or "does not answer" and for how long, its last 90 days, how fast it answers;
+- how many machines answer, when machines restart for updates, and what was wrong in the
+  last seven days;
+- its hidden services as Tor last found them;
+- the game servers: up, asleep (the first player wakes it) or stopped, and where to connect,
+  with a button to [the game page](#the-game-page);
+- "Get an account", to the sign-up page when the network has the
+  [accounts module](roles.md#accounts).
 
-"Get an account" leads to the sign-up page when the network has the
-[accounts module](roles.md#accounts).
-
-**The status page** is the detailed view, at `https://status.<host>/status`. Each service by the name people know,
-"works" or "does not answer" and for how long, how many machines answer, when
-machines restart for updates, and what was wrong in the last seven days. It shows
-no admin page, no address and no setting. Who may open it is set like for any
-service ([Who may reach what](network.md#who-may-reach-what)); `status_page: false`
-in the node's `control:` block switches it off. Home shows the same to the people
+It shows no admin page and no setting, and says Kiwi: `brand_name` names the page for
+the Internet only. Who may open it is set like for any service
+([Who may reach what](network.md#who-may-reach-what)); `status_page: false` in the node's
+`control:` block switches it off. Home shows the same to the people
 who run the network, with the machine to open.
 
 **Over Tor**, at the end of the status page: each hidden service with its Tor
@@ -406,14 +407,15 @@ hidden service itself: give the control node's machine the `onion` part with
 `services: {status: {}}` and apply it; the page then shows its own Tor address.
 A hidden service only for named keys is not asked (it needs one of them).
 
-**For strangers**, `control: { public_status_hostname: status.example.org }` puts a
-front page under a public name. It shows the services that are open to the
-Internet, their web and Tor addresses, whether they work, and how to get an
-account. The status of those services is at `/status`, and nothing about the
-machines or the VPN appears.
+**For strangers**, `control: { public_status_hostname: status.example.org }` puts the
+same page under a public name, with only the services that are open to the
+Internet, whether they work, what was wrong with them, and how to get an
+account. Nothing about the machines, the game servers or the VPN appears.
 
-The network's own name, colour, a few words about it, and how to reach its
-people go on these pages:
+The network's own name and a few words about it go on the page for strangers;
+its colour and how to reach its people on both (the page on the VPN says Kiwi, as
+the control page does). The accounts module's `brand` names its sign-up page and
+Kanidm's own pages, which show the kiwi too:
 
 ```yaml
     control: { brand_name: dlhost, brand_accent: "#2f7d4a", about: "Services for our club and friends.", contact: admin@xmpp.example.org }

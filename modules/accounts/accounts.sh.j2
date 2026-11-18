@@ -30,7 +30,7 @@ k login >/dev/null 2>&1 || { echo "accounts: the admin could not log in to Kanid
 unset KANIDM_PASSWORD
 # the rules for everyone, set again when the settings change: what a person needs to sign in,
 # how long a password is at least, and (Jabber) that LDAP takes the same password as the pages
-policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }}"
+policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }} look1 {{ brand or 'Kiwi' }}"
 mark={{ docker_dir }}/{{ container_prefix }}-accounts/data/.kiwi-policy
 if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
     k group account-policy enable idm_all_persons >/dev/null 2>&1 || true
@@ -43,6 +43,12 @@ if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
     k group account-policy enable jabber >/dev/null 2>&1 || true
     k group account-policy allow-primary-cred-fallback jabber true >/dev/null 2>&1
 {% endif %}
+    # Kanidm's own pages look like the network's: its name, and the kiwi as their logo
+    k system domain set-displayname "{{ brand or 'Kiwi' }}" >/dev/null 2>&1 || true
+    cat > "$work/kiwi.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#7b5a3c"/><circle cx="12" cy="12" r="9.3" fill="#8dc63f"/><circle cx="12" cy="12" r="3.3" fill="#f4f1d6"/><circle cx="17.7" cy="12.0" r=".75" fill="#1f2a1a"/><circle cx="16.6" cy="15.4" r=".75" fill="#1f2a1a"/><circle cx="13.8" cy="17.4" r=".75" fill="#1f2a1a"/><circle cx="10.2" cy="17.4" r=".75" fill="#1f2a1a"/><circle cx="7.4" cy="15.4" r=".75" fill="#1f2a1a"/><circle cx="6.3" cy="12.0" r=".75" fill="#1f2a1a"/><circle cx="7.4" cy="8.6" r=".75" fill="#1f2a1a"/><circle cx="10.2" cy="6.6" r=".75" fill="#1f2a1a"/><circle cx="13.8" cy="6.6" r=".75" fill="#1f2a1a"/><circle cx="16.6" cy="8.6" r=".75" fill="#1f2a1a"/></svg>
+SVG
+    k system domain set-image /root/kiwi.svg svg >/dev/null 2>&1 || true
     printf '%s' "$policy" > "$mark"
 fi
 token() {   # the link's token, out of what Kanidm prints

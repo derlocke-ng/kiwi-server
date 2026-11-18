@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.188.0 — one status page, the game servers on it, one look for the account pages
+
+- **status.<host> is one page**: the status page (its look stays), with what each service is
+  for, "Get an account" and the hidden services. There was a start page at `/` and the status
+  at `/status`, which looked like two halves of one thing (18 Nov 2026). `/status` and `/start`
+  still answer, with the same page; so does the page for strangers.
+- **Game servers on it**: up, asleep (wakes when you join) or stopped, where to connect, and a
+  button to the game page, which nothing linked to before.
+- **The page on the VPN says Kiwi**: papaya's status page said dlhost, the name of the page for
+  the Internet. `brand_name` names only that one now.
+- **The account pages** (kiwi-modules 0.85.0): Kanidm's own pages say the network's name (the
+  accounts `brand`, else Kiwi) and show the kiwi, not "Kanidm id.quince.home"; the sign-up
+  page says Kiwi, not "home".
+
 ## 2.187.0 — a hub on a node calls through the master's turn
 
 - A hub on a node with no `ice` of its own is told the master's `turn` server and its login,

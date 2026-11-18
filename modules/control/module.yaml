@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: control
   title: Control page
-  version: 1.1.0
+  version: 1.1.1
   description: "The control node (design/control-plane.md in kiwi-server): kiwi-server with web pages at control.<hostname>, for the mesh only. It keeps the fleet file and the secrets as the encrypted store, which its password opens into RAM; then it looks at every machine by itself, sends the role to RAM masters, and applies from a phone."
   category: system
   node_types: [node]
@@ -63,7 +63,7 @@ nginx:
       # usable as a hidden service: the start and status pages read only; tried through Tor
       onion: true
       site: status
-      # the network's start page: every service, what it is for, whether it works
+      # the status page: every service, what it is for, whether it works, the game servers
       proxy_pass: "http://control/start"
       extra_locations:
         - path: "= /status"
@@ -79,7 +79,7 @@ nginx:
       # usable as a hidden service: the status page reads only; tried through Tor
       onion: true
       site: status-public
-      # the front page for strangers, and at /status whether the services work
+      # the status page for strangers: what is open to the Internet, whether it works, how to get an account
       proxy_pass: "http://control/start/public"
       extra_locations:
         - path: "= /status"
@@ -128,7 +128,7 @@ settings:
     default: ""
   - key: brand_name
     label: The network's name
-    help: "On the start page, the front page for strangers and the status pages, e.g. dlhost. Empty: Kiwi."
+    help: "On the pages for the Internet (public_status_hostname), e.g. dlhost. The pages on the VPN say Kiwi, as the control page does."
     default: ""
   - key: brand_accent
     label: Its colour

@@ -3,14 +3,14 @@ schema_version: "1.0"
 module:
   name: hub
   title: Hub page
-  version: 1.1.0
+  version: 1.2.0
   description: "A hub built on kiwi-framework (Armory, or your fork) as a container behind the reverse proxy at hub.<hostname>: its relays, policy and public area set here, so a private hub inside the VPN, a semi-public one with a public chat, or a public one come from the same image"
   category: productivity
   node_types: [master, node]
 
 dependencies:
   required: [reverse-proxy]
-  optional: [vpn-client, nostr-relay]
+  optional: [vpn-client, nostr-relay, turn]
 
 network:
   listen_ports: ["80/tcp"]
@@ -28,6 +28,13 @@ derived:
   hub_host: "{{ hub_domain or 'hub.' ~ hostname }}"
   # the node's own relay when it runs one and no relays are given; the relay module's name, or relay.<hostname>
   relays_effective: "{{ (relays | join(',')) if relays else ('wss://' ~ ((module_config.get('nostr-relay') or {}).get('relay_domain') or ('relay.' ~ hostname)) if has_nostr_relay else '') }}"
+  # the calls' STUN and TURN servers: those named here, else this host's turn module, else none (the distribution's public STUN)
+  turn_config: "{{ 'yes' if 'turn' in module_config else '' }}"
+  turn_host: "{{ ((module_config.get('turn') or {}).get('turn_domain') or (module_config.get('vpn-server') or {}).get('wg_host') or hostname) if turn_config else '' }}"
+  turn_port: "{{ (module_config.get('turn') or {}).get('port', 3478) if turn_config else '' }}"
+  ice_effective: "{{ (ice | join(' ')) if ice else (('stun:%s:%s turn:%s:%s?transport=udp turn:%s:%s?transport=tcp' | format(turn_host, turn_port, turn_host, turn_port, turn_host, turn_port)) if turn_config else '') }}"
+  ice_username_effective: "{{ ice_username if ice else ((module_config.get('turn') or {}).get('username', 'kiwi') if turn_config else '') }}"
+  ice_credential_effective: "{{ ice_credential if ice else ((module_config.get('turn') or {}).get('password', '') if turn_config else '') }}"
 
 validate:
   - { when: "not relays_effective", error: "name relays, or run the nostr-relay module on this host" }
@@ -71,6 +78,21 @@ settings:
     help: "The Nextcloud the hub's calendar app reaches through the hub, e.g. https://cloud.<node hostname> (the cloud module's address). Only devices on the mesh can use it, on a public hub too. Empty: the calendar asks for a server."
     default: ""
     pattern: '(https?://[A-Za-z0-9.-]+(:[0-9]+)?)?'
+  - key: ice
+    type: list
+    label: Servers for calls (STUN, TURN)
+    help: "stun:, turn: or turns: addresses for the chat's calls, e.g. turn:turn.example.org:3478. A hub on a node uses the master's: turn:<the master's public name>:3478 with its login. Empty: this host's turn module when it runs one, else the public STUN servers the distribution names (calls between two strict networks then often fail)."
+    default: []
+    pattern: '(stun|turns?):[A-Za-z0-9.:\[\]-]+(\?transport=(udp|tcp))?'
+  - key: ice_username
+    label: TURN login name
+    help: "For a TURN server named under ice. The hub's pages carry it: a login for that server alone."
+    default: ""
+  - key: ice_credential
+    type: secret
+    label: TURN login password
+    help: "For a TURN server named under ice. The hub's pages carry it too."
+    default: ""
   - key: relays_locked
     type: bool
     label: Relays are fixed

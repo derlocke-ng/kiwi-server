@@ -114,14 +114,31 @@ def _store(fleet_dir):
     return st
 
 
-def push(fleet, host, tgt, force=False):
+def _fetch(tgt, rdir):
+    """The node's files as they travel: {name: bytes}."""
+    data = remote.run(tgt, "cd %s && tar -cz $(for f in %s; do [ -f $f ] && echo $f; done)"
+                      % (shlex.quote(rdir), " ".join(ON_NODE)))
+    got = {}
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        for m in tar.getmembers():
+            if m.isfile() and m.name in ON_NODE:
+                got[m.name] = tar.extractfile(m).read()
+    return got
+
+
+def push(fleet, host, tgt, force=False, identity=None):
     fleet_dir, fleet_name = os.path.dirname(fleet.path), os.path.basename(fleet.path)
     rdir = remote_dir(host)
     st = _store(fleet_dir)
     there, stamp = remote_state(tgt, rdir)
     if there and there != stamp and not force:
-        raise KiwiError("the control node's copy changed since the last sync (an apply or enroll there): "
-                        "kiwi-server control pull first, or push --force to overwrite it")
+        # an apply or an enroll there, or only its own save of the same content (it encrypts
+        # anew): the two copies become one here, file by file, and that one goes there
+        key = identity or storemod.keyring_key(st.store_id())
+        if not key:
+            raise KiwiError("the control node's copy changed since the last sync (an apply or enroll there): "
+                            "kiwi-server control pull first, or push --force to overwrite it")
+        _reconcile(fleet_dir, fleet_name, st, _fetch(tgt, rdir), key, "the control node's copy")
     blobs = _blobs(fleet_dir, fleet_name, st)
     d = blobs_digest(blobs)
     script = ("set -e; d=%(d)s; install -d -m 0700 \"$d\" \"$d/control\"; rm -rf \"$d/.incoming\"; "
@@ -137,6 +154,7 @@ def push(fleet, host, tgt, force=False):
               % {"d": shlex.quote(rdir), "files": " ".join(ON_NODE), "plain": " ".join(PLAIN), "s": d, "stamp": STAMP})
     remote.run(tgt, script, pack(blobs))
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), d)
+    _save_base(fleet_dir, fleet_name, st)
     return len(blobs)
 
 
@@ -145,13 +163,14 @@ def pull(fleet, host, tgt, force=False, identity=None):
     rdir = remote_dir(host)
     st = _store(fleet_dir)
     here, then = _stamp(fleet_dir)
-    if here and here_digest(fleet_dir, fleet_name) != here and not force:
-        raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
-                        "or pull --force to overwrite it")
+    changed_here = bool(here) and here_digest(fleet_dir, fleet_name) != here and not force
     there, their_stamp = remote_state(tgt, rdir)
     if not there:
         raise KiwiError("%s holds no fleet yet: kiwi-server control push" % host.name)
     if there == then:       # the node did not change either: its stamp says so too, or a push is refused
+        if changed_here:
+            raise KiwiError("this copy changed since the last sync: kiwi-server control push first, "
+                            "or pull --force to overwrite it")
         if their_stamp != there:
             remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
         return 0
@@ -159,16 +178,12 @@ def pull(fleet, host, tgt, force=False, identity=None):
     if not key:
         raise KiwiError("pull opens what comes with this computer's key, and the keyring has none: "
                         "kiwi-server control pull <fleet> --identity FILE (the recovery key)")
-    data = remote.run(tgt, "cd %s && tar -cz $(for f in %s; do [ -f $f ] && echo $f; done)"
-                      % (shlex.quote(rdir), " ".join(ON_NODE)))
-    got = {}
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-        for m in tar.getmembers():
-            if m.isfile() and m.name in ON_NODE:
-                got[m.name] = tar.extractfile(m).read()
-    n = _take(fleet_dir, fleet_name, st, got, key)
+    if changed_here:        # both changed: push makes one copy of the two and sends it
+        return push(fleet, host, tgt, identity=key)
+    n = _take(fleet_dir, fleet_name, st, _fetch(tgt, rdir), key)
     remote.run(tgt, "printf '%%s\\n' %s > %s/%s" % (there, shlex.quote(rdir), STAMP))
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), there)
+    _save_base(fleet_dir, fleet_name, st)
     return n
 
 
@@ -446,9 +461,6 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other):
     a file changed on both sides, or when there is nothing to compare with."""
     from . import merge
     base = merge.load_base(fleet_dir, key) if st.is_open() else None
-    if base is None:
-        raise KiwiError("%s changed, and so did this copy, since they last agreed: kiwi-server control pull "
-                        "--force takes that one, push --force this one" % other)
     there = merge.store_tree(got["secrets.age"], key)
     tmp = os.path.join(fleet_dir, "control", ".merge.age")
     try:
@@ -462,7 +474,13 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other):
     for name in ("secrets.recipients", "control/salt"):
         if name in got:
             there[name] = got[name]
-    merged, theirs, both = merge.merge(base, _tree(fleet_dir, fleet_name), there)
+    here = _tree(fleet_dir, fleet_name)
+    if there == here:       # the same content, only encrypted anew there: nothing to merge
+        return []
+    if base is None:
+        raise KiwiError("%s changed, and so did this copy, since they last agreed: kiwi-server control pull "
+                        "--force takes that one, push --force this one" % other)
+    merged, theirs, both = merge.merge(base, here, there)
     if both:
         raise KiwiError("changed on both sides since the last sync: %s. Which copy counts? kiwi-server control pull "
                         "--force takes %s, push --force this one" % (", ".join(both), other))

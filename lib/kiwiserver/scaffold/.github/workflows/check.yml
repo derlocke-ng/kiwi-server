@@ -7,6 +7,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: kiwi-modules, its newest release
         run: |
           tag=$(git ls-remote --tags --sort=-v:refname https://github.com/derlocke-ng/kiwi-modules 'v*' | head -1 | sed 's|.*refs/tags/||; s|\^{}||')
@@ -15,3 +17,6 @@ jobs:
       - run: pip install jinja2 pyyaml
       - name: every module renders
         run: python3 tools/check-modules.py
+      - name: a changed module bumps its version and the source's
+        if: github.event_name == 'pull_request'
+        run: python3 tools/check-versions.py origin/${{ github.base_ref }}

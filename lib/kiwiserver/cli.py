@@ -1507,7 +1507,7 @@ def cmd_sources(args):
         if not listed:
             util.say("no module sources: only the built-in modules (kiwi-server sources %s add <link>)" % args.fleet)
         for x in fleet.module_sources:
-            print("%-12s %s" % (x["name"], x.get("path") or "%s @ %s" % (x["url"], x["commit"][:12])))
+            print("%-12s %s" % (x["name"], x.get("path") or "%s @ %s%s" % (x["url"], x.get("tag") + " " if x.get("tag") else "", x["commit"][:12])))
             try:
                 folder = sourcesmod.fetch(x)
                 print("%-12s modules: %s" % ("", ", ".join(sorted(n for n in os.listdir(folder)
@@ -1524,7 +1524,8 @@ def cmd_sources(args):
         else:
             url = rest[0].rstrip("/")
             name = args.name or re.sub(r"\.git$", "", url.rsplit("/", 1)[-1]).lower()
-            entry = {"name": name, "url": url, "commit": sourcesmod.resolve(url, args.ref)}
+            commit, tag = sourcesmod.pin(url, args.ref)
+            entry = dict({"name": name, "url": url, "commit": commit}, **({"tag": tag} if tag else {}))
         if name in names:
             raise KiwiError("there is a module source called %s already: --name another, or sources %s update %s"
                             % (name, args.fleet, name))
@@ -1538,8 +1539,8 @@ def cmd_sources(args):
         util.say("module source %s: %s. Its templates and scripts run as root on the machines that use its modules"
                  % (name, ", ".join(mods)))
         if entry.get("url"):
-            util.say("pinned to commit %s: nothing of it changes until kiwi-server sources %s update %s"
-                     % (entry["commit"][:12], args.fleet, name))
+            util.say("pinned to %scommit %s: nothing of it changes until kiwi-server sources %s update %s"
+                     % ("%s, " % entry["tag"] if entry.get("tag") else "", entry["commit"][:12], args.fleet, name))
         else:
             util.say("a folder on this computer: other computers and the control node do not have it")
         return
@@ -1561,11 +1562,11 @@ def cmd_sources(args):
             return
         if not entry.get("url"):
             raise KiwiError("%s is a folder on this computer: it is always as it is now" % name)
-        new = sourcesmod.resolve(entry["url"], args.ref)
+        new, tag = sourcesmod.pin(entry["url"], args.ref)
         if new == entry["commit"]:
-            util.say("%s is at %s already" % (name, new[:12]))
+            util.say("%s is at %s already" % (name, tag or new[:12]))
             return
-        moved = dict(entry, commit=new)
+        moved = dict({k: v for k, v in entry.items() if k != "tag"}, commit=new, **({"tag": tag} if tag else {}))
         folder = sourcesmod.fetch(moved)
         old_folder = sourcesmod.fetch(entry)
 
@@ -1581,7 +1582,8 @@ def cmd_sources(args):
             if before.get(n) != after.get(n):
                 util.say("  %s: %s -> %s" % (n, before.get(n, "none"), after.get(n, "gone")))
         sourcesmod.write(args.fleet, [moved if x.get("name") == name else x for x in listed])
-        util.say("%s now at %s. Apply the machines that use its modules to bring the change" % (name, new[:12]))
+        util.say("%s now at %s. Apply the machines that use its modules to bring the change (kiwi-server apply %s --changed)"
+                 % (name, "%s (%s)" % (tag, new[:12]) if tag else new[:12], args.fleet))
         return
     raise KiwiError("sources: list, add, update, remove or new")
 
@@ -3151,7 +3153,9 @@ def cmd_connect(args):
     if not connectmod.have_networkmanager():
         util.say("this computer has no NetworkManager: import %s into its WireGuard program yourself" % shown_path(conf))
     else:
-        con = connectmod.up(conf, domain)
+        # the network's public names lead to their machines on the VPN as well (its DNS says so)
+        records = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).dns_records()
+        con = connectmod.up(conf, domain, names=[n for _ip, n in records if not n.endswith("." + domain)])
         util.say("connected: %s in this computer's network settings. It carries your network only, comes up by "
                  "itself, and names ending in .%s are asked there; everything else is as before" % (con, domain))
         master = next((h for h in fleet.hosts.values() if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of), None)

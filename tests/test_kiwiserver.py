@@ -1428,7 +1428,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 32)
+        self.assertEqual(len(ms.names()), 33)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -6572,6 +6572,26 @@ class TestModuleSources(Base):
             self.assertEqual(rc, 0, err)
             self.assertNotIn("module_sources", yaml.safe_load(util.read_text(f.path)))
 
+    def test_a_source_with_versions_is_pinned_to_its_newest_one(self):
+        src, git = self.repo()
+        subprocess.run(git + ["tag", "-a", "v0.1.0", "-m", "0.1.0"], check=True, capture_output=True)
+        first = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        util.write_text(os.path.join(src, "README.md"), "after the release\n")
+        subprocess.run(git + ["commit", "-qam", "unreleased"], check=True, capture_output=True)
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache")}):
+            rc, out, err = self.run_cli("sources", f.path, "add", "file://" + src, "--name", "c")
+            self.assertEqual(rc, 0, err)
+            entry = yaml.safe_load(util.read_text(f.path))["module_sources"][0]
+            self.assertEqual((entry["tag"], entry["commit"]), ("v0.1.0", first))     # the release, not what came after
+            self.assertIn("pinned to v0.1.0", err + out)
+            subprocess.run(git + ["tag", "v0.2.0"], check=True, capture_output=True)     # a lightweight one counts too
+            head = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            self.assertEqual(self.run_cli("sources", f.path, "update", "c")[0], 0)
+            entry = yaml.safe_load(util.read_text(f.path))["module_sources"][0]
+            self.assertEqual((entry["tag"], entry["commit"]), ("v0.2.0", head))
+            self.assertIn("v0.2.0", self.run_cli("sources", f.path)[1])
+
     def test_the_fleet_file_says_what_is_wrong_with_a_source(self):
         from kiwiserver import sources
         good, errs = sources.check([{"name": "a", "url": "https://github.com/x/y", "commit": "0" * 40},
@@ -7538,6 +7558,11 @@ class TestConnect(Base):
         self.assertEqual(calls[3], ["connection", "up", "kiwi-home"])
         self.assertEqual([n for n in os.listdir(self.tmp) if n.startswith("kiwi-connect-")], [])   # no copy of the key is left
         self.assertEqual(connectmod.connection_name("my-long-network-name.example"), "kiwi-mylongnetw")   # 15 at most
+        # the network's public names too: on the VPN its DNS answers them with the machines' VPN addresses
+        calls.clear()
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp}):
+            connectmod.up(conf, "home", runner=runner, names=["relay.kiwi-network.eu", "hub.kiwi-network.eu", "cloud.papaya.home"])
+        self.assertEqual(calls[2][3:5], ["ipv4.dns-search", "~home,~hub.kiwi-network.eu,~relay.kiwi-network.eu"])
 
     def test_the_computers_own_connection_is_known(self):
         from kiwiserver import connect as connectmod
@@ -7707,7 +7732,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 32)
+        self.assertEqual(len(json.loads(out)["modules"]), 33)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -8570,12 +8595,31 @@ class TestControlSync(StoreBase):
         n.lock_store()
         # the operator's computer sees the node changed, and gets it with pull
         store.Store.for_fleet(self.f.path).unlock(util.read_text(os.path.join(self.keyring, "item")).strip())
-        with self.assertRaisesRegex(KiwiError, "control pull first"):
-            controlsync.push(self.f, self.h, "t")
         self.assertGreater(controlsync.pull(self.f, self.h, "t"), 0)
         self.assertIn("# a job changed it", util.read_text(self.f.path))
         self.assertEqual(controlsync.pull(self.f, self.h, "t"), 0)   # in step: nothing to fetch
         controlsync.push(self.f, self.h, "t")
+        # the node saves the same fleet again (encrypted anew: other bytes, the same content);
+        # a push is no conflict, also without a common base to compare with
+        before = util.sha256_file(fleet + ".age")
+        util.write_bytes(fleet + ".age", store.encrypt_bytes(store.Store.for_fleet(self.f.path).recipients,
+                                                             util.read_bytes(self.f.path)), 0o600)
+        self.assertNotEqual(util.sha256_file(fleet + ".age"), before)
+        from kiwiserver import merge
+        os.remove(os.path.join(os.path.dirname(self.f.path), merge.BASE))
+        controlsync.push(self.f, self.h, "t")
+        # the node changed the fleet file, and so did this copy, elsewhere in it: one copy of the two
+        n = controlmod.Control(fleet, kiwi_cmd=["true"], run_dir=os.path.join(self.tmp, "ram4"))
+        self.assertTrue(n.login(self.PW))
+        with open(fleet, "a") as fh:
+            fh.write("# the node again\n")
+        n.save_fleet()
+        n.lock_store()
+        store.Store.for_fleet(self.f.path).unlock(util.read_text(os.path.join(self.keyring, "item")).strip())
+        write(os.path.join(self.secrets, "here.conf"), "from this computer")
+        controlsync.push(self.f, self.h, "t")
+        self.assertIn("# the node again", util.read_text(self.f.path))
+        self.assertEqual(controlsync.pull(self.f, self.h, "t"), 0)
 
     def test_who_changed_decides(self):
         self.init()
@@ -8588,8 +8632,6 @@ class TestControlSync(StoreBase):
         write(os.path.join(tree, "new.conf"), "from the node")
         subprocess.run([store._tool("age"), "-e", "-R", os.path.join(self.node, "secrets.recipients"),
                         "-o", os.path.join(self.node, "secrets.age")], input=store.snapshot(tree), check=True)
-        with self.assertRaisesRegex(KiwiError, "control pull first"):
-            controlsync.push(self.f, self.h, "t")
         self.assertGreater(controlsync.pull(self.f, self.h, "t"), 0)
         self.assertTrue(st.is_open())                            # opened again with the keyring's key
         self.assertEqual(util.read_text(os.path.join(self.secrets, "new.conf")), "from the node")
@@ -8600,6 +8642,15 @@ class TestControlSync(StoreBase):
         write(os.path.join(self.node, "control", "audit.jsonl"), "{}\n")
         controlsync.push(self.f, self.h, "t")
         self.assertTrue(os.path.isfile(os.path.join(self.node, "control", "audit.jsonl")))    # the node's own files stay
+        # the same file changed on both sides: that one is for a person
+        store.extract(store.snapshot(self.secrets), tree)
+        write(os.path.join(tree, "new.conf"), "the node's word")
+        subprocess.run([store._tool("age"), "-e", "-R", os.path.join(self.node, "secrets.recipients"),
+                        "-o", os.path.join(self.node, "secrets.age")], input=store.snapshot(tree), check=True)
+        write(os.path.join(self.secrets, "new.conf"), "this computer's word")
+        with self.assertRaisesRegex(KiwiError, "changed on both sides since the last sync: secrets/new.conf"):
+            controlsync.push(self.f, self.h, "t")
+        controlsync.push(self.f, self.h, "t", force=True)
 
     def test_which_control_node(self):
         with self.assertRaisesRegex(KiwiError, "no host has the control module"):

@@ -3036,7 +3036,7 @@ class NetworkPicture(Gtk.DrawingArea):
             text = self.create_pango_layout("")
             text.set_markup("<small>%s</small>" % esc(z["label"]))
             ink(.55)
-            cr.move_to(z["x"] + 14, z["y"] + 7)
+            cr.move_to(z.get("lx") or z["x"] + 14, z["y"] + 7)
             PangoCairo.show_layout(cr, text)
         cr.set_line_cap(1)
         cr.set_line_join(1)

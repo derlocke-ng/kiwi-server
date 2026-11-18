@@ -1609,7 +1609,7 @@ def picture(machines, devices=0, per_row=4, linked=()):
     out = []
     for z in lay["zones"]:
         out.append('<rect class="zone%s" x="%d" y="%d" width="%d" height="%d" rx="14"/><text class="zl" x="%d" y="%d">%s</text>'
-                   % (" away" if z["away"] else " fz" if z.get("partner") else "", z["x"], z["y"], z["w"], z["h"], z["x"] + 14,
+                   % (" away" if z["away"] else " fz" if z.get("partner") else "", z["x"], z["y"], z["w"], z["h"], z.get("lx") or z["x"] + 14,
                       z["y"] + 18, esc(z["label"])))
     for ln in lay["lines"]:
         d = " ".join(p[0] + " ".join("%.1f" % v for v in p[1:]) for p in ln["d"])

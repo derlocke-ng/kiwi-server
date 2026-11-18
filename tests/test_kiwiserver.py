@@ -12491,9 +12491,12 @@ class TestFirstRunPage(StoreBase):
         status, where, _ = self.ask("/access", dict(shown, **{"s.guests.%s.cloud" % node: "on", "new": "kids", "new_as": "apps"}),
                                     cookie=cookie)
         self.assertEqual((status, where), (303, "/access?saved=kids%2C%20guests"))
-        groups = self.data()["hosts"][master]["master"]["vpn-server"]["groups"]
-        self.assertEqual(groups["guests"], {"subnet": "10.8.1.0/24", "reach": ["cloud.%s" % node], "peers": False})
-        self.assertEqual(groups["kids"], {"subnet": "10.8.6.0/24", "reach": ["apps"], "peers": True})
+        data = self.data()       # a new network's groups live in the defaults, in its own mesh (2.215.0)
+        self.assertNotIn("groups", (data["hosts"][master].get("master") or {}).get("vpn-server") or {})
+        groups = data["defaults"]["master"]["vpn-server"]["groups"]
+        p = data["defaults"]["master"]["mesh_subnet"].rsplit(".", 2)[0] + "."
+        self.assertEqual(groups["guests"], {"subnet": p + "1.0/24", "reach": ["cloud.%s" % node], "peers": False})
+        self.assertEqual(groups["kids"], {"subnet": p + "6.0/24", "reach": ["apps"], "peers": True})
         self.assertEqual(groups["family"]["reach"], ["apps"])
         self.assertEqual(groups["devices"]["reach"], ["all"])
         self.assertTrue(os.path.islink(path))                           # still a link into memory
@@ -12507,7 +12510,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((status, where), (303, "/access"))
         body = self.ask("/access", dict(shown, **{"p.guests": "grape:22"}), cookie=cookie)[1]
         self.assertIn("no machine called grape", body)
-        self.assertEqual(self.data()["hosts"][master]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
+        self.assertEqual(self.data()["defaults"]["master"]["vpn-server"]["groups"]["guests"]["reach"], ["cloud.%s" % node])
         self.assertEqual(self.ask("/access")[:2], (303, "/login"))
         self.assertIn('href="/access"', self.ask("/", cookie=cookie)[1])
         # hidden services: only sites marked as usable over Tor are offered; one for a named person, the key on asking

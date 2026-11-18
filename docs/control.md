@@ -44,9 +44,10 @@ server, type a password twice. Done.
 By hand, the same steps:
 
 ```yaml
-papaya:
-  node:
-    modules: [vpn-client, reverse-proxy, control]
+hosts:
+  papaya:
+    node:
+      modules: [vpn-client, reverse-proxy, control]
 ```
 
 ```bash
@@ -143,23 +144,31 @@ module's default (`ram_mb: 2048`).
 
 ### Logins
 
-The page of a machine has a card *Logins* with one row for each service: its
+The *Services* tab of a machine's page has a card *Logins* with one row for each service: its
 name as a link to it, and its user name. *Show password* fetches the password
 and *Copy* copies it. The password is not part of the page before you ask for
 it. *Activity* then records that the logins of that machine were shown. It
 does not record the passwords.
 
-On Home, under *Open a service*, the link *login* below a service leads to
-that card. What the list holds and where the passwords come from:
+On the *Services* page, the link *login* beside a service leads to that card. What the list holds and where the passwords come from:
 [Sign in to a service](machines.md#sign-in-to-a-service).
+
+### A warning on purpose
+
+Every problem a machine reports says what to do about it. A warning that is so on
+purpose (an unencrypted disk on a machine that must start by itself, say) has
+*Leave it out*: from then on it is a note on the machine's page, not a warning,
+and no message is sent about it. It is the machine's setting `quiet` (*Warnings
+left out*), which takes `disk-plain`, `data-disk-plain`, `clock`, `memory`,
+`failed-units`, `unhealthy` and `not-applied`. Something broken never goes quiet.
 
 ### The role script
 
-Below a machine's details, the link *The role script* opens what *Apply*
+Below a machine's details, the button *The role script* opens what *Apply*
 sends to that machine and runs there, as plain text. It is made when you open
 the link, in the memory of the unlocked store, and is written nowhere. It
 holds the machine's secrets, so keep it to yourself. *Activity* records that
-it was shown. In the app: *Show role script*; in a terminal:
+it was shown. In the app: *Role script* in the machine's menu; in a terminal:
 `kiwi-server script FLEET HOST`.
 
 ### The password is forgotten

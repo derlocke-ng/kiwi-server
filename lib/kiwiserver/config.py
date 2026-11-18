@@ -156,6 +156,9 @@ DEFAULTS = {
     # data disks beside the system disk: "LABEL=data /mnt/data" or {device, at, format}. Mounted
     # before the role and its services start; never erased (mounts_of, roles.render_script)
     "mounts": [],
+    # warnings this machine does not show (facts.QUIETABLE): an unencrypted disk on purpose, say.
+    # They stay as notes; nothing that says something is broken can be left out
+    "quiet": [],
     # what the control node may do by itself when a machine is gone (watchdog.py, design/recovery.md)
     "recovery": {
         "master": {"after": 15, "do": "tell"},
@@ -434,6 +437,10 @@ class Host:
             errs.append("admin.ssh_port must be a port number (got %r)" % (port,))
         if self.target not in TARGETS:
             errs.append("target must be one of %s (got %r)" % (", ".join(TARGETS), self.target))
+        from .facts import QUIETABLE
+        quiet = c.get("quiet") or []
+        if not isinstance(quiet, list) or any(q not in QUIETABLE for q in quiet):
+            errs.append("quiet: warnings to leave out, from %s (got %r)" % (", ".join(sorted(QUIETABLE)), quiet))
         if not self.role:
             errs.append("role is missing")
         elif roles is not None and self.role not in roles:

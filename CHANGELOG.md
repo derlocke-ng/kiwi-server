@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.189.0 — what to do, warnings on purpose, the app's messages, module sources on the page
+
+- **What to do**, with every problem a machine reports: on Home and a machine's page, in the
+  app's *Needs attention*, and in the messages that are sent ("What to do: …").
+- **Leave it out**: a warning that is so on purpose (papaya's unencrypted data disk) becomes a
+  note with one click, on the page and in the app: the machine's setting `quiet` (*Warnings
+  left out*). Something broken never goes quiet.
+- **The app's messages**: a bell at the top right keeps everything the app said, with its time,
+  after its short messages vanish; new and gone warnings of the machines too, and a count of
+  what is new.
+- **Kanidm's pages kept "Kanidm id.quince.home"** after 2.188.0: their name and logo are Kanidm's
+  `admin`'s to set, not `idm_admin`'s (kiwi-modules 0.85.1).
+- **A look at the machines said it was done** a moment before what it found was written: the
+  page could show the look before as the new one.
+- **The status page linked the game page wrong** (`play.<host>/play/`, which does not answer):
+  it is `play.<host>/` now.
+- **Module sources** without a terminal: *Module sources* on the control page (More) and
+  *Module sources…* in the app's menu: each source with its version and modules, add one by its
+  link, look for new versions, update, remove. The same checks as `kiwi-server sources`, which
+  runs underneath; the control node saves its copy and the app sends it to the other computers.
+- `sources FLEET list --check` asks each repository for its newest version; `--porcelain` names
+  each source's modules. An `update` that finds the pinned commit is a version tag records it.
+- **The docs** for a first network: the logins are on the *Services* page and a machine's
+  *Services* tab, the app's entry is *Role script*, the disk's key is among a machine's logins,
+  and the example of a control node is under `hosts:` (a check of the getting-started path
+  against the code, 18 Nov 2026).
+
 ## 2.188.0 — one status page, the game servers on it, one look for the account pages
 
 - **status.<host> is one page**: the status page (its look stays), with what each service is

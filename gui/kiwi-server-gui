@@ -38,6 +38,11 @@ APP_ID = "eu.kiwinetwork.KiwiServer"
 esc = GLib.markup_escape_text
 
 CSS = b"""
+.ks-badge { background: @accent_bg_color; color: @accent_fg_color; border-radius: 999px; min-width: 15px;
+            padding: 0 4px; font-size: 0.66em; font-weight: 800; margin: -5px -8px 0 0; }
+.ks-badge.bad { background: @error_bg_color; color: @error_fg_color; }
+.ks-msg { padding: 8px 4px; }
+.ks-msg image.bad { color: @error_color; } .ks-msg image.warn { color: @warning_color; } .ks-msg image.ok { color: @success_color; }
 .ks-pill { border-radius: 999px; padding: 1px 9px; font-size: 0.76em; font-weight: 700; }
 .ks-pill.ok   { background: alpha(@success_color, .20); color: @success_color; }
 .ks-pill.acc  { background: alpha(@accent_bg_color, .24); color: @accent_color; }
@@ -88,6 +93,10 @@ BASE_GROUPS = [
              help="A second disk for the data, one per line: the disk, then where it goes, like LABEL=data /mnt/data. "
                   "The disk by its label (LABEL=…), its UUID=… or /dev/disk/by-id/…; kiwi-server disks <fleet> <machine> "
                   "lists what the machine has. It is mounted before the services start and never erased"),
+        dict(path=("quiet",), type="list", label="Warnings left out", scope="host", default=[],
+             help="Warnings this machine does not show, by their key: disk-plain (its disk is not encrypted), "
+                  "data-disk-plain, clock, memory, failed-units, unhealthy, not-applied. They stay as notes. "
+                  "A warning's own button does the same: Leave it out"),
         dict(path=("install", "on_done"), type="enum", label="When the install is done", options=["poweroff", "reboot"],
              default="poweroff",
              help="poweroff: the machine turns off, you pull the stick and switch it on again. reboot: it starts the "
@@ -254,6 +263,55 @@ def pill(text, kind, tip=None):
 # ---------------------------------------------------------------------------
 # the document
 # ---------------------------------------------------------------------------
+# the warnings a machine may leave out (kiwi-server's facts.QUIETABLE, its setting `quiet`)
+QUIETABLE = ("disk-plain", "data-disk-plain", "clock", "memory", "failed-units", "unhealthy", "not-applied")
+
+
+def messages_file():
+    """Where the app keeps what it said: its little messages vanish after a few seconds."""
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "kiwi-server", "messages.json")
+
+
+def load_messages():
+    try:
+        with open(messages_file()) as fh:
+            got = json.load(fh)
+        return [m for m in got if isinstance(m, dict) and m.get("text")][:300]
+    except (OSError, ValueError):
+        return []
+
+
+def save_messages(items):
+    path = messages_file()
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+            json.dump(items[:300], fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def message_kind(text):
+    """bad, warn, ok or info, from the words of a message."""
+    low = text.lower()
+    if re.search(r"\b(fail\w*|could not|did not|cannot|can't|error|refused|not saved|wrong|lost)\b", low):
+        return "bad"
+    if re.search(r"\b(first|needs?|waits?|locked|left out|newer)\b", low):
+        return "warn"
+    if re.search(r"\b(done|saved|holds|sent|added|removed|updated|copied|ready|fine again|in step|applied)\b", low):
+        return "ok"
+    return "info"
+
+
+def ago_words(t):
+    s = max(0, int(time.time() - t))
+    return ("just now" if s < 45 else "%d min ago" % max(1, s // 60) if s < 5400 else "%d h ago" % (s // 3600) if s < 172800
+            else time.strftime("%d %b, %H:%M", time.localtime(t)))
+
+
 class FleetDoc:
     """fleet.yaml as a dict, with get/set by path for either scope."""
 
@@ -1675,6 +1733,134 @@ class AccessDialog(Adw.Dialog):
         self.close()
         self.win.open_path(path, sync=False)        # the fleet file changed under the app
         self.win.toast("Saved — apply the master, and the machines whose services are named")
+
+
+class SourcesDialog(Adw.Dialog):
+    """Module sources (`kiwi-server sources`): modules besides the built-in ones, from a git repository,
+    each held at one version. List, add by link, update, remove, as on the control page."""
+
+    def __init__(self, win):
+        super().__init__(title="Module sources", content_width=620, content_height=680)
+        self.win = win
+        self.load()
+
+    def load(self, check=False, said="", bad=False):
+        self.set_child(Adw.StatusPage(title="Looking at the module sources…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
+        path = self.win.doc.path
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["sources", path, "list", "--porcelain"] + (["--check"] if check else []), timeout=180)
+            try:
+                got = json.loads(out)["sources"] if rc == 0 else None
+            except (ValueError, KeyError):
+                got = None
+            GLib.idle_add(self.show, got, (err.strip().replace("error: ", "").splitlines() or ["no answer"])[-1], check, said, bad)
+        threading.Thread(target=work, daemon=True).start()
+
+    def run(self, args, what):
+        """add, update, remove: the command, then the fleet file opened again and sent to the other computers."""
+        if self.win.doc.dirty:
+            self.win.toast("Save your changes first")
+            return
+        path = self.win.doc.path
+        self.set_child(Adw.StatusPage(title=what, child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["sources", path] + args, timeout=600)
+            text = "\n".join(line[3:] if line.startswith(":: ") else line.replace("error: ", "", 1)
+                              for line in (out + err).strip().splitlines())
+
+            def done():
+                if rc == 0:
+                    self.win.open_path(path, sync=False)
+                    self.win.sync(False, True)
+                    if args[0] != "remove" and " already" not in text:
+                        text_ = text + "\nThe machines that use its modules take the change with their next apply."
+                    else:
+                        text_ = text
+                    self.load(said=text_)
+                else:
+                    self.load(said=text, bad=True)
+                return False
+            GLib.idle_add(done)
+        threading.Thread(target=work, daemon=True).start()
+
+    def show(self, got, why, checked, said, bad):
+        tb = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        tb.add_top_bar(hb)
+        page = Adw.PreferencesPage()
+        if said:
+            g = Adw.PreferencesGroup()
+            g.add(Gtk.Label(label=said, wrap=True, xalign=0, css_classes=["error" if bad else "success"]))
+            page.add(g)
+        if got is None:
+            tb.set_content(Adw.StatusPage(title="The module sources could not be read", description=why,
+                                          icon_name="dialog-information-symbolic"))
+            self.set_child(tb)
+            return False
+        g = Adw.PreferencesGroup(title="Module sources", description="Modules besides the built-in ones, from a git repository "
+                                 "of your own or a community one. Each is held at one version: nothing of it changes until you update it.")
+        if got:
+            look = Gtk.Button(label="Look for new versions", css_classes=["flat"], valign=Gtk.Align.CENTER)
+            look.connect("clicked", lambda *_: self.load(check=True))
+            g.set_header_suffix(look)
+        for x in got:
+            version = x.get("tag") or ("commit " + x["commit"][:12] if x.get("commit") else "a folder on this computer")
+            sub = "%s · %s" % (version, ("its modules: " + ", ".join(x["modules"])) if x.get("modules") else (x.get("error") or "no modules"))
+            row = Adw.ActionRow(title=GLib.markup_escape_text(x["name"]), subtitle=GLib.markup_escape_text(sub))
+            new = x.get("newest") or {}
+            if new.get("error"):
+                row.add_suffix(Gtk.Label(label="could not ask", css_classes=["dim-label"], tooltip_text=new["error"]))
+            elif new.get("tag") and new.get("commit") != x.get("commit"):
+                row.add_suffix(Gtk.Label(label="%s is out" % new["tag"], css_classes=["warning"]))
+            elif checked and x.get("url"):
+                row.add_suffix(Gtk.Label(label="the newest", css_classes=["dim-label"]))
+            if x.get("url"):
+                up = Gtk.Button(label="Update to %s" % new["tag"] if new.get("tag") and new.get("commit") != x.get("commit") else "Update",
+                                valign=Gtk.Align.CENTER)
+                if new.get("tag") and new.get("commit") != x.get("commit"):
+                    up.add_css_class("suggested-action")
+                up.connect("clicked", lambda _b, n=x["name"]: self.run(["update", n], "Updating %s…" % n))
+                row.add_suffix(up)
+            rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove", css_classes=["flat"])
+            rm.connect("clicked", lambda _b, n=x["name"]: self.confirm_remove(n))
+            row.add_suffix(rm)
+            g.add(row)
+        if not got:
+            g.add(plain_row("None yet: only the built-in modules."))
+        page.add(g)
+        g = Adw.PreferencesGroup(title="Add a module source", description="Its modules' templates and scripts run as root on the "
+                                 "machines that use them: add only sources you trust. Then a machine takes its modules in its "
+                                 "settings, like the built-in ones.")
+        url = Adw.EntryRow(title="Its link (https://…)")
+        name = Adw.EntryRow(title="Its name here (empty: from the link)")
+        ref = Adw.EntryRow(title="Version (empty: its newest version tag)")
+        for r in (url, name, ref):
+            g.add(r)
+        add = Gtk.Button(label="Add it", css_classes=["suggested-action", "pill"], halign=Gtk.Align.START, margin_top=10)
+
+        def go(*_):
+            link, n, v = url.get_text().strip().rstrip("/"), name.get_text().strip(), ref.get_text().strip()
+            if not link.startswith("https://") or link.startswith("-") or n.startswith("-") or v.startswith("-"):
+                self.win.toast("The link is the https address of a git repository")
+                return
+            self.run(["add", link] + (["--name", n] if n else []) + (["--ref", v] if v else []), "Adding %s…" % link)
+        add.connect("clicked", go)
+        g.add(add)
+        page.add(g)
+        tb.set_content(page)
+        self.set_child(tb)
+        return False
+
+    def confirm_remove(self, name):
+        d = Adw.AlertDialog(heading="Remove %s?" % name, body="Its modules can then no longer be used. A machine that uses "
+                            "them needs them taken off first.")
+        d.add_response("cancel", "Cancel")
+        d.add_response("remove", "Remove")
+        d.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.connect("response", lambda _d, r: r == "remove" and self.run(["remove", name], "Removing %s…" % name))
+        d.present(self)
 
 
 class ActivityDialog(Adw.Dialog):
@@ -3703,6 +3889,7 @@ class Window(Adw.ApplicationWindow):
                          ("access", self.access_dialog), ("take-in", self.take_in_dialog),
                          ("accounts", lambda: self.doc.path and AccountsDialog(self).present(self)),
                          ("activity", lambda: self.doc.path and ActivityDialog(self).present(self)),
+                         ("sources", lambda: self.doc.path and SourcesDialog(self).present(self)),
                          ("federation", lambda: self.doc.path and FederationDialog(self).present(self)),
                          ("sshca", lambda: self.doc.path and SshCaDialog(self).present(self)),
                          ("locking", lambda: self.doc.path and LockDialog(self).present(self)),
@@ -3746,6 +3933,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Who may reach what…", "win.access")
         section.append("Accounts…", "win.accounts")
         section.append("Activity…", "win.activity")
+        section.append("Module sources…", "win.sources")
         section.append("Federation…", "win.federation")
         section.append("SSH certificates…", "win.sshca")
         section.append("Locking…", "win.locking")
@@ -3838,6 +4026,30 @@ class Window(Adw.ApplicationWindow):
         self.b_refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Ask the machines again", visible=False)
         self.b_refresh.connect("clicked", lambda *_: self.poll())
         self.content_hb.pack_start(self.b_refresh)
+        self.messages, self.unread = load_messages(), 0
+        pop = Gtk.Popover(has_arrow=True)
+        pbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=6, margin_start=6,
+                       margin_end=6, width_request=380)
+        head = Gtk.Box(spacing=6)
+        head.append(Gtk.Label(label="Messages", xalign=0, hexpand=True, css_classes=["heading"]))
+        self.bell_clear = Gtk.Button(label="Clear", css_classes=["flat"])
+        self.bell_clear.connect("clicked", self.clear_bell)
+        head.append(self.bell_clear)
+        pbox.append(head)
+        self.bell_empty = Gtk.Label(label="Nothing yet. What the app says shows here and stays.", wrap=True,
+                                    css_classes=["dim-label"], margin_top=18, margin_bottom=18)
+        pbox.append(self.bell_empty)
+        self.bell_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        pbox.append(Gtk.ScrolledWindow(child=self.bell_list, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                       propagate_natural_height=True, max_content_height=460))
+        pop.set_child(pbox)
+        pop.connect("show", self.fill_bell)
+        bell = Gtk.Overlay(child=Gtk.Image(icon_name="preferences-system-notifications-symbolic"))
+        self.bell_badge = Gtk.Label(label="", css_classes=["ks-badge"], halign=Gtk.Align.END, valign=Gtk.Align.START,
+                                    visible=False)
+        bell.add_overlay(self.bell_badge)
+        self.b_bell = Gtk.MenuButton(child=bell, popover=pop, tooltip_text="Messages: what the app said, and what to do")
+        self.content_hb.pack_end(self.b_bell)
         self.b_log = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Show output")
         self.content_hb.pack_end(self.b_log)
         self.b_stop = Gtk.Button(icon_name="process-stop-symbolic", tooltip_text="Stop what is running", visible=False)
@@ -4682,12 +4894,34 @@ class Window(Adw.ApplicationWindow):
             g.add(row)
         return g
 
+    def problem(self, host, text):
+        """The machine's own problem behind a line: {level, text, key, hint}, or {}."""
+        return next((p for p in (self.live.get(host) or {}).get("problems") or [] if p.get("text") == text), {})
+
+    def leave_out(self, host, key):
+        """A warning this machine does not show any more (its setting `quiet`): it stays as a note."""
+        now = list(self.doc.get(host, ("quiet",)) or [])
+        if key not in now:
+            self.doc.set(host, ("quiet",), now + [key])
+            self.save()
+            self.toast("%s leaves that warning out from now on: its settings bring it back" % host, "ok")
+            self.poll()
+
     def attention_group(self, items, with_host):
         g = Adw.PreferencesGroup(title="Needs attention")
-        for host, level, text in items:
-            text = in_plain_words(text)
-            row = plain_row(host if with_host else text, text if with_host else "")
+        for host, level, raw in items:
+            text = in_plain_words(raw)
+            p = self.problem(host, raw)
+            hint = p.get("hint") or ""
+            # the whole of it, and what to do on a line of its own (text from the machines: no markup)
+            row = Adw.ActionRow(use_markup=False, title=host if with_host else text, title_lines=3, subtitle_lines=0,
+                                subtitle="\n".join(x for x in ((text if with_host else ""), ("→ " + hint) if hint else "") if x))
             row.add_prefix(dot(level))
+            if level == "warn" and p.get("key") in QUIETABLE:
+                b = Gtk.Button(label="Leave it out", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                               tooltip_text="It stays as a note on the machine; its settings bring it back")
+                b.connect("clicked", lambda _b, h=host, k=p["key"]: self.leave_out(h, k))
+                row.add_suffix(b)
             if with_host:
                 row.set_activatable(True)
                 row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
@@ -5278,7 +5512,17 @@ class Window(Adw.ApplicationWindow):
             self.live = {}
         elif live:
             now = time.time()
+            before = {(h, p["text"]) for h, a in self.live.items() for p in a.get("problems") or []}
             self.live = {h["host"]: h for h in live["hosts"]}
+            if self.checked:        # not at the first look: then everything would be new
+                for h, a in self.live.items():
+                    for p in a.get("problems") or []:
+                        if (h, p["text"]) not in before:
+                            self.remember("%s: %s" % (h, in_plain_words(p["text"])), p.get("level") or "warn", p.get("hint") or "")
+                now_seen = {(h, p["text"]) for h, a in self.live.items() for p in a.get("problems") or []}
+                for h, text in sorted(before - now_seen):
+                    if h in self.live:
+                        self.remember("%s: fine again: %s" % (h, in_plain_words(text)), "ok")
             self.last_seen.update({h: now for h, a in self.live.items() if a["ok"]})
             self.checked = now
         self.update_rows()
@@ -5743,8 +5987,57 @@ class Window(Adw.ApplicationWindow):
         self.logbuf.delete_mark(mark)
         return False
 
-    def toast(self, text):
+    def toast(self, text, kind=None):
         self.toasts.add_toast(Adw.Toast.new(text))
+        self.remember(text, kind)
+
+    def remember(self, text, kind=None, hint=""):
+        """Into the bell's list: what the app said, with its time; kept after the app closes."""
+        if not hasattr(self, "messages"):
+            return
+        fleet = os.path.basename(os.path.dirname(self.doc.path)) if getattr(self, "doc", None) and self.doc.path else ""
+        self.messages.insert(0, {"at": time.time(), "text": text, "kind": kind or message_kind(text), "hint": hint, "fleet": fleet})
+        del self.messages[300:]
+        save_messages(self.messages)
+        self.unread += 1
+        self.update_bell()
+
+    def update_bell(self):
+        if not hasattr(self, "bell_badge"):
+            return
+        self.bell_badge.set_visible(self.unread > 0)
+        self.bell_badge.set_label(str(self.unread) if self.unread < 100 else "99+")
+        bad = any(m["kind"] == "bad" for m in self.messages[:self.unread])
+        (self.bell_badge.add_css_class if bad else self.bell_badge.remove_css_class)("bad")
+
+    def fill_bell(self, *_):
+        """The list, newest first, when the bell opens: what was said, when, and what to do."""
+        self.unread = 0
+        self.update_bell()
+        box = self.bell_list
+        while box.get_first_child():
+            box.remove(box.get_first_child())
+        icons = {"bad": "dialog-error-symbolic", "warn": "dialog-warning-symbolic", "ok": "object-select-symbolic",
+                 "info": "dialog-information-symbolic"}
+        for m in self.messages[:120]:
+            row = Gtk.Box(spacing=10, css_classes=["ks-msg"])
+            row.append(Gtk.Image(icon_name=icons.get(m["kind"], icons["info"]), valign=Gtk.Align.START, margin_top=2,
+                                 css_classes=[m["kind"]]))
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            col.append(Gtk.Label(label=m["text"], xalign=0, wrap=True, wrap_mode=2, max_width_chars=46, selectable=True))
+            if m.get("hint"):
+                col.append(Gtk.Label(label=m["hint"], xalign=0, wrap=True, max_width_chars=46, css_classes=["caption"]))
+            col.append(Gtk.Label(label=" · ".join(x for x in (ago_words(m["at"]), m.get("fleet") or "") if x), xalign=0,
+                                 css_classes=["caption", "dim-label"]))
+            row.append(col)
+            box.append(row)
+        self.bell_empty.set_visible(not self.messages)
+        self.bell_clear.set_sensitive(bool(self.messages))
+
+    def clear_bell(self, *_):
+        self.messages = []
+        save_messages(self.messages)
+        self.fill_bell()
 
     def alert(self, heading, body):
         dlg = Adw.AlertDialog(heading=heading, body=body)

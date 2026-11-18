@@ -30,6 +30,16 @@ it does not; a click on a machine opens it. The overview also lists what comes n
 install, apply. *+* adds a host with the next free fruit (or fruit dish, for a
 master) as its name.
 
+*Needs attention* says, under each thing, what to do about it. A warning that is
+so on purpose (a disk left unencrypted, say) has *Leave it out*: the machine's
+setting `quiet` keeps it as a note from then on, and its settings bring it back.
+Something broken never goes quiet.
+
+**Messages.** The bell at the top right keeps everything the app said, with its
+time and fleet, also after the app is closed: its short messages at the bottom
+vanish after a few seconds. New and gone warnings of the machines go there too.
+A number on the bell counts what came since it was last opened.
+
 ## A host
 
 A host has two tabs:

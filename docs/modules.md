@@ -439,7 +439,12 @@ kiwi-server sources ~/kiwi/fleet.yaml                     # the sources and thei
 kiwi-server sources ~/kiwi/fleet.yaml update kiwi-modules-community
 kiwi-server sources ~/kiwi/fleet.yaml remove kiwi-modules-community
 kiwi-server sources ~/kiwi/fleet.yaml add --path ~/src/my-modules --name mine
+kiwi-server sources ~/kiwi/fleet.yaml --check             # and each one's newest version
 ```
+
+The same without a terminal: *Module sources* on the control page (under More) and
+*Module sources…* in the app's menu list them with their modules, add one by its link, look for
+new versions, update and remove. A folder on this computer is for the terminal only.
 
 `add` pins the repository to its newest version tag (`v0.2.0`), or to the commit its default
 branch is at when it has none; `--ref` takes a branch or tag instead. A source made with

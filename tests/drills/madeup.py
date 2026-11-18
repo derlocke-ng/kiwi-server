@@ -28,10 +28,13 @@ MACHINES = [
     ("lychee", "node", ["vpn-client", "reverse-proxy", "portainer", "backup-server", "tang", "backup"], ["portainer"], "ok", [],
      facts(0.1, 2, (4, 1.1), [("/var", 480, 395)], 6, 6 * 3600)),
     ("quince", "node", ["vpn-client", "reverse-proxy", "vault", "gateway", "backup"], ["vault"], "warn",
-     [{"level": "warn", "text": "Its last backup is 3 days old."}], facts(0.4, 2, (4, 3.5), [("/var", 60, 51)], 5, 3 * 86400 + 4000)),
+     [{"level": "warn", "text": "Its last backup is 3 days old.", "key": "backup-old",
+       "hint": "Backups: Save it now, and look whether the backup machine answers."}], facts(0.4, 2, (4, 3.5), [("/var", 60, 51)], 5, 3 * 86400 + 4000)),
     ("medlar", "node", ["vpn-client", "reverse-proxy", "git", "onion", "tang"], ["git"], "down",
      [{"level": "bad", "text": "It does not answer."}], {}),
-    ("lime", "node", ["vpn-client", "dns", "reverse-proxy", "gateway", "tang", "backup"], ["pihole"], "ok", [],
+    ("lime", "node", ["vpn-client", "dns", "reverse-proxy", "gateway", "tang", "backup"], ["pihole"], "warn",
+     [{"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it", "key": "disk-plain",
+       "hint": "Install it again with encryption when it suits you, or leave this warning out in its settings."}],
      facts(0.05, 4, (2, 0.7), [("/var", 29, 9)], 5, 8 * 3600)),
 ]
 
@@ -59,7 +62,10 @@ def answers():
                                         "health": "", "stack": True},
                                        {"name": "kn-game-doom", "state": "inactive", "running": False, "asleep": True, "status": "", "image": "",
                                         "health": "", "stack": True}]
-    return {"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts}, {"hosts": said}
+    sources = [{"name": "kiwi-modules-personal", "url": "https://github.com/someone/kiwi-modules-personal",
+                "commit": "d8464b8b8ffbe0ba9848fe1e2009c0e6f252204f", "tag": "v0.1.0", "modules": ["smartfritz"]}]
+    return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts, "module_sources": sources},
+            {"hosts": said})
 
 
 LABELS = {"id": "Accounts", "wg": "VPN devices (wg-easy)", "pihole": "Ad blocker (Pi-hole)", "portainer": "Containers (Portainer)",

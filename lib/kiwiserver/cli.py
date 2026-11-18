@@ -1513,19 +1513,36 @@ def cmd_sources(args):
     listed = sourcesmod.raw(fleet)
     names = [str(x.get("name")) for x in listed if isinstance(x, dict)]
     if what == "list":
+        rows = []
+        for x in fleet.module_sources:
+            row = dict(x)
+            try:
+                folder = sourcesmod.fetch(x)
+                row["modules"] = sorted(n for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n, "module.yaml")))
+            except KiwiError as e:
+                row["modules"], row["error"] = [], str(e)
+            if args.check and x.get("url"):         # its newest version tag, asked of the repository
+                try:
+                    got = sourcesmod.latest(x["url"])
+                    row["newest"] = {"tag": got[0], "commit": got[1]} if got else {"tag": "", "commit": ""}
+                except KiwiError as e:
+                    row["newest"] = {"error": str(e)}
+            rows.append(row)
         if args.porcelain:
-            print(json.dumps({"sources": fleet.module_sources}, indent=2))
+            print(json.dumps({"sources": rows}, indent=2))
             return
         if not listed:
             util.say("no module sources: only the built-in modules (kiwi-server sources %s add <link>)" % args.fleet)
-        for x in fleet.module_sources:
+        for x in rows:
             print("%-12s %s" % (x["name"], x.get("path") or "%s @ %s%s" % (x["url"], x.get("tag") + " " if x.get("tag") else "", x["commit"][:12])))
-            try:
-                folder = sourcesmod.fetch(x)
-                print("%-12s modules: %s" % ("", ", ".join(sorted(n for n in os.listdir(folder)
-                                                                   if os.path.isfile(os.path.join(folder, n, "module.yaml"))))))
-            except KiwiError as e:
-                print("%-12s %s" % ("", e))
+            print("%-12s %s" % ("", x.get("error") or "modules: " + ", ".join(x["modules"])))
+            new = x.get("newest")
+            if new and new.get("error"):
+                print("%-12s newest version: could not ask (%s)" % ("", new["error"]))
+            elif new and new.get("tag") and new["commit"] != x.get("commit"):
+                print("%-12s newest version: %s (kiwi-server sources %s update %s)" % ("", new["tag"], args.fleet, x["name"]))
+            elif new:
+                print("%-12s the newest version" % "")
         return
     if what == "add":
         if not rest and not args.path:
@@ -1576,6 +1593,8 @@ def cmd_sources(args):
             raise KiwiError("%s is a folder on this computer: it is always as it is now" % name)
         new, tag = sourcesmod.pin(entry["url"], args.ref)
         if new == entry["commit"]:
+            if tag and entry.get("tag") != tag:         # the same commit, now known by its version
+                sourcesmod.write(args.fleet, [dict(x, tag=tag) if x.get("name") == name else x for x in listed])
             util.say("%s is at %s already" % (name, tag or new[:12]))
             return
         moved = dict({k: v for k, v in entry.items() if k != "tag"}, commit=new, **({"tag": tag} if tag else {}))
@@ -2958,13 +2977,14 @@ def cmd_status(args):
             if at:
                 e = "its disk is locked, the machine waits at %s: %s" % (at, unlock.locked_advice(h, args.fleet))
             return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down", "locked": bool(at),
-                    "problems": [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e}], "notes": [], "facts": {}}
+                    "problems": [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e, "key": "locked" if at else "unreachable",
+                                  "hint": facts.HINTS["locked" if at else "unreachable"]}], "notes": [], "facts": {}}
         measured = facts.parse(data)
-        state, problems, notes = facts.assess(measured)
+        state, problems, notes = facts.assess(measured, quiet=h.cfg.get("quiet") or [])
         if "backup-server" in (h.modules or []):
             level, text = backupmod.prune_note(fleet, h.name)
             if level:
-                problems.append({"level": level, "text": text})
+                problems.append({"level": level, "text": text, "key": "backup-store-full", "hint": facts.HINTS["backup-store-full"]})
                 state = "bad" if "bad" in (state, level) else "warn"
             else:
                 notes.append(text)
@@ -4530,6 +4550,7 @@ def build_parser():
     s.add_argument("--ref", help="add, update: a branch, tag or commit instead of the repository's default branch")
     s.add_argument("--name", help="add: the source's name (default: the repository's); new: the example module's")
     s.add_argument("--path", help="add: a folder on this computer instead of a link (while you write a module)")
+    s.add_argument("--check", action="store_true", help="list: ask each repository for its newest version")
     sub("targets", cmd_targets)
     sub("toolchain", cmd_toolchain).add_argument("action", nargs="?", choices=("status", "build"))
     sub("doctor", cmd_doctor)

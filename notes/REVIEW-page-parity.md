@@ -94,3 +94,15 @@ Since 2.170.0 to 2.174.0 (17 November 2026):
 | Connect the game page to the accounts | `accounts connect HOST control` | "Game page (play)", Connect | "Game page (play)", Connect |
 | The hidden services through Tor | (the status) | "answers" or "no answer" at each hidden service of a machine | "Over Tor" on the status page |
 | A hidden service's new address | `onion --new-address` | "New address" | "New address" |
+
+## Since then (18 November 2026, 2.180.0 to 2.189.0)
+
+| What | CLI | App | Page |
+|---|---|---|---|
+| Module sources: list, add by link, newest version, update, remove | `sources` (`--check`) | "Module sources…" in the menu | "Module sources" under More |
+| A module's parts as switches, with its source | `modules` | each machine's settings | each machine's settings |
+| Open to: Tor and a public name per site | settings | "Open to" at each module | "Open to" at each module |
+| Save & apply, and the other machines a change reaches | `apply --changed` | Apply offers them; overview card | "Save & apply"; Home card |
+| Game servers on the status page | (the status) | not needed: the status page is for everyone | status.<host> |
+
+Left: a module source that is a folder on this computer (`add --path`) is for the terminal only, on purpose.

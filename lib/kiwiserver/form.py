@@ -30,6 +30,10 @@ BASE_GROUPS = [
              help="A second disk for the data, one per line: the disk, then where it goes, like LABEL=data /mnt/data. "
                   "The disk by its label (LABEL=…), its UUID=… or /dev/disk/by-id/…; kiwi-server disks <fleet> <machine> "
                   "lists what the machine has. It is mounted before the services start and never erased"),
+        dict(path=("quiet",), type="list", label="Warnings left out", scope="host", default=[],
+             help="Warnings this machine does not show, by their key: disk-plain (its disk is not encrypted), "
+                  "data-disk-plain, clock, memory, failed-units, unhealthy, not-applied. They stay as notes. "
+                  "A warning's own button does the same: Leave it out"),
         dict(path=("install", "on_done"), type="enum", label="When the install is done", options=["poweroff", "reboot"],
              default="poweroff",
              help="poweroff: the machine turns off, you pull the stick and switch it on again. reboot: it starts the "

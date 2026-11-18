@@ -8,8 +8,8 @@ onto the network, opening its services, and keeping it well.
 The services of your network open by name (`cloud.papaya.home`) and only from a
 device that is on the network. There are three ways onto it.
 
-**The computer you run Kiwi Server on.** In the app: "Connect this computer…"
-(the overview offers it when the computer is not on the network). In a terminal:
+**The computer you run Kiwi Server on.** In the app: "Connect this computer…" in
+the menu (the overview offers *Connect* when the computer is not on the network). In a terminal:
 
 ```bash
 kiwi-server connect ~/kiwi/fleet.yaml
@@ -38,7 +38,7 @@ router's DHCP settings for the whole home.
 ## Open a service and log in
 
 The app shows "Open a service" at the top of a machine's page, the control page
-on its Home. A click opens the service in your browser.
+on its *Services* page. A click opens the service in your browser.
 
 The first time, a service asks for a user name and a password. Kiwi Server made
 them:

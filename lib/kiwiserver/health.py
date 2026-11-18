@@ -144,18 +144,20 @@ def update(state, machines, services, happened, now, after=600):
         for p in m.get("problems") or []:
             if p.get("level") in ("warn", "bad"):
                 seen["problem:%s:%s" % (m["name"], _key(p["text"]))] = (
-                    "problem", p["level"], "%s: %s" % (m["name"], p["text"]), "%s: no longer so: %s" % (m["name"], p["text"]))
+                    "problem", p["level"], "%s: %s" % (m["name"], p["text"]), "%s: no longer so: %s" % (m["name"], p["text"]),
+                    p.get("hint") or "")
     down = {m["name"] for m in machines if not m["ok"]}
     for s in services or []:
         if not s["ok"] and s["host"] not in down:        # a machine that is gone takes its services with it: said once
             seen["service:" + s["site"]] = ("service", "bad", "%s does not answer (%s)" % (label(s["site"]), s["site"]),
                                             "%s answers again (%s)" % (label(s["site"]), s["site"]))
-    for key, (kind, level, text, fine) in seen.items():
+    for key, said in seen.items():
+        kind, level, text, fine = said[:4]
         item = items.setdefault(key, {"kind": kind, "since": now, "told": False})
         item.update(level=level, text=text, fine=fine)
         if not item["told"] and now - item["since"] >= after:
             item["told"] = True
-            events.append({"kind": "wrong", "level": level, "text": text})
+            events.append(dict({"kind": "wrong", "level": level, "text": text}, **({"hint": said[4]} if len(said) > 4 and said[4] else {})))
             if kind in ("machine", "service"):
                 state.setdefault("incidents", []).append({"key": key, "text": text, "from": item["since"], "to": None})
     for key in [k for k in items if k not in seen]:
@@ -244,8 +246,8 @@ def message(events, network=""):
         title = "%s: %d things need a look" % (name, len(wrong)) if len(wrong) > 1 else "%s: %s" % (name, wrong[0]["text"])
     else:
         title = "%s: fine again" % name
-    lines = ["%s %s" % ("Fine again:" if e["kind"] == "fine" else "Done by itself:" if e["kind"] == "did" and e["level"] == "warn"
-                         else "Wrong:", e["text"]) for e in events]
+    lines = ["%s %s%s" % ("Fine again:" if e["kind"] == "fine" else "Done by itself:" if e["kind"] == "did" and e["level"] == "warn"
+                           else "Wrong:", e["text"], "\n  What to do: " + e["hint"] if e.get("hint") else "") for e in events]
     level = "bad" if any(e["level"] == "bad" for e in events) else "warn" if wrong else "info"
     return title[:200], "\n".join(lines), level
 

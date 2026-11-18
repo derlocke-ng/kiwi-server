@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.199.0 — the network as a family tree, with what the linked networks open
+
+- **How they are linked is a family tree** on the control page and in the app (the owner: "masters
+  on top, show proper federation"): the master on top with its standby and the linked networks
+  beside it, the machines under it in a zone per site, one line down from the master to each
+  site, a bar and a drop for each column. Many machines make more rows instead of a list; only a
+  phone gets the list. Dashed: another site, over the Internet.
+- **A linked network's line goes the way its traffic does**: over the link into the master, then
+  beside the master's own line down to each machine it may reach here, in violet, with its name
+  on the machine.
+- **What a linked network opens to this one stands under it**, in a violet zone: its machines and
+  their services. Its master's DNS says so over the link (kiwi-modules 0.89.0, 0.89.1: a TXT
+  record per partner, and the master's name), and the master's status asks it. The linked
+  network's box names its master.
+- Pointing at a machine or a linked network shows its lines and dims the rest; on the page too.
+
 ## 2.198.0 — quicker applies, the kiwi on every page
 
 - **An apply pulls only the images a machine does not have yet** (kiwi-stack 0.9.15; the owner:

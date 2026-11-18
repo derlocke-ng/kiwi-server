@@ -7625,6 +7625,17 @@ class TestApplyWaves(unittest.TestCase):
         self.assertEqual(waves[-1], ["papaya", "medlar", "quince"])
 
 
+class TestOpened(unittest.TestCase):
+    def test_what_a_linked_network_opens_as_its_dns_said(self):
+        from kiwiserver import facts
+        f = facts.parse("opened=kiwi2 git.damson cloud.damson \nopened=other - \nopened=quiet \npartner_master=kiwi2 crumble.internal\n"
+                        "partner_master=quiet \n")
+        self.assertEqual(f["opened"], {"kiwi2": ["git.damson", "cloud.damson"], "other": [], "quiet": None})
+        self.assertEqual(f["partner_masters"], {"kiwi2": "crumble.internal"})
+        self.assertIn("_kiwi-share.$pd", facts.PROBE)                 # asked through the master's own DNS, over the link
+        self.assertIn("_kiwi-master.$pd", facts.PROBE)
+
+
 class TestPicture(unittest.TestCase):
     """Where things stand in the picture of the network (picture.layout): the page and the app draw it."""
 
@@ -7636,19 +7647,19 @@ class TestPicture(unittest.TestCase):
         from kiwiserver import picture
         master = {"name": "sorbet", "state": "ok", "cap": "master"}
         machines = [{"name": n, "state": "ok", "cap": "node", "up": True, "site": site} for n, site in nodes]
-        return picture.layout(master, machines, [{"name": s, "state": "ok", "cap": "standby"} for s in standbys],
-                              [{"name": n, "state": "", "cap": "linked network"} for n in linked], width, narrow)
+        nets = [n if isinstance(n, dict) else {"name": n, "state": "", "cap": "linked network"} for n in linked]
+        return picture.layout(master, machines, [{"name": s, "state": "ok", "cap": "standby"} for s in standbys], nets, width, narrow)
 
     def test_each_site_has_its_zone_and_nothing_overlaps(self):
         for narrow in (False, True):
             lay = self.lay([("papaya", "home"), ("lychee", "home"), ("quince", "home"), ("kumquat", "away")],
                            standbys=["sorbet-b"], linked=["kiwi2"], width=860 if not narrow else 340, narrow=narrow)
-            self.assertEqual([z["label"] for z in lay["zones"]], ["At home", "Away"])
+            self.assertEqual([z["label"] for z in lay["zones"]], ["At home", "Away · over the Internet"])
             kinds = {b["name"]: b["kind"] for b in lay["boxes"]}
             self.assertEqual((kinds["sorbet"], kinds["sorbet-b"], kinds["kiwi2"], kinds["kumquat"]),
                              ("master", "standby", "linked", "machine"))
-            self.assertEqual(sorted(k for *_p, k in lay["sides"]), ["linked", "standby"])
-            away = next(z for z in lay["zones"] if z["label"] == "Away")
+            self.assertEqual(sorted(ln["kind"] for ln in lay["lines"] if ln["kind"] in ("link", "standby")), ["link", "standby"])
+            away = next(z for z in lay["zones"] if z["away"])
             k = next(b for b in lay["boxes"] if b["name"] == "kumquat")
             self.assertTrue(away["x"] <= k["x"] and k["x"] + k["w"] <= away["x"] + away["w"]
                             and away["y"] <= k["y"] and k["y"] + k["h"] <= away["y"] + away["h"], (away, k))
@@ -7657,13 +7668,40 @@ class TestPicture(unittest.TestCase):
                 for b in boxes[i + 1:]:
                     self.assertFalse(self.overlap(a, b), (a["name"], b["name"], narrow))
             self.assertTrue(all(b["x"] >= 0 and b["x"] + b["w"] <= lay["w"] for b in boxes))
-            n_machines = len([b for b in boxes if b["kind"] == "machine"])
-            self.assertEqual(len(lay["tunnels"]) + len(lay["branches"]), n_machines)    # every machine its tunnel
+            for b in boxes:                                       # every machine its own line, coloured by itself
+                if b["kind"] == "machine":
+                    self.assertTrue([ln for ln in lay["lines"] if ln["kind"] in ("stub", "away") and ln["hosts"] == [b["name"]]], b["name"])
+            if not narrow:                                        # the line to another site: over the Internet
+                self.assertTrue(any(ln["kind"] == "away" and "kumquat" in ln["hosts"] for ln in lay["lines"]))
 
-    def test_too_many_for_the_width_make_a_list(self):
-        lay = self.lay([("n%d" % i, "home") for i in range(9)] + [("far", "office")], width=500)
-        self.assertIsNotNone(lay["trunk"])
-        self.assertEqual(len(lay["branches"]), 10)
+    def test_many_machines_make_a_tree_and_only_a_phone_a_list(self):
+        lay = self.lay([("n%d" % i, "home") for i in range(9)] + [("far", "office")], width=860)
+        self.assertEqual(len([ln for ln in lay["lines"] if ln["kind"] == "drop"]) > 1, True)       # columns, not a list
+        self.assertGreater(len({b["y"] for b in lay["boxes"] if b["kind"] == "machine"}), 2)    # more rows than before
+        narrow = self.lay([("n%d" % i, "home") for i in range(9)] + [("far", "office")], width=340, narrow=True)
+        self.assertEqual(len([ln for ln in narrow["lines"] if ln["kind"] in ("stub", "away")]), 10)
+
+    def test_a_linked_network_reaches_along_the_masters_way_and_shows_what_it_opens(self):
+        from kiwiserver import picture
+        net = {"name": "kiwi2", "state": "", "cap": "linked network", "reach": ["cloud.papaya", "lychee:22", "nowhere"],
+               "theirs": ["git.damson", "cloud.damson", "crumble:22"]}
+        lay = self.lay([("papaya", "home"), ("lychee", "home"), ("quince", "home")], linked=[net], width=1100)
+        reach = [ln for ln in lay["lines"] if ln["kind"] == "reach"]
+        self.assertEqual(sorted(ln["hosts"][0] for ln in reach), ["lychee", "papaya"])          # nowhere: no such machine
+        m = next(b for b in lay["boxes"] if b["kind"] == "master")
+        lb = next(b for b in lay["boxes"] if b["kind"] == "linked")
+        for ln in reach:                    # from the linked network into the master, then down to the machine
+            self.assertEqual(ln["d"][0][1], lb["x"])
+            self.assertTrue(any(p[0] == "L" and m["x"] <= p[1] <= m["x"] + m["w"] and p[2] >= m["y"] + m["h"] - 2 for p in ln["d"]))
+            b = next(x for x in lay["boxes"] if x["name"] == ln["hosts"][0])
+            self.assertEqual(ln["d"][-1][1], b["x"])
+        partner = {b["name"]: b["cap"] for b in lay["boxes"] if b["kind"] == "partner"}
+        self.assertEqual(partner, {"crumble": "the whole machine", "damson": "git, cloud"})
+        zone = next(z for z in lay["zones"] if z["partner"] == "kiwi2")
+        self.assertEqual(zone["label"], "kiwi2 · opened to you")
+        self.assertEqual(sorted(b["name"] for b in lay["boxes"] if "kiwi2" in b["reached"]), ["lychee", "papaya"])
+        self.assertEqual(picture.opened({"theirs": []}), [])
+        self.assertGreaterEqual(picture.fit_width([{"name": "n%d" % i, "site": "home"} for i in range(12)]), 860)
 
 
 class TestLanAddresses(Base):
@@ -9394,7 +9432,7 @@ class TestWeb(WebBase):
                       '<a class="nav on" href="/">', "not reachable</span><b>1</b>",
                       "Machines on", "<b class=\"bad\">2<small> of 3</small></b>", "lychee is not reachable",              # the numbers
                       "<b class=\"warn\">5<small> of 6</small></b>", "1 not running", "ago at the longest: papaya",
-                      "How they are linked", '<path class="up"', '<path class="off"'):                                # the picture
+                      "How they are linked", 'stub up" data-h=', 'stub off" data-h='):                                # the picture
             self.assertIn(words, body)
         there = self.ask("/machines")[1]
         for words in ('title="7.0 GB of 8.0 GB in use"', 'class="fill bad" style="width:95%"',                           # a machine's bars
@@ -9411,7 +9449,7 @@ class TestWeb(WebBase):
         self.assertEqual(web.picture([m("a", "node", "ok")]), "")
         narrow = web.picture([m("a", "master", "ok"), m("b", "node", "down"), m("c", "node", "warn")], 2, per_row=1)
         self.assertIn("2 devices on its VPN", narrow)
-        self.assertEqual((narrow.count('class="up"'), narrow.count('class="off"')), (1, 1))
+        self.assertEqual((narrow.count('stub up"'), narrow.count('stub off"')), (1, 1))
         wide = web.picture([m("a", "master", "ok")] + [m("n%d" % i, "node", "ok") for i in range(6)], 0, per_row=4)
         self.assertEqual(wide.count("<rect"), 8)                       # seven machines and the home they stand in
         self.assertIn("At home", wide)

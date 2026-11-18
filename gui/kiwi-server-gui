@@ -2907,17 +2907,20 @@ def tags(modules):
 
 
 class NetworkPicture(Gtk.DrawingArea):
-    """The network as it is, the same picture as on the control page (kiwi-server's picture.layout):
-    the master out on the Internet with its standby and the networks linked to it, the machines in
-    a zone per site, and the tunnel each one holds to the master: green while the machine answers,
-    grey and broken when it does not. A click on a machine opens it, on a linked network Federation."""
+    """The network as a family tree, the same picture as on the control page (kiwi-server's
+    picture.layout): the masters on top (this network's, its standbys, the networks linked to
+    it), the machines under them in a zone per site, each one's line green while it answers, grey
+    and broken when it does not, dashed from another site; violet dots from a linked network to
+    what it may reach here. Pointing at a machine or a network shows its lines and dims the rest.
+    A click on a machine opens it, on a linked network Federation."""
     COLOURS = {"ok": (.18, .76, .49), "warn": (.90, .65, .04), "bad": (.88, .11, .14), "down": (.88, .11, .14)}
+    FED = (.48, .31, .82)           # the federation's colour, as on the page
 
     def __init__(self, win, master, machines, standbys=(), linked=()):
         super().__init__(hexpand=True)
         self.win, self.master, self.machines = win, master, machines
         self.standbys, self.linked = list(standbys), list(linked)
-        self.lay, self.dx, self.laid = None, 0, None
+        self.lay, self.dx, self.laid, self.focus = None, 0, None, None
         self.set_draw_func(self.draw)
         self.connect("resize", lambda _a, width, _h: self.lay_out(width))
         self.lay_out(720)
@@ -2926,6 +2929,7 @@ class NetworkPicture(Gtk.DrawingArea):
         self.add_controller(click)
         move = Gtk.EventControllerMotion()
         move.connect("motion", self.moved)
+        move.connect("leave", lambda _c: self.point_at(None))
         self.add_controller(move)
         self.update_property([Gtk.AccessibleProperty.LABEL],
                              ["Your network: the master %s and %d machines linked to it" % (master["name"], len(machines))])
@@ -2947,16 +2951,46 @@ class NetworkPicture(Gtk.DrawingArea):
     def clicked(self, b):
         if not b:
             return
-        if b["kind"] == "linked":
+        if b["kind"] in ("linked", "partner"):
             self.win.activate_action("win.federation", None)
         else:
             self.win.select_scope(b["name"])
 
+    def point_at(self, b):
+        name = b and (b["kind"], b["name"])
+        if name != self.focus:
+            self.focus = name
+            self.queue_draw()
+
     def moved(self, _c, x, y):
         b = self.at(x, y)
+        self.point_at(b)
         self.set_cursor(Gdk.Cursor.new_from_name("pointer") if b else None)
-        self.set_tooltip_text(("%s: %s" % (b["name"], b["cap"]) if b["kind"] == "linked" else
-                               "%s: %s" % (b["name"], WORDS.get(b["state"], b["state"]))) if b else None)
+        if not b:
+            self.set_tooltip_text(None)
+        elif b["kind"] == "partner":
+            self.set_tooltip_text("%s, in %s\nOpened to you: %s" % (b["name"], b["net"], b["cap"]))
+        elif b["kind"] == "linked":
+            what = next((n.get("reach") for n in self.linked if n["name"] == b["name"]), None) or []
+            self.set_tooltip_text("%s: %s\nMay reach here: %s" % (b["name"], b["cap"], ", ".join(what) or "nothing"))
+        else:
+            self.set_tooltip_text("%s: %s%s" % (b["name"], WORDS.get(b["state"], b["state"]),
+                                                "\nReached from: " + ", ".join(b["reached"]) if b.get("reached") else ""))
+
+    def _related(self, hosts, nets, kind=None):
+        """Is a box or line with these hosts and networks one of what is pointed at?"""
+        if not self.focus:
+            return True
+        fk, fname = self.focus
+        box = next((b for b in self.lay["boxes"] if b["kind"] == fk and b["name"] == fname), None)
+        if box is None:
+            return True
+        if fk in ("linked", "partner"):
+            return (box.get("net") or fname) in nets
+        if fk == "master":
+            return True
+        mine = set(box["hosts"])
+        return bool(mine & set(hosts)) or (kind == "linked" and bool(set(box.get("reached") or []) & set(nets)))
 
     @staticmethod
     def _rounded(cr, x, y, w, h, r):
@@ -2976,14 +3010,19 @@ class NetworkPicture(Gtk.DrawingArea):
             accent = (accent.red, accent.green, accent.blue)
         except AttributeError:                  # an older libadwaita: its blue
             accent = (.21, .52, .89)
+        dark = Adw.StyleManager.get_default().get_dark()
+        fed = (.66, .55, .94) if dark else self.FED
         # the sites: at home, and every other place a machine stands
         for z in self.lay["zones"]:
             self._rounded(cr, z["x"] + .5, z["y"] + .5, z["w"], z["h"], 14)
             ink(.035)
             cr.fill_preserve()
-            cr.set_dash([2, 4])
+            cr.set_dash([7, 5] if z.get("away") else [2, 4])
             cr.set_line_width(1)
-            ink(.25)
+            if z.get("partner"):
+                cr.set_source_rgba(*fed, .6)
+            else:
+                ink(.25)
             cr.stroke()
             cr.set_dash([])
             text = self.create_pango_layout("")
@@ -2992,96 +3031,113 @@ class NetworkPicture(Gtk.DrawingArea):
             cr.move_to(z["x"] + 14, z["y"] + 7)
             PangoCairo.show_layout(cr, text)
         cr.set_line_cap(1)
-        if self.lay["trunk"]:       # the list: one line down from the master, a branch to each machine
-            tx, ty1, ty2 = self.lay["trunk"]
-            ink(.22)
-            cr.set_line_width(1.6)
-            cr.move_to(tx, ty1)
-            cr.line_to(tx, ty2)
-            cr.stroke()
-        # the master to its standby (the same master on another machine) and to the linked networks
-        for x1, y1, x2, y2, kind in self.lay["sides"]:
-            cr.move_to(x1, y1)
-            cr.line_to(x2, y2)
-            if kind == "linked":
-                cr.set_source_rgba(*accent, .7)
-                cr.set_dash([2, 3])
+        cr.set_line_join(1)
+        # the lines: each on its own, so that what is not pointed at steps back
+        for ln in self.lay["lines"]:
+            f = 1 if self._related(ln["hosts"], ln["nets"]) else .15
+            kind, up = ln["kind"], ln["up"]
+            for p in ln["d"]:
+                if p[0] == "M":
+                    cr.move_to(p[1], p[2])
+                elif p[0] == "L":
+                    cr.line_to(p[1], p[2])
+                else:
+                    cr.curve_to(*p[1:])
+            dash, width = [], 1.8
+            if kind in ("stub", "away") and up:
+                cr.set_source_rgba(*self.COLOURS["ok"], .8 * f)
+            elif kind == "reach":
+                cr.set_source_rgba(*fed, .9 * f)
+                dash, width = [1, 4], (2.4 if self.focus and f == 1 else 1.5)
+            elif kind == "link":
+                cr.set_source_rgba(*fed, .9 * f)
+                dash, width = [9, 3, 2, 3], 2.2
+            elif kind == "fed":
+                cr.set_source_rgba(*fed, .7 * f)
+                width = 1.6
+            elif kind == "standby":
+                ink(.4 * f)
+                dash, width = [6, 5], 1.4
             else:
-                ink(.4)
-                cr.set_dash([6, 5])
-            cr.set_line_width(1.6)
-            cr.stroke()
-        cr.set_dash([])
-
-        def tunnel_style(up):
-            if up:
-                cr.set_source_rgba(*self.COLOURS["ok"], .75)
-                cr.set_dash([])
-                cr.set_line_width(1.8)
-            else:
-                ink(.35)
-                cr.set_dash([4, 5])
-                cr.set_line_width(1.6)
-        for sx, sy, ex, ez, ey, up in self.lay["tunnels"]:
-            mid = (sy + ez) / 2
-            cr.move_to(sx, sy)
-            cr.curve_to(sx, mid, ex, mid, ex, ez)
-            cr.line_to(ex, ey)
-            tunnel_style(up)
-            cr.stroke()
-        for tx, y, ex, up in self.lay["branches"]:
-            cr.move_to(tx, y - 10)
-            cr.curve_to(tx, y, tx, y, tx + 10, y)
-            cr.line_to(ex, y)
-            tunnel_style(up)
+                ink((.35 if up is False else .25) * f)
+                width = 1.6 if kind in ("bar", "drop") else 1.8
+            if kind == "away":
+                dash = [7, 5]
+            elif kind == "stub" and up is False:
+                dash = [4, 4]
+            cr.set_dash(dash)
+            cr.set_line_width(width)
             cr.stroke()
         cr.set_dash([])
         # the boxes: on a ground of their own, so that a line behind one does not show through
-        dark = Adw.StyleManager.get_default().get_dark()
         ground = (.19, .19, .21) if dark else (1, 1, 1)
         for b in self.lay["boxes"]:
-            x, y, w, h = b["x"] + .5, b["y"] + .5, b["w"], b["h"]
-            kind = b["kind"]
-            self._rounded(cr, x, y, w, h, 12)
-            cr.set_source_rgb(*ground)
-            cr.fill_preserve()
-            cr.set_source_rgba(*(accent if kind in ("master", "linked") else (fg.red, fg.green, fg.blue)),
-                               .10 if kind == "master" else .06 if kind == "linked" else .045)
-            cr.fill_preserve()
-            cr.set_line_width(1.5 if kind == "master" else 1.2)
-            if kind == "master":
-                cr.set_source_rgba(*accent, .9)
-            elif kind == "linked":
-                cr.set_source_rgba(*accent, .8)
-                cr.set_dash([2, 3])
-            elif kind == "standby":
-                ink(.45)
-                cr.set_dash([6, 4])
-            else:
-                ink(.18)
-            cr.stroke()
-            cr.set_dash([])
-            cx, cy = x + 20, y + h / 2
-            colour = self.COLOURS.get(b["state"])
-            if kind == "linked":
-                cr.set_source_rgba(*accent, 1)
-            elif colour:
-                cr.set_source_rgba(*colour, .22)
-                cr.arc(cx, cy, 9, 0, 6.2831853)
-                cr.fill()
-                cr.set_source_rgb(*colour)
-            else:
-                ink(.3)
-            cr.arc(cx, cy, 5, 0, 6.2831853)
+            nets = [b["name"]] if b["kind"] == "linked" else [b["net"]] if b["kind"] == "partner" else b.get("reached") or []
+            related = b["kind"] == "master" or self._related(b["hosts"], nets, b["kind"])
+            cr.push_group()
+            self._draw_box(cr, b, fg, ink, accent, fed, ground)
+            cr.pop_group_to_source()
+            cr.paint_with_alpha(1 if related else .2)
+
+    def _draw_box(self, cr, b, fg, ink, accent, fed, ground):
+        x, y, w, h = b["x"] + .5, b["y"] + .5, b["w"], b["h"]
+        kind = b["kind"]
+        self._rounded(cr, x, y, w, h, 12)
+        cr.set_source_rgb(*ground)
+        cr.fill_preserve()
+        tint = accent if kind == "master" else fed if kind == "linked" else (fg.red, fg.green, fg.blue)
+        cr.set_source_rgba(*tint, .10 if kind == "master" else .08 if kind == "linked" else .045)
+        cr.fill_preserve()
+        cr.set_line_width(1.5 if kind == "master" else 1.2)
+        if kind == "master":
+            cr.set_source_rgba(*accent, .9)
+        elif kind == "linked":
+            cr.set_source_rgba(*fed, .8)
+            cr.set_dash([2, 3])
+        elif kind == "partner":
+            cr.set_source_rgba(*fed, .55)
+        elif kind == "standby":
+            ink(.45)
+            cr.set_dash([6, 4])
+        else:
+            ink(.18)
+        cr.stroke()
+        cr.set_dash([])
+        cx, cy = x + 20, y + h / 2
+        colour = self.COLOURS.get(b["state"])
+        if kind in ("linked", "partner"):
+            cr.set_source_rgba(*fed, 1)
+        elif colour:
+            cr.set_source_rgba(*colour, .22)
+            cr.arc(cx, cy, 9, 0, 6.2831853)
             cr.fill()
-            for markup, dy, alpha in (("<b>%s</b>" % esc(b["name"]), -18, 1), ("<small>%s</small>" % esc(b["cap"]), 1, .6)):
-                text = self.create_pango_layout("")
-                text.set_markup(markup)
-                text.set_width(int((w - 46) * Pango.SCALE))
-                text.set_ellipsize(Pango.EllipsizeMode.END)
-                ink(alpha)
-                cr.move_to(x + 36, y + h / 2 + dy)
-                PangoCairo.show_layout(cr, text)
+            cr.set_source_rgb(*colour)
+        else:
+            ink(.3)
+        cr.arc(cx, cy, 5, 0, 6.2831853)
+        cr.fill()
+        for markup, dy, alpha in (("<b>%s</b>" % esc(b["name"]), -18, 1), ("<small>%s</small>" % esc(b["cap"]), 1, .6)):
+            text = self.create_pango_layout("")
+            text.set_markup(markup)
+            text.set_width(int((w - 46) * Pango.SCALE))
+            text.set_ellipsize(Pango.EllipsizeMode.END)
+            ink(alpha)
+            cr.move_to(x + 36, y + h / 2 + dy)
+            PangoCairo.show_layout(cr, text)
+        # the linked networks that may reach it: a small tag each, on its upper edge
+        right = x + w - 8
+        for net in (b.get("reached") or []) if kind not in ("linked", "partner") else []:
+            text = self.create_pango_layout("")
+            text.set_markup("<span size='x-small' weight='bold'>%s</span>" % esc(net))
+            tw = text.get_pixel_size()[0] + 10
+            right -= tw
+            self._rounded(cr, right, y - 7, tw, 15, 7.5)
+            cr.set_source_rgba(*fed, 1)
+            cr.fill()
+            cr.set_source_rgb(1, 1, 1)
+            cr.move_to(right + 5, y - 7 + (15 - text.get_pixel_size()[1]) / 2)
+            PangoCairo.show_layout(cr, text)
+            right -= 4
 
 
 class Column:
@@ -5064,7 +5120,12 @@ class Window(Adw.ApplicationWindow):
         # a standby is no host of its own in the fleet file (its master's standby: block): `list` names it
         standbys = [{"name": h, "state": self.state_of(h), "cap": "standby: takes over when %s is gone" % master[0]}
                     for h, st in sorted(self.status.items()) if st.get("standby_of") == master[0]]
-        linked = [{"name": x["name"], "state": "", "cap": "linked network · %s%s" % (x.get("mesh") or "", " · its way out" if x.get("exit") else "")}
+        said = ((self.live.get(master[0]) or {}).get("facts") or {}).get("opened") or {}    # what each opens to us
+        masters_of = ((self.live.get(master[0]) or {}).get("facts") or {}).get("partner_masters") or {}
+        linked = [{"name": x["name"], "state": "", "reach": list(x.get("reach") or []), "theirs": said.get(x["name"]),
+                   "cap": "linked network · %s%s%s" % (masters_of.get(x["name"]) or x.get("mesh") or "",
+                                                       " · its way out" if x.get("exit") else "",
+                                                       " · opens nothing to you" if said.get(x["name"]) == [] else "")}
                   for x in (self.fleet_info or {}).get("linked") or []]
         return NetworkPicture(self, {"name": master[0], "state": master[1], "cap": cap},
                               [machine(r) for r in masters[1:] + rest], standbys, linked)
@@ -5450,8 +5511,9 @@ class Window(Adw.ApplicationWindow):
         picture = self.picture()
         if picture:
             linked = Adw.PreferencesGroup(title="How they are linked", description="Every machine holds a link to the master. "
-                                          "A green line: the machine answers. A grey, broken one: it does not. Dashed beside "
-                                          "the master: its standby. Dotted: a network linked to this one.")
+                                          "A green line: the machine answers; a grey, broken one: it does not. Dashed: over "
+                                          "the Internet, from another site. Violet dots: what a linked network may reach here; "
+                                          "in violet below it, what it opens to you. Point at one to see its lines.")
             linked.add(Gtk.Frame(child=picture, css_classes=["card", "ks-picture"]))
             parts.append(linked)
         net = Adw.PreferencesGroup(title="Network")

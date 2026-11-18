@@ -92,14 +92,16 @@ def site_of(host):
 
 
 def linked_networks(fleet):
-    """[{name, mesh, exit, internet, shared}] of the networks linked to this one, nothing secret:
-    for the picture of the network. [] when there are none, or the file cannot be read."""
+    """[{name, mesh, exit, internet, shared, reach}] of the networks linked to this one, nothing
+    secret: for the picture of the network (reach: what each may reach here, as `share` names it).
+    [] when there are none, or the file cannot be read."""
     try:
         found = fedmod.partners(os.path.dirname(os.path.abspath(fleet.path)))
     except KiwiError:
         return []
     return [{"name": n, "mesh": str(x.get("mesh") or ""), "exit": bool(x.get("exit")), "internet": bool(x.get("internet")),
-             "shared": len(x.get("share") or [])} for n, x in sorted(found.items())]
+             "shared": len(x.get("share") or []), "reach": [str(e) for e in x.get("share") or []]}
+            for n, x in sorted(found.items())]
 
 
 def has_master(fleet, roles):

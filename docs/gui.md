@@ -26,7 +26,10 @@ last backup is. Every machine has a card: what it is for the others (control
 node, gateway, keeps backups), its processor's load, its memory and its disks.
 *How they are linked* is a picture of the network: the master, and a line to
 every other machine, green when the machine answers and grey and broken when
-it does not; a click on a machine opens it. The overview also lists what comes next for every machine not installed yet: enroll, build,
+it does not; a click on a machine opens it. Beside the master, dashed, its
+standby; dotted, every network linked to this one (a click opens Federation).
+The machines stand in a zone per site: at home, and every other place one stands
+(its *Site* setting). The control page draws the same picture. The overview also lists what comes next for every machine not installed yet: enroll, build,
 install, apply. *+* adds a host with the next free fruit (or fruit dish, for a
 master) as its name.
 
@@ -39,6 +42,20 @@ Something broken never goes quiet.
 time and fleet, also after the app is closed: its short messages at the bottom
 vanish after a few seconds. New and gone warnings of the machines go there too.
 A number on the bell counts what came since it was last opened.
+
+## Preferences
+
+The gear at the top of the list, or *Preferences* in the menu (Ctrl+,):
+
+- **General**: the app's icon, the kiwi in any of kiwi-icons' colourways and
+  styles (as in Kiwi Apps); light or dark; the messages kept under the bell.
+- **Sharing**: another computer, a synced folder, a home server that looks after
+  the network; *Sync now* and *Compare with the other copy*.
+- **Security**: *Locking*, and what to do when a computer was lost or stolen.
+- **Tools**: whether the build tools are here; render every machine; build every ISO.
+
+The menu holds the rest: opening and starting networks, *This network* (what one
+does with it now and then), *Manage* (who may do what), and *Sync now*.
 
 ## A host
 

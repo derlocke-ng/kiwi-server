@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.191.0 — Preferences and a short menu, sites, and the whole network in the picture
+
+- **Preferences** in the app (the gear, Ctrl+,): its icon from kiwi-icons in any colourway and
+  style, as in Kiwi Apps; light or dark; the kept messages; sharing; locking; the tools. The menu
+  is short now: *This network* and *Manage* open further, the app's own things are in Preferences.
+- **The picture of the network** (app and control page, one layout for both): the master's
+  standby beside it, dashed; every linked network, dotted; and the machines in a zone per site.
+- **A machine at another site** (`network.site`, "Site" in its settings): machines of one site
+  with fixed addresses reach each other on their LAN, one at another site over the VPN, also
+  when that LAN has the same numbers as home's; its unlock ring is not looked for on this LAN.
+  `list` names each machine's site and the linked networks.
+- `tests/drills/offsite-vm.sh`: a node in a local VM behind QEMU's NAT joins the network as a
+  machine elsewhere.
+
 ## 2.190.0 — in step without a riddle, the differences, the network's admins, the API for the phone
 
 - **"Not in step: this copy changed since the last sync … push first"** came again and again

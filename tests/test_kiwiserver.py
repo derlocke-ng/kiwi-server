@@ -3188,10 +3188,14 @@ class TestLocalCache(Base):
                      "node": dict(node, vpn_ip="10.8.0.10", preset="minimal")},
             "far": {"role": "node", "target": "debian",
                     "network": {"dhcp": False, "address": "10.44.0.5/24", "gateway": "10.44.0.1"},
-                    "node": dict(node, vpn_ip="10.8.0.11", preset="minimal", apt_proxy="http://10.44.0.9:3142")}}})
+                    "node": dict(node, vpn_ip="10.8.0.11", preset="minimal", apt_proxy="http://10.44.0.9:3142")},
+            # the same numbers as home, at a friend's: not the cache's LAN
+            "friend": {"role": "node", "target": "debian",
+                       "network": {"dhcp": False, "address": "192.168.7.32/24", "gateway": "192.168.7.1", "site": "friend"},
+                       "node": dict(node, vpn_ip="10.8.0.12", preset="minimal")}}})
         r = cli.Renderer(f, rolesmod.discover(), self.tmp, None, modmod.discover())
         got = {}
-        for name in ("gate", "store", "near", "far"):
+        for name in ("gate", "store", "near", "far", "friend"):
             h = f.hosts[name]
             role = r.prepare(h)
             r.use_cache(h, role)
@@ -3201,6 +3205,7 @@ class TestLocalCache(Base):
         self.assertEqual(got["store"][0]["docker.io"], "cache.store.kiwi/docker.io")      # its own mirrors too
         self.assertEqual(got["far"], ({}, "http://10.44.0.9:3142"))                       # another LAN; its own setting stays
         self.assertEqual(got["gate"], ({}, ""))                                           # a master is nowhere near
+        self.assertEqual(got["friend"], ({}, ""))                                         # another site, the same numbers
 
 
 class TestCheck(Base):
@@ -5090,6 +5095,15 @@ class TestUnlock(Base):
         h, srv = f.hosts["lychee"], f.hosts["papaya"]
         h.cfg["unlock"]["via"] = {"infra": "http://127.0.0.1:7500"}
         self.assertEqual(unlock.url(h, "infra", srv, 7500), "http://127.0.0.1:7500")
+
+    def test_a_ring_at_another_site_is_not_looked_for_on_this_lan(self):
+        f = self.unlock_fleet()
+        h, srv = f.hosts["lychee"], f.hosts["papaya"]
+        url = unlock.url(h, "infra", srv, 7500)                                   # one site, one LAN: its address there
+        self.assertTrue(url.startswith("http://192.168."), url)
+        h.cfg["network"]["site"] = "friend"                                    # the same numbers at a friend's
+        with self.assertRaisesRegex(KiwiError, "not on one LAN with static addresses at one site"):
+            unlock.url(h, "infra", srv, 7500)
 
     def tunnel_host(self):
         f = self.unlock_fleet()
@@ -7536,6 +7550,47 @@ peers=4 3
         self.assertIn("latest-handshakes", facts.SCRIPT)
 
 
+class TestPicture(unittest.TestCase):
+    """Where things stand in the picture of the network (picture.layout): the page and the app draw it."""
+
+    @staticmethod
+    def overlap(a, b):
+        return a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"] and a["y"] < b["y"] + b["h"] and b["y"] < a["y"] + a["h"]
+
+    def lay(self, nodes, standbys=(), linked=(), width=860, narrow=False):
+        from kiwiserver import picture
+        master = {"name": "sorbet", "state": "ok", "cap": "master"}
+        machines = [{"name": n, "state": "ok", "cap": "node", "up": True, "site": site} for n, site in nodes]
+        return picture.layout(master, machines, [{"name": s, "state": "ok", "cap": "standby"} for s in standbys],
+                              [{"name": n, "state": "", "cap": "linked network"} for n in linked], width, narrow)
+
+    def test_each_site_has_its_zone_and_nothing_overlaps(self):
+        for narrow in (False, True):
+            lay = self.lay([("papaya", "home"), ("lychee", "home"), ("quince", "home"), ("kumquat", "away")],
+                           standbys=["sorbet-b"], linked=["kiwi2"], width=860 if not narrow else 340, narrow=narrow)
+            self.assertEqual([z["label"] for z in lay["zones"]], ["At home", "Away"])
+            kinds = {b["name"]: b["kind"] for b in lay["boxes"]}
+            self.assertEqual((kinds["sorbet"], kinds["sorbet-b"], kinds["kiwi2"], kinds["kumquat"]),
+                             ("master", "standby", "linked", "machine"))
+            self.assertEqual(sorted(k for *_p, k in lay["sides"]), ["linked", "standby"])
+            away = next(z for z in lay["zones"] if z["label"] == "Away")
+            k = next(b for b in lay["boxes"] if b["name"] == "kumquat")
+            self.assertTrue(away["x"] <= k["x"] and k["x"] + k["w"] <= away["x"] + away["w"]
+                            and away["y"] <= k["y"] and k["y"] + k["h"] <= away["y"] + away["h"], (away, k))
+            boxes = lay["boxes"]
+            for i, a in enumerate(boxes):
+                for b in boxes[i + 1:]:
+                    self.assertFalse(self.overlap(a, b), (a["name"], b["name"], narrow))
+            self.assertTrue(all(b["x"] >= 0 and b["x"] + b["w"] <= lay["w"] for b in boxes))
+            n_machines = len([b for b in boxes if b["kind"] == "machine"])
+            self.assertEqual(len(lay["tunnels"]) + len(lay["branches"]), n_machines)    # every machine its tunnel
+
+    def test_too_many_for_the_width_make_a_list(self):
+        lay = self.lay([("n%d" % i, "home") for i in range(9)] + [("far", "office")], width=500)
+        self.assertIsNotNone(lay["trunk"])
+        self.assertEqual(len(lay["branches"]), 10)
+
+
 class TestLanAddresses(Base):
     @staticmethod
     def host(**network):
@@ -7544,9 +7599,14 @@ class TestLanAddresses(Base):
     def view(self, host, node_type="node"):
         r = cli.Renderer.__new__(cli.Renderer)
         r._scanned = True
-        r._node_lan = [("10.9.0.2", ipaddress.ip_address("192.168.2.30")), ("10.9.0.3", ipaddress.ip_address("192.168.2.61")),
-                       ("10.9.0.4", ipaddress.ip_address("10.20.0.5"))]
+        r._node_lan = [("10.9.0.2", ipaddress.ip_address("192.168.2.30"), "home"), ("10.9.0.3", ipaddress.ip_address("192.168.2.61"), "home"),
+                       ("10.9.0.4", ipaddress.ip_address("10.20.0.5"), "home"),
+                       ("10.9.0.5", ipaddress.ip_address("192.168.2.40"), "office")]       # the same numbers, another place
         return r.lan_addresses(host, types.SimpleNamespace(node_type=node_type))
+
+    def test_another_site_with_the_same_numbers_is_reached_over_the_vpn(self):
+        self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.41/16", site="office")), {"10.9.0.5": "192.168.2.40"})
+        self.assertNotIn("10.9.0.5", self.view(self.host(dhcp=False, address="192.168.2.30/16")))     # home: over the VPN
 
     def test_only_nodes_on_this_lan_get_their_lan_address(self):
         self.assertEqual(self.view(self.host(dhcp=False, address="192.168.2.30/16")),
@@ -8961,7 +9021,8 @@ class TestMadeUpNetwork(unittest.TestCase):
             self.assertEqual(set(facts.parse("")) - set(h["facts"]), set(), h["host"])
         for h in status["hosts"]:
             self.assertEqual({"host", "target", "ok", "output", "state", "problems", "notes", "facts"} - set(h), set())
-        self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]), sorted(h["name"] for h in listed["hosts"]))
+        self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]),
+                         sorted(h["name"] for h in listed["hosts"] if not h.get("standby_of")))     # a standby is its master's block
         r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "drills", "madeup.py"), "status", "x", "--porcelain"],
                            capture_output=True, text=True)
         self.assertEqual(json.loads(r.stdout), status)

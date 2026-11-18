@@ -65,6 +65,10 @@ do_install() {
         python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null ||
             warn "the GUI needs python3-gobject, gtk4 and libadwaita (Fedora: python3-gobject libadwaita; Debian: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1) — kiwi-server-gui starts once they are installed"
         install -Dm755 "$SRC/gui/kiwi-server-gui" "$PREFIX/bin/kiwi-server-gui"
+        # Preferences, App icon: kiwi-icons' kiwi_icon.py draws the colourways; the stock icon stays
+        # here too, so that "Kiwi Server's own" can be put back over a chosen one
+        install -Dm644 "$SRC/gui/kiwi_icon.py" "$LIB/kiwi_icon.py"
+        install -Dm644 "$SRC/data/icons/$APP_ID.svg" "$LIB/$APP_ID.svg"
         mkdir -p "$SHARE/applications"
         sed "s|^Exec=.*|Exec=$PREFIX/bin/kiwi-server-gui|" "$SRC/data/kiwi-server.desktop" \
             > "$SHARE/applications/$APP_ID.desktop"

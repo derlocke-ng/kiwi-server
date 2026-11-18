@@ -62,6 +62,21 @@ kiwi-server secrets admin-password ~/kiwi/fleet.yaml
 which leaves `password_hash` in the fleet file and the password itself in the secret store,
 where `kiwi-server logins` shows it as *The machine's screen*.
 
+The modules' passwords go the same way. A password written for a machine's module
+(Pi-hole's, Portainer's, the VPN server's, a VPN provider's key, a router's password) moves
+into the secret store with
+
+```bash
+kiwi-server secrets keep ~/kiwi/fleet.yaml
+```
+
+It lands in `secrets/pins.json` under `hostname/module/key` and leaves the fleet file. Every
+machine keeps the same password: an apply afterwards changes nothing on them.
+`kiwi-server secrets show` and `logins` still show each one. A password typed on the
+control page or in the app goes there by itself when the settings are saved. A password
+written in the defaults, for every machine of a role, is not moved: give each machine its
+own, or leave it out to have one generated, which changes it.
+
 ## How settings combine
 
 - Hosts override defaults key by key.

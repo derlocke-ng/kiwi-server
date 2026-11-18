@@ -8239,10 +8239,11 @@ class TestCli(Base):
     def test_validate_warns_about_passwords_that_need_not_be_written(self):
         rc, out, err = self.run_cli("validate", self.media_fleet().path)
         self.assertEqual(rc, 0, err)
-        self.assertIn("vpn-server.wg_password, dns.pihole_password: literal", err)
+        self.assertIn("vpn-client.wireguard_private_key, vpn-server.wg_password, dns.pihole_password: a password written in the fleet file", err)
         rc, out, err = self.run_cli("validate", self.unwritten_fleet().path)
         self.assertEqual(rc, 0, err)
-        self.assertNotIn("literal in the fleet file, and generated", err)
+        self.assertNotIn("wg_password", err)                       # left out: generated
+        self.assertIn("vpn-client.wireguard_private_key: a password written in the fleet file", err)   # nothing makes that one
 
     def media_fleet(self):
         return self.fleet({"defaults": self.base_defaults(), "hosts": {
@@ -8362,6 +8363,36 @@ class TestLogins(Base):
         self.assertNotIn("admin.password is a literal", err)
         rc, out, err = self.run_cli("secrets", "admin-password", f.path)               # once more: nothing left to move
         self.assertNotIn("password_hash", util.read_text(f.path).replace("password_hash: '", "", 1))
+
+    def test_module_passwords_move_into_the_store_and_stay_the_same(self):
+        """`secrets keep`: no password left in the fleet file, every machine renders the same values."""
+        f = self.network()
+        os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
+        before = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
+        shut = types.SimpleNamespace(is_open=lambda: False, exists=lambda: True)
+        with self.assertRaisesRegex(KiwiError, "locked"):                              # never into a plain folder on the disk
+            cli.secrets_keep(f.path, shut)
+        synced = []
+        open_store = types.SimpleNamespace(is_open=lambda: True, exists=lambda: True, sync=lambda: synced.append(1))
+        cli.secrets_keep(f.path, open_store)
+        self.assertEqual(synced, [1])                                                  # in secrets.age before the file loses them
+        text = util.read_text(f.path)
+        for gone in ("wg_password", "pihole_password", "transmission_password", "sftp_password", "wireguard_private_key"):
+            self.assertNotIn(gone, text)
+        pins = json.loads(util.read_text(os.path.join(os.path.dirname(f.path), "secrets", "pins.json")))
+        gate, m1 = (config.Fleet.load(f.path).hosts[n].hostname for n in ("gate", "m1"))
+        self.assertEqual((pins[gate + "/vpn-server/wg_password"], pins[gate + "/vpn-client/wireguard_private_key"],
+                          pins[m1 + "/sftp/sftp_password"]), ("w", "k", "s"))
+        after = {n: json.loads(json.dumps(self.settings(f.path, n))) for n in ("gate", "m1", "sh3")}
+        self.assertEqual(after, before)                                                # the same passwords, generated ones too
+        rc, out, err = self.run_cli("secrets", "show", f.path, "gate", "wg_password")
+        self.assertEqual((rc, out.strip()), (0, "w"), err)
+        rc, out, err = self.run_cli("validate", f.path)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("a password written in the fleet file", err)
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()) as said:
+            cli.secrets_keep(f.path, open_store)                                       # once more: nothing to move
+        self.assertIn("nothing to move", said.getvalue())
 
     def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
         f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),
@@ -8567,8 +8598,13 @@ class TestControl(StoreBase):
             c.settings("a")
         c.kiwi = [sys.executable, "-c", "import sys; sys.path.insert(0, %r); from kiwiserver import cli; "
                   "sys.exit(cli.main(sys.argv[1:]))" % os.path.join(ROOT, "lib")]
-        self.assertEqual(c.save_settings("a", {("timezone",): "Europe/Vienna", "admin.password": "a-new-s3cr3t"}, "anna"),
-                         ["timezone", "admin.password"])
+        ran = []
+        real_run = controlmod.subprocess.run
+        with mock.patch.object(controlmod.subprocess, "run", lambda argv, **kw: ran.append(list(argv)) or real_run(argv, **kw)):
+            self.assertEqual(c.save_settings("a", {("timezone",): "Europe/Vienna", "admin.password": "a-new-s3cr3t"}, "anna"),
+                             ["timezone", "admin.password"])
+        # a password typed into the form goes on into the secret store (`secrets keep`), not the fleet file
+        self.assertIn(["secrets", "keep", c.fleet_path, "--quiet"], [a[-4:] for a in ran])
         self.assertEqual(config.Fleet.load(self.f.path).hosts["a"].cfg["timezone"], "Europe/Vienna")
         last = c.audit_tail(1)[0]
         self.assertEqual((last["user"], last["what"], last["hosts"], last["keys"]),
@@ -9174,6 +9210,25 @@ class TestHealth(Base):
         with self.assertRaisesRegex(KiwiError, "nowhere to send it yet"):
             cli.cmd_notify(argparse.Namespace(fleet=f.path, test=True, output=None, media=None))
 
+
+    def test_the_messages_password_and_token_live_in_the_secret_store(self):
+        """`secrets keep` takes notify's mail password and ntfy token out of the fleet file too; the
+        messages still go out with them."""
+        f = self.fleet({"defaults": self.base_defaults(notify={
+            "mail": {"host": "smtp.example.org", "user": "u", "password": "mail-pw-of-the-test", "to": "a@example.org"},
+            "ntfy": {"url": "https://ntfy.example.org/topic", "token": "tk-of-the-test"}}), "hosts": {"a": {}}})
+        os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["validate", f.path])
+        self.assertIn("notify.mail.password: a password written in the fleet file", err.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cli.secrets_keep(f.path, types.SimpleNamespace(is_open=lambda: True, exists=lambda: True, sync=lambda: None))
+        text = util.read_text(f.path)
+        self.assertNotIn("of-the-test", text)
+        self.assertIn("smtp.example.org", text)                                        # the rest stays
+        cfg = cli.notify_config(config.Fleet.load(f.path))
+        self.assertEqual((cfg["mail"]["password"], cfg["ntfy"]["token"]), ("mail-pw-of-the-test", "tk-of-the-test"))
 
 class TestBanned(unittest.TestCase):
     def test_a_machine_says_how_many_addresses_fail2ban_keeps_out(self):
@@ -12111,7 +12166,11 @@ class TestFirstRunPage(StoreBase):
         cookie, _csrf = self.made()
         node, page = self.node(), "/hosts/%s/settings" % self.node()
         self.assertEqual(self.change(page, cookie, {"f:node.cloud.admin_password": "nextcloud-s3cr3t"})[:2], (303, page + "?saved=1"))
-        self.assertEqual(self.data()["hosts"][node]["node"]["cloud"], {"admin_password": "nextcloud-s3cr3t"})
+        # into the secret store, not the fleet file (`secrets keep`): every computer that joins keeps that file
+        self.assertNotIn("cloud", self.data()["hosts"][node]["node"])
+        pins = os.path.join(self.dir, "secrets", "pins.json")
+        hostname = next(h["hostname"] for h in self.c.fleet_info()["hosts"] if h["name"] == node)
+        self.assertEqual(json.loads(util.read_text(pins))[hostname + "/cloud/admin_password"], "nextcloud-s3cr3t")
         body = self.ask(page, cookie=cookie)[1]
         self.assertNotIn("s3cr3t", body)
         self.assertRegex(body, r'type="password" name="f:node.cloud.admin_password" autocomplete="new-password"\s+'
@@ -12123,9 +12182,10 @@ class TestFirstRunPage(StoreBase):
                 self.assertNotIn(b"s3cr3t", util.read_bytes(os.path.join(self.dir, name)))
         # left empty it stays; ticked away it goes
         self.assertEqual(self.change(page, cookie, {"f:keyboard": "fr"})[0], 303)
-        self.assertEqual(self.data()["hosts"][node]["node"]["cloud"], {"admin_password": "nextcloud-s3cr3t"})
+        self.assertIn(hostname + "/cloud/admin_password", json.loads(util.read_text(pins)))
         self.assertEqual(self.change(page, cookie, {"clear:node.cloud.admin_password": "1"})[0], 303)
-        self.assertNotIn("cloud", self.data()["hosts"][node]["node"])
+        self.assertNotIn(hostname + "/cloud/admin_password", json.loads(util.read_text(pins)))
+        self.assertEqual(self.c.audit_tail(1)[0]["keys"], ["node.cloud.admin_password"])
         self.at_rest()
 
     def test_the_settings_for_every_machine(self):

@@ -59,20 +59,19 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
 3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option),
    rings on more than one machine, ring rotation, the leash, a third share for
    papaya, and the control node's own unlock, which hangs on one ring today.
-4. **Restore on first boot** for a rebuilt node, and port ranges for modules.
-5. **The image:** the phoenix spin with the container images inside, the join
+4. **The image:** the phoenix spin with the container images inside, the join
    token instead of per-host media, and hosters without our own install media.
-6. **At home:** netboot (PXE) and Wake-on-LAN, and a node that sleeps and wakes
+5. **At home:** netboot (PXE) and Wake-on-LAN, and a node that sleeps and wakes
    for the night's backups.
-7. **A master in RAM, room for its updates:** its /var is half its memory, and an
-   image update needs room for the new image before the old one goes (crumble:
-   95 % full with its own images). An update one image at a time, or a master
-   with a disk.
-8. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
+6. **A master in RAM, room for its updates:** its /var is half its memory (crumble:
+   95 % full with its own images). Since 2.209.0 (kiwi-stack 0.9.16) an update on a
+   nearly full disk takes one image at a time, proven on crumble. Left: room for
+   a module more, or a master with a disk.
+7. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
    kernel TLS instead of the SFTP container, backups of the desktop and the phone
    (not designed yet), the OpenWrt package, rootless podman for the minimal
    preset, managed masters (the orchard), the Bluefin client.
-9. **Later, when the network is stable:** the repositories move to the GitHub
+8. **Later, when the network is stable:** the repositories move to the GitHub
    organization kiwi-eco. The live v1 network moves only when its owner decides.
 
 Decided against: two masters that share the load (it splits the network in

@@ -1635,7 +1635,38 @@ class Control:
         schema = self.schema()
         doc = form.Doc.parse(util.read_text(os.path.realpath(self.fleet_path)))
         doc.block(host)             # says so when there is no such machine
-        return {"host": host, "groups": form.groups(schema, schema.get("targets") or {}, doc, host)}
+        groups = form.groups(schema, schema.get("targets") or {}, doc, host)
+        kept = self._kept(host)
+        for g in groups:            # a password kept in the secret store (`secrets keep`) is set too
+            for f in g["fields"]:
+                if f.get("secret") and self._pin_key(host, f["path"], kept) in kept["pins"]:
+                    f["set"] = True
+        return {"host": host, "groups": groups}
+
+    def _kept(self, host):
+        """The secret store's pins and this machine's host name: {"pins", "hostname"}."""
+        pins = {}
+        path = os.path.join(self.fleet_dir, "secrets", "pins.json")
+        if os.path.isfile(path):
+            try:
+                pins = json.loads(util.read_text(path))
+            except ValueError:
+                pins = {}
+        hostname = ""
+        if host is not None:
+            hostname = next((h.get("hostname") for h in (self.fleet_info() or {}).get("hosts") or [] if h.get("name") == host), "") or ""
+        return {"pins": pins, "hostname": hostname}
+
+    @staticmethod
+    def _pin_key(host, path, kept):
+        """hostname/module/key of a module's setting (role, module, key), notify/channel/key of the
+        messages' password or token (the defaults), or None."""
+        path = tuple(path.split(".")) if isinstance(path, str) else tuple(path)
+        if host is None and len(path) == 3 and path[0] == "notify":
+            return "notify/%s/%s" % (path[1], path[2])
+        if host is None or len(path) != 3 or not kept["hostname"]:
+            return None
+        return "%s/%s/%s" % (kept["hostname"], path[1], path[2])
 
     def _problems(self):
         """What `validate` finds wrong in the fleet file as it is now. A machine that is not on
@@ -1682,7 +1713,17 @@ class Control:
             path = os.path.realpath(self.fleet_path)        # in RAM on a control node: nothing beside the link
             before = util.read_text(path)
             doc = form.Doc.parse(before)
+            # a password taken away that lives in the secret store, not in the file (`secrets keep`)
+            kept = self._kept(host)
+            forget = {self._pin_key(host, p, kept): (p if isinstance(p, str) else ".".join(p))
+                      for p, v in changes.items() if v is None and self._pin_key(host, p, kept) in kept["pins"]}
             keys = doc.apply(host, changes)
+            if forget:
+                for k in forget:
+                    kept["pins"].pop(k, None)
+                util.write_text(os.path.join(self.fleet_dir, "secrets", "pins.json"),
+                                json.dumps(kept["pins"], indent=1, sort_keys=True) + "\n", 0o600)
+                keys += [n for n in forget.values() if n not in keys]
             if not keys:
                 return []
             text = doc.dump()
@@ -1704,6 +1745,11 @@ class Control:
             finally:
                 if not kept:        # whatever went wrong: the file as it was
                     util.write_text(path, before, 0o600)
+            if any("password" in k or "secret" in k or "token" in k or k.endswith("_key") for k in keys):
+                # a password typed into the form goes into the secret store, not the fleet file, which
+                # computers that join keep on their disks (`secrets keep`; the same value)
+                subprocess.run(list(self.kiwi) + ["secrets", "keep", self.fleet_path, "--quiet"], capture_output=True,
+                               stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
             self.save_fleet()
         # which settings, never what they are now: a value may be a secret
         self.audit(user, "settings changed", hosts=[host] if host else [], keys=keys)

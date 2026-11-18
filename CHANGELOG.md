@@ -9,7 +9,8 @@
   nothing. Before, taking one out of the file would have changed it, so they stayed there in
   the clear on the disk of every computer that holds the fleet.
 - **A password typed on the control page or in the app goes into the secret store by itself**
-  when the settings are saved; the app's field then says it is kept there.
+  when the settings are saved; the page counts it as set (and its *clear* box takes it out of the
+  store), the app's field says it is kept there.
 - kiwi-modules 0.94.0: a password nothing can generate (a provider's key, a router's
   password) comes from the secret store when the fleet file leaves it out.
 - `validate` names every module password still written in the file, generated or not, and

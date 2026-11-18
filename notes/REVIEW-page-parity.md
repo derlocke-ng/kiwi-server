@@ -120,4 +120,8 @@ A controller like a second computer: it joins with the invite link and reads the
 | The CA's mark and each service's Android app | `ca_mark`, `services[].android` in the registry (2.196.0); the mark on the status page | for the app to show and use |
 | Devices: list, add (config, QR code, a split config's DNS line), remove | `/api/devices`, `DELETE /api/devices/{name}` (2.213.0) | for the app: the phone puts itself on the VPN |
 | Actions as jobs (apply, update, check, plan, backup …) and their logs | `POST /api/jobs`, `/api/jobs/{job}/log` | for the app |
-| Everything else that changes something (settings, accounts, who may reach what, backups, services, module sources, game servers) | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |
+| Accounts: the lists and every button of the Accounts page | `/api/accounts` (2.213.0) | for the app |
+| Settings: every machine's and the defaults', Save and Save & apply | `/api/settings` (2.213.0) | for the app |
+| Who may reach what, and what the linked networks may reach | `/api/access`, `/api/federation` (2.213.0) | for the app |
+| Backups (save now, restore, prune, a new history) and a service's container (restart, stop, start, logs) | `POST /api/jobs` with `save`, `restore`, `prune`, `start-new`, `service` | for the app |
+| Module sources, game servers | none yet: the page does it by form posts | gap: each needs a JSON route, sharing one function with the page |

@@ -3385,6 +3385,13 @@ def cmd_enroll(args):
         dest = fleet.resolve_path("secrets/devices/%s.conf" % name)
     util.write_text(dest, text if text.endswith("\n") else text + "\n", 0o600)
     util.say("%s" % dest)
+    if args.split and not host:
+        # imported as it is, its DNS line takes every name of the computer; a split tunnel wants only the network's
+        domains = ["~" + d for d in [fleet.hosts[next(iter(fleet.hosts))].domain] +
+                   [p["domain"] for p in fedmod.partners(fleet.dir).values() if p.get("domain")] if d]
+        util.say("on a computer with NetworkManager, after importing it: nmcli connection modify %s ipv4.dns-search %s "
+                 "ipv4.never-default yes, so that only the network's names are asked through it (kiwi-server connect "
+                 "does that for this computer by itself)" % (name, ",".join(dict.fromkeys(domains))))
     try:                                 # the new peer is part of what a rebuilt master needs
         keep_identity(fleet, master, args.ssh)
     except KiwiError as e:

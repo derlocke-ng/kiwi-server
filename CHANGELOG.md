@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.198.0 — the kiwi on every page, room in a master's RAM
+
+- **Every page kiwi-server serves has the kiwi as its icon**: the control page, the status page
+  and each machine's page, the game page, the starter's page. It is inside the page, so it shows
+  under every name a page answers at.
+- **A machine's logins list its accounts page** (kiwi-modules 0.88.2), and say why Kanidm's admin
+  has no password there: kiwi-server takes it over for each change and keeps none. Accounts and
+  admins are made under Accounts.
+- **Images nothing uses go when the disk runs full** (kiwi-stack 0.9.14): after an apply, at 75%
+  or more, every image that no container and no module of the stack uses. crumble, a master in
+  RAM, had its 913 MB /var 95% full.
+
 ## 2.197.0 — a module ticked shows its settings at once
 
 - **The control page shows a module's settings as soon as it is ticked**, as the app does (the

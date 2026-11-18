@@ -8380,7 +8380,7 @@ class TestLogins(Base):
         self.assertEqual([x["site"] for x in modules["downloader"]], ["dl", "jd"])
         self.assertEqual(modules["tor"], [])
         self.assertEqual(sorted(n for n, x in modules.items() if x), [
-            "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
+            "accounts", "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
 
 
 class TestControl(StoreBase):
@@ -9476,6 +9476,10 @@ class TestWeb(WebBase):
         now = time.time()
         os.makedirs(self.c.dir, exist_ok=True)
         self.assertIn("Nothing has been checked yet", self.ask("/status")[1])          # before the first look
+        for page in ("/status", "/login"):                                              # the kiwi as its icon, inline
+            self.assertIn('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,', self.ask(page)[1])
+        from kiwiserver import starter
+        self.assertIn('<link rel=\\"icon\\"', starter.PAGE_SH)
         util.write_text(self.c.health_file, json.dumps({
             "checked": now - 120, "machines": {"on": 2, "of": 2}, "window": "Sun 03:30",
             "services": [{"site": "cloud.papaya.home", "label": "Files (Nextcloud)", "host": "papaya", "admin": False, "ok": False,

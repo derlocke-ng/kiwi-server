@@ -1,7 +1,15 @@
 # Changelog
 
-## 2.198.0 — the kiwi on every page, room in a master's RAM
+## 2.198.0 — quicker applies, the kiwi on every page
 
+- **An apply pulls only the images a machine does not have yet** (kiwi-stack 0.9.15; the owner:
+  "why do reapply/download everything?"): newer ones come with the update (the weekly timer,
+  `apply --update`). papaya asked 31 registries at every apply, medlar tried codeberg.org three
+  times. Packages already installed are not looked up again either. With `auto_update: off` the
+  apply still brings every image, as there it is the only way they change.
+- **A new release alone is no change of a machine**: `apply --changed` and the app's "changes
+  not applied" compared the whole role script, kiwi-server's version in it, so every release
+  named every machine. Now only what a machine gets counts.
 - **Every page kiwi-server serves has the kiwi as its icon**: the control page, the status page
   and each machine's page, the game page, the starter's page. It is inside the page, so it shows
   under every name a page answers at.

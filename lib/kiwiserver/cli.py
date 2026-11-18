@@ -1333,8 +1333,33 @@ def backup_untold(fleet):
     return out
 
 
+_VERSION_LINES = re.compile(r"^(# kiwi-server )\S+( — role script)|^(KS_VERSION=).*$", re.M)
+
+
 def _fingerprint(script):
-    return hashlib.sha256(script.encode() if isinstance(script, str) else script).hexdigest()
+    """What a machine gets, without the version of kiwi-server that made it: a release that
+    changes nothing on a machine does not make it one with changes (the owner, 18 Nov 2026: every
+    release sent every machine its role again). "v2:" marks this kind."""
+    text = script.decode(errors="replace") if isinstance(script, bytes) else script
+    return "v2:" + hashlib.sha256(_VERSION_LINES.sub(lambda m: (m.group(1) or "") + (m.group(2) or "") + (m.group(3) or ""),
+                                                     text).encode()).hexdigest()
+
+
+def _same_as_told(script, told):
+    """The fingerprint told after the last apply, and the one of this script: the same? One told
+    before "v2:" holds the version that made it: the script with that version in its place."""
+    if told.startswith("v2:"):
+        return _fingerprint(script) == told
+    text = script.decode(errors="replace") if isinstance(script, bytes) else script
+    m = re.search(r"^KS_VERSION='?([^'\n]*)'?$", text, re.M)
+    now = m.group(1) if m else ""
+    major, minor = (now.split(".") + ["0", "0"])[:2]
+    if not (major.isdigit() and minor.isdigit()):
+        return False
+    for v in ("%s.%d.%d" % (major, n, p) for n in range(int(minor), max(-1, int(minor) - 40), -1) for p in range(4)):
+        if hashlib.sha256(text.replace(now, v).encode()).hexdigest() == told:
+            return True
+    return False
 
 
 def record_rendered(fleet, name, script):
@@ -1361,7 +1386,7 @@ def changed_since_apply(fleet, roles, r, skip=()):
             script, _b = r.script(h)
         except KiwiError:
             continue
-        if _fingerprint(script) != told[h.name]:
+        if not _same_as_told(script, told[h.name]):
             out.append(h.name)
     return out
 

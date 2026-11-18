@@ -2796,6 +2796,17 @@ class TestSetup(Base):
         dns = [h.name for h in ok if "dns" in fleet.hosts[h.name].modules]
         self.assertTrue(dns and all(d in changed for d in dns), (dns, changed))       # they must learn paste.<node>
 
+    def test_a_new_release_alone_is_no_change(self):
+        import hashlib
+        a = "#!/bin/bash\n# kiwi-server 2.197.0 — role script for host lychee\nKS_VERSION='2.197.0'\necho hi\n"
+        b = a.replace("2.197.0", "2.198.0")
+        self.assertEqual(cli._fingerprint(a), cli._fingerprint(b))                      # only the version: the same
+        self.assertTrue(cli._same_as_told(b, cli._fingerprint(a)))
+        self.assertFalse(cli._same_as_told(b.replace("hi", "ho"), cli._fingerprint(a)))  # the role itself: changed
+        old = hashlib.sha256(a.encode()).hexdigest()                                     # told before "v2:"
+        self.assertTrue(cli._same_as_told(b, old))
+        self.assertFalse(cli._same_as_told(b.replace("hi", "ho"), old))
+
     def test_a_backup_server_with_a_new_client_is_named_until_it_is_applied(self):
         answers = os.path.join(self.tmp, "answers.json")
         write(answers, json.dumps(self.ANSWERS))

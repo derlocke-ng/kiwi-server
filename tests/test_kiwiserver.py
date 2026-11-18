@@ -2796,6 +2796,17 @@ class TestSetup(Base):
         dns = [h.name for h in ok if "dns" in fleet.hosts[h.name].modules]
         self.assertTrue(dns and all(d in changed for d in dns), (dns, changed))       # they must learn paste.<node>
 
+    def test_a_new_release_alone_is_no_change(self):
+        import hashlib
+        a = "#!/bin/bash\n# kiwi-server 2.197.0 — role script for host lychee\nKS_VERSION='2.197.0'\necho hi\n"
+        b = a.replace("2.197.0", "2.198.0")
+        self.assertEqual(cli._fingerprint(a), cli._fingerprint(b))                      # only the version: the same
+        self.assertTrue(cli._same_as_told(b, cli._fingerprint(a)))
+        self.assertFalse(cli._same_as_told(b.replace("hi", "ho"), cli._fingerprint(a)))  # the role itself: changed
+        old = hashlib.sha256(a.encode()).hexdigest()                                     # told before "v2:"
+        self.assertTrue(cli._same_as_told(b, old))
+        self.assertFalse(cli._same_as_told(b.replace("hi", "ho"), old))
+
     def test_a_backup_server_with_a_new_client_is_named_until_it_is_applied(self):
         answers = os.path.join(self.tmp, "answers.json")
         write(answers, json.dumps(self.ANSWERS))
@@ -8380,7 +8391,7 @@ class TestLogins(Base):
         self.assertEqual([x["site"] for x in modules["downloader"]], ["dl", "jd"])
         self.assertEqual(modules["tor"], [])
         self.assertEqual(sorted(n for n, x in modules.items() if x), [
-            "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
+            "accounts", "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
 
 
 class TestControl(StoreBase):
@@ -9476,6 +9487,10 @@ class TestWeb(WebBase):
         now = time.time()
         os.makedirs(self.c.dir, exist_ok=True)
         self.assertIn("Nothing has been checked yet", self.ask("/status")[1])          # before the first look
+        for page in ("/status", "/login"):                                              # the kiwi as its icon, inline
+            self.assertIn('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,', self.ask(page)[1])
+        from kiwiserver import starter
+        self.assertIn('<link rel=\\"icon\\"', starter.PAGE_SH)
         util.write_text(self.c.health_file, json.dumps({
             "checked": now - 120, "machines": {"on": 2, "of": 2}, "window": "Sun 03:30",
             "services": [{"site": "cloud.papaya.home", "label": "Files (Nextcloud)", "host": "papaya", "admin": False, "ok": False,

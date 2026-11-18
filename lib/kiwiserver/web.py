@@ -31,9 +31,13 @@ from .util import KiwiError
 COOKIE = "kiwi_session"
 COPY_MAX = 64 * 1024 * 1024         # a copy of a network is a few hundred KB; an upload larger than this is refused
 
+# the kiwi icon (data/icons), inline: the pages answer under many names, a path of its own might not pass
+FAVICON = '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij48Y2lyY2xlIGN4PSI2NCIgY3k9IjY0IiByPSI1OCIgZmlsbD0iIzhCNjEwMCIvPjxjaXJjbGUgY3g9IjY0IiBjeT0iNjQiIHI9IjUxIiBmaWxsPSIjRTdCNjQzIi8+PGcgZmlsbD0iIzQ3MkQwMCI+PGVsbGlwc2UgY3g9IjY0IiBjeT0iMzMiIHJ4PSI0IiByeT0iNS42Ii8+PGVsbGlwc2UgY3g9IjkwLjgiIGN5PSI0OC41IiByeD0iNCIgcnk9IjUuNiIgdHJhbnNmb3JtPSJyb3RhdGUoNjAgOTAuOCA0OC41KSIvPjxlbGxpcHNlIGN4PSI5MC44IiBjeT0iNzkuNSIgcng9IjQiIHJ5PSI1LjYiIHRyYW5zZm9ybT0icm90YXRlKDEyMCA5MC44IDc5LjUpIi8+PGVsbGlwc2UgY3g9IjY0IiBjeT0iOTUiIHJ4PSI0IiByeT0iNS42Ii8+PGVsbGlwc2UgY3g9IjM3LjIiIGN5PSI3OS41IiByeD0iNCIgcnk9IjUuNiIgdHJhbnNmb3JtPSJyb3RhdGUoNjAgMzcuMiA3OS41KSIvPjxlbGxpcHNlIGN4PSIzNy4yIiBjeT0iNDguNSIgcng9IjQiIHJ5PSI1LjYiIHRyYW5zZm9ybT0icm90YXRlKDEyMCAzNy4yIDQ4LjUpIi8+PC9nPjxjaXJjbGUgY3g9IjY0IiBjeT0iNjQiIHI9IjIxIiBmaWxsPSIjRkVGNERGIi8+PGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNjQgNjQpIHNjYWxlKDAuOTUpIHRyYW5zbGF0ZSgtNjQgLTY0KSI+PHBhdGggZD0iTTU2IDU0LjVINzJhMiAyIDAgMCAxIDIgMnYzYTIgMiAwIDAgMS0yIDJINTZhMiAyIDAgMCAxLTItMnYtM2EyIDIgMCAwIDEgMi0yWk01NiA2Ni41SDcyYTIgMiAwIDAgMSAyIDJ2M2EyIDIgMCAwIDEtMiAySDU2YTIgMiAwIDAgMS0yLTJ2LTNhMiAyIDAgMCAxIDItMloiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzQ3MkQwMCIgc3Ryb2tlLXdpZHRoPSIzLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvZz48L3N2Zz4=">'
+
 BASE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Kiwi{% endblock %}</title>
+""" + FAVICON + """
 <script>(function(){var t=document.cookie.match(/(?:^|; )kiwi_theme=(light|dark)/);if(t)document.documentElement.dataset.theme=t[1]})()</script>
 <style>
 :root{--bg:#f5f6f7;--fg:#16191b;--card:#fff;--line:#e4e7ea;--line2:#c9ced3;--muted:#667078;--accent:#13805c;--onaccent:#fff;

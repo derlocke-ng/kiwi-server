@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.198.0 — quicker applies, the kiwi on every page
+
+- **An apply pulls only the images a machine does not have yet** (kiwi-stack 0.9.15; the owner:
+  "why do reapply/download everything?"): newer ones come with the update (the weekly timer,
+  `apply --update`). papaya asked 31 registries at every apply, medlar tried codeberg.org three
+  times. Packages already installed are not looked up again either. With `auto_update: off` the
+  apply still brings every image, as there it is the only way they change.
+- **A new release alone is no change of a machine**: `apply --changed` and the app's "changes
+  not applied" compared the whole role script, kiwi-server's version in it, so every release
+  named every machine. Now only what a machine gets counts.
+- **Every page kiwi-server serves has the kiwi as its icon**: the control page, the status page
+  and each machine's page, the game page, the starter's page. It is inside the page, so it shows
+  under every name a page answers at.
+- **A machine's logins list its accounts page** (kiwi-modules 0.88.2), and say why Kanidm's admin
+  has no password there: kiwi-server takes it over for each change and keeps none. Accounts and
+  admins are made under Accounts.
+- **Images nothing uses go when the disk runs full** (kiwi-stack 0.9.14): after an apply, at 75%
+  or more, every image that no container and no module of the stack uses. crumble, a master in
+  RAM, had its 913 MB /var 95% full.
+
 ## 2.197.0 — a module ticked shows its settings at once
 
 - **The control page shows a module's settings as soon as it is ticked**, as the app does (the

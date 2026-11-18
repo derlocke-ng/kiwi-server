@@ -46,6 +46,10 @@ storage:
 urls:
   - "Accounts: https://{{ id_host }} — people set their password there with the link they were given; kiwi-server accounts makes the accounts"
 
+logins:
+  - label: Accounts (Kanidm)
+    note: "Everyone signs in here with their own account. Kanidm's own admin keeps no password: kiwi-server takes it over for each change and forgets it. Make accounts, and admins of Forgejo, Nextcloud and Immich, under Accounts on the control page or in the app."
+
 nginx:
   server_name: "{{ id_host }}"
   # its name on the VPN stays, and sends the browser on to the name it was given

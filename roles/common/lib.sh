@@ -64,6 +64,11 @@ ks_apt_update() {
 }
 ks_apt() { # package...
     ks_is_debian || { ks_warn "not Debian — cannot install: $*"; return 0; }
+    local p missing=0
+    for p in "$@"; do
+        dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing=1
+    done
+    (( missing )) || return 0       # all there: no lists fetched on every apply (newer ones: the OS's own updates)
     ks_apt_update
     # the lock timeout matters: unattended-upgrades may be running on first boot
     apt-get -o DPkg::Lock::Timeout=600 -q -y --no-install-recommends install "$@"
@@ -751,14 +756,66 @@ ks_stack_unpack() {
     } | ks_write "$KS_STACK_ENV" 0644
 }
 
+ks_image_here() { # IMAGE
+    if [[ $KS_STACK_RUNTIME == podman ]]; then
+        podman image exists "$1" 2>/dev/null
+    else
+        docker image inspect "$1" >/dev/null 2>&1
+    fi
+}
+
+ks_stack_prune() {
+    # Images nothing here uses any more, once the disk under them runs full: a master in RAM
+    # (crumble, 18 Nov 2026) had 690 MB of images in its 913 MB, two of them from modules it no
+    # longer ran. What a container or a module of the stack uses stays; an image a script pulls
+    # for itself comes back by itself when it is needed. Old copies go always (as `update` does).
+    [[ $KS_STACK_RUNTIME == podman ]] || return 0
+    podman image prune -f >/dev/null 2>&1 || true
+    local root use keep img id gone=0
+    root=$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null) || return 0
+    use=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc 0-9)
+    (( ${use:-0} >= 75 )) || return 0
+    keep=" $(podman ps -a --format '{{.ImageID}}' 2>/dev/null | tr '\n' ' ' || true) "
+    for img in "${KS_STACK_IMAGES[@]}"; do
+        keep+="$(podman image inspect --format '{{.Id}}' "$img" 2>/dev/null || true) "
+    done
+    while read -r id; do
+        id=${id#sha256:}
+        [[ -n $id && $keep != *" $id "* ]] || continue
+        podman rmi "$id" >/dev/null 2>&1 && gone=$((gone + 1))
+    done < <(podman images -q --no-trunc)
+    if (( gone )); then
+        ks_say "the disk under the images was ${use}% full: $gone image(s) that nothing here uses removed"
+    fi
+    return 0
+}
+
 ks_stack_pull() {
     # Every image before the first start, one after the other with retries and a
     # visible name: a target that starts a dozen cold pulls at once on a home
     # uplink times units out and the stack looks up while nothing runs.
-    local img n ok
+    # An image this machine has already is not asked for again: newer ones come with the update
+    # (the weekly timer, kiwi-stack update, kiwi-server apply --update), so an apply that changes
+    # a setting does not wait for every registry (the owner, 18 Nov 2026: 31 images on papaya at
+    # every apply). With auto_update off the apply is how images change: then every one is asked.
+    local img n ok want=()
     [[ ${#KS_STACK_IMAGES[@]} -gt 0 ]] || return 0
-    ks_say "pulling ${#KS_STACK_IMAGES[@]} images (the first run of a stack; later runs are quick)"
     for img in "${KS_STACK_IMAGES[@]}"; do
+        if [[ ${KS_STACK_AUTO_UPDATE:-registry} == registry ]] && ks_image_here "$img"; then
+            continue
+        fi
+        want+=("$img")
+    done
+    if [[ ${#want[@]} -eq 0 ]]; then
+        ks_say "all ${#KS_STACK_IMAGES[@]} images are here (newer ones come with the update: kiwi-stack update)"
+        return 0
+    fi
+    if [[ ${KS_STACK_AUTO_UPDATE:-registry} == registry ]]; then
+        ks_say "pulling ${#want[@]} of ${#KS_STACK_IMAGES[@]} images: the ones this machine does not have yet"
+    else
+        ks_say "pulling ${#want[@]} images (auto_update is off: the apply brings the newer ones)"
+    fi
+    for img in "${want[@]}"; do
         ok=0
         for n in 1 2 3; do
             if [[ $KS_STACK_RUNTIME == podman ]]; then
@@ -939,6 +996,7 @@ ks_stack_apply() {
     fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
+    ks_stack_prune
     for unit in "${KS_STACK_UNITS[@]}"; do
         systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
         if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then

@@ -29,9 +29,9 @@ run included. Compared command by command and setting by setting.
 | A Services page: every service under its machine, with login, answer and hidden-service address (2.117.0); the menu in groups | the app keeps its own layout (the owner prefers it); hidden-service addresses are on a machine's page since 2.118.0 |
 | Hidden services: only sites marked usable over Tor are offered (2.120.0) | **built** in 2.120.0 in both: the page's list and the app's dialog show the same sites |
 | Take in a waiting starter machine (its address and setup code) (2.123.0) | **built** in 2.141.0: the app's menu, "Take in a waiting machine…", and `kiwi-server take-in`; the handshake is one function for the page and the command |
-| Preview (`plan`) | open |
-| Update everything (`apply --update`) | open |
-| Remove a phone or laptop (`enroll --remove`), show its QR code again | open |
+| Preview (`plan`) | **built** in 2.92.0: a machine's menu, "Preview what Apply would change" |
+| Update everything (`apply --update`) | **built** in 2.92.0: the main menu, "Update everything…" |
+| Remove a phone or laptop (`enroll --remove`), show its QR code again | **built** in 2.92.0: "Add a phone or laptop…" lists them with "Show its code" and "Remove"; on the page the config downloads from the control node since 2.209.0 |
 | "Leave NAME out" while keys are replaced (`rotate --waive`) | **built** in 2.142.0: "A computer was lost or stolen…" says which machines still wait and offers "Leave NAME out" for the keys and the secrets |
 | Activity: tasks and who did what | **built** in 2.147.0: the app's menu, "Activity…", and `kiwi-server control activity` |
 

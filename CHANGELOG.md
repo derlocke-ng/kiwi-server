@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.210.0 — the public names in the check
+
+- **`kiwi-server check` asks every public name too**, from this computer as a stranger reaches it,
+  its certificate checked as a browser does: a public name was left out since 2.202.0 (it is not
+  in the network's own DNS). `--no-public` leaves them out. On the test network: 8 public names, all
+  answering with valid certificates.
+- The page-parity notes say what the app has had since 2.92.0 (Preview, Update everything, the
+  devices' codes and removal).
+
 ## 2.209.0 — an update with little room
 
 - **An image update on a nearly full disk takes one image at a time** (kiwi-stack 0.9.16): it pulls

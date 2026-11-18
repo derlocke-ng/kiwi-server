@@ -2466,10 +2466,39 @@ fi
 """
 
 
+def public_names(r, domain):
+    """Every public name of the fleet's sites: not under its own domain, not a VPN alias."""
+    return sorted({n for found in r._names.values() for n in found
+                   if not n.endswith("." + domain) and n not in r.aliases and "." in n and "*" not in n})
+
+
+def public_answer(name, port=443, timeout=15):
+    """What a public name answers here over HTTPS, its certificate checked as a browser does: the
+    status code, or what went wrong (no name, the certificate, no answer)."""
+    import http.client
+    import socket
+    import ssl
+    try:
+        socket.getaddrinfo(name, port)
+    except OSError:
+        return "no-name"
+    conn = http.client.HTTPSConnection(name, port, timeout=timeout, context=ssl.create_default_context())
+    try:
+        conn.request("GET", "/", headers={"User-Agent": "kiwi-server check"})
+        return str(conn.getresponse().status)
+    except ssl.SSLCertVerificationError as e:
+        return "certificate:" + str(getattr(e, "verify_message", "") or "not valid").replace(" ", "-")
+    except (OSError, http.client.HTTPException):
+        return "no-answer"
+    finally:
+        conn.close()
+
+
 def cmd_check(args):
     """After an update: from each master's Pi-hole container (the fleet's own resolver), every
     name of the fleet over HTTPS, a fleet name and one outside in DNS, and where its exit
-    leaves. Read-only; says what fails."""
+    leaves; then from here every public name as a stranger reaches it, its certificate checked.
+    Read-only; says what fails."""
     fleet, roles, ms = load(args)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
     records = r.dns_records()
@@ -2511,6 +2540,15 @@ def cmd_check(args):
             print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", h.name, kind, name, value))
             if not ok:
                 failed.append("%s %s" % (kind, name))
+    # the public names, asked the way a stranger asks them: from here, through the Internet's DNS, and
+    # with the Internet's certificates (a public name is never one of the network's own, 2.202.0)
+    domain = next((h.domain for h in fleet.hosts.values() if h.domain), "home")
+    for name in public_names(r, domain) if not getattr(args, "no_public", False) else []:
+        value = public_answer(name)
+        ok = value[:1] in "234"
+        print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", "here", "https", name, value))
+        if not ok:
+            failed.append("https %s" % name)
     if failed:
         raise KiwiError("%d checks failed" % len(failed))
 
@@ -4597,6 +4635,7 @@ def build_parser():
     s.add_argument("--via", metavar="NODE|IP", help="no tunnel: a static route to a gateway node on the LAN")
     s.add_argument("--name", default="kiwi", help="the interface and zone name on the router (default kiwi)")
     s = sub("check", cmd_check); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s.add_argument("--no-public", action="store_true", help="leave out the public names (asked from this computer)")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the master")
     s = sub("plan", cmd_plan); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")

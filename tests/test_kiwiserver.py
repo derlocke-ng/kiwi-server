@@ -3238,6 +3238,25 @@ class TestCheck(Base):
         self.assertRegex(out, r"FAILED gate +dns +quad9.net none")
         self.assertIn("NAMES=", seen[0])
 
+    def test_check_asks_the_public_names_from_here(self):
+        names = types.SimpleNamespace(_names={"gate.kiwi": ["gate.kiwi", "wg.gate.kiwi", "relay.example.org"],
+                                              "sh3.kiwi": ["cloud.sh3.kiwi", "status.example.org", "cloud.example.org"]},
+                                      aliases={"cloud.example.org"})
+        self.assertEqual(cli.public_names(names, "kiwi"), ["relay.example.org", "status.example.org"])   # not the VPN's own
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()}}})
+        answers = {"relay.example.org": "200", "status.example.org": "certificate:self-signed-certificate"}
+        with mock.patch.object(remote, "run", lambda *a, **kw: b"dns gate.kiwi 10.8.0.1\n"), \
+                mock.patch.object(remote, "reach", lambda h, o=None: "core@gate"), \
+                mock.patch.object(cli, "public_names", lambda r, d: sorted(answers)), \
+                mock.patch.object(cli, "public_answer", lambda n: answers[n]):
+            rc, out, err = TestManage.run_cli(self, "check", f.path)
+            self.assertRegex(out, r"ok +here +https relay.example.org 200")
+            self.assertRegex(out, r"FAILED here +https status.example.org certificate:self-signed-certificate")
+            self.assertEqual(rc, 1)
+            rc, out, err = TestManage.run_cli(self, "check", f.path, "--no-public")
+            self.assertNotIn(" here ", out)
+
 
 class TestAccess(Base):
     """Who may reach what: the VPN's groups and the linked networks, in the same words."""

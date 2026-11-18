@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.206.0 — a group and a linked network, on the page and in the app
+
+- *Who may reach what* on the control page and in the app says that a group can be given a
+  linked network by its name (`kiwi2`) next to single ports, as `kiwi-server access` can since
+  2.205.0; the network docs list it.
+- The federation drill runs both ways: B's DNS is found from B's mesh, and it says which group
+  its client stands in. Run from kiwi's side (a client of kiwi opening kiwi2's damson), a group
+  without `kiwi2` was refused and one with it got through.
+
 ## 2.205.0 — the website, and what federation is for
 
 - **Every page the network shows wears the control page's frame** (the owner: "why don't you use

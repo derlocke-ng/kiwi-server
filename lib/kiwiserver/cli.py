@@ -2,6 +2,7 @@
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
 import concurrent.futures
+import threading
 import ipaddress
 import getpass
 import hashlib
@@ -2419,20 +2420,31 @@ def cmd_apply(args):
     check(fleet, roles, ms, hosts)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
     failed = []
-    servers = None
     update = getattr(args, "update", False)
+    # every role script first, one after the other (the renderer is not shared between threads), and the
+    # rings once: then the machines themselves, several at once
+    servers = None
+    if any(unlock.wanted(h) for h in hosts):
+        servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+    scripts = {}
     for h in hosts:
+        try:
+            scripts[h.name] = r.script(h)[0]
+        except KiwiError as e:
+            failed.append(h.name)
+            print("error: %s: %s" % (h.name, e), file=sys.stderr)
+    book = threading.Lock()         # the fleet's own files: one machine's bookkeeping at a time
+
+    def one(h, prefix):
         if getattr(args, "new_host_key", False) and args.ssh:
             adoptmod.forget_host_key(args.ssh)      # installed anew: the key it showed before is not its key
         tgt = remote.reach(h, args.ssh)
         try:
-            if servers is None and unlock.wanted(h):
-                servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
             if not args.no_run and h.target == "ucore":
                 coreos_t.wait_for_ucore(h.name, tgt)    # a fresh one restarts twice by itself first
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
-            script, _b = r.script(h)
+            script = scripts[h.name]
             if not args.no_run and backupmod.carries_wireguard(h) and backupmod.put_back_wireguard(h, tgt):
                 util.say("%s: its WireGuard identity is back from the fleet's copy" % h.name)
             if not args.no_run and h.target == "coreos-ram" and ram_t.put_back(h, tgt):
@@ -2441,7 +2453,7 @@ def cmd_apply(args):
             remote.put(tgt, script.encode(), "/var/lib/kiwi-server/role.sh", "0700")
             if args.no_run:
                 util.say("%s: in place at /var/lib/kiwi-server/role.sh — run it with: sudo bash /var/lib/kiwi-server/role.sh --force" % h.name)
-                continue
+                return
             if os.environ.get("KIWI_CONTROL_HOST") == h.name:
                 # its disk first (over SSH, nothing restarts): the starter's TPM gives way to the rings or the console key
                 if unlock.wanted(h):
@@ -2458,14 +2470,14 @@ def cmd_apply(args):
                                     + " && { [ ! -x %s ] || %s; }" % (startermod.DONE, startermod.DONE)))
                 util.say("%s: applying itself, detached (this page may drop for a moment); on the machine: "
                          "journalctl -u kiwi-self-apply -f" % h.name)
-                continue
+                return
             util.say("%s: applying (the output below is the machine's)" % h.name)
-            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force")
+            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force", prefix=prefix)
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
             if update:      # an apply fetches newer images; this brings them into use (only what changed restarts)
                 util.say("%s: newer images into use" % h.name)
-                if remote.run_stream(tgt, UPDATE_IMAGES) != 0:
+                if remote.run_stream(tgt, UPDATE_IMAGES, prefix=prefix) != 0:
                     util.warn("%s: the images were not updated — sudo kiwi-stack update on the machine" % h.name)
             if unlock.wanted(h):
                 try:
@@ -2489,18 +2501,31 @@ def cmd_apply(args):
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)
             tgt = sshport.ensure(h, tgt)     # admin.ssh_port: moved without locking anyone out
-            if sshca.exists(fleet):
+            with book:
+                sca = sshca.exists(fleet)
+            if sca:
                 sshca.install(fleet, h, tgt)
                 util.say("%s: its host certificate is signed, its sshd takes the fleet's user certificates" % h.name)
             tgt = addressmod.settle(h, tgt)     # last: the connection goes away with the old address
-            record_applied(fleet, h.name)
-            record_backup_clients(fleet, h)
-            if not args.no_run:
-                record_rendered(fleet, h.name, script)
+            with book:
+                record_applied(fleet, h.name)
+                record_backup_clients(fleet, h)
+                if not args.no_run:
+                    record_rendered(fleet, h.name, script)
             util.say("%s: applied" % h.name)
         except KiwiError as e:
-            failed.append(h.name)
+            with book:
+                failed.append(h.name)
             print("error: %s: %s" % (h.name, e), file=sys.stderr)
+
+    for wave in apply_waves(fleet, roles, [h for h in hosts if h.name in scripts]):
+        if len(wave) == 1 or args.ssh:
+            for h in wave:
+                one(h, "")
+            continue
+        util.say("at once: %s" % ", ".join(h.name for h in wave))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(wave))) as pool:
+            list(pool.map(lambda h: one(h, h.name), wave))
     for server, new in sorted(backup_untold(fleet).items()):
         util.warn("%s does not take the backups of %s yet: kiwi-server apply %s %s"
                   % (server, ", ".join(new), shown_path(fleet.path), server))
@@ -2510,6 +2535,19 @@ def cmd_apply(args):
                   % (", ".join(others), "s" if len(others) == 1 else "ve", shown_path(fleet.path)))
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
+
+
+def apply_waves(fleet, roles, hosts):
+    """The machines to apply in turns: the masters (and their standbys) one after the other; then the
+    machines that answer for names or open disks (dns, tang), at once; then all the rest at once; the
+    control node that runs this last, as its apply restarts what runs it."""
+    me = os.environ.get("KIWI_CONTROL_HOST")
+    masters = [h for h in hosts if h.standby_of or (h.role in roles and roles[h.role].node_type == "master")]
+    rest = [h for h in hosts if h not in masters and h.name != me]
+    first = [h for h in rest if {"dns", "tang"} & set(h.modules or [])]
+    others = [h for h in rest if h not in first]
+    waves = [[h] for h in masters] + [first, others, [h for h in hosts if h.name == me]]
+    return [w for w in waves if w]
 
 
 def cmd_adopt(args):

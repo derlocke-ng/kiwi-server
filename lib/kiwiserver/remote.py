@@ -7,6 +7,7 @@ import os
 import shlex
 import socket
 import subprocess
+import threading
 import time
 
 from .util import KiwiError
@@ -226,10 +227,24 @@ def run(tgt, script, data=None, runner=subprocess.run, options=()):
     return r.stdout
 
 
-def run_stream(tgt, script, runner=subprocess.run):
+_PRINT = threading.Lock()
+
+
+def run_stream(tgt, script, runner=subprocess.run, prefix=""):
     """Like run(), but the output goes straight to the terminal (a role
-    script takes minutes and talks)."""
+    script takes minutes and talks). `prefix`: each line under the machine's name, for
+    several machines at once."""
     argv = ["ssh"] + ssh_opts() + [tgt, "sudo sh -c " + shlex.quote(script)]
+    if prefix:
+        try:
+            p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True, errors="replace")
+        except FileNotFoundError:
+            raise KiwiError("ssh is not installed")
+        for line in p.stdout:
+            with _PRINT:
+                print("%s | %s" % (prefix, line.rstrip("\n")), flush=True)
+        return p.wait()
     try:
         r = runner(argv, stdin=subprocess.DEVNULL)
     except FileNotFoundError:

@@ -181,6 +181,11 @@ kiwi-server apply fleet.yaml --changed          # every machine with changes not
 kiwi-server apply fleet.yaml medlar --changed   # medlar, and every other one the change reached
 ```
 
+**Several machines at once.** An apply of several machines goes in turns: the masters
+first, one after the other; then the machines that answer for names or open disks
+(`dns`, `tang`), together; then all the others together, up to six at a time; the control
+node last when it applies itself. Each line of a machine's output starts with its name.
+
 The app's **Apply** offers them along; the page has **Save & apply** in the
 settings and **Apply all** on Home under "Changes not applied yet". The GUI has the same
 two actions on the host page.

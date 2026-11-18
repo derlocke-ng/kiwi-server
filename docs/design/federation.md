@@ -31,6 +31,17 @@ The sharing master's firewall lets the partner's `from` reach only the shared no
 on 443 for a service; the node's nginx admits the partner only to the shared names. Nothing is
 shared that is not listed.
 
+## What each side sees of the other
+
+A network's `federation.yaml` says what it opens to a partner, not what the partner opens to it:
+that is in the partner's file. So each master's DNS says it over the link. It answers a TXT record
+`<the partner's mesh>._kiwi-share.<its domain>` (for example `10-9-0-0-16._kiwi-share.internal`)
+with the names from that partner's `share` (`-` when it opens nothing), and
+`_kiwi-master.<its domain>` with its own name. The partner's status asks both from its master
+(the master forwards the partner's domain to the partner's DNS already), and the picture of the
+network draws what the partner opens under the partner's box. These are names, not secrets: anyone
+on the partner's mesh who asks gets them.
+
 ## Names and certificates
 
 Each Pi-hole forwards the partner's domain to the partner's DNS over the link. Services keep

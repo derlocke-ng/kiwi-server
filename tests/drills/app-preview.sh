@@ -15,6 +15,7 @@ cat > "$r/bin/kiwi-server" <<STAND
 #!/bin/bash
 case "\${1:-}" in
     list|status|secrets|onion) exec python3 "$here/madeup.py" "\$@" ;;
+    agent) exit 1 ;;     # no resident one: every read goes to the made-up answers above
     *) exec "$root/bin/kiwi-server" "\$@" ;;
 esac
 STAND

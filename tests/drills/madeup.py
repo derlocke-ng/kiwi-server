@@ -10,7 +10,7 @@ GB = 1048576
 
 def facts(load, cpus, mem, disks, running, backup=None, up=400000):
     f = {"applied": "2026-11-15T06:10:00+00:00", "role_failed": "", "kernel": "6.17.7-200.fc43.x86_64", "clock_synced": True,
-         "skew": 0, "reboot": False, "failed_units": [], "runtime": "podman",
+         "skew": 0, "reboot": False, "failed_units": [], "runtime": "podman", "opened": {}, "partner_masters": {},
          "os": "Fedora CoreOS 43", "uptime": up, "load": [load, load, load], "cpus": cpus,
          "memory": {"total": mem[0] * GB, "available": int((mem[0] - mem[1]) * GB)},
          "disks": [{"mount": m, "size": s * GB, "used": int(u * GB)} for m, s, u in disks],
@@ -69,7 +69,10 @@ def answers():
         h["site"] = "friend" if h["name"] == "kumquat" else "home"
     hosts.append(dict(next(h for h in hosts if h["name"] == "sorbet"), name="sorbet-b", standby_of="sorbet", address="192.168.1.70"))
     said.append(dict(next(w for w in said if w["host"] == "sorbet"), host="sorbet-b", target="core@192.168.1.70"))
-    linked = [{"name": "kiwi2", "mesh": "10.10.0.0/16", "exit": False, "internet": False, "shared": 1}]
+    master = next(w for w in said if w["host"] == "sorbet")
+    master["facts"] = dict(master["facts"], opened={"kiwi2": ["git.damson", "cloud.damson", "crumble:22"]},
+                           partner_masters={"kiwi2": "crumble.internal"})
+    linked = [{"name": "kiwi2", "mesh": "10.10.0.0/16", "exit": False, "internet": False, "shared": 2, "reach": ["cloud.papaya", "git.medlar"]}]
     sources = [{"name": "kiwi-modules-personal", "url": "https://github.com/someone/kiwi-modules-personal",
                 "commit": "d8464b8b8ffbe0ba9848fe1e2009c0e6f252204f", "tag": "v0.1.0", "modules": ["smartfritz"]}]
     return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts, "module_sources": sources,

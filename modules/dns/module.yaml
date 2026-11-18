@@ -16,6 +16,7 @@ dependencies:
 derived:
   shares_proxy_namespace: "{{ 'yes' if network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else '' }}"
   web_port_effective: "{{ web_port or (8081 if (network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode) else 80) }}"
+  federation_ask: "{{ 'yes' if node_type == 'master' and (module_config.get('vpn-server') or {}).get('federation') else '' }}"
 
 network:
   listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp"]
@@ -41,6 +42,7 @@ templates:
   blocklist_script: blocklist.sh.j2
   blocklist_service: blocklist.service.j2
   blocklist_timer: blocklist.timer.j2
+  federation_ask: federation-ask.j2
 
 # the fleet's DNS records go in as FTLCONF_dns_hosts (pihole.toml dns.hosts):
 # Pi-hole 6 regenerates hosts/custom.list itself, a file put there is ignored.
@@ -58,6 +60,8 @@ outputs:
   blocklist_script: { path: "kiwi/pihole-blocklist.sh", mode: 0755 }
   blocklist_service: { kind: host_unit, name: "{{ container_prefix }}-pihole-blocklist.service" }
   blocklist_timer: { kind: host_unit, name: "{{ container_prefix }}-pihole-blocklist.timer" }
+  # the linked networks whose DNS kiwi-server's status asks what they open to this one
+  federation_ask: { path: "kiwi/federation-ask", mode: 0644, when: federation_ask }
 
 storage:
   bind_mounts:

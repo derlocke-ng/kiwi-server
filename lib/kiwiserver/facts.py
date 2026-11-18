@@ -74,6 +74,17 @@ if [ -f /etc/kiwi-server/stack.env ]; then
     if [ -f "${STACK_DIR:-}/${STACK_PREFIX:-km}-onion/var/kiwi-check" ]; then
         while read -r line; do kv onion_check "$line"; done < "${STACK_DIR}/${STACK_PREFIX:-km}-onion/var/kiwi-check"
     fi
+    # a master: what each linked network opens to this one, as that network's DNS says over the
+    # link (a TXT record it keeps for this network's mesh; empty: it does not say, "-": nothing)
+    if [ -f "${STACK_DIR:-}/kiwi/federation-ask" ]; then
+        while read -r pn pd lb; do
+            [ -n "$lb" ] || continue
+            kv opened "$pn $(timeout 8 "$rt" exec "${STACK_PREFIX:-km}-pihole" dig +short +time=2 +tries=1 @127.0.0.1 TXT \
+                "$lb._kiwi-share.$pd" </dev/null 2>/dev/null | tr -d '"' | tr '\n' ' ')"
+            kv partner_master "$pn $(timeout 8 "$rt" exec "${STACK_PREFIX:-km}-pihole" dig +short +time=2 +tries=1 @127.0.0.1 TXT \
+                "_kiwi-master.$pd" </dev/null 2>/dev/null | tr -d '"' | head -n 1)"
+        done < "${STACK_DIR}/kiwi/federation-ask"
+    fi
     "$rt" ps -a --format 'container={{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null
     for s in ${STACK_SERVICES:-}; do
         if [ -e "/run/kiwi-stack/sleeping/$s" ]; then
@@ -142,7 +153,7 @@ def _int(value, default=0):
 
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
-    raw, disks, containers, units, certificates, repos, copies, onion = {}, {}, {}, [], [], [], [], []
+    raw, disks, containers, units, certificates, repos, copies, onion, opened, partner_masters = {}, {}, {}, [], [], [], [], [], {}, {}
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -170,6 +181,14 @@ def parse(data, local_now=None):
             if len(parts) == 4 and parts[1].endswith(".onion"):
                 onion.append({"service": parts[0], "address": parts[1], "code": parts[2], "ok": parts[2] != "000",
                               "at": _int(parts[3])})
+        elif key == "opened":
+            name, _, what = value.partition(" ")
+            words = what.split()
+            opened[name] = None if not words else [w for w in words if w != "-"]
+        elif key == "partner_master":
+            name, _, master = value.partition(" ")
+            if master.strip():
+                partner_masters[name] = master.strip()
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
@@ -207,6 +226,9 @@ def parse(data, local_now=None):
         "failed_units": [u for u in raw.get("failed", "").split() if not _HEALTHCHECK_UNIT.match(u)
                          and u[:-len(".service")] not in {s["name"] for s in services if s["asleep"]}],
         "runtime": raw.get("runtime", ""),
+        # a master: what each linked network opens to this one ({name: [names]}; None: it does not say)
+        "opened": opened,
+        "partner_masters": partner_masters,     # and the name of each one's master
         "services": services,
         "running": sum(1 for s in services if s["stack"] and s["running"]),
         "expected": sum(1 for s in services if s["stack"] and not s["asleep"]),     # asleep: not missing

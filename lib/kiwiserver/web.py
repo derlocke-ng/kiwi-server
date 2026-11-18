@@ -40,13 +40,13 @@ BASE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 """ + FAVICON + """
 <script>(function(){var t=document.cookie.match(/(?:^|; )kiwi_theme=(light|dark)/);if(t)document.documentElement.dataset.theme=t[1]})()</script>
 <style>
-:root{--bg:#f5f6f7;--fg:#16191b;--card:#fff;--line:#e4e7ea;--line2:#c9ced3;--muted:#667078;--accent:#13805c;--onaccent:#fff;
+:root{--bg:#f5f6f7;--fg:#16191b;--card:#fff;--line:#e4e7ea;--line2:#c9ced3;--muted:#667078;--accent:#13805c;--onaccent:#fff;--fed:#7a4fd0;
 --tint:#e7f4ee;--hover:#f0f2f4;--off:#9aa2a8;
 --ok:#13805c;--warn:#b26b00;--bad:#c4332b;--okbg:#e5f5ed;--warnbg:#fcf1de;--badbg:#fdeceb}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0c0e0f;--fg:#e7e9ea;--card:#141719;--line:#23282b;--line2:#353b3f;--muted:#8a9297;--accent:#38c793;--onaccent:#06150e;
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0c0e0f;--fg:#e7e9ea;--card:#141719;--line:#23282b;--line2:#353b3f;--muted:#8a9297;--accent:#38c793;--onaccent:#06150e;--fed:#a98bf0;
 --tint:#16251f;--hover:#1a1e21;--off:#5e666b;
 --ok:#38c793;--warn:#f0a945;--bad:#f2665c;--okbg:#10241c;--warnbg:#2a2114;--badbg:#2c1715}}
-:root[data-theme=dark]{--bg:#0c0e0f;--fg:#e7e9ea;--card:#141719;--line:#23282b;--line2:#353b3f;--muted:#8a9297;--accent:#38c793;--onaccent:#06150e;
+:root[data-theme=dark]{--bg:#0c0e0f;--fg:#e7e9ea;--card:#141719;--line:#23282b;--line2:#353b3f;--muted:#8a9297;--accent:#38c793;--onaccent:#06150e;--fed:#a98bf0;
 --tint:#16251f;--hover:#1a1e21;--off:#5e666b;
 --ok:#38c793;--warn:#f0a945;--bad:#f2665c;--okbg:#10241c;--warnbg:#2a2114;--badbg:#2c1715}
 {% if brand_accent %}:root{--accent:{{ brand_accent }}}{% endif %}
@@ -131,10 +131,15 @@ text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82
 .pic rect.zone{fill:var(--fg);fill-opacity:.035;stroke:var(--line2);stroke-dasharray:2 4}.pic text.zl{fill:var(--muted);font:400 11px system-ui,sans-serif}
 .pic circle.ring{opacity:.22}
 .pic text{fill:var(--fg);font:600 14px system-ui,sans-serif}.pic text.c{fill:var(--muted);font-weight:400;font-size:11px}
-.pic path{fill:none;stroke:var(--line2);stroke-width:1.8;stroke-linecap:round}.pic path.up{stroke:var(--ok);stroke-opacity:.75}
-.pic path.off{stroke:var(--off);stroke-dasharray:5 5}
-.pic path.side{stroke:var(--muted);stroke-dasharray:6 5;stroke-width:1.4}.pic rect.sb{stroke-dasharray:6 4}
-.pic rect.ln{stroke:var(--accent);stroke-dasharray:2 3}.pic circle.lk{fill:var(--accent)}
+.pic path{fill:none;stroke:var(--line2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.pic path.stub.up,.pic path.away.up{stroke:var(--ok);stroke-opacity:.8}.pic path.stub.off,.pic path.away.off{stroke:var(--off)}
+.pic path.stub.off{stroke-dasharray:4 4}.pic path.away{stroke-dasharray:7 5}.pic path.bar,.pic path.drop{stroke-width:1.6}
+.pic path.standby{stroke:var(--muted);stroke-dasharray:6 5;stroke-width:1.4}.pic rect.sb{stroke-dasharray:6 4}
+.pic path.link{stroke:var(--fed);stroke-width:2.2;stroke-dasharray:9 3 2 3}.pic path.reach{stroke:var(--fed);stroke-width:1.5;stroke-dasharray:1 4}
+.pic rect.ln{stroke:var(--fed);stroke-dasharray:2 3}.pic rect.pt{stroke:var(--fed);stroke-opacity:.6}
+.pic path.fed{stroke:var(--fed);stroke-opacity:.7;stroke-width:1.6}.pic rect.zone.fz{stroke:var(--fed);stroke-opacity:.6}.pic circle.lk{fill:var(--fed)}.pic rect.zone.away{stroke-dasharray:7 5}
+.pic rect.chip{fill:var(--fed);stroke:none}.pic text.chip{fill:#fff;font:600 9.5px system-ui,sans-serif}
+.pic .x{transition:opacity .15s}.pic svg.focus .x:not(.hi){opacity:.15}.pic path.reach.hi{stroke-width:2.4}
 .pic circle{fill:var(--off)}.pic circle.ok{fill:var(--ok)}.pic circle.warn{fill:var(--warn)}.pic circle.bad,.pic circle.down{fill:var(--bad)}
 .what{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:start;margin-top:8px}
 .what p{margin:0}ul{margin:6px 0;padding-left:20px}li{margin:3px 0}
@@ -479,7 +484,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 {% for m in fresh %}{{ step(m, tok) }}{% endfor %}{% endif %}
 
 {% if wide %}<h2>How they are linked</h2><div class="card pic"><div class="wide">{{ wide }}</div><div class="narrow">{{ narrow }}</div>
-<p class="muted small" style="margin:10px 0 0">Every machine holds a link to the master. A green line: the machine answers. A grey, broken one: it does not.</p></div>{% endif %}
+<p class="muted small" style="margin:10px 0 0">Every machine holds a link to the master. A green line: the machine answers; a grey, broken one: it does not. Dashed: over the Internet, from another site. Violet dots: what a linked network may reach here; in violet below it, what it opens to you. Point at a machine or a network to see its lines.</p></div>{% endif %}
 <h2>Go on</h2><div class="tiles">
 <a class="tile" href="/machines"><b>Machines</b><span>How each one is, add one, update them all</span></a>
 <a class="tile" href="/services"><b>Services</b><span>Open what runs on them, with its login</span></a>
@@ -1551,10 +1556,11 @@ def stats(machines, devices):
 
 
 def picture(machines, devices=0, per_row=4, linked=()):
-    """The network as it is (SVG; the app draws the same, both from picture.layout): the master out
-    on the Internet with its standby and the networks linked to it, the machines in a zone per site,
-    and the tunnel each holds to the master, green while it answers. `per_row=1` is the narrow one
-    for a phone: a list with a branch to each machine."""
+    """The network as a family tree (SVG; the app draws the same, both from picture.layout): the
+    masters on top, this network's with its standbys and the networks linked to it, the machines
+    under it in a zone per site, a dotted line from each linked network to what it may reach here.
+    Pointing at a machine or a linked network shows its lines and dims the rest. `per_row=1` is
+    the narrow one for a phone: a list with a branch to each machine."""
     from . import picture as picmod
     masters = [m for m in machines if m["role"] == "master" and not m.get("standby_of")]
     rest = [m for m in machines if m["role"] and m["role"] != "master"]
@@ -1566,43 +1572,72 @@ def picture(machines, devices=0, per_row=4, linked=()):
     mcap = "master" + (" · %d %s on its VPN" % (devices, "device" if devices == 1 else "devices") if devices else "")
     standbys = [dict(name=m["name"], state=m["state"], cap="standby: takes over when %s is gone" % master["name"])
                 for m in machines if m.get("standby_of") == master["name"]]
-    nets = [dict(name=n["name"], state="", cap="linked network · %s%s" % (n.get("mesh") or "", " · its way out" if n.get("exit") else ""))
+    said = (master.get("facts") or {}).get("opened") or {}        # what each opens to us, as its DNS told the master
+    masters_of = (master.get("facts") or {}).get("partner_masters") or {}
+    nets = [dict(name=n["name"], state="", reach=list(n.get("reach") or []), theirs=said.get(n["name"]),
+                 cap="linked network · %s%s%s" % (masters_of.get(n["name"]) or n.get("mesh") or "", " · its way out" if n.get("exit") else "",
+                                                  " · opens nothing to you" if said.get(n["name"]) == [] else ""))
             for n in linked or []]
     others = [m for m in masters[1:]] + rest
-    lay = picmod.layout(dict(name=master["name"], state=master["state"], cap=mcap),
-                        [dict(name=m["name"], state=m["state"], cap=cap(m), site=m.get("site") or "home",
-                              up=m["state"] in ("ok", "warn", "bad")) for m in others],
-                        standbys, nets, width=340 if per_row == 1 else per_row * (picmod.BW + picmod.GAP) + 120,
-                        narrow=per_row == 1)
+    rows = [dict(name=m["name"], state=m["state"], cap=cap(m), site=m.get("site") or "home", up=m["state"] in ("ok", "warn", "bad"))
+            for m in others]
+    lay = picmod.layout(dict(name=master["name"], state=master["state"], cap=mcap), rows, standbys, nets,
+                        width=340 if per_row == 1 else picmod.fit_width(rows, nets), narrow=per_row == 1)
+    allhosts = " ".join(b["name"] for b in lay["boxes"] if b["kind"] != "linked")
+    allnets = " ".join(n["name"] for n in nets)
+    shares = {n["name"]: n["reach"] for n in nets}
     out = []
     for z in lay["zones"]:
-        out.append('<rect class="zone" x="%d" y="%d" width="%d" height="%d" rx="14"/><text class="zl" x="%d" y="%d">%s</text>'
-                   % (z["x"], z["y"], z["w"], z["h"], z["x"] + 14, z["y"] + 18, esc(z["label"])))
-    if lay["trunk"]:
-        tx, y1, y2 = lay["trunk"]
-        out.append('<path d="M%.1f %.1f V%.1f"/>' % (tx, y1, y2))
-    for x1, y1, x2, y2, _kind in lay["sides"]:
-        out.append('<path class="side" d="M%.1f %.1f L%.1f %.1f"/>' % (x1, y1, x2, y2))
-    for sx, sy, ex, ez, ey, up in lay["tunnels"]:
-        mid = (sy + ez) / 2
-        out.append('<path class="%s" d="M%.1f %.1f C%.1f %.1f %.1f %.1f %.1f %.1f V%.1f"/>'
-                   % ("up" if up else "off", sx, sy, sx, mid, ex, mid, ex, ez, ey))
-    for tx, y, ex, up in lay["branches"]:
-        out.append('<path class="%s" d="M%.1f %.1f Q%.1f %.1f %.1f %.1f H%.1f"/>'
-                   % ("up" if up else "off", tx, y - 10, tx, y, tx + 10, y, ex))
+        out.append('<rect class="zone%s" x="%d" y="%d" width="%d" height="%d" rx="14"/><text class="zl" x="%d" y="%d">%s</text>'
+                   % (" away" if z["away"] else " fz" if z.get("partner") else "", z["x"], z["y"], z["w"], z["h"], z["x"] + 14,
+                      z["y"] + 18, esc(z["label"])))
+    for ln in lay["lines"]:
+        d = " ".join(p[0] + " ".join("%.1f" % v for v in p[1:]) for p in ln["d"])
+        cls = ln["kind"] + ("" if ln["up"] is None else " up" if ln["up"] else " off")
+        out.append('<path class="x %s" data-h="%s" data-n="%s" d="%s"/>' % (cls, esc(" ".join(ln["hosts"])), esc(" ".join(ln["nets"])), d))
     for b in lay["boxes"]:
-        cls = {"master": "m", "standby": "sb", "linked": "ln"}.get(b["kind"], "")
-        href = "/federation" if b["kind"] == "linked" else "/hosts/%s" % esc(b["name"])
+        kind = b["kind"]
+        cls = {"master": "m", "standby": "sb", "linked": "ln", "partner": "pt"}.get(kind, "")
+        href = "/federation" if kind in ("linked", "partner") else "/hosts/%s" % esc(b["name"])
+        cy = b["y"] + b["h"] // 2
         dot = ('<circle class="ring %s" cx="%d" cy="%d" r="9"/><circle class="%s" cx="%d" cy="%d" r="5"/>'
-               % (esc(b["state"]), b["x"] + 20, b["y"] + b["h"] // 2, esc(b["state"]), b["x"] + 20, b["y"] + b["h"] // 2)
-               if b["kind"] != "linked" else
-               '<circle class="lk" cx="%d" cy="%d" r="5"/>' % (b["x"] + 20, b["y"] + b["h"] // 2))
-        out.append('<a href="%s"><rect %sx="%d" y="%d" width="%d" height="%d" rx="12"/>%s'
-                   '<text x="%d" y="%d">%s</text><text class="c" x="%d" y="%d">%s</text></a>'
-                   % (href, 'class="%s" ' % cls if cls else "", b["x"], b["y"], b["w"], b["h"], dot,
-                      b["x"] + 36, b["y"] + b["h"] // 2 - 4, esc(b["name"]), b["x"] + 36, b["y"] + b["h"] // 2 + 13, esc(b["cap"])))
-    return markupsafe.Markup('<svg viewBox="0 0 %d %d" style="max-width:%dpx" role="img" aria-label="Your network: the master and '
-                             'the machines linked to it">%s</svg>' % (lay["w"], lay["h"], lay["w"], "".join(out)))
+               % (esc(b["state"]), b["x"] + 20, cy, esc(b["state"]), b["x"] + 20, cy)
+               if kind not in ("linked", "partner") else '<circle class="lk" cx="%d" cy="%d" r="5"/>' % (b["x"] + 20, cy))
+        if kind == "partner":
+            title = "%s, in %s — opened to you: %s" % (b["name"], b["net"], b["cap"])
+        elif kind == "linked":
+            what = shares.get(b["name"]) or []
+            title = "%s — %s. May reach here: %s" % (b["name"], b["cap"], ", ".join(what) if what else "nothing")
+        else:
+            title = "%s — %s%s" % (b["name"], b["cap"], ". Reached from: " + ", ".join(b["reached"]) if b["reached"] else "")
+        chips, cx = [], b["x"] + b["w"] - 8
+        for net in b["reached"] if kind not in ("linked", "partner") else []:
+            cw = 10 + 6 * len(net)
+            cx -= cw
+            chips.append('<rect class="chip" x="%d" y="%d" width="%d" height="15" rx="7.5"/><text class="chip" x="%d" y="%d">%s</text>'
+                         % (cx, b["y"] - 7, cw, cx + 5, b["y"] + 4, esc(net)))
+            cx -= 4
+        h = allhosts if kind == "master" else " ".join(b["hosts"])
+        n = b["name"] if kind == "linked" else b["net"] if kind == "partner" else allnets if kind == "master" else " ".join(b["reached"])
+        out.append('<g class="x" data-k="%s" data-h="%s" data-n="%s"><a href="%s"><title>%s</title><rect %sx="%d" y="%d" width="%d" '
+                   'height="%d" rx="12"/>%s<text x="%d" y="%d">%s</text><text class="c" x="%d" y="%d">%s</text>%s</a></g>'
+                   % (kind, esc(h), esc(n), href, esc(title), 'class="%s" ' % cls if cls else "", b["x"], b["y"], b["w"], b["h"], dot,
+                      b["x"] + 36, cy - 4, esc(b["name"]), b["x"] + 36, cy + 13, esc(b["cap"]), "".join(chips)))
+    return markupsafe.Markup('<svg viewBox="0 0 %d %d" style="max-width:%dpx" role="img" aria-label="Your network: the masters on top, '
+                             'the machines under them, and what the linked networks may reach">%s</svg>%s'
+                             % (lay["w"], lay["h"], lay["w"], "".join(out), PICTURE_JS))
+
+
+# pointing at a machine or a linked network: its lines stand out, the rest steps back
+PICTURE_JS = """<script>(function(){document.querySelectorAll('.pic svg').forEach(function(s){if(s.dataset.hov)return;s.dataset.hov=1;
+var xs=s.querySelectorAll('.x');function sp(e,a){return (e.getAttribute(a)||'').split(' ').filter(Boolean)}
+function any(a,b){return a.some(function(v){return b.indexOf(v)>=0})}
+function on(g){var k=g.getAttribute('data-k'),h=sp(g,'data-h'),n=sp(g,'data-n');s.classList.add('focus');
+xs.forEach(function(o){var r=(k==='linked'||k==='partner')?any(sp(o,'data-n'),n):(any(sp(o,'data-h'),h)||(o.getAttribute('data-k')==='linked'&&any(sp(o,'data-n'),n)));
+o.classList.toggle('hi',r)})}
+function off(){s.classList.remove('focus');xs.forEach(function(o){o.classList.remove('hi')})}
+s.querySelectorAll('g.x').forEach(function(g){g.addEventListener('mouseenter',function(){on(g)});g.addEventListener('mouseleave',off);
+g.addEventListener('focusin',function(){on(g)});g.addEventListener('focusout',off)})})})()</script>"""
 
 # a service by the first part of its name: the module whose settings it has, and the page in the
 # app where its admin changes what is inside it (users, rooms, repositories)

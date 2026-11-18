@@ -24,12 +24,19 @@ it, then shows the fleet with its next steps.
 It counts machines, services and what needs a look, and says how old the oldest
 last backup is. Every machine has a card: what it is for the others (control
 node, gateway, keeps backups), its processor's load, its memory and its disks.
-*How they are linked* is a picture of the network: the master, and a line to
-every other machine, green when the machine answers and grey and broken when
-it does not; a click on a machine opens it. Beside the master, dashed, its
-standby; dotted, every network linked to this one (a click opens Federation).
-The machines stand in a zone per site: at home, and every other place one stands
-(its *Site* setting). The control page draws the same picture. The overview also lists what comes next for every machine not installed yet: enroll, build,
+*How they are linked* is a picture of the network as a family tree. The masters
+stand on top: this network's master, its standby beside it (dashed) and every
+network linked to it (dotted, named with its master). Under them the machines
+stand in a zone per site: at home, and every other place one stands (its *Site*
+setting), with a line down from the master to each machine, green when the
+machine answers and grey and broken when it does not; dashed to another site,
+over the Internet. A linked network's violet dots go the way its traffic goes,
+over the link into the master and beside the master's own line, to each machine
+it may reach here (`share` in `federation.yaml`). What a linked network opens to
+this one stands under it in a violet zone: its master's DNS says so over the
+link, and the status asks it. Pointing at a machine or a linked network shows
+its lines and dims the rest; a click on a machine opens it, on a linked network
+Federation. The control page draws the same picture. The overview also lists what comes next for every machine not installed yet: enroll, build,
 install, apply. *+* adds a host with the next free fruit (or fruit dish, for a
 master) as its name.
 

@@ -167,10 +167,15 @@ try:
     clients.update({r["name"]: made[r["name"]] for r in want})
     partner = None
     if opts.partner:
-        pname = os.path.basename(os.path.dirname(os.path.abspath(opts.partner)))
         import yaml
         with open(opts.partner) as fh:
             pmesh = ((yaml.safe_load(fh) or {}).get("defaults", {}).get("master") or {}).get("mesh_subnet") or "10.10.0.0/16"
+        # its name here: the entry of this network's federation.yaml with its mesh (the folders may be named otherwise)
+        fed = os.path.join(os.path.dirname(os.path.abspath(args.fleet)), "federation.yaml")
+        with open(fed) if os.path.isfile(fed) else open(os.devnull) as fh:
+            linked = yaml.safe_load(fh) or {}
+        pname = next((n for n, p in linked.items() if str((p or {}).get("mesh")) == str(pmesh)),
+                     os.path.basename(os.path.dirname(os.path.abspath(opts.partner))))
         partner = next((r for r in facts["who"] if r["kind"] == "network" and r["name"] == pname), None)
         if partner is None:
             sys.exit("drill: %s is not linked to a network called %s" % (args.fleet, pname))

@@ -1,7 +1,7 @@
 # Roadmap and known issues
 
 This page says where kiwi-server stands and what comes next. Its first two
-sections are the current picture (18 November 2026, kiwi-server 2.191.0). The
+sections are the current picture (18 November 2026, kiwi-server 2.208.0). The
 sections after them are the roadmap as it grew from 2.4.0 on: the problems that
 were found and how each one was fixed, and the items as they were raised. They
 stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-server/blob/main/CHANGELOG.md) has every release.
@@ -17,9 +17,11 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
   commercial VPN (Mullvad, Riseup) and can have a standby: the same master on a
   second machine that takes over when the first is gone. Linked networks reach
   each other's shared services and can be each other's way out (federation).
-  Who may reach what is set per group of devices and per machine. Services can
-  be open to the Internet through the master or as Tor hidden services. A node
-  can stand at another site than home (`network.site`).
+  Who may reach what is set per group of devices and per machine, linked
+  networks included. Services can be open to the Internet through the master or
+  as Tor hidden services; a public name leads through the master from
+  everywhere, the network's own names stay inside. A node can stand at another
+  site than home (`network.site`).
 - **Encrypted disks that open by themselves.** LUKS on every target, opened at
   boot by Tang rings on other machines, through a relay on the master for a
   machine away from home, or by a key typed at the console. Data disks are
@@ -35,20 +37,24 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
   changes before an update (`plan`) and whether everything answers after it
   (`check`), messages when something is wrong, with what to do.
 - **Three ways to run it**: the command line, the desktop app, and the control
-  page on a node at home, which keeps the network when no computer is on. More
-  computers join as controllers; their copies are kept in step and their
-  differences shown. The Android app (kiwi-app) reads the network through the
-  control node's API.
+  page on a node at home, which keeps the network when no computer is on. Once
+  there is a control node it is the one admin: the app sends its applies there
+  and shows their log. More computers join as controllers; their copies are kept
+  in step and their differences shown. The Android app (kiwi-app) reads the
+  network through the control node's API.
+- **A face for strangers**: a website from a pinned repository of pages (the
+  template dlhost-eu), the status page and the sign-up, all in the control
+  page's look, with the website's files through a CDN if wanted.
 
 ## Open, in order
 
 1. **The Android app.** Every action the control page does by a form needs a
    JSON route, sharing one function with the page; the app is a controller like a
    second computer.
-2. **A machine at another site, tried live.** `tests/drills/offsite-vm.sh` puts a
-   node behind QEMU's network address translation and checks how the network
-   reaches it. Then an encrypted node away from home, opened through the master's
-   ring.
+2. **An encrypted machine at another site.** The offsite drill passed with a plain
+   node (kumquat, 18 November); next, one whose disk opens through the master's
+   ring. The offsite VM does not start again after the computer it runs on
+   restarts.
 3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option),
    rings on more than one machine, ring rotation, the leash, a third share for
    papaya, and the control node's own unlock, which hangs on one ring today.
@@ -57,11 +63,15 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    token instead of per-host media, and hosters without our own install media.
 6. **At home:** netboot (PXE) and Wake-on-LAN, and a node that sleeps and wakes
    for the night's backups.
-7. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
+7. **A master in RAM, room for its updates:** its /var is half its memory, and an
+   image update needs room for the new image before the old one goes (crumble:
+   95 % full with its own images). An update one image at a time, or a master
+   with a disk.
+8. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
    kernel TLS instead of the SFTP container, backups of the desktop and the phone
    (not designed yet), the OpenWrt package, rootless podman for the minimal
    preset, managed masters (the orchard), the Bluefin client.
-8. **Later, when the network is stable:** the repositories move to the GitHub
+9. **Later, when the network is stable:** the repositories move to the GitHub
    organization kiwi-eco. The live v1 network moves only when its owner decides.
 
 Decided against: two masters that share the load (it splits the network in

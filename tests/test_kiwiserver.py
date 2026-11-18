@@ -9696,7 +9696,10 @@ class TestWeb(WebBase):
         self.assertIn("lowercase letters", body)
         code, body = self.ask("/devices/add", {"name": "annas-phone", "group": "devices", "csrf": tok})
         self.assertIn("annas-phone is ready", body)
-        self.assertIn("PrivateKey = abc", body)                                   # for the download
+        self.assertNotIn("PrivateKey", body)                                      # the key is not in the page: a download asks for it
+        self.assertIn('action="/devices/download"', body)
+        self.assertEqual(self.ask("/devices/download", {"name": "annas-phone", "csrf": tok}), (200, conf))
+        self.assertEqual(self.ask("/devices/download", {"name": "annas-phone"})[0], 303)   # no token: nothing
         if shutil.which("qrencode"):
             self.assertIn("<svg", body)
         self.assertIn("exists already", self.ask("/devices/add", {"name": "annas-phone", "csrf": tok})[1])

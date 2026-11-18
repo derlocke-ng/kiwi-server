@@ -1,7 +1,8 @@
-# Groups of the home network, and VLANs (proposal, 19 November 2026)
+# Groups of the home network, and VLANs (19 November 2026)
 
 The owner, 18 November: "many companies use those, so we should keep that in mind to
-integrate/support that (kinda like the subnet-group filter)". Not built.
+integrate/support that (kinda like the subnet-group filter)". Step 1 is built in 2.217.0
+(kiwi-modules 0.96.0, kiwi-stack 0.9.17); steps 2 and 3 are proposals.
 
 ## What there is now
 
@@ -27,9 +28,11 @@ defaults:
 - No VLAN hardware needed: any subnet the home routes is a group, a guest Wi-Fi with its own
   range as much as a VLAN.
 - Enforced where the packets are: each node's nginx (the same allow and deny lines as for a VPN
-  group, `reverse-proxy.access`), each node's host firewall for what is not a web page (SSH,
-  SFTP, game ports), and the gateway's forwarding for what it routes from the home network into
-  the mesh (masters, machines at another site).
+  group, `reverse-proxy.access`), and each node's nftables table `kiwi_lan` (kiwi-stack) for the
+  ports, looked at before a published container port's DNAT. Not yet: the gateway's forwarding
+  for what it routes from the home network into the mesh (masters, machines at another site).
+- Proven on a kernel by `tests/drills/lan-netns.py`: rootless namespaces, a node with the table
+  kiwi-stack writes, a client in a group and one in none, a published port.
 - `kiwi-server access FLEET iot cloud.papaya`, the page's and the app's *Who may reach what*:
   one more row per group, as for the VPN's groups. `tests/drills/access.py` gets a client in a
   group's range.

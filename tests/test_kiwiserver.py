@@ -3551,6 +3551,48 @@ class TestAccess(Base):
         self.assertRegex(out, r"family +10\.8\.2\.0/24 +nothing")
         self.assertRegex(out, r"guests +10\.8\.1\.0/24 +cloud\.papaya +\(other devices: no, internet: no, admin pages: no\)")
 
+    def test_a_group_of_the_home_network_is_kept_by_each_node(self):
+        """docs/design/lans.md: a subnet at home given things in the same words; each node keeps it,
+        its nginx the names, its nftables (kiwi-stack, lan_rules) the ports."""
+        f = self.net()
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "iot", "cloud.papaya")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("--new --lan", err)
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "iot", "--new", "--lan", "192.168.20.0/24", "cloud.papaya")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("iot (192.168.20.0/24, at home) may reach: cloud.papaya", out + err)
+        self.assertIn("apply fleet.yaml papaya", out + err)
+        self.assertEqual(config.Fleet.load(f.path).defaults["lan"]["groups"]["iot"],
+                         {"subnet": "192.168.20.0/24", "reach": ["cloud.papaya"]})
+        rc, out, err = TestManage.run_cli(self, "access", f.path)
+        self.assertRegex(out, r"iot +192\.168\.20\.0/24 +cloud\.papaya +\(at home; admin pages: no\)")
+        # papaya: the cloud's page for it, nothing else (nginx), and only the web ports (nftables)
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        node = fleet.hosts["papaya"]
+        nginx = r.bundle(node, r.prepare(node)).files["kn-nginx/nginx.conf"][0]
+        self.assertEqual(node.role_settings["lan_rules"], ["192.168.20.0/24 tcp:443,tcp:80"])
+        cloud = nginx.split("server_name cloud.papaya.home;", 1)[1].split("server {", 1)[0]
+        vault = nginx.split("server_name vault.papaya.home;", 1)[1].split("server {", 1)[0]
+        self.assertNotIn("deny 192.168.20.0/24;", cloud)
+        self.assertIn("deny 192.168.20.0/24;", vault)
+        # the whole node, then nothing; --peers is not a home network's
+        self.assertEqual(TestManage.run_cli(self, "access", f.path, "iot", "papaya")[0], 0)
+        fleet = config.Fleet.load(f.path)
+        self.assertEqual(cli.accessmod.lan_ports(cli._lan_groups(fleet), "papaya", "papaya.home"), ["192.168.20.0/24 all"])
+        self.assertEqual(TestManage.run_cli(self, "access", f.path, "iot", "nothing")[0], 0)
+        self.assertEqual(cli.accessmod.lan_ports(cli._lan_groups(config.Fleet.load(f.path)), "papaya", "papaya.home"),
+                         ["192.168.20.0/24 none"])
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "iot", "--peers", "no")
+        self.assertIn("the home's router decides those", err)
+        # names and subnets that clash
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "guests", "--new", "--lan", "192.168.30.0/24")
+        self.assertIn("a group of the home network needs a name of its own", err)
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "cam", "--new", "--lan", "192.168.20.128/25")
+        self.assertIn("overlaps iot's", err)
+        rc, out, err = TestManage.run_cli(self, "access", f.path, "pub", "--new", "--lan", "8.8.8.0/24")
+        self.assertIn("not a private IPv4 network", err)
+
     def test_a_linked_network_is_given_things_the_same_way(self):
         f = self.net()
         write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump({"other": {
@@ -10199,7 +10241,7 @@ class TestWeb(WebBase):
         saved, fsaved = [], []
         with mock.patch.object(self.c, "controller", lambda t: "phone" if t == "tok" else None), \
                 mock.patch.object(self.c, "access", lambda: rules), \
-                mock.patch.object(self.c, "save_access", lambda changes, new="", new_as="nothing", user="admin":
+                mock.patch.object(self.c, "save_access", lambda changes, new="", new_as="nothing", user="admin", new_lan="":
                                   saved.append((changes, new, new_as, user)) or list(changes) + ([new] if new else [])), \
                 mock.patch.object(self.c, "federation", lambda: fed), \
                 mock.patch.object(self.c, "save_federation", lambda changes, user="admin": fsaved.append((changes, user))):
@@ -12610,6 +12652,13 @@ class TestFirstRunPage(StoreBase):
         status, where, _ = self.ask("/onion", {"csrf": csrf}, cookie=cookie)                                 # unticked
         self.assertNotIn("cloud", (self.data()["hosts"][node]["node"].get("onion") or {}).get("services") or {})
         self.assertEqual(self.ask("/onion", {"csrf": "x"})[:2], (303, "/login"))
+        # a group of the home network from the same form: a subnet at home, every app
+        status, where, _ = self.ask("/access", {"csrf": csrf, "new": "iot", "new_lan": "192.168.20.0/24", "new_as": "apps"}, cookie=cookie)
+        self.assertEqual(status, 303, where)
+        self.assertEqual(self.data()["defaults"]["lan"]["groups"]["iot"], {"subnet": "192.168.20.0/24", "reach": ["apps"]})
+        body = self.ask("/access", cookie=cookie)[1]
+        self.assertIn("group of the home network · 192.168.20.0/24", body)
+        self.assertNotIn('name="peers.iot"', body)                      # the home's router decides that
 
     def test_the_recovery_key_sets_a_new_password(self):
         _s, body, _c = self.ask("/setup", dict(self.FORM, password=self.PW, again=self.PW, code=self.c.setup_code()))

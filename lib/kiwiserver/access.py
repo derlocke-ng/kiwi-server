@@ -18,6 +18,13 @@ reaches for some services only refuses that group its other names in its own web
 `node_rules` makes that list for the reverse proxy. For a linked network the same is done
 in federation.py.
 
+A third kind is a group of the home network (`lan.groups` in the fleet file's defaults,
+docs/design/lans.md): a subnet at home, a guest Wi-Fi or a VLAN, given things in the same
+words. What is not in such a group reaches everything at home, as before. Each node keeps it
+itself: its nginx refuses the names (as for a VPN group) and its nftables table kiwi_lan the
+ports (`lan_ports`), since the home network reaches a node across the switch, not through
+the master.
+
 Some pages are not apps but the network's controls: the control page, Portainer, Pi-hole,
 the WireGuard page, the backup server, the cache (`admin: true` in their module). They are
 the admin pages. A group opens them only with its `admin` switch on, or when one is named
@@ -162,6 +169,75 @@ def view(groups, partners, found, domain, device_addresses=None):
     return rows
 
 
+def lan_view(lan, found, domain):
+    """The groups of the home network as rows like the VPN's groups (kind lan)."""
+    rows = []
+    for name, g in (lan or {}).items():
+        g = g or {}
+        reach = _loose(g.get("reach", ["all"]), found, domain, True)
+        rows.append({"kind": "lan", "name": name, "range": str(g.get("subnet") or ""), "reach": reach,
+                     "open": shape(reach, found), "says": words(reach), "devices": [],
+                     "admin": bool(g.get("admin", FLAG_DEFAULT["admin"]))})
+    return rows
+
+
+def lan_problems(lan, mesh="", vpn_groups=()):
+    """What is wrong with the groups of the home network, in sentences."""
+    bad, seen = [], []
+    for name, g in (lan or {}).items():
+        if not NAME.match(str(name)) or name in ("all", "nodes", "nothing", "apps"):
+            bad.append("lan.groups: %r is not a name for a group (small letters, digits and -)" % name)
+            continue
+        if name in (vpn_groups or ()):
+            bad.append("lan.groups.%s: a group of the VPN has that name too: one of them needs another" % name)
+        g = g if isinstance(g, dict) else {}
+        try:
+            net = ipaddress.ip_network(str(g.get("subnet") or ""), strict=False)
+        except ValueError:
+            bad.append("lan.groups.%s: subnet %r is not a network like 192.168.20.0/24" % (name, g.get("subnet")))
+            continue
+        if net.version != 4 or not net.is_private:
+            bad.append("lan.groups.%s: %s is not a private IPv4 network" % (name, net))
+            continue
+        if mesh:
+            try:
+                if net.overlaps(ipaddress.ip_network(str(mesh), strict=False)):
+                    bad.append("lan.groups.%s: %s is in the VPN's mesh %s" % (name, net, mesh))
+            except ValueError:
+                pass
+        for other, o in seen:
+            if net.overlaps(o):
+                bad.append("lan.groups.%s: %s overlaps %s's" % (name, net, other))
+        seen.append((name, net))
+        for k in set(g) - {"subnet", "reach", "admin"}:
+            bad.append("lan.groups.%s: %s is not a setting of a group of the home network (subnet, reach, admin)" % (name, k))
+    return bad
+
+
+def lan_ports(lan, name, hostname):
+    """kiwi-stack's lan_rules for one node: per group of the home network "SUBNET all|none|tcp:…".
+    The whole node (all, nodes, it by name): all; its web pages (apps, one of its services): 80 and
+    443, the names are its nginx's to refuse; a port of it: that port."""
+    out = []
+    for g in (lan or {}).values():
+        g = g or {}
+        if not g.get("subnet"):
+            continue
+        reach = [str(e).lower() for e in (g.get("reach", ["all"]) or [])]
+        if "all" in reach or "nodes" in reach or name in reach or hostname in reach:
+            out.append("%s all" % g["subnet"])
+            continue
+        ports = []
+        if "apps" in reach or any(":" not in e and (e.endswith("." + name) or e.endswith("." + hostname)) for e in reach):
+            ports += ["tcp:443", "tcp:80"]
+        for e in reach:
+            host, _, port = e.partition(":")
+            if port and host in (name, hostname) and ("tcp:" + port) not in ports:
+                ports.append("tcp:" + port)
+        out.append("%s %s" % (g["subnet"], ",".join(ports) if ports else "none"))
+    return out
+
+
 def node_rules(groups, name, hostname, admin=()):
     """reverse-proxy's `access` for one node: which client ranges it refuses where. names:
     site -> the ranges refused there; others: the ranges refused at every site not listed.
@@ -237,7 +313,8 @@ def change(groups, name, found, domain, mesh, reach=None, add=(), remove=(), new
     groups = {k: dict(v or {}) for k, v in (groups or {}).items()}
     if name not in groups:
         if not new:
-            raise KiwiError("no group called %s (there is: %s). --new makes it" % (name, ", ".join(groups) or "none"))
+            raise KiwiError("no group called %s (there is: %s). --new makes it; --new --lan 192.168.20.0/24 a group of "
+                            "the home network" % (name, ", ".join(groups) or "none"))
         if not NAME.match(name) or name in ("all", "nodes", "nothing"):
             raise KiwiError("a group's name: small letters, digits and -")
         groups[name] = {"subnet": next_range(groups, mesh), "reach": [], "peers": False}

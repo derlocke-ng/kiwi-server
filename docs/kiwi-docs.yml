@@ -26,6 +26,7 @@ pages:
   - design/controllers.md: "Design: controllers"
   - design/ram-master.md: "Design: a master in RAM"
   - design/federation.md: "Design: federation"
+  - design/lans.md: "Design: groups of the home network, and VLANs"
   - design/local-first.md: "Design: local first"
   - design/recovery.md: "Design: autonomy and recovery"
   - design/onion.md: "Design: hidden services"

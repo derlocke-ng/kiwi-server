@@ -921,10 +921,10 @@ The master is always reachable: it answers the names.</p>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
 <form method="post" action="/access">{{ tok }}
 {% for w in who %}<div class="card"><div class="row"><strong>{{ w.name }}</strong>
-<span class="muted">{{ "group" if w.kind == "group" else "linked network" }} · {{ w.range }}{% if w.devices %} ·
+<span class="muted">{{ {"group": "group", "lan": "group of the home network"}.get(w.kind, "linked network") }} · {{ w.range }}{% if w.devices %} ·
 {{ w.devices | join(", ") }}{% endif %}</span></div>
 <p class="muted" style="margin:4px 0">Now: {{ w.says }}.</p>
-{% if w.kind == "group" %}<label><input type="checkbox" name="all.{{ w.name }}" style="width:auto"{% if w.open.all %} checked{% endif %}>
+{% if w.kind in ("group", "lan") %}<label><input type="checkbox" name="all.{{ w.name }}" style="width:auto"{% if w.open.all %} checked{% endif %}>
 Everything on the VPN</label>
 <label><input type="checkbox" name="apps.{{ w.name }}" style="width:auto"{% if w.open.apps %} checked{% endif %}>
 Every app <span class="muted">· the pages of every machine, no admin pages, nothing else of the machines</span></label>{% endif %}
@@ -940,9 +940,9 @@ name="s.{{ w.name }}.{{ m.name }}.{{ s }}" style="width:auto"{% if s in o.servic
 <label for="p-{{ w.name }}">Single ports{{ ", addresses and linked networks" if w.kind == "group" else "" }}</label>
 <input id="p-{{ w.name }}" name="p.{{ w.name }}" placeholder="{{ "lychee:22 kiwi2" if w.kind == "group" else "lychee:22" }}" value="{{ w.extra | join(' ') }}">
 {% if w.kind == "group" %}<p class="muted small" style="margin:4px 0 0">A linked network by its name (kiwi2): what it opens to this network. Without it, or <em>Everything</em>, the group reaches nothing of it.</p>{% endif %}
-{% if w.kind == "group" %}<div style="margin-top:8px">
-<label style="display:inline"><input type="checkbox" name="peers.{{ w.name }}" style="width:auto"{% if w.peers %} checked{% endif %}> Other devices on the VPN</label>
-<label style="display:inline;margin-left:12px"><input type="checkbox" name="internet.{{ w.name }}" style="width:auto"{% if w.internet %} checked{% endif %}> The Internet through the VPN</label>
+{% if w.kind in ("group", "lan") %}<div style="margin-top:8px">
+{% if w.kind == "group" %}<label style="display:inline"><input type="checkbox" name="peers.{{ w.name }}" style="width:auto"{% if w.peers %} checked{% endif %}> Other devices on the VPN</label>
+<label style="display:inline;margin-left:12px"><input type="checkbox" name="internet.{{ w.name }}" style="width:auto"{% if w.internet %} checked{% endif %}> The Internet through the VPN</label>{% endif %}
 <label style="display:inline;margin-left:12px"><input type="checkbox" name="admin.{{ w.name }}" style="width:auto"{% if w.admin %} checked{% endif %}> The admin pages</label>
 <p class="muted" style="margin:4px 0 0">Admin pages are the network's controls: this control page, Portainer, Pi-hole, the
 VPN's device page, backups. Without this tick a group does not open them, also not with "everything", unless one is
@@ -952,6 +952,9 @@ ticked above.</p></div>{% else %}<p class="muted" style="margin:6px 0 0">Who of 
 <div class="card"><label for="new">A new group</label><p class="muted" style="margin:0 0 4px">A name like kids or
 work. A device joins it under <a href="/devices">Add a phone or laptop</a>.</p>
 <input id="new" name="new" placeholder="kids" pattern="[a-z0-9][a-z0-9-]*">
+<label for="newlan">At home: its subnet</label><p class="muted" style="margin:0 0 4px">Empty: a group of the VPN. A subnet
+(192.168.20.0/24: a guest Wi-Fi, a VLAN) makes a group of the home network: each machine keeps it itself.</p>
+<input id="newlan" name="new_lan" placeholder="192.168.20.0/24">
 <label for="newas">It starts with</label><select id="newas" name="new_as">
 <option value="nothing">nothing: tick what it may open after saving</option>
 <option value="apps">every app: for the people of the house</option>
@@ -3290,10 +3293,10 @@ def make_app(control: Control):
             changes = {}
             for w in a["who"]:
                 n = w["name"]
-                if "all." + n in form and w["kind"] == "group":
+                if "all." + n in form and w["kind"] in ("group", "lan"):
                     reach = ["all"]
                 else:
-                    reach = ["apps"] if "apps." + n in form and w["kind"] == "group" else []
+                    reach = ["apps"] if "apps." + n in form and w["kind"] in ("group", "lan") else []
                     for m in a["machines"]:
                         if m["master"]:
                             continue
@@ -3304,6 +3307,7 @@ def make_app(control: Control):
                     reach += [e for e in str(form.get("p." + n, "")).split() if e not in reach]
                 changes[n] = dict({"reach": reach}, **{k: "%s.%s" % (k, n) in form for k in ("peers", "internet", "admin")})
             done = control.save_access(changes, new=str(form.get("new", "")).strip().lower(),
+                                       new_lan=str(form.get("new_lan", "")).strip(),
                                        new_as=str(form.get("new_as", "nothing")), user=u)
         except KiwiError as e:
             return access_page(request, error=str(e))
@@ -3328,10 +3332,10 @@ def make_app(control: Control):
 
     @app.post("/api/access")
     async def api_access_do(request: Request):
-        """{who: {name: {reach, peers, internet, admin}}, new, new_as} -> {saved: [names]}. What a
+        """{who: {name: {reach, peers, internet, admin}}, new, new_as, new_lan} -> {saved: [names]}. What a
         name leaves out stays as it is; `reach` is a list (machines, services like cloud.papaya,
         ports like papaya:22, "apps", "all"); `new` makes a group starting with `new_as` (nothing,
-        apps, all)."""
+        apps, all); with `new_lan` (a subnet at home) it is a group of the home network."""
         who = bearer(request)
         if not who:
             return JSONResponse({"error": "who?"}, status_code=401)
@@ -3350,7 +3354,7 @@ def make_app(control: Control):
                 changes[name] = dict({"reach": [str(e) for e in c["reach"]] if "reach" in c else now[name]["reach"]},
                                      **{k: (c[k] is True) if k in c else bool(now[name].get(k)) for k in ("peers", "internet", "admin")})
             done = await run_in_threadpool(control.save_access, changes, str(body.get("new") or "").strip().lower(),
-                                           str(body.get("new_as") or "nothing"), who)
+                                           str(body.get("new_as") or "nothing"), who, str(body.get("new_lan") or "").strip())
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return {"saved": list(done or [])}

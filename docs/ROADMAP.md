@@ -69,13 +69,11 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    95 % full with its own images). Since 2.209.0 (kiwi-stack 0.9.16) an update on a
    nearly full disk takes one image at a time, proven on crumble. Left: room for
    a module more, or a master with a disk.
-7. **LANs and VLANs, as companies have them** (the owner, 18 November): a named LAN
-   subnet as a group in "who may reach what" (`iot: 192.168.20.0/24`), enforced on
-   the gateway and the nodes like the VPN's groups, which works without VLAN
-   hardware; then tagged interfaces per machine (`network.vlans`), a service on
-   one VLAN only, and the gateway's DHCP, DNS and routing per VLAN. Tested on a
-   Linux bridge with VLAN filtering and VMs, no managed switch needed. Design
-   first.
+7. **LANs and VLANs, as companies have them** (the owner, 18 November;
+   docs/design/lans.md): groups of the home network (a subnet at home given what it
+   may reach, kept by each node) since 2.217.0. Left: the gateway's forwarding for
+   them, tagged interfaces per machine (`network.vlans`), a service on one VLAN
+   only, and the gateway's DHCP, DNS and routing per VLAN.
 8. **Moving a whole network to another mesh or domain**, for just in case
    (docs/design/federation.md): it must pin every secret derived from a host name
    (passwords, data disk keys) first. Two networks of one mesh or domain link

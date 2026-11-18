@@ -177,6 +177,10 @@ DEFAULTS = {
         "heartbeat": "",
         "after": 10,
     },
+    "lan": {
+        # groups of the home network: a subnet at home given what it may reach (docs/design/lans.md)
+        "groups": {},
+    },
     "backup": {
         # the fleet directory itself (fleet file, secrets/, the CA), encrypted,
         # to these hosts after every render or build — kiwi-server restore
@@ -605,6 +609,13 @@ class Fleet:
                 raise ValueError
         except (TypeError, ValueError):
             self.errors.append("backup.keep must be a positive integer")
+        lan = (self.defaults.get("lan") or {}).get("groups") or {}
+        if not isinstance(lan, dict):
+            self.errors.append("lan.groups: a name per group, each with a subnet")
+        elif lan:
+            from . import access as accessmod
+            mesh = ((self.defaults.get("master") or {}).get("mesh_subnet")) or ""
+            self.errors += accessmod.lan_problems(lan, mesh)
 
     # what a standby does not take from its master: it is a machine of its own there
     STANDBY_OWN = ("standby", "vps", "disk", "mac", "network", "install", "unlock")

@@ -62,9 +62,16 @@ for _ in $(seq 1 180); do [ -s qemu.pid ] && kill -0 "$(cat qemu.pid)" 2>/dev/nu
 rm -f qemu.pid
 vm boot.log disk; check $? "it starts from its disk"
 
+# ---- its first apply comes from a computer at its site: home cannot reach it before it is on the VPN ----
+# (here QEMU's forwarded port stands for a laptop on that LAN; later the join token makes this unneeded)
+for _ in $(seq 1 60); do inside true && break; sleep 10; done
+"${ks[@]}" apply "$F" "$N" --ssh "ssh://core@127.0.0.1:${P_SSH:-2290}" --new-host-key >first-apply.log 2>&1
+check $? "its first apply, from a computer at its site"
+
 # ---- it joins the mesh through the master, from behind someone else's router ----------------------
 up=1
-for _ in $(seq 1 240); do ping -c1 -W2 "$mesh" >/dev/null 2>&1 && { up=0; break; }; sleep 10; done
+# (a node answers no ping: its SSH over the mesh is the question)
+for _ in $(seq 1 240); do ssh_to "core@$mesh" true >/dev/null 2>&1 && { up=0; break; }; sleep 10; done
 check $up "it answers at its mesh address $mesh (its tunnel to the master is up)"
 if [ "$up" != 0 ]; then         # why not: its first-boot role and its tunnel, as it says itself
     inside 'sudo systemctl is-active kiwi-role.service; sudo journalctl -u kiwi-role.service -n 25 --no-pager -o cat; sudo podman ps --format "{{.Names}} {{.Status}}"' >inside.log

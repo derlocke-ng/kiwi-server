@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.195.0 — several machines at once
+
+- **`apply` of several machines runs them together** (the owner: "the last apply took server
+  after server"): the masters first, then the machines that answer for names or open disks,
+  then all the others at once, up to six; the control node last when it applies itself. Every
+  role script is made first, the fleet's own files are written one machine at a time, and each
+  line of a machine's output starts with its name.
+- **A machine with no site of its own answers at the mesh** (kiwi-modules 0.88.1): its own page
+  and its registry address open 80 and 443 there too. The offsite drill's minimal node answered
+  SSH over the mesh but not its page.
+- **The offsite drill** (tests/drills/offsite-vm.sh) gives the new machine its first apply the
+  way a computer at its site would: home cannot reach a machine behind another router before it
+  is on the VPN, and the install media bring a bare system. It asks SSH over the mesh, not ping,
+  which nodes do not answer.
+
 ## 2.194.0 — a machine's logins on the phone
 
 - **`GET /api/hosts/{name}/logins`** answers a controller's token too (kiwi-app shows a machine's

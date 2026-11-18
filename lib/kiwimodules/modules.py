@@ -980,8 +980,11 @@ class Renderer:
         base["exposed"] = rp.get("exposed") or {}
         base["f2b_jails"] = self.login_jails(spec, ordered, base)
         base["module_rules"] = self.vpn_rules(spec, ordered, base)
-        base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and any(
-            self.ms.get(n).needs_vpn_dnat for n in ordered)
+        # the proxy answers at the mesh address for a module's site, and for the machine's own page
+        # (its name and its registry, which kiwi-server names) also when no module has one
+        own = (spec.module_config.get("reverse-proxy") or {}).get("machine_page") if "reverse-proxy" in ordered else ""
+        base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and (any(
+            self.ms.get(n).needs_vpn_dnat for n in ordered) or bool(own))
         if not spec.vpn_ip:
             at_mesh = [n for n in ordered if self.ms.get(n).needs_vpn_dnat] if base["enable_vpn_dnat"] else []
             if (spec.module_config.get("vpn-client") or {}).get("extra_dnat_rules"):

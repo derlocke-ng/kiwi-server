@@ -6024,7 +6024,7 @@ class TestManage(Base):
                         b"service=kn-nginx inactive\n")
             return b""
 
-        def fake_stream(tgt, script, runner=None):
+        def fake_stream(tgt, script, runner=None, prefix=""):
             calls.append(("stream", tgt, script))
             return 0 if "--force" in script else 2
         with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "run_stream", fake_stream):
@@ -7564,6 +7564,20 @@ peers=4 3
             self.assertEqual(r.returncode, 0, r.stdout)
         self.assertNotIn("dump", facts.SCRIPT)
         self.assertIn("latest-handshakes", facts.SCRIPT)
+
+
+class TestApplyWaves(unittest.TestCase):
+    def test_masters_then_names_and_rings_then_the_rest_at_once_the_control_node_last(self):
+        H = lambda name, role, mods=(), standby="": types.SimpleNamespace(name=name, role=role, modules=list(mods), standby_of=standby)  # noqa: E731
+        roles = {"master": types.SimpleNamespace(node_type="master"), "node": types.SimpleNamespace(node_type="node")}
+        hosts = [H("papaya", "node", ["control"]), H("lime", "node", ["dns", "tang"]), H("sorbet", "master"),
+                 H("sorbet-b", "master", standby="sorbet"), H("medlar", "node"), H("quince", "node")]
+        with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": "papaya"}):
+            waves = [[h.name for h in w] for w in cli.apply_waves(None, roles, hosts)]
+        self.assertEqual(waves, [["sorbet"], ["sorbet-b"], ["lime"], ["medlar", "quince"], ["papaya"]])
+        with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):          # from a computer: papaya is a node like any
+            waves = [[h.name for h in w] for w in cli.apply_waves(None, roles, hosts)]
+        self.assertEqual(waves[-1], ["papaya", "medlar", "quince"])
 
 
 class TestPicture(unittest.TestCase):

@@ -542,6 +542,9 @@ class Renderer:
         if role.node_type != "master" and "hub" in host.modules and self._turn and not host.module_settings["hub"].get("ice"):
             # a hub on a node: its calls go through the master's turn server, as a hub on the master's would
             host.module_settings["hub"].update(self._turn)
+        if role.node_type != "master" and "dns" in host.modules and self._partners:
+            # a node's Pi-hole asks its master for the linked networks' names (the master asks the partner)
+            host.module_settings["dns"]["partner_domains"] = sorted({str(p["domain"]) for p in self._partners.values() if p.get("domain")})
         if role.node_type == "master" and "tang" in host.modules and "vpn-server" in host.modules:
             # a ring here (away): the VPN server publishes it, to the home's addresses only
             host.module_settings["vpn-server"]["local_rings"] = dict(host.module_settings["tang"].get("rings") or {})

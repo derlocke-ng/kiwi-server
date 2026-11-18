@@ -29,6 +29,12 @@
 {% if domain %}
 {% if node_type != 'master' and master_ip %}
 {% set _ = lines.append('server=/' ~ domain ~ '/' ~ master_ip) %}
+{# a linked network's names: from the master, which asks the partner; the wildcard gets past
+   Pi-hole 6's own local=/internal/ and local=/home.arpa/ #}
+{% for d in partner_domains or [] if d and d != domain %}
+{% set _ = lines.append('server=/' ~ d ~ '/' ~ master_ip) %}
+{% set _ = lines.append('server=/*.' ~ d ~ '/' ~ master_ip) %}
+{% endfor %}
 {% else %}
 {% set _ = lines.append('local=/' ~ domain ~ '/') %}
 {% endif %}

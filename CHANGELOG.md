@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.203.0 — a linked network's names at home
+
+- **A node's Pi-hole knows the linked networks' domains** (kiwi-modules 0.90.1): it asks the
+  master for them, and the master asks the partner. `dig damson.internal @papaya` said NXDOMAIN
+  while the master's Pi-hole answered: a computer at home could not reach a partner's machine by
+  its name.
+- dlhost.eu's website is on, from the template [dlhost-eu](https://github.com/derlocke-ng/dlhost-eu).
+
 ## 2.202.0 — a public name is public everywhere
 
 - **A public name resolves to the master's public address at home and on the VPN too** (the

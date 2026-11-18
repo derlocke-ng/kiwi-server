@@ -219,6 +219,7 @@ def inject(fleet_dir, data):
                 block["reverse-proxy"] = dict(block.get("reverse-proxy") or {}, federation=rules)
 
 
+
 def write(fleet_dir, partner, entry):
     """One partner's entry, its share and from kept when it is there already (by its name, or by
     its mesh when its folder was renamed). The name it is written under."""

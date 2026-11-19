@@ -4680,6 +4680,20 @@ class TestFederation(Base):
         self.assertIn("not a network's card", err)
 
 
+class TestFirstContact(Base):
+    def test_apply_says_how_to_reach_a_machine_met_for_the_first_time(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "papaya": {"role": "bare", "network": {"dhcp": False, "address": "192.168.2.30/24", "gateway": "192.168.2.1"}}}})
+        from kiwiserver import connect as connectmod
+        with mock.patch.object(connectmod, "resolves", lambda name, s: False), \
+                mock.patch.object(remote, "reach", lambda h, o=None: remote.target(h, o)):
+            rc, out, err = TestManage.run_cli(self, "apply", f.path, "papaya")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("resolves on the VPN only", err)
+        self.assertIn("next %s papaya finds it at 192.168.2.30" % f.path.replace(os.path.expanduser("~"), "~"), err)
+        self.assertIn("--ssh core@192.168.2.30", err)
+
+
 class TestWake(Base):
     """Wake-on-LAN (wake.py): what an apply learns, which machine sends the packet, and how."""
 
@@ -6538,6 +6552,10 @@ class TestManage(Base):
         self.assertFalse(swapped(calls))
 
     def test_apply_and_status_through_fake_ssh(self):
+        from kiwiserver import connect as connectmod      # the machine's name resolves, as on the VPN
+        resolving = mock.patch.object(connectmod, "resolves", lambda name, s: True)
+        resolving.start()
+        self.addCleanup(resolving.stop)
         write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"),
               "[Interface]\nPrivateKey = k\nAddress = 10.8.0.7/24\n\n[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/0\nEndpoint = v:51820\n")
         f = self.manage_fleet()

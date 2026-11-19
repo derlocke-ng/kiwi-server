@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.229.0 — apply says how to reach a new machine
+
+- `kiwi-server apply FLEET HOST` on a machine met for the first time (nothing of it on record,
+  its name resolves on the VPN only) stopped with an SSH error that said nothing useful. It
+  says now that `kiwi-server next FLEET HOST` finds it at its fixed address, or which `--ssh`
+  to give. Found in the first-run review (notes/REVIEW-first-run.md, 27).
+- `wake`: tried live, crumble-b sent damson the packet (both test VMs on sh3); its hint names
+  the fleet file as `~/…`.
+
 ## 2.228.0 — Wake-on-LAN
 
 - **`network.wol: true`**: the next apply switches waking on at the machine's card (a drop-in

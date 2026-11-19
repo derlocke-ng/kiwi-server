@@ -19,8 +19,9 @@ kiwi-server enroll fleet.yaml sh3 --existing          # the config of a client t
   device goes into `family`, or the first group without the admin pages: a device outside every
   group reaches everything, admin pages included. The control page and the app preselect the
   same group.
-  By default: 10.8.1.0/24 guests, 10.8.2.0/24 pentest, 10.8.3.0/24 devices,
-  10.8.4.0/24 routers. The master's firewall rules go by these.
+  By default, in your mesh 10.X.0.0/16: 10.X.1.0/24 guests, 10.X.2.0/24 pentest,
+  10.X.3.0/24 devices, 10.X.4.0/24 routers, 10.X.5.0/24 family. The master's
+  firewall rules go by these.
 - `--address` sets one by hand.
 - A fleet host's client is named after its hostname, so the wg-easy page and
   the fleet agree.

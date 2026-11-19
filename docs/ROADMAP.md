@@ -58,7 +58,8 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    and after a restart it opened by itself and came back on the mesh. Since
    2.215.0 such a machine is reached at its mesh address before the home's DNS
    knows its name.
-3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option),
+3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option; still
+   none in 2025.89, Debian trixie, checked 19 November),
    rings on more than one machine, a third share for papaya. The control node's
    own unlock takes several rings since 2.219.0 (`unlock.control: [house,
    attic]`); the leash and ring rotation (`rotate FLEET ring NAME`) are there
@@ -82,8 +83,9 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    page and in the app since 2.224.0. Left: a service on one VLAN only, and the
    gateway's DHCP, DNS and routing per VLAN.
 8. **Moving a whole network to another mesh or domain**, for just in case
-   (docs/design/federation.md): it must pin every secret derived from a host name
-   (passwords, data disk keys) first. Two networks of one mesh or domain link
+   (docs/design/federation.md): the plan since 2.237.0 (`kiwi-server move FLEET
+   --mesh … --domain …`, changes nothing); left: the move itself, which must pin
+   every secret derived from a host name (passwords, data disk keys) first. Two networks of one mesh or domain link
    since 2.216.0, translated at the link. A partner with a domain of its own has
    its CA offered to the devices since 2.222.0; a translated partner's names are
    signed by this network's own CA since 2.226.0 (one operator; left: between two).

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.237.0 — a plan for moving the network, just in case
+
+- **`kiwi-server move FLEET --mesh 10.X.0.0/16 --domain D`** (either or both): what moving the
+  whole network would change, and nothing changed. Per machine its new address and name, how many
+  generated passwords and data disk keys would be kept (pinned before anything else), the
+  groups' new ranges, the passwords already kept that move to the new names; for people: the
+  devices that need a new config (a new QR code), the linked networks that link again, a new CA
+  when the old one may sign only the old domain. It refuses a mesh that overlaps a network at
+  home or a group of it, and a domain that cannot work (`.local`). `--porcelain` gives it as JSON.
+  The move itself comes later, on this plan (docs/design/federation.md).
+
 ## 2.236.0 — a ring at home for a machine at another site, relayed by itself
 
 - **A machine at another site** whose ring stands at home no longer needs `unlock.via` and the

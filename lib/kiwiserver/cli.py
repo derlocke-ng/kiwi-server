@@ -4802,6 +4802,20 @@ def cmd_federate(args):
                  % (na, nb))
 
 
+def cmd_move(args):
+    """For just in case: what moving the whole network to another mesh and/or domain would change
+    (move.py). A plan only, nothing is changed."""
+    from . import move as movemod
+    fleet, roles, ms = load(args)
+    p = movemod.plan(fleet, roles, ms, mesh=args.mesh, domain=args.domain)
+    if args.porcelain:
+        print(json.dumps(p, indent=1))
+    else:
+        movemod.say(p)
+    if p["problems"]:
+        raise SystemExit(1)
+
+
 def cmd_wake(args):
     """Wake a machine at home that is switched off (Wake-on-LAN): another machine of its LAN sends
     the magic packet. Its card must have waking on (network.wol, and often its firmware)."""
@@ -5384,6 +5398,9 @@ def build_parser():
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
+    s = sub("move", cmd_move); s.add_argument("fleet")
+    s.add_argument("--mesh", help="the new mesh, like 10.42.0.0/16")
+    s.add_argument("--domain", help="the new domain, like internal")
     s = sub("wake", cmd_wake); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--mac", help="its card's MAC, where no apply learned it (aa:bb:cc:dd:ee:ff)")
     s.add_argument("--address", help="its address on the LAN, where the fleet file has none")

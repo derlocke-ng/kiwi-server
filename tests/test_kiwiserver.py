@@ -4792,6 +4792,35 @@ class TestJoinOverVpn(Base):
         self.assertIn("install.over_vpn is for Debian, CoreOS and uCore machines", err + out)
 
 
+class TestMovePlan(Base):
+    def test_the_plan_says_what_a_move_changes_and_changes_nothing(self):
+        f = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "papaya": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.30/24", "gateway": "192.168.2.1"},
+                       "mounts": ["LABEL=data /mnt/data"],
+                       "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.9.0.25", "preset": "minimal"}}}})
+        write(os.path.join(self.tmp, "secrets", "devices", "phone.conf"), "[Interface]\n")
+        before = util.read_text(f.path)
+        domain = config.Fleet.load(f.path).defaults["domain"]
+        rc, out, err = TestManage.run_cli(self, "move", f.path, "--mesh", "10.42.0.0/16", "--domain", "internal", "--porcelain")
+        self.assertEqual(rc, 0, err)
+        p = json.loads(out)
+        papaya = next(m for m in p["machines"] if m["name"] == "papaya")
+        self.assertEqual(papaya["mesh"], ["10.9.0.25", "10.42.0.25"])
+        self.assertEqual(papaya["hostname_to"], "papaya.internal")
+        self.assertEqual(p["disks"], [{"name": "papaya", "mounts": ["/mnt/data"]}])
+        self.assertEqual(p["devices"], ["phone"])
+        self.assertTrue(any(p["secrets"].values()))                     # generated passwords: kept, pinned first
+        self.assertTrue(all(h.endswith("." + domain) for h in p["secrets"]))
+        self.assertIn("a new QR code", " ".join(p["people"]))
+        self.assertEqual(util.read_text(f.path), before)              # a plan: nothing changed
+        rc, out, err = TestManage.run_cli(self, "move", f.path, "--mesh", "192.168.0.0/16", "--domain", "local")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("the network at home 192.168.2.0/24 (papaya) overlaps", out + err)
+        self.assertIn(".local is mDNS", out + err)
+        self.assertIn("move to what?", TestManage.run_cli(self, "move", f.path)[2])
+
+
 class TestFirstContact(Base):
     def test_apply_says_how_to_reach_a_machine_met_for_the_first_time(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {

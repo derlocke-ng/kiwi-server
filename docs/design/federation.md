@@ -183,7 +183,12 @@ before NETMAP turns it into the partner's.
 ## Moving a whole network to another mesh or domain
 
 For just in case (the owner, 18 November): `kiwi-server move FLEET --mesh 10.X.0.0/16`
-and/or `--domain D`, as a plan first and then an apply. Not built yet. What it has to carry:
+and/or `--domain D`, as a plan first and then an apply. The plan is built (2.237.0, move.py):
+it lists each machine's new address and name, the groups' new ranges, the passwords and disk
+keys that would be kept (pinned first), the devices that need a new config, the linked
+networks that link again, whether the CA needs replacing (its name constraint), and refuses a
+mesh that overlaps a network at home or a domain that cannot work. It changes nothing. The
+apply is not built yet. What it has to carry:
 
 - **Mesh:** every node's and device's address in it, the groups' ranges, the access rules
   written as addresses. While it moves, the master's VPN serves both meshes (each peer allowed

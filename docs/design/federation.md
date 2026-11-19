@@ -162,8 +162,12 @@ How A's devices come to trust B's certificates, two cases, decided on 19 Novembe
   A's own CA; nothing of B's is imported. It is used only while it fits the machine's key: a
   certificate of B's own issued again brings a new key, and nginx would not start with the old
   one, so the render leaves it out and says to link again. A machine without a certificate yet
-  gets one after its first apply and a second `federate`. Between two operators (not built):
-  the request and the signed certificate would travel like the cards.
+  gets one after its first apply and a second `federate`. Since 2.227.0 a machine keeps its key
+  when its own certificate is issued again, so what a partner signed still fits. Between two
+  operators (2.227.0): each card carries a certificate request per machine (public: the key's
+  public half); the side that sees the other translated signs them on `--accept` into
+  `<it>.signed-for-<partner>.yaml`, which goes back and is taken with `--accept` too, only for
+  this network, signed by the CA on the partner's card, for the machine's key and its names.
 
 **What does not change.** `share` and `from` are written in the partner's own words, as now;
 the TXT records, the picture and the access manager show the alias names.

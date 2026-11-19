@@ -56,7 +56,11 @@ def _ensure_ca(ca_dir, days=DAYS, name_constraints=()):
 
 
 def cert_names(pem_path):
-    out = _openssl(["x509", "-in", pem_path, "-noout", "-ext", "subjectAltName"]).stdout
+    """The DNS names of a certificate: a file, or PEM text."""
+    if "-----BEGIN" in str(pem_path):
+        out = _openssl(["x509", "-noout", "-ext", "subjectAltName"], input=str(pem_path)).stdout
+    else:
+        out = _openssl(["x509", "-in", pem_path, "-noout", "-ext", "subjectAltName"]).stdout
     return [p.strip()[4:] for p in out.replace("\n", ",").split(",") if p.strip().startswith("DNS:")]
 
 
@@ -85,23 +89,47 @@ def public_key(pem, private=False):
     return _openssl(["x509", "-noout", "-pubkey"], input=pem).stdout
 
 
-def sign_for(ca_dir, key_path, names, days=CERT_DAYS):
+def request_for(key_path, cn):
+    """A certificate request (PEM text, public) for the key at key_path: what a partner's CA signs."""
+    return _openssl(["req", "-new", "-key", key_path, "-subj", "/O=kiwi/CN=%s" % cn]).stdout
+
+
+def sign_request(ca_dir, request, names, days=CERT_DAYS):
     """A certificate (leaf, then the CA: a fullchain) of the CA in ca_dir for exactly these names,
-    for the key at key_path, which stays where it is: another network's CA signing a machine's
-    names as that network calls it (federation, translated at the link). The CA must exist."""
+    for the key of a request (PEM text): only its key is taken from it, the names are the
+    signer's. Another network's CA signing a machine's names as that network calls it
+    (federation, translated at the link). The CA must exist."""
     ca_key, ca_pem = os.path.join(ca_dir, "kiwiCA.key"), os.path.join(ca_dir, "kiwiCA.pem")
     if not (os.path.isfile(ca_key) and os.path.isfile(ca_pem)):
         raise KiwiError("%s: no CA there to sign with" % ca_dir)
+    if "-----BEGIN CERTIFICATE REQUEST-----" not in str(request or ""):
+        raise KiwiError("not a certificate request")
     import tempfile
     with tempfile.TemporaryDirectory(prefix="kiwi-sign-") as tmp:
         csr, ext, crt = (os.path.join(tmp, n) for n in ("request.csr", "ext.cnf", "cert.pem"))
+        util.write_text(csr, str(request))
+        _openssl(["req", "-in", csr, "-noout", "-verify"])          # its key made it: not someone else's
         util.write_text(ext, "authorityKeyIdentifier=keyid,issuer\nbasicConstraints=CA:FALSE\n"
                              "keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
                              "subjectAltName=%s\n" % ",".join("DNS:%s" % n for n in names))
-        _openssl(["req", "-new", "-key", key_path, "-subj", "/O=kiwi/CN=%s" % names[0], "-out", csr])
         _openssl(["x509", "-req", "-in", csr, "-CA", ca_pem, "-CAkey", ca_key, "-CAcreateserial",
                   "-days", str(days), "-sha256", "-extfile", ext, "-out", crt])
         return util.read_text(crt) + util.read_text(ca_pem)
+
+
+def sign_for(ca_dir, key_path, names, days=CERT_DAYS):
+    """sign_request for the key at key_path, which stays where it is."""
+    return sign_request(ca_dir, request_for(key_path, names[0]), names, days)
+
+
+def signed_by(cert_pem, ca_pem):
+    """Was the first certificate of cert_pem (PEM text) signed by the CA ca_pem (PEM text)?"""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="kiwi-verify-") as tmp:
+        c, a = os.path.join(tmp, "cert.pem"), os.path.join(tmp, "ca.pem")
+        util.write_text(c, str(cert_pem))
+        util.write_text(a, str(ca_pem))
+        return subprocess.run(["openssl", "verify", "-CAfile", a, c], capture_output=True).returncode == 0
 
 
 def cert_valid(pem_path, min_days=30):
@@ -131,9 +159,12 @@ def _ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_const
                          "keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
                          "subjectAltName=%s\n" % ",".join("DNS:%s" % n for n in [hostname, "*." + hostname] +
                                                             [n for a in aliases for n in (a, "*." + a)]))
-    _openssl(["genrsa", "-out", key + ".tmp", "4096"])
-    os.chmod(key + ".tmp", 0o600)
-    os.replace(key + ".tmp", key)
+    # issued again (new names, close to its end): the key stays, so what a partner's CA signed for
+    # it (alias-*.pem, federation) still fits; a new key only when there is none
+    if not os.path.isfile(key):
+        _openssl(["genrsa", "-out", key + ".tmp", "4096"])
+        os.chmod(key + ".tmp", 0o600)
+        os.replace(key + ".tmp", key)
     _openssl(["req", "-new", "-key", key, "-subj", "/C=NZ/ST=kiwi/L=kiwi/O=kiwi/OU=kiwi/CN=%s" % hostname,
               "-out", csr])
     _openssl(["x509", "-req", "-in", csr, "-CA", ca_pem, "-CAkey", ca_key, "-CAcreateserial",

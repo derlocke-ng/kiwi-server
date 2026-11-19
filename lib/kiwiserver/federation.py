@@ -28,6 +28,7 @@ import base64
 import hashlib
 import ipaddress
 import os
+import re
 
 import yaml
 
@@ -197,7 +198,13 @@ def read_card(path):
     ipaddress.ip_network(str(data["mesh"]), strict=False)
     if data.get("ca") and not str(data["ca"]).startswith("-----BEGIN CERTIFICATE-----"):
         raise KiwiError("%s: its ca is not a certificate" % path)
-    return str(data["name"]), {k: data[k] for k in CARD if k in data}
+    out = {k: data[k] for k in CARD if k in data}
+    req = data.get("requests") or {}
+    if not isinstance(req, dict) or any(not LABEL.match(str(k)) or "BEGIN CERTIFICATE REQUEST" not in str(v) for k, v in req.items()):
+        raise KiwiError("%s: its requests are not {machine: certificate request}" % path)
+    if req:
+        out["requests"] = {str(k): str(v) for k, v in req.items()}
+    return str(data["name"]), out
 
 
 def ca_offer(entry, own_domain, permitted):
@@ -325,10 +332,25 @@ class _Dumper(yaml.SafeDumper):
 _Dumper.add_representer(str, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v, style="|" if "\n" in v else None))
 
 
-def card_text(name, entry):
-    """A card as its file has it."""
+def card_text(name, entry, requests=None):
+    """A card as its file has it. `requests`: {machine: certificate request}, for a partner that
+    has this network's domain to sign the names it gives those machines (translated at the link)."""
+    c = card(name, entry)
+    if requests:
+        c["requests"] = dict(sorted(requests.items()))
     return ("# %s's card for a partner network (kiwi-server federate FLEET --accept THIS). Nothing secret.\n" % name
-            + yaml.dump(card(name, entry), Dumper=_Dumper, sort_keys=False, default_flow_style=None, allow_unicode=True))
+            + yaml.dump(c, Dumper=_Dumper, sort_keys=False, default_flow_style=None, allow_unicode=True))
+
+
+LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def signed_text(by, them, certs):
+    """What a network sends back to a partner whose machines' names it signed: {machine: fullchain}."""
+    return ("# %s's certificates for %s's machines, as %s calls them (kiwi-server federate FLEET --accept THIS). "
+            "Nothing secret.\n" % (by, them, by)
+            + yaml.dump({"federation-signed": 1, "by": by, "for": them, "certs": dict(sorted(certs.items()))},
+                        Dumper=_Dumper, sort_keys=False, default_flow_style=None, allow_unicode=True))
 
 
 def dump(data):

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.227.0 — a translated partner's names between two operators
+
+- **Cards carry a certificate request per machine** (public). On `federate FLEET --accept CARD`
+  of a partner that has this network's domain, this network's CA signs the names its devices
+  use for the partner's machines into `<this>.signed-for-<partner>.yaml`; the partner takes it
+  with `--accept` that file. It is taken only when it is for that network, signed by the CA on
+  the sender's card, for the machine's key and for its names; what is not is said.
+- **A machine keeps its key** when its own certificate is issued again (new names, near its end):
+  a certificate a partner signed for it still fits. Before, the first render after linking
+  issued a new key and the partner's certificate was left out until linking again.
+- A card made before the network's first render carries its CA too: the CA is made then.
+
 ## 2.226.0 — a translated partner's pages trusted
 
 - **A partner with this network's domain** (translated at the link) is trusted on your devices

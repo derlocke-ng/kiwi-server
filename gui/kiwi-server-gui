@@ -101,6 +101,11 @@ BASE_GROUPS = [
              default="poweroff",
              help="poweroff: the machine turns off, you pull the stick and switch it on again. reboot: it starts the "
                   "installed system by itself; for a virtual machine, or when its own disk comes first in the boot order"),
+        dict(path=("asleep", "from"), type="string", label="Asleep from", scope="host", default="",
+             help="HH:MM: from then on it sleeps (suspended, little power) until the time below, and wakes by its own "
+                  "clock, for example for the night's backups. Not while it is set up or a backup runs. Empty: always awake"),
+        dict(path=("asleep", "until"), type="string", label="…until", scope="host", default="",
+             help="HH:MM: when it wakes again. Wake-on-LAN (Network) wakes it earlier"),
         dict(path=("install", "over_vpn"), type="bool", label="It stands at another site", scope="host", default=False,
              help="Behind someone else's router nothing at home reaches it. On: its install media bring a one-time way "
                   "onto the VPN, it comes onto it by itself, and its first setup comes over the VPN; then that way is "
@@ -5315,6 +5320,8 @@ class Window(Adw.ApplicationWindow):
             return "not installed yet"
         if not live:
             return "checking…" if self.polling else "no answer yet"
+        if not live["ok"] and live.get("state") == "asleep":     # in its sleep window (asleep): as it should
+            return (live.get("notes") or ["asleep"])[0]
         if not live["ok"]:
             seen = self.last_seen.get(name)
             return "unreachable" + (", seen %s ago" % duration(time.time() - seen) if seen else "")

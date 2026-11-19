@@ -68,9 +68,10 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    token instead of per-host media (on the mesh only; a machine at another site
    comes onto the VPN first, `install.over_vpn` since 2.235.0), and hosters
    without our own install media.
-5. **At home:** netboot (PXE), and a node that sleeps and wakes for the night's
-   backups. Wake-on-LAN is there since 2.228.0 (`network.wol`, `kiwi-server wake`,
-   *Wake it*), proven up to the card in a drill; waking real hardware is untested.
+5. **At home:** netboot (PXE). Wake-on-LAN is there since 2.228.0 (`network.wol`,
+   `kiwi-server wake`, *Wake it*), proven up to the card in a drill; waking real
+   hardware is untested. A machine asleep by day and awake for the night's backups
+   since 2.238.0 (`asleep: {from, until}`).
 6. **A master in RAM, room for its updates:** its /var is half its memory (crumble:
    913 MB). Since 2.209.0 (kiwi-stack 0.9.16) an update on a nearly full disk takes
    one image at a time; since 2.230.0 nginx runs on Alpine (64 MB instead of 167 MB)

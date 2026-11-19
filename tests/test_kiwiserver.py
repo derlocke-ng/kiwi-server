@@ -10,6 +10,7 @@ import hashlib
 import io
 import ipaddress
 import argparse
+import datetime
 import json
 import os
 import random
@@ -44,6 +45,7 @@ from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
 from kiwiserver import wake as wakemod  # noqa: E402
 from kiwiserver import join as joinmod  # noqa: E402
+from kiwiserver import asleep as asleepmod  # noqa: E402
 from kiwiserver import watchdog as watchdogmod  # noqa: E402
 from kiwiserver import access as accessmod  # noqa: E402
 from kiwiserver import fleettext, onion as onionmod  # noqa: E402
@@ -4792,6 +4794,68 @@ class TestJoinOverVpn(Base):
         self.assertIn("install.over_vpn is for Debian, CoreOS and uCore machines", err + out)
 
 
+class TestAsleep(Base):
+    """asleep: {from, until} (asleep.py): it sleeps by day and wakes for the night's backups."""
+
+    def test_its_window_is_checked_and_crosses_midnight(self):
+        self.assertEqual(asleepmod.problems({"asleep": {"from": "06:00", "until": "02:30"}}), [])
+        self.assertIn("asleep.until must be HH:MM (24h)", asleepmod.problems({"asleep": {"from": "06:00", "until": "2:30"}}))
+        self.assertTrue(asleepmod.problems({"asleep": {"from": "06:00", "until": "06:00"}}))
+        self.assertTrue(asleepmod.problems({"asleep": {"from": "06:00", "until": "02:30", "days": "Sat"}}))
+        h = type("H", (), {"cfg": {"asleep": {"from": "06:00", "until": "02:30"}}, "name": "x"})()
+        at = lambda hh, mm: datetime.datetime(2026, 11, 19, hh, mm)
+        self.assertTrue(asleepmod.now_asleep(h, at(12, 0)))
+        self.assertTrue(asleepmod.now_asleep(h, at(1, 0)))              # after midnight, before it wakes
+        self.assertFalse(asleepmod.now_asleep(h, at(3, 0)))             # awake for the night's backups
+        h.cfg = {"asleep": {"from": "13:00", "until": "14:00"}}
+        self.assertTrue(asleepmod.now_asleep(h, at(13, 30)))
+        self.assertFalse(asleepmod.now_asleep(h, at(14, 0)))
+
+    def run_script(self, start, end, busy=""):
+        """The machine's script with stand-ins for what it calls: was rtcwake asked, and for when?"""
+        bin_ = os.path.join(self.tmp, "bin-asleep")
+        os.makedirs(bin_, exist_ok=True)
+        log = os.path.join(self.tmp, "rtcwake.log")
+        if os.path.exists(log):
+            os.remove(log)
+        for name, body in (("rtcwake", 'echo "$@" > %s' % log), ("logger", "true"),
+                           ("systemctl", '[ "$3" = "%s.service" ]' % busy if busy.startswith("kiwi-") else "exit 1"),
+                           ("pgrep", "exit 0" if busy == "restic" else "exit 1"), ("podman", "exit 1"), ("docker", "exit 1")):
+            write(os.path.join(bin_, name), "#!/bin/sh\n%s\n" % body)
+            os.chmod(os.path.join(bin_, name), 0o755)
+        v = {"from": start, "until": end, "path": asleepmod.SCRIPT_PATH, "unit": asleepmod.UNIT}
+        r = subprocess.run(["sh", "-c", asleepmod.SCRIPT % v], env=dict(os.environ, PATH=bin_ + ":" + os.environ["PATH"]),
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return util.read_text(log).split() if os.path.exists(log) else None
+
+    def test_the_machine_sleeps_inside_its_window_when_nothing_runs(self):
+        now = datetime.datetime.now()
+        if now.hour == 23 and now.minute >= 50 or now.hour == 0 and now.minute < 10:
+            self.skipTest("too close to midnight for windows around now")
+        hm = lambda d: (now + datetime.timedelta(minutes=d)).strftime("%H:%M")
+        got = self.run_script(hm(-5), hm(5))
+        self.assertEqual(got[:3], ["-m", "mem", "-t"])                  # suspended to RAM, its clock wakes it
+        wake = int(got[3])
+        self.assertTrue(0 < wake - time.time() <= 6 * 60)
+        self.assertIsNone(self.run_script(hm(5), hm(10)))               # outside its window: awake
+        self.assertIsNone(self.run_script(hm(-5), hm(5), busy="restic"))   # a backup runs: not now
+        self.assertIsNone(self.run_script(hm(-5), hm(5), busy="kiwi-role"))
+
+    def test_asleep_in_its_window_is_no_problem_in_the_status(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "fig": {"role": "bare", "asleep": {"from": "00:00", "until": "23:59"}}}})
+        def gone(tgt, script, data=None, runner=None):
+            raise KiwiError("ssh: connect to host fig: No route to host")
+        with mock.patch.object(remote, "run", gone), mock.patch.object(remote, "reach", lambda h, o=None: "core@fig"), \
+                mock.patch.object(unlock, "waiting_at", lambda h: None), \
+                mock.patch.object(asleepmod, "now_asleep", lambda h, now=None: True):
+            rc, out, err = TestManage.run_cli(self, "status", f.path, "--porcelain")
+        h = json.loads(out)["hosts"][0]
+        self.assertEqual((h["state"], h["problems"]), ("asleep", []))
+        self.assertIn("asleep until 23:59", h["notes"][0])
+
+
 class TestMovePlan(Base):
     def test_the_plan_says_what_a_move_changes_and_changes_nothing(self):
         f = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}), "hosts": {
@@ -6675,7 +6739,7 @@ class TestManage(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
-            if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT):   # their own tests
+            if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT) or "kiwi-asleep" in script:   # their own tests
                 return b""
             calls.append((script, data))
             if "luksChangeKey" in script:
@@ -6781,7 +6845,7 @@ class TestManage(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
-            if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT):   # their own tests
+            if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT) or "kiwi-asleep" in script:   # their own tests
                 return b""
             calls.append(("run", tgt, script, data))
             if "role.done" in script:

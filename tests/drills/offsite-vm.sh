@@ -14,6 +14,8 @@
 #   OVER_VPN=1: install.over_vpn: its media bring a one-time join peer, it comes onto the VPN by itself,
 #       and its first setup is `kiwi-server next` from home over the mesh (no computer at its site);
 #       afterwards the join tunnel and peer are gone and it answers at its own mesh address
+#   ASLEEP=1: after its setup, a sleep window of a few minutes (asleep): it suspends at its start, does
+#       not answer, `status` says asleep, and its clock wakes it at its end (QEMU with S3 on)
 #   ENCRYPT=RING: its disk encrypted (LUKS), opened at boot by RING, a ring at home that the master relays
 #       over the mesh (it keeps no key): the master is applied so that it relays, the first boot gets its
 #       one-time key through the initramfs's SSH from a computer at its site, the first apply binds the
@@ -42,7 +44,7 @@ vm() {      # LOG BOOT(cd|disk)
         -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.fd" -drive if=pflash,format=raw,file=vars.fd \
         "${boot[@]}" -drive if=none,id=disk,format=qcow2,file=disk.qcow2 -device virtio-blk-pci,drive=disk,bootindex=1 \
         -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${P_SSH:-2290}-:22,hostfwd=tcp:127.0.0.1:${P_DROP:-2292}-:2222 \
-        -display none -serial file:"$1" -daemonize -pidfile qemu.pid
+        -global ICH9-LPC.disable_s3=0 -display none -serial file:"$1" -daemonize -pidfile qemu.pid
 }
 # what the machine itself says, through QEMU's forwarded port (only this computer reaches it)
 inside() { ssh -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -169,6 +171,26 @@ if [ -n "${ENCRYPT:-}" ]; then
     for _ in $(seq 1 60); do ssh_to "core@$mesh" true >/dev/null 2>&1 && { back=0; break; }; sleep 10; done
     check $back "after a restart it opened its disk by itself and is on the mesh again (the ring $ENCRYPT, relayed)"
     ssh_to "core@$mesh" "sudo journalctl -b -o cat --no-pager | grep -i -m3 -E 'clevis|tang'" >reboot-unlock.txt 2>/dev/null
+fi
+
+# ---- asleep for a few minutes, woken by its own clock ---------------------------------------------
+if [ "${ASLEEP:-0}" = 1 ]; then
+    a=$(date -d "+3 min" +%H:%M); b=$(date -d "+8 min" +%H:%M)
+    python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" "asleep={\"from\": \"$a\", \"until\": \"$b\"}" >/dev/null
+    "${ks[@]}" apply "$F" "$N" >asleep-apply.log 2>&1; check $? "a sleep window $a to $b set"
+    until [ "$(date +%H:%M)" = "$a" ]; do sleep 5; done; sleep 60
+    gone=0; ssh_to "core@$mesh" true >/dev/null 2>&1 && gone=1
+    check $gone "at $a it is asleep: it does not answer"
+    "${ks[@]}" status "$F" "$N" --porcelain >asleep-status.json 2>/dev/null
+    python3 -c "import json,sys; h=json.load(open('asleep-status.json'))['hosts'][0]; sys.exit(0 if h['state']=='asleep' and not h['problems'] else 1)"
+    check $? "status says asleep, no problem"
+    until [ "$(date +%H:%M)" = "$b" ]; do sleep 5; done
+    woke=1
+    for _ in $(seq 1 30); do ssh_to "core@$mesh" true >/dev/null 2>&1 && { woke=0; break; }; sleep 10; done
+    check $woke "at $b its clock woke it, and it answers again"
+    python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" "asleep={}" >/dev/null
+    "${ks[@]}" apply "$F" "$N" >asleep-off.log 2>&1
+    ssh_to "core@$mesh" "systemctl is-enabled kiwi-asleep.timer" >/dev/null 2>&1; [ $? != 0 ]; check $? "without a window the timer is gone"
 fi
 
 # ---- the control node at home reaches it too ----------------------------------------------------

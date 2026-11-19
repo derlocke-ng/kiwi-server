@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.238.0 — asleep by day, awake for the backups
+
+- **`asleep: { from: "06:00", until: "02:30" }`** on a machine (settings: *Asleep from*, *…until*):
+  in that window it suspends to RAM and its own clock wakes it at `until` (`rtcwake`), from a
+  timer that looks every quarter of an hour. Not while it is set up, its own backup runs or a
+  backup comes in to its backup server; then a quarter of an hour later. Wake-on-LAN wakes it
+  earlier. Taken out of the fleet file, the next apply removes it.
+- **`status`** says "asleep until …" for a machine in its window that does not answer (state
+  `asleep`, no problem, no message); the control page and the app show it.
+- Tests that use the control page wait up to a minute for the look a login starts (one failed
+  now and then on a slow run). ROADMAP: papaya has three rings.
+
 ## 2.237.0 — a plan for moving the network, just in case
 
 - **`kiwi-server move FLEET --mesh 10.X.0.0/16 --domain D`** (either or both): what moving the

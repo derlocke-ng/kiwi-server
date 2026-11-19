@@ -236,6 +236,26 @@ for that moment: no broadcast is needed. `tests/drills/wake-netns.py` shows that
 packet reaches the card; that a card then starts its machine is up to the hardware,
 and virtual machines cannot be woken this way.
 
+## Asleep by day, awake for the backups
+
+A machine that is only needed at night, a backup machine for instance, can sleep the rest
+of the day:
+
+```yaml
+hosts:
+  lychee:
+    asleep: { from: "06:00", until: "02:30" }
+```
+
+- From `from` it suspends to RAM (little power, its memory kept) and its own clock wakes it
+  at `until`. The window may cross midnight; the times are the machine's own (`timezone`).
+- It does not go to sleep while it is being set up, while its own backup runs or while a
+  backup comes in to it; it tries again a quarter of an hour later, inside the window.
+- `kiwi-server status`, the control page and the app say "asleep until 02:30" for it then,
+  instead of a machine that does not answer, and no message goes out.
+- Wake-on-LAN (above) wakes it earlier. In the settings: *Asleep from* and *…until*.
+- Put the backups of the machines it keeps after `until` (the backup module's time).
+
 ## Sign in to a service
 
 A service such as Nextcloud, Pi-hole or Portainer asks for a user name and a

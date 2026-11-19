@@ -75,6 +75,9 @@ DEFAULTS = {
         "wol": False,
         "mac": "",
     },
+    # a machine that sleeps by day and wakes for the night's backups: {from: "06:00", until: "02:30"}
+    # (asleep.py); empty: always awake
+    "asleep": {},
     "updates": {
         # When an update may REBOOT the machine. Updates themselves are fetched
         # continuously on every target; the window only gates the reboot.
@@ -522,6 +525,8 @@ class Host:
             errs.append("install.over_vpn must be true or false")
         elif ov and self.target not in ("debian", "coreos", "ucore"):
             errs.append("install.over_vpn is for Debian, CoreOS and uCore machines")
+        from . import asleep as asleepmod
+        errs += asleepmod.problems(c)
         if not isinstance(n.get("wol", False), bool):
             errs.append("network.wol must be true or false")
         if n.get("mac") and not re.match(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$", str(n["mac"])):

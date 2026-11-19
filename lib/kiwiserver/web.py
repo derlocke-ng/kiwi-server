@@ -475,6 +475,7 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 {% for m in todo %}{% for p in m.problems %}<div class="card"><div class="row"><strong><span class="dot {{ p.level }}"></span>{{ m.name }}</strong>
 <a class="btn" href="/hosts/{{ m.name }}">Open</a></div><p>{{ p.text }}</p>
 {% set tip = p.hint or hint(p.text) %}{% if tip %}<p class="muted">{{ tip }}</p>{% endif %}
+{% from "acts.html" import acts with context %}{{ acts(m, p, tok) }}
 {% if p.level == "warn" and p.key in quietable %}<form class="inline" method="post" action="/hosts/{{ m.name }}/quiet">{{ tok }}
 <input type="hidden" name="key" value="{{ p.key }}"><button title="It stays as a note on the machine's page; its settings bring it back">Leave it out</button></form>{% endif %}
 </div>{% endfor %}{% endfor %}{% endif %}
@@ -631,10 +632,9 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <input type="hidden" name="host" value="{{ m.name }}"><button>Wake it now</button></form>{% endif %}</div>{% endif %}
 {% for p in m.problems %}<div class="card"><p><span class="dot {{ p.level }}"></span>{{ p.text }}</p>
 {% set tip = p.hint or hint(p.text) %}{% if tip %}<p class="muted">{{ tip }}</p>{% endif %}
+{% from "acts.html" import acts with context %}{{ acts(m, p, tok) }}
 {% if p.level == "warn" and p.key in quietable %}<form class="inline" method="post" action="/hosts/{{ m.name }}/quiet">{{ tok }}
 <input type="hidden" name="key" value="{{ p.key }}"><button title="It stays as a note here; the settings bring it back">Leave it out</button></form>{% endif %}
-{% if "disk is locked" in p.text|lower %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="unlock">
-<input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Unlock it</button></form>{% endif %}
 {% if m.wol and p.key == "unreachable" %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="wake">
 <input type="hidden" name="host" value="{{ m.name }}"><button class="primary">Wake it</button></form>
 <p class="muted small">Another machine of its LAN sends it the wake-up signal (Wake-on-LAN).</p>{% endif %}</div>{% endfor %}
@@ -1465,6 +1465,16 @@ if h.page.startswith("/") and not h.page.startswith("//") %}<a class="btn" href=
 {% endfor %}</pre></details>{% endif %}</details>{% endfor %}{% endif %}
 {% endblock %}"""
 
+
+# what a person can do about a problem (facts.ACTIONS): a job for this machine as a button, a page as a link
+TEMPLATES["acts.html"] = """{% macro acts(m, p, tok) %}{% set list = p.actions if p.actions else
+([{"label": "Unlock it", "run": "unlock"}] if "disk is locked" in p.text|lower else []) %}{% if list %}<div class="actions">
+{% for a in list %}{% if a.run %}<form class="inline" method="post" action="/run"{% if a.run == "apply" %}
+onsubmit="return confirm('Apply to {{ m.name }} now? Services that changed restart for a moment.')"{% endif %}>{{ tok }}
+<input type="hidden" name="action" value="{{ a.run }}"><input type="hidden" name="host" value="{{ m.name }}">
+<button{% if loop.first %} class="primary"{% endif %}>{{ a.label }}</button></form>
+{% elif a.page and a.page.startswith("/") and not a.page.startswith("//") %}<a class="btn" href="{{ a.page }}">{{ a.label }}</a>{% endif %}{% endfor %}
+</div>{% endif %}{% endmacro %}"""
 
 TEMPLATES["unlock.html"] = """{% extends "base.html" %}{% block main %}
 <p><a href="/">← Home</a></p><h1>Disk unlock</h1>

@@ -266,8 +266,9 @@ def parse(data, local_now=None):
 
 # what a person can do about each kind of problem: with it in the app, on the page and in messages
 HINTS = {
-    "unreachable": "Is it on and on the network? Look at its screen or restart it. If it stays away: If something breaks.",
-    "locked": "Its disk waits for its key: Unlock on the machine's page, or the rings it needs must be up.",
+    "unreachable": "Is it on and on the network? Look at its screen or restart it.",
+    "locked": "Its disk waits for its key: unlock it, or the rings it needs must be up.",
+    "rebuilt": "When it is installed and on, unlock it if its disk is encrypted, then apply it.",
     "role-failed": "Open the machine: the output of its last apply says where it stopped. Apply it again.",
     "not-applied": "Apply it.",
     "service": "Restart it under the machine's services, and read its log there.",
@@ -286,6 +287,30 @@ HINTS = {
     "disk-plain": "Install it again with encryption when it suits you, or leave this warning out in its settings.",
     "data-disk-plain": "Its data disk is encrypted when it is set up again empty, or leave this warning out in its settings.",
 }
+# What a person can do about a problem, beside the hint: [{label, page, app, run}]. `page`: a
+# page of the control page; `app`: the app's own action for it; `run`: a job for this machine
+# (the page's /run, the app's command). One table for the page, the app and the phone.
+_BREAKS = {"label": "If something breaks", "page": "/recovery", "app": "recovery"}
+_UNLOCK = {"label": "Unlock it", "run": "unlock"}
+_RINGS = {"label": "Disk unlock", "page": "/unlock", "app": "unlock-picture"}
+_BACKUPS = {"label": "Backups", "page": "/backups"}
+ACTIONS = {
+    "unreachable": [_BREAKS],
+    "locked": [_UNLOCK, _RINGS, _BREAKS],
+    "rebuilt": [_UNLOCK, _RINGS, _BREAKS],
+    "role-failed": [{"label": "Apply", "run": "apply"}],
+    "not-applied": [{"label": "Apply", "run": "apply"}],
+    "tunnel": [{"label": "Apply", "run": "apply"}],
+    "clock": [{"label": "Apply", "run": "apply"}],
+    "certificate": [{"label": "Apply", "run": "apply"}],
+    "backups-held": [_BACKUPS], "backup-none": [_BACKUPS], "backup-old": [_BACKUPS], "backup-store-full": [_BACKUPS],
+}
+
+
+def actions(key):
+    return [dict(a) for a in ACTIONS.get(key or "", [])]
+
+
 # the warnings a machine may leave out (its setting `quiet`): never one that says something is broken
 QUIETABLE = {"disk-plain": "The disk is not encrypted", "data-disk-plain": "A data disk is not encrypted",
              "clock": "The clock", "memory": "Little free memory", "failed-units": "Failed units",
@@ -295,8 +320,10 @@ QUIETABLE = {"disk-plain": "The disk is not encrypted", "data-disk-plain": "A da
 def assess(f, quiet=()):
     """(state, problems, notes). state: ok, warn or bad; a problem is {level, text, key, hint}.
     `quiet`: the keys of warnings this machine leaves out (QUIETABLE): they become notes."""
-    bad = lambda text, key: {"level": "bad", "text": text, "key": key, "hint": HINTS.get(key, "")}     # noqa: E731
-    warn = lambda text, key: {"level": "warn", "text": text, "key": key, "hint": HINTS.get(key, "")}   # noqa: E731
+    bad = lambda text, key: {"level": "bad", "text": text, "key": key, "hint": HINTS.get(key, ""),     # noqa: E731
+                             "actions": actions(key)}
+    warn = lambda text, key: {"level": "warn", "text": text, "key": key, "hint": HINTS.get(key, ""),   # noqa: E731
+                              "actions": actions(key)}
     problems, notes = [], []
     booting = 0 < f.get("uptime", 0) < BOOTING
     if f.get("role_failed"):

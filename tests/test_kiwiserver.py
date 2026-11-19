@@ -5201,6 +5201,51 @@ class TestAwayRing(Base):
             self.assertEqual(compose["services"]["km-tang-away"]["network_mode"], "service:km-vpn-server")
 
 
+class TestStory(Base):
+    """A machine's story (lifecycle.py) and what to do about a problem (facts.ACTIONS)."""
+
+    def test_media_newer_than_the_last_apply_tell_a_reinstall(self):
+        from kiwiserver import lifecycle
+        now = 1_000_000
+        self.assertIsNone(lifecycle.story("lime", now - 10, now - 2400, False, now=now))          # applied since
+        self.assertIsNone(lifecycle.story("lime", now - 10, None, False, now=now))                # no media
+        st = lifecycle.story("lime", now - 9000, now - 2400, False, encrypted=True, now=now)
+        self.assertEqual(st["stage"], "installing")
+        self.assertIn("made 40 minutes ago (it was set up before: this is a reinstall)", st["text"])
+        self.assertIn("waits at boot for its disk's key", st["text"])
+        st = lifecycle.story("lime", None, now - 2400, False, waits_at="192.168.2.64", now=now)
+        self.assertEqual((st["stage"], "Its first start waits at 192.168.2.64" in st["text"]), ("waits", True))
+        d = os.path.join(self.tmp, "media", "lime")
+        os.makedirs(d)
+        write(os.path.join(d, "lime-encrypted.img"), "x")
+        os.utime(os.path.join(d, "lime-encrypted.img"), (now, now))
+        self.assertEqual(lifecycle.media_time(os.path.join(self.tmp, "media"), "lime"), now)
+        self.assertIsNone(lifecycle.media_time(os.path.join(self.tmp, "media"), "papaya"))
+
+    def test_status_says_a_reinstalled_machine_that_does_not_answer_is_not_just_unreachable(self):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        media = os.path.join(self.tmp, "output", "x")
+        os.makedirs(media, exist_ok=True)
+        write(os.path.join(media, "x.iso"), "iso")
+
+        def gone(*a, **kw):
+            raise KiwiError("ssh: connect to host x port 22: Connection timed out")
+        with mock.patch.object(remote, "run", gone), mock.patch.object(remote, "reach", lambda h, o=None: "core@x"), \
+                mock.patch.object(unlock, "waiting_at", lambda h, runner=None: None):
+            rc, out, err = TestManage.run_cli(self, "status", f.path, "--porcelain")
+            row = json.loads(out)["hosts"][0]
+            self.assertEqual(row["stage"], "installing")
+            self.assertEqual([p["key"] for p in row["problems"]], ["rebuilt", "unreachable"])
+            self.assertEqual([a["label"] for a in row["problems"][0]["actions"]], ["Unlock it", "Disk unlock", "If something breaks"])
+            self.assertEqual(row["problems"][1]["actions"], [{"label": "If something breaks", "page": "/recovery", "app": "recovery"}])
+            self.assertNotIn("If it stays away", row["problems"][1]["hint"])           # the link says it now
+            rc, out, err = TestManage.run_cli(self, "status", f.path)
+            self.assertIn("! Its install media were made", out)
+            os.remove(os.path.join(media, "x.iso"))                                    # no media: only unreachable
+            rc, out, err = TestManage.run_cli(self, "status", f.path, "--porcelain")
+            self.assertEqual([p["key"] for p in json.loads(out)["hosts"][0]["problems"]], ["unreachable"])
+
+
 class TestCount(unittest.TestCase):
     def test_one_day_two_days(self):
         self.assertEqual([util.count(n, "day") for n in (0, 1, 1.7, 2)], ["0 days", "1 day", "1 day", "2 days"])
@@ -8464,7 +8509,7 @@ peers=4 3
     def test_the_disk_is_reported_as_it_is(self):
         state, problems, _n = self.assessed("luks=none")[1]
         self.assertIn({"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it",
-                       "key": "disk-plain", "hint": facts.HINTS["disk-plain"]}, problems)
+                       "key": "disk-plain", "hint": facts.HINTS["disk-plain"], "actions": []}, problems)
         self.assertIn("leave this warning out", problems[0]["hint"])           # and what to do about it
         self.assertEqual(state, "warn")
         # left out on purpose (the machine's `quiet`): a note then, and the machine is fine
@@ -13804,6 +13849,22 @@ class TestFirstRunPage(StoreBase):
             fleet_name, plain, _kept = backup.open_copy(fh.read(), recovery)
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
+
+    def test_a_problem_shows_what_to_do_as_buttons_and_links(self):
+        cookie, _csrf = self.made()
+        node = self.node()
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": node, "ok": False, "state": "down", "notes": [], "facts": {}, "problems": [
+                {"level": "warn", "key": "rebuilt", "text": "Its install media were made 40 minutes ago and it has not answered since.",
+                 "hint": facts.HINTS["rebuilt"], "actions": facts.actions("rebuilt")},
+                {"level": "bad", "key": "unreachable", "text": "unreachable: timed out", "hint": facts.HINTS["unreachable"],
+                 "actions": facts.actions("unreachable")}]}]}))
+        for page in ("/hosts/%s" % node, "/"):
+            body = self.ask(page, cookie=cookie)[1]
+            self.assertIn("Its install media were made 40 minutes ago", body)
+            self.assertIn('<a class="btn" href="/recovery">If something breaks</a>', body)
+            self.assertIn('<a class="btn" href="/unlock">Disk unlock</a>', body)
+            self.assertRegex(body, r'name="action" value="unlock"><input type="hidden" name="host" value="%s">\s*<button class="primary">Unlock it' % node)
 
     def test_a_machine_restarts_or_switches_off_from_its_page(self):
         cookie, _csrf = self.made()

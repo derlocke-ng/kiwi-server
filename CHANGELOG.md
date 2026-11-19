@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.250.0 — a machine's story, and what to do as a button
+
+- **A machine that was installed anew no longer just says "unreachable".** When its install
+  media are newer than its last apply and it does not answer, `status`, the page and the app
+  say so: "Its install media were made 40 minutes ago (it was set up before: this is a
+  reinstall) and it has not answered since: it is being installed, or it waits at boot for its
+  disk's key." A first start that waits for its one-time key is named with its address.
+- **Every hint has its actions**, from one table for the page, the app and the phone: a job for
+  the machine as a button (Unlock it, Apply), a page as a link (Disk unlock, If something
+  breaks, Backups). "If it stays away: If something breaks." without a link is gone.
+- First step of docs/design/ui.md.
+
 ## 2.249.0 — switch off, restart
 
 - **Switch a machine off or restart it**: `kiwi-server power <fleet> <machine> off|restart` says

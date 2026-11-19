@@ -3484,6 +3484,20 @@ def _watch_once(args):
             util.say("%s: %s" % (h.name, st))
 
 
+def _first_boot_waits(h):
+    """Where a machine installed encrypted waits at its first start for the one-time key of its
+    media (its boot system answers, its system not yet), or None. As `next` finds it."""
+    net = h.cfg.get("network") or {}
+    addr = str(net["address"]).split("/")[0] if not net.get("dhcp", True) and net.get("address") else None
+    try:
+        if addr and luks.at_first_boot(h) and h.cfg["unlock"].get("ssh") and remote.speaks_ssh(addr, unlock.ssh_port(h)) \
+                and not remote.speaks_ssh(addr, remote.ssh_port(h)):
+            return addr
+    except (KiwiError, OSError):
+        pass
+    return None
+
+
 def cmd_status(args):
     """What a running machine says: when its role was applied, what its stack
     is doing, and what is wrong with it. Every host at once, so one that is
@@ -3492,6 +3506,8 @@ def cmd_status(args):
     hosts = fleet.select(args.hosts)
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
+    from . import lifecycle as lifecyclemod
+    applied, media = fleet_state(fleet).get("applied") or {}, media_dir_for(args, fleet)
 
     def ask(h):
         tgt = remote.reach(h, args.ssh)
@@ -3505,9 +3521,19 @@ def cmd_status(args):
             at = unlock.waiting_at(h)
             if at:
                 e = "its disk is locked, the machine waits at %s: %s" % (at, unlock.locked_advice(h, args.fleet))
+            key = "locked" if at else "unreachable"
+            problems = [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e, "key": key,
+                         "hint": facts.HINTS[key], "actions": facts.actions(key)}]
+            # its story: install media newer than its last apply mean it is being installed anew, or
+            # waits at its first start for its disk's key (which no host key on record can tell yet)
+            st = lifecyclemod.story(h.name, applied.get(h.name), lifecyclemod.media_time(media, h.name), False,
+                                    waits_at=at or _first_boot_waits(h), encrypted=unlock._way(h) != "not encrypted")
+            if st:
+                problems.insert(0, {"level": "warn", "text": st["text"], "key": "rebuilt", "hint": facts.HINTS["rebuilt"],
+                                    "actions": facts.actions("rebuilt")})
             return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down", "locked": bool(at),
-                    "problems": [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e, "key": "locked" if at else "unreachable",
-                                  "hint": facts.HINTS["locked" if at else "unreachable"]}], "notes": [], "facts": {}}
+                    "story": st["text"] if st else "", "stage": st["stage"] if st else "",
+                    "problems": problems, "notes": [], "facts": {}}
         measured = facts.parse(data)
         state, problems, notes = facts.assess(measured, quiet=h.cfg.get("quiet") or [])
         if "backup-server" in (h.modules or []):
@@ -3531,6 +3557,9 @@ def cmd_status(args):
         if o["ok"]:
             for p in o["problems"]:
                 print("   ! %s" % p["text"])
+        elif o.get("story"):
+            print("   ! %s" % o["story"])
+            print("     %s" % facts.HINTS["rebuilt"])
             for n in o["notes"]:
                 print("   - %s" % n)
 

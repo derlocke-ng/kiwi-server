@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.248.0 — openers
+
+- **Openers**: a master at a hoster that waits at boot for a ring it reaches only through a
+  tunnel is opened by the ring's own machine as well, not only by the control node. That
+  machine looks once a minute whether the master's boot system answers, and offers it its ring
+  with a key that allows nothing else there. Only machines with an encrypted disk are openers.
+  `unlock.openers` (optional) names them; `kiwi-server unlock <fleet>`, the Disk unlock page and
+  the app show them, and the recovery report's power-cut check counts them: with one, the
+  master no longer waits for the control node after a power cut.
+- Design: desktops and laptops open by a policy of rings: every health ring and its
+  auto-unlock ring, or its emergency ring (**Unlock now**). Proven in VMs on Fedora Silverblue
+  (`tests/drills/desktop-silverblue-vm.sh`, 0 wrong); the Debian desktop drill follows.
+
 ## 2.247.0 — a log a person can read
 
 - **Fixed (kiwi-modules 0.101.1):** the accounts' sign-up page (kn-signup) stopped at every start

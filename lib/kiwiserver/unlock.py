@@ -760,11 +760,11 @@ def _known_hosts(host):
     return host.fleet.resolve_path("secrets/known_hosts.initramfs")
 
 
-def _initramfs_ssh(host, tgt):
+def _initramfs_ssh(host, tgt, servers=None):
     """SSH in the initramfs, and its host key on record while the machine can vouch for it:
     the boot partition is not encrypted, so that key is the only proof of who answers."""
     script = (PREPARE_DROPBEAR % (dropbear_conf(host), LOOPBACK_PATH, LOOPBACK_HOOK)) if host.target == "debian" else PREPARE_DRACUT_SSHD
-    out = remote.run(tgt, script, (authorized_line(host) + "\n").encode())
+    out = remote.run(tgt, script, ("\n".join(authorized_lines(host, servers)) + "\n").encode())
     key = out.decode(errors="replace").strip()
     if not key.startswith("ssh-ed25519 "):
         raise KiwiError("%s: the initramfs has no SSH host key" % host.name)
@@ -904,7 +904,7 @@ def bind(host, tgt, servers, force=False):
     if coreos and not host.cfg["unlock"].get("ssh") and b"updated" in remote.run(tgt, RING_TIMEOUTS_COREOS):
         util.say("%s: the unlock at boot gives a silent ring seconds, not minutes, from the next boot on" % host.name)
     if host.cfg["unlock"].get("ssh"):
-        _initramfs_ssh(host, tgt)
+        _initramfs_ssh(host, tgt, servers)
         if coreos:
             util.say("%s: SSH in the initramfs comes with the next boot" % host.name)
     return changed
@@ -1150,7 +1150,7 @@ def picture(fleet, roles, ms):
     for h in sorted(hosts.values(), key=lambda x: x.name):
         cfg = h.cfg.get("unlock") or {}
         forwarded = set(_forwarded_rings(h)) if cfg.get("rings") else set()
-        rings, openers = [], []
+        rings, who_opens = [], []
         for r in cfg.get("rings") or []:
             server = servers.get(r, (None, 0))[0]
             if server is None:
@@ -1158,9 +1158,12 @@ def picture(fleet, roles, ms):
             elif isinstance(server, OperatorRing):
                 path = "the computer with kiwi-server, by hand"
             elif r in forwarded:
-                path = "a tunnel the control node opens"
-                if control is not None and control.name not in openers:
-                    openers.append(control.name)
+                own = any(op is server and ring == r for op, ring, _v, _p in openers(h, servers))
+                path = "a tunnel %s opens" % ("its own machine or the control node" if own and control is not None
+                                              else "its own machine" if own else "the control node")
+                for who in ([server.name] if own else []) + ([control.name] if control is not None else []):
+                    if who not in who_opens:
+                        who_opens.append(who)
             elif one_lan(h, server):
                 path = "the LAN"
             else:
@@ -1168,7 +1171,7 @@ def picture(fleet, roles, ms):
             rings.append({"ring": r, "server": getattr(server, "name", None) if not isinstance(server, OperatorRing)
                           else "operator", "path": path})
         rows.append({"name": h.name, "way": _way(h), "threshold": int(cfg.get("threshold") or 1) if rings else 0,
-                     "rings": rings, "openers": openers, "needs": sorted(needs.get(h.name, [])),
+                     "rings": rings, "openers": who_opens, "needs": sorted(needs.get(h.name, [])),
                      "power_cut": "waits" if h.name in stuck else "opens" if rings else ""})
     return rows
 
@@ -1191,3 +1194,56 @@ def say_picture(rows, out=print):
             out("%-*s  after a power cut: opens, as long as %s starts too" % (width, "", " and ".join(r["needs"])))
         else:
             out("%-*s  after a power cut: opens, also with one of its rings' machines off" % (width, ""))
+
+
+# ---- openers (docs/design/unlock.md): who opens the way for a machine away from home ------------
+def _encrypted(host):
+    return _way(host) in ("by itself", "by a person")
+
+
+def openers(host, servers):
+    """[(opener, ring, via_port, ring_port)]: the machines that open the way into this one's boot
+    system for a ring of theirs, by themselves, when it waits (a master at a hoster reaches no ring
+    at home). Each ring's own machine for its own ring, if its disk is encrypted (the key it holds
+    for this lies on its disk), and if `unlock.openers` names it when that is set."""
+    cfg = host.cfg.get("unlock") or {}
+    chosen = cfg.get("openers")
+    out = []
+    for r in _forwarded_rings(host) if cfg.get("rings") else []:
+        server, port = servers.get(r, (None, 0))
+        if server is None or isinstance(server, OperatorRing) or server is host or not _encrypted(server):
+            continue
+        if chosen is not None and server.name not in [str(x) for x in chosen]:
+            continue
+        out.append((server, r, forwarded_ring(host, r)[1], int(port)))
+    return out
+
+
+def opener_key(fleet, name):
+    """The key an opener uses to reach a waiting machine's boot system: one per opener, made on
+    first use, kept in the fleet's secrets."""
+    path = fleet.resolve_path("secrets/openers/%s_ed25519" % name)
+    if not os.path.isfile(path):
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "kiwi-opener-%s" % name, "-f", path], check=True)
+    return path
+
+
+def opener_line(host, opener, via_port):
+    """An opener's line in the waiting machine's boot system: it may offer one port there, and
+    nothing else (no shell, no password prompt: a forced command that only waits)."""
+    public = " ".join(util.read_bytes(opener_key(host.fleet, opener.name) + ".pub").decode().split()[:2])
+    if host.target == "debian":         # dropbear: no rule for one remote port; local forwarding is off for all (-j)
+        options = ["no-agent-forwarding", "no-X11-forwarding", "no-pty", 'command="echo %s; sleep 900"' % _CONNECTED]
+    else:
+        options = ["restrict", "port-forwarding", 'permitlisten="127.0.0.1:%d"' % via_port,
+                   'command="echo %s; sleep 900"' % _CONNECTED]
+    return "%s %s" % (",".join(options), public)
+
+
+def authorized_lines(host, servers=None):
+    """Every line of the boot system's authorized_keys: the fleet's unlock key, and one per opener."""
+    lines = [authorized_line(host)]
+    for opener, _ring, via, _port in (openers(host, servers) if servers else []):
+        lines.append(opener_line(host, opener, via))
+    return lines

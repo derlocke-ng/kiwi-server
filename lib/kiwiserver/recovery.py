@@ -284,11 +284,11 @@ def start_alone(fleet, hosts, servers, off=()):
     start alone. A ring that has to be forwarded needs the control node up and open. `off`:
     machines that stay off."""
     control = next((h for h in hosts.values() if "control" in (h.modules or [])), None)
-    opens_control = None        # the machine whose ring opens the control node's keys after a restart
+    opens_control = set()       # the machines whose rings open the control node's keys after a restart (any one)
     if control is not None:
-        ring = (control.cfg.get("unlock") or {}).get("control")
-        if ring and ring in servers and not isinstance(servers[ring][0], unlockmod.OperatorRing):
-            opens_control = servers[ring][0].name
+        for ring in unlockmod.control_rings(control):
+            if ring in servers and not isinstance(servers[ring][0], unlockmod.OperatorRing):
+                opens_control.add(servers[ring][0].name)
     needs = {}
     for h in fleet.hosts.values():
         cfg = h.cfg.get("unlock") or {}
@@ -299,19 +299,21 @@ def start_alone(fleet, hosts, servers, off=()):
         for r in rings:
             if r not in servers or isinstance(servers[r][0], unlockmod.OperatorRing):
                 continue                        # nobody serves it, or a person's computer does
-            who = {servers[r][0].name}
+            who, any_of = {servers[r][0].name}, set()
             if str(via.get(r) or "").startswith("http://127.0.0.1:"):
-                if control is None or opens_control is None:
+                if control is None or not opens_control:
                     continue                    # forwarded by hand: not by itself
-                who |= {control.name, opens_control}
-            givers.append(who)
+                who |= {control.name}
+                any_of = set(opens_control)     # and one machine whose ring opens the control node
+            givers.append((who, any_of))
         needs[h.name] = (int(cfg.get("threshold") or 1), givers)
     up = {h.name for h in fleet.hosts.values() if h.name not in needs and h.name not in off}
     grew = True
     while grew:
         grew = False
         for name, (need, givers) in needs.items():
-            if name not in up and name not in off and sum(1 for g in givers if g <= up) >= need:
+            if name not in up and name not in off and \
+                    sum(1 for g, a in givers if g <= up and (not a or a & up)) >= need:
                 up.add(name)
                 grew = True
     return up, sorted(n for n in needs if n not in up and n not in off)

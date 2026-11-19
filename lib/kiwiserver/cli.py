@@ -2999,25 +2999,37 @@ def cmd_control(args):
             if x.role in roles:
                 rolesmod.resolve_settings(roles[x.role], x, ms)
         h = controlsync.control_host(fleet, args.to)
-        ring = str(h.cfg["unlock"].get("control") or "")
-        if not ring:
+        rings = unlock.control_rings(h)
+        if not rings:
             print(json.dumps({}))
             return
         servers = unlock.ring_servers(fleet, lambda x: None)
-        if ring not in servers or isinstance(servers[ring][0], unlock.OperatorRing):
-            raise KiwiError("%s: unlock.control names the ring %s, which no machine of the fleet serves" % (h.name, ring))
-        server, port = servers[ring]
-        if server is h:
-            raise KiwiError("%s cannot open itself: the ring %s is its own. Name a ring on another machine" % (h.name, ring))
-        try:
-            where = unlock.url(h, ring, server, port)
-        except KiwiError:                # not on one LAN: over the mesh (the tang module forwards its rings there)
-            mesh_ip = (server.role_settings or {}).get("vpn_ip")
-            if not mesh_ip:
-                raise
-            where = "http://%s:%d" % (mesh_ip, port)
-        print(json.dumps({"ring": ring, "server": server.name, "url": where,
-                          "adv": json.loads(unlock.advertisement(server, ring))}))
+        found, missed = [], []
+        for ring in rings:
+            if ring not in servers or isinstance(servers[ring][0], unlock.OperatorRing):
+                raise KiwiError("%s: unlock.control names the ring %s, which no machine of the fleet serves" % (h.name, ring))
+            server, port = servers[ring]
+            if server is h:
+                raise KiwiError("%s cannot open itself: the ring %s is its own. Name a ring on another machine" % (h.name, ring))
+            try:
+                where = unlock.url(h, ring, server, port)
+            except KiwiError:            # not on one LAN: over the mesh (the tang module forwards its rings there)
+                mesh_ip = (server.role_settings or {}).get("vpn_ip")
+                if not mesh_ip:
+                    raise
+                where = "http://%s:%d" % (mesh_ip, port)
+            try:
+                adv = json.loads(unlock.advertisement(server, ring))
+            except KiwiError as e:       # one ring away now: the others still open it, and the next login tries again
+                missed.append("%s (%s)" % (ring, str(e)[:120]))
+                continue
+            found.append({"ring": ring, "server": server.name, "url": where, "adv": adv})
+        if not found:
+            raise KiwiError("%s: none of its rings answered: %s" % (h.name, "; ".join(missed)))
+        for m in missed:
+            util.warn("the ring %s did not answer: the control node opens by the others" % m)
+        # one ring: as before (clevis tang); several: any one of them opens it (clevis sss, t=1)
+        print(json.dumps(dict(found[0], rings=found) if len(found) == 1 else {"rings": found}))
         return
     if args.action == "run":            # an action as a job on the control node: this copy goes there first
         if not args.link:

@@ -576,18 +576,23 @@ class Control:
                 if os.path.exists(f):
                     os.remove(f)
             return None
+        rings = pin.get("rings") or [pin]
+        if len(rings) == 1:
+            how = ["tang", json.dumps({"url": rings[0]["url"], "adv": rings[0]["adv"]})]
+        else:                                    # any one of them opens it: no single machine it hangs on
+            how = ["sss", json.dumps({"t": 1, "pins": {"tang": [{"url": r["url"], "adv": r["adv"]} for r in rings]}})]
         try:
-            c = subprocess.run(["clevis", "encrypt", "tang", json.dumps({"url": pin["url"], "adv": pin["adv"]})],
-                               input=self._identity.encode(), capture_output=True, timeout=60)
+            c = subprocess.run(["clevis", "encrypt"] + how, input=self._identity.encode(), capture_output=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired) as e:
             self.audit("control", "unlock by itself was not set up: %s" % e)
             return None
         if c.returncode != 0 or not c.stdout.strip():
             self.audit("control", "unlock by itself was not set up: clevis refused")
             return None
+        names = ", ".join(r["ring"] for r in rings)
         util.write_bytes(self.auto_file, c.stdout, 0o600)
-        util.write_text(self.auto_file + ".json", json.dumps({"ring": pin["ring"], "server": pin["server"]}), 0o600)
-        return pin["ring"]
+        util.write_text(self.auto_file + ".json", json.dumps({"ring": names, "server": ", ".join(r["server"] for r in rings)}), 0o600)
+        return names
 
     def try_auto(self):
         """Locked, and a ring may open it: ask the ring. True when it opened."""

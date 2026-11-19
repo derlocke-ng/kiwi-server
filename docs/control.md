@@ -234,6 +234,18 @@ papaya:
 After the next login the node keeps its key encrypted for that ring. After a
 restart it asks the ring and opens with nobody there (seconds). If the ring's
 machine is off it stays locked and the page says which machine it waits for.
+
+With one ring the control node hangs on one machine. Name more, and any one of
+them opens it:
+
+```yaml
+papaya:
+  unlock: { control: [house, attic] }   # lychee's ring or medlar's: either opens it
+```
+
+A ring that does not answer when the key is made is left out with a note; the
+next login tries again. `kiwi-server recovery` counts each of them when it says
+which machines come back by themselves after a power cut.
 A stolen disk alone opens nothing; a thief would also need to reach the ring
 on your network, the same trade your encrypted disks make. The app's control
 dialog offers this as "After a power cut".

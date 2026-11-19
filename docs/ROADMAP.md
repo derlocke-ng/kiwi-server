@@ -60,7 +60,8 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    knows its name.
 3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option),
    rings on more than one machine, ring rotation, the leash, a third share for
-   papaya, and the control node's own unlock, which hangs on one ring today.
+   papaya. The control node's own unlock takes several rings since 2.219.0
+   (`unlock.control: [house, attic]`).
 4. **The image:** the phoenix spin with the container images inside, the join
    token instead of per-host media, and hosters without our own install media.
 5. **At home:** netboot (PXE) and Wake-on-LAN, and a node that sleeps and wakes

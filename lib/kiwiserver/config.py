@@ -788,8 +788,11 @@ class Fleet:
         out = []
         for n in names:
             if n not in self.hosts:
-                raise KiwiError("no such host in %s: %s (have: %s)" % (
-                    os.path.basename(self.path), n, ", ".join(self.hosts)))
+                import difflib
+                near = difflib.get_close_matches(n, list(self.hosts), n=1, cutoff=0.7)
+                raise KiwiError("no such host in %s: %s%s (have: %s)" % (
+                    os.path.basename(self.path), n, " — did you mean %s?" % near[0] if near else "",
+                    ", ".join(self.hosts)))
             out.append(self.hosts[n])
         return out
 

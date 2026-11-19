@@ -9326,6 +9326,8 @@ class TestLogins(Base):
         rc, _out, err = self.run_cli("logins", f.path, "nobody")
         self.assertEqual(rc, 1)
         self.assertIn("no such host", err)
+        self.assertNotIn("did you mean", err)
+        self.assertIn("no such host in fleet.yaml: sh33 — did you mean sh3?", self.run_cli("logins", f.path, "sh33")[2])
 
     def test_what_is_off_is_not_listed(self):
         f = self.network(

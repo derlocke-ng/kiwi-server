@@ -940,7 +940,7 @@ def locked_advice(host, fleet_path):
     A ring this computer can forward: the unlock command. Rings at home that are away: say
     which machines serve them, since the waiting machine opens by itself when one is back."""
     if _forwarded_rings(host):
-        return "kiwi-server unlock %s %s" % (fleet_path, host.name)
+        return "kiwi-server unlock %s %s" % (util.typed_path(fleet_path), host.name)
     who = []
     try:
         servers = ring_servers(host.fleet, lambda x: None)

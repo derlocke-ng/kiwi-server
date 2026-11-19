@@ -211,3 +211,21 @@ def home_dir():
 
 def parent(path):
     return os.path.dirname(os.path.abspath(path))
+
+
+def shown_path(path):
+    """A path as a person reads it: relative below the working directory, else from ~."""
+    rel = os.path.relpath(path)
+    if not rel.startswith(".."):
+        return rel
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
+def typed_path(path):
+    """A path for a command a person copies: as shown_path writes it, quoted where it must be,
+    a leading ~/ left outside the quotes so the shell still expands it."""
+    shown = shown_path(os.path.abspath(path))
+    if shown.startswith("~/"):
+        return "~/" + shlex.quote(shown[2:])
+    return shlex.quote(shown)

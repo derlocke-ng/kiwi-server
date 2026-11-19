@@ -817,7 +817,7 @@ def load(args, need_roles=True):
     st = store.Store.for_fleet(args.fleet)
     if st.locked() and not os.environ.get("KIWI_SECRETS_DIR"):     # (a private copy is open for this process)
         # before anything looks in secrets/: a missing seed would be made anew
-        raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % args.fleet)
+        raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % typed_path(args.fleet))
     fleet = config.Fleet.load(args.fleet)
     remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
     if st.exists() and st.is_open() and not getattr(args, "porcelain", False):
@@ -1277,8 +1277,8 @@ def cmd_next(args):
                 rc = main(["apply", path, server])
                 if rc:
                     raise SystemExit(rc)
-        util.say("every machine is set up. How they are: kiwi-server status %s" % path)
-        util.say("your phone or laptop on the VPN: kiwi-server enroll %s phone (it shows a QR code to scan)" % path)
+        util.say("every machine is set up. How they are: kiwi-server status %s" % typed_path(path))
+        util.say("your phone or laptop on the VPN: kiwi-server enroll %s phone (it shows a QR code to scan)" % typed_path(path))
         return
     h, phase, text, errs, o = todo[0]
     util.say("%s (%d of %d machines still to set up)" % (h.name, len(todo), len(fleet.hosts)))
@@ -1304,7 +1304,7 @@ def cmd_next(args):
             # the master hands out the places: without it the step ended in an SSH error about a
             # name nobody can resolve yet (a dry run of the first steps, 17 Nov 2026)
             raise KiwiError("%s gets its place on your VPN from the master, and %s is not set up yet. "
-                            "Set it up first: kiwi-server next %s" % (h.name, masters_pending[0], path))
+                            "Set it up first: kiwi-server next %s" % (h.name, masters_pending[0], typed_path(path)))
         if go("Give %s its place on your VPN (the master has to be running)?" % h.name):
             run("enroll", path, h.name)
             util.say("done. Run this again for the next step")
@@ -1514,22 +1514,7 @@ def changed_since_apply(fleet, roles, r, skip=()):
     return out
 
 
-def shown_path(path):
-    """A path as a person reads it: relative below the working directory, else from ~."""
-    rel = os.path.relpath(path)
-    if not rel.startswith(".."):
-        return rel
-    home = os.path.expanduser("~")
-    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
-
-
-def typed_path(path):
-    """A path for a command a person copies: as shown_path writes it, quoted where it must be,
-    a leading ~/ left outside the quotes so the shell still expands it."""
-    shown = shown_path(os.path.abspath(path))
-    if shown.startswith("~/"):
-        return "~/" + shlex.quote(shown[2:])
-    return shlex.quote(shown)
+shown_path, typed_path = util.shown_path, util.typed_path     # what most of kiwi-server calls them by
 
 
 STARTER_KEY = "/starter/id_ed25519"
@@ -1720,7 +1705,7 @@ def cmd_sources(args):
             print(json.dumps({"sources": rows}, indent=2))
             return
         if not listed:
-            util.say("no module sources: only the built-in modules (kiwi-server sources %s add <link>)" % args.fleet)
+            util.say("no module sources: only the built-in modules (kiwi-server sources %s add <link>)" % typed_path(args.fleet))
         for x in rows:
             print("%-12s %s" % (x["name"], x.get("path") or "%s @ %s%s" % (x["url"], x.get("tag") + " " if x.get("tag") else "", x["commit"][:12])))
             print("%-12s %s" % ("", x.get("error") or "modules: " + ", ".join(x["modules"])))
@@ -1728,7 +1713,7 @@ def cmd_sources(args):
             if new and new.get("error"):
                 print("%-12s newest version: could not ask (%s)" % ("", new["error"]))
             elif new and new.get("tag") and new["commit"] != x.get("commit"):
-                print("%-12s newest version: %s (kiwi-server sources %s update %s)" % ("", new["tag"], args.fleet, x["name"]))
+                print("%-12s newest version: %s (kiwi-server sources %s update %s)" % ("", new["tag"], typed_path(args.fleet), x["name"]))
             elif new:
                 print("%-12s the newest version" % "")
         return
@@ -2414,9 +2399,9 @@ def secrets_store(args):
             if args.porcelain:
                 print(json.dumps({"store": False, "open": True, "locks_at": None, "opens_with": []}))
                 return
-            print("no secret store: secrets/ is plain files (kiwi-server secrets init %s)" % args.fleet)
+            print("no secret store: secrets/ is plain files (kiwi-server secrets init %s)" % typed_path(args.fleet))
             return
-        raise KiwiError("this fleet has no secret store: kiwi-server secrets init %s" % args.fleet)
+        raise KiwiError("this fleet has no secret store: kiwi-server secrets init %s" % typed_path(args.fleet))
     elif args.action == "unlock":
         if args.password_stdin:
             store.Store.password_given = sys.stdin.readline().rstrip("\n")
@@ -2500,7 +2485,7 @@ def secrets_store(args):
     elif args.action == "copy-key":
         # once, for a store made before 2.170.0: the key its copies are signed with, from the recovery key
         if not args.identity:
-            raise KiwiError("give the recovery key: kiwi-server secrets copy-key %s --identity RECOVERY-KEY-FILE" % args.fleet)
+            raise KiwiError("give the recovery key: kiwi-server secrets copy-key %s --identity RECOVERY-KEY-FILE" % typed_path(args.fleet))
         identity = st.identity(args.identity)
         if store.public_of(identity) != store.recovery_public(util.read_text(st.recipients)):
             raise KiwiError("that is not this store's recovery key: the copy key comes from the recovery key only")
@@ -2513,8 +2498,8 @@ def secrets_store(args):
     elif args.action == "join":
         public = st.join()
         util.say("this computer has a key for the store now, in its keyring; on a computer that can open it run:")
-        print("\n  kiwi-server secrets add %s %s %s\n" % (args.fleet, args.host or "<name of this computer>", public))
-        util.say("then bring the fleet folder here again (its secrets.age changes) and kiwi-server secrets unlock %s" % args.fleet)
+        print("\n  kiwi-server secrets add %s %s %s\n" % (typed_path(args.fleet), args.host or "<name of this computer>", public))
+        util.say("then bring the fleet folder here again (its secrets.age changes) and kiwi-server secrets unlock %s" % typed_path(args.fleet))
     elif args.action == "add":
         if not (args.host and args.setting):
             raise KiwiError("kiwi-server secrets add <fleet> <name> <age1… key from `kiwi-server secrets join` on that computer>")
@@ -3218,7 +3203,7 @@ def cmd_serve(args):
         import getpass
         pw = getpass.getpass("control password: ") if sys.stdin.isatty() else sys.stdin.readline().rstrip("\n")
         c.set_password(pw)
-        util.say("the control password opens the store now; kiwi-server control push %s takes it to the node" % args.fleet)
+        util.say("the control password opens the store now; kiwi-server control push %s takes it to the node" % typed_path(args.fleet))
         return
     if c.fresh() and args.wait:
         # nothing here yet: the page asks the questions of `init`. The code proves that the
@@ -3227,7 +3212,7 @@ def cmd_serve(args):
     elif not c.ready():
         if not args.wait:
             raise KiwiError("nothing to serve yet: the fleet needs its secret store (kiwi-server secrets init) and "
-                            "a control password (kiwi-server serve %s --set-password)" % args.fleet)
+                            "a control password (kiwi-server serve %s --set-password)" % typed_path(args.fleet))
         util.say("waiting for the fleet: kiwi-server control push <fleet>, from the operator's computer")
         sys.stdout.flush()
         while not c.ready():
@@ -3446,7 +3431,7 @@ def _open_for_watch(path):
         return st, st.private_copy(st.identity())
     except KiwiError as e:
         raise KiwiError("the secret store is locked and the keyring did not open it (%s): "
-                        "a RAM master that boots now stays blank until kiwi-server secrets unlock %s" % (e, path))
+                        "a RAM master that boots now stays blank until kiwi-server secrets unlock %s" % (e, typed_path(path)))
 
 
 def _watch_once(args):
@@ -3753,7 +3738,7 @@ def cmd_connect(args):
         util.say("for every program on this computer, once, as administrator:")
         print("    %s" % connectmod.system_trust_command(shown_path(ca), domain))
         _trust_partners(fleet, domain, make_tc(args))
-    util.say("what is where, and the logins: kiwi-server status %s" % path)
+    util.say("what is where, and the logins: kiwi-server status %s" % typed_path(path))
 
 
 def _trust_partners(fleet, domain, tc):
@@ -4013,10 +3998,10 @@ def cmd_sshca(args):
     if args.action == "init":
         pub = sshca.init(fleet)
         util.say("SSH CA made: %s (%s); every apply from now on signs the machine's host key" % (sshca.CA, pub.split()[1][-12:]))
-        util.say("next: kiwi-server apply %s, then kiwi-server sshca %s trust" % (os.path.basename(args.fleet), os.path.basename(args.fleet)))
+        util.say("next: kiwi-server apply %s, then kiwi-server sshca %s trust" % (typed_path(args.fleet), typed_path(args.fleet)))
         return
     if not sshca.exists(fleet):
-        raise KiwiError("the fleet has no SSH CA yet: kiwi-server sshca %s init" % args.fleet)
+        raise KiwiError("the fleet has no SSH CA yet: kiwi-server sshca %s init" % typed_path(args.fleet))
     if args.action == "trust":
         known = os.path.expanduser(args.known_hosts or "~/.ssh/known_hosts")
         changed = sshca.trust(fleet, known)
@@ -4024,7 +4009,7 @@ def cmd_sshca(args):
         return
     if args.action == "sign":
         if not args.key:
-            raise KiwiError("which key? kiwi-server sshca %s sign ~/.ssh/id_ed25519.pub" % args.fleet)
+            raise KiwiError("which key? kiwi-server sshca %s sign ~/.ssh/id_ed25519.pub" % typed_path(args.fleet))
         key = os.path.expanduser(args.key)
         user = args.user or (fleet.defaults.get("admin") or {}).get("user") or "core"
         cert = sshca.sign(fleet, util.read_text(key), "%s (%s)" % (user, os.path.basename(key)), [user], args.days)
@@ -4839,7 +4824,7 @@ def cmd_wake(args):
     fleet, _roles, _ms = load(args, need_roles=False)
     host = fleet.select([args.host])[0]
     wakemod.wake(fleet, host, mac=args.mac, address=args.address, via=args.via)
-    util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, shown_path(args.fleet)))
+    util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, typed_path(args.fleet)))
 
 
 def cmd_unlock(args):
@@ -4948,8 +4933,8 @@ def restore_copy(args, name, data, into):
         util.warn("no keyring took a key: unlocking will ask for the recovery key")
     if any(f.startswith("outside/") for f in files):
         util.say("files that lived outside the fleet directory are under %s/outside — point the settings at them" % into)
-    util.say("next: kiwi-server list %s — are these your machines? A copy is not signed" % fleet_path)
-    util.say("then: kiwi-server status %s" % fleet_path)
+    util.say("next: kiwi-server list %s — are these your machines? A copy is not signed" % typed_path(fleet_path))
+    util.say("then: kiwi-server status %s" % typed_path(fleet_path))
 
 
 def cmd_restore(args):

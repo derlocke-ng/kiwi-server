@@ -963,15 +963,18 @@ ks_stack_make_room() { # WANT...   — on a nearly full disk, room for images th
     root=$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null) || return 0
     use=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc 0-9)
     (( ${use:-0} >= ${KS_ROOM_AT:-85} )) || return 0
+    # compared by their first 12 hex digits: `podman ps` shows those, `image inspect` all 64
     keep=" "
     for img in "${KS_STACK_IMAGES[@]}"; do
         id=$(podman image inspect --format '{{.Id}}' "$img" 2>/dev/null || true)
-        [[ -n $id ]] && keep+="${id#sha256:} "
+        id=${id#sha256:}
+        [[ -n $id ]] && keep+="${id:0:12} "
     done
     names=" ${KS_STACK_SERVICES[*]} "
     while read -r name id; do
         id=${id#sha256:}
-        [[ -n $name && $names == *" $name "* && $keep != *" $id "* ]] || continue
+        id=${id:0:12}
+        [[ -n $name && -n $id && $names == *" $name "* && $keep != *" $id "* ]] || continue
         ks_say "the disk is ${use}% full: $name stops for a moment, its old image makes room for the new one"
         # its unit first, so that systemd does not bring it back on the old image meanwhile
         systemctl stop "$name.service" >/dev/null 2>&1 || podman stop -t 20 "$name" >/dev/null 2>&1 || true

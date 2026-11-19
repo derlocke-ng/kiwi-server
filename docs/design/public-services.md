@@ -164,6 +164,12 @@ other account.
   new to run, LDAP for a public Jabber built in; accounts on Tor and on the Internet are then
   separate, which is allowed. authentik if one account for both doors matters more than 2 GB.
   Passkeys belong to one name in every one of them: over a second name people use a password.
+- **Not now (owner, 19 November):** the owner's network needs no public accounts. Its public
+  services are Jabber (own accounts, on the VPN, the Internet and Tor), the nostr relay and the
+  paste (no accounts), and git over the VPN and Tor (Forgejo's own accounts for friends, a
+  password over Tor). A public identity server (authentik, if one account for both doors) is
+  for other networks, later. Sharing one Kanidm between two names does not work: Kanidm keeps
+  its name in its data, and replicates only between instances of the same name.
 - **A VPN name for a public instance**, so people at home do not take the long way through the
   master or Tor: `<site>-public.<machine>.home`, on the mesh only. The public name itself keeps
   resolving to the master everywhere (decided 16 November). Only where it works: Jabber (an app

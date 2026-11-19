@@ -5271,6 +5271,27 @@ class TestStory(Base):
             self.assertEqual([p["key"] for p in json.loads(out)["hosts"][0]["problems"]], ["unreachable"])
 
 
+class TestNames(Base):
+    def test_a_container_that_is_down_is_named_under_its_part(self):
+        from kiwiserver import cli as climod
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {"role": "node-cloud", "node-cloud": self.node_cloud()}}})
+        h = f.hosts["a"]
+
+        class B:
+            service_modules = {"nextcloud-aio-apache": "cloud", "kn-vault": "vault"}
+        problems = [{"key": "service", "text": "nextcloud-aio-apache is not running (exited)"},
+                    {"key": "unhealthy", "text": "kn-vault reports unhealthy"},
+                    {"key": "service", "text": "kn-stranger is not running (exited)"},
+                    {"key": "disk-full", "text": "/ is 96% full"}]
+        with mock.patch.object(modmod.Renderer, "render", lambda self, spec: B()):
+            climod.name_under_parts(h, self.roles, self.ms, problems)
+        self.assertEqual(problems[0]["text"], "%s: nextcloud-aio-apache is not running (exited)" % self.ms.modules["cloud"].title)
+        self.assertEqual((problems[0]["part"], problems[1]["part"]), ("cloud", "vault"))
+        self.assertTrue(problems[1]["text"].startswith(self.ms.modules["vault"].title + ": kn-vault"))
+        self.assertEqual(problems[2]["text"], "kn-stranger is not running (exited)")      # of no part: as it is
+        self.assertEqual(problems[3]["text"], "/ is 96% full")
+
+
 class TestCount(unittest.TestCase):
     def test_one_day_two_days(self):
         self.assertEqual([util.count(n, "day") for n in (0, 1, 1.7, 2)], ["0 days", "1 day", "1 day", "2 days"])

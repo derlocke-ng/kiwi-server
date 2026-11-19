@@ -8,7 +8,8 @@
   ring's name (7600 to 7799), as a disk keeps the address it was bound with. Apply the master once
   after such a machine joins. A way written by hand stays as it is.
 - The offsite drill's `ENCRYPT=RING` uses that relay to a ring at home (no ring on the master); it
-  applies the master before and after.
+  applies the master before and after. With `ENCRYPT=infra OVER_VPN=1`: 29 of 29, the disk bound to
+  `http://<master>:7793` and opened by itself after a restart.
 - docs: the decision on joining (no endpoint on the Internet; a machine at another site comes onto
   the VPN first) in design/control-plane.md and the ROADMAP.
 

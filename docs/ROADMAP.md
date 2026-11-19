@@ -1,7 +1,7 @@
 # Roadmap and known issues
 
 This page says where kiwi-server stands and what comes next. Its first two
-sections are the current picture (18 November 2026, kiwi-server 2.208.0). The
+sections are the current picture (19 November 2026, kiwi-server 2.239.0). The
 sections after them are the roadmap as it grew from 2.4.0 on: the problems that
 were found and how each one was fixed, and the items as they were raised. They
 stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-server/blob/main/CHANGELOG.md) has every release.
@@ -11,21 +11,30 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
 - **Machines install themselves.** Fedora CoreOS, uCore and Debian from
   unattended install media; Armbian boards taken in as they are (`adopt`); a
   server at netcup installed through its API (`vps`); a master that runs in RAM
-  only (`target: coreos-ram`); a waiting machine from the starter stick.
+  only (`target: coreos-ram`); a waiting machine from the starter stick; a
+  machine at another site that comes onto the VPN by itself and is set up over
+  it (`install.over_vpn`). Machines at home wake by Wake-on-LAN and can sleep by
+  day (`asleep`).
 - **One private network.** The master is the only machine reachable from the
   Internet. It runs the WireGuard server, leaves to the Internet through a
   commercial VPN (Mullvad, Riseup) and can have a standby: the same master on a
   second machine that takes over when the first is gone. Linked networks reach
-  each other's shared services and can be each other's way out (federation).
+  each other's shared services and can be each other's way out (federation),
+  also two of one mesh or domain (translated at the link), with their pages
+  trusted on each other's devices.
   Who may reach what is set per group of devices and per machine, linked
   networks included. Services can be open to the Internet through the master or
   as Tor hidden services; a public name leads through the master from
   everywhere, the network's own names stay inside. A node can stand at another
-  site than home (`network.site`).
+  site than home (`network.site`). Subnets at home (a guest Wi-Fi, a VLAN) are
+  groups of their own, machines take tagged VLANs, and a service can answer at
+  one address only.
 - **Encrypted disks that open by themselves.** LUKS on every target, opened at
-  boot by Tang rings on other machines, through a relay on the master for a
-  machine away from home, or by a key typed at the console. Data disks are
-  encrypted too. The secrets of the network are an encrypted store that locks
+  boot by Tang rings on other machines, through the master for a machine away
+  from home (it relays, it keeps no key), or by a key typed at the console; how
+  many rings must answer is a setting, a ring's keys can be replaced in place,
+  and a machine carried off locks itself (the leash). Data disks are encrypted
+  too. The secrets of the network are an encrypted store that locks
   by itself.
 - **Services as modules** (kiwi-modules, 33 built in): files, photos, documents,
   passwords, git, chat, accounts for all of them (Kanidm, with a group of admins),

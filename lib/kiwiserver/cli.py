@@ -3485,6 +3485,26 @@ def _watch_once(args):
             util.say("%s: %s" % (h.name, st))
 
 
+def name_under_parts(host, roles, ms, problems):
+    """One name per thing (docs/design/ui.md): a container that is down or unhealthy is named under
+    its part, by the module's title: "Files (Nextcloud): nextcloud-aio-apache is not running". Only
+    asked when a machine has such a problem: it renders the machine's stack to know."""
+    try:
+        role = roles[host.role]
+        rolesmod.resolve_settings(role, host, ms)
+        owner = getattr(modmod.Renderer(ms).render(rolesmod.stack_spec(host, role)), "service_modules", {}) or {}
+    except (KiwiError, KeyError, AttributeError, TypeError, ValueError):
+        return
+    for p in problems:
+        if p.get("key") not in ("service", "unhealthy"):
+            continue
+        module = owner.get(str(p.get("text") or "").split(" ", 1)[0])
+        mod = ms.modules.get(module) if module else None
+        if mod is not None:
+            p["part"] = module
+            p["text"] = "%s: %s" % (getattr(mod, "title", "") or module, p["text"])
+
+
 def _first_boot_waits(h):
     """Where a machine installed encrypted waits at its first start for the one-time key of its
     media (its boot system answers, its system not yet), or None. As `next` finds it."""
@@ -3549,6 +3569,9 @@ def cmd_status(args):
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         out = list(pool.map(ask, hosts))
     record_applied(fleet, *[o["host"] for o in out if o["ok"] and o["facts"].get("applied")], only_new=True)
+    for o in out:                       # one after the other: the renderer is not shared between threads
+        if any(p.get("key") in ("service", "unhealthy") for p in o["problems"]):
+            name_under_parts(fleet.hosts[o["host"]], roles, ms, o["problems"])
     if args.porcelain:
         print(json.dumps({"hosts": out}, indent=2))
         return

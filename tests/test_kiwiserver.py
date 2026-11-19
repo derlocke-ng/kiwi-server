@@ -5271,6 +5271,27 @@ class TestStory(Base):
             self.assertEqual([p["key"] for p in json.loads(out)["hosts"][0]["problems"]], ["unreachable"])
 
 
+class TestNames(Base):
+    def test_a_container_that_is_down_is_named_under_its_part(self):
+        from kiwiserver import cli as climod
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {"role": "node-cloud", "node-cloud": self.node_cloud()}}})
+        h = f.hosts["a"]
+
+        class B:
+            service_modules = {"nextcloud-aio-apache": "cloud", "kn-vault": "vault"}
+        problems = [{"key": "service", "text": "nextcloud-aio-apache is not running (exited)"},
+                    {"key": "unhealthy", "text": "kn-vault reports unhealthy"},
+                    {"key": "service", "text": "kn-stranger is not running (exited)"},
+                    {"key": "disk-full", "text": "/ is 96% full"}]
+        with mock.patch.object(modmod.Renderer, "render", lambda self, spec: B()):
+            climod.name_under_parts(h, self.roles, self.ms, problems)
+        self.assertEqual(problems[0]["text"], "%s: nextcloud-aio-apache is not running (exited)" % self.ms.modules["cloud"].title)
+        self.assertEqual((problems[0]["part"], problems[1]["part"]), ("cloud", "vault"))
+        self.assertTrue(problems[1]["text"].startswith(self.ms.modules["vault"].title + ": kn-vault"))
+        self.assertEqual(problems[2]["text"], "kn-stranger is not running (exited)")      # of no part: as it is
+        self.assertEqual(problems[3]["text"], "/ is 96% full")
+
+
 class TestCount(unittest.TestCase):
     def test_one_day_two_days(self):
         self.assertEqual([util.count(n, "day") for n in (0, 1, 1.7, 2)], ["0 days", "1 day", "1 day", "2 days"])
@@ -7073,7 +7094,7 @@ class TestManage(Base):
             self.assertEqual(rc, 0, err)
             self.assertIn("== sh3 (core@sh3.kiwi)", out)
             self.assertIn("   uptime: up 3 days", out)
-            self.assertIn("   ! kn-nginx is not running (inactive)", out)
+            self.assertIn("   ! Web addresses (nginx): kn-nginx is not running (inactive)", out)     # named under its part
         # a role script that fails is reported, not swallowed
         with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "run_stream", lambda *a, **k: 7):
             rc, out, err = self.run_cli("apply", f.path, "sh3")
@@ -13874,6 +13895,15 @@ class TestFirstRunPage(StoreBase):
             fleet_name, plain, _kept = backup.open_copy(fh.read(), recovery)
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
+
+    def test_a_machines_parts_are_named_by_their_title_first(self):
+        cookie, _csrf = self.made()
+        node = self.node()
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": node, "ok": True, "state": "ok", "notes": ["certificates good for 60 days"], "facts": {}, "problems": []}]}))
+        body = self.ask("/hosts/%s" % node, cookie=cookie)[1]
+        self.assertRegex(body, r'<dt>Parts</dt><dd>VPN connection <code class="sm">vpn-client</code>')
+        self.assertNotRegex(body, r"<dt>Parts</dt><dd>vpn-client,")
 
     def test_a_problem_shows_what_to_do_as_buttons_and_links(self):
         cookie, _csrf = self.made()

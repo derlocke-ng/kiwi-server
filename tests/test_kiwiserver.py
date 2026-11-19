@@ -1215,7 +1215,15 @@ class TestArmbian(Base):
         self.assertEqual(self.host().validate(self.roles), [])
         self.assertIn("n2: armbian.board is missing (its name at dl.armbian.com, e.g. odroidn2 or odroidm1)",
                       self.host(armbian={"board": None}).validate(self.roles))
-        self.assertTrue(any("no encrypted disk" in e for e in self.host(unlock={"rings": ["infra"]}).validate(self.roles)))
+        self.assertTrue(any("this board's disk is not encrypted" in e for e in self.host(unlock={"rings": ["infra"]}).validate(self.roles)))
+        enc = self.host(unlock={"rings": ["infra"], "ssh": True}, armbian={"board": "odroidn2", "encrypt": True})
+        self.assertEqual(enc.validate(self.roles), [])                  # an image built encrypted: rings as on Debian
+        self.assertTrue(unlock.debian_like(enc))
+        self.assertEqual(unlock.ssh_port(enc), 2222)
+        self.assertEqual(unlock._way(enc), "by itself")
+        self.assertEqual(unlock._way(self.host(armbian={"board": "odroidn2", "encrypt": True})), "by a person")
+        self.assertEqual(unlock._way(self.host()), "not encrypted")
+        self.assertIn("cryptroot-unlock", unlock.authorized_line(enc))  # dropbear's line, as on Debian
         self.assertEqual(armbian_t.download_url(self.host().cfg["armbian"]),
                          "https://dl.armbian.com/odroidn2/Trixie_current_minimal")
 

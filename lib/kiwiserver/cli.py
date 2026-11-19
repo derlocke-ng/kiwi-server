@@ -2876,7 +2876,8 @@ def cmd_apply(args):
                 unlock.drop_standin(h, tgt)
             elif h.target == "debian" and luks.uses_one_time_key(h):    # encrypted, no ring: its key only
                 remote.run(tgt, unlock.INSTALL_KEY_ONLY)
-            if not unlock.wanted(h) and h.target in ("debian", "coreos", "ucore"):
+            if not unlock.wanted(h) and (h.target in ("debian", "coreos", "ucore")
+                                         or (h.target == "armbian" and h.cfg["armbian"].get("encrypt"))):
                 unlock.unbind_rings(h, tgt)     # rings taken out of the fleet: their bindings go too
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)

@@ -150,8 +150,8 @@ node to do everything, and can start a new network with the install media.
   Settings with its module and system tabs under "Machine kiwi-node / master". That page is
   what step 6 and 7 rebuild, not only the dialogs.
 - **Who it is for:** people interested in IT, who know what an IP address is or can look it up.
-  The page and the apps use the proper words where a thing has one; the docs explain them
-  simply. Not a tool for people who want nothing explained, and not one that hides its terms.
+  The page and the apps use the proper words where a thing has one; the docs explain each
+  word where it first appears. Not a tool for people who want nothing explained, and not one that hides its terms.
 - **Automated to the end:** a network runs without its admin doing anything. Things break; then
   the admin changes the disk or replaces the machine, and the software does the rest. Every
   place where a person still has to act is a gap to close, and until then the page says

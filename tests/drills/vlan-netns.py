@@ -123,9 +123,11 @@ sh("nft delete table inet kiwi_lan", "node")
 ks_vlans("20 192.168.20.31/24")
 addrs = sh("ip -o -4 addr show dev eth0.20", "node").stdout
 check("192.168.20.31/24" in addrs and "192.168.20.30/" not in addrs, "a changed address replaces the old one")
-# after a restart the boot script brings it back
-sh("ip link del dev eth0.20", "node")
-sh("%s %s" % (os.path.join(work, "sbin", "kiwi-vlans"), os.path.join(work, "etc", "vlans")), "node")
+# after a restart the boot script brings it back, also while the card is still down (it runs before the network)
+sh("ip link del dev eth0.20 && ip link set dev eth0 down", "node")
+r = sh("%s %s" % (os.path.join(work, "sbin", "kiwi-vlans"), os.path.join(work, "etc", "vlans")), "node", check_rc=False)
+sh("ip route replace default via 192.168.2.1 dev eth0", "node", check_rc=False)
+check(r.returncode == 0, "kiwi-vlans succeeds with the card still down at boot%s" % (": " + r.stderr.strip() if r.returncode else ""))
 check(opens("iot", "192.168.20.31", 443), "kiwi-vlans brings it back as at boot")
 # no VLANs: gone, with its files
 ks_vlans()

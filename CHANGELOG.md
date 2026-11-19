@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.225.0 — a tagged interface at boot
+
+- kiwi-stack 0.9.19: `kiwi-vlans.service` brings the card up before its tagged interfaces. It runs
+  before the network, and with the card still down the unit failed (the kernel brought the
+  interface up a moment later, so it worked, but the machine showed a failed unit). Found on a
+  Debian test machine after a restart; `tests/drills/vlan-netns.py` now starts the script with
+  the card down.
+
 ## 2.224.0 — the disk unlock and VLANs in the settings
 
 - **Settings, *Disk unlock*** on the control page and in the app: the rings that open a machine's

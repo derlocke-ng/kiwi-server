@@ -25,7 +25,7 @@ than "always by itself". This design is the one place for all of it.
 |---|---|---|
 | `by-itself` (now) | its rings open it, N of them | servers |
 | `by-a-person` | it waits: its key at its screen, `unlock --manual`, or **Open now** on the page or in the app | a machine that should never open alone |
-| `at-home` | its rings on its own LAN open it; anywhere else it asks for its passphrase | laptops, desktops |
+| `at-home` | its rings on its own LAN open it; anywhere else it asks for its passphrase | laptops, desktops (below: their policy) |
 
 - Switching the way is an apply: it binds or unbinds the rings (unbinding exists since 2.234).
   `by-a-person` is "auto-unlock off".
@@ -66,10 +66,29 @@ kiwi-server unlock fleet.yaml          # no machine: who opens whom
   Android app as well.
 - The recovery report keeps its checks; they read the same table.
 
-## Desktops later
+## Desktops and laptops (the owner, 19 November 2026)
 
-A desktop or laptop is `at-home`: its own passphrase always works, the rings at home spare
-typing it. No TPM (decided earlier). A lost laptop: **New keys** for its rings on the page.
+A desktop's disk opens by a policy of rings (clevis `sss`), and its own passphrase always works:
+
+```
+opens = (every health ring  and  its auto-unlock ring)  or  its emergency ring
+```
+
+- **Health rings**: rings on the machines that must be up for the desktop to boot ("everything
+  runs"). A missing one means something at home is wrong: the desktop waits.
+- **Auto-unlock ring**: one per desktop, on the control node, running only while **Opens by
+  itself** is on for it. Off: the desktop waits for its passphrase (or the button below).
+- **Emergency ring**: one per desktop, on the control node, running only for a few minutes after
+  **Unlock now** on the page or in the app. A waiting desktop asks its rings again every few
+  seconds, so the button opens it within seconds, whatever else is down.
+- A ring answers anyone who reaches it, so the switch and the button are rings that run or do not.
+  The control node holds their keys on its encrypted disk.
+- Away from home a laptop reaches no ring and asks for its passphrase, as before.
+- Proven in VMs first: a Debian desktop (GNOME) and Fedora Silverblue, each bound with that
+  policy to four test rings (`tests/drills/desktop-clevis-vm.sh`, `desktop-silverblue-vm.sh`):
+  everything up opens it; auto-unlock off or a health ring down makes it wait; **Unlock now**
+  opens it then; with no ring the passphrase does.
+- No TPM (decided earlier). A lost laptop: **New keys** for its rings on the page.
 
 ## lime: an encrypted Armbian image
 

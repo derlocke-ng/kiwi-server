@@ -953,6 +953,34 @@ ks_stack_prune() {
     return 0
 }
 
+ks_stack_make_room() { # WANT...   — on a nearly full disk, room for images this machine lacks
+    # A changed image (nginx:1 to nginx:1-alpine) is pulled while the container still holds the
+    # old one: on a master in RAM (crumble, 19 Nov 2026: 55 MB free) the pull fails. A container
+    # whose image the stack no longer names is stopped and goes, with its image, before the pull;
+    # the units bring it back on the new one a moment later.
+    [[ $KS_STACK_RUNTIME == podman && $# -gt 0 ]] || return 0
+    local root use names keep id name img gone=0
+    root=$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null) || return 0
+    use=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc 0-9)
+    (( ${use:-0} >= ${KS_ROOM_AT:-85} )) || return 0
+    keep=" "
+    for img in "${KS_STACK_IMAGES[@]}"; do
+        id=$(podman image inspect --format '{{.Id}}' "$img" 2>/dev/null || true)
+        [[ -n $id ]] && keep+="${id#sha256:} "
+    done
+    names=" ${KS_STACK_SERVICES[*]} "
+    while read -r name id; do
+        id=${id#sha256:}
+        [[ -n $name && $names == *" $name "* && $keep != *" $id "* ]] || continue
+        ks_say "the disk is ${use}% full: $name stops for a moment, its old image makes room for the new one"
+        # its unit first, so that systemd does not bring it back on the old image meanwhile
+        systemctl stop "$name.service" >/dev/null 2>&1 || podman stop -t 20 "$name" >/dev/null 2>&1 || true
+        podman rm -f "$name" >/dev/null 2>&1 || true
+        podman rmi "$id" >/dev/null 2>&1 && gone=$((gone + 1))
+    done < <(podman ps -a --format '{{.Names}} {{.ImageID}}' 2>/dev/null)
+    return 0
+}
+
 ks_stack_pull() {
     # Every image before the first start, one after the other with retries and a
     # visible name: a target that starts a dozen cold pulls at once on a home
@@ -973,6 +1001,7 @@ ks_stack_pull() {
         ks_say "all ${#KS_STACK_IMAGES[@]} images are here (newer ones come with the update: kiwi-stack update)"
         return 0
     fi
+    ks_stack_make_room "${want[@]}"
     if [[ ${KS_STACK_AUTO_UPDATE:-registry} == registry ]]; then
         ks_say "pulling ${#want[@]} of ${#KS_STACK_IMAGES[@]} images: the ones this machine does not have yet"
     else

@@ -8933,6 +8933,18 @@ class TestControl(StoreBase):
         self.assertFalse(fresh.locked())
         self.assertEqual(util.read_text(os.path.join(self.secrets, "seed")), "S" * 32)
         self.assertIn("unlocked by the ring house", [e["what"] for e in fresh.audit_tail(5)])
+        # two rings: any one of them opens it (clevis sss), so it hangs on no single machine
+        two = {"rings": [pin, dict(pin, ring="attic", server="medlar", url="http://192.168.2.63:7500")]}
+        fresh.kiwi = [sys.executable, "-c", "print(%r)" % json.dumps(two)]
+        write(tool, '#!/bin/sh\ncase $1 in\n  encrypt) echo "$@" > "$FAKE_KEYRING/clevis-args"; printf JWE:; cat ;;\n'
+                    '  decrypt) sed s/^JWE:// ;;\nesac\n')
+        fresh.login(self.PW)
+        self.assertEqual(fresh.arm_auto(), "house, attic")
+        args = util.read_text(os.path.join(self.keyring, "clevis-args"))
+        self.assertTrue(args.startswith("encrypt sss "))
+        self.assertEqual(json.loads(args.split(" ", 2)[2])["t"], 1)
+        self.assertEqual(len(json.loads(args.split(" ", 2)[2])["pins"]["tang"]), 2)
+        self.assertEqual(fresh.auto_state(), {"ring": "house, attic", "server": "lychee, medlar"})
         # the owner takes unlock.control away again: the next login removes what the ring could open
         fresh.kiwi = [sys.executable, "-c", "print('{}')"]
         fresh.login(self.PW)
@@ -13196,6 +13208,25 @@ class TestRecovery(Base):
         # no encrypted disk at all: nothing to say
         _r, checks = self.report(home())
         self.assertNotIn("power-cut", checks)
+        # a ring forwarded by the control node (papaya): it opens its own keys by any of its rings
+        def with_control(control):
+            f = home(papaya={"rings": ["home"]}, quince={"rings": ["infra"], "via": {"infra": "http://127.0.0.1:7500"}})
+            data = yaml.safe_load(util.read_text(f.path))
+            data["hosts"]["papaya"]["node"]["modules"] = data["hosts"]["papaya"]["node"]["modules"] + ["control"]
+            data["hosts"]["papaya"]["unlock"]["control"] = control
+            write(f.path, yaml.safe_dump(data))
+            fleet = config.Fleet.load(f.path)
+            hosts = recovery._resolved(fleet, self.roles, self.ms)
+            servers = unlock.ring_servers(fleet, lambda x: None if x.name in hosts else (_ for _ in ()).throw(KiwiError("no")))
+            return fleet, hosts, servers
+        fleet, hosts, servers = with_control("house")
+        self.assertIn("quince", recovery.start_alone(fleet, hosts, servers)[0])
+        self.assertIn("quince", recovery.start_alone(fleet, hosts, servers, off=("lychee",))[1])     # its one ring is gone
+        fleet, hosts, servers = with_control(["house", "home"])
+        self.assertIn("quince", recovery.start_alone(fleet, hosts, servers, off=("lychee",))[0])     # the other opens it
+        self.assertEqual(unlock.control_rings(fleet.hosts["papaya"]), ["house", "home"])
+        self.assertEqual(unlock.control_rings(config.Fleet.load(with_control("house, home")[0].path).hosts["papaya"]),
+                         ["house", "home"])
 
     def test_the_master_its_vpn_state_its_reinstall_and_a_master_in_memory(self):
         f = self.network()

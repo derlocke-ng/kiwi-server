@@ -365,6 +365,15 @@ def wanted(host):
     return bool(host.cfg["unlock"].get("rings"))
 
 
+def control_rings(host):
+    """The rings that open the control node's keys after a restart (`unlock.control`): one name,
+    or several, any one of which opens them."""
+    got = (host.cfg.get("unlock") or {}).get("control")
+    if isinstance(got, str):
+        got = got.replace(",", " ").split()
+    return [str(r) for r in (got or []) if str(r).strip()]
+
+
 def ring_servers(fleet, resolve):
     """ring -> (host, port), for every ring a host of this fleet serves, and the operator's.
     `resolve(host)` fills in its settings; a host that cannot be resolved serves nothing."""

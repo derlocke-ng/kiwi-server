@@ -3903,8 +3903,11 @@ class ControlSetupDialog(Adw.Dialog):
     def offer_rings(self):
         host = self.hosts[self.host.get_selected()] if self.hosts else ""
         self.offered = [(r, h) for r, h in self.rings if h != host]
-        self.ring.set_model(Gtk.StringList.new(["I log in on its page"] + ["%s opens it" % h for _r, h in self.offered]))
-        self.ring.set_selected(0)
+        if len(self.offered) > 1:           # any one of them opens it: it hangs on no single machine
+            self.offered = [([r for r, _h in self.offered], ", ".join(h for _r, h in self.offered))] + self.offered
+        self.ring.set_model(Gtk.StringList.new(["I log in on its page"] + [
+            ("any of %s opens it" if isinstance(r, list) else "%s opens it") % h for r, h in self.offered]))
+        self.ring.set_selected(0)          # opt-in, as before
 
     def check(self):
         a, b = self.pw1.get_text(), self.pw2.get_text()

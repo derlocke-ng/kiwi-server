@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.219.0 — the control node opens by any of several rings
+
+- **`unlock.control` takes several rings** (`[house, attic]`): the control node's key is kept
+  for all of them (clevis `sss`, any one opens it), so after a restart it no longer hangs on one
+  machine (ROADMAP: "the control node's own unlock, which hangs on one ring today"). A ring that
+  does not answer when the key is made is left out with a note. Proven with the real clevis and
+  two Tang servers: one stopped, the key still opens; both stopped, it stays locked.
+- `kiwi-server recovery` counts any of them when it says which machines come back by
+  themselves after a power cut (a ring forwarded by the control node needs one of its rings up).
+- The app's control node setup offers *any of lychee, medlar opens it* when several machines
+  serve a ring (still opt-in: *I log in on its page* stays the first choice).
+
 ## 2.218.0 — the gateway keeps the groups of the home network; a removed machine is gone at once
 
 - **A gateway node keeps the groups of the home network too**, for what it routes from the home

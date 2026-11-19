@@ -5107,7 +5107,8 @@ def cmd_version(_args):
 USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network machines
 
   kiwi-server init [fleet.yaml]                 a new fleet: a few questions (--example: the commented example)
-  kiwi-server add <fleet> master|node|bare [name]  a new host, named after a fruit dish (master) or a fruit
+  kiwi-server add <fleet> master|node|bare [name]
+                                                a new host, named after a fruit dish (master) or a fruit
   kiwi-server names [fleet]                     free names for new machines, as JSON
   kiwi-server validate <fleet> [host...]        check it (exit 2 on errors)
   kiwi-server list <fleet>                      hosts and what has been generated
@@ -5125,44 +5126,55 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
   kiwi-server accounts <fleet> invite|requests|accept|deny|create|link|list|delete …
                                                 the network's accounts: invite codes, requests, accounts, password links
-  kiwi-server signup serve|invite|requests|…   the accounts' sign-up page, in the accounts module's container
+  kiwi-server signup serve|invite|requests|…    the accounts' sign-up page, in the accounts module's container
   kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
   kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
   kiwi-server control invite <fleet>            makes that link here, for one more computer
-  kiwi-server control push|pull|join <fleet> --dir FOLDER     the same through a synced folder (Nextcloud, …);
+  kiwi-server control push|pull|join <fleet> --dir FOLDER
+                                                the same through a synced folder (Nextcloud, …);
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
-  kiwi-server gone <fleet> [--dry-run]                machines that do not answer: what the fleet allows done about it
-  kiwi-server remove <fleet> <host> [--yes]            a machine leaves for good: off the VPN, out of the fleet file
-  kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
+  kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
+  kiwi-server remove <fleet> <host> [--yes]     a machine leaves for good: off the VPN, out of the fleet file
+  kiwi-server connect <fleet> [--name N] [--remove]
+                                                this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
-  kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
-  kiwi-server secrets init|unlock|lock|status <fleet>  secrets/ as one encrypted file, opened into memory
-  kiwi-server secrets admin-password <fleet>        the console password into the store, its hash in the fleet file
-  kiwi-server mtu <fleet> <node|device|address> [--write]   measure a tunnel's real MTU; say what to set
+  kiwi-server secrets show <fleet> <host> [setting]
+                                                print a host's password (no setting: their names)
+  kiwi-server secrets init|unlock|lock|status <fleet>
+                                                secrets/ as one encrypted file, opened into memory
+  kiwi-server secrets admin-password <fleet>    the console password into the store, its hash in the fleet file
+  kiwi-server mtu <fleet> <node|device|address> [--write]
+                                                measure a tunnel's real MTU; say what to set
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
   kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
-  kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
-  kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
+  kiwi-server restore --from user@node [--into DIR]
+                                                get it back on a fresh machine (or restore FILE)
+  kiwi-server prune <fleet> [host...] [--dry-run]
+                                                old snapshots off the backup nodes
   kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
-  kiwi-server check <fleet>                      after an update: every name over HTTPS, DNS, the exit
-  kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
+  kiwi-server check <fleet>                     after an update: every name over HTTPS, DNS, the exit
+  kiwi-server backups <fleet> <host> [module...]
+                                                a machine's snapshots; --now, --restore [--at TIME]
   kiwi-server recovery <fleet>                  if something breaks: could it come back, and what to do
-  kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
-  kiwi-server federate <fleet> --invite|--accept CARD  the same between two operators, by cards
-  kiwi-server federate <fleet> --ca PARTNER          a linked network's CA, for your devices to import
-  kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
-  kiwi-server onion <fleet> [service.machine]        hidden services: a site for anyone with Tor, or for named people
-  kiwi-server disks <fleet> <host>                    the machine's disks, and the line that mounts a data disk
-  kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
+  kiwi-server federate <fleet> <other fleet>    link two networks (then share with: access)
+  kiwi-server federate <fleet> --invite|--accept CARD
+                                                the same between two operators, by cards
+  kiwi-server federate <fleet> --ca PARTNER     a linked network's CA, for your devices to import
+  kiwi-server access <fleet> [who] [what…]      who on the VPN may reach what: groups and linked networks
+  kiwi-server onion <fleet> [service.machine]   hidden services: a site for anyone with Tor, or for named people
+  kiwi-server disks <fleet> <host>              the machine's disks, and the line that mounts a data disk
+  kiwi-server sshca <fleet> [init|sign KEY|trust]
+                                                the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
-  kiwi-server rotate <fleet> [ssh|seed|ring NAME|ring all]   new keys: what is due, or one kind
+  kiwi-server rotate <fleet> [ssh|seed|ring NAME|ring all]
+                                                new keys: what is due, or one kind
   kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
   kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is

@@ -142,6 +142,11 @@ DEFAULTS = {
         # a control node: the ring (on another machine) that opens its secret store by itself after a
         # restart, so that nobody has to log in after a power cut. Empty: the password, every time.
         "control": "",
+        # the leash (docs/design/control-plane.md): this machine restarts into its locked state when
+        # the rings at its own site have not answered for this many minutes, after it saw them since
+        # boot: carried off, it locks itself. 0: no leash. A whole house without its network for that
+        # long restarts too, so it is for machines that hold something worth it.
+        "leash": 0,
     },
     "tls": {
         # certificates for hosts that run the reverse proxy and bring none:

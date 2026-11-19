@@ -5,7 +5,7 @@ behind a router can do the same without each device running WireGuard, in one
 of two ways:
 
 - **The router is a mesh client.** It runs WireGuard with a config the master
-  issued, and routes the mesh subnet (`10.8.0.0/16`) into the tunnel. This is
+  issued, and routes the mesh subnet (`10.X.0.0/16`, your network's own: `mesh_subnet` in the fleet file) into the tunnel. This is
   the *split* tunnel: only mesh traffic goes through. The *full* tunnel sends
   everything, so the whole LAN leaves the internet through the master's exit.
 - **A static route to a gateway node.** The router has no tunnel; it sends the
@@ -57,7 +57,7 @@ when the fleet has no master); `network.kiwi_peer`
 is a `wireguard_kiwi` section with `public_key`, `endpoint_host`,
 `endpoint_port`, `persistent_keepalive='25'`, `route_allowed_ips='1'` and
 `allowed_ips`; `firewall.kiwi` is a zone with `masq='1'` and `mtu_fix='1'`,
-plus a forwarding from `lan`; and in `dhcp`, `server='/home/10.8.0.1'` on the
+plus a forwarding from `lan`; and in `dhcp`, `server='/home/10.X.0.1'` on the
 dnsmasq section.
 
 ## FritzBox
@@ -69,7 +69,7 @@ forwarding, so the DNS rule moves to a node:
    connect to another WireGuard service → import the config file the master
    issued. The imported `AllowedIPs` decides split or full.
 2. **Or a static route**: Home Network → Network → Network Settings → IPv4
-   Routes: destination `10.8.0.0`, subnet mask `255.255.0.0`, gateway the
+   Routes: destination `10.X.0.0` (your mesh), subnet mask `255.255.0.0`, gateway the
    gateway node's LAN address.
 3. **DNS**: point the LAN at a Pi-hole. Either set the gateway node as the
    local DNS server under Home Network → Network → Network Settings → IPv4
@@ -82,7 +82,7 @@ Static routes and the tunnel can coexist; the tunnel wins for the mesh.
 ## Any other router
 
 The same three facts: a WireGuard client config for the router, or a static
-route for `10.8.0.0/16` to the gateway node's LAN address; and DNS for the LAN
+route for your mesh (`10.X.0.0/16`) to the gateway node's LAN address; and DNS for the LAN
 pointed at a Pi-hole that knows the fleet, which is any node running the `dns`
 module. Routers with dnsmasq underneath (DD-WRT, Tomato, pfSense's forwarder)
-take the one-line forward `server=/home/10.8.0.1` as well.
+take the one-line forward `server=/home/10.X.0.1` as well.

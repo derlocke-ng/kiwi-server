@@ -59,9 +59,10 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    2.215.0 such a machine is reached at its mesh address before the home's DNS
    knows its name.
 3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option),
-   rings on more than one machine, ring rotation, the leash, a third share for
-   papaya. The control node's own unlock takes several rings since 2.219.0
-   (`unlock.control: [house, attic]`).
+   rings on more than one machine, a third share for papaya. The control node's
+   own unlock takes several rings since 2.219.0 (`unlock.control: [house,
+   attic]`); the leash and ring rotation (`rotate FLEET ring NAME`) are there
+   since 2.220.0.
 4. **The image:** the phoenix spin with the container images inside, the join
    token instead of per-host media, and hosters without our own install media.
 5. **At home:** netboot (PXE) and Wake-on-LAN, and a node that sleeps and wakes

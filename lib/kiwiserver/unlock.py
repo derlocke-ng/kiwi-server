@@ -79,7 +79,15 @@ echo none
 BIND_SCRIPT = luks._PRELUDE + r'''
 IFS= read -r key; IFS= read -r dev; IFS= read -r tree; IFS= read -r old
 printf %s "$key" > "$d/key"
-clevis luks bind -y -k "$d/key" -d "$dev" sss "$tree" || exit 1
+if ! clevis luks bind -y -k "$d/key" -d "$dev" sss "$tree"; then
+    # no room for a second binding in the header (CoreOS: Ignition's holds every ring's
+    # advertisement): the old one first, while the key opens the disk, then the new one
+    cryptsetup open --test-passphrase --key-file="$d/key" "$dev" >/dev/null 2>&1 || exit 1
+    [ -n "$old" ] || exit 1
+    for slot in $old; do clevis luks unbind -f -d "$dev" -s "$slot" || exit 1; done
+    clevis luks bind -y -k "$d/key" -d "$dev" sss "$tree" || { echo "the disk opens only with its key now" >&2; exit 1; }
+    exit 0
+fi
 for slot in $old; do clevis luks unbind -f -d "$dev" -s "$slot" || exit 1; done
 '''
 
@@ -456,6 +464,45 @@ def _inner_port(server, ring):
     return 7500
 
 
+# stdin: nothing. Every Tang binding of the machine's LUKS disks made again in place with the rings'
+# keys as they are now (a ring's keys were rotated): no extra room in the header needed. Then each is
+# checked: it opens with the new keys. Prints "regen DEV SLOT" per binding, "none" without any.
+REGEN_SCRIPT = r'''
+set -u
+n=0
+for dev in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
+    for slot in $(clevis luks list -d "$dev" 2>/dev/null | grep tang | sed -n 's/^\([0-9]*\):.*/\1/p'); do
+        clevis luks regen -q -d "$dev" -s "$slot" >/dev/null 2>&1 || { echo "regen failed: $dev slot $slot" >&2; exit 1; }
+        clevis luks pass -d "$dev" -s "$slot" >/dev/null 2>&1 || { echo "the new binding of $dev slot $slot does not open" >&2; exit 1; }
+        echo "regen $dev $slot"; n=$((n + 1))
+    done
+done
+[ "$n" -gt 0 ] || echo none
+'''
+
+
+def regen(host, tgt):
+    """The machine's disk bound again to its rings' keys as they are now, in place (clevis luks regen);
+    each binding then opens with them. KiwiError when it cannot (a ring forwarded only at boot)."""
+    out = remote.run(tgt, REGEN_SCRIPT).decode(errors="replace")
+    if "regen " not in out:
+        raise KiwiError("%s: no Tang binding on its disks" % host.name)
+    return out.count("regen ")
+
+
+def rotate_ring(server, ring):
+    """New keys for a ring on its machine; the old ones stay, hidden (.<thumbprint>.jwk), so what was
+    bound to them still opens until `finish_ring`."""
+    # what tangd-rotate-keys does, which not every tang image has: the keys hidden, new ones made
+    _in_ring(server, ring, "sh -c 'set -e; o=$(stat -c %u:%g /db); cd /db; for k in *.jwk; do [ -e \"$k\" ] && mv \"$k\" \".$k\"; done; "
+                           "g=$(command -v tangd-keygen || echo /usr/libexec/tangd-keygen); \"$g\" /db; chown -R \"$o\" /db'")
+
+
+def finish_ring(server, ring):
+    """The hidden old keys of a ring gone: only the new ones open anything from now on."""
+    _in_ring(server, ring, "sh -c 'rm -f /db/.*.jwk'")
+
+
 def _in_ring(server, ring, command):
     runtime = shlex.quote(server.role_settings.get("runtime") or "podman")
     prefix = "km" if _on_master(server) else "kn"
@@ -659,8 +706,95 @@ def _coreos_key(host, tgt, servers):
     return state == "added"
 
 
-def bind(host, tgt, servers):
-    """Bind the disk to the host's rings; what is already right stays as it is."""
+LEASH_PATH = "/usr/local/sbin/kiwi-leash"
+LEASH_SCRIPT = r'''#!/bin/sh
+# kiwi-server's leash (docs/design/control-plane.md): this machine saw the rings of its own site
+# since boot and has not reached them for MINUTES minutes: it was carried off, or the house is
+# without its network. It restarts into its locked state. Opened by hand without them, it never
+# saw them, and stays.
+urls="URLS"; minutes=MINUTES
+seen=/run/kiwi-leash.seen; gone=/run/kiwi-leash.gone
+for u in $urls; do
+    if curl -fs --max-time 5 -o /dev/null "$u/adv"; then
+        : > "$seen"; rm -f "$gone"; exit 0
+    fi
+done
+[ -f "$seen" ] || exit 0
+now=$(date +%s)
+[ -f "$gone" ] || { echo "$now" > "$gone"; exit 0; }
+since=$(cat "$gone")
+[ $((now - since)) -ge $((minutes * 60)) ] || exit 0
+logger -t kiwi-leash "the rings of this machine's site ($urls) have not answered for $minutes minutes: restarting into the locked state"
+systemctl reboot
+'''
+INSTALL_LEASH = r'''
+set -eu
+install -d /usr/local/sbin
+cat > %(path)s.new
+chmod 0755 %(path)s.new
+mv %(path)s.new %(path)s
+cat > /etc/systemd/system/kiwi-leash.service <<'UNIT'
+[Unit]
+Description=kiwi-server: lock again when the rings of this site are gone (the leash)
+
+[Service]
+Type=oneshot
+ExecStart=%(path)s
+UNIT
+cat > /etc/systemd/system/kiwi-leash.timer <<'UNIT'
+[Unit]
+Description=kiwi-server: the leash, every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable -q --now kiwi-leash.timer
+''' % {"path": LEASH_PATH}
+REMOVE_LEASH = """
+if [ -f /etc/systemd/system/kiwi-leash.timer ]; then
+    systemctl disable -q --now kiwi-leash.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/kiwi-leash.timer /etc/systemd/system/kiwi-leash.service %s /run/kiwi-leash.seen /run/kiwi-leash.gone
+    systemctl daemon-reload
+    echo removed
+fi
+""" % LEASH_PATH
+
+
+def leash_urls(host, wanted_tree):
+    """The ring URLs at the machine's own site (its LAN), out of the rings it is bound to."""
+    mine = _lan(host)
+    out = []
+    for p in (wanted_tree or {}).get("pins", {}).get("tang", []):
+        try:
+            h = urllib.parse.urlsplit(p["url"]).hostname
+            if mine and h and ipaddress.ip_address(h) in mine.network:
+                out.append(p["url"])
+        except ValueError:
+            continue
+    return out
+
+
+def leash_script(host, wanted_tree):
+    """The leash for this machine, or None without one. KiwiError: wanted, but no ring at its site."""
+    got = host.cfg["unlock"].get("leash")
+    minutes = 10 if got is True else int(got or 0)          # leash: true is the design's ten minutes
+    if minutes <= 0:
+        return None
+    urls = leash_urls(host, wanted_tree)
+    if not urls:
+        raise KiwiError("%s: unlock.leash needs a ring at its own site (on its LAN, a fixed address): it locks the "
+                        "machine when that ring is gone" % host.name)
+    return LEASH_SCRIPT.replace("URLS", " ".join(urls)).replace("MINUTES", str(max(minutes, 5)))
+
+
+def bind(host, tgt, servers, force=False):
+    """Bind the disk to the host's rings; what is already right stays as it is. `force`: bound
+    again even so, to the rings' keys as they are now (a ring's keys were rotated)."""
     coreos = host.target != "debian"
     if coreos:
         _coreos_key(host, tgt, servers)
@@ -670,12 +804,18 @@ def bind(host, tgt, servers):
     wanted_tree = tree(host, servers)
     if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
-    changed = _rebind(host, tgt, key, wanted_tree)
+    changed = _rebind(host, tgt, key, wanted_tree, force=force)
     if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
     # and no machine restarts for updates while the rings that open it do not answer
     remote.run(tgt, INSTALL_RINGS_ANSWER, RINGS_ANSWER.encode())
+    leash = leash_script(host, wanted_tree)
+    if leash:
+        remote.run(tgt, INSTALL_LEASH, leash.encode())
+        util.say("%s: the leash is on: when the rings of its site are gone for a while it restarts locked" % host.name)
+    elif b"removed" in remote.run(tgt, REMOVE_LEASH):
+        util.say("%s: the leash is off" % host.name)
     if coreos and not host.cfg["unlock"].get("ssh") and b"updated" in remote.run(tgt, RING_TIMEOUTS_COREOS):
         util.say("%s: the unlock at boot gives a silent ring seconds, not minutes, from the next boot on" % host.name)
     if host.cfg["unlock"].get("ssh"):
@@ -685,14 +825,14 @@ def bind(host, tgt, servers):
     return changed
 
 
-def _rebind(host, tgt, key, wanted_tree):
+def _rebind(host, tgt, key, wanted_tree, force=False):
     listing = remote.run(tgt, LIST_SCRIPT, (key + "\n").encode()).decode(errors="replace")
     if not listing.startswith("device "):
         raise KiwiError("%s: no disk on the machine opens with the key on record" % host.name)
     dev = listing.split()[1]
     urls = sorted(p["url"] for p in wanted_tree["pins"]["tang"])
     now = _bound(listing)
-    if [(t, u) for _s, t, u in now] == [(wanted_tree["t"], urls)]:
+    if [(t, u) for _s, t, u in now] == [(wanted_tree["t"], urls)] and not force:
         return False
     old = " ".join(s for s, _t, _u in now)
     data = "%s\n%s\n%s\n%s\n" % (key, dev, json.dumps(wanted_tree, separators=(",", ":")), old)

@@ -1135,6 +1135,33 @@ class TestAdopt(Base):
         self.assertIn("clevis luks unbind -f", unlock.DROP_TPM_SCRIPT)
         self.assertIn("</dev/null", unlock.DROP_TPM_SCRIPT)        # unbind reads stdin: it must not read the script's
 
+    def test_a_forced_rebind_binds_again_to_the_same_rings(self):
+        """A ring's keys were rotated: the URLs are the same, the keys not, so the disk is bound again."""
+        listing = "device /dev/vda3\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"
+        tree = {"t": 1, "pins": {"tang": [{"url": "http://192.168.2.61:7500", "adv": {"payload": "x"}}]}}
+        h = types.SimpleNamespace(name="papaya", cfg={"unlock": {"rings": ["house"]}})
+        ran = []
+
+        def run(tgt, script, data=b""):
+            ran.append(script)
+            return listing.encode() if script == unlock.LIST_SCRIPT else b""
+        with mock.patch.object(remote, "run", run), mock.patch.object(util, "say", lambda *a: None):
+            self.assertFalse(unlock._rebind(h, "t", "key", tree))                    # the same: left as it is
+            self.assertNotIn(unlock.BIND_SCRIPT, ran)
+            self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
+            self.assertIn(unlock.BIND_SCRIPT, ran)
+
+    def test_the_scripts_that_bind_again_parse_and_say_what_they_do(self):
+        for name in ("REGEN_SCRIPT", "BIND_SCRIPT"):
+            path = os.path.join(self.tmp, name + ".sh")
+            write(path, getattr(unlock, name))
+            self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0, name)
+        self.assertIn("clevis luks regen -q", unlock.REGEN_SCRIPT)          # in place: no room needed (CoreOS)
+        self.assertIn("clevis luks pass", unlock.REGEN_SCRIPT)               # and it opens with the new keys
+        # a bind that does not fit beside the old one: the old one first, while the key opens the disk
+        self.assertLess(unlock.BIND_SCRIPT.index("cryptsetup open --test-passphrase"),
+                        unlock.BIND_SCRIPT.index("clevis luks unbind -f -d \"$dev\" -s \"$slot\" || exit 1; done\n    clevis luks bind"))
+
     def test_new_host_key_forgets_the_address(self):
         calls = []
         with mock.patch.object(remote, "KNOWN_HOSTS", "/k"):
@@ -3125,6 +3152,57 @@ class TestSshCa(Base):
         write(os.path.join(os.path.dirname(f.path), "secrets", "away.conf"), "[Interface]\nPrivateKey = x\nAddress = 10.9.0.14/24\n")
         self.assertEqual(remote.addresses(f.hosts["away"]), [f.hosts["away"].hostname, "10.9.0.14"])
         self.assertNotIn("10.66.1.2", remote.addresses(f.hosts["gate"]))      # a master's client config is another network's
+
+class TestLeash(Base):
+    """The leash (docs/design/control-plane.md): a machine that saw the rings of its site and lost them
+    restarts into its locked state; one opened by hand without them stays."""
+
+    def host(self, leash, address="192.168.2.30/24"):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"papaya": {
+            "role": "bare", "network": {"dhcp": False, "address": address, "gateway": "192.168.2.1"},
+            "unlock": {"rings": ["house"], "leash": leash}}}})
+        return f.hosts["papaya"]
+
+    TREE = {"t": 1, "pins": {"tang": [{"url": "http://192.168.2.61:7500"}, {"url": "http://5.45.103.177:7510"}]}}
+
+    def test_only_the_rings_of_its_own_site_hold_it(self):
+        self.assertIsNone(unlock.leash_script(self.host(0), self.TREE))
+        script = unlock.leash_script(self.host(True), self.TREE)
+        self.assertIn('urls="http://192.168.2.61:7500"; minutes=10', script)        # not the master's ring far away
+        self.assertIn('minutes=5', unlock.leash_script(self.host(2), self.TREE))     # never shorter than five
+        with self.assertRaisesRegex(KiwiError, "needs a ring at its own site"):
+            unlock.leash_script(self.host(10), {"t": 1, "pins": {"tang": [{"url": "http://5.45.103.177:7510"}]}})
+
+    def test_it_restarts_only_after_it_saw_the_ring_and_lost_it_long_enough(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        bin_ = os.path.join(d, "bin")
+        os.makedirs(bin_)
+        for name, body in (("curl", '[ -e "%s/ring-up" ]' % d), ("date", 'cat "%s/now"' % d),
+                           ("systemctl", 'echo "$@" >> "%s/reboots"' % d), ("logger", "true")):
+            write(os.path.join(bin_, name), "#!/bin/sh\n%s\n" % body)
+            os.chmod(os.path.join(bin_, name), 0o755)
+        script = os.path.join(d, "leash")
+        write(script, unlock.leash_script(self.host(10), self.TREE).replace("/run/", d + "/"))
+
+        def tick(now, up):
+            write(os.path.join(d, "now"), str(now))
+            if up:
+                write(os.path.join(d, "ring-up"), "")
+            elif os.path.exists(os.path.join(d, "ring-up")):
+                os.remove(os.path.join(d, "ring-up"))
+            subprocess.run(["sh", script], env=dict(os.environ, PATH=bin_ + ":" + os.environ["PATH"]), check=True)
+            return os.path.exists(os.path.join(d, "reboots"))
+        self.assertFalse(tick(1000, False))         # opened by hand, the ring never seen: nothing to guard
+        self.assertFalse(tick(5000, False))
+        self.assertFalse(tick(6000, True))          # the ring answers: from now on it guards
+        self.assertFalse(tick(6060, False))         # gone: the time starts
+        self.assertFalse(tick(6600, False))         # nine minutes
+        self.assertFalse(tick(6630, True))          # back: the time is gone
+        self.assertFalse(tick(6700, False))
+        self.assertFalse(tick(7200, False))
+        self.assertTrue(tick(7310, False))          # ten minutes and more without it: restart
+        self.assertEqual(util.read_text(os.path.join(d, "reboots")).split(), ["reboot"])
+
 
 class TestSshPort(Base):
     def test_targets_carry_the_port(self):
@@ -5179,6 +5257,9 @@ class TestUnlock(Base):
             if "kiwi-curl" in script and "initramfs-etc" in script:      # CoreOS: the time limits at boot, its own test
                 self.limits = tgt
                 return b"updated\n"
+            if "kiwi-leash" in script:                   # the leash, on or off: its own test
+                self.leash = (tgt, script, data)
+                return b""
             calls.append((tgt, script, data))
             if "tang-show-keys" in script:
                 return b"THUMBPRINT\n"
@@ -10954,6 +11035,50 @@ class TestFolderSync(StoreBase):
         self.assertEqual(controlsync.folder_state(self.folder), "")       # no list: no fleet there (yet)
         write(os.path.join(self.folder, "requests", "x.json"), '{"name": "y", "key": "age1bad"}')
         self.assertEqual(controlsync.requests(self.folder), [])           # a request that is not one is not shown
+
+
+class TestRingRotation(Base):
+    """New keys for an unlock ring: the old ones stay (hidden) until every disk it opens is bound
+    to the new ones, so a machine that is away meanwhile still opens."""
+
+    def test_the_old_keys_go_only_when_the_last_machine_has_changed(self):
+        from kiwiserver import rotate, unlock as unlockmod
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "lychee": {"role": "bare"},
+            "papaya": {"role": "bare", "unlock": {"rings": ["house", "home"], "control": ["house"]}},
+            "quince": {"role": "bare", "unlock": {"rings": ["house"]}},
+            "lime": {"role": "bare", "unlock": {"rings": ["home"]}}}})
+        servers = {"house": (f.hosts["lychee"], 7500)}
+        done, away, said = [], {"quince"}, []
+        calls = []
+
+        def rebind(h):
+            if h.name in away:
+                raise KiwiError("unreachable: ssh: connect to host quince.home port 22: No route to host")
+            done.append(h.name)
+        with mock.patch.object(unlockmod, "rotate_ring", lambda srv, r: calls.append(("rotate", srv.name, r))), \
+                mock.patch.object(unlockmod, "finish_ring", lambda srv, r: calls.append(("finish", srv.name, r))):
+            left = rotate.ring(f, "house", servers, rebind, why="a test", say=said.append)
+            self.assertEqual((left, done, calls), (["quince"], ["papaya"], [("rotate", "lychee", "house")]))
+            self.assertIn("quince waits: unreachable", "\n".join(said))
+            self.assertEqual(rotate.ring_pending(f, "house"), ["quince"])
+            plan = {w: (st, how) for w, st, how in rotate.plan(f)}
+            self.assertEqual(plan["The keys of the unlock ring house"], ("under way: quince still on the old keys", "rotate ring house"))
+            away.clear()                                   # quince is back: the same command again
+            left = rotate.ring(f, "house", servers, rebind, say=said.append)
+            self.assertEqual((left, done), ([], ["papaya", "quince"]))
+            self.assertEqual(calls, [("rotate", "lychee", "house"), ("finish", "lychee", "house")])     # rotated once
+            self.assertIn("the control node (papaya) binds its key to the new keys with the next login", "\n".join(said))
+            self.assertTrue(rotate.plan(f) and dict((w, st) for w, st, _h in rotate.plan(f))[
+                "The keys of the unlock ring house"].startswith("replaced "))
+            # a machine left out by hand (off for good): the rest finish without it
+            calls.clear()
+            done.clear()
+            away.add("quince")
+            left = rotate.ring(f, "house", servers, rebind, waive=("quince",), say=said.append)
+            self.assertEqual((left, done, [c[0] for c in calls]), ([], ["papaya"], ["rotate", "finish"]))
+        with self.assertRaisesRegex(KiwiError, "no machine of the fleet serves the ring nowhere"):
+            rotate.ring(f, "nowhere", servers, rebind)
 
 
 class TestRotate(Base):

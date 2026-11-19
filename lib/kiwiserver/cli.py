@@ -3903,6 +3903,31 @@ def cmd_rotate(args):
         for what, state, how in rotate.plan(fleet, ways, ms):
             print("%-48s %s" % (what, "  ".join(x for x in (state, how) if x)))
         return
+    if args.action == "ring":
+        if not args.hosts:
+            raise KiwiError("which ring? kiwi-server rotate %s ring <name> (kiwi-server rotate %s lists them)"
+                            % (args.fleet, args.fleet))
+        name, only = args.hosts[0], args.hosts[1:]
+        for n in list(only) + list(args.waive or []):
+            if n not in fleet.hosts:
+                raise KiwiError("no such machine: %s" % n)
+        servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+
+        def rebind(h):
+            # in place: the header has no room for a second binding beside Ignition's (CoreOS)
+            try:
+                unlock.regen(h, remote.reach(h))
+            except KiwiError:
+                if not any(str(v).startswith("http://127.0.0.1:") for v in (h.cfg["unlock"].get("via") or {}).values()):
+                    raise
+                unlock.bind(h, remote.reach(h), servers, force=True)     # a ring it reaches only at boot
+        
+        left = rotate.ring(fleet, name, servers, rebind, only, args.waive or (), args.why or "")
+        if share(args.fleet, "push"):
+            util.say("the other computers and the control node have the result")
+        if left:
+            raise SystemExit(1)
+        return
     for n in list(args.hosts) + list(args.waive or []):
         if n not in fleet.hosts:
             raise KiwiError("no such machine: %s" % n)
@@ -5026,9 +5051,10 @@ def build_parser():
     s.add_argument("--days", type=int, default=sshca.USER_DAYS, help="sign: how long it lets the key in (default %(default)s)")
     s.add_argument("--known-hosts", metavar="FILE", help="trust: instead of ~/.ssh/known_hosts")
     s = sub("rotate", cmd_rotate); s.add_argument("fleet")
-    s.add_argument("action", nargs="?", choices=("ssh", "seed"), help="without: the list of what can be replaced. "
-                   "ssh: the admin key and SSH CA. seed: the secrets inside the services that a restart can change")
-    s.add_argument("hosts", nargs="*", help="only these machines (default: all that still wait)")
+    s.add_argument("action", nargs="?", choices=("ssh", "seed", "ring"), help="without: the list of what can be replaced. "
+                   "ssh: the admin key and SSH CA. seed: the secrets inside the services that a restart can change. "
+                   "ring NAME: the keys of an unlock ring, and every disk it opens bound again")
+    s.add_argument("hosts", nargs="*", help="only these machines (default: all that still wait); for ring: its name first")
     s.add_argument("--waive", action="append", metavar="HOST", help="leave this machine out (off for good, or about to be installed anew)")
     s.add_argument("--why", help="a note for the record, e.g. laptop lost")
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", nargs="?", help="the partner network's fleet file")

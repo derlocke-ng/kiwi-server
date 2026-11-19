@@ -356,6 +356,68 @@ def seed(fleet, ms, apply, names=(), waive=(), why="", say=util.say, before=None
     return left
 
 
+# ---- the keys of an unlock ring (docs/design/control-plane.md: rotation) --------------------------
+def ring_hosts(fleet, ring):
+    """The machines whose disks a ring opens (unlock.rings), and the control node it opens."""
+    from . import unlock as unlockmod
+    disks = sorted(h.name for h in fleet.hosts.values() if ring in [str(r) for r in (h.cfg.get("unlock") or {}).get("rings") or []])
+    control = sorted(h.name for h in fleet.hosts.values() if ring in unlockmod.control_rings(h))
+    return disks, control
+
+
+def ring_pending(fleet, ring, state=None):
+    state = load(fleet) if state is None else state
+    return list(((state.get("rings") or {}).get(ring) or {}).get("pending") or [])
+
+
+def ring(fleet, name, servers, rebind, names=(), waive=(), why="", say=util.say):
+    """New keys for the ring `name`, then each machine it opens bound again to them; the old keys stay
+    (hidden) until the last machine has changed, then they go. A machine that cannot be reached now
+    waits, and opens with the old keys meanwhile: `rotate ring NAME` again takes it. `rebind(host)`
+    binds one machine's disk again (unlock.bind, forced). The names left."""
+    from . import unlock as unlockmod
+    if name not in servers or isinstance(servers[name][0], unlockmod.OperatorRing):
+        raise KiwiError("no machine of the fleet serves the ring %s" % name)
+    server = servers[name][0]
+    state = load(fleet)
+    rings = state.setdefault("rings", {})
+    disks, control = ring_hosts(fleet, name)
+    if not rings.get(name):
+        unlockmod.rotate_ring(server, name)
+        rings[name] = {"pending": disks, "begun": time.strftime("%Y-%m-%dT%H:%M:%S"), "why": why}
+        _save(fleet, state)
+        say("the ring %s on %s has new keys; the old ones open what was bound to them until every machine has changed"
+            % (name, server.name))
+    entry = rings[name]
+    for n in waive:
+        if n in entry["pending"]:
+            entry["pending"].remove(n)
+            say("%s left out: it opens with the old keys until they go, then by its key at the console" % n)
+    for n in [x for x in entry["pending"] if not names or x in names]:
+        try:
+            rebind(fleet.hosts[n])
+        except (KiwiError, OSError) as e:
+            say("%s waits: %s" % (n, str(e).splitlines()[0][:160]))
+            continue
+        entry["pending"].remove(n)
+        _save(fleet, state)
+        say("%s: bound to the new keys of %s" % (n, name))
+    _save(fleet, state)
+    if entry["pending"]:
+        say("still on the old keys: %s. kiwi-server rotate <fleet> ring %s again when they are up"
+            % (", ".join(entry["pending"]), name))
+        return list(entry["pending"])
+    unlockmod.finish_ring(server, name)
+    state.setdefault("last", {})["ring:" + name] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    rings[name] = None
+    _save(fleet, state)
+    say("every machine of %s is on the new keys: the old ones are gone" % name)
+    if control:
+        say("the control node (%s) binds its key to the new keys with the next login on its page; until then it "
+            "waits for a login after a restart" % ", ".join(control))
+    return []
+
+
 def plan(fleet, control_ways=(), ms=None):
     """[(what, state, how)]: what a computer that managed this network could read, and how
     each is replaced."""
@@ -395,7 +457,18 @@ def plan(fleet, control_ways=(), ms=None):
     else:
         rows.append(("Generated passwords (databases, admin logins)", "", "rotate seed"))
     rows.append(("WireGuard keys of the machines", "not built yet", "a later release"))
-    rows.append(("The key that unlocks disks at boot", "not built yet", "a later release"))
+    from . import unlock as unlockmod
+    try:
+        served = sorted(r for r, (srv, _p) in unlockmod.ring_servers(fleet, lambda x: None).items()
+                        if not isinstance(srv, unlockmod.OperatorRing))
+    except KiwiError:
+        served = []
+    named = {str(r) for h in fleet.hosts.values() for r in (h.cfg.get("unlock") or {}).get("rings") or []}
+    for r in sorted(set(served) | (named - {"operator"})):
+        waits = ring_pending(fleet, r, state)
+        when = ("under way: %s still on the old keys" % ", ".join(waits) if waits or (state.get("rings") or {}).get(r)
+                else "replaced %s" % last["ring:" + r][:10] if last.get("ring:" + r) else "never replaced")
+        rows.append(("The keys of the unlock ring %s" % r, when, "rotate ring %s" % r))
     rows.append(("The certificate authority", "not built yet", "a later release; every device imports the new one"))
     outside = [(n, w) for n, w in (("secrets/netcup.token", "the hoster's API token"),)
                if os.path.isfile(fleet.resolve_path(n))]

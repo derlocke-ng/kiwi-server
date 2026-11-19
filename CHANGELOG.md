@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.220.0 — the leash, and new keys for a ring
+
+- **`unlock: { leash: 10 }`** (docs/design/control-plane.md, ROADMAP's unlock list): a machine that
+  saw the rings of its own site since it started, and then has not reached them for that many
+  minutes, restarts into its locked state, so a box carried off while running locks itself.
+  Opened by hand without its rings it never saw them and stays up; a ring on the master far
+  away does not count; `true` is ten minutes, five the least. `apply` puts the timer on the
+  machine (`kiwi-leash.timer`) and takes it away again when the setting goes. Off by default:
+  a house without its network for that long restarts its leashed machines too.
+- **`kiwi-server rotate FLEET ring NAME`**: new keys for an unlock ring (`tangd-rotate-keys`, the
+  old ones kept hidden), every disk it opens bound again to them, and the old keys removed only
+  when the last machine has changed; a machine that is off meanwhile still opens and is taken by
+  the same command later (`--waive` for one gone for good). `rotate FLEET` lists each ring and
+  when its keys were last replaced (was: "the key that unlocks disks at boot: not built yet").
+  Each disk is bound again in place (`clevis luks regen`) and checked to open. Tried live: the
+  ring `away` on sorbet, and the ring `attic` on medlar with papaya's and quince's disks bound
+  again; the old keys gone, both disks open.
+- **A disk whose new binding does not fit beside the old one is bound all the same** (found by
+  that rotation: on CoreOS, Ignition's binding fills the LUKS2 header): the old binding goes
+  first, while the key on record opens the disk, then the new one. Before, a change of a CoreOS
+  machine's rings failed with "Error adding new binding".
+
 ## 2.219.0 — the control node opens by any of several rings
 
 - **`unlock.control` takes several rings** (`[house, attic]`): the control node's key is kept

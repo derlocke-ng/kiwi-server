@@ -626,6 +626,9 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <b>{{ age(m.facts.uptime) }}</b><span class="cap">since it last started</span></div>{% endif %}
 {% for b in m.bars %}<div class="stat"><span class="lbl">{{ b.label }}</span><b class="{{ b.level }}">{{ b.pct }}<small> %</small></b>
 <span class="cap">{{ b.more }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span></div>{% endfor %}</div>{% endif %}
+{% if m.state == "asleep" %}<div class="card"><p>{{ (m.notes or ["Asleep"])[0] | capitalize }}.</p>
+{% if m.wol %}<form method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="wake">
+<input type="hidden" name="host" value="{{ m.name }}"><button>Wake it now</button></form>{% endif %}</div>{% endif %}
 {% for p in m.problems %}<div class="card"><p><span class="dot {{ p.level }}"></span>{{ p.text }}</p>
 {% set tip = p.hint or hint(p.text) %}{% if tip %}<p class="muted">{{ tip }}</p>{% endif %}
 {% if p.level == "warn" and p.key in quietable %}<form class="inline" method="post" action="/hosts/{{ m.name }}/quiet">{{ tok }}

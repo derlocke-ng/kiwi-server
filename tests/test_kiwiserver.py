@@ -10175,6 +10175,12 @@ class TestWeb(WebBase):
         self.assertIn('<input type="hidden" name="action" value="wake">', body)
         self.assertIn("Wake it", body)
         self.assertNotIn("Wake it", self.ask("/hosts/papaya")[1])             # no Wake-on-LAN: no button
+        # asleep in its window (asleep): said so, no problem, and woken on purpose if wanted
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": "fig", "state": "asleep", "problems": [], "notes": ["asleep until 02:30 (by its clock)"], "facts": {}}]}))
+        body = self.ask("/hosts/fig")[1]
+        self.assertIn("Asleep until 02:30", body)
+        self.assertIn("Wake it now", body)
 
     def test_changes_not_applied_yet_are_applied_with_one_button(self):
         """Save & apply, and the Home card (after OpenWrt): a change reaches other machines too."""

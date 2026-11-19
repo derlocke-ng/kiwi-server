@@ -5761,6 +5761,16 @@ class Window(Adw.ApplicationWindow):
             row = Adw.ActionRow(use_markup=False, title=host if with_host else text, title_lines=3, subtitle_lines=0,
                                 subtitle="\n".join(x for x in ((text if with_host else ""), ("→ " + hint) if hint else "") if x))
             row.add_prefix(dot(level))
+            for a in p.get("actions") or []:        # what to do about it, as buttons (facts.ACTIONS; one table with the page)
+                if a.get("run") and self.doc.path:
+                    msg = "%s: %s…" % (host, a["label"])
+                    ask = (("Apply to %s now?" % host, "Services that changed restart for a moment.", "Apply")
+                           if a["run"] == "apply" else None)
+                    row.add_suffix(self.action_button(a["label"], [a["run"], self.doc.path, host], msg, ask))
+                elif a.get("app"):
+                    b = Gtk.Button(label=a["label"], valign=Gtk.Align.CENTER, css_classes=["flat"])
+                    b.connect("clicked", lambda _b, name=a["app"]: self.activate_action(name, None))
+                    row.add_suffix(b)
             if level == "warn" and p.get("key") in QUIETABLE:
                 b = Gtk.Button(label="Leave it out", valign=Gtk.Align.CENTER, css_classes=["flat"],
                                tooltip_text="It stays as a note on the machine; its settings bring it back")

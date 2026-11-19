@@ -7094,7 +7094,7 @@ class TestManage(Base):
             self.assertEqual(rc, 0, err)
             self.assertIn("== sh3 (core@sh3.kiwi)", out)
             self.assertIn("   uptime: up 3 days", out)
-            self.assertIn("   ! kn-nginx is not running (inactive)", out)
+            self.assertIn("   ! Web addresses (nginx): kn-nginx is not running (inactive)", out)     # named under its part
         # a role script that fails is reported, not swallowed
         with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "run_stream", lambda *a, **k: 7):
             rc, out, err = self.run_cli("apply", f.path, "sh3")

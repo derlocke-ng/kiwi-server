@@ -403,6 +403,7 @@ class Bundle:
         self.kernel_modules = []
         self.container_ips = {}
         self.services = []     # container names, for the summary
+        self.service_modules = {}   # container name -> the module it is of ("km-pihole" -> "dns")
         self.urls = []         # what the operator can open afterwards
         self.compose = None
         self.vpn_dependents = []   # containers inside the VPN client's network namespace
@@ -678,6 +679,7 @@ class Renderer:
                 services[svc] = body
                 bundle.services.append(svc)
                 module_services.setdefault(name, []).append(svc)
+                bundle.service_modules[str((body or {}).get("container_name") or svc)] = name
             for vol, body in (doc.get("volumes") or {}).items():
                 volumes.setdefault(vol, body or {"name": vol})
             for vol in mod.volumes:

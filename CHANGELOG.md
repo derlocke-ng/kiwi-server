@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.252.0 — one name per thing
+
+- **A machine's parts are named by their title first**, the technical name small after it:
+  "Ad blocker (Pi-hole) `dns`" under a machine's details on the page.
+- **A container that is down or unhealthy is named under its part**: "Files (Nextcloud):
+  nextcloud-aio-apache is not running", in `status`, on the page and in the app (kiwi-modules
+  0.102.0 says which module a container is of).
+- The app says **Linked networks**, as the page does (it said Federation).
+- Second step of docs/design/ui.md.
+
 ## 2.251.0 — boards: a fixed address, and rings for an encrypted one
 
 - **A board gets its fixed address** (`network.address`, `dhcp: false`): written at an image's

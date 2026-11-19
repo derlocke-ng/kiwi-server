@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.244.0 — 1 day, not 1 days
+
+- Counts say "1 day", "1 minute", "1 snapshot", "1 machine": in status, recovery, the backup
+  notes, the watchdog's messages, the control page and two lines of the app. A prune of today
+  says "pruned today".
+- README: a board (Odroid, Banana Pi) gets its own Armbian image; docs/roles.md: a role or
+  setting for debian counts on armbian.
+- `./install.sh --help` prints the usage and exits 0.
+- A sentence of the API docs reads plainly ("which of its people this network lets in").
+
 ## 2.243.0 — a typo gets a guess
 
 - A mistyped command gets one line and a guess (`statsu` → did you mean status?) instead of

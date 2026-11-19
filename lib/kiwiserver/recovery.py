@@ -52,8 +52,8 @@ def record_copy(fleet, hosts=(), local=None, fetched=False, now=None):
 
 def age(seconds):
     s = max(0, int(seconds or 0))
-    return ("%d minutes" % (s // 60) if s < 5400 else "%d hours" % (s // 3600) if s < 172800
-            else "%d days" % (s // 86400))
+    return (util.count(s // 60, "minute") if s < 5400 else util.count(s // 3600, "hour") if s < 172800
+            else util.count(s // 86400, "day"))
 
 
 def names(items):

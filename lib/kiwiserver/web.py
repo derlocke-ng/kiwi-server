@@ -1489,8 +1489,8 @@ def hint(text):
 
 def age(seconds):
     s = max(0, int(seconds or 0))
-    return ("%d seconds" % s if s < 90 else "%d minutes" % (s // 60) if s < 5400
-            else "%d hours" % (s // 3600) if s < 172800 else "%d days" % (s // 86400))
+    return (util.count(s, "second") if s < 90 else util.count(s // 60, "minute") if s < 5400
+            else util.count(s // 3600, "hour") if s < 172800 else util.count(s // 86400, "day"))
 
 
 def ago(t):
@@ -3400,7 +3400,7 @@ def make_app(control: Control):
     @app.post("/api/federation")
     async def api_federation_do(request: Request):
         """{name: {share, from, exit, internet}} -> {saved: true}: what this network opens to a linked
-        one, whom of it it lets in, and whether it leaves to the Internet through it. Left out: as now."""
+        one, which of its people this network lets in, and whether it leaves to the Internet through it. Left out: as now."""
         who = bearer(request)
         if not who:
             return JSONResponse({"error": "who?"}, status_code=401)

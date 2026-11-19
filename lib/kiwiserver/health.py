@@ -18,6 +18,7 @@ import ssl
 import time
 import urllib.error
 import urllib.request
+from . import util
 
 # a service by the first part of its name, in the words the pages use
 SERVICES = {"cloud": "Files (Nextcloud)", "vault": "Passwords (Vaultwarden)", "pihole": "Ad blocker (Pi-hole)",
@@ -124,7 +125,8 @@ def _key(text):
 
 def duration(seconds):
     s = max(0, int(seconds))
-    return ("%d minutes" % max(1, s // 60) if s < 5400 else "%d hours" % (s // 3600) if s < 172800 else "%d days" % (s // 86400))
+    return (util.count(max(1, s // 60), "minute") if s < 5400 else util.count(s // 3600, "hour") if s < 172800
+            else util.count(s // 86400, "day"))
 
 
 def update(state, machines, services, happened, now, after=600):

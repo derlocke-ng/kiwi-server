@@ -299,7 +299,7 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/access` | who may reach what, as the page shows it: `master`, `who` (each group and linked network with `kind`, `reach`, `peers`, `internet`, `admin`), `machines` |
 | `POST /api/access` | `{who: {name: {reach, peers, internet, admin}}, new, new_as}` gives `{saved}`. What a name leaves out stays as it is; `reach` lists machines, services like `cloud.papaya`, ports like `papaya:22`, `apps` or `all`; `new` makes a group that starts with `new_as` (nothing, apps, all) |
 | `GET /api/federation` | the linked networks: per name `domain`, `mesh`, `share`, `from`, `exit`, `internet` |
-| `POST /api/federation` | `{name: {share, from, exit, internet}}`: what this network opens to a linked one, whom of it it lets in, whether it leaves to the Internet through it. Linking a network needs both fleets and stays with `kiwi-server federate` |
+| `POST /api/federation` | `{name: {share, from, exit, internet}}`: what this network opens to a linked one, which of its people this network lets in, whether it leaves to the Internet through it. Linking a network needs both fleets and stays with `kiwi-server federate` |
 | `GET /api/modules?check=1` | the module sources (`name`, `url`, `tag`, `commit`, `modules`); with `check`, `news`: each repository's newest version tag |
 | `POST /api/modules` | `{op: add, update or remove, url, name, ref}` gives `{said}`: a module source, as on the Module sources page |
 | `GET /api/accounts` | with the accounts module: `people` (name, display name, admin, Jabber), `invites` (never a code: a code is shown once when made), `waiting` (requests to accept or deny), `jabber`, and `error` when the accounts machine did not answer |

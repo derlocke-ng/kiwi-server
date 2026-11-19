@@ -229,3 +229,9 @@ def typed_path(path):
     if shown.startswith("~/"):
         return "~/" + shlex.quote(shown[2:])
     return shlex.quote(shown)
+
+
+def count(n, word, many=None):
+    """1 day, 2 days: a number with its word, never "1 days"."""
+    n = int(n)
+    return "%d %s" % (n, word if n == 1 else (many or word + "s"))

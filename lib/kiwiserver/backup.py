@@ -599,9 +599,10 @@ def prune_note(fleet, host, now=None):
     if not rec or host not in rec.get("nodes", []):
         return ("warn", "never pruned from here; %s" % timer)
     days = (now - rec["time"]) / 86400
+    when = "today" if days < 1 else util.count(days, "day") + " ago"
     if rec.get("failed"):
-        return ("warn", "the last prune %d days ago failed for %s; %s" % (days, ", ".join(rec["failed"]), timer))
-    return ("warn" if days * 86400 > PRUNE_LATE else None, "pruned %d days ago; %s" % (days, timer))
+        return ("warn", "the last prune (%s) failed for %s; %s" % (when, ", ".join(rec["failed"]), timer))
+    return ("warn" if days * 86400 > PRUNE_LATE else None, "pruned %s; %s" % (when, timer))
 
 
 # ---- a master's WireGuard identity ------------------------------------------------------

@@ -17,6 +17,7 @@ Guards no policy switches off: the same machine is not acted on twice within an 
 more than three times a day, and nothing is done when the provider cannot be asked, since
 then this computer is the one that is cut off.
 """
+from . import util
 from .util import KiwiError
 
 DO = ("tell", "restart", "reinstall")
@@ -123,8 +124,8 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
                            "text": what + ". It was restarted %d times today and is still gone: look at it" % len(times)})
             continue
         if times and now - times[-1] < AGAIN_AFTER:
-            events.append({"host": name, "kind": "held", "text": what + ". It was restarted %d minutes ago: waiting for it"
-                           % int((now - times[-1]) / 60)})
+            events.append({"host": name, "kind": "held", "text": what + ". It was restarted %s ago: waiting for it"
+                           % util.count((now - times[-1]) / 60, "minute")})
             continue
         try:
             restart(name)

@@ -8,6 +8,7 @@ what is wrong; the app shows that and decides nothing of its own.
 """
 import re
 import time
+from . import util
 
 MARK = "--- kiwi-facts ---"
 
@@ -136,7 +137,7 @@ def human(kib):
 
 
 def lasts(days):
-    return "%d days" % days if days < 60 else "%d weeks" % (days / 7) if days < 730 else "years"
+    return util.count(days, "day") if days < 60 else util.count(days / 7, "week") if days < 730 else "years"
 
 
 def split(text):
@@ -335,7 +336,7 @@ def assess(f, quiet=()):
         week = sum(r["week_kib"] for r in repos)
         days = st["free_kib"] / (week / 7) if week else None
         notes.append("backups here: %s; %s free%s" % (
-            ", ".join("%s %s in %d snapshots" % (r["client"], human(r["kib"]), r["snapshots"]) for r in repos) or "none yet",
+            ", ".join("%s %s in %s" % (r["client"], human(r["kib"]), util.count(r["snapshots"], "snapshot")) for r in repos) or "none yet",
             human(st["free_kib"]), ", about %s at last week's rate" % lasts(days) if days is not None else ""))
         if days is not None and days < BACKUP_FULL_SOON:
             problems.append((bad if days < 7 else warn)(
@@ -374,9 +375,9 @@ def assess(f, quiet=()):
     for c in f.get("certificates", []):
         days = int(c["left"] / 86400)
         if c["left"] < CERTIFICATE_BAD:
-            problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %d days" % days), "certificate"))
+            problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %s" % util.count(days, "day")), "certificate"))
         elif c["left"] < CERTIFICATE_LATE:
-            problems.append(warn("the certificate of %s expires in %d days: it should have been renewed" % (c["name"], days), "certificate"))
+            problems.append(warn("the certificate of %s expires in %s: it should have been renewed" % (c["name"], util.count(days, "day")), "certificate"))
     for o in f.get("onion") or []:
         if not o["ok"]:
             notes.append("the hidden service %s did not answer through Tor when last asked" % o["service"])

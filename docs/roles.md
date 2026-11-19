@@ -444,6 +444,9 @@ module_defaults:
 ks_role_apply() { ks_stack_apply; }
 ```
 
+A role that runs on `debian` runs on `armbian` boards too, and so does a setting
+marked `targets: [debian]`: Armbian is Debian on a board.
+
 A role without modules does its own thing in `ks_role_apply()` with the
 library in [roles/common/lib.sh](https://github.com/derlocke-ng/kiwi-server/blob/main/roles/common/lib.sh):
 `ks_say/ks_warn/ks_die`, `ks_apt`, `ks_file`, `ks_write`, `ks_subst`,

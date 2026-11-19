@@ -3118,7 +3118,7 @@ class NetworkPicture(Gtk.DrawingArea):
         move.connect("leave", lambda _c: self.point_at(None))
         self.add_controller(move)
         self.update_property([Gtk.AccessibleProperty.LABEL],
-                             ["Your network: the master %s and %d machines linked to it" % (master["name"], len(machines))])
+                             ["Your network: the master %s and %d machine%s linked to it" % (master["name"], len(machines), "" if len(machines) == 1 else "s")])
 
     def lay_out(self, width):
         if self.laid == width or kiwi_picture is None:
@@ -5913,8 +5913,8 @@ class Window(Adw.ApplicationWindow):
                 g.add(row)
         if store:
             repos = store.get("repos") or []
-            row = plain_row("Stored here", "%s free on %s · %d machines" % (
-                size_kib(store.get("free_kib") or 0), store.get("mount", ""), len(repos)))
+            row = plain_row("Stored here", "%s free on %s · %d machine%s" % (
+                size_kib(store.get("free_kib") or 0), store.get("mount", ""), len(repos), "" if len(repos) == 1 else "s"))
             row.add_suffix(self.action_button("Prune now", ["prune", self.doc.path, name], "Pruning %s…" % name))
             g.add(row)
         return g

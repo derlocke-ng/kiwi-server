@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.231.0 — only the container whose image changed
+
+- kiwi-stack 0.9.21 fixes 0.9.20 (in 2.230.0): on a disk 85 % full or more, making room for a
+  changed image stopped every container of the stack, not only the one whose image changed
+  (podman shows short image IDs in one place, long ones in the other). On crumble, the master in
+  RAM, all seven restarted at the apply of 2.230.0. Machines below 85 % (papaya: 12 %) never ran
+  it. crumble's /var went from 95 % to 83 % with nginx on Alpine.
+
 ## 2.230.0 — nginx on Alpine
 
 - kiwi-modules 0.100.0: the reverse proxy runs `nginx:1-alpine` (64 MB) instead of the Debian

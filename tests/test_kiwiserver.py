@@ -13811,6 +13811,19 @@ class TestRecovery(Base):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
 
+    def test_a_fleet_under_home_is_written_as_typed_and_the_tilde_left_unquoted(self):
+        home = os.path.expanduser("~")
+        self.assertEqual(recovery._q("~/kiwi/fleet.yaml"), "~/kiwi/fleet.yaml")
+        self.assertEqual(recovery._q("~/my kiwi/fleet.yaml"), "~/'my kiwi/fleet.yaml'")
+        self.assertEqual(recovery._q("/srv/my kiwi/fleet.yaml"), "'/srv/my kiwi/fleet.yaml'")
+        f = self.network()
+        with mock.patch("os.getcwd", return_value="/somewhere/else"):
+            rep = recovery.report(f, self.roles, self.ms, None, os.path.join(home, "kiwi", "fleet.yaml"))
+        said = json.dumps(rep)
+        self.assertIn("~/kiwi/fleet.yaml", said)
+        self.assertNotIn(home, said)
+        self.assertNotIn("'~", said)
+
     def test_a_new_network_has_its_gaps_first_and_the_reminder_of_the_key(self):
         f = self.network()
         rep, checks = self.report(f)

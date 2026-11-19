@@ -631,6 +631,44 @@ def drop_standin(host, tgt, servers=None):
     return changed
 
 
+# stdin: the disk's key. Every ring binding (sss, tang) goes from the disks that key opens; a disk
+# it does not open keeps what it has, so no disk is left without a way in. A machine whose rings
+# were taken out of the fleet opens with its key only, as the fleet file says (19 Nov 2026: damson
+# kept its binding to a ring on the master after the ring was taken out of its unlock.rings).
+UNBIND_SCRIPT = r'''
+set -eu
+key=$(cat)
+for d in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
+    printf '%s' "$key" | cryptsetup open --test-passphrase "$d" --key-file - 2>/dev/null || continue
+    for s in $(clevis luks list -d "$d" 2>/dev/null | sed -n 's/^\([0-9]*\): \(sss\|tang\) .*/\1/p'); do
+        clevis luks unbind -f -d "$d" -s "$s" >/dev/null 2>&1 && echo "unbound $d $s"
+    done
+done
+true
+'''
+BOUND_SCRIPT = ("for d in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do "
+                "clevis luks list -d \"$d\" 2>/dev/null | grep -qE '^[0-9]+: (sss|tang) ' && echo \"bound $d\"; done; true")
+
+
+def unbind_rings(host, tgt):
+    """A machine that names no ring (any more): what its disks are still bound to goes, with the
+    key on record checked first on each disk. True when something went."""
+    if wanted(host):
+        return False
+    key = luks.current_key(host) or luks.one_time_key(host)
+    if not key:
+        if b"bound " in remote.run(tgt, BOUND_SCRIPT):
+            util.warn("%s: its disk is still bound to rings it no longer names, and its key is not on record here to "
+                      "check before they go" % host.name)
+        return False
+    out = remote.run(tgt, UNBIND_SCRIPT, data=key.encode()).decode(errors="replace")
+    gone = [ln for ln in out.splitlines() if ln.startswith("unbound ")]
+    if gone:
+        util.say("%s: it names no ring any more: %d binding(s) to rings removed; its disk opens with its key"
+                 % (host.name, len(gone)))
+    return bool(gone)
+
+
 def _unlock_key(fleet):
     """A key for the initramfs and for nothing else: what a person does with it there is
     limited by its line in authorized_keys, and it opens no running machine."""

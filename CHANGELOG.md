@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.234.0 — a ring taken out comes off the disk
+
+- **Fixed:** a machine whose rings were taken out of `unlock.rings` kept its binding to them, so
+  its disk still opened by a ring the fleet file no longer named (damson and a ring on the
+  master, 19 November). The next apply of a machine with no ring now removes its ring bindings,
+  on each disk only after its key on record is checked to open it; without a key on record it
+  says so and removes nothing.
+- docs: for a machine at another site the master relays a ring at home (`unlock_relay`) and keeps
+  no key; a ring on the master itself is possible, but its keys then lie on a rented server.
+
 ## 2.233.0 — how many rings open the control node
 
 - **`unlock.control_threshold`**: how many of the rings in `unlock.control` must answer together

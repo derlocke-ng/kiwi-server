@@ -5544,6 +5544,31 @@ class TestUnlock(Base):
             return b"updated\n" if "update-initramfs" in script else b""
         return calls, mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@%s" % h.name)
 
+    def test_rings_taken_out_of_the_fleet_are_unbound_with_the_key_checked_first(self):
+        f = self.unlock_fleet()
+        h = f.hosts["lychee"]
+        seen = []
+
+        def run(tgt, script, data=None, runner=None):
+            seen.append((script, data))
+            return b"unbound /dev/vda5 1\n" if "clevis luks unbind" in script else b""
+        with mock.patch.object(remote, "run", run):
+            self.assertFalse(unlock.unbind_rings(h, "core@lychee"))      # it names its rings: nothing goes
+            h.cfg["unlock"]["rings"] = []
+            with mock.patch.object(luks, "current_key", lambda host: "thediskkey"):
+                self.assertTrue(unlock.unbind_rings(h, "core@lychee"))
+        script, data = seen[-1]
+        self.assertEqual(data, b"thediskkey")                            # on stdin, never on a command line
+        self.assertIn("cryptsetup open --test-passphrase", script)       # only disks its key opens
+        self.assertNotIn("thediskkey", script)
+        seen.clear()
+        with mock.patch.object(remote, "run", lambda tgt, script, data=None, runner=None: seen.append(script) or b"bound /dev/vda5\n"), \
+                mock.patch.object(luks, "current_key", lambda host: ""), mock.patch.object(luks, "one_time_key", lambda host: ""), \
+                mock.patch.object(util, "warn") as warned:
+            self.assertFalse(unlock.unbind_rings(h, "core@lychee"))
+        self.assertNotIn("unbind", seen[0])                              # no key on record: told, nothing removed
+        self.assertIn("still bound to rings it no longer names", str(warned.call_args))
+
     def test_it_binds_with_the_thumbprint_the_rings_own_host_reports(self):
         f = self.unlock_fleet()
         calls, a, b = self.fake_remote()
@@ -6470,7 +6495,7 @@ class TestManage(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
-            if wakemod.LEARN in script:          # its card, for Wake-on-LAN: TestWake looks at it
+            if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT):   # their own tests
                 return b""
             calls.append((script, data))
             if "luksChangeKey" in script:
@@ -6576,7 +6601,7 @@ class TestManage(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
-            if wakemod.LEARN in script:          # its card, for Wake-on-LAN: TestWake looks at it
+            if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT):   # their own tests
                 return b""
             calls.append(("run", tgt, script, data))
             if "role.done" in script:

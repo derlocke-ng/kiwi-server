@@ -163,7 +163,12 @@ A disk can open itself at boot. The `tang` module on one node serves a
   where from.
 - A machine behind NAT that nobody can reach at boot asks its master instead:
   `vpn-server.unlock_relay: { "7500": "<mesh address>:7500" }` there, and
-  `via: { infra: "http://<master>:7500" }` on the machine.
+  `via: { infra: "http://<master>:7500" }` on the machine. The master only passes
+  the port on to the ring at home; it keeps no key. A ring on the master itself
+  (`tang` on the master) is possible, but puts the ring's keys on a rented server.
+- A ring taken out of a machine's `unlock.rings` comes off its disk with the next
+  apply too, once its key on record is checked to open that disk (since 2.234.0;
+  before, the binding stayed and the disk still opened by the ring).
 - A machine cannot serve its own ring. The ring named `operator` is served
   from the machine running kiwi-server while it is needed, for what no other
   machine can open.

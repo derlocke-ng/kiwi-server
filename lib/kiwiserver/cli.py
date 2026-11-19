@@ -2832,6 +2832,8 @@ def cmd_apply(args):
                 unlock.drop_standin(h, tgt)
             elif h.target == "debian" and luks.uses_one_time_key(h):    # encrypted, no ring: its key only
                 remote.run(tgt, unlock.INSTALL_KEY_ONLY)
+            if not unlock.wanted(h) and h.target in ("debian", "coreos", "ucore"):
+                unlock.unbind_rings(h, tgt)     # rings taken out of the fleet: their bindings go too
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)

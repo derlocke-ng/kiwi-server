@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.246.0 — who opens whom
+
+- **Disk unlock**: one picture of how each machine's disk opens at boot, with which rings (and
+  on which machine each ring runs), how it reaches them, and whether it comes back by itself
+  after a power cut: `kiwi-server unlock <fleet>` (no machine), the control page's new **Disk
+  unlock** page, `GET /api/unlock` for the Android app, and the app's **Disk unlock…** window.
+  Read only; step 1 of docs/design/unlock.md.
+- A new drill, `tests/drills/desktop-clevis-vm.sh`: a Debian desktop whose encrypted disk opens
+  with rings by a policy (all health rings and its auto-unlock ring, or its emergency ring).
+- Designs: which identity server the public side would take (compared), and why the owner's
+  network needs none now.
+
 ## 2.245.0 — 3-2-1
 
 - `kiwi-server recovery` (and the page, the app) has a line for **3-2-1**: the data, two

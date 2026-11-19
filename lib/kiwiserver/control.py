@@ -1173,6 +1173,23 @@ class Control:
             raise KiwiError("the fleet is locked: log in")
         return fedmod.partners(self.fleet_dir)
 
+    def partner_cas(self):
+        """{partner: {offered, why, mark, pem}}: whether this network's devices may import each
+        linked network's CA (federation.ca_offer); pem only when they may."""
+        from . import certs
+        from . import federation as fedmod
+        own = (self.fleet_info() or {}).get("domain") or ""
+        out = {}
+        for name, p in self.federation().items():
+            try:
+                ok, why = fedmod.ca_offer(p, own, certs.ca_permitted(p["ca"]) if p.get("ca") else [])
+            except KiwiError as e:
+                ok, why = False, "its CA could not be read: %s" % e
+            pem = str(p.get("ca") or "") if ok else ""
+            out[name] = {"offered": ok, "why": why, "pem": pem,
+                         "mark": hashlib.sha256(pem.encode()).hexdigest()[:8] if pem else ""}
+        return out
+
     def save_federation(self, changes, user="admin"):
         """{partner: {share: [...], from: [...], exit: bool, internet: bool}} into federation.yaml.
         The file says no when the change makes no sense (two exits, out through each other)."""
@@ -1207,9 +1224,7 @@ class Control:
                     else:
                         entry.pop(k, None)
                 data[name] = entry
-            head = ("# federation.yaml — the partner networks and what each may reach here "
-                    "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
-            util.write_text(path, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+            util.write_text(path, fedmod.dump(data), 0o644)
             try:
                 fedmod.partners(self.fleet_dir)
             except KiwiError:

@@ -464,13 +464,29 @@ kiwi2:
 
 When the two networks have two operators, each gives the other a card instead
 (nothing secret on it: the link key's public half, the master's address, the
-mesh, the domain and the groups):
+mesh, the domain, the groups and the CA's certificate):
 
 ```bash
 kiwi-server federate ~/kiwi/fleet.yaml --invite kiwi.card.yaml   # send this file to the other
 kiwi-server federate ~/theirs/fleet.yaml --accept kiwi.card.yaml # they take it; it writes their card beside it
 kiwi-server federate ~/kiwi/fleet.yaml --accept theirs.card.yaml # and you take theirs
 ```
+
+### A partner's certificates on your devices
+
+A partner's pages carry certificates of its own CA. Your devices trust them once they
+import that CA. Since 2.222.0 `federate` keeps the partner's CA in `federation.yaml`
+(`ca:`). It is offered to your devices only when its name constraint permits nothing
+but the partner's own domain, so it can sign nothing of yours:
+
+- the control page: *Linked networks*, a download with the CA's mark;
+- the app: *Federation…*, *Its certificates*, *Save…*;
+- `kiwi-server federate ~/kiwi/fleet.yaml --ca kiwi2` prints it;
+- `kiwi-server connect` puts it into this computer's browsers, beside your own CA.
+
+A partner with your own domain (translated at the link) is not offered: its CA could
+sign your names. Networks linked before 2.222.0 bring their CA when they are linked
+again.
 
 ### Leave to the Internet through a partner
 

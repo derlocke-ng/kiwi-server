@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.222.0 — a linked network's certificates on your devices
+
+- **A network's card carries its CA's certificate** (public), and `kiwi-server federate` keeps it
+  in `federation.yaml` as `ca:`. A card without one keeps the CA that is there.
+- **The partner's CA is offered to your devices** when its name constraint permits only the
+  partner's own domain and nothing of yours: the control page's *Linked networks* has a download
+  with its mark, the app's *Federation…* a *Save…*, and `kiwi-server federate FLEET --ca PARTNER`
+  prints it. `kiwi-server connect` puts it into this computer's browsers too. A CA that could
+  sign any name, other names or this network's own (a translated partner) is not offered, and
+  the page says why. `/api/federation` gives `ca`, `ca_mark` and `ca_why`.
+- Networks linked before this release bring their CA when they are linked again
+  (`kiwi-server federate`, or the cards once more); what each shares stays as it is.
+
 ## 2.221.0 — new disk keys from the page and the app
 
 - **The control page's *If a computer was lost or stolen*** has *3. The keys that open the disks at

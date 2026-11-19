@@ -143,12 +143,17 @@ change A's own names too.
 (`cloud.papaya.kiwi2.home` beside `cloud.papaya.home`), built in 2.216.0. `federate` refuses an
 alias that is one of A's own host names.
 
-Whether A's devices trust them is not built yet. Two cases, decided on 19 November 2026:
+How A's devices come to trust B's certificates, two cases, decided on 19 November 2026:
 
-- *B has a domain of its own* (`internal`): A's devices may import B's CA as it is. It carries
-  its name constraint (`internal`), so it can sign nothing of A's. A's control page offers it
-  under *Linked networks*, as it offers A's own CA.
-- *B has A's domain* (translated): B's CA is constrained to `home` too, so importing it would let
+- *B has a domain of its own* (`internal`), built in 2.222.0: B's card carries its CA's
+  certificate, and `federate` keeps it in A's `federation.yaml` (`ca:`). A's devices may import
+  it as it is when its name constraint permits only B's domain or names below it, and nothing
+  of A's domain, above or below. Then A's control page offers it under *Linked networks* (with its
+  mark), the app's *Federation…* saves it, `kiwi-server federate FLEET --ca B` prints it, and
+  `kiwi-server connect` puts it into this computer's browsers beside A's own. A CA without a
+  name constraint, or one that permits other names, is not offered, and the page says why. The
+  CA stays out of the machines' settings.
+- *B has A's domain* (translated), not built yet: B's CA is constrained to `home` too, so importing it would let
   B sign A's own names. Instead A's CA signs B's alias names for B's key: B sends a request for
   `*.papaya.kiwi2.home` (one per shared machine), A signs only names under the alias it gave B,
   and B's nginx serves that certificate on the alias names (SNI). A's devices trust it through

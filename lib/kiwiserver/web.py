@@ -20,7 +20,7 @@ import jinja2
 import markupsafe
 from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from . import VERSION, access as accessmod, form as formmod, health as healthmod, play as playmod, providers as providersmod, site as sitemod, util
 from .control import ACTIONS, Control
@@ -897,6 +897,9 @@ network needs both networks' settings, so it is done on the computer that has th
 {% for name, p in partners.items() %}<div class="card"><div class="row"><strong>{{ name }}</strong>
 <span class="muted">its names end in .{{ p.domain or "?" }} · {{ p.mesh }}</span></div>
 <p>Shared with it: {{ p.share | join(", ") or "nothing" }}. <a href="/access">Change who may reach what</a></p>
+{% set c = cas.get(name) %}{% if c and c.offered %}<p>Its certificates: <a href="/federation/{{ name }}/ca.pem" download>{{ name }}'s CA</a>
+<span class="muted">· mark <code>{{ c.mark }}</code> · {{ c.why }}. Import it on your devices to open {{ name }}'s pages
+without a warning.</span></p>{% elif c %}<p class="muted">Its certificates: not offered here, {{ c.why }}.</p>{% endif %}
 <label for="f-{{ name }}">Who of it may come</label><p class="muted" style="margin:0 0 4px">Addresses or networks of
 {{ name }}, like 10.10.3.0/24. Empty: all of {{ name }}.</p>
 <input id="f-{{ name }}" name="from.{{ name }}" value="{{ p['from'] | join(' ') }}">
@@ -3238,10 +3241,10 @@ def make_app(control: Control):
 
     def federation_page(request, **kw):
         try:
-            partners = control.federation()
+            partners, cas = control.federation(), control.partner_cas()
         except KiwiError as e:
-            partners, kw = {}, dict(kw, error=kw.get("error") or str(e))
-        return page("federation.html", request, "/federation", partners=partners, **kw)
+            partners, cas, kw = {}, {}, dict(kw, error=kw.get("error") or str(e))
+        return page("federation.html", request, "/federation", partners=partners, cas=cas, **kw)
 
     def access_page(request, **kw):
         try:
@@ -3381,7 +3384,10 @@ def make_app(control: Control):
         if not bearer(request) and not user(request):
             return JSONResponse({"error": "who?"}, status_code=401)
         try:
-            return {n: {k: e.get(k) for k in FED_KEYS} for n, e in control.federation().items()}
+            cas = control.partner_cas()
+            # its CA (PEM) only when this network's devices may import it; else why not
+            return {n: dict({k: e.get(k) for k in FED_KEYS}, ca=cas[n]["pem"], ca_mark=cas[n]["mark"], ca_why=cas[n]["why"])
+                    for n, e in control.federation().items()}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=409)
 
@@ -3411,6 +3417,20 @@ def make_app(control: Control):
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return {"saved": True}
+
+    @app.get("/federation/{name}/ca.pem")
+    def federation_ca(request: Request, name: str):
+        """A linked network's CA, for a device to import; only one that can sign its own names only."""
+        if not user(request):
+            return login_page()
+        try:
+            c = control.partner_cas().get(name)
+        except KiwiError as e:
+            return PlainTextResponse(str(e), status_code=409)
+        if not c or not c["offered"]:
+            return PlainTextResponse("not offered: %s" % (c["why"] if c else "no linked network called " + name), status_code=404)
+        return Response(c["pem"], media_type="application/x-pem-file",
+                        headers={"Content-Disposition": 'attachment; filename="kiwiCA-%s.pem"' % re.sub(r"[^a-z0-9-]", "", name)})
 
     @app.get("/federation")
     def federation(request: Request):

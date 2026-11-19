@@ -16,6 +16,9 @@
       seen_as:                       # only when its mesh or domain is this network's own:
         mesh: 10.209.0.0/16          #   how it is seen here (federate picks a free /16) …
         domain: kiwi2.home           #   … and its names (<its name>.<its domain>)
+      ca: |                          # its CA's certificate, from its card: offered to this
+        -----BEGIN CERTIFICATE-----  #   network's devices when it can sign only its own names
+        ...
 
 The exit rides the link: the master is not a client of the partner's VPN server.
 
@@ -32,7 +35,7 @@ from . import util
 from .util import KiwiError
 
 FILE = "federation.yaml"
-KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet", "groups", "seen_as")
+KEYS = ("endpoint", "public_key", "mesh", "domain", "dns", "share", "from", "as", "exit", "internet", "groups", "seen_as", "ca")
 
 _P = 2 ** 255 - 19
 
@@ -170,11 +173,13 @@ def _source(p, name, spec, x):
     return str(net)
 
 
+CARD = ("endpoint", "public_key", "mesh", "domain", "dns", "groups", "ca")
+
+
 def card(name, entry):
     """What a network tells a partner about itself (`federate --invite`): its link key's public
-    half, its master's address, mesh, domain, DNS and groups. Nothing secret."""
-    return {"federation": 1, "name": name, **{k: entry[k] for k in ("endpoint", "public_key", "mesh", "domain", "dns", "groups")
-                                               if entry.get(k) not in (None, "")}}
+    half, its master's address, mesh, domain, DNS, groups and its CA's certificate. Nothing secret."""
+    return {"federation": 1, "name": name, **{k: entry[k] for k in CARD if entry.get(k) not in (None, "")}}
 
 
 def read_card(path):
@@ -190,7 +195,32 @@ def read_card(path):
     if len(base64.b64decode(str(data["public_key"]) + "==")) != 32:
         raise KiwiError("%s: its public_key is not a WireGuard key" % path)
     ipaddress.ip_network(str(data["mesh"]), strict=False)
-    return str(data["name"]), {k: data[k] for k in ("endpoint", "public_key", "mesh", "domain", "dns", "groups") if k in data}
+    if data.get("ca") and not str(data["ca"]).startswith("-----BEGIN CERTIFICATE-----"):
+        raise KiwiError("%s: its ca is not a certificate" % path)
+    return str(data["name"]), {k: data[k] for k in CARD if k in data}
+
+
+def ca_offer(entry, own_domain, permitted):
+    """(may this network's devices import the partner's CA, why not). `permitted`: the domains its
+    certificate may sign names under (certs.ca_permitted), None for any. Only when every one is
+    the partner's own domain or below it, and none is this network's domain, above or below it
+    (a translated partner has this network's domain: its CA could sign this network's names)."""
+    if not entry.get("ca"):
+        return False, "its card brought no CA: link it again (kiwi-server federate) to bring it"
+    if not permitted:
+        return False, "its CA is not limited to its own names: it could sign any name"
+    theirs = str(entry.get("domain") or "").strip(".").lower()
+    own = str(own_domain or "").strip(".").lower()
+
+    def under(name, dom):
+        return bool(dom) and (name == dom or name.endswith("." + dom))
+    foreign = [d for d in permitted if not under(d, theirs)]
+    if foreign:
+        return False, "its CA may sign names under .%s, which are not its own (.%s)" % (foreign[0], theirs or "?")
+    mine = [d for d in permitted if under(d, own) or under(own, d)]
+    if mine:
+        return False, "its CA may sign names under .%s, this network's own" % mine[0]
+    return True, "it can sign names under .%s only" % ", .".join(permitted)
 
 
 def exit_through(fleet_dir):
@@ -248,6 +278,8 @@ def inject(fleet_dir, data):
     found = partners(fleet_dir)
     if not found or not isinstance(data, dict):
         return
+    for p in found.values():                # the partner's CA is for this network's devices, not its machines
+        p.pop("ca", None)
     defaults = data.get("defaults") or {}
     domain = defaults.get("domain") or "home"
     mesh = (defaults.get("master") or {}).get("mesh_subnet") or "10.8.0.0/16"
@@ -281,6 +313,28 @@ def inject(fleet_dir, data):
 
 
 
+HEAD = ("# federation.yaml — the partner networks and what each may reach here "
+        "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
+
+
+class _Dumper(yaml.SafeDumper):
+    pass
+
+
+_Dumper.add_representer(str, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v, style="|" if "\n" in v else None))
+
+
+def card_text(name, entry):
+    """A card as its file has it."""
+    return ("# %s's card for a partner network (kiwi-server federate FLEET --accept THIS). Nothing secret.\n" % name
+            + yaml.dump(card(name, entry), Dumper=_Dumper, sort_keys=False, default_flow_style=None, allow_unicode=True))
+
+
+def dump(data):
+    """federation.yaml's text: the head, then the partners; a CA's certificate as a block."""
+    return HEAD + yaml.dump(data, Dumper=_Dumper, sort_keys=False, default_flow_style=None, allow_unicode=True)
+
+
 def write(fleet_dir, partner, entry):
     """One partner's entry, its share and from kept when it is there already (by its name, or by
     its mesh when its folder was renamed). The name it is written under."""
@@ -290,15 +344,17 @@ def write(fleet_dir, partner, entry):
         partner = next((n for n, x in data.items() if (x or {}).get("mesh") == entry.get("mesh")), partner)
     old = data.get(partner) or {}
     entry = dict(entry, share=old.get("share") or [], **{"from": old.get("from") or []})
+    if not entry.get("ca"):                 # a card without one keeps the CA there
+        entry.pop("ca", None)
+        if old.get("ca"):
+            entry["ca"] = old["ca"]
     if not entry.get("seen_as"):            # only when its mesh or domain is this network's own
         entry.pop("seen_as", None)
     for k in ("exit", "internet"):          # the owner's, like share and from
         if old.get(k):
             entry[k] = True
     data[partner] = entry
-    head = ("# federation.yaml — the partner networks and what each may reach here "
-            "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
-    util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+    util.write_text(p, dump(data), 0o644)
     return partner
 
 
@@ -309,9 +365,7 @@ def set_share(fleet_dir, partner, share):
     if partner not in data:
         raise KiwiError("%s: no partner called %s" % (p, partner))
     data[partner] = dict(data[partner] or {}, share=list(share))
-    head = ("# federation.yaml — the partner networks and what each may reach here "
-            "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
-    util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+    util.write_text(p, dump(data), 0o644)
 
 
 def set_flag(fleet_dir, partner, key, on):
@@ -324,7 +378,5 @@ def set_flag(fleet_dir, partner, key, on):
         data[partner][key] = True
     else:
         data[partner].pop(key, None)
-    head = ("# federation.yaml — the partner networks and what each may reach here "
-            "(docs/design/federation.md).\n# kiwi-server federate writes the link; share and from are yours.\n")
-    util.write_text(p, head + yaml.safe_dump(data, sort_keys=False, default_flow_style=None), 0o644)
+    util.write_text(p, dump(data), 0o644)
 

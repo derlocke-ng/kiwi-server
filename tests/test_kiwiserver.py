@@ -4496,6 +4496,46 @@ class TestFederation(Base):
         self.assertNotEqual(rc, 0)
         self.assertIn("two partners of one mesh cannot share the link", err)
 
+    def test_a_partners_ca_is_offered_only_when_it_signs_nothing_of_this_network(self):
+        def offer(permitted, own="home", dom="internal"):
+            return fedmod.ca_offer({"domain": dom, "ca": "-----BEGIN CERTIFICATE-----"}, own, permitted)
+        self.assertTrue(offer(["internal"])[0])
+        self.assertTrue(offer(["lab.internal"])[0])
+        self.assertIn("not limited", offer(None)[1])                                  # it could sign any name
+        self.assertIn("not its own", offer(["internal", "example.com"])[1])
+        self.assertIn("this network's own", offer(["home"], dom="home")[1])            # translated: one domain
+        self.assertIn("this network's own", offer(["kiwi2.home"], dom="kiwi2.home")[1])   # below this network's
+        self.assertIn("this network's own", offer(["lab"], own="x.lab", dom="lab")[1])    # above it
+        self.assertIn("brought no CA", fedmod.ca_offer({"domain": "internal"}, "home", ["internal"])[1])
+
+    def test_the_card_brings_the_partners_ca_for_the_devices(self):
+        a, b, other = self.two_fleets()
+        ca_dir = os.path.join(other, "secrets", "ca")
+        shutil.rmtree(ca_dir, ignore_errors=True)
+        _k, pem = certs.ensure_ca(ca_dir, name_constraints=["internal"])
+        self.assertEqual(certs.ca_permitted(util.read_text(pem)), ["internal"])
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("ca: |", util.read_text(os.path.join(self.tmp, "federation.yaml")))
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--ca", "other")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out.strip(), util.read_text(pem).strip())
+        fed = config.Fleet.load(a).hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]
+        self.assertNotIn("ca", fed)                                         # for the devices, not the machines
+        # a card without one keeps the CA there; one that may sign any name is not offered
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--invite", os.path.join(self.tmp, "o.card.yaml"))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("ca: |", util.read_text(os.path.join(self.tmp, "o.card.yaml")))
+        shutil.rmtree(ca_dir)
+        certs.ensure_ca(ca_dir)
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--ca", "other")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not limited to its own names", err)
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--ca", "nobody")
+        self.assertIn("no linked network called nobody", err)
+
     def test_two_operators_link_their_networks_with_cards(self):
         a, b, other = self.two_fleets()
         card = os.path.join(self.tmp, "mine.card.yaml")
@@ -10377,6 +10417,8 @@ class TestWeb(WebBase):
                 mock.patch.object(self.c, "save_access", lambda changes, new="", new_as="nothing", user="admin", new_lan="":
                                   saved.append((changes, new, new_as, user)) or list(changes) + ([new] if new else [])), \
                 mock.patch.object(self.c, "federation", lambda: fed), \
+                mock.patch.object(self.c, "partner_cas", lambda: {"kiwi2": {"offered": True, "pem": "PEM", "mark": "abcd1234",
+                                                                            "why": "it can sign names under .internal only"}}), \
                 mock.patch.object(self.c, "save_federation", lambda changes, user="admin": fsaved.append((changes, user))):
             self.assertEqual(api("GET", "/api/access", "tok"), (200, rules))
             code, out = api("POST", "/api/access", "tok", {"who": {"family": {"reach": ["apps", "papaya:22"]}}, "new": "Kids"})
@@ -10387,7 +10429,8 @@ class TestWeb(WebBase):
             self.assertEqual(api("POST", "/api/access", "tok", {"who": {"family": {"reach": "all"}}})[0], 400)
             code, out = api("GET", "/api/federation", "tok")
             self.assertEqual(out, {"kiwi2": {"domain": "internal", "mesh": "10.10.0.0/16", "share": ["cloud.papaya"],
-                                             "from": [], "exit": False, "internet": None}})
+                                             "from": [], "exit": False, "internet": None, "ca": "PEM", "ca_mark": "abcd1234",
+                                             "ca_why": "it can sign names under .internal only"}})
             self.assertNotIn("public_key", json.dumps(out))
             self.assertEqual(api("POST", "/api/federation", "tok", {"kiwi2": {"from": ["10.10.3.0/24"]}}), (200, {"saved": True}))
             self.assertEqual(fsaved[-1], ({"kiwi2": {"share": ["cloud.papaya"], "from": ["10.10.3.0/24"], "exit": False,
@@ -12772,6 +12815,26 @@ class TestFirstRunPage(StoreBase):
         body = self.ask("/federation", {"csrf": csrf, "share.kiwi2": "rm -rf", "from.kiwi2": ""}, cookie=cookie)[1]
         self.assertIn("is not a machine", body)
         self.assertEqual(self.ask("/federation")[:2], (303, "/login"))
+        # its CA: offered for the devices when it can sign only its own names (docs/design/federation.md)
+        self.assertIn("its card brought no CA", self.ask("/federation", cookie=cookie)[1])
+        _k, pem = certs.ensure_ca(os.path.join(self.tmp, "kiwi2-ca"), name_constraints=["internal"])
+        data = yaml.safe_load(util.read_text(fed))
+        data["kiwi2"]["ca"] = util.read_text(pem)
+        write(fed, fedmod.dump(data))
+        self.assertIn("ca: |", util.read_text(fed))
+        body = self.ask("/federation", cookie=cookie)[1]
+        self.assertIn('href="/federation/kiwi2/ca.pem"', body)
+        self.assertIn("names under .internal only", body)
+        status, got = self.ask("/federation/kiwi2/ca.pem", cookie=cookie)[:2]
+        self.assertEqual((status, got.strip()), (200, util.read_text(pem).strip()))
+        self.assertEqual(self.ask("/federation/kiwi2/ca.pem")[:2], (303, "/login"))
+        self.assertEqual(self.ask("/federation/nobody/ca.pem", cookie=cookie)[0], 404)
+        # not limited to its names: not offered, and not served
+        _k, wide = certs.ensure_ca(os.path.join(self.tmp, "kiwi2-wide"))
+        data["kiwi2"]["ca"] = util.read_text(wide)
+        write(fed, fedmod.dump(data))
+        self.assertIn("not limited to its own names", self.ask("/federation", cookie=cookie)[1])
+        self.assertEqual(self.ask("/federation/kiwi2/ca.pem", cookie=cookie)[0], 404)
 
     def test_who_may_reach_what_is_ticked_on_the_page(self):
         cookie, csrf = self.made()

@@ -47,6 +47,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [A standby master](design/standby.md) | the same master on a second machine, which takes over when the first is gone |
 | [Encrypted disks by default](design/encryption.md) | every target encrypted, and how each opens at boot |
 | [Who opens whom](design/unlock.md) | the ways a disk opens at boot, openers, one picture for page and apps |
+| [The page and the apps as server management](design/ui.md) | the machines table by site, a machine's story and states, one name per thing, speed, the app on the shared kit |
 | [Services for the public](design/public-services.md) | accounts, sign-up, landing page, status |
 | [A public website](design/website.md) | the front page from a pinned repository of pages |
 

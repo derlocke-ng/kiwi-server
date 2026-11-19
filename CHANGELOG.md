@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.249.0 — switch off, restart
+
+- **Switch a machine off or restart it**: `kiwi-server power <fleet> <machine> off|restart` says
+  first what that means for this machine (the master takes the VPN with it, the control node its
+  page, a disk without rings waits for its key, who can switch it on again) and does it only with
+  `--yes`. On the page: **Restart** and **Switch off** under "What you can do"; in the app: a
+  **Power** group on a machine's page. Both ask first, with the same words.
+- **Fixed:** an apply did not update who may reach a machine's boot system (its openers' keys)
+  while one of its rings did not answer. Found live: the master's opener was missing while a
+  ring's machine was being reinstalled.
+- Design: the page and the apps as server management (docs/design/ui.md): a machines table by
+  site, a machine's story and states, one name per thing, speed, the app on kiwi-template's kit.
+
 ## 2.248.0 — openers
 
 - **Openers**: a master at a hoster that waits at boot for a ring it reaches only through a

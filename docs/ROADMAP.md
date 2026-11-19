@@ -69,9 +69,10 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    backups. Wake-on-LAN is there since 2.228.0 (`network.wol`, `kiwi-server wake`,
    *Wake it*), proven up to the card in a drill; waking real hardware is untested.
 6. **A master in RAM, room for its updates:** its /var is half its memory (crumble:
-   95 % full with its own images). Since 2.209.0 (kiwi-stack 0.9.16) an update on a
-   nearly full disk takes one image at a time, proven on crumble. Left: room for
-   a module more, or a master with a disk.
+   913 MB). Since 2.209.0 (kiwi-stack 0.9.16) an update on a nearly full disk takes
+   one image at a time; since 2.230.0 nginx runs on Alpine (64 MB instead of 167 MB)
+   and a changed image makes room for itself: crumble went from 95 % to 83 %, about
+   160 MB free, room for a small module more. Left: a master with a disk.
 7. **LANs and VLANs, as companies have them** (the owner, 18 November;
    docs/design/lans.md): groups of the home network (a subnet at home given what it
    may reach, kept by each node and the gateway) since 2.217.0 and 2.218.0, tagged

@@ -22,7 +22,8 @@ while read -r name addr port via ring; do
     timeout 600 ssh -i "$d/key" -o UserKnownHostsFile="$d/known_hosts" -o StrictHostKeyChecking=yes \
         -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 \
         -p "$port" -N -R "127.0.0.1:$via:$ring" "root@$addr" </dev/null
-    logger -t kiwi-opener "$name: the way is closed again (exit $?)"
+    rc=$?; [ $rc = 255 ] && logger -t kiwi-opener "$name: its boot system is done (it went on booting)" \
+        || logger -t kiwi-opener "$name: the way is closed again (exit $rc)"
 done < "$d/targets"
 '''
 SERVICE = "[Unit]\nDescription=kiwi-server: open the way for a machine that waits for a ring of this one\n\n[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH

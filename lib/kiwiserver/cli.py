@@ -2866,6 +2866,12 @@ def cmd_apply(args):
                         unlock.drop_standin(h, tgt)
                     else:
                         remote.run(tgt, unlock.INSTALL_KEY_ONLY)
+                        if h.cfg["unlock"].get("ssh"):
+                            # who may reach its boot system (the openers) does not wait for every ring to answer
+                            try:
+                                unlock._initramfs_ssh(h, tgt, servers)
+                            except KiwiError as e2:
+                                util.warn("%s: its boot system's keys were not updated: %s" % (h.name, e2))
             elif h.target in ("coreos", "ucore"):      # the starter's TPM, on a machine with no rings: the console key instead
                 unlock.drop_standin(h, tgt)
             elif h.target == "debian" and luks.uses_one_time_key(h):    # encrypted, no ring: its key only

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.241.0 — hints that work from any folder
+
+- Every "next: kiwi-server …" hint (list, the wizard, recovery, apply, build, access, onion and
+  the others) names the fleet as you would type it, `~/kiwi/fleet.yaml`, instead of only
+  `fleet.yaml`: copied from any folder, it works. A path with spaces is quoted, the `~/` stays
+  outside the quotes so the shell still expands it.
+- kiwi-stack 0.9.23: `kiwi-server status` shows each host unit's state without its journal
+  lines (the ACME timer's last run filled it). A failed unit still shows its last 10 lines.
+- `kiwi-server move`: a warning about the new domain (such as `.lan`) says **Take care**, not
+  "To do for people".
+- `kiwi-server --help`: one column for what each command does; a long command says it on the
+  next line. It also lists rotate, wake, move, `federate --invite|--accept` and `--ca`.
+- Docs: no placeholder words left.
+
 ## 2.240.0 — connect with a linked network's CA
 
 - **Fixed:** `kiwi-server connect` stopped with an error on a network whose linked network's CA

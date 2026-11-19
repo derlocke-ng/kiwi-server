@@ -9,7 +9,7 @@ boot. The machine needs docker and nothing else; all templating happens on
 the machine that runs `kiwi-server`.
 
 The module format is kiwi-v2's (`kiwi-network-docker/kiwi-v2/modules`), with
-the gaps its TODO listed filled in and a few keys added so a module can say
+the gaps its to-do list named filled in and a few keys added so a module can say
 everything the generator needs. The modules shipped here are the live v1
 stacks (kiwi-master, kiwi-node-gw, kiwi-cloud) taken apart.
 

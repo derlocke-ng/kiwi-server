@@ -16,12 +16,12 @@ def _mesh(fleet):
 
 
 def plan(fleet, roles, ms, mesh=None, domain=None):
-    """{from, to, problems, machines, groups, devices, partners, secrets, pins, disks, certs, ca,
-    people}: what a move would change. Nothing is touched."""
+    """{from, to, problems, warnings, machines, groups, devices, partners, secrets, pins, disks,
+    certs, ca, people}: what a move would change. Nothing is touched."""
     if not mesh and not domain:
         raise KiwiError("move to what? --mesh 10.X.0.0/16 and/or --domain D")
     old_mesh, old_domain = _mesh(fleet), str(fleet.defaults.get("domain") or "home")
-    problems, people = [], []
+    problems, warnings, people = [], [], []
     new_mesh = None
     if mesh:
         try:
@@ -38,7 +38,7 @@ def plan(fleet, roles, ms, mesh=None, domain=None):
         if advice and advice[0] == "error":
             problems.append(advice[1])
         elif advice:
-            people.append(advice[1])
+            warnings.append(advice[1])
         if domain == old_domain:
             problems.append("the domain is %s already" % old_domain)
 
@@ -131,7 +131,7 @@ def plan(fleet, roles, ms, mesh=None, domain=None):
                 people.append("the CA may sign names under .%s only: a new CA, and every device imports it again"
                               % ", .".join(permitted))
     return {"from": {"mesh": old_mesh, "domain": old_domain}, "to": {"mesh": str(new_mesh) if new_mesh else None,
-            "domain": domain or None}, "problems": problems, "machines": machines, "groups": groups,
+            "domain": domain or None}, "problems": problems, "warnings": warnings, "machines": machines, "groups": groups,
             "devices": devices, "partners": sorted(partners), "secrets": secrets, "pins": pins, "disks": disks,
             "ca": ca, "people": people}
 
@@ -164,6 +164,8 @@ def say(p, out=print):
             out("  group %s: %s -> %s" % (g["name"], g["subnet"][0], g["subnet"][1]))
     if p["pins"]:
         out("  kept passwords to move to the new names: %d" % sum(p["pins"].values()))
+    for x in p.get("warnings") or []:
+        out("Take care: %s" % x)
     for x in p["people"]:
         out("To do for people: %s" % x)
     for x in p["problems"]:

@@ -3524,7 +3524,7 @@ class TestAccess(Base):
         self.assertIn("portainer.papaya", out.split("admin pages (only", 1)[1].splitlines()[0])
         rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "--admin", "yes")
         self.assertEqual(rc, 0, err)
-        self.assertIn("apply fleet.yaml gate papaya", out + err)                     # the node's own web server changes
+        self.assertRegex(out + err, r"apply \S*fleet\.yaml gate papaya")                     # the node's own web server changes
         fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
         r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
         node = fleet.hosts["papaya"]
@@ -3604,7 +3604,7 @@ class TestAccess(Base):
         rc, out, err = TestManage.run_cli(self, "access", f.path, "guests", "cloud.papaya", "--internet", "no")
         self.assertEqual(rc, 0, err)
         self.assertIn("guests (10.8.1.0/24) may reach: cloud.papaya", out + err)
-        self.assertIn("apply fleet.yaml gate papaya", out + err)
+        self.assertRegex(out + err, r"apply \S*fleet\.yaml gate papaya")
         g = config.Fleet.load(f.path).hosts["gate"].cfg["master"]["vpn-server"]["groups"]["guests"]
         self.assertEqual((g["reach"], g["internet"], g["peers"]), (["cloud.papaya"], False, False))
         # the master lets the group to that address for the web only; the node refuses it the other names
@@ -3623,7 +3623,7 @@ class TestAccess(Base):
         # a new group, a name that is none, and taking a thing away
         rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "--new", "papaya:22")
         self.assertEqual(rc, 0, err)
-        self.assertIn("enroll fleet.yaml <device> --group family", out + err)
+        self.assertRegex(out + err, r"enroll \S*fleet\.yaml <device> --group family")
         rc, out, err = TestManage.run_cli(self, "access", f.path, "family", "grape")
         self.assertNotEqual(rc, 0)
         self.assertIn("no machine called grape", err)
@@ -3643,7 +3643,7 @@ class TestAccess(Base):
         rc, out, err = TestManage.run_cli(self, "access", f.path, "iot", "--new", "--lan", "192.168.20.0/24", "cloud.papaya")
         self.assertEqual(rc, 0, err)
         self.assertIn("iot (192.168.20.0/24, at home) may reach: cloud.papaya", out + err)
-        self.assertIn("apply fleet.yaml papaya", out + err)
+        self.assertRegex(out + err, r"apply \S*fleet\.yaml papaya")
         self.assertEqual(config.Fleet.load(f.path).defaults["lan"]["groups"]["iot"],
                          {"subnet": "192.168.20.0/24", "reach": ["cloud.papaya"]})
         rc, out, err = TestManage.run_cli(self, "access", f.path)
@@ -4895,6 +4895,10 @@ class TestMovePlan(Base):
         self.assertIn("the network at home 192.168.2.0/24 (papaya) overlaps", out + err)
         self.assertIn(".local is mDNS", out + err)
         self.assertIn("move to what?", TestManage.run_cli(self, "move", f.path)[2])
+        rc, out, err = TestManage.run_cli(self, "move", f.path, "--domain", "lan")     # allowed, with a warning
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Take care: domain 'lan'", out + err)
+        self.assertNotIn("To do for people: domain", out + err)
 
 
 class TestFirstContact(Base):
@@ -13810,6 +13814,20 @@ class TestRecovery(Base):
     def report(self, f, status=None, now=None):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
+
+    def test_a_fleet_under_home_is_written_as_typed_and_the_tilde_left_unquoted(self):
+        home = os.path.expanduser("~")
+        f = self.network()
+        with mock.patch("os.getcwd", return_value="/somewhere/else"):
+            self.assertEqual(cli.typed_path(os.path.join(home, "kiwi/fleet.yaml")), "~/kiwi/fleet.yaml")
+            self.assertEqual(cli.typed_path(os.path.join(home, "my kiwi/fleet.yaml")), "~/'my kiwi/fleet.yaml'")
+            self.assertEqual(cli.typed_path("/srv/my kiwi/fleet.yaml"), "'/srv/my kiwi/fleet.yaml'")
+            self.assertEqual(cli.typed_path("/somewhere/else/fleet.yaml"), "fleet.yaml")
+            rep = recovery.report(f, self.roles, self.ms, None, os.path.join(home, "kiwi", "fleet.yaml"))
+        said = json.dumps(rep)
+        self.assertIn("~/kiwi/fleet.yaml", said)
+        self.assertNotIn(home, said)
+        self.assertNotIn("'~", said)
 
     def test_a_new_network_has_its_gaps_first_and_the_reminder_of_the_key(self):
         f = self.network()

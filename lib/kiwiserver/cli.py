@@ -964,7 +964,7 @@ def cmd_init(args):
                   "It is shown once. If this computer is lost, it is the only way back to your network's keys:\n\n  %s\n" % recovery)
             if asking:
                 input("Written down? Press Enter. ")
-        print("\n".join(setupmod.next_steps(shown_path(os.path.abspath(dest)))))
+        print("\n".join(setupmod.next_steps(typed_path(dest))))
         return
     text = util.read_text(os.path.join(util.home_dir(), "examples", "fleet.yaml"))
     if args.domain:
@@ -1523,6 +1523,15 @@ def shown_path(path):
     return "~" + path[len(home):] if path.startswith(home + os.sep) else path
 
 
+def typed_path(path):
+    """A path for a command a person copies: as shown_path writes it, quoted where it must be,
+    a leading ~/ left outside the quotes so the shell still expands it."""
+    shown = shown_path(os.path.abspath(path))
+    if shown.startswith("~/"):
+        return "~/" + shlex.quote(shown[2:])
+    return shlex.quote(shown)
+
+
 STARTER_KEY = "/starter/id_ed25519"
 
 
@@ -1537,7 +1546,7 @@ def starter_host(fleet):
 def next_step(fleet, roles, host, errors, out):
     """(phase, what to do next) for a machine, from what this computer knows: the fleet file
     and the output. `status` knows whether it runs; the app combines the two."""
-    fname = os.path.basename(fleet.path)
+    fname = typed_path(fleet.path)
     real = [e for e in errors if not not_enrolled(e)]
     if real:
         return "invalid", "fix the fleet file: %s" % real[0]
@@ -1816,7 +1825,7 @@ def make_bare(fleet, hosts, note):
     for h in hosts:
         if h.role != "bare":
             note("%s: bare media — afterwards: kiwi-server apply %s %s --ssh %s@<address>"
-                 % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"]))
+                 % (h.name, typed_path(fleet.path), h.name, h.admin["user"]))
         h.role, h.role_settings_raw, h.role_settings = "bare", {}, {}
 
 
@@ -1863,7 +1872,7 @@ def _iso_key(host):
 def vps_boot_ram(args, fleet, client, server, h):
     base = os.path.join(media_dir_for(args, fleet), h.name, h.name)
     if not os.path.isfile(base + ".iso"):
-        raise KiwiError("no image for %s yet: kiwi-server build %s %s" % (h.name, os.path.basename(fleet.path), h.name))
+        raise KiwiError("no image for %s yet: kiwi-server build %s %s" % (h.name, typed_path(fleet.path), h.name))
     label = server.get("nickname") or server.get("name")
     if not args.yes:
         if not sys.stdin.isatty():
@@ -1872,7 +1881,7 @@ def vps_boot_ram(args, fleet, client, server, h):
                  % label).strip() != label:
             raise KiwiError("not confirmed, nothing touched")
     netcup.boot_live(client, server, base + ".iso", _iso_key(h), lambda m: util.say("%s: %s" % (h.name, m)))
-    util.say("%s: next: kiwi-server watch %s sends it its role once it answers" % (h.name, os.path.basename(fleet.path)))
+    util.say("%s: next: kiwi-server watch %s sends it its role once it answers" % (h.name, typed_path(fleet.path)))
 
 
 def vps_install(args, fleet, client, server):
@@ -1893,10 +1902,10 @@ def vps_install(args, fleet, client, server):
                         % (h.name, h.cfg.get("disk"), want, disks[0].get("storageDriver"), want))
     base = os.path.join(media_dir_for(args, fleet), h.name, h.name)
     if not os.path.isfile(base + ".iso"):
-        raise KiwiError("no ISO for %s yet: kiwi-server build %s %s" % (h.name, os.path.basename(fleet.path), h.name))
+        raise KiwiError("no ISO for %s yet: kiwi-server build %s %s" % (h.name, typed_path(fleet.path), h.name))
     if not os.path.isfile(base + ".iso.bare"):
         raise KiwiError("%s.iso carries the role's secrets and this would put it on a provider's store: "
-                        "kiwi-server build %s %s, without --offline" % (h.name, os.path.basename(fleet.path), h.name))
+                        "kiwi-server build %s %s, without --offline" % (h.name, typed_path(fleet.path), h.name))
     label = server.get("nickname") or server.get("name")
     if not args.yes:
         if not sys.stdin.isatty():
@@ -1911,11 +1920,11 @@ def vps_install(args, fleet, client, server):
             subprocess.run(["ssh-keygen", "-q", "-R", a, "-f", known], capture_output=True)
     if luks.uses_one_time_key(h):
         if h.cfg["unlock"].get("ssh"):
-            util.say("%s: the disk waits for its key: kiwi-server unlock %s %s --manual" % (h.name, os.path.basename(fleet.path), h.name))
+            util.say("%s: the disk waits for its key: kiwi-server unlock %s %s --manual" % (h.name, typed_path(fleet.path), h.name))
         else:
             util.say("%s: at the console, the disk asks for the key in %s" % (h.name, luks.once_file(h)))
     util.say("%s: next: kiwi-server apply %s %s --ssh %s@%s"
-             % (h.name, os.path.basename(fleet.path), h.name, h.admin["user"], addresses[0] if addresses else "<address>"))
+             % (h.name, typed_path(fleet.path), h.name, h.admin["user"], addresses[0] if addresses else "<address>"))
 
 
 def print_probe(p):
@@ -2209,7 +2218,7 @@ def cmd_mtu(args):
         return
     util.write_text(fleet.path, new, 0o600)
     util.say("  wrote wg_mtu: %d for %s and %s; next: kiwi-server apply %s %s %s"
-             % (largest, host.name, master.name, os.path.basename(fleet.path), master.name, host.name))
+             % (largest, host.name, master.name, typed_path(fleet.path), master.name, host.name))
 
 
 def admin_password_into_store(path, st):
@@ -3652,7 +3661,7 @@ def cmd_enroll(args):
         util.warn("%s: the fleet's copy of its WireGuard state was not refreshed: %s" % (master.name, e))
     if host:
         util.say("%s's vpn-client picks it up by itself (wireguard_config falls back to secrets/<hostname>.conf) — "
-                 "kiwi-server render %s" % (host.name, os.path.basename(fleet.path)))
+                 "kiwi-server render %s" % (host.name, typed_path(fleet.path)))
     if args.qr:
         print(qrmod.text_blocks(text))
 
@@ -4209,7 +4218,7 @@ def cmd_access(args):
         print("\nmachines: %s" % "; ".join("%s%s" % (m["name"], (" (%s)" % ", ".join(m["services"])) if m["services"] else "")
                                            for m in found if not m["master"]))
         print("change:   kiwi-server access %s <who> <what…>    what: all, nodes, apps, nothing, a machine, service.machine, machine:port"
-              % os.path.basename(fleet.path))
+              % typed_path(fleet.path))
         return
     what = [w for w in args.what if w != "nothing"]
     if args.who in groups and args.who in partners:
@@ -4254,10 +4263,10 @@ def cmd_access(args):
         g = new[args.who]
         util.say("%s (%s) may reach: %s" % (args.who, g["subnet"], accessmod.words(g["reach"])))
         if args.new:
-            util.say("a device joins it with: kiwi-server enroll %s <device> --group %s" % (os.path.basename(fleet.path), args.who))
+            util.say("a device joins it with: kiwi-server enroll %s <device> --group %s" % (typed_path(fleet.path), args.who))
         if not kept and any(x.lstrip().startswith("#") for x in before.splitlines()[2:]):
             util.say("%s was written anew: the comments in it are not kept" % os.path.basename(fleet.path))
-    util.say("bring it to the machines: kiwi-server apply %s %s" % (os.path.basename(fleet.path),
+    util.say("bring it to the machines: kiwi-server apply %s %s" % (typed_path(fleet.path),
                                                                     " ".join([master.name] + sorted(touched - {master.name}))))
 
 
@@ -4296,7 +4305,7 @@ def _access_lan(args, fleet, master, lan, groups, partners, found, domain, mesh,
         raise KiwiError(errs[0])
     util.say("%s (%s, at home) may reach: %s" % (args.who, g["subnet"], accessmod.words(g["reach"])))
     nodes = sorted(m["name"] for m in found if not m["master"])
-    util.say("bring it to the machines: kiwi-server apply %s %s" % (os.path.basename(fleet.path), " ".join(nodes)))
+    util.say("bring it to the machines: kiwi-server apply %s %s" % (typed_path(fleet.path), " ".join(nodes)))
 
 
 def site_names(ms, host, role, with_usable=False):
@@ -4359,7 +4368,7 @@ def cmd_onion(args):
             print("%-22s http://%s  %s" % ("%s.%s" % (s, h.name), a, ("only: " + ", ".join(c)) if c else "anyone with the address"))
         if not rows:
             util.say("no hidden services yet. Make one: kiwi-server onion %s <service>.<machine>, e.g. git.papaya"
-                     % os.path.basename(fleet.path))
+                     % typed_path(fleet.path))
         return
     service, _, hname = args.what.partition(".")
     host = fleet.hosts.get(hname)
@@ -4458,7 +4467,7 @@ def cmd_onion(args):
                  % (", ".join(have[service]), args.client, onionmod.browser_line(fleet.seed(), host.name, service, args.client)))
     elif not args.remove and not have[service]:
         util.say("anyone with the address gets in, and meets the service's own login")
-    util.say("bring it to the machine: kiwi-server apply %s %s" % (base, host.name))
+    util.say("bring it to the machine: kiwi-server apply %s %s" % (typed_path(fleet.path), host.name))
 
 
 SERVICE_NAME = re.compile(r"^k[nm]-[a-z0-9][a-z0-9-]{0,40}$")
@@ -5098,7 +5107,8 @@ def cmd_version(_args):
 USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network machines
 
   kiwi-server init [fleet.yaml]                 a new fleet: a few questions (--example: the commented example)
-  kiwi-server add <fleet> master|node|bare [name]  a new host, named after a fruit dish (master) or a fruit
+  kiwi-server add <fleet> master|node|bare [name]
+                                                a new host, named after a fruit dish (master) or a fruit
   kiwi-server names [fleet]                     free names for new machines, as JSON
   kiwi-server validate <fleet> [host...]        check it (exit 2 on errors)
   kiwi-server list <fleet>                      hosts and what has been generated
@@ -5116,41 +5126,57 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
   kiwi-server accounts <fleet> invite|requests|accept|deny|create|link|list|delete …
                                                 the network's accounts: invite codes, requests, accounts, password links
-  kiwi-server signup serve|invite|requests|…   the accounts' sign-up page, in the accounts module's container
+  kiwi-server signup serve|invite|requests|…    the accounts' sign-up page, in the accounts module's container
   kiwi-server qr <file> [--png|--svg]           a device's config as a QR code for the WireGuard app
   kiwi-server control push|pull <fleet>         the fleet to the control node, or back (encrypted)
   kiwi-server control join <fleet> <link>       this computer joins a fleet with an invite link from the control page
   kiwi-server control invite <fleet>            makes that link here, for one more computer
-  kiwi-server control push|pull|join <fleet> --dir FOLDER     the same through a synced folder (Nextcloud, …);
+  kiwi-server control push|pull|join <fleet> --dir FOLDER
+                                                the same through a synced folder (Nextcloud, …);
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
-  kiwi-server gone <fleet> [--dry-run]                machines that do not answer: what the fleet allows done about it
-  kiwi-server remove <fleet> <host> [--yes]            a machine leaves for good: off the VPN, out of the fleet file
-  kiwi-server connect <fleet> [--name N] [--remove]   this computer on the network: VPN connection, names, certificates
+  kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
+  kiwi-server remove <fleet> <host> [--yes]     a machine leaves for good: off the VPN, out of the fleet file
+  kiwi-server connect <fleet> [--name N] [--remove]
+                                                this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
-  kiwi-server secrets show <fleet> <host> [setting]   print a host's password (no setting: their names)
-  kiwi-server secrets init|unlock|lock|status <fleet>  secrets/ as one encrypted file, opened into memory
-  kiwi-server secrets admin-password <fleet>        the console password into the store, its hash in the fleet file
-  kiwi-server mtu <fleet> <node|device|address> [--write]   measure a tunnel's real MTU; say what to set
+  kiwi-server secrets show <fleet> <host> [setting]
+                                                print a host's password (no setting: their names)
+  kiwi-server secrets init|unlock|lock|status <fleet>
+                                                secrets/ as one encrypted file, opened into memory
+  kiwi-server secrets admin-password <fleet>    the console password into the store, its hash in the fleet file
+  kiwi-server mtu <fleet> <node|device|address> [--write]
+                                                measure a tunnel's real MTU; say what to set
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
   kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
-  kiwi-server restore --from user@node [--into DIR]   get it back on a fresh machine (or restore FILE)
-  kiwi-server prune <fleet> [host...] [--dry-run]    old snapshots off the backup nodes
+  kiwi-server restore --from user@node [--into DIR]
+                                                get it back on a fresh machine (or restore FILE)
+  kiwi-server prune <fleet> [host...] [--dry-run]
+                                                old snapshots off the backup nodes
   kiwi-server plan <fleet> [host...]            what an apply would change and restart, before an update
-  kiwi-server check <fleet>                      after an update: every name over HTTPS, DNS, the exit
-  kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
+  kiwi-server check <fleet>                     after an update: every name over HTTPS, DNS, the exit
+  kiwi-server backups <fleet> <host> [module...]
+                                                a machine's snapshots; --now, --restore [--at TIME]
   kiwi-server recovery <fleet>                  if something breaks: could it come back, and what to do
-  kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
-  kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
-  kiwi-server onion <fleet> [service.machine]        hidden services: a site for anyone with Tor, or for named people
-  kiwi-server disks <fleet> <host>                    the machine's disks, and the line that mounts a data disk
-  kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
+  kiwi-server federate <fleet> <other fleet>    link two networks (then share with: access)
+  kiwi-server federate <fleet> --invite|--accept CARD
+                                                the same between two operators, by cards
+  kiwi-server federate <fleet> --ca PARTNER     a linked network's CA, for your devices to import
+  kiwi-server access <fleet> [who] [what…]      who on the VPN may reach what: groups and linked networks
+  kiwi-server onion <fleet> [service.machine]   hidden services: a site for anyone with Tor, or for named people
+  kiwi-server disks <fleet> <host>              the machine's disks, and the line that mounts a data disk
+  kiwi-server sshca <fleet> [init|sign KEY|trust]
+                                                the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
+  kiwi-server rotate <fleet> [ssh|seed|ring NAME|ring all]
+                                                new keys: what is due, or one kind
+  kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
+  kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian, armbian, coreos-ram

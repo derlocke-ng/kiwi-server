@@ -1056,6 +1056,23 @@ class TestAdopt(Base):
         self.assertIn("authorized_keys", names)
         self.assertNotIn("role.sh", names)                  # apply sends the role, not adopt
 
+    def test_a_board_gets_its_fixed_address(self):
+        """Seen on lime, 19 Nov 2026: flashed anew it came up on DHCP, since nothing wrote its address."""
+        self.assertEqual(adoptmod.network_script(self.host(network={"dhcp": True})), "")
+        h = self.host(network={"dhcp": False, "address": "192.168.2.64/16", "gateway": "192.168.2.1", "dns": ["9.9.9.9"]})
+        on_image = adoptmod.script(h, lock_root=True)                  # an image's first start: at once
+        self.assertIn("'Address=192.168.2.64/16' 'Gateway=192.168.2.1' DNS=9.9.9.9 'DHCP=no'", on_image)
+        self.assertIn("/etc/systemd/network/05-kiwi-static.network", on_image)     # before netplan's 10-netplan-*
+        self.assertIn("networkctl reload", on_image)
+        self.assertIn("ipv4.method manual ipv4.addresses 192.168.2.64/16", on_image)   # a board on NetworkManager
+        over_ssh = adoptmod.script(h)                                   # a running board: the session stays
+        self.assertNotIn("networkctl reload", over_ssh)
+        self.assertIn("it takes it with its next restart", over_ssh)
+        p = os.path.join(self.tmp, "adopt.sh")
+        for text in (on_image, over_ssh):
+            write(p, text)
+            self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
+
     def test_admin_target_and_other_targets(self):
         h = self.host()
         self.assertEqual(adoptmod.admin_target(h, "odroid@192.168.2.40"), "kiwi@192.168.2.40")

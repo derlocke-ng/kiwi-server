@@ -65,4 +65,8 @@ are. A password login works; sudo may ask for it.
 
 ## Not yet
 
+A board with a fixed address in the fleet file (`network.address`, `dhcp: false`) gets that
+address written at its first start, or with `adopt` for its next restart: a file of
+systemd-networkd's that comes before netplan's, or the card's connection in NetworkManager.
+
 An encrypted disk (Armbian's build framework): see the [roadmap](ROADMAP.md).

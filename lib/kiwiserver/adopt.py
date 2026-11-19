@@ -58,6 +58,7 @@ install -m 0644 "$D/kiwi-reboot-if-required.service" "$D/kiwi-reboot-if-required
 install -d -m 0700 %(role_dir)s
 %(updates)s
 %(lock_root)s
+%(network)s
 systemctl daemon-reload
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl reload sshd
@@ -68,6 +69,44 @@ _UPDATES_ON = """apt-get -y -q update
 apt-get -y -q install unattended-upgrades
 install -m 0644 "$D/20auto-upgrades" "$D/52kiwi-updates" /etc/apt/apt.conf.d/
 systemctl enable kiwi-reboot-if-required.timer"""
+
+
+# The board's fixed address (network.address), for the network service the board runs. A file of
+# systemd-networkd's that sorts before netplan's own (10-netplan-*), or the connection NetworkManager
+# has for the card. On an image's first start it takes effect at once; on a running board that is
+# being adopted over SSH with the next restart, so the session and the apply after it stay.
+_NETWORK = r"""
+dev=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+if [ -n "$dev" ] && systemctl is-active -q systemd-networkd; then
+    install -d /etc/systemd/network
+    printf '%%s\n' '# kiwi-server: the fixed address of this machine, as the fleet file says (network.address)' \
+        '[Match]' "Name=$dev" '' '[Network]' 'Address=%(address)s' 'Gateway=%(gateway)s' %(dns)s 'DHCP=no' \
+        > /etc/systemd/network/05-kiwi-static.network
+    chmod 0644 /etc/systemd/network/05-kiwi-static.network
+    %(now)s
+    echo "its fixed address %(address)s is set (systemd-networkd, $dev)%(later)s"
+elif [ -n "$dev" ] && systemctl is-active -q NetworkManager && con=$(nmcli -g GENERAL.CONNECTION device show "$dev" 2>/dev/null) && [ -n "$con" ]; then
+    nmcli connection modify "$con" ipv4.method manual ipv4.addresses %(address)s ipv4.gateway %(gateway)s ipv4.dns %(dns_nm)s
+    %(now_nm)s
+    echo "its fixed address %(address)s is set (NetworkManager, $con)%(later)s"
+else
+    echo "its fixed address %(address)s is NOT set: neither systemd-networkd nor NetworkManager runs its card. Set it by hand" >&2
+fi
+"""
+
+
+def network_script(host, now=False):
+    """The lines that give a board its fixed address, or "" for one on DHCP."""
+    net = host.cfg.get("network") or {}
+    if net.get("dhcp", True) or not net.get("address") or not net.get("gateway"):
+        return ""
+    dns = [str(d) for d in net.get("dns") or []]
+    return _NETWORK % {
+        "address": shlex.quote(str(net["address"])), "gateway": shlex.quote(str(net["gateway"])),
+        "dns": " ".join(shlex.quote("DNS=" + d) for d in dns), "dns_nm": shlex.quote(" ".join(dns)),
+        "now": "networkctl reload 2>/dev/null || systemctl restart systemd-networkd" if now else ":",
+        "now_nm": 'nmcli connection up "$con" >/dev/null 2>&1 || true' if now else ":",
+        "later": "" if now else ": it takes it with its next restart"}
 
 
 def script(host, lock_root=False):
@@ -85,6 +124,8 @@ def script(host, lock_root=False):
         "lock_root": ("passwd -l root >/dev/null\n"
                       "grep -ls -- '--autologin root' /etc/systemd/system/*getty@.service.d/*.conf | xargs -r rm -f")
                      if lock_root else "",
+        # lock_root is an image's first start: its address at once; a running board with its next restart
+        "network": network_script(host, now=lock_root),
     }
 
 

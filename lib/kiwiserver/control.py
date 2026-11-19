@@ -1133,6 +1133,11 @@ class Control:
                     self.save_fleet()
             except (KiwiError, OSError) as e:
                 util.warn("control: the fleet file was not saved: %s" % e)
+            if meta["action"] == "remove" and rc == 0:      # gone from the last look before the job says done:
+                try:                                        # a page that reads "ok" never sees it half there
+                    self._forget_in_status(meta["hosts"])
+                except (OSError, ValueError) as e:
+                    util.warn("control: the last look still names %s: %s" % (", ".join(meta["hosts"]), e))
             meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
             self._write(meta)
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
@@ -1148,8 +1153,6 @@ class Control:
             self.fleet_info(fresh=True)         # an apply changes what the next step is
         except (OSError, ValueError):
             pass
-        if meta["action"] == "remove" and rc == 0:      # gone from the network: from the last look too, at once
-            self._forget_in_status(meta["hosts"])
         if meta["action"] == "setup" and rc == 0:       # set up: its install media have done their work
             row = next((h for h in (self.fleet_info() or {}).get("hosts") or [] if h["name"] in meta["hosts"]), None)
             if row and row.get("phase") == "applied" and self.media(row["name"]):

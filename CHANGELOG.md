@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.235.0 — a machine at another site sets itself up over the VPN
+
+- **`install.over_vpn`** ("It stands at another site" in a machine's settings, page and app):
+  `kiwi-server build` makes a one-time join peer on the master and puts its WireGuard config on
+  the machine's install media (Debian, CoreOS, uCore). The installed machine comes onto the VPN
+  with it at first boot (`wg-quick@kiwi-join`, the mesh only, a routing table of its own so the
+  role's own VPN client does not cut the setup), `kiwi-server next` or the control node sets it up
+  over the mesh, and once it answers at its own mesh address the join tunnel goes and the peer is
+  removed from the master. No computer at its site and nothing more opened on the master.
+- `tests/drills/offsite-vm.sh` has `OVER_VPN=1`: a VM behind QEMU's NAT, set up from home; 21 of 21
+  checks. Its first runs found two things, both fixed before release: wg-easy's `/24` on the join
+  address put the mesh on the join tunnel ahead of the machine's own VPN client (now `/32`), and
+  the join went before the apply's last steps over it (it goes last now).
+- `remove` takes a join peer still there off the master too.
+- The federation drill names why a master gave no facts (a store that locked itself).
+
 ## 2.234.0 — a ring taken out comes off the disk
 
 - **Fixed:** a machine whose rings were taken out of `unlock.rings` kept its binding to them, so

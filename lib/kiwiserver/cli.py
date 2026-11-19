@@ -18,7 +18,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import health as healthmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
+from . import health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -693,6 +693,14 @@ class Renderer:
             produced.append(o.stack)
         elif os.path.isdir(o.stack):
             shutil.rmtree(o.stack)
+        host.join_conf = None
+        if joinmod.wanted(host):
+            jp = joinmod.path(self.fleet, host)
+            if os.path.isfile(jp):
+                host.join_conf = util.read_text(jp)
+            else:
+                util.warn("%s: install.over_vpn, but its one-time way onto the VPN is not made yet: kiwi-server build "
+                          "makes it" % host.name)
         if host.target == "debian":
             util.write_text(o.preseed, debian_t.preseed(host, VERSION), 0o600)
             if os.path.isdir(o.files):
@@ -1032,7 +1040,10 @@ def cmd_remove(args):
                 c = api.client(h.hostname)
                 if c is not None:
                     api.delete(c["id"])
-                return c is not None
+                j = api.client(joinmod.peer_name(h))        # a one-time join peer still there (install.over_vpn)
+                if j is not None:
+                    api.delete(j["id"])
+                return c is not None or j is not None
             if args.api:
                 was = drop(args.api)
             else:
@@ -1049,7 +1060,7 @@ def cmd_remove(args):
             util.warn("its place on the VPN could not be taken away (%s): do it on the master's VPN page (wg.<master>), "
                       "or run this again when the master answers" % str(e).splitlines()[0])
     # what this computer keeps of it
-    for rel in ("secrets/%s.conf" % h.hostname, "secrets/ram/%s" % name):
+    for rel in ("secrets/%s.conf" % h.hostname, "secrets/ram/%s" % name, "secrets/join/%s.conf" % h.hostname):
         p = fleet.resolve_path(rel)
         if os.path.isdir(p):
             shutil.rmtree(p)
@@ -1298,6 +1309,9 @@ def cmd_next(args):
     net = h.cfg.get("network") or {}
     addr = (str(net["address"]).split("/")[0] if not net.get("dhcp", True) and net.get("address")
             else (h.role_settings_raw.get("vpn-server") or {}).get("wg_host") if is_master(h) else None)
+    if joinmod.joined_at(fleet, h):
+        # install.over_vpn: at another site, it comes onto the VPN by itself with its media's join peer
+        addr = joinmod.joined_at(fleet, h)
     tgt = "%s@%s" % (h.admin["user"], addr) if addr else None
     if addr and luks.at_first_boot(h) and h.cfg["unlock"].get("ssh") and remote.speaks_ssh(addr, unlock.ssh_port(h)) \
             and not remote.speaks_ssh(addr, remote.ssh_port(h)):
@@ -2852,6 +2866,12 @@ def cmd_apply(args):
                 record_backup_clients(fleet, h)
                 if not args.no_run:
                     record_rendered(fleet, h.name, script)
+            # the very last step: it may switch off the tunnel this session runs over
+            if joinmod.joined_at(fleet, h):  # its first apply came over its one-time way onto the VPN
+                try:
+                    _drop_join(fleet, roles, ms, h, tgt)
+                except KiwiError as e:
+                    util.warn("%s: its one-time way onto the VPN was not removed: %s" % (h.name, e))
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             with book:
@@ -3732,6 +3752,37 @@ def cmd_ca(args):
     util.say("hosts that run the reverse proxy get a *.<hostname> certificate from it at render time")
 
 
+def _join_master(fleet, roles, ms):
+    master = _master_of(fleet, roles, ms, None)
+    vs = master.module_settings.get("vpn-server") or {}
+    mesh = (master.role_settings or {}).get("mesh_subnet") or "10.8.0.0/16"
+    return master, vs.get("wg_password"), mesh
+
+
+def _make_join(fleet, roles, ms, h, ssh=None):
+    """install.over_vpn: the one-time join peer on the master, before its media are made."""
+    master, password, mesh = _join_master(fleet, roles, ms)
+    joinmod.make(fleet, master, password, mesh, h, ssh=None)
+
+
+def _drop_join(fleet, roles, ms, h, tgt):
+    """After a first apply over the join tunnel: once the machine answers at its own mesh
+    address, the tunnel goes (detached: this session may run over it) and the peer leaves the
+    master. Until then both stay, so a machine whose own tunnel is not up is not cut off."""
+    mesh_ip = (h.role_settings or {}).get("vpn_ip") or ""
+    for _ in range(12):             # its VPN client connects within a minute of the role
+        if joinmod.on_its_own(h, mesh_ip):
+            break
+        time.sleep(5)
+    else:
+        util.warn("%s: it does not answer at its own mesh address %s yet: its one-time way onto the VPN stays until "
+                  "an apply after it does" % (h.name, mesh_ip or "?"))
+        return
+    remote.run(tgt, joinmod.OFF)
+    master, password, _mesh = _join_master(fleet, roles, ms)
+    joinmod.drop(fleet, master, password, h)
+
+
 def _render_or_build(args, build):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
@@ -3749,6 +3800,8 @@ def _render_or_build(args, build):
     failed = []
     for h in hosts:
         try:
+            if build and joinmod.wanted(h) and not os.path.isfile(joinmod.path(fleet, h)):
+                _make_join(fleet, roles, ms, h, getattr(args, "ssh", None))
             if build:
                 util.say("building %s (%s, %s) -> %s" % (h.name, h.target, h.role, out_dir))
                 o = r.build(h, cache_dir_for(args))

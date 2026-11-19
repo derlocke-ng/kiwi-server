@@ -294,6 +294,11 @@ def build_butane(host, role_script):
     units.append({"name": "kiwi-role.service", "enabled": True,
                   "contents": role_unit(host, extra_conditions=[UCORE_SIGNED_MARKER] if ucore else [])})
 
+    if getattr(host, "join_conf", None):
+        # install.over_vpn: on the VPN by itself at first boot, for its first apply over the mesh
+        files.append(_file("/etc/wireguard/kiwi-join.conf", host.join_conf, mode=0o600))
+        units.append({"name": "wg-quick@kiwi-join.service", "enabled": True})
+
     co = c["coreos"]
     passthrough(co, files, dirs, units)
     bu = assemble(user, files, dirs, links, units)

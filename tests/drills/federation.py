@@ -131,11 +131,13 @@ if a_masters and b_name:
         facts = json.loads(got.stdout)["hosts"][0]["facts"]
     except (ValueError, KeyError, IndexError):
         facts = {}
+    # no facts at all: what `status` said (a store that locked itself, a master that is away)
+    why = "no answer" if facts else (((got.stderr or got.stdout).strip().splitlines() or ["no answer"])[-1][:160])
     said = (facts.get("opened") or {}).get(b_name)
     results.append(("%s learns from %s's DNS what it opens to it" % (a_masters[0], b_name), said is not None,
-                    ", ".join(said) if said else "nothing" if said == [] else "no answer"))
+                    ", ".join(said) if said else "nothing" if said == [] else why))
     results.append(("%s knows %s's master by name" % (a_masters[0], b_name), bool((facts.get("partner_masters") or {}).get(b_name)),
-                    (facts.get("partner_masters") or {}).get(b_name) or "no answer"))
+                    (facts.get("partner_masters") or {}).get(b_name) or why))
 for what, ok, detail in results:
     say("%s %s (%s)" % ("ok    " if ok else "FAILED", what, detail))
 sys.exit(0 if results and all(ok for _w, ok, _d in results) else 1)

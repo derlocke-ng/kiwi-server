@@ -6,7 +6,7 @@ After=km-vpn-server.service
 StartLimitIntervalSec=0
 
 [Container]
-Image=docker.io/library/nginx:1
+Image=docker.io/library/nginx:1-alpine
 ContainerName=km-nginx
 Network=container:km-vpn-server
 AutoUpdate=registry

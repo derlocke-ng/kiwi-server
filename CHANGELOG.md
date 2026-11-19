@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.230.0 — nginx on Alpine
+
+- kiwi-modules 0.100.0: the reverse proxy runs `nginx:1-alpine` (64 MB) instead of the Debian
+  `nginx:1` (167 MB): the same official nginx, about 100 MB less on every machine. For the master
+  in RAM it is room it lacked: crumble's /var (half its memory) was 94 % full. The next apply
+  fetches it and restarts the proxy once. `reverse-proxy.image: docker.io/library/nginx:1` keeps
+  the Debian one. `tests/drills/nginx-check.py` checks with the machine's own image, as before.
+- kiwi-stack 0.9.20: on a disk 85 % full or more, a container whose image the stack no longer
+  names goes, with that image, before the new one is pulled (it comes back on the new one at
+  once). Without it the switch above could not be pulled on crumble.
+
 ## 2.229.0 — apply says how to reach a new machine
 
 - `kiwi-server apply FLEET HOST` on a machine met for the first time (nothing of it on record,

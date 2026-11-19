@@ -964,7 +964,7 @@ def cmd_init(args):
                   "It is shown once. If this computer is lost, it is the only way back to your network's keys:\n\n  %s\n" % recovery)
             if asking:
                 input("Written down? Press Enter. ")
-        print("\n".join(setupmod.next_steps(shown_path(os.path.abspath(dest)))))
+        print("\n".join(setupmod.next_steps(typed_path(dest))))
         return
     text = util.read_text(os.path.join(util.home_dir(), "examples", "fleet.yaml"))
     if args.domain:
@@ -1546,7 +1546,7 @@ def starter_host(fleet):
 def next_step(fleet, roles, host, errors, out):
     """(phase, what to do next) for a machine, from what this computer knows: the fleet file
     and the output. `status` knows whether it runs; the app combines the two."""
-    fname = os.path.basename(fleet.path)
+    fname = typed_path(fleet.path)
     real = [e for e in errors if not not_enrolled(e)]
     if real:
         return "invalid", "fix the fleet file: %s" % real[0]

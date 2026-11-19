@@ -48,6 +48,7 @@ outputs:
   tls_fullchain: { path: "{{ container_prefix }}-nginx/fullchain.pem", mode: 0644 }
   tls_privkey: { path: "{{ container_prefix }}-nginx/privkey.pem", mode: 0600 }
   onion_fullchain: { path: "{{ container_prefix }}-nginx/onion-fullchain.pem", mode: 0644 }
+  alias_fullchain: { path: "{{ container_prefix }}-nginx/alias-fullchain.pem", mode: 0644 }
   onion_privkey: { path: "{{ container_prefix }}-nginx/onion-privkey.pem", mode: 0600 }
   nginx_start: { path: "{{ container_prefix }}-nginx/start.sh", mode: 0755, when: public_names }
   acme_script: { path: "kiwi/acme.sh", mode: 0755, when: public_names }
@@ -135,6 +136,11 @@ settings:
     group: Generated
     label: Certificate chain for the hidden services
     help: "Filled in by kiwi-server when the onion module's tls is on: one certificate of the fleet's CA for this machine's .onion addresses. Each hidden service then answers https too."
+  - key: alias_fullchain
+    type: file
+    group: Generated
+    label: Certificate for a partner's name of this machine
+    help: "Filled in by kiwi-server federate when a linked network has this network's domain and sees it under another name (federation.alias): a certificate the partner's CA signed for this machine's names under that name, with this machine's own key (tls_privkey). Its devices trust it without importing anything of this network."
   - key: onion_privkey
     type: file
     group: Generated

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.226.0 — a translated partner's pages trusted
+
+- **A partner with this network's domain** (translated at the link) is trusted on your devices
+  without importing its CA: `kiwi-server federate A B` has A's CA sign the names A's devices
+  use for B's machines (`papaya.kiwi2.home`, `*.papaya.kiwi2.home`) for each machine's own key,
+  and the other way round. B's machines show that certificate on those names (kiwi-modules
+  0.99.0: the alias names in a server of their own). It is used while it fits the machine's key;
+  after a new key the render leaves it out and says to link again. With both fleets on one
+  computer; between two operators not yet.
+- **Fixed:** a node with admin pages (Portainer, Pi-hole, the control page) lost the name a
+  partner of the same domain gives it (`federation.alias`) when its admin pages were closed to
+  partners, so it did not answer that name at all (since 2.216.0). The rules keep it now.
+
 ## 2.225.0 — a tagged interface at boot
 
 - kiwi-stack 0.9.19: `kiwi-vlans.service` brings the card up before its tagged interfaces. It runs

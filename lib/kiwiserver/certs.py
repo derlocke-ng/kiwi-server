@@ -78,6 +78,32 @@ def ca_permitted(pem):
     return permitted
 
 
+def public_key(pem, private=False):
+    """The public key (PEM text) of a certificate, or of a private key file (private=True)."""
+    if private:
+        return _openssl(["pkey", "-in", pem, "-pubout"]).stdout
+    return _openssl(["x509", "-noout", "-pubkey"], input=pem).stdout
+
+
+def sign_for(ca_dir, key_path, names, days=CERT_DAYS):
+    """A certificate (leaf, then the CA: a fullchain) of the CA in ca_dir for exactly these names,
+    for the key at key_path, which stays where it is: another network's CA signing a machine's
+    names as that network calls it (federation, translated at the link). The CA must exist."""
+    ca_key, ca_pem = os.path.join(ca_dir, "kiwiCA.key"), os.path.join(ca_dir, "kiwiCA.pem")
+    if not (os.path.isfile(ca_key) and os.path.isfile(ca_pem)):
+        raise KiwiError("%s: no CA there to sign with" % ca_dir)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="kiwi-sign-") as tmp:
+        csr, ext, crt = (os.path.join(tmp, n) for n in ("request.csr", "ext.cnf", "cert.pem"))
+        util.write_text(ext, "authorityKeyIdentifier=keyid,issuer\nbasicConstraints=CA:FALSE\n"
+                             "keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
+                             "subjectAltName=%s\n" % ",".join("DNS:%s" % n for n in names))
+        _openssl(["req", "-new", "-key", key_path, "-subj", "/O=kiwi/CN=%s" % names[0], "-out", csr])
+        _openssl(["x509", "-req", "-in", csr, "-CA", ca_pem, "-CAkey", ca_key, "-CAcreateserial",
+                  "-days", str(days), "-sha256", "-extfile", ext, "-out", crt])
+        return util.read_text(crt) + util.read_text(ca_pem)
+
+
 def cert_valid(pem_path, min_days=30):
     r = subprocess.run(["openssl", "x509", "-in", pem_path, "-noout", "-checkend", str(min_days * 86400)],
                        capture_output=True)

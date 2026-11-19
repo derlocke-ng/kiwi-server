@@ -484,7 +484,10 @@ but the partner's own domain, so it can sign nothing of yours:
 - `kiwi-server federate ~/kiwi/fleet.yaml --ca kiwi2` prints it;
 - `kiwi-server connect` puts it into this computer's browsers, beside your own CA.
 
-A partner with your own domain (translated at the link) is not offered: its CA could
+A partner with your own domain (translated at the link) gets its names signed by your
+CA instead (2.226.0, with both fleets on one computer): `federate` signs the names your
+devices use for its machines, and its machines show that certificate on them. Apply
+its machines afterwards. Its own CA is not offered: it could
 sign your names. Networks linked before 2.222.0 bring their CA when they are linked
 again.
 

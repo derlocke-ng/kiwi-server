@@ -6552,6 +6552,10 @@ class TestManage(Base):
         self.assertFalse(swapped(calls))
 
     def test_apply_and_status_through_fake_ssh(self):
+        from kiwiserver import connect as connectmod      # the machine's name resolves, as on the VPN
+        resolving = mock.patch.object(connectmod, "resolves", lambda name, s: True)
+        resolving.start()
+        self.addCleanup(resolving.stop)
         write(os.path.join(self.tmp, "secrets", "sh3.kiwi.conf"),
               "[Interface]\nPrivateKey = k\nAddress = 10.8.0.7/24\n\n[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/0\nEndpoint = v:51820\n")
         f = self.manage_fleet()

@@ -5512,8 +5512,21 @@ def save_store(args):
         print("warning: changes in secrets/ were not saved to %s: %s" % (store.FILE, e), file=sys.stderr)
 
 
+# commands the machines and the control node run themselves: not in the help, never suggested
+INNER = {"agent", "notify", "serve-public", "recover", "help", "version"}
+
+
 def main(argv=None):
     p = build_parser()
+    words = sys.argv[1:] if argv is None else list(argv)
+    known = next(a for a in p._actions if isinstance(a, argparse._SubParsersAction)).choices
+    first = next((w for w in words if not w.startswith("-")), None)
+    if first is not None and first not in known and words and not words[0].startswith("-"):
+        import difflib                          # a typo: one line and a guess, not the whole help
+        near = difflib.get_close_matches(first, sorted(set(known) - INNER), n=2, cutoff=0.7)
+        print("kiwi-server: there is no command %r%s; kiwi-server --help lists them"
+              % (first, " (did you mean %s?)" % " or ".join(near) if near else ""), file=sys.stderr)
+        return 2
     args = p.parse_args(argv)
     if args.version:
         cmd_version(args)

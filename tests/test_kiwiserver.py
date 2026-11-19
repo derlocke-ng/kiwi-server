@@ -4898,8 +4898,16 @@ class TestCompletion(unittest.TestCase):
         from kiwiserver import cli as climod
         subs = next(a for a in climod.build_parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
         named = set(re.findall(r"^  kiwi-server ([a-z][a-z-]*)", climod.USAGE, re.M))
-        inner = {"agent", "notify", "serve-public", "recover", "help", "version"}    # the machines' and the control node's own
-        self.assertEqual(sorted(set(subs) - named - inner), [])
+        self.assertEqual(sorted(set(subs) - named - climod.INNER), [])
+
+    def test_a_mistyped_command_gets_one_line_and_a_guess(self):
+        from kiwiserver import cli as climod
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(climod.main(["statsu", "fleet.yaml"]), 2)
+        self.assertEqual(err.getvalue(), "kiwi-server: there is no command 'statsu' (did you mean status?); "
+                                         "kiwi-server --help lists them\n")
+        self.assertEqual(out.getvalue(), "")                                   # not the whole help
 
     def test_rotate_offers_its_kinds(self):
         self.assertEqual(self.complete("kiwi-server", "rotate", "fleet.yaml", ""), ["ssh", "seed", "ring"])

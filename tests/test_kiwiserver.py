@@ -4877,6 +4877,26 @@ class TestAsleep(Base):
         self.assertIn("asleep until 23:59", h["notes"][0])
 
 
+class TestCompletion(unittest.TestCase):
+    """Bash completion knows every command the help names (11 were missing by 2.241)."""
+    PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "bash-completion", "kiwi-server")
+
+    def complete(self, *words):
+        script = ('source %s; COMP_WORDS=(%s); COMP_CWORD=%d; _kiwi_server; printf "%%s\\n" "${COMPREPLY[@]}"'
+                  % (shlex.quote(self.PATH), " ".join(shlex.quote(w) for w in words), len(words) - 1))
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.split()
+
+    def test_every_command_of_the_help(self):
+        from kiwiserver import cli as climod
+        named = sorted(set(re.findall(r"^  kiwi-server ([a-z][a-z-]*)", climod.USAGE, re.M)))
+        offered = self.complete("kiwi-server", "")
+        self.assertEqual([c for c in named if c not in offered], [])
+        self.assertEqual(self.complete("kiwi-server", "rec"), ["recovery"])
+
+    def test_rotate_offers_its_kinds(self):
+        self.assertEqual(self.complete("kiwi-server", "rotate", "fleet.yaml", ""), ["ssh", "seed", "ring"])
+
+
 class TestMovePlan(Base):
     def test_the_plan_says_what_a_move_changes_and_changes_nothing(self):
         f = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}), "hosts": {

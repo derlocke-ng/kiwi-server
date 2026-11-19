@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.243.0 — a typo gets a guess
+
+- A mistyped command gets one line and a guess (`statsu` → did you mean status?) instead of
+  the whole help; a mistyped machine too (`papya` → did you mean papaya?).
+- `kiwi-server status` says which kiwi-server each machine was applied with, beside when.
+- `kiwi-server plan` counts a new kiwi-stack tool or library as a change (it said "nothing
+  changes" when only those were new), and writes "1 file", not "1 files".
+- The last hints that printed the full fleet path name it as typed (`~/kiwi/fleet.yaml`): the
+  secret store, sshca, unlock, next, sources, restore. A missing fleet file too.
+
 ## 2.242.0 — every command in the help and in completion
 
 - **Fixed:** on an Armbian board a bare machine's **Extra packages** were dropped: the setting

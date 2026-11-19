@@ -4898,8 +4898,16 @@ class TestCompletion(unittest.TestCase):
         from kiwiserver import cli as climod
         subs = next(a for a in climod.build_parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
         named = set(re.findall(r"^  kiwi-server ([a-z][a-z-]*)", climod.USAGE, re.M))
-        inner = {"agent", "notify", "serve-public", "recover", "help", "version"}    # the machines' and the control node's own
-        self.assertEqual(sorted(set(subs) - named - inner), [])
+        self.assertEqual(sorted(set(subs) - named - climod.INNER), [])
+
+    def test_a_mistyped_command_gets_one_line_and_a_guess(self):
+        from kiwiserver import cli as climod
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(climod.main(["statsu", "fleet.yaml"]), 2)
+        self.assertEqual(err.getvalue(), "kiwi-server: there is no command 'statsu' (did you mean status?); "
+                                         "kiwi-server --help lists them\n")
+        self.assertEqual(out.getvalue(), "")                                   # not the whole help
 
     def test_rotate_offers_its_kinds(self):
         self.assertEqual(self.complete("kiwi-server", "rotate", "fleet.yaml", ""), ["ssh", "seed", "ring"])
@@ -5178,6 +5186,9 @@ class TestPlan(unittest.TestCase):
         x = planmod.compare(B, want, have, ["kn-a", "kn-b", "kn-gone"])
         self.assertEqual((x["restart"], x["new_services"], x["removed_services"]), (["kn-a"], ["kn-c"], ["kn-gone"]))
         self.assertEqual(planmod.compare(B, want, dict(want), B.services)["changed"], [])
+        have = dict(want, **{planmod.CLI: "older"})                     # a new kiwi-stack: the tool changes, nothing restarts
+        x = planmod.compare(B, want, have, B.services)
+        self.assertEqual((x["changed"], x["restart"]), ([{"path": "/usr/local/bin/kiwi-stack", "new": False}], []))
 
 
 class TestBackups(unittest.TestCase):
@@ -8453,6 +8464,14 @@ peers=4 3
         self.assertEqual(shown["ms"], 120)
 
     def test_status_text_and_probe_come_apart(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        write(os.path.join(d, "stack.env"), "# written by kiwi-server 2.241.0 \u2014 read by /usr/local/bin/kiwi-stack\nX=1\n")
+        write(os.path.join(d, "role.done"), "2026-11-19T10:00:00Z\n")
+        head = facts.HUMAN.split("if [ -f")[0].replace("/etc/kiwi-server/", d + "/").replace("/var/lib/kiwi-server/", d + "/")
+        said = subprocess.run(["sh", "-c", head], capture_output=True, text=True).stdout
+        self.assertEqual(said, "applied: 2026-11-19T10:00:00Z with kiwi-server 2.241.0\n")    # which version, as plan says
+        os.unlink(os.path.join(d, "stack.env"))                                                  # a bare machine: no stack
+        self.assertEqual(subprocess.run(["sh", "-c", head], capture_output=True, text=True).stdout, "applied: 2026-11-19T10:00:00Z\n")
         human, data = facts.split("applied: x\n%s\nuptime=1\n" % facts.MARK)
         self.assertEqual((human, data), ("applied: x\n", "uptime=1\n"))
         self.assertEqual(facts.split("no probe\n"), ("no probe\n", ""))
@@ -9310,6 +9329,8 @@ class TestLogins(Base):
         rc, _out, err = self.run_cli("logins", f.path, "nobody")
         self.assertEqual(rc, 1)
         self.assertIn("no such host", err)
+        self.assertNotIn("did you mean", err)
+        self.assertIn("no such host in fleet.yaml: sh33 — did you mean sh3?", self.run_cli("logins", f.path, "sh33")[2])
 
     def test_what_is_off_is_not_listed(self):
         f = self.network(

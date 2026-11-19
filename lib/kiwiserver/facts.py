@@ -12,7 +12,8 @@ import time
 MARK = "--- kiwi-facts ---"
 
 # what `kiwi-server status` has always printed for a person
-HUMAN = ("echo \"applied: $(cat /var/lib/kiwi-server/role.done 2>/dev/null || echo never)\"; "
+HUMAN = ("v=$(head -n1 /etc/kiwi-server/stack.env 2>/dev/null | sed -n 's/^# written by kiwi-server \\([^ ]*\\) .*/\\1/p'); "
+         "echo \"applied: $(cat /var/lib/kiwi-server/role.done 2>/dev/null || echo never)${v:+ with kiwi-server $v}\"; "
          "if [ -f /var/lib/kiwi-server/role.failed ]; then echo 'ROLE FAILED:'; "
          "sed 's/^/  /' /var/lib/kiwi-server/role.failed; fi; "
          "echo \"uptime: $(uptime -p 2>/dev/null || uptime)\"; "

@@ -705,7 +705,7 @@ class Fleet:
     @classmethod
     def load(cls, path):
         if not os.path.isfile(path):
-            raise KiwiError("fleet file not found: %s" % path)
+            raise KiwiError("fleet file not found: %s" % util.shown_path(os.path.abspath(path)))
         try:
             data = yaml.safe_load(util.read_text(path))
         except yaml.YAMLError as e:
@@ -733,7 +733,7 @@ class Fleet:
             if st.exists() and not st.is_open() and not os.environ.get("KIWI_SECRETS_DIR"):
                 # never a new seed beside a locked store: every generated secret would differ
                 # (found: a watch run whose store was locked under it made one in a plain secrets/)
-                raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % self.path)
+                raise KiwiError("the secret store is locked: kiwi-server secrets unlock %s" % util.typed_path(self.path))
             os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
             util.write_bytes(p, os.urandom(32), 0o600)
             # stderr: `script` and --porcelain keep stdout for their payload
@@ -788,8 +788,11 @@ class Fleet:
         out = []
         for n in names:
             if n not in self.hosts:
-                raise KiwiError("no such host in %s: %s (have: %s)" % (
-                    os.path.basename(self.path), n, ", ".join(self.hosts)))
+                import difflib
+                near = difflib.get_close_matches(n, list(self.hosts), n=1, cutoff=0.7)
+                raise KiwiError("no such host in %s: %s%s (have: %s)" % (
+                    os.path.basename(self.path), n, " — did you mean %s?" % near[0] if near else "",
+                    ", ".join(self.hosts)))
             out.append(self.hosts[n])
         return out
 

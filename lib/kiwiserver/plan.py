@@ -2,7 +2,8 @@
 host units rendered here, compared by hash with the machine's, and the containers that would
 restart for it, by the rule kiwi-stack itself applies (roles/common/lib.sh,
 ks_stack_changed_services: a container restarts when its quadlet changed, or a file it mounts
-or reads). The rest of the role script (packages, sshd, sysctl) is not compared.
+or reads), and the kiwi-stack tool and library. The rest of the role script (packages, sshd,
+sysctl) is not compared.
 """
 import hashlib
 import shlex
@@ -12,6 +13,8 @@ from . import remote
 QUADLETS = "/etc/containers/systemd"
 UNITS = "/etc/systemd/system"
 STACK_ENV = "/etc/kiwi-server/stack.env"
+CLI = "/usr/local/bin/kiwi-stack"
+LIB = "/usr/local/lib/kiwi-stack/lib.sh"
 
 
 def _sha(content):
@@ -25,6 +28,10 @@ def wanted(host, bundle):
     out.update({"%s/%s" % (UNITS if n.endswith(".target") else QUADLETS, n): _sha(t)     # the target is a unit
                 for n, t in (getattr(bundle, "quadlets", None) or {}).items()})
     out.update({"%s/%s" % (UNITS, n): _sha(t) for n, t in bundle.units.items()})
+    # the stack's own tool and library: a new release changes how the stack starts, stops and reports
+    from . import roles as rolesmod
+    out[CLI] = _sha(rolesmod.stack_cli())
+    out[LIB] = _sha(rolesmod.common_lib())
     return out
 
 

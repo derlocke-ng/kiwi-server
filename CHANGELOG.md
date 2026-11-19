@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.245.0 — 3-2-1
+
+- `kiwi-server recovery` (and the page, the app) has a line for **3-2-1**: the data, two
+  copies of it, one of them elsewhere. It names the machines that keep one copy only, or every
+  copy in the same place as the machine. A hint, not a gap: a machine without any backup stays
+  the gap it was.
+- `kiwi-server check` ends with one line: all N checks pass, or which failed.
+- Designs: **who opens whom** (docs/design/unlock.md: ways a disk opens, openers, one picture
+  for page and apps, desktops, an encrypted Armbian image), and in public-services.md the
+  decision of 19 November: public and internal services may be separate instances; Kanidm
+  takes one address only, so it gets no hidden service.
+
 ## 2.244.0 — 1 day, not 1 days
 
 - Counts say "1 day", "1 minute", "1 snapshot", "1 machine": in status, recovery, the backup

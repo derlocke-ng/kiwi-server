@@ -3360,7 +3360,7 @@ class TestCheck(Base):
         with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@gate"):
             rc, out, err = TestManage.run_cli(self, "check", f.path)
         self.assertEqual(rc, 1)
-        self.assertIn("2 checks failed", err)
+        self.assertIn("2 of 5 checks failed: https pihole.gate.kiwi, dns quad9.net", err)
         self.assertRegex(out, r"ok +gate +https wg.gate.kiwi 403")
         self.assertRegex(out, r"FAILED gate +https pihole.gate.kiwi 000")
         self.assertRegex(out, r"FAILED gate +dns +quad9.net none")
@@ -13880,6 +13880,21 @@ class TestRecovery(Base):
     def report(self, f, status=None, now=None):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
+
+    def test_three_two_one_two_copies_one_elsewhere(self):
+        rep, checks = self.report(self.network())
+        self.assertIsNone(checks["copies"]["ok"])                          # a hint, not a gap
+        self.assertIn("papaya keeps one copy only", checks["copies"]["text"])
+        self.assertIn("papaya keeps every copy in the same place", checks["copies"]["text"])
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        friend = {"network": {"dhcp": True, "site": "friend"}, "role": "node",
+                  "node": dict(node, modules=["vpn-client", "reverse-proxy", "backup-server"],
+                               **{"backup-server": {"clients": ["papaya.kiwi"]}})}
+        papaya = {"network": {"address": "192.168.2.30/24"}, "role": "node", "unlock": {"rings": ["infra"]},
+                  "node": dict(node, modules=["vpn-client", "reverse-proxy", "vault", "backup"],
+                               backup={"servers": ["https://backup.lychee.kiwi", "https://backup.friend.kiwi"]})}
+        rep, checks = self.report(self.network(friend=friend, papaya=papaya))
+        self.assertIs(checks["copies"]["ok"], True, checks["copies"]["text"])
 
     def test_a_fleet_under_home_is_written_as_typed_and_the_tilde_left_unquoted(self):
         home = os.path.expanduser("~")

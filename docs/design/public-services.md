@@ -105,8 +105,9 @@ so the rule is:
    bookmarks and apps keep working.
 3. **Tor is the second door.** Every app that can list more than one address of its own is told
    its onion address (as Paperless, PrivateBin and BTCPay are today); the pages show it. An app
-   that knows one address only works over Tor without the parts bound to its name: Kanidm signs
-   people in with a password there, not with a passkey.
+   that knows one address only does not work over Tor: Kanidm takes one origin per installation,
+   and its hidden service on quince was taken away on 19 November. Such an app gets a public
+   instance of its own instead (below).
 4. **The pages show every door of a service**: the control page's Services, the status page,
    the front page for strangers, each with the VPN name, the public name and the onion address.
 
@@ -134,3 +135,24 @@ other account.
 3. **No email address** at sign-up for now: the network runs no mail server. A lost password
    is reset by the people who run the network (a reset link they hand over), and the sign-up
    page says so.
+
+## Decided (owner, 19 November 2026): public and internal may be separate
+
+- **Tor and the VPN can be separate worlds.** A service can run as two instances that share no
+  accounts and no data: a **public** one (the Internet and/or Tor, open to strangers, as Jabber
+  is) and an **internal** one (the VPN, closed to the public). `xmpp.separate` does this
+  today; other modules follow the same shape.
+- **Accounts:** the internal Kanidm stays at `id.<hostname>`. The public side gets its own
+  accounts: a second Kanidm whose one origin is its public name or its onion address, or
+  another identity server that takes more than one address. Which one: compared first
+  (Keycloak, Authentik, Zitadel), then chosen.
+- **First** where a public service needs accounts: git over Tor (Forgejo signs in through
+  Kanidm, which does not work there). Services with accounts of their own (Jabber, BTCPay)
+  need nothing.
+- **A VPN name for a public instance**, so people at home do not take the long way through the
+  master or Tor: `<site>-public.<machine>.home`, on the mesh only. The public name itself keeps
+  resolving to the master everywhere (decided 16 November). Only where it works: Jabber (an app
+  connects there and still speaks to its public domain, with its real certificate) and apps
+  that take several addresses (PrivateBin, Paperless, BTCPay). An app with one address
+  (Forgejo, Kanidm) would only send the browser on to its public name or onion: none for it.
+

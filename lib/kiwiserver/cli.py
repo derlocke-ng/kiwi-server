@@ -2712,7 +2712,7 @@ def cmd_check(args):
     records = r.dns_records()
     names = sorted({n for _ip, n in records if n.count(".") >= 2})        # services: <service>.<host>.<domain>
     hosts = sorted({n for _ip, n in records if n.count(".") == 1})
-    failed = []
+    failed, checked = [], 0
     masters = [h for h in fleet.select(args.hosts) if h.role in roles and roles[h.role].node_type == "master"]
     if not masters and not has_master(fleet, roles):
         # a network without a master (docs/design/no-master.md): asked from the machines that answer for the names
@@ -2746,6 +2746,7 @@ def cmd_check(args):
             else:
                 continue
             print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", h.name, kind, name, value))
+            checked += 1
             if not ok:
                 failed.append("%s %s" % (kind, name))
     # the public names, asked the way a stranger asks them: from here, through the Internet's DNS, and
@@ -2755,10 +2756,13 @@ def cmd_check(args):
         value = public_answer(name)
         ok = value[:1] in "234"
         print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", "here", "https", name, value))
+        checked += 1
         if not ok:
             failed.append("https %s" % name)
     if failed:
-        raise KiwiError("%d checks failed" % len(failed))
+        raise KiwiError("%d of %d checks failed: %s" % (len(failed), checked + sum(1 for f in failed if " " not in f),
+                                                      ", ".join(failed[:8]) + (" …" if len(failed) > 8 else "")))
+    util.say("all %s pass" % util.count(checked, "check"))
 
 
 def cmd_apply(args):

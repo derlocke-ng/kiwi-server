@@ -57,7 +57,7 @@ Found by installing the VM quince from the wizard's kind of fleet.
 | 24 | The second switch step failed and never ran again. First cause: it has no retry, so one failure is final. | **fixed** in 2.78.0: both steps retry |
 | 25 | The real cause behind 24: on an encrypted machine with a fixed address, the network connection made for unlocking at boot stays the machine's connection, and it had no DNS servers. No name resolved, so the switch could never finish. | **fixed** in 2.78.0: the boot-time setting carries the DNS servers |
 | 26 | A static address together with disk unlock needs `network.interface`; the build says so, but the wizard never asks and cannot know the name. | **fixed** in 2.79.0: without a name the setting is for the machine's wired card |
-| 27 | `apply <fleet> <host>` on a fresh machine tries its name, which resolves on the VPN only, and "connection refused" says nothing useful. The app passes the address; the terminal did not. | **fixed** in 2.78.0 for `next`; plain `apply` still wants `--ssh` the first time |
+| 27 | `apply <fleet> <host>` on a fresh machine tries its name, which resolves on the VPN only, and "connection refused" says nothing useful. The app passes the address; the terminal did not. | **fixed** in 2.78.0 for `next`; plain `apply` still wants `--ssh` the first time, and says so with the machine's address since 2.229.0 |
 | 28 | A reinstalled machine shows a new host key; the apply stops and names the command that forgets the old one. | **fixed** in 2.79.0: a first setup forgets an older key, the app asks, `next <fleet> <host>` takes a machine that was installed anew |
 
 ## What can be looked up instead of asked

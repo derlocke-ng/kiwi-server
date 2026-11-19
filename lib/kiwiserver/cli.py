@@ -2767,6 +2767,15 @@ def cmd_apply(args):
         if getattr(args, "new_host_key", False) and args.ssh:
             adoptmod.forget_host_key(args.ssh)      # installed anew: the key it showed before is not its key
         tgt = remote.reach(h, args.ssh)
+        from . import connect as connectmod
+        if not args.ssh and tgt == remote.target(h) and not connectmod.resolves(h.hostname, 5):
+            # nothing of it on record and its name resolves on the VPN only: a machine met for the first time
+            net = h.cfg.get("network") or {}
+            addr = str(net["address"]).split("/")[0] if not net.get("dhcp", True) and net.get("address") else ""
+            raise KiwiError("%s: its name %s resolves on the VPN only, and no other address of it is on record here. The "
+                            "first time: kiwi-server next %s %s finds it%s; or give its address: --ssh %s@%s"
+                            % (h.name, h.hostname, shown_path(args.fleet), h.name, " at " + addr if addr else "",
+                               h.admin["user"], addr or "<address>"))
         try:
             if not args.no_run and h.target == "ucore":
                 coreos_t.wait_for_ucore(h.name, tgt)    # a fresh one restarts twice by itself first
@@ -4714,7 +4723,7 @@ def cmd_wake(args):
     fleet, _roles, _ms = load(args, need_roles=False)
     host = fleet.select([args.host])[0]
     wakemod.wake(fleet, host, mac=args.mac, address=args.address, via=args.via)
-    util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, args.fleet))
+    util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, shown_path(args.fleet)))
 
 
 def cmd_unlock(args):

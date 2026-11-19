@@ -9867,6 +9867,10 @@ class TestWeb(WebBase):
 
     def test_a_machine_with_wake_on_lan_that_does_not_answer_can_be_woken(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        for _ in range(200):                # the look the login started writes these files too: after it
+            if not self.c.looking:
+                break
+            time.sleep(0.05)
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
             {"name": n, "hostname": n + ".home", "role": "node", "modules": [], "sites": [], "next": "", "wol": n == "fig"}
             for n in ("fig", "papaya")]}))

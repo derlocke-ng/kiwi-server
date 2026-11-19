@@ -5246,6 +5246,9 @@ class TestUnlock(Base):
             if "kiwi-curl" in script and "initramfs-etc" in script:      # CoreOS: the time limits at boot, its own test
                 self.limits = tgt
                 return b"updated\n"
+            if "kiwi-leash" in script:                   # the leash, on or off: its own test
+                self.leash = (tgt, script, data)
+                return b""
             calls.append((tgt, script, data))
             if "tang-show-keys" in script:
                 return b"THUMBPRINT\n"

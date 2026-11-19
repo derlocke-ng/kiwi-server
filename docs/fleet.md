@@ -146,6 +146,9 @@ network:
     - { id: 30, address: 192.168.30.5/24, interface: eth1 }
 ```
 
+A module answers at one of them only with its `listen` setting: its ports are bound
+to that address (`node: { paste: { listen: 192.168.20.5 } }`).
+
 Static addresses without typing them: `network: { dhcp: false, gateway: …,
 iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
 the next free address in file order; a host's own `address:` is reserved

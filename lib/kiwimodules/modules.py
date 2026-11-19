@@ -103,6 +103,15 @@ def wg_key(secret):
     return base64.b64encode(hashlib.sha256(str(secret).encode()).digest()).decode()
 
 
+
+# the generic setting of a module that publishes ports (Module.settings adds it)
+LISTEN_SETTING = {
+    "key": "listen", "group": "Advanced", "label": "Only at this address",
+    "help": "One address of this machine its ports answer at, and no other: a VLAN's (network.vlans), the LAN's, "
+            "or 127.0.0.1. Empty: every address, as usual. Not for a module on the host's own network.",
+    "default": "", "pattern": r"([0-9]{1,3}\.){3}[0-9]{1,3}",
+}
+
 class Module:
     def __init__(self, path, source=None):
         self.dir = path
@@ -140,6 +149,9 @@ class Module:
         env = meta.get("env") or {}
         self.env_optional = {str(k): v for k, v in (env.get("optional") or {}).items()}
         self.settings = load_settings("modules/%s" % self.name, meta.get("settings"))
+        if self.templates.get("compose") and not any(s.key == "listen" for s in self.settings):
+            # every module that publishes ports: only at one address of the machine, a VLAN's say
+            self.settings += load_settings("modules/%s" % self.name, [LISTEN_SETTING])
         # its sign-in with the network's accounts (OpenID Connect), when it has one: where it is,
         # where the accounts send people back to, and the settings it takes the client in
         acc = meta.get("accounts")
@@ -623,6 +635,27 @@ class Renderer:
             })
         return sources
 
+    @staticmethod
+    def bind_ports(name, listen, doc):
+        """A module's published ports at one address of the machine (its `listen`): "8080:80" becomes
+        "<listen>:8080:80"; one that names its address already stays. A service on the host's own
+        network has no ports of its own to bind: that is said."""
+        for svc, body in (doc.get("services") or {}).items():
+            body = body or {}
+            if body.get("network_mode") == "host":
+                raise KiwiError("modules/%s: listen %s: %s runs on the host's own network, its ports cannot be bound "
+                                "to one address" % (name, listen, svc))
+            out = []
+            for p in body.get("ports") or []:
+                if isinstance(p, dict):
+                    p = dict(p)
+                    p.setdefault("host_ip", listen)
+                elif str(p).rsplit("/", 1)[0].count(":") == 1:
+                    p = "%s:%s" % (listen, p)
+                out.append(p)
+            if out:
+                body["ports"] = out
+
     def render_compose(self, spec, ordered, base, bundle):
         services, volumes, networks = {}, {}, {}
         module_services = {}
@@ -637,6 +670,9 @@ class Renderer:
                 doc = yaml.safe_load(rendered) or {}
             except yaml.YAMLError as e:
                 raise KiwiError("modules/%s: rendered compose is not valid YAML: %s" % (name, e))
+            listen = str(ctx.get("listen") or "").strip()
+            if listen:
+                self.bind_ports(name, listen, doc)
             for svc, body in (doc.get("services") or {}).items():
                 if svc in services:
                     raise KiwiError("service %s is defined by two modules" % svc)

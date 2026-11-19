@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.239.0 — a service at one address only
+
+- kiwi-modules 0.101.0: every module that publishes ports has the setting **`listen`** ("Only at
+  this address", Advanced, on the page and in the app): its ports answer at that one address of
+  the machine, a VLAN's, the LAN's or 127.0.0.1. A module on the host's own network is refused.
+- The control page shows a machine asleep in its window as "Asleep until …", with *Wake it now*
+  when it has Wake-on-LAN.
+- Over the VPN first (`install.over_vpn`) works on Fedora CoreOS and uCore too: their images
+  carry `wireguard-tools` and `wg-quick@` (checked in Fedora CoreOS's image).
+- README and the notes on what the page and the app offer list this week's additions.
+
 ## 2.238.0 — asleep by day, awake for the backups
 
 - **`asleep: { from: "06:00", until: "02:30" }`** on a machine (settings: *Asleep from*, *…until*):

@@ -36,7 +36,13 @@ vm_start() {    # LOG [EXTRA QEMU ARGS...]: from disk.qcow2, with vars.fd, the s
         -drive if=none,id=disk,format=qcow2,file=disk.qcow2 -device virtio-blk-pci,drive=disk,bootindex=1 \
         -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PSSH-:22 \
         -display none -chardev socket,id=s0,path=serial.sock,server=on,wait=off,logfile='$log' -serial chardev:s0 \
-        -daemonize -pidfile qemu.pid"
+        -monitor unix:monitor.sock,server=on,wait=off -daemonize -pidfile qemu.pid"
+}
+vm_shot() {     # LOCAL.png: what the VM's screen shows now (an installer waits there, not on the serial console)
+    vh "python3 -c 'import socket,time
+s=socket.socket(socket.AF_UNIX); s.connect(\"monitor.sock\"); time.sleep(0.3); s.recv(4096)
+s.send(b\"screendump shot.png -f png\\n\"); time.sleep(1.5); s.close()'" && \
+    if [ -n "$VMHOST" ]; then scp -q "$VMHOST:$VD/shot.png" "$1"; else cp "$VD/shot.png" "$1"; fi
 }
 vm_running() { vh '[ -s qemu.pid ] && kill -0 $(cat qemu.pid) 2>/dev/null'; }
 vm_wait_log() { local n=$3; while [ "$n" -gt 0 ]; do vh "grep -qaE '$2' '$1'" 2>/dev/null && return 0; sleep 5; n=$((n - 5)); done; return 1; }

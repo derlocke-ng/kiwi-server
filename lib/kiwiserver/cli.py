@@ -2876,6 +2876,9 @@ def cmd_apply(args):
                 backupmod.keep_wireguard(h, tgt)
             wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)
             asleepmod.after_apply(h, tgt)   # asleep by day, awake for the night's backups (asleep), or always awake
+            if servers and unlock.wanted(h):
+                from . import opener as openermod
+                openermod.after_apply(h, tgt, servers)      # opens the way for a machine away from home (openers)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)

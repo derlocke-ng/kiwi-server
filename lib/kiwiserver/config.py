@@ -160,6 +160,10 @@ DEFAULTS = {
         # boot: carried off, it locks itself. 0: no leash. A whole house without its network for that
         # long restarts too, so it is for machines that hold something worth it.
         "leash": 0,
+        # openers (docs/design/unlock.md): the machines that open the way into this one's boot system
+        # for a ring of theirs when it waits away from home. Empty (None): every ring's own machine
+        # whose disk is encrypted; a list: only those.
+        "openers": None,
     },
     "tls": {
         # certificates for hosts that run the reverse proxy and bring none:
@@ -519,6 +523,16 @@ class Host:
             errs.append("unlock.control_threshold is a number, 1 or more: how many of its rings must answer")
         elif _control_rings(self) and ct > len(_control_rings(self)):
             errs.append("unlock.control_threshold is %d, but unlock.control names %d ring(s)" % (ct, len(_control_rings(self))))
+        op = uc.get("openers")
+        if op is not None:
+            if not isinstance(op, list) or not all(isinstance(x, str) for x in op):
+                errs.append("unlock.openers is a list of machines: the ones that open the way for this one at boot")
+            else:
+                for x in op:
+                    if x not in self.fleet.hosts:
+                        errs.append("unlock.openers: %s is no machine of this fleet" % x)
+                    elif x == self.name:
+                        errs.append("unlock.openers: a machine cannot open the way for itself")
         ov = (c.get("install") or {}).get("over_vpn", False)
         if not isinstance(ov, bool):
             errs.append("install.over_vpn must be true or false")

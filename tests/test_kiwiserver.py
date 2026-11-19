@@ -13941,6 +13941,59 @@ class TestRecovery(Base):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
 
+    def test_openers_open_the_way_for_a_master_away_from_home(self):
+        from kiwiserver import opener as openermod
+        node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        sorbet = {"role": "master", "target": "debian", "master": self.master(), "vps": {"provider": "netcup"},
+                  "network": {"dhcp": True}, "debian": {"encrypt": True},
+                  "unlock": {"rings": ["infra"], "via": {"infra": "http://127.0.0.1:7500"}, "ssh": True}}
+        lychee = {"network": {"address": "192.168.2.61/24"}, "role": "node", "target": "debian", "debian": {"encrypt": True},
+                  "node": dict(node, modules=["vpn-client", "reverse-proxy", "backup-server", "tang"],
+                               **{"backup-server": {"clients": ["papaya.kiwi"]}})}
+        f = self.network(sorbet=sorbet, lychee=lychee)
+        rows = {r["name"]: r for r in unlock.picture(f, self.roles, self.ms)}
+        self.assertEqual(rows["sorbet"]["rings"][0]["path"], "a tunnel its own machine opens")
+        self.assertEqual(rows["sorbet"]["openers"], ["lychee"])
+        self.assertEqual(rows["sorbet"]["power_cut"], "opens")             # no control node needed any more
+        servers = unlock.ring_servers(f, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms))
+        h = f.hosts["sorbet"]
+        self.assertEqual([(o.name, r, v, p) for o, r, v, p in unlock.openers(h, servers)], [("lychee", "infra", 7500, 7500)])
+        lines = unlock.authorized_lines(h, servers)
+        self.assertEqual(len(lines), 2)                                      # the unlock key and lychee's
+        self.assertTrue(lines[1].startswith('no-agent-forwarding,no-X11-forwarding,no-pty,command="echo'), lines[1])
+        self.assertIn("kiwi-opener-lychee", util.read_text(unlock.opener_key(f, "lychee") + ".pub"))
+        util.write_text(unlock._known_hosts(h), "[198.51.100.7]:2222 ssh-ed25519 AAAAhost\n[other]:22 ssh-ed25519 AAAAx\n")
+        with mock.patch.object(remote, "addresses", lambda x: ["198.51.100.7"]):
+            targets, known = openermod.plan(f.hosts["lychee"], servers)
+        self.assertEqual(targets, "sorbet 198.51.100.7 2222 7500 127.0.0.1:7500\n")
+        self.assertEqual(known, "[198.51.100.7]:2222 ssh-ed25519 AAAAhost\n")    # only its own machines' keys
+        self.assertIsNone(openermod.plan(f.hosts["papaya"], servers))         # papaya opens nobody
+        calls = []
+        with mock.patch.object(remote, "addresses", lambda x: ["198.51.100.7"]):
+            openermod.after_apply(f.hosts["lychee"], "core@lychee", servers, runner=lambda t, sc, data=None: calls.append((sc, data)))
+            openermod.after_apply(f.hosts["papaya"], "core@papaya", servers, runner=lambda t, sc, data=None: calls.append((sc, data)))
+        script, key = calls[0]
+        self.assertIn(b"OPENSSH PRIVATE KEY", key)                          # the key over stdin
+        self.assertNotIn("PRIVATE KEY", script)                              # never in the script
+        p = os.path.join(self.tmp, "opener-install.sh")
+        write(p, script)
+        self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
+        write(p, openermod.SCRIPT)
+        self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
+        self.assertIn("systemctl enable --now -q kiwi-opener.timer", script)
+        self.assertEqual(calls[1], (openermod.REMOVE, None))                 # a machine that opens nobody: none
+        # an opener without an encrypted disk is none: the key would lie in the clear
+        plain = dict(lychee, debian={"encrypt": False})
+        f2 = self.network(sorbet=sorbet, lychee=plain)
+        s2 = unlock.ring_servers(f2, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms))
+        self.assertEqual(unlock.openers(f2.hosts["sorbet"], s2), [])
+        # unlock.openers names them, or none of this fleet
+        bad = dict(sorbet, unlock=dict(sorbet["unlock"], openers=["nobody"]))
+        self.assertTrue(any("unlock.openers: nobody is no machine" in e for e in self.network(sorbet=bad).hosts["sorbet"].validate(self.roles)))
+        only = dict(sorbet, unlock=dict(sorbet["unlock"], openers=[]))
+        f3 = self.network(sorbet=only, lychee=lychee)
+        self.assertEqual(unlock.openers(f3.hosts["sorbet"], servers), [])
+
     def test_who_opens_whom(self):
         rows = {r["name"]: r for r in unlock.picture(self.network(), self.roles, self.ms)}
         self.assertEqual(rows["papaya"]["way"], "by itself")
@@ -14137,8 +14190,9 @@ class TestRecovery(Base):
         _r, checks = self.report(home())
         self.assertNotIn("power-cut", checks)
         # a ring forwarded by the control node (papaya): it opens its own keys by any of its rings
-        def with_control(control):
-            f = home(papaya={"rings": ["home"]}, quince={"rings": ["infra"], "via": {"infra": "http://127.0.0.1:7500"}})
+        def with_control(control, openers=()):
+            f = home(papaya={"rings": ["home"]}, quince={"rings": ["infra"], "via": {"infra": "http://127.0.0.1:7500"},
+                                                          "openers": list(openers)})
             data = yaml.safe_load(util.read_text(f.path))
             data["hosts"]["papaya"]["node"]["modules"] = data["hosts"]["papaya"]["node"]["modules"] + ["control"]
             data["hosts"]["papaya"]["unlock"]["control"] = control
@@ -14152,6 +14206,9 @@ class TestRecovery(Base):
         self.assertIn("quince", recovery.start_alone(fleet, hosts, servers, off=("lychee",))[1])     # its one ring is gone
         fleet, hosts, servers = with_control(["house", "home"])
         self.assertIn("quince", recovery.start_alone(fleet, hosts, servers, off=("lychee",))[0])     # the other opens it
+        # papaya as its ring's own opener (openers, 2.248): it needs no control node keys, so lychee off does not matter
+        f2, h2, s2 = with_control("house", openers=["papaya"])
+        self.assertIn("quince", recovery.start_alone(f2, h2, s2, off=("lychee",))[0])
         self.assertEqual(unlock.control_rings(fleet.hosts["papaya"]), ["house", "home"])
         self.assertEqual(unlock.control_rings(config.Fleet.load(with_control("house, home")[0].path).hosts["papaya"]),
                          ["house", "home"])

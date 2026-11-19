@@ -338,6 +338,9 @@ def start_alone(fleet, hosts, servers, off=()):
                 continue                        # nobody serves it, or a person's computer does
             who, any_of = {servers[r][0].name}, set()
             if str(via.get(r) or "").startswith("http://127.0.0.1:"):
+                if any(op is servers[r][0] and ring == r for op, ring, _v, _p in unlockmod.openers(h, servers)):
+                    givers.append((who, set()))     # the ring's own machine opens the way: it needs nothing else
+                    continue
                 if control is None or not opens_control:
                     continue                    # forwarded by hand: not by itself
                 who |= {control.name}

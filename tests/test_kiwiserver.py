@@ -8453,6 +8453,14 @@ peers=4 3
         self.assertEqual(shown["ms"], 120)
 
     def test_status_text_and_probe_come_apart(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        write(os.path.join(d, "stack.env"), "# written by kiwi-server 2.241.0 \u2014 read by /usr/local/bin/kiwi-stack\nX=1\n")
+        write(os.path.join(d, "role.done"), "2026-11-19T10:00:00Z\n")
+        head = facts.HUMAN.split("if [ -f")[0].replace("/etc/kiwi-server/", d + "/").replace("/var/lib/kiwi-server/", d + "/")
+        said = subprocess.run(["sh", "-c", head], capture_output=True, text=True).stdout
+        self.assertEqual(said, "applied: 2026-11-19T10:00:00Z with kiwi-server 2.241.0\n")    # which version, as plan says
+        os.unlink(os.path.join(d, "stack.env"))                                                  # a bare machine: no stack
+        self.assertEqual(subprocess.run(["sh", "-c", head], capture_output=True, text=True).stdout, "applied: 2026-11-19T10:00:00Z\n")
         human, data = facts.split("applied: x\n%s\nuptime=1\n" % facts.MARK)
         self.assertEqual((human, data), ("applied: x\n", "uptime=1\n"))
         self.assertEqual(facts.split("no probe\n"), ("no probe\n", ""))

@@ -430,7 +430,54 @@ def url(client, ring, server, port):
         if public:
             return "http://%s:%d" % (public, port)
     raise KiwiError("%s cannot reach the ring on %s at boot: they are not on one LAN with static addresses at one "
-                    "site (unlock.via says where else to find it, or a ring on the master)" % (client.name, server.name))
+                    "site, and the fleet has no master to relay it (unlock.via says where else to find it)"
+                    % (client.name, server.name))
+
+
+RELAY_BASE, RELAY_SPAN = 7600, 200
+
+
+def relay_port(ring):
+    """The master's public port that relays a ring: fixed by its name, as the machines' disks keep
+    the address they were bound with."""
+    import zlib
+    return RELAY_BASE + zlib.crc32(str(ring).encode()) % RELAY_SPAN
+
+
+def one_lan(client, server):
+    """Does the machine reach the ring's machine on their LAN at boot (fixed addresses, one site)?"""
+    mine, theirs = _lan(client), _lan(server)
+    return bool(mine and theirs and theirs.ip in mine.network and _site(client) == _site(server))
+
+
+def relays(fleet, servers, mesh_ip):
+    """The rings machines reach at boot only through the master (another site, no shared LAN):
+    {ring: {port, to, clients}}. The master passes the port on over the mesh to the ring's
+    machine and keeps no key (docs/security.md); a machine that names the way itself
+    (unlock.via) is left out. `mesh_ip(host)`: a machine's address on the mesh."""
+    out = {}
+    for h in fleet.hosts.values():
+        if h.standby_of:
+            continue
+        via = h.cfg["unlock"].get("via") or {}
+        for ring in h.cfg["unlock"].get("rings") or []:
+            if via.get(ring) or ring not in servers:
+                continue
+            server, port = servers[ring]
+            if isinstance(server, OperatorRing) or server is h or _on_master(server) or one_lan(h, server):
+                continue
+            ip = mesh_ip(server)
+            if not ip:
+                continue
+            e = out.setdefault(ring, {"port": relay_port(ring), "to": "%s:%d" % (ip, int(port)), "clients": []})
+            e["clients"].append(h)
+    taken = {}
+    for ring, e in sorted(out.items()):
+        if e["port"] in taken:
+            raise KiwiError("the rings %s and %s would share the master's relay port %d: give one of them unlock.via and "
+                            "vpn-server.unlock_relay by hand" % (taken[e["port"]], ring, e["port"]))
+        taken[e["port"]] = ring
+    return out
 
 
 def thumbprint(server, ring, port):

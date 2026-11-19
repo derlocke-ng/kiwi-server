@@ -378,6 +378,7 @@ class Renderer:
             return
         self._scanned = True
         recs, needs_ca, master_ip, node_lan = [], False, "", []
+        master_host, public_host, vpn_ips = None, "", {}
         self._caches = []       # (LAN interface, hostname, registries, apt, site) of the nodes that run the cache module
         open_nodes = []         # (name, mesh address, public names, ports) of the nodes open to the internet
         mesh_only = []          # names whose service answers at the mesh address only: never a home address for them
@@ -392,6 +393,10 @@ class Renderer:
                 spec = rolesmod.stack_spec(h, role)
                 if not spec.vpn_ip:
                     continue
+                vpn_ips[h.name] = spec.vpn_ip
+                if role.node_type == "master" and master_host is None:
+                    master_host = h
+                    public_host = str((h.module_settings.get("vpn-server") or {}).get("wg_host") or "")
                 if "control" in h.modules and not self._status_page:
                     c = h.module_settings.get("control") or {}
                     if c.get("status_page", True):
@@ -454,6 +459,19 @@ class Renderer:
                                          "proxy_protocol": p["proxy_protocol"], "proto": proto})
         self._exposed = exposed
         self._mesh_only = mesh_only
+        # rings that machines at another site reach only through the master: it relays them over the
+        # mesh and keeps no key; such a machine finds them at the master's public address
+        self._relays = {}
+        if master_host is not None and public_host:
+            try:
+                servers = unlock.ring_servers(self.fleet, lambda x: self.prepare(x))
+                self._relays = unlock.relays(self.fleet, servers, lambda s: vpn_ips.get(s.name, ""))
+            except KiwiError as e:
+                util.warn("the rings at other sites are not relayed: %s" % e)
+            for ring, e in self._relays.items():
+                for c in e["clients"]:
+                    c.cfg["unlock"] = dict(c.cfg["unlock"], via=dict(c.cfg["unlock"].get("via") or {},
+                                                                     **{ring: "http://%s:%d" % (public_host, e["port"])}))
         self._records, self._needs_ca, self._master_ip, self._node_lan = recs, needs_ca, master_ip, node_lan
 
     def dns_records(self):
@@ -600,6 +618,12 @@ class Renderer:
         if role.node_type != "master" and "dns" in host.modules and self._partners:
             # a node's Pi-hole asks its master for the linked networks' names (the master asks the partner)
             host.module_settings["dns"]["partner_domains"] = sorted({fedmod.seen(p)[1] for p in self._partners.values() if fedmod.seen(p)[1]})
+        if role.node_type == "master" and "vpn-server" in host.modules:
+            self.scan()
+            if self._relays:            # rings at home for machines at another site: passed on, no key kept here
+                vs = host.module_settings["vpn-server"]
+                vs["unlock_relay"] = dict({str(e["port"]): e["to"] for e in self._relays.values()},
+                                          **{str(k): v for k, v in (vs.get("unlock_relay") or {}).items()})
         if role.node_type == "master" and "tang" in host.modules and "vpn-server" in host.modules:
             # a ring here (away): the VPN server publishes it, to the home's addresses only
             host.module_settings["vpn-server"]["local_rings"] = dict(host.module_settings["tang"].get("rings") or {})
@@ -721,6 +745,7 @@ class Renderer:
         else:
             host.unlock_standin = False
             if unlock.wanted(host):      # the thumbprints go into the Ignition: Ignition binds the disk
+                self.scan()             # a ring at another site: through the master's relay (unlock.via filled in)
                 try:
                     host.unlock_pins = unlock.pins(host, unlock.ring_servers(
                         self.fleet, lambda x: rolesmod.resolve_settings(self.roles[x.role], x, self.ms)))
@@ -2768,6 +2793,7 @@ def cmd_apply(args):
     servers = None
     if any(unlock.wanted(h) for h in hosts):
         servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+        r.scan()            # rings at another site: unlock.via through the master's relay, before binding
     scripts = {}
     for h in hosts:
         try:

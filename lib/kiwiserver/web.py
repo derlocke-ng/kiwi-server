@@ -1065,7 +1065,19 @@ admin passwords of Nextcloud, Immich and the like stay as they are for now.</spa
 onsubmit="return confirm('Leave {{ n }} out? It takes the new secrets at its next update.')">{{ tok }}
 <input type="hidden" name="action" value="rotate-seed"><input type="hidden" name="host" value="{{ n }}">
 <button>Leave {{ n }} out</button></form>{% endfor %}
-<p style="margin-top:18px"><strong>3. The password of this page</strong></p>
+{% if rot.rings %}<p style="margin-top:18px"><strong>3. The keys that open the disks at boot</strong><br><span class="muted small">
+Each ring makes new keys; every disk it opens is bound to them again, in place, and the old keys go when the last
+machine has changed. A machine that is off meanwhile still opens with the old ones: switch it on, then press again.
+Nothing restarts.</span></p>
+{% for r in rot.rings %}<div style="margin:6px 0"><strong>{{ r.name }}</strong> <span class="muted small">·
+{% if r.pending %}under way: {{ r.pending|join(", ") }} still on the old keys{% elif r.last %}last replaced {{ r.last[:10] }}{% else %}never replaced{% endif %}</span>
+<form class="inline" method="post" action="/run" onsubmit="return confirm('New keys for the ring {{ r.name }}, and every disk it opens bound to them again?')">{{ tok }}
+<input type="hidden" name="action" value="rotate-ring"><input type="hidden" name="module" value="{{ r.name }}"><button class="small">Replace</button></form>
+{% for n in r.pending %}<form class="inline" method="post" action="/run"
+onsubmit="return confirm('Leave {{ n }} out? It opens with the old keys until they go, then only with its key at the console.')">{{ tok }}
+<input type="hidden" name="action" value="rotate-ring"><input type="hidden" name="module" value="{{ r.name }}"><input type="hidden" name="host" value="{{ n }}">
+<button class="small">Leave {{ n }} out</button></form>{% endfor %}</div>{% endfor %}{% endif %}
+<p style="margin-top:18px"><strong>{{ 4 if rot.rings else 3 }}. The password of this page</strong></p>
 <form method="post" action="/controllers/password">{{ tok }}
 <input type="password" name="old" placeholder="Current password" autocomplete="current-password" required>
 <input type="password" name="new" placeholder="New password (12 characters or more)" autocomplete="new-password" minlength="12" required>
@@ -1445,6 +1457,7 @@ VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "che
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "remove": "Removing",
         "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
+        "rotate-ring": "Replacing the keys of an unlock ring",
         "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
         "doctor": "Checking the tools of this machine", "service": "Looking after a container on"}
 SERVICES = healthmod.SERVICES        # a service by the first part of its name, in plain words
@@ -2847,7 +2860,7 @@ def make_app(control: Control):
             return JSONResponse({"error": "unknown action"}, status_code=400)
         try:
             jid = control.start(action, [host] if host else [], user=u, at=at if action in ("setup", "restore", "service") else "",
-                                module=module if action in ("restore", "service") else "")
+                                module=module if action in ("restore", "service", "rotate-ring") else "")
         except KiwiError as e:
             if action == "backup":              # said where the button is
                 ms, _st, _info = machines()
@@ -2889,10 +2902,10 @@ def make_app(control: Control):
             say["ok"] = "Done. Go back: the machine's page has the install media and says what to do with them."
         if j["action"] == "setup":
             say["ok"] = "Done. Go back for the next step."
-        if j["action"] in ("rotate", "rotate-seed"):      # a machine that is off is no failure: it waits
+        if j["action"] in ("rotate", "rotate-seed", "rotate-ring"):      # a machine that is off is no failure: it waits
             say["failed"] = ("Not every machine could be changed. The ones that wait are listed under Computers; "
                              "the lines below say why.")
-        back = ("/" if j["action"] == "remove" else "/backups" if j["action"] in ("save", "backup", "restore", "start-new", "prune") else "/controllers" if j["action"] in ("rotate", "rotate-seed")
+        back = ("/" if j["action"] == "remove" else "/backups" if j["action"] in ("save", "backup", "restore", "start-new", "prune") else "/controllers" if j["action"] in ("rotate", "rotate-seed", "rotate-ring")
                 else "/help" if j["action"] == "doctor"
                 else "/hosts/" + j["hosts"][0] if j["hosts"] else "/")
         return page("job.html", request, "/activity", job=j, title=title.strip(), say=say, back=back)
@@ -2918,7 +2931,7 @@ def make_app(control: Control):
         at, module = str(body.get("at") or ""), str(body.get("module") or "")
         try:
             jid = control.start(action, hosts, user=who, at=at if action in ("setup", "restore", "service") else "",
-                                module=module if action in ("restore", "service") else "")
+                                module=module if action in ("restore", "service", "rotate-ring") else "")
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return {"job": jid}

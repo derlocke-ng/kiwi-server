@@ -140,10 +140,20 @@ address moved into `10.209`. Pi-hole's own address rewriting (`alias=`) cannot d
 change A's own names too.
 
 **Certificates.** B adds the alias names to the certificates of what it shares with A
-(`cloud.papaya.kiwi2.home` beside `cloud.papaya.home`), from A's card. A trusts B's CA for
-`kiwi2.home` only, so B's CA can never sign one of A's own names. An alias domain inside the
-shared domain stays within B's own name constraint. `federate` refuses an alias that is one of
-A's own host names.
+(`cloud.papaya.kiwi2.home` beside `cloud.papaya.home`), built in 2.216.0. `federate` refuses an
+alias that is one of A's own host names.
+
+Whether A's devices trust them is not built yet. Two cases, decided on 19 November 2026:
+
+- *B has a domain of its own* (`internal`): A's devices may import B's CA as it is. It carries
+  its name constraint (`internal`), so it can sign nothing of A's. A's control page offers it
+  under *Linked networks*, as it offers A's own CA.
+- *B has A's domain* (translated): B's CA is constrained to `home` too, so importing it would let
+  B sign A's own names. Instead A's CA signs B's alias names for B's key: B sends a request for
+  `*.papaya.kiwi2.home` (one per shared machine), A signs only names under the alias it gave B,
+  and B's nginx serves that certificate on the alias names (SNI). A's devices trust it through
+  A's own CA; nothing of B's is imported. With one operator `federate` does both sides; between
+  two, the request and the signed certificate travel like the cards.
 
 **What does not change.** `share` and `from` are written in the partner's own words, as now;
 the TXT records, the picture and the access manager show the alias names.

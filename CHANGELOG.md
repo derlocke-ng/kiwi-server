@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.221.0 — new disk keys from the page and the app
+
+- **The control page's *If a computer was lost or stolen*** has *3. The keys that open the disks at
+  boot*: each unlock ring with when its keys were last replaced, *Replace*, and *Leave … out* for
+  a machine that waits. The app's dialog has *Replace the disk keys* (every ring in turn).
+- `kiwi-server rotate FLEET ring all`: every ring the machines name, one after the other; with
+  `--waive NAME` only the rings still waiting for that machine, and no new keys.
+
 ## 2.220.0 — the leash, and new keys for a ring
 
 - **`unlock: { leash: 10 }`** (docs/design/control-plane.md, ROADMAP's unlock list): a machine that

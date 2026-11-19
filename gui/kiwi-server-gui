@@ -4848,7 +4848,11 @@ class Window(Adw.ApplicationWindow):
                      "password there.")
             dlg.add_response("page", "Open the control page")
         pending = self.rotation_pending()
-        for kind, label in (("ssh", "keys"), ("seed", "secrets")):
+        rings = self.rings_named()
+        if rings:
+            body += ("\n\nThe keys that open the disks at boot (%s): each ring makes new ones, every disk it opens is "
+                     "bound to them again, and the old keys go when the last machine has changed." % ", ".join(rings))
+        for kind, label in (("ssh", "keys"), ("seed", "secrets"), ("ring", "disk keys")):
             if pending[kind]:
                 body += "\n\nUnder way: %s still on the old %s. Switch them on, then press again; or leave out one " \
                         "that is gone or will be installed anew." % (", ".join(pending[kind]), label)
@@ -4857,6 +4861,8 @@ class Window(Adw.ApplicationWindow):
         dlg.set_body(body)
         dlg.add_response("close", "Not now")
         dlg.add_response("seed", "Replace the secrets")
+        if rings:
+            dlg.add_response("ring", "Replace the disk keys")
         dlg.add_response("go", "Replace the keys")
         dlg.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
 
@@ -4870,6 +4876,9 @@ class Window(Adw.ApplicationWindow):
                 self._after_spawn = lambda: self.sync(False, True)      # the other computers get the result
                 self.spawn(["rotate", self.doc.path, "ssh" if r == "go" else "seed"],
                            "Replacing the keys…" if r == "go" else "Replacing the secrets…")
+            elif r == "ring":
+                self._after_spawn = lambda: self.sync(False, True)
+                self.spawn(["rotate", self.doc.path, "ring", "all"], "Replacing the disk keys…")
         dlg.connect("response", answer)
         dlg.present(self)
 
@@ -4880,14 +4889,22 @@ class Window(Adw.ApplicationWindow):
             with open(os.path.join(self.doc.dir, "secrets", "rotation.json")) as fh:
                 state = json.load(fh)
         except (OSError, ValueError):
-            return {"ssh": [], "seed": []}
-        return {k: [] if (state.get(k) or {}).get("done") is None else
-                [n for n in self.doc.hosts() if n not in state[k]["done"]] for k in ("ssh", "seed")}
+            return {"ssh": [], "seed": [], "ring": []}
+        out = {k: [] if (state.get(k) or {}).get("done") is None else
+               [n for n in self.doc.hosts() if n not in state[k]["done"]] for k in ("ssh", "seed")}
+        out["ring"] = sorted({n for x in (state.get("rings") or {}).values() if x for n in x.get("pending") or []})
+        return out
+
+    def rings_named(self):
+        """The unlock rings the machines name (unlock.rings)."""
+        return sorted({str(r) for n in self.doc.hosts() for r in (self.doc.get(n, ("unlock", "rings")) or [])} - {"operator"})
 
     def confirm_waive(self, kind, host):
         """A machine left out of a replacement under way: gone for good, or about to be installed anew."""
-        body = ("Its old key stops working when the others are done. Only for a machine that is gone or will be "
-                "installed anew." if kind == "ssh" else "It takes the new secrets at its next update.")
+        body = {"ssh": "Its old key stops working when the others are done. Only for a machine that is gone or will be "
+                       "installed anew.",
+                "ring": "It opens with the old disk keys until they go, then only with its key at the console."}.get(
+                    kind, "It takes the new secrets at its next update.")
         dlg = Adw.AlertDialog(heading="Leave %s out?" % host, body=body)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("leave", "Leave it out")
@@ -4897,7 +4914,8 @@ class Window(Adw.ApplicationWindow):
         def answer(_d, r):
             if r == "leave":
                 self._after_spawn = lambda: self.sync(False, True)
-                self.spawn(["rotate", self.doc.path, kind, "--waive", host], "Leaving %s out…" % host)
+                self.spawn(["rotate", self.doc.path, kind] + (["all"] if kind == "ring" else []) + ["--waive", host],
+                           "Leaving %s out…" % host)
         dlg.connect("response", answer)
         dlg.present(self)
 

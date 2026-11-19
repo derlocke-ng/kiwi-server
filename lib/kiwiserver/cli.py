@@ -3642,7 +3642,32 @@ def cmd_connect(args):
             util.say("no browser of yours keeps a certificate store here yet: start it once, then run this again")
         util.say("for every program on this computer, once, as administrator:")
         print("    %s" % connectmod.system_trust_command(shown_path(ca), domain))
+        _trust_partners(fleet, domain, make_tc(args))
     util.say("what is where, and the logins: kiwi-server status %s" % path)
+
+
+def _trust_partners(fleet, domain, tc):
+    """The linked networks' CAs into this user's browsers too, those that can sign only their
+    own names (federation.ca_offer); the others are named with why not."""
+    import tempfile
+    try:
+        found = fedmod.partners(fleet.dir)
+    except KiwiError:
+        return
+    for name, p in sorted(found.items()):
+        try:
+            ok, why = fedmod.ca_offer(p, domain, certs.ca_permitted(p["ca"]) if p.get("ca") else [])
+        except KiwiError as e:
+            ok, why = False, str(e)
+        if not ok:
+            util.say("%s's certificates are not trusted here: %s" % (name, why))
+            continue
+        with tempfile.TemporaryDirectory(prefix="kiwi-partner-") as tmp:
+            pem = os.path.join(tmp, "ca.pem")
+            util.write_text(pem, str(p["ca"]), 0o644)
+            took, _why = connectmod.trust(pem, str(p.get("domain") or name), tc)
+        if took:
+            util.say("your browsers trust %s's certificates too (%s)" % (name, why))
 
 
 def cmd_ca(args):
@@ -4394,10 +4419,14 @@ def _federation_side(args, path):
     if not vs.get("wg_host") or not vs.get("federation_secret"):
         raise KiwiError("%s: its master %s has no wg_host or no federation key" % (path, h.name))
     groups = {str(n): str(g["subnet"]) for n, g in (vs.get("groups") or {}).items() if isinstance(g, dict) and g.get("subnet")}
+    # its CA's certificate (public): the partner's devices may import it when it signs only this network's names
+    tls = fleet.defaults.get("tls") or {}
+    ca = os.path.join(fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
     return fleet, os.path.basename(fleet.dir.rstrip("/")) or h.name, {
         "endpoint": str(vs["wg_host"]), "public_key": fedmod.public_key(vs["federation_secret"]),
         "mesh": h.role_settings.get("mesh_subnet") or h.role_settings_raw.get("mesh_subnet") or "10.8.0.0/16",
-        "domain": h.domain, "dns": vs.get("server_ip") or "", "groups": groups}
+        "domain": h.domain, "dns": vs.get("server_ip") or "", "groups": groups,
+        "ca": util.read_text(ca) if os.path.isfile(ca) else ""}
 
 
 def _seen_as(fleet, entry, them, theirs):
@@ -4444,13 +4473,28 @@ def _say_seen(them, seen):
                     " and ".join(seen[k] for k in ("mesh", "domain") if seen.get(k))))
 
 
+def _partner_ca(args):
+    """`federate FLEET --ca PARTNER`: the partner's CA certificate on stdout, for this network's
+    devices to import, when it can sign only the partner's own names (federation.ca_offer)."""
+    fleet, _roles, _ms = load(args, need_roles=False)
+    found = fedmod.partners(fleet.dir)
+    if args.ca not in found:
+        raise KiwiError("no linked network called %s (%s)" % (args.ca, ", ".join(sorted(found)) or "none"))
+    p = found[args.ca]
+    ok, why = fedmod.ca_offer(p, fleet.defaults.get("domain") or "home", certs.ca_permitted(p["ca"]) if p.get("ca") else [])
+    if not ok:
+        raise KiwiError("%s's CA is not offered to your devices: %s" % (args.ca, why))
+    sys.stdout.write(str(p["ca"]).rstrip("\n") + "\n")
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
     mesh and DNS into the other's federation.yaml. What each shares stays empty until written.
     Between two operators: --invite writes this network's card for the other one, --accept
     takes theirs (and writes this network's card for them, when there is none yet)."""
+    if args.ca:
+        return _partner_ca(args)
     if args.invite or args.accept:
-        import yaml
         if args.other:
             raise KiwiError("--invite and --accept take one fleet file: the other network is the card")
         fleet, name, entry = _federation_side(args, args.fleet)
@@ -4466,8 +4510,7 @@ def cmd_federate(args):
                      % (them, name, os.path.join(fleet.dir, fedmod.FILE)))
         out = args.invite or os.path.join(os.path.dirname(os.path.abspath(args.accept)), "%s.card.yaml" % name)
         if args.invite or not os.path.isfile(out):
-            util.write_text(out, "# %s's card for a partner network (kiwi-server federate FLEET --accept THIS). Nothing secret.\n"
-                            % name + yaml.safe_dump(fedmod.card(name, entry), sort_keys=False, default_flow_style=None), 0o644)
+            util.write_text(out, fedmod.card_text(name, entry), 0o644)
             util.say("%s's card: %s. The other network's operator takes it with: kiwi-server federate THEIR-FLEET --accept %s"
                      % (name, out, os.path.basename(out)))
         return
@@ -5073,6 +5116,8 @@ def build_parser():
     s.add_argument("--accept", metavar="CARD", help="take a partner's card (and write this network's for them)")
     s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
+    s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
+                   "when it can sign only the partner's own names")
     s = sub("service", cmd_service); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("name", help="the service as its container is called, e.g. kn-nginx")
     s.add_argument("action", choices=["restart", "stop", "start", "logs"])

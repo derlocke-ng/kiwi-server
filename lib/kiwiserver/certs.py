@@ -60,6 +60,24 @@ def cert_names(pem_path):
     return [p.strip()[4:] for p in out.replace("\n", ",").split(",") if p.strip().startswith("DNS:")]
 
 
+def ca_permitted(pem):
+    """The domains a CA certificate (PEM text) may sign names under: its name constraint's
+    permitted DNS entries, without the leading dot. None: no constraint, it may sign any name."""
+    if "-----BEGIN CERTIFICATE-----" not in str(pem or ""):
+        raise KiwiError("not a certificate")
+    out = _openssl(["x509", "-noout", "-ext", "nameConstraints"], input=pem).stdout
+    if "Name Constraints" not in out:
+        return None
+    permitted, inside = [], False
+    for line in out.splitlines():
+        line = line.strip()
+        if line.endswith(":") and not line.startswith("DNS:"):
+            inside = line == "Permitted:"
+        elif inside and line.startswith("DNS:"):
+            permitted.append(line[4:].strip().lstrip(".").lower())
+    return permitted
+
+
 def cert_valid(pem_path, min_days=30):
     r = subprocess.run(["openssl", "x509", "-in", pem_path, "-noout", "-checkend", str(min_days * 86400)],
                        capture_output=True)

@@ -1600,6 +1600,13 @@ class FederationDialog(Adw.Dialog):
                                 subtitle="%s's devices come out at your master. To the Internet only." % name)
             g.add(out)
             g.add(let)
+            # its CA, for this network's devices: only one that signs its own names only (kiwi-server federate --ca)
+            ca = Adw.ActionRow(title="Its certificates", subtitle="Save its CA and import it on your devices, to open "
+                               "%s's pages without a warning. Offered only when it can sign nothing of yours." % name)
+            get = Gtk.Button(label="Save…", valign=Gtk.Align.CENTER)
+            get.connect("clicked", lambda _b, n=name: self.save_ca(n))
+            ca.add_suffix(get)
+            g.add(ca)
             self.rows[name] = (share, frm, out, let)
             page.add(g)
         save = Gtk.Button(label="Save", css_classes=["suggested-action"], sensitive=bool(self.rows))
@@ -1625,12 +1632,41 @@ class FederationDialog(Adw.Dialog):
                 else:
                     entry.pop(key, None)
             self.data[name] = entry
+        class Dumper(yaml.SafeDumper):      # a partner's CA certificate stays a block, as kiwi-server writes it
+            pass
+        Dumper.add_representer(str, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v,
+                                                                   style="|" if "\n" in v else None))
         text = ("# federation.yaml — the partner networks and what each may reach here.\n"
-                + yaml.safe_dump(self.data, sort_keys=False, default_flow_style=None))
+                + yaml.dump(self.data, Dumper=Dumper, sort_keys=False, default_flow_style=None, allow_unicode=True))
         with open(self.path, "w") as fh:
             fh.write(text)
         self.close()
         self.win.toast("Saved — apply the master and the nodes")
+
+    def save_ca(self, name):
+        path = self.win.doc.path
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["federate", path, "--ca", name])
+
+            def done():
+                if rc != 0 or "BEGIN CERTIFICATE" not in out:
+                    self.win.alert("Not offered", ((err or out).strip().replace("error: ", "").splitlines() or ["?"])[-1])
+                    return False
+                dlg = Gtk.FileDialog(title="Save %s's CA" % name, initial_name="kiwiCA-%s.pem" % name)
+
+                def chosen(d, res):
+                    try:
+                        dest = d.save_finish(res).get_path()
+                    except GLib.Error:
+                        return
+                    with open(dest, "w") as fh:
+                        fh.write(out)
+                    self.win.toast("Saved. Import it on your devices as a certificate authority.")
+                dlg.save(self.win, None, chosen)
+                return False
+            GLib.idle_add(done)
+        threading.Thread(target=work, daemon=True).start()
 
     def link(self):
         dlg = Gtk.FileDialog(title="The other network's fleet file")

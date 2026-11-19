@@ -79,8 +79,9 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
 8. **Moving a whole network to another mesh or domain**, for just in case
    (docs/design/federation.md): it must pin every secret derived from a host name
    (passwords, data disk keys) first. Two networks of one mesh or domain link
-   since 2.216.0, translated at the link; left there: a partner's CA trusted on
-   the devices for its alias domain.
+   since 2.216.0, translated at the link. A partner with a domain of its own has
+   its CA offered to the devices since 2.222.0; left: the alias names of a
+   translated partner signed by this network's own CA.
 9. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
    kernel TLS instead of the SFTP container, backups of the desktop and the phone
    (not designed yet), the OpenWrt package, rootless podman for the minimal

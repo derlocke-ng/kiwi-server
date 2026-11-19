@@ -136,4 +136,5 @@ A controller like a second computer: it joins with the invite link and reads the
 | Several rings for the control node | `unlock.control: [house, attic]` | control setup: *any of … opens it* | fleet file (the control node is set up from the app) |
 | The leash | `unlock.leash` | fleet file | fleet file |
 | Forget a kept password | `secrets forget` | *Forget* on the field | the field's clear box |
+| A linked network's CA for the devices | `federate … --ca NAME`, `connect` | Federation…, *Its certificates* | Linked networks, download (2.222.0) |
 

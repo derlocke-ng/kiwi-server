@@ -16,7 +16,6 @@ Two parts:
 """
 import json
 import os
-import shlex
 import textwrap
 import time
 import urllib.parse

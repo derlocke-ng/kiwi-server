@@ -804,7 +804,7 @@ print("\n".join(d.get("sigs", [])))
         live = starter.live_butane("{}", plain_ign="{}")
         self.assertEqual(sorted(f["path"] for f in live["storage"]["files"] if f["path"].endswith(".ign")),
                          ["/etc/kiwi-starter/installed-plain.ign", "/etc/kiwi-starter/installed.ign"])
-        tpm, meminfo = os.path.join(self.tmp, "tpm"), os.path.join(self.tmp, "meminfo")
+        tpm = os.path.join(self.tmp, "tpm")
         os.makedirs(tpm, exist_ok=True)
         write(os.path.join(self.tmp, "live.sh"), starter.install_script())
 
@@ -5055,7 +5055,8 @@ class TestStandby(Base):
         self.assertEqual(f.standbys("gate"), [b])
         self.assertEqual(b.admin["ssh_port"], 41022)                       # its master's, unless its own
         self.assertNotIn("standby", b.overrides)
-        role_g, role_b = self.prepare(gate), self.prepare(b)
+        self.prepare(gate)
+        role_b = self.prepare(b)
         self.assertEqual(role_b.node_type, "master")
         self.assertNotIn("tor", b.modules)                                  # at home: no Tor
         self.assertNotIn("tang", b.modules)                                 # nor its master's ring
@@ -7477,7 +7478,6 @@ class TestModuleSources(Base):
         return rc, out.getvalue(), err.getvalue()
 
     def test_a_source_is_added_pinned_moved_on_purpose_and_removed(self):
-        from kiwiserver import sources
         src, git = self.repo()
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
         with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache")}):
@@ -7592,7 +7592,6 @@ class TestModuleSources(Base):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "other", "modules", "hello", "module.yaml")))
 
     def test_a_module_that_says_how_it_signs_in_is_connected_like_a_built_in_one(self):
-        from kiwiserver import sources
         src, git = self.repo("grow")
         mod = os.path.join(src, "modules", "grow", "module.yaml")
         text = util.read_text(mod).replace("settings:\n", "settings:\n  - key: accounts_client\n    default: \"\"\n"
@@ -13131,7 +13130,7 @@ class TestFirstRunPage(StoreBase):
 
     def test_a_value_that_cannot_be_is_refused_and_nothing_is_written(self):
         cookie, _csrf = self.made()
-        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        page = "/hosts/%s/settings" % self.node()
         path = os.path.realpath(os.path.join(self.dir, "fleet.yaml"))
         text, age = util.read_text(path), util.sha256_file(os.path.join(self.dir, "fleet.yaml.age"))
         # the fleet's own check says no
@@ -13181,7 +13180,7 @@ class TestFirstRunPage(StoreBase):
 
     def test_the_settings_for_every_machine(self):
         cookie, _csrf = self.made()
-        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        page = "/hosts/%s/settings" % self.node()
         self.assertEqual(self.ask("/settings")[:2], (303, "/login"))
         self.assertIn('<a href="/settings">Settings for every machine</a>', self.ask("/machines", cookie=cookie)[1])
         body = self.ask("/settings", cookie=cookie)[1]

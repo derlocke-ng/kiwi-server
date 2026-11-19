@@ -1151,6 +1151,17 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_the_scripts_that_bind_again_parse_and_say_what_they_do(self):
+        for name in ("REGEN_SCRIPT", "BIND_SCRIPT"):
+            path = os.path.join(self.tmp, name + ".sh")
+            write(path, getattr(unlock, name))
+            self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0, name)
+        self.assertIn("clevis luks regen -q", unlock.REGEN_SCRIPT)          # in place: no room needed (CoreOS)
+        self.assertIn("clevis luks pass", unlock.REGEN_SCRIPT)               # and it opens with the new keys
+        # a bind that does not fit beside the old one: the old one first, while the key opens the disk
+        self.assertLess(unlock.BIND_SCRIPT.index("cryptsetup open --test-passphrase"),
+                        unlock.BIND_SCRIPT.index("clevis luks unbind -f -d \"$dev\" -s \"$slot\" || exit 1; done\n    clevis luks bind"))
+
     def test_new_host_key_forgets_the_address(self):
         calls = []
         with mock.patch.object(remote, "KNOWN_HOSTS", "/k"):

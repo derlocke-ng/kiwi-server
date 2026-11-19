@@ -79,7 +79,15 @@ echo none
 BIND_SCRIPT = luks._PRELUDE + r'''
 IFS= read -r key; IFS= read -r dev; IFS= read -r tree; IFS= read -r old
 printf %s "$key" > "$d/key"
-clevis luks bind -y -k "$d/key" -d "$dev" sss "$tree" || exit 1
+if ! clevis luks bind -y -k "$d/key" -d "$dev" sss "$tree"; then
+    # no room for a second binding in the header (CoreOS: Ignition's holds every ring's
+    # advertisement): the old one first, while the key opens the disk, then the new one
+    cryptsetup open --test-passphrase --key-file="$d/key" "$dev" >/dev/null 2>&1 || exit 1
+    [ -n "$old" ] || exit 1
+    for slot in $old; do clevis luks unbind -f -d "$dev" -s "$slot" || exit 1; done
+    clevis luks bind -y -k "$d/key" -d "$dev" sss "$tree" || { echo "the disk opens only with its key now" >&2; exit 1; }
+    exit 0
+fi
 for slot in $old; do clevis luks unbind -f -d "$dev" -s "$slot" || exit 1; done
 '''
 
@@ -456,10 +464,38 @@ def _inner_port(server, ring):
     return 7500
 
 
+# stdin: nothing. Every Tang binding of the machine's LUKS disks made again in place with the rings'
+# keys as they are now (a ring's keys were rotated): no extra room in the header needed. Then each is
+# checked: it opens with the new keys. Prints "regen DEV SLOT" per binding, "none" without any.
+REGEN_SCRIPT = r'''
+set -u
+n=0
+for dev in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
+    for slot in $(clevis luks list -d "$dev" 2>/dev/null | grep tang | sed -n 's/^\([0-9]*\):.*/\1/p'); do
+        clevis luks regen -q -d "$dev" -s "$slot" >/dev/null 2>&1 || { echo "regen failed: $dev slot $slot" >&2; exit 1; }
+        clevis luks pass -d "$dev" -s "$slot" >/dev/null 2>&1 || { echo "the new binding of $dev slot $slot does not open" >&2; exit 1; }
+        echo "regen $dev $slot"; n=$((n + 1))
+    done
+done
+[ "$n" -gt 0 ] || echo none
+'''
+
+
+def regen(host, tgt):
+    """The machine's disk bound again to its rings' keys as they are now, in place (clevis luks regen);
+    each binding then opens with them. KiwiError when it cannot (a ring forwarded only at boot)."""
+    out = remote.run(tgt, REGEN_SCRIPT).decode(errors="replace")
+    if "regen " not in out:
+        raise KiwiError("%s: no Tang binding on its disks" % host.name)
+    return out.count("regen ")
+
+
 def rotate_ring(server, ring):
     """New keys for a ring on its machine; the old ones stay, hidden (.<thumbprint>.jwk), so what was
     bound to them still opens until `finish_ring`."""
-    _in_ring(server, ring, "sh -c 'o=$(stat -c %u:%g /db); /usr/libexec/tangd-rotate-keys -d /db >/dev/null && chown -R \"$o\" /db'")
+    # what tangd-rotate-keys does, which not every tang image has: the keys hidden, new ones made
+    _in_ring(server, ring, "sh -c 'set -e; o=$(stat -c %u:%g /db); cd /db; for k in *.jwk; do [ -e \"$k\" ] && mv \"$k\" \".$k\"; done; "
+                           "g=$(command -v tangd-keygen || echo /usr/libexec/tangd-keygen); \"$g\" /db; chown -R \"$o\" /db'")
 
 
 def finish_ring(server, ring):

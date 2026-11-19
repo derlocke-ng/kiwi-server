@@ -3914,7 +3914,14 @@ def cmd_rotate(args):
         servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
 
         def rebind(h):
-            unlock.bind(h, remote.reach(h), servers, force=True)
+            # in place: the header has no room for a second binding beside Ignition's (CoreOS)
+            try:
+                unlock.regen(h, remote.reach(h))
+            except KiwiError:
+                if not any(str(v).startswith("http://127.0.0.1:") for v in (h.cfg["unlock"].get("via") or {}).values()):
+                    raise
+                unlock.bind(h, remote.reach(h), servers, force=True)     # a ring it reaches only at boot
+        
         left = rotate.ring(fleet, name, servers, rebind, only, args.waive or (), args.why or "")
         if share(args.fleet, "push"):
             util.say("the other computers and the control node have the result")

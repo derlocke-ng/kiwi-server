@@ -21,7 +21,6 @@ set -u
 # one compound command: bash reads all of it before it runs any, so a change to this file
 # during a run cannot make it run a VM's lines here
 {
-here=$(cd "$(dirname "$0")/../.." && pwd)
 w=${1:-$HOME/kiwi-vm/standin}
 mkdir -p "$w"; cd "$w" || exit 2
 OVMF=/usr/share/edk2/ovmf
@@ -168,7 +167,7 @@ vssh "sudo systemctl reboot" 2>/dev/null
 t0=$(date +%s); n=600; now=""
 while [ "$n" -gt 0 ]; do now=$(vssh cat /proc/sys/kernel/random/boot_id 2>/dev/null); [ -n "$now" ] && [ "$now" != "$boot" ] && break; sleep 5; n=$((n - 5)); done
 [ -n "$now" ] && [ "$now" != "$boot" ]; check $? "it started again and opened with the ring ($(( $(date +%s) - t0 )) s)"
-podman logs "$tang" 2>&1 | grep -c 'POST /rec' | xargs -I{} say "the ring was asked {} time(s)"
+say "the ring was asked $(podman logs "$tang" 2>&1 | grep -c 'POST /rec') time(s)"      # say is a function: xargs could not run it
 
 # ---- a boot with the ring off: the console key ---------------------------------------------
 podman stop -t 2 "$tang" >/dev/null

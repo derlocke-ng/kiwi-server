@@ -4198,15 +4198,18 @@ class TestMounts(Base):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
         said = (b'NAME="sda" SIZE="953.9G" TYPE="disk" FSTYPE="xfs" LABEL="data" UUID="1-2" MOUNTPOINT=""\n'
                 b'NAME="nvme0n1p3" SIZE="384M" TYPE="part" FSTYPE="ext4" LABEL="boot" UUID="3-4" MOUNTPOINT="/boot"\n'
-                b'NAME="sdb1" SIZE="1.8T" TYPE="part" FSTYPE="ext4" LABEL="" UUID="5-6" MOUNTPOINT=""\n')
+                b'NAME="sdb1" SIZE="1.8T" TYPE="part" FSTYPE="ext4" LABEL="" UUID="5-6" MOUNTPOINT=""\n'
+                b'NAME="lychee--vg-swap_1" SIZE="1G" TYPE="lvm" FSTYPE="swap" LABEL="" UUID="7-8" MOUNTPOINT="[SWAP]"\n')
         with mock.patch.object(remote, "run", lambda *a, **kw: said), mock.patch.object(remote, "reach", lambda h, o=None: "core@x"):
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x")
             self.assertEqual(rc, 0, err)
+            table = [l for l in out.splitlines() if l.startswith(("NAME", "sd", "nvme", "lychee"))]
+            self.assertEqual(len({re.match(r"\S+ +\S+", l).end() for l in table}), 1)      # the sizes end in one column
             self.assertIn('mounts: ["LABEL=data /mnt/data"]', out + err)
             self.assertIn('mounts: ["UUID=5-6 /mnt/data"]', out + err)               # no label: by its UUID
             self.assertNotIn("LABEL=boot", out + err)
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x", "--porcelain")
-            self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1"])
+            self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1", "lychee--vg-swap_1"])
 
     def test_service_restarts_stops_starts_or_shows_the_log_of_one_container_of_the_stack(self):
         from kiwiserver import cli as climod

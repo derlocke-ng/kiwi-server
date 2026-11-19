@@ -4539,10 +4539,12 @@ def cmd_disks(args):
     if args.porcelain:
         print(json.dumps({"host": host.name, "disks": rows, "mounts": [list(m) for m in config.mounts_of(host.cfg)]}, indent=2))
         return
-    print("%-12s %8s  %-5s %-12s %-12s %s" % ("NAME", "SIZE", "TYPE", "FILESYSTEM", "LABEL", "MOUNTED AT"))
-    for r in rows:
-        print("%-12s %8s  %-5s %-12s %-12s %s" % (r.get("NAME", ""), r.get("SIZE", ""), r.get("TYPE", ""), r.get("FSTYPE", "") or "-",
-                                                 r.get("LABEL", "") or "-", r.get("MOUNTPOINT", "") or "-"))
+    table = [("NAME", "SIZE", "TYPE", "FILESYSTEM", "LABEL", "MOUNTED AT")] + [
+        (r.get("NAME", ""), r.get("SIZE", ""), r.get("TYPE", ""), r.get("FSTYPE", "") or "-",
+         r.get("LABEL", "") or "-", r.get("MOUNTPOINT", "") or "-") for r in rows]
+    w = [max(len(t[i]) for t in table) for i in range(5)]       # as wide as the longest (LVM names are long)
+    for t in table:
+        print("%-*s %*s  %-*s %-*s %-*s %s" % (w[0], t[0], w[1], t[1], w[2], t[2], w[3], t[3], w[4], t[4], t[5]))
     for dev, at in set_up.items():
         util.say("in the fleet file: %s at %s" % (dev, at))
     for r in free:

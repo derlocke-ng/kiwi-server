@@ -4819,7 +4819,8 @@ class TestAsleep(Base):
         if os.path.exists(log):
             os.remove(log)
         for name, body in (("rtcwake", 'echo "$@" > %s' % log), ("logger", "true"),
-                           ("systemctl", '[ "$3" = "%s.service" ]' % busy if busy.startswith("kiwi-") else "exit 1"),
+                           # SubState as systemd says it: a finished one-shot (kiwi-role) is "exited", a running one "start"
+                           ("systemctl", '[ "$5" = "%s.service" ] && echo start || echo exited' % busy),
                            ("pgrep", "exit 0" if busy == "restic" else "exit 1"), ("podman", "exit 1"), ("docker", "exit 1")):
             write(os.path.join(bin_, name), "#!/bin/sh\n%s\n" % body)
             os.chmod(os.path.join(bin_, name), 0o755)

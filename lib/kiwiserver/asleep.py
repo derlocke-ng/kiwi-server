@@ -23,8 +23,11 @@ f=$(date -d "%(from)s" +%%s); u=$(date -d "%(until)s" +%%s); now=$(date +%%s)
 if [ "$f" -le "$u" ]; then inside=$([ "$now" -ge "$f" ] && [ "$now" -lt "$u" ] && echo y)
 else inside=$({ [ "$now" -ge "$f" ] || [ "$now" -lt "$u" ]; } && echo y); fi
 [ -n "$inside" ] || exit 0
+# running, not only "active": a one-shot that has finished (kiwi-role) stays active
 for unit in kiwi-role kiwi-self-apply kiwi-stack-update; do
-    systemctl is-active -q "$unit.service" 2>/dev/null && { logger -t kiwi-asleep "not now: $unit runs"; exit 0; }
+    case $(systemctl show -p SubState --value "$unit.service" 2>/dev/null) in
+        running|start|start-pre|start-post) logger -t kiwi-asleep "not now: $unit runs"; exit 0 ;;
+    esac
 done
 # its own backup (restic, in a container: the host sees the process)
 if pgrep -x restic >/dev/null 2>&1; then logger -t kiwi-asleep "not now: a backup runs"; exit 0; fi

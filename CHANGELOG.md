@@ -9,6 +9,11 @@
   earlier. Taken out of the fleet file, the next apply removes it.
 - **`status`** says "asleep until …" for a machine in its window that does not answer (state
   `asleep`, no problem, no message); the control page and the app show it.
+- Tried on a VM (`tests/drills/offsite-vm.sh`, `ASLEEP=1`): at the window's start it suspended
+  (`rtcwake -m mem`), did not answer, `status` said asleep; at its end its clock woke it. In QEMU
+  the firmware starts afresh on that wake instead of resuming; real hardware resumes. The first
+  try found that a finished one-shot unit (the first setup) counted as running: "busy" is now
+  what systemd says is running.
 - Tests that use the control page wait up to a minute for the look a login starts (one failed
   now and then on a slow run). ROADMAP: papaya has three rings.
 

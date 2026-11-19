@@ -14,9 +14,10 @@
 #   OVER_VPN=1: install.over_vpn: its media bring a one-time join peer, it comes onto the VPN by itself,
 #       and its first setup is `kiwi-server next` from home over the mesh (no computer at its site);
 #       afterwards the join tunnel and peer are gone and it answers at its own mesh address
-#   ENCRYPT=RING: its disk encrypted (LUKS), opened at boot by RING, a ring on the master (`tang` there):
-#       the first boot gets its one-time key through the initramfs's SSH from a computer at its site,
-#       the first apply binds the ring, and a restart must open the disk by itself
+#   ENCRYPT=RING: its disk encrypted (LUKS), opened at boot by RING, a ring at home that the master relays
+#       over the mesh (it keeps no key): the master is applied so that it relays, the first boot gets its
+#       one-time key through the initramfs's SSH from a computer at its site, the first apply binds the
+#       ring through the master, a restart must open the disk by itself; at the end the master again
 set -u
 {
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -62,6 +63,13 @@ if [ -n "${ENCRYPT:-}" ]; then
     check $? "its disk encrypted, opened at boot by the ring $ENCRYPT"
 fi
 "${ks[@]}" enroll "$F" "$N" >enroll.log 2>&1; check $? "$N enrolled: its place on the VPN"
+master=$("${ks[@]}" list "$F" --porcelain 2>/dev/null | python3 -c "import json,sys; print(next(h['name'] for h in json.load(sys.stdin)['hosts'] if h['role']=='master' and not h.get('standby_of')))")
+if [ -n "${ENCRYPT:-}" ]; then
+    # the master relays the ring at home for it: applied now, so the port is there before the first bind
+    python3 "$here/tests/drills/nginx-check.py" "$F" "$master" >nginx-check.log 2>&1 && \
+        "${ks[@]}" apply "$F" "$master" >master-apply.log 2>&1
+    check $? "the master $master relays the ring $ENCRYPT at home (applied)"
+fi
 mesh=$("${ks[@]}" list "$F" --porcelain 2>/dev/null | python3 -c "import json,sys; print(next(h['vpn_ip'] for h in json.load(sys.stdin)['hosts'] if h['name']=='$N'))")
 say "its mesh address: $mesh"
 "${ks[@]}" build "$F" "$N" >build.log 2>&1; check $? "its install media built"
@@ -149,7 +157,7 @@ esac
 code=$(curl -sk -o /dev/null -w '%{http_code}' -m 15 --resolve "$N.home:443:$mesh" "https://$N.home/" 2>/dev/null)
 [ -n "$code" ] && [ "$code" != 000 ]; check $? "its proxy answers over the mesh (https $code)"
 
-# ---- an encrypted one: the ring on the master opens it after a restart, nobody types anything ------
+# ---- an encrypted one: the ring at home opens it after a restart, through the master, nobody types --
 if [ -n "${ENCRYPT:-}" ]; then
     dev=$(ssh_to "core@$mesh" "sudo blkid -t TYPE=crypto_LUKS -o device | head -1" 2>/dev/null)
     [ -n "$dev" ]; check $? "its disk is LUKS ($dev)"
@@ -159,7 +167,7 @@ if [ -n "${ENCRYPT:-}" ]; then
     sleep 20
     back=1
     for _ in $(seq 1 60); do ssh_to "core@$mesh" true >/dev/null 2>&1 && { back=0; break; }; sleep 10; done
-    check $back "after a restart it opened its disk by itself and is on the mesh again (the ring $ENCRYPT on the master)"
+    check $back "after a restart it opened its disk by itself and is on the mesh again (the ring $ENCRYPT, relayed)"
     ssh_to "core@$mesh" "sudo journalctl -b -o cat --no-pager | grep -i -m3 -E 'clevis|tang'" >reboot-unlock.txt 2>/dev/null
 fi
 
@@ -174,6 +182,9 @@ if [ "${KEEP:-0}" != 1 ] && [ "$fails" = 0 ]; then
     stop
     "${ks[@]}" remove "$F" "$N" --yes >remove.log 2>&1; check $? "$N left the network (off the VPN, out of the fleet file)"
     "${ks[@]}" control push "$F" >>push.log 2>&1
+    if [ -n "${ENCRYPT:-}" ]; then          # nobody needs the relay any more: the master closes it
+        "${ks[@]}" apply "$F" "$master" >master-apply-after.log 2>&1; check $? "the master no longer relays the ring"
+    fi
 fi
 say "$fails wrong"
 exit $((fails > 0))

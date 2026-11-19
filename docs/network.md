@@ -204,8 +204,9 @@ opened on the master than the VPN it has anyway.
 
 An encrypted machine there opens its disk at boot from a ring at its own site, or
 from a ring at home through the master: the master only passes the ring's port on over
-the VPN (`vpn-server.unlock_relay`, docs/security.md) and keeps no key, and it lets in
-only the addresses the network's machines last connected from. A ring at home is no
+the VPN and keeps no key, and it lets in only the addresses the network's machines last
+connected from. kiwi-server sets that up by itself (`vpn-server.unlock_relay` and the
+machine's `unlock.via`); apply the master once after the machine joins. A ring at home is no
 help to it directly: its initramfs has no VPN yet.
 
 A ring served by the master itself (`tang` on the master) works too, but then its keys

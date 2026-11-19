@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.236.0 — a ring at home for a machine at another site, relayed by itself
+
+- **A machine at another site** whose ring stands at home no longer needs `unlock.via` and the
+  master's `vpn-server.unlock_relay` written by hand: kiwi-server fills both in. The master passes
+  the ring's port on over the mesh to the ring's machine and keeps no key; the port is fixed by the
+  ring's name (7600 to 7799), as a disk keeps the address it was bound with. Apply the master once
+  after such a machine joins. A way written by hand stays as it is.
+- The offsite drill's `ENCRYPT=RING` uses that relay to a ring at home (no ring on the master); it
+  applies the master before and after.
+- docs: the decision on joining (no endpoint on the Internet; a machine at another site comes onto
+  the VPN first) in design/control-plane.md and the ROADMAP.
+
 ## 2.235.0 — a machine at another site sets itself up over the VPN
 
 - **`install.over_vpn`** ("It stands at another site" in a machine's settings, page and app):

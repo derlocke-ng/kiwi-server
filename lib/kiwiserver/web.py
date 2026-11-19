@@ -1486,7 +1486,7 @@ back by itself after a power cut.</p>
 {% if m.rings %}<ul class="small">{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
 {{ r.path }}{% endif %}</li>{% endfor %}</ul>
 <p class="small"><span class="dot {{ 'warn' if m.power_cut == 'waits' or m.needs else 'ok' }}"></span>After a power cut:
-{% if m.power_cut == "waits" %}it waits for a person.{% elif m.needs %}it opens, as long as {{ m.needs|join(" and ") }} starts too.
+{% if m.power_cut == "waits" %}it waits for a person.{% elif m.needs %}it opens, as long as {{ m.needs|join(" and ") }} {{ "starts" if m.needs|length == 1 else "start" }} too.
 {% else %}it opens, also with one of its rings' machines off.{% endif %}</p>{% endif %}</div>{% endfor %}
 <p class="muted small">Change a machine's rings in its Settings (Disk unlock). In a terminal:
 <code>kiwi-server unlock &lt;fleet&gt;</code>.</p>

@@ -65,4 +65,30 @@ are. A password login works; sudo may ask for it.
 
 ## Not yet
 
-An encrypted disk (Armbian's build framework): see the [roadmap](ROADMAP.md).
+A board with a fixed address in the fleet file (`network.address`, `dhcp: false`) gets that
+address written at its first start, or with `adopt` for its next restart: a file of
+systemd-networkd's that comes before netplan's, or the card's connection in NetworkManager.
+
+## An encrypted board
+
+A board's disk is encrypted when its image was built that way: with Armbian's build framework
+(`CRYPTROOT_ENABLE=yes`), which makes the separate `/boot` and the boot system a locked root
+needs. kiwi-server does not build that image yet; made by hand, the board is told so in the
+fleet file and is then unlocked like a Debian machine:
+
+```yaml
+lime:
+  target: armbian
+  armbian: { board: odroidn2, encrypt: true }
+  unlock: { rings: [infra, house], ssh: true }
+```
+
+- Its key is `secrets/luks/<name>.key`. `apply` binds the disk to the rings, writes the board's
+  fixed address into its boot system and kiwi-server's keys for it (`kiwi-server unlock`, the
+  openers).
+- Proven on an Odroid N2+ (19 November 2026): flashed anew, its first start brought its
+  services and its ring's keys back from the backup by itself; bound to three rings it opens by
+  itself 48 seconds after a restart, and opens the way for the master as an opener.
+- By hand until kiwi-server builds the image: the image itself, the first unlock at the
+  address DHCP gave it, and growing the encrypted volume to the disk's size (Armbian grows the
+  partition only: `cryptsetup resize`, then `resize2fs`).

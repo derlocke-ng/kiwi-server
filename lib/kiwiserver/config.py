@@ -142,6 +142,9 @@ DEFAULTS = {
         "branch": "current",
         "variant": "minimal",    # minimal or server
         "image_url": None,       # another .img.xz (its .sha beside it)
+        # its root is in LUKS: an image built with Armbian's build framework (CRYPTROOT_ENABLE), its
+        # key in secrets/luks/<host>.key. Then unlock.rings binds it as a Debian machine's disk.
+        "encrypt": False,
     },
     "unlock": {
         # the Tang rings that may open this machine's disk at boot (the tang module serves them)
@@ -575,8 +578,11 @@ class Host:
                 errs.append("armbian.board is missing (its name at dl.armbian.com, e.g. odroidn2 or odroidm1)")
             if ab.get("variant") not in ("minimal", "server"):
                 errs.append("armbian.variant must be minimal or server")
-            if (c["unlock"].get("rings") or []):
-                errs.append("unlock.rings: an Armbian image has no encrypted disk yet")
+            if not isinstance(ab.get("encrypt", False), bool):
+                errs.append("armbian.encrypt must be true or false")
+            elif (c["unlock"].get("rings") or []) and not ab.get("encrypt"):
+                errs.append("unlock.rings: this board's disk is not encrypted (armbian.encrypt: true says its image was "
+                            "built encrypted)")
         elif not self.cfg.get("disk"):
             if self.target != "coreos-ram":     # it touches no disk
                 self.warnings.append("no disk: set — configs render, but an ISO cannot be built")

@@ -1056,6 +1056,23 @@ class TestAdopt(Base):
         self.assertIn("authorized_keys", names)
         self.assertNotIn("role.sh", names)                  # apply sends the role, not adopt
 
+    def test_a_board_gets_its_fixed_address(self):
+        """Seen on lime, 19 Nov 2026: flashed anew it came up on DHCP, since nothing wrote its address."""
+        self.assertEqual(adoptmod.network_script(self.host(network={"dhcp": True})), "")
+        h = self.host(network={"dhcp": False, "address": "192.168.2.64/16", "gateway": "192.168.2.1", "dns": ["9.9.9.9"]})
+        on_image = adoptmod.script(h, lock_root=True)                  # an image's first start: at once
+        self.assertIn("'Address=192.168.2.64/16' 'Gateway=192.168.2.1' DNS=9.9.9.9 'DHCP=no'", on_image)
+        self.assertIn("/etc/systemd/network/05-kiwi-static.network", on_image)     # before netplan's 10-netplan-*
+        self.assertIn("networkctl reload", on_image)
+        self.assertIn("ipv4.method manual ipv4.addresses 192.168.2.64/16", on_image)   # a board on NetworkManager
+        over_ssh = adoptmod.script(h)                                   # a running board: the session stays
+        self.assertNotIn("networkctl reload", over_ssh)
+        self.assertIn("it takes it with its next restart", over_ssh)
+        p = os.path.join(self.tmp, "adopt.sh")
+        for text in (on_image, over_ssh):
+            write(p, text)
+            self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
+
     def test_admin_target_and_other_targets(self):
         h = self.host()
         self.assertEqual(adoptmod.admin_target(h, "odroid@192.168.2.40"), "kiwi@192.168.2.40")
@@ -1198,7 +1215,15 @@ class TestArmbian(Base):
         self.assertEqual(self.host().validate(self.roles), [])
         self.assertIn("n2: armbian.board is missing (its name at dl.armbian.com, e.g. odroidn2 or odroidm1)",
                       self.host(armbian={"board": None}).validate(self.roles))
-        self.assertTrue(any("no encrypted disk" in e for e in self.host(unlock={"rings": ["infra"]}).validate(self.roles)))
+        self.assertTrue(any("this board's disk is not encrypted" in e for e in self.host(unlock={"rings": ["infra"]}).validate(self.roles)))
+        enc = self.host(unlock={"rings": ["infra"], "ssh": True}, armbian={"board": "odroidn2", "encrypt": True})
+        self.assertEqual(enc.validate(self.roles), [])                  # an image built encrypted: rings as on Debian
+        self.assertTrue(unlock.debian_like(enc))
+        self.assertEqual(unlock.ssh_port(enc), 2222)
+        self.assertEqual(unlock._way(enc), "by itself")
+        self.assertEqual(unlock._way(self.host(armbian={"board": "odroidn2", "encrypt": True})), "by a person")
+        self.assertEqual(unlock._way(self.host()), "not encrypted")
+        self.assertIn("cryptroot-unlock", unlock.authorized_line(enc))  # dropbear's line, as on Debian
         self.assertEqual(armbian_t.download_url(self.host().cfg["armbian"]),
                          "https://dl.armbian.com/odroidn2/Trixie_current_minimal")
 

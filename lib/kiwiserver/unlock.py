@@ -293,7 +293,13 @@ fi
 '''
 
 _CONNECTED = "kiwi-unlock-connected"
-SSH_PORT = {"debian": 2222}      # else 22: CoreOS's initramfs sshd takes the normal port
+SSH_PORT = {"debian": 2222, "armbian": 2222}      # else 22: CoreOS's initramfs sshd takes the normal port
+
+
+def debian_like(host):
+    """Debian's way of unlocking at boot (initramfs-tools, dropbear, clevis-initramfs): Debian, and
+    an Armbian board whose image was built encrypted (armbian.encrypt)."""
+    return host.target in ("debian", "armbian")
 
 
 def ssh_port(host):
@@ -731,7 +737,7 @@ def authorized_line(host):
     Dropbear ignores a key with an option it does not know, so it gets only what it knows."""
     public = " ".join(util.read_bytes(_unlock_key(host.fleet) + ".pub").decode().split()[:2])
     forwards = _forwarded_rings(host)
-    if host.target == "debian":
+    if debian_like(host):
         options = ["no-agent-forwarding", "no-X11-forwarding", "no-pty"] + ([] if forwards else ["no-port-forwarding"])
         options.append('command="case $SSH_ORIGINAL_COMMAND in unlock) cryptroot-unlock;; *) echo %s; sleep 900;; esac"' % _CONNECTED)
     else:
@@ -763,7 +769,7 @@ def _known_hosts(host):
 def _initramfs_ssh(host, tgt, servers=None):
     """SSH in the initramfs, and its host key on record while the machine can vouch for it:
     the boot partition is not encrypted, so that key is the only proof of who answers."""
-    script = (PREPARE_DROPBEAR % (dropbear_conf(host), LOOPBACK_PATH, LOOPBACK_HOOK)) if host.target == "debian" else PREPARE_DRACUT_SSHD
+    script = (PREPARE_DROPBEAR % (dropbear_conf(host), LOOPBACK_PATH, LOOPBACK_HOOK)) if debian_like(host) else PREPARE_DRACUT_SSHD
     out = remote.run(tgt, script, ("\n".join(authorized_lines(host, servers)) + "\n").encode())
     key = out.decode(errors="replace").strip()
     if not key.startswith("ssh-ed25519 "):
@@ -880,7 +886,7 @@ def leash_script(host, wanted_tree):
 def bind(host, tgt, servers, force=False):
     """Bind the disk to the host's rings; what is already right stays as it is. `force`: bound
     again even so, to the rings' keys as they are now (a ring's keys were rotated)."""
-    coreos = host.target != "debian"
+    coreos = not debian_like(host)
     if coreos:
         _coreos_key(host, tgt, servers)
     key = luks.current_key(host)
@@ -1039,7 +1045,7 @@ def _as_new_installation(host, address, port, runner):
 def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
     """The disk's key, handed to the initramfs over SSH, for when no ring can help. It goes
     on stdin without a line end: Debian passes stdin to cryptsetup as it is."""
-    if host.target != "debian":
+    if not debian_like(host):
         raise KiwiError("%s: typing the key over SSH is built for Debian; on %s use the console" % (host.name, host.target))
     key = luks.current_key(host) or luks.one_time_key(host)
     if not key:
@@ -1111,6 +1117,8 @@ def _way(host):
     d = host.cfg.get("debian") or {}
     if host.target == "debian" and (d.get("encrypt") or d.get("partitioning") == "crypto"):
         return "by a person"            # encrypted, no ring: its key at the screen or over SSH
+    if host.target == "armbian" and (host.cfg.get("armbian") or {}).get("encrypt"):
+        return "by a person"
     return "not encrypted"
 
 
@@ -1191,7 +1199,8 @@ def say_picture(rows, out=print):
         if r["power_cut"] == "waits":
             out("%-*s  after a power cut: waits for a person" % (width, ""))
         elif r["needs"]:
-            out("%-*s  after a power cut: opens, as long as %s starts too" % (width, "", " and ".join(r["needs"])))
+            out("%-*s  after a power cut: opens, as long as %s start%s too"
+                % (width, "", " and ".join(r["needs"]), "s" if len(r["needs"]) == 1 else ""))
         else:
             out("%-*s  after a power cut: opens, also with one of its rings' machines off" % (width, ""))
 
@@ -1233,7 +1242,7 @@ def opener_line(host, opener, via_port):
     """An opener's line in the waiting machine's boot system: it may offer one port there, and
     nothing else (no shell, no password prompt: a forced command that only waits)."""
     public = " ".join(util.read_bytes(opener_key(host.fleet, opener.name) + ".pub").decode().split()[:2])
-    if host.target == "debian":         # dropbear: no rule for one remote port; local forwarding is off for all (-j)
+    if debian_like(host):               # dropbear: no rule for one remote port; local forwarding is off for all (-j)
         options = ["no-agent-forwarding", "no-X11-forwarding", "no-pty", 'command="echo %s; sleep 900"' % _CONNECTED]
     else:
         options = ["restrict", "port-forwarding", 'permitlisten="127.0.0.1:%d"' % via_port,

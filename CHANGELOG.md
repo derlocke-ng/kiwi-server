@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.251.0 — boards: a fixed address, and rings for an encrypted one
+
+- **A board gets its fixed address** (`network.address`, `dhcp: false`): written at an image's
+  first start, or by `adopt` for the next restart. Until now nothing wrote it, and a board
+  flashed anew came up wherever DHCP put it.
+- **An Armbian board whose image was built encrypted** (`armbian.encrypt: true`) binds rings as
+  a Debian machine does: `unlock.rings`, the boot system's fixed address, `kiwi-server unlock`,
+  and it can be an opener. Proven on an Odroid N2+: it opens by itself 48 seconds after a
+  restart, and opened the master with the control node's opener switched off. kiwi-server does
+  not build that image yet (docs/boards.md says what is still by hand).
+- "Who opens whom" says "start" for several machines.
+
 ## 2.250.0 — a machine's story, and what to do as a button
 
 - **A machine that was installed anew no longer just says "unreachable".** When its install

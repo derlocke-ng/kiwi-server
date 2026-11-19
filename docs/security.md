@@ -169,6 +169,14 @@ A disk can open itself at boot. The `tang` module on one node serves a
   only passes the port on; it keeps no key. Apply the master once after such a
   machine joins, so that it relays. Written by hand, `unlock.via` stays as it is. A ring on the master itself
   (`tang` on the master) is possible, but puts the ring's keys on a rented server.
+- **Openers** (since 2.248.0): a master at a hoster, which reaches its rings only
+  through a tunnel into its boot system (`unlock.via` to `127.0.0.1`), is opened
+  not only by the control node: each ring's own machine opens the way for its own
+  ring, once a minute it looks whether the master waits. Its key there allows
+  nothing but offering that port: no shell, no password prompt. Only a machine
+  whose own disk is encrypted is an opener, since that key lies on its disk.
+  `unlock.openers` names them, if not all should be; `kiwi-server unlock <fleet>`
+  shows who opens whom. Apply the master first, then the openers.
 - A ring taken out of a machine's `unlock.rings` comes off its disk with the next
   apply too, once its key on record is checked to open that disk (since 2.234.0;
   before, the binding stayed and the disk still opened by the ring).

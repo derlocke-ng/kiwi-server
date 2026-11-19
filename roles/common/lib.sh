@@ -422,6 +422,8 @@ f=${1:-/etc/kiwi-server/vlans}
 rc=0
 while read -r parent id addr name; do
     [[ -n ${name:-} && ${parent:0:1} != "#" ]] || continue
+    # at boot this runs before the network: a tagged interface comes up only on a card that is up
+    ip link set dev "$parent" up || rc=1
     if ! ip link show dev "$name" >/dev/null 2>&1; then
         ip link add link "$parent" name "$name" type vlan id "$id" || { rc=1; continue; }
     fi

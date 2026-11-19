@@ -2,8 +2,10 @@
 """One part of the app on its own, to look at while working on it: the setup wizard, without
 the file dialog in front of it (a desktop portal would open that on the real screen).
 
-    gtk4-broadwayd :7 &
-    GDK_BACKEND=broadway BROADWAY_DISPLAY=:7 tools/gui-preview.py wizard /tmp/x/fleet.yaml
+    tools/private-session.sh sh -c 'gtk4-broadwayd :7 & sleep 1; GDK_BACKEND=broadway BROADWAY_DISPLAY=:7 \
+        tools/gui-preview.py unlock ~/kiwi/fleet.yaml'          (or: wizard /tmp/x/fleet.yaml)
+Only inside tools/private-session.sh: with the desktop's own runtime folder a preview's bus
+started a second document portal, and the desktop lost its /run/user/$UID/doc (19 Nov 2026).
 
 then open http://127.0.0.1:8087 in a browser. Uses this tree's bin/kiwi-server.
 """
@@ -39,15 +41,32 @@ class Host(Adw.ApplicationWindow):
         print("would open", path, flush=True)
 
 
+def private_or_refuse():
+    """The owner's rule (19 Nov 2026): never on the desktop's runtime folder or bus."""
+    real = "/run/user/%d" % os.getuid()
+    rt = os.path.realpath(os.environ.get("XDG_RUNTIME_DIR") or real)
+    bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or ""
+    if rt == real or not rt.startswith(real + "/kiwi-private.") or real + "/bus" in bus \
+            or os.environ.get("KIWI_PRIVATE_SESSION") != "1":
+        sys.exit("gui-preview: refused: XDG_RUNTIME_DIR is the desktop's own (%s). Run it through "
+                 "tools/private-session.sh, which gives it a throwaway folder and a bus that starts nothing." % rt)
+
+
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] != "wizard":
-        sys.exit("usage: tools/gui-preview.py wizard PATH/fleet.yaml")
-    data = json.loads(subprocess.run([CLI, "init", "--questions"], capture_output=True, text=True, check=True).stdout)
+    private_or_refuse()
+    if len(sys.argv) != 3 or sys.argv[1] not in ("wizard", "unlock"):
+        sys.exit("usage: tools/gui-preview.py wizard|unlock PATH/fleet.yaml")
+    path = os.path.abspath(sys.argv[2])
 
     def activate(app):
         w = Host(app)
         w.present()
-        gui.SetupWizard(w, os.path.abspath(sys.argv[2]), data).present(w)
+        if sys.argv[1] == "unlock":
+            w.doc = type("Doc", (), {"path": path})()
+            gui.UnlockDialog(w).present(w)
+            return
+        data = json.loads(subprocess.run([CLI, "init", "--questions"], capture_output=True, text=True, check=True).stdout)
+        gui.SetupWizard(w, path, data).present(w)
     app = Adw.Application(application_id="eu.kiwinetwork.KiwiServer.Preview")
     app.connect("activate", activate)
     app.run([])

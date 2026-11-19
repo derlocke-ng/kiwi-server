@@ -4834,6 +4834,13 @@ def cmd_wake(args):
 def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
+    if not args.host:                   # who opens whom (docs/design/unlock.md)
+        rows = unlock.picture(fleet, roles, ms)
+        if args.porcelain:
+            print(json.dumps({"machines": rows}, indent=2))
+        else:
+            unlock.say_picture(rows)
+        return
     hosts = fleet.select([args.host])
     if args.manual or not hosts[0].cfg["unlock"].get("rings"):     # no ring: its key opens it
         unlock.type_key(hosts[0], address=args.address, port=args.port, timeout=args.timeout)
@@ -5168,7 +5175,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server disks <fleet> <host>              the machine's disks, and the line that mounts a data disk
   kiwi-server sshca <fleet> [init|sign KEY|trust]
                                                 the fleet's SSH CA: host certificates, keys let in for a while
-  kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
+  kiwi-server unlock <fleet> [host]             no host: who opens whom; a host: forward a ring into it at boot
   kiwi-server rotate <fleet> [ssh|seed|ring NAME|ring all]
                                                 new keys: what is due, or one kind
   kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
@@ -5459,7 +5466,8 @@ def build_parser():
     s.add_argument("--internet", choices=["yes", "no"], help="may the group leave to the internet through the VPN")
     s.add_argument("--admin", choices=["yes", "no"], help="may the group open the admin pages: the control page, Portainer, Pi-hole and the like")
     s.add_argument("--lan", metavar="SUBNET", help="with --new: a group of the home network, this subnet at home (a guest Wi-Fi, a VLAN)")
-    s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host")
+    s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host", nargs="?",
+                                                                          help="none: who opens whom")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")
     s.add_argument("--address", metavar="ADDR", help="where the machine answers, instead of the fleet's addresses for it")

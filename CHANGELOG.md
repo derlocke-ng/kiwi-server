@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.246.0 — who opens whom
+
+- **Disk unlock**: one picture of how each machine's disk opens at boot, with which rings (and
+  on which machine each ring runs), how it reaches them, and whether it comes back by itself
+  after a power cut: `kiwi-server unlock <fleet>` (no machine), the control page's new **Disk
+  unlock** page, `GET /api/unlock` for the Android app, and the app's **Disk unlock…** window.
+  Read only; step 1 of docs/design/unlock.md.
+- **Previews and tests of the app run only in a private session** (`tools/private-session.sh`):
+  a throwaway runtime folder and a session bus that starts no services, no portals, no gvfs.
+  `tools/gui-preview.py` refuses to start outside one, and the app-preview drill goes through
+  it. Afterwards the desktop's document portal mount is checked and the portal restarted if it
+  went missing. Why: twice a preview's own bus started a second document portal on the
+  desktop's runtime folder, and stopping it took the desktop's `/run/user/<uid>/doc` along.
+- A new drill, `tests/drills/desktop-clevis-vm.sh`: a Debian desktop whose encrypted disk opens
+  with rings by a policy (all health rings and its auto-unlock ring, or its emergency ring).
+- Designs: which identity server the public side would take (compared), and why the owner's
+  network needs none now.
+
 ## 2.245.0 — 3-2-1
 
 - `kiwi-server recovery` (and the page, the app) has a line for **3-2-1**: the data, two

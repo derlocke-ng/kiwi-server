@@ -13770,6 +13770,20 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
 
+    # ---- who opens whom ----
+    def test_the_disk_unlock_page_and_its_api(self):
+        cookie, _csrf = self.made()
+        self.assertEqual(self.ask("/unlock")[:2], (303, "/login"))
+        status, body, _ = self.ask("/unlock", cookie=cookie)
+        self.assertEqual(status, 200, body)
+        self.assertIn("<h1>Disk unlock</h1>", body)
+        for n in self.data()["hosts"]:
+            self.assertIn("<strong>%s</strong>" % n, body)              # every machine has its row
+        self.assertIn('href="/unlock"', body)                             # in the menu
+        status, body, _ = self.ask("/api/unlock", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(m["name"] for m in json.loads(body)["machines"]), sorted(self.data()["hosts"]))
+
     # ---- if something breaks ----
     def test_if_something_breaks_says_the_gaps_of_a_new_network_and_where_to_go(self):
         cookie, _csrf = self.made()
@@ -13880,6 +13894,19 @@ class TestRecovery(Base):
     def report(self, f, status=None, now=None):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
+
+    def test_who_opens_whom(self):
+        rows = {r["name"]: r for r in unlock.picture(self.network(), self.roles, self.ms)}
+        self.assertEqual(rows["papaya"]["way"], "by itself")
+        self.assertEqual([(x["ring"], x["server"], x["path"]) for x in rows["papaya"]["rings"]], [("infra", "lychee", "the LAN")])
+        self.assertEqual(rows["papaya"]["needs"], ["lychee"])                  # its one ring's machine
+        self.assertEqual(rows["quince"]["way"], "not encrypted")
+        rc, out, err = self.run_cli("unlock", self.network().path)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("papaya  by itself, with 1 of: infra (lychee)", out)
+        self.assertIn("after a power cut: opens, as long as lychee starts too", out)
+        rc, out, err = self.run_cli("unlock", self.network().path, "--porcelain")
+        self.assertEqual(sorted(m["name"] for m in json.loads(out)["machines"]), ["lychee", "papaya", "quince", "sorbet"])
 
     def test_three_two_one_two_copies_one_elsewhere(self):
         rep, checks = self.report(self.network())

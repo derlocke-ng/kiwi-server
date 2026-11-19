@@ -149,6 +149,27 @@ other account.
 - **First** where a public service needs accounts: git over Tor (Forgejo signs in through
   Kanidm, which does not work there). Services with accounts of their own (Jabber, BTCPay)
   need nothing.
+- **Which identity server for the public side** (compared 19 November; Keycloak 26.8, authentik
+  2026.8, Zitadel 4.20, Kanidm 1.12):
+
+  | | One instance, several names (public + onion) | Sign-up without email | LDAP for Jabber | Size |
+  |---|---|---|---|---|
+  | Kanidm | no: one origin | our sign-up page does it (invite, approval, reset link) | built in | small, no database server |
+  | authentik | yes: issuer and passkeys follow the request's name | invite links, inactive users, recovery links | an extra outpost container | 2 GB at least, plus Postgres |
+  | Keycloak | yes (`hostname-strict false`) | invites by email only | none | 1.25 GB, plus a database |
+  | Zitadel | partly (one domain, more only by API) | email required | none | 0.5 GB, plus Postgres and a login container |
+
+  **Proposal:** a second Kanidm per public door (one for the public name, one for the onion),
+  with our sign-up page in front, as the internal one has. Small enough for a board, nothing
+  new to run, LDAP for a public Jabber built in; accounts on Tor and on the Internet are then
+  separate, which is allowed. authentik if one account for both doors matters more than 2 GB.
+  Passkeys belong to one name in every one of them: over a second name people use a password.
+- **Not now (owner, 19 November):** the owner's network needs no public accounts. Its public
+  services are Jabber (own accounts, on the VPN, the Internet and Tor), the nostr relay and the
+  paste (no accounts), and git over the VPN and Tor (Forgejo's own accounts for friends, a
+  password over Tor). A public identity server (authentik, if one account for both doors) is
+  for other networks, later. Sharing one Kanidm between two names does not work: Kanidm keeps
+  its name in its data, and replicates only between instances of the same name.
 - **A VPN name for a public instance**, so people at home do not take the long way through the
   master or Tor: `<site>-public.<machine>.home`, on the mesh only. The public name itself keeps
   resolving to the master everywhere (decided 16 November). Only where it works: Jabber (an app

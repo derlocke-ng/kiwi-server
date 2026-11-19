@@ -1456,6 +1456,23 @@ if h.page.startswith("/") and not h.page.startswith("//") %}<a class="btn" href=
 {% endblock %}"""
 
 
+TEMPLATES["unlock.html"] = """{% extends "base.html" %}{% block main %}
+<p><a href="/">← Home</a></p><h1>Disk unlock</h1>
+<p class="muted">Who opens whom: how each machine's disk opens at boot, with which rings, and whether it comes
+back by itself after a power cut.</p>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+{% for m in machines %}<div class="card"><p><strong>{{ m.name }}</strong> · {{ m.way }}{% if m.rings %}, with {{ m.threshold }} of
+{{ m.rings|length }} {{ "ring" if m.rings|length == 1 else "rings" }}{% endif %}</p>
+{% if m.rings %}<ul class="small">{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
+{{ r.path }}{% endif %}</li>{% endfor %}</ul>
+<p class="small"><span class="dot {{ 'warn' if m.power_cut == 'waits' or m.needs else 'ok' }}"></span>After a power cut:
+{% if m.power_cut == "waits" %}it waits for a person.{% elif m.needs %}it opens, as long as {{ m.needs|join(" and ") }} starts too.
+{% else %}it opens, also with one of its rings' machines off.{% endif %}</p>{% endif %}</div>{% endfor %}
+<p class="muted small">Change a machine's rings in its Settings (Disk unlock). In a terminal:
+<code>kiwi-server unlock &lt;fleet&gt;</code>.</p>
+{% endblock %}"""
+
+
 # what the pages call things
 KIND = {"master": "Master", "node": "Home server (node)", "node-gw": "Home server and gateway",
         "node-cloud": "Home server", "bare": "Bare machine"}
@@ -1505,6 +1522,7 @@ NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/se
        ("/access", "Who may reach what", "shield", "Access"),
        ("/federation", "Linked networks", "link", "Access"),
        ("/backups", "Backups", "box", "Safety"), ("/recovery", "If something breaks", "buoy", "Safety"),
+       ("/unlock", "Disk unlock", "lock", "Safety"),
        ("/controllers", "Computers", "screen", "Safety"),
        ("/activity", "Activity", "pulse", "More"), ("/settings", "Settings", "sliders", "More"),
        ("/modules", "Module sources", "stack", "More"), ("/help", "Help", "help", "More"))
@@ -1518,6 +1536,7 @@ ICONS = {
     "link": '<path d="M10 14a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 5.3l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/>',
     "buoy": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>'
             '<path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6"/>',
+    "lock": '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
     "screen": '<rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M8 20h8M12 16v4"/>',
     "pulse": '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
     "sliders": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
@@ -3477,6 +3496,27 @@ def make_app(control: Control):
         except (KiwiError, OSError) as e:
             rep, error = None, "The report could not be made: %s" % e
         return page("breaks.html", request, "/recovery", rep=rep, error=error)
+
+    @app.get("/unlock")
+    def unlock_page(request: Request):
+        """Who opens whom (docs/design/unlock.md): read only, from the fleet."""
+        if not user(request):
+            return login_page()
+        try:
+            machines, error = control.unlock_picture(), None
+        except (KiwiError, OSError) as e:
+            machines, error = [], "The picture could not be made: %s" % e
+        return page("unlock.html", request, "/unlock", machines=machines, error=error)
+
+    @app.get("/api/unlock")
+    def api_unlock(request: Request):
+        """The same rows for a controller (the Android app, the app on a computer)."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        try:
+            return {"machines": control.unlock_picture()}
+        except (KiwiError, OSError) as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
 
     @app.get("/activity")
     def activity(request: Request):

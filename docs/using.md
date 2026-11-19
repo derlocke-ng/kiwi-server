@@ -27,7 +27,14 @@ On the control page: Devices. In a terminal:
 kiwi-server enroll ~/kiwi/fleet.yaml phone --qr
 ```
 
-Scan the code with the WireGuard app on the device.
+Scan the code with the WireGuard app on the device. To show the code again later,
+or to save it as an image, while the secret store is open
+(`kiwi-server secrets unlock`, see [Security](security.md#the-secret-store)):
+
+```bash
+kiwi-server qr ~/kiwi/secrets/devices/phone.conf
+kiwi-server qr ~/kiwi/secrets/devices/phone.conf --png > phone.png
+```
 
 **Everything at home at once.** A machine with the gateway preset is your home's
 ad blocker and VPN gateway. A device that uses that machine's address as its DNS

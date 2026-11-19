@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.238.0 — asleep by day, awake for the backups
+
+- **`asleep: { from: "06:00", until: "02:30" }`** on a machine (settings: *Asleep from*, *…until*):
+  in that window it suspends to RAM and its own clock wakes it at `until` (`rtcwake`), from a
+  timer that looks every quarter of an hour. Not while it is set up, its own backup runs or a
+  backup comes in to its backup server; then a quarter of an hour later. Wake-on-LAN wakes it
+  earlier. Taken out of the fleet file, the next apply removes it.
+- **`status`** says "asleep until …" for a machine in its window that does not answer (state
+  `asleep`, no problem, no message); the control page and the app show it.
+- Tried on a VM (`tests/drills/offsite-vm.sh`, `ASLEEP=1`): at the window's start it suspended
+  (`rtcwake -m mem`), did not answer, `status` said asleep; at its end its clock woke it. In QEMU
+  the firmware starts afresh on that wake instead of resuming; real hardware resumes. The first
+  try found that a finished one-shot unit (the first setup) counted as running: "busy" is now
+  what systemd says is running.
+- Tests that use the control page wait up to a minute for the look a login starts (one failed
+  now and then on a slow run). ROADMAP: papaya has three rings.
+
 ## 2.237.0 — a plan for moving the network, just in case
 
 - **`kiwi-server move FLEET --mesh 10.X.0.0/16 --domain D`** (either or both): what moving the

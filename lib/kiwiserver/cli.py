@@ -18,7 +18,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
+from . import asleep as asleepmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -2877,6 +2877,7 @@ def cmd_apply(args):
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)
+            asleepmod.after_apply(h, tgt)   # asleep by day, awake for the night's backups (asleep), or always awake
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)
@@ -3490,6 +3491,10 @@ def cmd_status(args):
         try:
             human, data = facts.split(remote.run(tgt, facts.SCRIPT).decode(errors="replace"))
         except KiwiError as e:
+            if asleepmod.now_asleep(h):         # sleeping, as it should by its window: no problem, no message
+                return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "asleep", "locked": False,
+                        "problems": [], "notes": ["asleep until %s (by its clock; Wake-on-LAN wakes it earlier)"
+                                                  % asleepmod.window(h)[1]], "facts": {}}
             at = unlock.waiting_at(h)
             if at:
                 e = "its disk is locked, the machine waits at %s: %s" % (at, unlock.locked_advice(h, args.fleet))

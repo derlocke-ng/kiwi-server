@@ -653,7 +653,7 @@ UX and ecosystem:
     when a node has a public address and publishes ports.
     (modules/reverse-proxy, modules.py, roles/common/stack.yaml)
 
-## Todo, in order
+## To do, in order
 
 The six steps agreed with the owner, with the items above folded in.
 
@@ -830,7 +830,7 @@ Asked for by the owner in October 2026, for the test round and after:
   wait for the power-off, detach, power on), `vps rescue on|off`.
 - **The phoenix-server repository** for the bootc image: Containerfile, CI build,
   cosign signing, published to ghcr.io; kiwi-server pins it by tag like
-  kiwi-stack and kiwi-modules (todo step 5).
+  kiwi-stack and kiwi-modules (step 5 of the list above).
 - **Two-factor codes with a phone app and a web UI.** Vaultwarden already
   does it: the Bitwarden apps generate TOTP codes and sync them, the web
   vault shows them, and Bitwarden Authenticator imports an Aegis export.

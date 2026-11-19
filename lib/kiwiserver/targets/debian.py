@@ -116,6 +116,8 @@ def preseed(host, version):
     pkgs += [str(p) for p in (d.get("packages") or []) if str(p) not in pkgs]
     if _ssh_at_boot(host):
         pkgs.append("dropbear-initramfs")
+    if getattr(host, "join_conf", None):        # install.over_vpn: its first way onto the VPN
+        pkgs.append("wireguard-tools")
     L += [
         "",
         "### packages",
@@ -206,6 +208,11 @@ def late_script(host):
                 "sed \"s/IFACE/$dev/\" $S/kiwi-unlock-ip > $T/etc/initramfs-tools/conf.d/kiwi-unlock",
             ]
         L.append("in-target update-initramfs -u")
+    if getattr(host, "join_conf", None):
+        # install.over_vpn: on the VPN by itself at first boot, for its first apply over the mesh
+        L += ["install -d -m 0700 $T/etc/wireguard",
+              "install -m 0600 $S/kiwi-join.conf $T/etc/wireguard/kiwi-join.conf",
+              "in-target systemctl enable wg-quick@kiwi-join.service"]
     L += ["in-target systemctl enable kiwi-role.service", "exit 0", ""]
     return "\n".join(L)
 
@@ -235,6 +242,8 @@ def iso_files(host, role_script):
                      "dropbear.conf": (unlock.dropbear_conf(host) + "\n", 0o644),
                      "kiwi-loopback": (unlock.LOOPBACK_HOOK + "\n", 0o755),
                      "kiwi-unlock-ip": ("IP=%s\n" % unlock.initramfs_ip(host), 0o644)}
+    if getattr(host, "join_conf", None):
+        ssh_files["kiwi-join.conf"] = (host.join_conf, 0o600)
     out = {
         **ssh_files,
         "late.sh": (late_script(host), 0o755),

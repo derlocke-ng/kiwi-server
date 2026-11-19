@@ -90,6 +90,9 @@ DEFAULTS = {
         # would otherwise reinstall on every boot. reboot: straight into the
         # installed system (a VM whose ISO you detach by hand).
         "on_done": "poweroff",
+        # a machine at another site, behind a router nothing at home reaches: its install media
+        # bring a one-time way onto the VPN, and its first apply comes over the mesh (join.py)
+        "over_vpn": False,
     },
     "vps": {
         # the machine at a provider, for `kiwi-server vps`: netcup's id, name or
@@ -514,6 +517,11 @@ class Host:
             errs.append("unlock.control_threshold is a number, 1 or more: how many of its rings must answer")
         elif _control_rings(self) and ct > len(_control_rings(self)):
             errs.append("unlock.control_threshold is %d, but unlock.control names %d ring(s)" % (ct, len(_control_rings(self))))
+        ov = (c.get("install") or {}).get("over_vpn", False)
+        if not isinstance(ov, bool):
+            errs.append("install.over_vpn must be true or false")
+        elif ov and self.target not in ("debian", "coreos", "ucore"):
+            errs.append("install.over_vpn is for Debian, CoreOS and uCore machines")
         if not isinstance(n.get("wol", False), bool):
             errs.append("network.wol must be true or false")
         if n.get("mac") and not re.match(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$", str(n["mac"])):

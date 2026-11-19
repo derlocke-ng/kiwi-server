@@ -43,6 +43,7 @@ from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian 
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
 from kiwiserver import wake as wakemod  # noqa: E402
+from kiwiserver import join as joinmod  # noqa: E402
 from kiwiserver import watchdog as watchdogmod  # noqa: E402
 from kiwiserver import access as accessmod  # noqa: E402
 from kiwiserver import fleettext, onion as onionmod  # noqa: E402
@@ -4678,6 +4679,116 @@ class TestFederation(Base):
         rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", card)
         self.assertNotEqual(rc, 0)
         self.assertIn("not a network's card", err)
+
+
+class TestJoinOverVpn(Base):
+    """install.over_vpn (join.py): a machine at another site comes onto the VPN with a one-time
+    join peer from its media; its first apply comes over the mesh, then the peer goes."""
+    WG = ("[Interface]\nPrivateKey = joinkey\nAddress = 10.9.0.77/24\nDNS = 10.9.0.1\nMTU = 1420\n\n"
+          "[Peer]\nPublicKey = masterkey\nPresharedKey = psk\nAllowedIPs = 0.0.0.0/0, ::/0\n"
+          "PersistentKeepalive = 0\nEndpoint = 198.51.100.4:51820\n")
+
+    def site_fleet(self, target="debian"):
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "nashi": {"role": "node", "target": target, "install": {"over_vpn": True},
+                      "network": {"site": "friend"},
+                      "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.31", "preset": "minimal"}}}})
+
+    def test_the_tunnel_takes_the_mesh_only_and_its_own_table(self):
+        text = joinmod.tunnel_config(self.WG, "10.9.0.0/16")
+        self.assertIn("AllowedIPs = 10.9.0.0/16", text)
+        self.assertNotIn("0.0.0.0/0", text)
+        self.assertNotIn("DNS =", text)                       # a bare Debian has no resolvconf for wg-quick
+        self.assertIn("MTU = 1280", text)
+        self.assertIn("Table = %d" % joinmod.TABLE, text)
+        self.assertIn("PostUp = ip -4 rule add from 10.9.0.77 table %d" % joinmod.TABLE, text)
+        self.assertEqual(joinmod.address(text), "10.9.0.77")
+
+    def test_its_media_bring_it_onto_the_vpn(self):
+        f = self.site_fleet()
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        with mock.patch.object(util, "warn") as warned:
+            r.render(fleet.hosts["nashi"])
+        self.assertIn("not made yet", str(warned.call_args))               # render alone does not touch the master
+        write(joinmod.path(fleet, fleet.hosts["nashi"]), joinmod.tunnel_config(self.WG, "10.9.0.0/16"))
+        o, _produced = r.render(fleet.hosts["nashi"])
+        files = os.path.join(o.dir, "nashi.kiwi-server")
+        self.assertIn("Table = %d" % joinmod.TABLE, util.read_text(os.path.join(files, "kiwi-join.conf")))
+        self.assertEqual(os.stat(os.path.join(files, "kiwi-join.conf")).st_mode & 0o777, 0o600)
+        self.assertIn("systemctl enable wg-quick@kiwi-join.service", util.read_text(os.path.join(files, "late.sh")))
+        self.assertIn("wireguard-tools", util.read_text(o.preseed))
+        f2 = self.site_fleet("ucore")
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f2.path, roles_dir=None))
+        h = fleet.hosts["nashi"]
+        write(joinmod.path(fleet, h), joinmod.tunnel_config(self.WG, "10.9.0.0/16"))
+        h.join_conf = util.read_text(joinmod.path(fleet, h))
+        bu = coreos_t.build_butane(h, "#!/bin/sh\n")
+        self.assertIn("/etc/wireguard/kiwi-join.conf", [x["path"] for x in bu["storage"]["files"]])
+        self.assertIn({"name": "wg-quick@kiwi-join.service", "enabled": True}, bu["systemd"]["units"])
+
+    def test_the_peer_is_made_once_and_goes_when_it_answers_on_its_own(self):
+        f = self.site_fleet()
+        made, gone = [], []
+
+        class Api:
+            def __init__(self, url, pw):
+                pass
+
+            def login(self):
+                return self
+
+            def client(self, name):
+                return {"id": "c1", "name": name} if made else None
+
+            def create(self, name):
+                made.append(name)
+                return {"id": "c1", "name": name}
+
+            def configuration(self, cid):
+                return TestJoinOverVpn.WG
+
+            def delete(self, cid):
+                gone.append(cid)
+        h = f.hosts["nashi"]
+        with mock.patch.object(wgeasy, "WgEasy", Api):
+            text = joinmod.make(f, f.hosts["gate"], "pw", "10.9.0.0/16", h, api="http://x")
+            self.assertEqual(joinmod.make(f, f.hosts["gate"], "pw", "10.9.0.0/16", h, api="http://x"), text)
+            self.assertEqual(made, ["join-nashi"])                         # once
+            self.assertEqual(joinmod.joined_at(f, h), "10.9.0.77")
+            joinmod.drop(f, f.hosts["gate"], "pw", h, api="http://x")
+        self.assertEqual(gone, ["c1"])
+        self.assertEqual(joinmod.joined_at(f, h), "")
+        self.assertFalse(joinmod.on_its_own(h, "10.8.0.31", answers=lambda a, p: False))
+        self.assertTrue(joinmod.on_its_own(h, "10.8.0.31", answers=lambda a, p: a == "10.8.0.31"))
+
+    def test_apply_keeps_the_join_until_it_answers_on_its_own(self):
+        f = self.site_fleet()
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        h = fleet.hosts["nashi"]
+        h.role_settings = {"vpn_ip": "10.8.0.31"}
+        write(joinmod.path(fleet, h), joinmod.tunnel_config(self.WG, "10.9.0.0/16"))
+        ran, dropped = [], []
+        with mock.patch.object(joinmod, "on_its_own", lambda host, ip, answers=None: False), \
+                mock.patch.object(cli.time, "sleep", lambda s: None), mock.patch.object(util, "warn") as warned:
+            cli._drop_join(fleet, roles, ms, h, "core@10.9.0.77")
+        self.assertIn("stays until", str(warned.call_args))
+        self.assertTrue(os.path.isfile(joinmod.path(fleet, h)))
+        with mock.patch.object(joinmod, "on_its_own", lambda host, ip, answers=None: True), \
+                mock.patch.object(remote, "run", lambda tgt, script, data=None: ran.append((tgt, script)) or b""), \
+                mock.patch.object(joinmod, "drop", lambda *a, **k: dropped.append(a[3].name)):
+            cli._drop_join(fleet, roles, ms, h, "core@10.9.0.77")
+        self.assertEqual(ran, [("core@10.9.0.77", joinmod.OFF)])
+        self.assertIn("systemd-run", joinmod.OFF)                           # detached: the session may run over it
+        self.assertEqual(dropped, ["nashi"])
+
+    def test_only_for_installed_systems(self):
+        data = {"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "coreos-ram", "install": {"over_vpn": True}, "master": self.master()}}}
+        f = self.fleet(data)
+        rc, out, err = TestManage.run_cli(self, "validate", f.path)
+        self.assertIn("install.over_vpn is for Debian, CoreOS and uCore machines", err + out)
 
 
 class TestFirstContact(Base):

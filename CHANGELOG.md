@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.242.0 — every command in the help and in completion
+
+- **Fixed:** on an Armbian board a bare machine's **Extra packages** were dropped: the setting
+  was for Debian only, and Armbian is Debian on a board. What runs on debian runs on armbian
+  now, and `kiwi-server roles` lists armbian where it can run.
+- `kiwi-server --help` names `next`, `adopt`, `service` and `sources` too. Bash completion
+  knows the 14 commands it was missing (access, connect, recovery, rotate, qr, …) and offers
+  rotate's kinds. Tests keep both in step with the commands.
+- `kiwi-server recovery`: a long label ("Bring something back on …") on a line of its own,
+  so it no longer runs into its command.
+- `kiwi-server disks`: the columns as wide as the longest name (LVM names ran into the size).
+- Docs: `kiwi-server qr` shows a device's code again, or saves it as an image.
+- The stand-in drill counts the ring's requests again; leftovers removed.
+
 ## 2.241.0 — hints that work from any folder
 
 - Every "next: kiwi-server …" hint (list, the wizard, recovery, apply, build, access, onion and

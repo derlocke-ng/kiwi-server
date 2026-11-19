@@ -47,6 +47,8 @@ ostreesetup --osname=fedora --url=file:///ostree/repo --ref=fedora/45/x86_64/sil
 services --enabled=sshd
 poweroff
 %post
+# Silverblue has sshd (GNOME's Remote Login switches it); services --enabled did not take on an ostree install
+systemctl enable sshd.service
 echo "$admin ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$admin
 chmod 0440 /etc/sudoers.d/$admin
 %end
@@ -72,7 +74,8 @@ if ! vh '[ -s bound ]'; then
     vm_start boot1.log
     vm_wait_log boot1.log "$PROMPT" 300; check $? "it asks for its passphrase at boot"
     vm_type "$PASS_PHRASE"
-    up_within 300; check $? "the passphrase opens it"
+    up_within 300; rc=$?; check $rc "the passphrase opens it, and ssh answers"
+    [ $rc = 0 ] || { say "$fails wrong (stopped: no way in)"; exit 1; }
     vssh "rpm -q clevis clevis-luks clevis-dracut" > clevis.log 2>&1; have=$?
     say "clevis in the image: $( [ $have = 0 ] && echo yes || echo "no: layered with rpm-ostree" )"
     if [ $have != 0 ]; then
@@ -80,14 +83,16 @@ if ! vh '[ -s bound ]'; then
     fi
     vssh "sudo rpm-ostree initramfs --enable --arg=-a --arg=clevis --arg=-a --arg=clevis-pin-tang --arg=-a --arg=clevis-pin-sss" >>clevis.log 2>&1
     check $? "the boot system made here, with clevis and its tang and sss pins"
-    vssh "sudo systemctl reboot" 2>/dev/null
-    n=300; until [ "$(vh "grep -caE '$PROMPT' boot1.log" 2>/dev/null || echo 0)" -ge 2 ] || [ "$n" -le 0 ]; do sleep 5; n=$((n - 5)); done
-    [ "$n" -gt 0 ]; check $? "it asks again after the reboot"
+    vssh "sudo systemctl poweroff" 2>/dev/null
+    n=180; while vm_running && [ "$n" -gt 0 ]; do sleep 5; n=$((n - 5)); done
+    vm_start boot2.log
+    vm_wait_log boot2.log "$PROMPT" 300; check $? "it asks again, from the new deployment"
     vm_type "$PASS_PHRASE"
     up_within 300; check $? "after the reboot into the new deployment the passphrase opens it"
     dev=$(vssh "sudo blkid -t TYPE=crypto_LUKS -o device" | head -1)
     printf '%s' "$PASS_PHRASE" | vssh "sudo clevis luks bind -y -k - -d $dev sss '$POLICY'" >bind.log 2>&1
-    check $? "bound: (health1 and health2 and auto) or emergency"
+    rc=$?; check $rc "bound: (health1 and health2 and auto) or emergency"
+    [ $rc = 0 ] || { say "$fails wrong (stopped: not bound)"; exit 1; }
     vh "echo $dev > bound"
     vssh "sudo systemctl poweroff" 2>/dev/null; sleep 20
 fi

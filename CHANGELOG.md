@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.247.0 — a log a person can read
+
+- **Fixed (kiwi-modules 0.101.1):** the accounts' sign-up page (kn-signup) stopped at every start
+  with "argument --id-onion: expected one argument" once the accounts had no hidden service: an
+  empty word vanished from its container's command. Empty words stay words now.
+- **A service's log says first, in words, why it stops**: "kn-signup keeps stopping right after
+  it starts (24 restarts so far)… Its last words: …". Then only the service's own lines with a
+  short time; podman's lines about its container are left out (and counted). In the terminal
+  `kiwi-server service … logs` (`--raw` for every line, `--save FILE` for the full log); on the
+  page the log is open at once, with **Open as text** and **Download**; in the app **Log** opens
+  a large window with **Save…** (the full log) and **Copy**.
+
 ## 2.246.0 — who opens whom
 
 - **Disk unlock**: one picture of how each machine's disk opens at boot, with which rings (and

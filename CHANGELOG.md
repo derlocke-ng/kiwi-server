@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.232.0 — a quieter status
+
+- kiwi-stack 0.9.22: `kiwi-server status` no longer shows podman's
+  `conmon … <nwarn>: Failed to open cgroups file` lines (one for every health check), which
+  buried what the units really said.
+- ROADMAP: the master in RAM has about 160 MB free again (crumble, 83 %).
+
 ## 2.231.0 — only the container whose image changed
 
 - kiwi-stack 0.9.21 fixes 0.9.20 (in 2.230.0): on a disk 85 % full or more, making room for a

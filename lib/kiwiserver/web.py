@@ -3400,7 +3400,7 @@ def make_app(control: Control):
     @app.post("/api/federation")
     async def api_federation_do(request: Request):
         """{name: {share, from, exit, internet}} -> {saved: true}: what this network opens to a linked
-        one, whom of it it lets in, and whether it leaves to the Internet through it. Left out: as now."""
+        one, which of its people this network lets in, and whether it leaves to the Internet through it. Left out: as now."""
         who = bearer(request)
         if not who:
             return JSONResponse({"error": "who?"}, status_code=401)

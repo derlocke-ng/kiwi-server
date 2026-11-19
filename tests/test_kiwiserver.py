@@ -804,7 +804,7 @@ print("\n".join(d.get("sigs", [])))
         live = starter.live_butane("{}", plain_ign="{}")
         self.assertEqual(sorted(f["path"] for f in live["storage"]["files"] if f["path"].endswith(".ign")),
                          ["/etc/kiwi-starter/installed-plain.ign", "/etc/kiwi-starter/installed.ign"])
-        tpm, meminfo = os.path.join(self.tmp, "tpm"), os.path.join(self.tmp, "meminfo")
+        tpm = os.path.join(self.tmp, "tpm")
         os.makedirs(tpm, exist_ok=True)
         write(os.path.join(self.tmp, "live.sh"), starter.install_script())
 
@@ -1187,6 +1187,12 @@ class TestArmbian(Base):
                                                        admin={"user": "kiwi", "password": "pw", "ssh_keys": [KEY]}),
                         "hosts": {"n2": dict({"hostname": "n2.home", "armbian": {"board": "odroidn2"}}, **over)}})
         return f.hosts["n2"]
+
+    def test_what_runs_on_debian_runs_here_extra_packages_too(self):
+        self.assertIn("armbian", self.roles["node"].targets)
+        h = self.host(bare={"packages": ["htop"]})
+        rolesmod.resolve_settings(self.roles["bare"], h, self.ms)
+        self.assertEqual(h.role_settings["packages"], ["htop"])          # was dropped: the setting said debian only
 
     def test_checks(self):
         self.assertEqual(self.host().validate(self.roles), [])
@@ -4192,15 +4198,18 @@ class TestMounts(Base):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
         said = (b'NAME="sda" SIZE="953.9G" TYPE="disk" FSTYPE="xfs" LABEL="data" UUID="1-2" MOUNTPOINT=""\n'
                 b'NAME="nvme0n1p3" SIZE="384M" TYPE="part" FSTYPE="ext4" LABEL="boot" UUID="3-4" MOUNTPOINT="/boot"\n'
-                b'NAME="sdb1" SIZE="1.8T" TYPE="part" FSTYPE="ext4" LABEL="" UUID="5-6" MOUNTPOINT=""\n')
+                b'NAME="sdb1" SIZE="1.8T" TYPE="part" FSTYPE="ext4" LABEL="" UUID="5-6" MOUNTPOINT=""\n'
+                b'NAME="lychee--vg-swap_1" SIZE="1G" TYPE="lvm" FSTYPE="swap" LABEL="" UUID="7-8" MOUNTPOINT="[SWAP]"\n')
         with mock.patch.object(remote, "run", lambda *a, **kw: said), mock.patch.object(remote, "reach", lambda h, o=None: "core@x"):
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x")
             self.assertEqual(rc, 0, err)
+            table = [l for l in out.splitlines() if l.startswith(("NAME", "sd", "nvme", "lychee"))]
+            self.assertEqual(len({re.match(r"\S+ +\S+", l).end() for l in table}), 1)      # the sizes end in one column
             self.assertIn('mounts: ["LABEL=data /mnt/data"]', out + err)
             self.assertIn('mounts: ["UUID=5-6 /mnt/data"]', out + err)               # no label: by its UUID
             self.assertNotIn("LABEL=boot", out + err)
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x", "--porcelain")
-            self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1"])
+            self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1", "lychee--vg-swap_1"])
 
     def test_service_restarts_stops_starts_or_shows_the_log_of_one_container_of_the_stack(self):
         from kiwiserver import cli as climod
@@ -4868,6 +4877,34 @@ class TestAsleep(Base):
         self.assertIn("asleep until 23:59", h["notes"][0])
 
 
+class TestCompletion(unittest.TestCase):
+    """Bash completion knows every command the help names (11 were missing by 2.241)."""
+    PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "bash-completion", "kiwi-server")
+
+    def complete(self, *words):
+        script = ('source %s; COMP_WORDS=(%s); COMP_CWORD=%d; _kiwi_server; printf "%%s\\n" "${COMPREPLY[@]}"'
+                  % (shlex.quote(self.PATH), " ".join(shlex.quote(w) for w in words), len(words) - 1))
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.split()
+
+    def test_every_command_of_the_help(self):
+        from kiwiserver import cli as climod
+        named = sorted(set(re.findall(r"^  kiwi-server ([a-z][a-z-]*)", climod.USAGE, re.M)))
+        offered = self.complete("kiwi-server", "")
+        self.assertEqual([c for c in named if c not in offered], [])
+        self.assertEqual(self.complete("kiwi-server", "rec"), ["recovery"])
+
+    def test_the_help_names_every_command_people_run(self):
+        import argparse
+        from kiwiserver import cli as climod
+        subs = next(a for a in climod.build_parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
+        named = set(re.findall(r"^  kiwi-server ([a-z][a-z-]*)", climod.USAGE, re.M))
+        inner = {"agent", "notify", "serve-public", "recover", "help", "version"}    # the machines' and the control node's own
+        self.assertEqual(sorted(set(subs) - named - inner), [])
+
+    def test_rotate_offers_its_kinds(self):
+        self.assertEqual(self.complete("kiwi-server", "rotate", "fleet.yaml", ""), ["ssh", "seed", "ring"])
+
+
 class TestMovePlan(Base):
     def test_the_plan_says_what_a_move_changes_and_changes_nothing(self):
         f = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}), "hosts": {
@@ -5018,7 +5055,8 @@ class TestStandby(Base):
         self.assertEqual(f.standbys("gate"), [b])
         self.assertEqual(b.admin["ssh_port"], 41022)                       # its master's, unless its own
         self.assertNotIn("standby", b.overrides)
-        role_g, role_b = self.prepare(gate), self.prepare(b)
+        self.prepare(gate)
+        role_b = self.prepare(b)
         self.assertEqual(role_b.node_type, "master")
         self.assertNotIn("tor", b.modules)                                  # at home: no Tor
         self.assertNotIn("tang", b.modules)                                 # nor its master's ring
@@ -7440,7 +7478,6 @@ class TestModuleSources(Base):
         return rc, out.getvalue(), err.getvalue()
 
     def test_a_source_is_added_pinned_moved_on_purpose_and_removed(self):
-        from kiwiserver import sources
         src, git = self.repo()
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
         with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache")}):
@@ -7555,7 +7592,6 @@ class TestModuleSources(Base):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "other", "modules", "hello", "module.yaml")))
 
     def test_a_module_that_says_how_it_signs_in_is_connected_like_a_built_in_one(self):
-        from kiwiserver import sources
         src, git = self.repo("grow")
         mod = os.path.join(src, "modules", "grow", "module.yaml")
         text = util.read_text(mod).replace("settings:\n", "settings:\n  - key: accounts_client\n    default: \"\"\n"
@@ -13094,7 +13130,7 @@ class TestFirstRunPage(StoreBase):
 
     def test_a_value_that_cannot_be_is_refused_and_nothing_is_written(self):
         cookie, _csrf = self.made()
-        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        page = "/hosts/%s/settings" % self.node()
         path = os.path.realpath(os.path.join(self.dir, "fleet.yaml"))
         text, age = util.read_text(path), util.sha256_file(os.path.join(self.dir, "fleet.yaml.age"))
         # the fleet's own check says no
@@ -13144,7 +13180,7 @@ class TestFirstRunPage(StoreBase):
 
     def test_the_settings_for_every_machine(self):
         cookie, _csrf = self.made()
-        node, page = self.node(), "/hosts/%s/settings" % self.node()
+        page = "/hosts/%s/settings" % self.node()
         self.assertEqual(self.ask("/settings")[:2], (303, "/login"))
         self.assertIn('<a href="/settings">Settings for every machine</a>', self.ask("/machines", cookie=cookie)[1])
         body = self.ask("/settings", cookie=cookie)[1]
@@ -14078,6 +14114,9 @@ class TestRecovery(Base):
         self.assertTrue(out.startswith("Ready?\n  gap  "))
         self.assertIn("If something breaks", out)
         self.assertIn("kiwi-server next fleet.yaml sorbet --yes".replace("fleet.yaml", f.path), out)
+        cut = [l for l in out.splitlines() if re.match(r"    \S.{28}kiwi-server", l) and not re.match(r"    .{28} kiwi", l)]
+        self.assertEqual(cut, [])                       # a label never runs into its command
+        self.assertRegex(out, r"\n    Bring something back on papaya\n {33}kiwi-server backups ")
         status = os.path.join(self.tmp, "status.json")
         write(status, json.dumps({"hosts": [{"host": "papaya", "ok": False, "facts": {}}]}))
         rc, out, err = self.run_cli("recovery", f.path, "--status", status, "--porcelain")

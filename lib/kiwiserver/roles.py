@@ -54,6 +54,11 @@ class Role(_profiles.Profile):
         # machine that runs on coreos runs there too. Decided here, the profiles are kiwi-modules'.
         if "coreos" in self.targets and (self.node_type == "master" or not self.stack) and "coreos-ram" not in self.targets:
             self.targets.append("coreos-ram")
+        # armbian is Debian on a board: what runs on debian runs there, and a setting for debian
+        # (bare's extra packages) counts there too
+        for targets in [self.targets] + [s.targets for s in self.settings]:
+            if "debian" in targets and "armbian" not in targets:
+                targets.insert(targets.index("debian") + 1, "armbian")
         self.apply_path = os.path.join(path, "apply.sh")
         if not os.path.isfile(self.apply_path):
             raise KiwiError("%s: apply.sh is missing" % self.name)

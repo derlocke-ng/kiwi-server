@@ -78,7 +78,10 @@ tunnel_up() {   # PORTS...: each local 127.0.0.1 port on VMHOST's 127.0.0.1 too
     [ -n "$VMHOST" ] || return 0
     local f=() p
     for p in "$@"; do f+=(-R "127.0.0.1:$p:127.0.0.1:$p"); done
-    ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 "${f[@]}" "$VMHOST" &
+    # a connection of its own: through a shared ControlMaster the forwards would stay with the
+    # master after the drill, and this ssh would end at once
+    ssh -N -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=20 "${f[@]}" "$VMHOST" &
     TUNNEL=$!
     sleep 3; kill -0 "$TUNNEL" 2>/dev/null
 }

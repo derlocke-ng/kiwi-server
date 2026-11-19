@@ -5146,11 +5146,16 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server backups <fleet> <host> [module...]      a machine's snapshots; --now, --restore [--at TIME]
   kiwi-server recovery <fleet>                  if something breaks: could it come back, and what to do
   kiwi-server federate <fleet> <other fleet>         link two networks (then share with: access)
+  kiwi-server federate <fleet> --invite|--accept CARD  the same between two operators, by cards
+  kiwi-server federate <fleet> --ca PARTNER          a linked network's CA, for your devices to import
   kiwi-server access <fleet> [who] [what…]            who on the VPN may reach what: groups and linked networks
   kiwi-server onion <fleet> [service.machine]        hidden services: a site for anyone with Tor, or for named people
   kiwi-server disks <fleet> <host>                    the machine's disks, and the line that mounts a data disk
   kiwi-server sshca <fleet> [init|sign KEY|trust]     the fleet's SSH CA: host certificates, keys let in for a while
   kiwi-server unlock <fleet> <host>             forward a Tang ring into a machine waiting at boot
+  kiwi-server rotate <fleet> [ssh|seed|ring NAME|ring all]   new keys: what is due, or one kind
+  kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
+  kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
   kiwi-server targets                           coreos, ucore, debian, armbian, coreos-ram

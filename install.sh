@@ -129,5 +129,6 @@ case "$ACTION" in
     install)   do_install ;;
     update)    do_update ;;
     uninstall) do_uninstall ;;
+    -h|--help|help) echo "usage: $0 install|update|uninstall [--purge]" ;;
     *) echo "usage: $0 install|update|uninstall [--purge]" >&2; exit 1 ;;
 esac

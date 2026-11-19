@@ -8832,14 +8832,18 @@ class TestControl(StoreBase):
         self.assertIsNone(c.login(self.PW, "1.1.1.1"))           # the old one opens nothing
         self.assertTrue(c.login("another long password", "1.1.1.2"))
         self.assertFalse(c.locked())
-        self.assertEqual(c.rotation(), {"pending": [], "last": None, "seed_pending": [], "seed_last": None})
+        self.assertEqual(c.rotation(), {"pending": [], "last": None, "seed_pending": [], "seed_last": None, "rings": []})
         write(os.path.join(self.tmp, "secrets", "rotation.json"),
               json.dumps({"ssh": {"done": ["a"]}, "seed": {"done": []}, "last": {"seed": "2026-11-13T10:00:00"}}))
         with mock.patch.object(c, "fleet_info", lambda **_k: {"hosts": [{"name": "a"}, {"name": "b"}]}):
             self.assertEqual(c.rotation(), {"pending": ["b"], "last": None, "seed_pending": ["a", "b"],
-                                            "seed_last": "2026-11-13T10:00:00"})
+                                            "seed_last": "2026-11-13T10:00:00", "rings": []})
         self.assertEqual(c.argv("rotate-seed", ["b"])[-5:], ["rotate", self.f.path, "seed", "--waive", "b"])
         self.assertEqual(c.argv("rotate", ["b"])[-5:], ["rotate", self.f.path, "ssh", "--waive", "b"])   # the page's Leave out
+        self.assertEqual(c.argv("rotate-ring", [], module="house")[-4:], ["rotate", self.f.path, "ring", "house"])
+        self.assertEqual(c.argv("rotate-ring", ["b"], module="house")[-2:], ["--waive", "b"])
+        with self.assertRaisesRegex(KiwiError, "which ring"):
+            c.argv("rotate-ring", [], module="house; rm -rf /")
         self.assertEqual(c.argv("rotate")[-3:], ["rotate", self.f.path, "ssh"])
         with mock.patch.object(c, "fleet_info", lambda **_k: {"hosts": [{"name": "a"}]}):
             self.assertEqual(c.argv("update")[-4:], ["apply", self.f.path, "--update", "a"])    # newer images into use
@@ -11079,6 +11083,24 @@ class TestRingRotation(Base):
             self.assertEqual((left, done, [c[0] for c in calls]), ([], ["papaya"], ["rotate", "finish"]))
         with self.assertRaisesRegex(KiwiError, "no machine of the fleet serves the ring nowhere"):
             rotate.ring(f, "nowhere", servers, rebind)
+
+
+class TestRingRotationPage(WebBase):
+    def test_the_page_offers_each_ring_and_what_waits(self):
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        data = yaml.safe_load(util.read_text(os.path.realpath(self.c.fleet_path)))
+        data["hosts"]["a"]["unlock"] = {"rings": ["house"]}
+        write(os.path.realpath(self.c.fleet_path), yaml.safe_dump(data))
+        util.write_text(os.path.join(self.c.fleet_dir, "secrets", "rotation.json"), json.dumps(
+            {"rings": {"house": {"pending": ["a"], "begun": "2026-11-19T01:00:00"}}}))
+        rot = self.c.rotation()
+        self.assertEqual(rot["rings"], [{"name": "house", "pending": ["a"], "under_way": True, "last": None}])
+        body = self.ask("/controllers")[1]
+        self.assertIn("3. The keys that open the disks at boot", body)
+        self.assertIn('<input type="hidden" name="action" value="rotate-ring"><input type="hidden" name="module" value="house">', body)
+        self.assertIn("under way: a still on the old keys", body)
+        self.assertIn("Leave a out", body)
+        self.assertIn("4. The password of this page", body)
 
 
 class TestRotate(Base):

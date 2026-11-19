@@ -3913,6 +3913,15 @@ def cmd_rotate(args):
                 raise KiwiError("no such machine: %s" % n)
         servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
 
+        names = [name]
+        if name == "all":           # every ring the machines name, one after the other
+            names = sorted({str(r) for h in fleet.hosts.values() for r in (h.cfg.get("unlock") or {}).get("rings") or []}
+                           - {"operator"})
+            if not names:
+                raise KiwiError("no machine of this fleet is opened by a ring")
+            if args.waive:          # leaving a machine out: only the rings still waiting for it, no new keys
+                names = [r for r in names if set(args.waive) & set(rotate.ring_pending(fleet, r))]
+
         def rebind(h):
             # in place: the header has no room for a second binding beside Ignition's (CoreOS)
             try:
@@ -3922,7 +3931,9 @@ def cmd_rotate(args):
                     raise
                 unlock.bind(h, remote.reach(h), servers, force=True)     # a ring it reaches only at boot
         
-        left = rotate.ring(fleet, name, servers, rebind, only, args.waive or (), args.why or "")
+        left = []
+        for name in names:
+            left += rotate.ring(fleet, name, servers, rebind, only, args.waive or (), args.why or "")
         if share(args.fleet, "push"):
             util.say("the other computers and the control node have the result")
         if left:

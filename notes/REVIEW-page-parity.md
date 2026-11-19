@@ -126,3 +126,14 @@ A controller like a second computer: it joins with the invite link and reads the
 | Backups (save now, restore, prune, a new history) and a service's container (restart, stop, start, logs) | `POST /api/jobs` with `save`, `restore`, `prune`, `start-new`, `service` | for the app |
 | Module sources | `/api/modules` (2.213.0) | for the app |
 | Game servers | the play page is for the people who play; for an admin, a game server's container is a `service` job | nothing left |
+
+## Since 2.216.0 (19 November 2026)
+
+| What | CLI | App | Page |
+|---|---|---|---|
+| Groups of the home network | `access … --new --lan SUBNET` | Who may reach what, *At home* | Who may reach what, *At home* |
+| New keys for an unlock ring | `rotate … ring NAME` / `ring all` | *Replace the disk keys* (all rings) | per ring, *Replace* and *Leave out* (2.221.0) |
+| Several rings for the control node | `unlock.control: [house, attic]` | control setup: *any of … opens it* | fleet file (the control node is set up from the app) |
+| The leash | `unlock.leash` | fleet file | fleet file |
+| Forget a kept password | `secrets forget` | *Forget* on the field | the field's clear box |
+

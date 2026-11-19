@@ -42,6 +42,7 @@ ACTIONS = {
     "check": ("check", False), "watch": ("watch", True), "backup": ("backup", False),
     "save": ("backups", True), "update": ("apply", False), "rotate": ("rotate", False),
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
+    "rotate-ring": ("rotate", False),   # new keys for an unlock ring (module: its name), every disk bound again
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
     "tell-test": ("notify", False), "mtu": ("mtu", True),
     "start-new": ("backups", True),     # a rebuilt machine whose backups wait: a new history instead
@@ -50,7 +51,7 @@ ACTIONS = {
     "adopt": ("adopt", True),           # a waiting starter, taken in (take_in)
     "service": ("service", True),       # one container of a machine's stack: restart, stop, start, logs
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "setup", "build", "restore", "unlock", "remove",
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "rotate-ring", "setup", "build", "restore", "unlock", "remove",
            "start-new", "prune", "service"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
@@ -703,14 +704,25 @@ class Control:
         try:
             state = json.loads(util.read_text(path))
         except (OSError, ValueError):
-            return {"pending": [], "last": None, "seed_pending": [], "seed_last": None}
+            state = {}
         names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
 
         def waits(what):
             done = (state.get(what) or {}).get("done")
             return [] if done is None else [n for n in names if n not in done]
         last = state.get("last") or {}
-        return {"pending": waits("ssh"), "last": last.get("ssh"), "seed_pending": waits("seed"), "seed_last": last.get("seed")}
+        # the unlock rings: those the machines name, with what waits and when they were last replaced
+        try:
+            import yaml
+            data = yaml.safe_load(util.read_text(os.path.realpath(self.fleet_path))) or {}
+            named = sorted({str(r) for h in (data.get("hosts") or {}).values() if isinstance(h, dict)
+                            for r in ((h.get("unlock") or {}).get("rings") or [])} - {"operator"})
+        except (OSError, ValueError):
+            named = []
+        rings = [{"name": r, "pending": list(((state.get("rings") or {}).get(r) or {}).get("pending") or []),
+                  "under_way": bool((state.get("rings") or {}).get(r)), "last": last.get("ring:" + r)} for r in named]
+        return {"pending": waits("ssh"), "last": last.get("ssh"), "seed_pending": waits("seed"), "seed_last": last.get("seed"),
+                "rings": rings}
 
     def _control_key(self):
         return next((key for name, key in self.store.ways() if name == "control"), None)
@@ -999,6 +1011,13 @@ class Control:
                 return list(self.kiwi) + ["prune", self.fleet_path, hosts[0]]
             return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--new"]
         # new SSH keys, or a new seed, on every machine that still has the old ones
+        if action == "rotate-ring":         # module: the ring; hosts: left out (gone for good)
+            if not MODULE.match(module or ""):
+                raise KiwiError("which ring?")
+            argv = list(self.kiwi) + ["rotate", self.fleet_path, "ring", module]
+            for h in hosts:
+                argv += ["--waive", h]
+            return argv
         if action in ("rotate", "rotate-seed"):
             argv = list(self.kiwi) + ["rotate", self.fleet_path, "ssh" if action == "rotate" else "seed"]
             for h in hosts:                 # left out: gone for good, or about to be installed anew

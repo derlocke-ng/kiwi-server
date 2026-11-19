@@ -45,13 +45,17 @@ def address(text):
 
 
 def tunnel_config(text, mesh):
-    """wg-easy's config for the join peer as the bare machine uses it: the mesh only, no DNS (a
-    bare Debian has no resolvconf for wg-quick), 1280 bytes (an unknown line at another site),
-    and a routing table of its own for what comes from its address."""
+    """wg-easy's config for the join peer as the bare machine uses it: the mesh only, its address
+    alone, no DNS (a bare Debian has no resolvconf for wg-quick), 1280 bytes (an unknown line at
+    another site), and a routing table of its own for what comes from its address."""
     text = wgeasy.split_tunnel(text, mesh)
     text = wgeasy.with_mtu(text, wgeasy.DEVICE_MTU)
     lines = [ln for ln in text.splitlines() if not re.match(r"\s*DNS\s*=", ln)]
     addr = address(text)
+    # its address alone (/32): wg-easy's /24 would put the mesh's first /24 on the join tunnel in the
+    # main table, ahead of the machine's own VPN client, and its own address would never answer
+    # (kumquat, 19 Nov 2026)
+    lines = [re.sub(r"^(\s*Address\s*=\s*)([0-9.]+)/\d+", r"\g<1>\2/32", ln) for ln in lines]
     out = []
     for ln in lines:
         out.append(ln)

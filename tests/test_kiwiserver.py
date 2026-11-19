@@ -4701,6 +4701,7 @@ class TestJoinOverVpn(Base):
         self.assertNotIn("0.0.0.0/0", text)
         self.assertNotIn("DNS =", text)                       # a bare Debian has no resolvconf for wg-quick
         self.assertIn("MTU = 1280", text)
+        self.assertIn("Address = 10.9.0.77/32", text)       # its address alone: no /24 route ahead of its own VPN client
         self.assertIn("Table = %d" % joinmod.TABLE, text)
         self.assertIn("PostUp = ip -4 rule add from 10.9.0.77 table %d" % joinmod.TABLE, text)
         self.assertEqual(joinmod.address(text), "10.9.0.77")

@@ -11,6 +11,9 @@
 #       CONTROL_ADDR: the control node's LAN address; HOME_DNS: a DNS server at home (the gateway's)
 #       NAME: kumquat by default; WORKDIR: ~/kiwi-vm/offsite         (~30 to 60 minutes, most of it Debian's install)
 #   After a failed check the machine stays: kiwi-server remove FLEET NAME --yes takes it out again
+#   OVER_VPN=1: install.over_vpn: its media bring a one-time join peer, it comes onto the VPN by itself,
+#       and its first setup is `kiwi-server next` from home over the mesh (no computer at its site);
+#       afterwards the join tunnel and peer are gone and it answers at its own mesh address
 #   ENCRYPT=RING: its disk encrypted (LUKS), opened at boot by RING, a ring on the master (`tang` there):
 #       the first boot gets its one-time key through the initramfs's SSH from a computer at its site,
 #       the first apply binds the ring, and a restart must open the disk by itself
@@ -49,6 +52,10 @@ trap 'if [ "${KEEP:-0}" != 1 ] && [ "$fails" = 0 ]; then stop; fi' EXIT
 "${ks[@]}" add "$F" node "$N" --preset minimal --target debian >add.log 2>&1; check $? "$N added to the fleet (a node, Debian)"
 python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" 'network.dhcp=true' 'network.site="away"' 'disk="/dev/vda"' \
     'install.on_done="poweroff"' >/dev/null; check $? "$N stands at the site away, its address from the router there"
+if [ "${OVER_VPN:-0}" = 1 ]; then
+    python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" 'install.over_vpn=true' >/dev/null
+    check $? "its first setup comes over the VPN (install.over_vpn)"
+fi
 if [ -n "${ENCRYPT:-}" ]; then
     python3 "$HOME/kiwi-dev/tools/fleet-edit.py" "$F" "$N" 'debian.encrypt=true' \
         "unlock={\"rings\": [\"$ENCRYPT\"], \"threshold\": 1, \"ssh\": true}" >/dev/null
@@ -60,6 +67,11 @@ say "its mesh address: $mesh"
 "${ks[@]}" build "$F" "$N" >build.log 2>&1; check $? "its install media built"
 iso="$fd/output/$N/$N.iso"
 [ -f "$iso" ]; check $? "the ISO is there"
+if [ "${OVER_VPN:-0}" = 1 ]; then
+    jconf=$(ls "$fd"/secrets/join/"$N".*.conf 2>/dev/null | head -1)
+    join=$(sed -n 's/^Address *= *\([0-9.]*\).*/\1/p' "$jconf" 2>/dev/null)
+    [ -n "$join" ]; check $? "its one-time join peer is made (${join:-none})"
+fi
 
 # ---- installed behind QEMU's NAT: nobody at home reaches 10.0.2.15 --------------------------------
 rm -f disk.qcow2; qemu-img create -q -f qcow2 disk.qcow2 20G
@@ -88,11 +100,23 @@ if [ -n "${ENCRYPT:-}" ]; then
     "${ks[@]}" unlock "$F" "$N" --manual --address 127.0.0.1 --port "${P_DROP:-2292}" --timeout 900 >unlock-first.log 2>&1
     check $? "its first boot: the one-time key through the initramfs's SSH"
 fi
+if [ "${OVER_VPN:-0}" = 1 ]; then
+    # ---- it comes onto the VPN by itself; home sets it up over the mesh, nobody at its site -----------
+    seen=1
+    for _ in $(seq 1 90); do timeout 3 bash -c "echo > /dev/tcp/$join/22" 2>/dev/null && { seen=0; break; }; sleep 10; done
+    check $seen "the bare system is on the VPN at its join address $join"
+    "${ks[@]}" next "$F" "$N" </dev/null >first-apply.log 2>&1
+    check $? "its first setup, by kiwi-server next from home over the mesh"
+    sleep 20
+    [ ! -e "$jconf" ]; check $? "its one-time join peer is gone from the fleet's secrets"
+    inside 'ip link show kiwi-join' >/dev/null 2>&1; [ $? != 0 ]; check $? "its join tunnel is gone on the machine"
+else
 # ---- its first apply comes from a computer at its site: home cannot reach it before it is on the VPN ----
-# (here QEMU's forwarded port stands for a laptop on that LAN; later the join token makes this unneeded)
+# (here QEMU's forwarded port stands for a laptop on that LAN)
 for _ in $(seq 1 60); do inside true && break; sleep 10; done
 "${ks[@]}" apply "$F" "$N" --ssh "ssh://core@127.0.0.1:${P_SSH:-2290}" --new-host-key >first-apply.log 2>&1
 check $? "its first apply, from a computer at its site"
+fi
 
 # ---- it joins the mesh through the master, from behind someone else's router ----------------------
 up=1

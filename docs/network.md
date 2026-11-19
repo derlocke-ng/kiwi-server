@@ -184,6 +184,24 @@ Without `site` every machine is at `home`. It matters when the other place's LAN
 the same numbers as the home's (two routers of one make give out the same range):
 without it, home would send the machine's name to an address in its own LAN.
 
+Nothing at home reaches a machine there before it is on the VPN, so its first setup
+cannot come over SSH from home. Either a computer at its site does it (`apply … --ssh`),
+or the machine comes onto the VPN by itself first:
+
+```yaml
+hosts:
+  medlar:
+    install: { over_vpn: true }      # or "It stands at another site" in its settings
+```
+
+`kiwi-server build` then makes a one-time join peer on the master (its own key and
+address, not the machine's) and puts its WireGuard config on the install media. The
+installed machine comes onto the VPN with it at first boot; `kiwi-server next` (or the
+control node) finds it there and sets it up over the mesh. As soon as it answers at its
+own mesh address, the join tunnel is switched off on the machine and the peer is removed
+from the master. Until then the stick carries that key: keep it safe. Nothing more is
+opened on the master than the VPN it has anyway.
+
 An encrypted machine there opens its disk at boot from a ring at its own site, or
 from a ring at home through the master: the master only passes the ring's port on over
 the VPN (`vpn-server.unlock_relay`, docs/security.md) and keeps no key, and it lets in

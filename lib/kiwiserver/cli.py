@@ -1040,7 +1040,10 @@ def cmd_remove(args):
                 c = api.client(h.hostname)
                 if c is not None:
                     api.delete(c["id"])
-                return c is not None
+                j = api.client(joinmod.peer_name(h))        # a one-time join peer still there (install.over_vpn)
+                if j is not None:
+                    api.delete(j["id"])
+                return c is not None or j is not None
             if args.api:
                 was = drop(args.api)
             else:
@@ -1057,7 +1060,7 @@ def cmd_remove(args):
             util.warn("its place on the VPN could not be taken away (%s): do it on the master's VPN page (wg.<master>), "
                       "or run this again when the master answers" % str(e).splitlines()[0])
     # what this computer keeps of it
-    for rel in ("secrets/%s.conf" % h.hostname, "secrets/ram/%s" % name):
+    for rel in ("secrets/%s.conf" % h.hostname, "secrets/ram/%s" % name, "secrets/join/%s.conf" % h.hostname):
         p = fleet.resolve_path(rel)
         if os.path.isdir(p):
             shutil.rmtree(p)
@@ -2848,11 +2851,6 @@ def cmd_apply(args):
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)
-            if joinmod.joined_at(fleet, h):  # its first apply came over its one-time way onto the VPN
-                try:
-                    _drop_join(fleet, roles, ms, h, tgt)
-                except KiwiError as e:
-                    util.warn("%s: its one-time way onto the VPN was not removed: %s" % (h.name, e))
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)
@@ -2868,6 +2866,12 @@ def cmd_apply(args):
                 record_backup_clients(fleet, h)
                 if not args.no_run:
                     record_rendered(fleet, h.name, script)
+            # the very last step: it may switch off the tunnel this session runs over
+            if joinmod.joined_at(fleet, h):  # its first apply came over its one-time way onto the VPN
+                try:
+                    _drop_join(fleet, roles, ms, h, tgt)
+                except KiwiError as e:
+                    util.warn("%s: its one-time way onto the VPN was not removed: %s" % (h.name, e))
             util.say("%s: applied" % h.name)
         except KiwiError as e:
             with book:

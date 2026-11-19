@@ -782,7 +782,9 @@ while, and when it is fine again. What everyone on your network sees without a l
 <p><a href="{{ back }}">← Back</a></p><h1>{{ title }}</h1>
 <p id="say" class="banner {{ 'ok' if job.state == 'ok' else 'bad' if job.state == 'failed' else 'warn' }}">{{ say[job.state] }}</p>
 <p id="open" class="card" style="display:none">Open this page to go on: <a id="openlink" target="_blank" rel="noopener"></a></p>
-<details {% if job.state == 'failed' %}open{% endif %}><summary>What is happening, line by line</summary><pre id="log"></pre></details>
+<details {% if job.state == 'failed' or job.action == 'service' %}open{% endif %}><summary>What is happening, line by line</summary><pre id="log"></pre>
+<p class="small"><a href="/api/jobs/{{ job.id }}/log?text=1" target="_blank" rel="noopener">Open as text</a> ·
+<a href="/api/jobs/{{ job.id }}/log?text=1&amp;download=1">Download</a></p></details>
 <script>
 const say={{ say|tojson }};let off=0;const log=document.getElementById("log"),el=document.getElementById("say");
 async function poll(){const r=await fetch("/api/jobs/{{ job.id }}/log?offset="+off);if(!r.ok)return;
@@ -2965,12 +2967,18 @@ def make_app(control: Control):
         return {"job": jid}
 
     @app.get("/api/jobs/{jid}/log")
-    def job_log(request: Request, jid: str, offset: int = 0):
+    def job_log(request: Request, jid: str, offset: int = 0, text: int = 0, download: int = 0):
+        """A job's log: in pieces for the page that follows it, or whole as text (text=1), to read
+        at any size or to keep (download=1)."""
         if not user(request) and not bearer(request):
             return JSONResponse({"error": "log in"}, status_code=401)
         j = control.job(jid)
         if not j:
             return JSONResponse({"error": "no such job"}, status_code=404)
+        if text:
+            whole, _off = control.log(jid, 0)
+            head = {"Content-Disposition": 'attachment; filename="kiwi-%s.log"' % jid} if download else {}
+            return PlainTextResponse(whole, headers=head)
         text, off = control.log(jid, offset)
         return {"text": text, "offset": off, "state": control.job(jid)["state"]}
 

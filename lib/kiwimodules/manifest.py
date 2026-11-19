@@ -1,6 +1,5 @@
 """What the machine side reads: bash variables for the role script and for
 the bundle's stack.sh (the same list, from one place)."""
-import os
 
 from . import resolver
 

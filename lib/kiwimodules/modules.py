@@ -14,7 +14,6 @@ and finished: each module's compose fragment is parsed as YAML and merged
 aggregated from the modules' `nginx:` sections, and the modules' firewall
 rules end up in the VPN client's post-rules.
 """
-import copy
 import ipaddress
 import hashlib
 import os

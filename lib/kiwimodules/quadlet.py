@@ -30,7 +30,7 @@ def _esc(value):
     """A systemd assignment value: % is a specifier, so %%; quoted when it
     has whitespace or quotes; compose's $$ (its own escaping) back to $."""
     v = str(value).replace("$$", "$").replace("%", "%%")
-    if re.search(r"[\s\"'\\]", v):
+    if v == "" or re.search(r"[\s\"'\\]", v):         # an empty argument stays one: ""
         v = '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return v
 

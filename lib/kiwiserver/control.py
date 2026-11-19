@@ -1527,6 +1527,24 @@ class Control:
             lines = [x for x in (r.stderr or "").strip().splitlines() if x.strip()]
             raise KiwiError((lines[-1] if lines else "no answer").replace("error: ", "")[:300])
 
+    def unlock_picture(self):
+        """Who opens whom (unlock.picture), as `kiwi-server unlock FLEET --porcelain` gives it."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        try:
+            r = subprocess.run(list(self.kiwi) + ["unlock", self.fleet_path, "--porcelain"], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
+        except subprocess.TimeoutExpired:
+            raise KiwiError("the picture took too long to work out")
+        try:
+            rows = json.loads(r.stdout)["machines"]
+            if not isinstance(rows, list):
+                raise ValueError
+            return rows
+        except (ValueError, KeyError, TypeError):
+            lines = [x for x in (r.stderr or "").strip().splitlines() if x.strip()]
+            raise KiwiError((lines[-1] if lines else "no answer").replace("error: ", "")[:300])
+
     # ---- machines: a new one, its install media ---------------------------------------
     def media_dir(self):
         """Where install media are made. They carry the machine's secrets: on a control node

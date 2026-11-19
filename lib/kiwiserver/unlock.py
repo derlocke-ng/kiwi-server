@@ -1097,3 +1097,97 @@ def open_disk(host, servers, ring=None, address=None, port=None, timeout=300, ru
                 return True
         sleep(3)
     raise KiwiError("%s: no initramfs answered within %d s%s" % (host.name, timeout, " (ssh: %s)" % last if last else ""))
+
+
+# ---- who opens whom (docs/design/unlock.md) ---------------------------------------------------
+def _way(host):
+    """How a machine's disk opens at boot, from the fleet: by itself (rings), by a person (a key
+    and no ring), in RAM (nothing on a disk), or not at all (not encrypted)."""
+    cfg = host.cfg.get("unlock") or {}
+    if host.target == "coreos-ram":
+        return "in RAM"
+    if cfg.get("rings"):
+        return "by itself"
+    d = host.cfg.get("debian") or {}
+    if host.target == "debian" and (d.get("encrypt") or d.get("partitioning") == "crypto"):
+        return "by a person"            # encrypted, no ring: its key at the screen or over SSH
+    return "not encrypted"
+
+
+def picture(fleet, roles, ms):
+    """Who opens whom, one row per machine: {name, way, threshold, rings: [{ring, server, path}],
+    openers, needs, power_cut}. The same rows for the CLI, the page and the apps. Reads the
+    fleet only; asks no machine."""
+    from . import recovery as recmod, roles as rolesmod
+    hosts = {h.name: h for h in fleet.hosts.values() if h.role in roles}
+
+    def resolve(x):
+        if x.name not in hosts:
+            raise KiwiError("not here")
+        rolesmod.resolve_settings(roles[x.role], x, ms)
+    resolved = set()
+    for h in hosts.values():
+        try:
+            resolve(h)
+            resolved.add(h.name)
+        except KiwiError:
+            pass
+
+    def known(x):
+        if x.name not in resolved:
+            raise KiwiError("not resolved")
+    servers = ring_servers(fleet, known)
+    control = next((h for h in hosts.values() if "control" in (h.modules or [])), None)
+    up, stuck = recmod.start_alone(fleet, hosts, servers)
+    helpers = sorted({s[0].name for s in servers.values() if not isinstance(s[0], OperatorRing)}
+                     | ({control.name} if control else set()))
+    needs = {}
+    for m in helpers:
+        for lost in recmod.start_alone(fleet, hosts, servers, off=(m,))[1]:
+            if lost != m:
+                needs.setdefault(lost, []).append(m)
+    rows = []
+    for h in sorted(hosts.values(), key=lambda x: x.name):
+        cfg = h.cfg.get("unlock") or {}
+        forwarded = set(_forwarded_rings(h)) if cfg.get("rings") else set()
+        rings, openers = [], []
+        for r in cfg.get("rings") or []:
+            server = servers.get(r, (None, 0))[0]
+            if server is None:
+                path = "nobody serves it"
+            elif isinstance(server, OperatorRing):
+                path = "the computer with kiwi-server, by hand"
+            elif r in forwarded:
+                path = "a tunnel the control node opens"
+                if control is not None and control.name not in openers:
+                    openers.append(control.name)
+            elif one_lan(h, server):
+                path = "the LAN"
+            else:
+                path = "the master's relay"
+            rings.append({"ring": r, "server": getattr(server, "name", None) if not isinstance(server, OperatorRing)
+                          else "operator", "path": path})
+        rows.append({"name": h.name, "way": _way(h), "threshold": int(cfg.get("threshold") or 1) if rings else 0,
+                     "rings": rings, "openers": openers, "needs": sorted(needs.get(h.name, [])),
+                     "power_cut": "waits" if h.name in stuck else "opens" if rings else ""})
+    return rows
+
+
+def say_picture(rows, out=print):
+    """The rows in words, a few lines per machine."""
+    width = max([len(r["name"]) for r in rows] + [6])
+    for r in rows:
+        if not r["rings"]:
+            out("%-*s  %s" % (width, r["name"], r["way"]))
+            continue
+        out("%-*s  %s, with %d of: %s" % (width, r["name"], r["way"], r["threshold"],
+                                       ", ".join("%s (%s)" % (x["ring"], x["server"] or "?") for x in r["rings"])))
+        far = [x for x in r["rings"] if x["path"] != "the LAN"]
+        if far:
+            out("%-*s  reached through: %s" % (width, "", "; ".join("%s: %s" % (x["ring"], x["path"]) for x in far)))
+        if r["power_cut"] == "waits":
+            out("%-*s  after a power cut: waits for a person" % (width, ""))
+        elif r["needs"]:
+            out("%-*s  after a power cut: opens, as long as %s starts too" % (width, "", " and ".join(r["needs"])))
+        else:
+            out("%-*s  after a power cut: opens, also with one of its rings' machines off" % (width, ""))

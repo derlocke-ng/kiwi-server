@@ -4,6 +4,7 @@ the file dialog in front of it (a desktop portal would open that on the real scr
 
     gtk4-broadwayd :7 &
     GDK_BACKEND=broadway BROADWAY_DISPLAY=:7 tools/gui-preview.py wizard /tmp/x/fleet.yaml
+    GDK_BACKEND=broadway BROADWAY_DISPLAY=:7 tools/gui-preview.py unlock ~/kiwi/fleet.yaml   (who opens whom)
 
 then open http://127.0.0.1:8087 in a browser. Uses this tree's bin/kiwi-server.
 """
@@ -40,14 +41,19 @@ class Host(Adw.ApplicationWindow):
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] != "wizard":
-        sys.exit("usage: tools/gui-preview.py wizard PATH/fleet.yaml")
-    data = json.loads(subprocess.run([CLI, "init", "--questions"], capture_output=True, text=True, check=True).stdout)
+    if len(sys.argv) != 3 or sys.argv[1] not in ("wizard", "unlock"):
+        sys.exit("usage: tools/gui-preview.py wizard|unlock PATH/fleet.yaml")
+    path = os.path.abspath(sys.argv[2])
 
     def activate(app):
         w = Host(app)
         w.present()
-        gui.SetupWizard(w, os.path.abspath(sys.argv[2]), data).present(w)
+        if sys.argv[1] == "unlock":
+            w.doc = type("Doc", (), {"path": path})()
+            gui.UnlockDialog(w).present(w)
+            return
+        data = json.loads(subprocess.run([CLI, "init", "--questions"], capture_output=True, text=True, check=True).stdout)
+        gui.SetupWizard(w, path, data).present(w)
     app = Adw.Application(application_id="eu.kiwinetwork.KiwiServer.Preview")
     app.connect("activate", activate)
     app.run([])

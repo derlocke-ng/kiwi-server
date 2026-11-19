@@ -1330,6 +1330,61 @@ def long_row(title, subtitle="", **kw):
     return row
 
 
+class UnlockDialog(Adw.Dialog):
+    """Who opens whom (`unlock FLEET --porcelain`, docs/design/unlock.md): how each machine's disk
+    opens at boot, with which rings, and whether it comes back by itself after a power cut."""
+
+    def __init__(self, win):
+        super().__init__(title="Disk unlock", content_width=620, content_height=640)
+        self.win = win
+        self.page = Adw.PreferencesPage()
+        self.status = Adw.StatusPage(title="Looking at the fleet…", child=Adw.Spinner())
+        self.stack = Gtk.Stack()
+        self.stack.add_named(self.status, "wait")
+        self.stack.add_named(self.page, "list")
+        tb = Adw.ToolbarView(content=self.stack)
+        tb.add_top_bar(Adw.HeaderBar())
+        self.set_child(tb)
+        threading.Thread(target=self.load, daemon=True).start()
+
+    def load(self):
+        rc, out, err = run_cli(self.win.cli, ["unlock", self.win.doc.path, "--porcelain"])
+        try:
+            rows = json.loads(out)["machines"] if rc == 0 else None
+        except (ValueError, KeyError):
+            rows = None
+        GLib.idle_add(self.show, rows, err.strip())
+
+    def show(self, rows, err):
+        if rows is None:
+            self.status.set_title("No answer")
+            self.status.set_description(err.splitlines()[-1] if err else "")
+            self.status.set_child(None)
+            return False
+        g = Adw.PreferencesGroup(title="Who opens whom", description="Change a machine's rings in its settings (Disk unlock).")
+        for m in rows:
+            if not m["rings"]:
+                g.add(long_row(m["name"], m["way"]))
+                continue
+            rings = ", ".join("%s on %s%s" % (r["ring"], r["server"] or "nobody", "" if r["path"] == "the LAN" else " (%s)" % r["path"])
+                              for r in m["rings"])
+            if m["power_cut"] == "waits":
+                cut = "After a power cut it waits for a person."
+            elif m["needs"]:
+                cut = "After a power cut it opens, as long as %s starts too." % " and ".join(m["needs"])
+            else:
+                cut = "After a power cut it opens, also with one of its rings' machines off."
+            row = long_row(m["name"], "%s, with %d of: %s. %s" % (m["way"], m["threshold"], rings, cut))
+            img = Gtk.Image(icon_name="dialog-warning-symbolic" if m["power_cut"] == "waits" or m["needs"] else "emblem-ok-symbolic",
+                            valign=Gtk.Align.CENTER)
+            img.add_css_class("warning" if m["power_cut"] == "waits" or m["needs"] else "success")
+            row.add_prefix(img)
+            g.add(row)
+        self.page.add(g)
+        self.stack.set_visible_child_name("list")
+        return False
+
+
 class RecoveryDialog(Adw.Dialog):
     """If something breaks (`recovery --porcelain`): could the network come back, as rows with
     an icon, gaps first; then each case to open, with a button where the app does what it needs."""
@@ -4542,6 +4597,7 @@ class Window(Adw.ApplicationWindow):
                          ("locking", lambda: self.doc.path and LockDialog(self).present(self)),
                          ("rotate", self.rotate_dialog), ("connect", self.connect_dialog),
                          ("recovery", lambda: self.doc.path and RecoveryDialog(self).present(self)),
+                         ("unlock-picture", lambda: self.doc.path and UnlockDialog(self).present(self)),
                          ("rebuild-host", lambda: self.is_host() and RebuildDialog(self, self.current_scope).present(self))):
             act = Gio.SimpleAction(name=name)
             act.connect("activate", lambda _a, _p, cb=cb: cb())
@@ -4569,6 +4625,7 @@ class Window(Adw.ApplicationWindow):
         net.append("Back up the network now", "win.backup-now")
         net.append("Save a copy of the network…", "win.copy")
         net.append("If something breaks…", "win.recovery")
+        net.append("Disk unlock…", "win.unlock-picture")
         section.append_submenu("This network", net)
         manage = Gio.Menu()                     # who may do what, and where modules come from
         manage.append("Who may reach what…", "win.access")

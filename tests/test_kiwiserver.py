@@ -14078,6 +14078,9 @@ class TestRecovery(Base):
         self.assertTrue(out.startswith("Ready?\n  gap  "))
         self.assertIn("If something breaks", out)
         self.assertIn("kiwi-server next fleet.yaml sorbet --yes".replace("fleet.yaml", f.path), out)
+        cut = [l for l in out.splitlines() if re.match(r"    \S.{28}kiwi-server", l) and not re.match(r"    .{28} kiwi", l)]
+        self.assertEqual(cut, [])                       # a label never runs into its command
+        self.assertRegex(out, r"\n    Bring something back on papaya\n {33}kiwi-server backups ")
         status = os.path.join(self.tmp, "status.json")
         write(status, json.dumps({"hosts": [{"host": "papaya", "ok": False, "facts": {}}]}))
         rc, out, err = self.run_cli("recovery", f.path, "--status", status, "--porcelain")

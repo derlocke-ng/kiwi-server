@@ -620,8 +620,12 @@ def human(rep, width=96):
         for h in k["how"]:
             if h["command"]:
                 cmds = h["command"].splitlines()
-                lines.append("    %-28s %s" % (h["label"], cmds[0]))
-                lines += ["    %-28s %s" % ("", c) for c in cmds[1:]]
+                if len(h["label"]) > 28:            # a long label on a line of its own: the commands stay in their column
+                    lines.append("    %s" % h["label"])
+                    lines += ["    %-28s %s" % ("", c) for c in cmds]
+                else:
+                    lines.append("    %-28s %s" % (h["label"], cmds[0]))
+                    lines += ["    %-28s %s" % ("", c) for c in cmds[1:]]
     return "\n".join(lines)
 
 

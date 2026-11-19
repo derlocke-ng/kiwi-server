@@ -42,6 +42,7 @@ from kiwiserver import address as addressmod, adopt as adoptmod, control as cont
 from kiwiserver.targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t  # noqa: E402
 from kiwiserver.toolchain import Toolchain  # noqa: E402
 from kiwiserver import util  # noqa: E402
+from kiwiserver import wake as wakemod  # noqa: E402
 from kiwiserver import watchdog as watchdogmod  # noqa: E402
 from kiwiserver import access as accessmod  # noqa: E402
 from kiwiserver import fleettext, onion as onionmod  # noqa: E402
@@ -4679,6 +4680,74 @@ class TestFederation(Base):
         self.assertIn("not a network's card", err)
 
 
+class TestWake(Base):
+    """Wake-on-LAN (wake.py): what an apply learns, which machine sends the packet, and how."""
+
+    def lan_fleet(self):
+        node = self.node_gw() if hasattr(self, "node_gw") else {"preset": "minimal"}
+        return self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "papaya": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.30/24", "gateway": "192.168.2.1"},
+                       "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.25", "preset": "minimal"}},
+            "fig": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.40/24", "gateway": "192.168.2.1", "wol": True},
+                    "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.26", "preset": "minimal"}},
+            "away": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.50/24", "gateway": "192.168.2.1", "site": "office"},
+                     "node": {"vpn-client": {"wireguard_config": "secrets/wg.conf"}, "vpn_ip": "10.8.0.27", "preset": "minimal"}}}})
+
+    def test_what_an_apply_learns_and_the_packet(self):
+        self.assertEqual(wakemod.parse("enp1s0 52:54:00:85:81:FA 192.168.2.71/16\nwol g\n"),
+                         {"card": "enp1s0", "mac": "52:54:00:85:81:fa", "address": "192.168.2.71/16", "wol": "g"})
+        self.assertEqual(wakemod.parse("nothing here"), {})
+        m = wakemod.magic("52:54:00:85:81:fa")
+        self.assertEqual((len(m), m[:6], m[6:12]), (102, b"\xff" * 6, bytes.fromhex("52540085 81fa".replace(" ", ""))))
+        f = self.lan_fleet()
+        calls = []
+
+        def run(tgt, script, data=None):
+            calls.append(script)
+            return b"eth0 02:00:00:00:00:40 192.168.2.40/24\nwol d\n" if "Wake-on" in script else b""
+        with mock.patch.object(util, "warn") as warned:
+            wakemod.after_apply(f.hosts["fig"], "core@fig", runner=run)
+        self.assertIn("WakeOnLan=magic", calls[0])                       # network.wol: on at the card
+        self.assertEqual(wakemod.known(f)["fig"]["mac"], "02:00:00:00:00:40")
+        self.assertIn("does not wake on a magic packet yet", str(warned.call_args))
+        wakemod.after_apply(f.hosts["papaya"], "core@papaya", runner=lambda t, s, d=None: b"")
+        self.assertNotIn("papaya", wakemod.known(f))                     # nothing learned: nothing kept
+
+    def test_a_machine_of_its_lan_sends_it(self):
+        f = self.lan_fleet()
+        wakemod.remember(f, "fig", {"card": "eth0", "mac": "02:00:00:00:00:40", "address": "192.168.2.40/24"})
+        self.assertEqual([h.name for h in wakemod.wakers(f, f.hosts["fig"], ipaddress.ip_network("192.168.2.0/24"))], ["papaya"])
+        sent = []
+
+        def run(tgt, script, data=None):
+            if tgt == "core@nobody":
+                raise KiwiError("ssh: no answer")
+            sent.append((tgt, script))
+            return b"sent on eth0\n"
+        self.assertEqual(wakemod.wake(f, f.hosts["fig"], reach=lambda h: "core@" + h.name, runner=run), "papaya")
+        tgt, script = sent[0]
+        self.assertEqual(tgt, "core@papaya")
+        self.assertIn("ip neigh replace 192.168.2.40 lladdr 02:00:00:00:00:40", script)
+        self.assertIn("/dev/udp/192.168.2.40/9", script)
+        self.assertIn("\\xff\\xff\\xff\\xff\\xff\\xff\\x02\\x00", script)
+        # none answers: said; no MAC: said; --via another
+        with self.assertRaises(KiwiError) as e:
+            wakemod.wake(f, f.hosts["fig"], reach=lambda h: "core@nobody", runner=run)
+        self.assertIn("no machine of its LAN sent the packet: papaya (ssh: no answer)", str(e.exception))
+        with self.assertRaises(KiwiError) as e:
+            wakemod.wake(f, f.hosts["papaya"], reach=lambda h: "core@" + h.name, runner=run)
+        self.assertIn("its MAC is not known", str(e.exception))
+        self.assertEqual(wakemod.wake(f, f.hosts["papaya"], mac="02:00:00:00:00:30", via="fig",
+                                      reach=lambda h: "core@" + h.name, runner=run), "fig")
+        rc, out, err = TestManage.run_cli(self, "validate", f.path)
+        self.assertEqual(rc, 0, err)
+        data = yaml.safe_load(util.read_text(f.path))
+        data["hosts"]["fig"]["network"]["mac"] = "not-a-mac"
+        write(f.path, yaml.safe_dump(data))
+        self.assertIn("network.mac must be like", TestManage.run_cli(self, "validate", f.path)[2])
+
+
 class TestStandby(Base):
     def fleet_with_standby(self, **standby):
         sb = {"target": "debian", "network": {"dhcp": False, "address": "192.168.7.70/24", "gateway": "192.168.7.1"}}
@@ -6373,6 +6442,8 @@ class TestManage(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
+            if wakemod.LEARN in script:          # its card, for Wake-on-LAN: TestWake looks at it
+                return b""
             calls.append((script, data))
             if "luksChangeKey" in script:
                 return state.encode()
@@ -6473,6 +6544,8 @@ class TestManage(Base):
         calls = []
 
         def fake_run(tgt, script, data=None, runner=None):
+            if wakemod.LEARN in script:          # its card, for Wake-on-LAN: TestWake looks at it
+                return b""
             calls.append(("run", tgt, script, data))
             if "role.done" in script:
                 if tgt.endswith("gate.kiwi"):
@@ -9774,6 +9847,19 @@ class WebBase(StoreBase):
 class TestWeb(WebBase):
     """The control page's own pages."""
 
+    def test_a_machine_with_wake_on_lan_that_does_not_answer_can_be_woken(self):
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": n, "hostname": n + ".home", "role": "node", "modules": [], "sites": [], "next": "", "wol": n == "fig"}
+            for n in ("fig", "papaya")]}))
+        gone = {"level": "bad", "text": "unreachable: no answer", "key": "unreachable"}
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": n, "state": "bad", "problems": [gone], "notes": [], "facts": {}} for n in ("fig", "papaya")]}))
+        body = self.ask("/hosts/fig")[1]
+        self.assertIn('<input type="hidden" name="action" value="wake">', body)
+        self.assertIn("Wake it", body)
+        self.assertNotIn("Wake it", self.ask("/hosts/papaya")[1])             # no Wake-on-LAN: no button
+
     def test_changes_not_applied_yet_are_applied_with_one_button(self):
         """Save & apply, and the Home card (after OpenWrt): a change reaches other machines too."""
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
@@ -9927,6 +10013,7 @@ class TestWeb(WebBase):
         self.assertIn("Standby of sorbet", self.ask("/machines")[1])            # not a second master
         code, body = self.ask("/hosts/papaya")
         self.assertIn("Home server (node)", body)
+        self.assertNotIn("Wake it", body)
         self.assertIn("Changes nothing.", body)                                   # each button says what it does
         self.assertIn("2 hours ago", body)
         self.assertIn("raw words", body)
@@ -12919,6 +13006,7 @@ class TestFirstRunPage(StoreBase):
                 self.c.argv("restore", ["papaya"], at, module)
         self.assertEqual(self.c.argv("unlock", ["papaya"])[-3:], ["unlock", fleet, "papaya"])
         self.assertEqual(self.c.argv("remove", ["papaya"])[-4:], ["remove", fleet, "papaya", "--yes"])
+        self.assertEqual(self.c.argv("wake", ["papaya"])[-3:], ["wake", fleet, "papaya"])
         with self.assertRaises(KiwiError):
             self.c.argv("remove", [])
         with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": "papaya"}), self.assertRaises(KiwiError):

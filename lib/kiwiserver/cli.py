@@ -18,7 +18,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import health as healthmod, recovery as recoverymod, sources as sourcesmod, starter as startermod
+from . import health as healthmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -1131,6 +1131,7 @@ def cmd_list(args):
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
                      "modules": list(h.modules), "disk": h.cfg.get("disk"),
                      "address": h.cfg["network"].get("address") if not h.cfg["network"].get("dhcp", True) else "dhcp",
+                     "wol": bool(h.cfg["network"].get("wol")),      # Wake-on-LAN on: a Wake button while it is off
                      "vpn_ip": mesh_ip,
                      # its sites, the public names too (those are not in the network's own DNS, 2.202.0)
                      "sites": [n for n in (r._names.get(h.hostname) or []) if mesh_ip and n != h.hostname and n not in r.aliases],
@@ -2824,6 +2825,7 @@ def cmd_apply(args):
                 remote.run(tgt, unlock.INSTALL_KEY_ONLY)
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
+            wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)
@@ -4706,6 +4708,15 @@ def cmd_federate(args):
                  % (na, nb))
 
 
+def cmd_wake(args):
+    """Wake a machine at home that is switched off (Wake-on-LAN): another machine of its LAN sends
+    the magic packet. Its card must have waking on (network.wol, and often its firmware)."""
+    fleet, _roles, _ms = load(args, need_roles=False)
+    host = fleet.select([args.host])[0]
+    wakemod.wake(fleet, host, mac=args.mac, address=args.address, via=args.via)
+    util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, args.fleet))
+
+
 def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
@@ -5279,6 +5290,10 @@ def build_parser():
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
+    s = sub("wake", cmd_wake); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--mac", help="its card's MAC, where no apply learned it (aa:bb:cc:dd:ee:ff)")
+    s.add_argument("--address", help="its address on the LAN, where the fleet file has none")
+    s.add_argument("--via", metavar="MACHINE", help="the machine of its LAN that sends the packet")
     s = sub("service", cmd_service); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("name", help="the service as its container is called, e.g. kn-nginx")
     s.add_argument("action", choices=["restart", "stop", "start", "logs"])

@@ -210,6 +210,32 @@ restarts. The control page has the same buttons on the machine's page,
 Services tab, **Its containers**; the app has them in the menu at each row of
 **Services**. A restart from there is in the machine's History.
 
+## Wake a machine that is off
+
+A machine at home that is switched off can be started over the network
+(Wake-on-LAN), when its card and its firmware allow it:
+
+```yaml
+hosts:
+  fig:
+    network: { dhcp: false, address: 192.168.1.40/24, gateway: 192.168.1.1, wol: true }
+```
+
+- The next apply switches waking on at the card (`WakeOnLan=magic` for systemd's
+  network cards, and `ethtool` at once where it is there). It takes at the next start.
+  Some machines also need it switched on in their firmware (BIOS/UEFI).
+- Every apply learns the machine's card, its MAC and its address on the LAN, so nothing
+  has to be typed. Before the first apply: `network.mac`.
+- `kiwi-server wake fleet.yaml fig` has another machine of its LAN send the signal:
+  one at the same site with an address in the same network, or the one named with
+  `--via`. On the control page and in the app, a machine with `wol: true` that does not
+  answer has **Wake it**.
+
+The signal goes to the machine's address through a neighbour entry that names its MAC
+for that moment: no broadcast is needed. `tests/drills/wake-netns.py` shows that the
+packet reaches the card; that a card then starts its machine is up to the hardware,
+and virtual machines cannot be woken this way.
+
 ## Sign in to a service
 
 A service such as Nextcloud, Pi-hole or Portainer asks for a user name and a

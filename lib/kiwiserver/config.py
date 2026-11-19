@@ -70,6 +70,10 @@ DEFAULTS = {
         "site": "home",
         # tagged interfaces (docs/design/lans.md, step 2): [{id: 20, address: 192.168.20.5/24, name: iot}]
         "vlans": [],
+        # Wake-on-LAN: switched on at the card, so `kiwi-server wake` can start it when it is off;
+        # its MAC is learned at each apply, or given here
+        "wol": False,
+        "mac": "",
     },
     "updates": {
         # When an update may REBOOT the machine. Updates themselves are fetched
@@ -501,6 +505,10 @@ class Host:
                     ipaddress.ip_address(str(d))
                 except ValueError:
                     errs.append("network.dns entry %r is not an IP address" % d)
+        if not isinstance(n.get("wol", False), bool):
+            errs.append("network.wol must be true or false")
+        if n.get("mac") and not re.match(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$", str(n["mac"])):
+            errs.append("network.mac must be like aa:bb:cc:dd:ee:ff")
         if n.get("vlans"):
             from . import access as accessmod
             fd = self.fleet.defaults

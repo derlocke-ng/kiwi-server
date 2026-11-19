@@ -44,6 +44,7 @@ ACTIONS = {
     "rotate-seed": ("rotate", False), "setup": ("next", True), "build": ("build", True),
     "rotate-ring": ("rotate", False),   # new keys for an unlock ring (module: its name), every disk bound again
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
+    "wake": ("wake", True),             # a machine at home that is off: another of its LAN sends the magic packet
     "tell-test": ("notify", False), "mtu": ("mtu", True),
     "start-new": ("backups", True),     # a rebuilt machine whose backups wait: a new history instead
     "prune": ("prune", True),           # old snapshots off a backup machine, by its keep_* settings
@@ -1063,6 +1064,10 @@ class Control:
             if hosts[0] == os.environ.get("KIWI_CONTROL_HOST"):
                 raise KiwiError("this is the machine the page runs on: it cannot remove itself")
             return list(self.kiwi) + ["remove", self.fleet_path, hosts[0], "--yes"]
+        if action == "wake":                # Wake-on-LAN, from a machine of its LAN
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            return list(self.kiwi) + ["wake", self.fleet_path, hosts[0]]
         if action == "unlock":              # a machine whose encrypted disk waits at boot
             if len(hosts) != 1:
                 raise KiwiError("which machine?")

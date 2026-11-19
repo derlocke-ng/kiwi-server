@@ -136,6 +136,7 @@ A controller like a second computer: it joins with the invite link and reads the
 | Several rings for the control node | `unlock.control: [house, attic]` | control setup: *any of … opens it*; settings, *Disk unlock* (2.224.0) | settings, *Disk unlock* (2.224.0) |
 | The leash | `unlock.leash` | settings, *Disk unlock* (2.224.0) | settings, *Disk unlock* (2.224.0) |
 | Forget a kept password | `secrets forget` | *Forget* on the field | the field's clear box |
+| Wake-on-LAN | `wake`, `network.wol` | *Wake it* on a machine that is off; settings, Network | the same (2.228.0) |
 | Tagged interfaces (VLANs) | `network.vlans` | settings, Network, *Tagged VLANs* (2.224.0) | the same (2.224.0) |
 | A linked network's CA for the devices | `federate … --ca NAME`, `connect` | Federation…, *Its certificates* | Linked networks, download (2.222.0) |
 

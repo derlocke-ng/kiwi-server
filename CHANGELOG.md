@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.228.0 — Wake-on-LAN
+
+- **`network.wol: true`**: the next apply switches waking on at the machine's card (a drop-in
+  for systemd's `99-default.link`, `WakeOnLan=magic`, and `ethtool` at once where it is there).
+- **Every apply learns the machine's card, MAC and LAN address** into the store
+  (`secrets/macs.json`); `network.mac` for a machine not applied yet.
+- **`kiwi-server wake FLEET HOST`** (`--via`, `--mac`, `--address`): another machine of its LAN
+  sends the magic packet, to its address through a neighbour entry naming its MAC for that
+  moment, so no broadcast is needed. *Wake it* on the control page and in the app for a
+  machine with Wake-on-LAN that does not answer; the setting in both (Network).
+- `tests/drills/wake-netns.py`: the packet reaches a card that has no address (4 checks).
+  Waking real hardware is not tested yet.
+
 ## 2.227.0 — a translated partner's names between two operators
 
 - **Cards carry a certificate request per machine** (public). On `federate FLEET --accept CARD`

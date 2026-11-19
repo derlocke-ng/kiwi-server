@@ -472,7 +472,7 @@ class Host:
         elif roles is not None and self.role not in roles:
             errs.append("unknown role %r (known: %s)" % (self.role, ", ".join(sorted(roles))))
         elif roles is not None and self.target in TARGETS and \
-                ("debian" if self.target == "armbian" else self.target) not in roles[self.role].targets:
+                self.target not in roles[self.role].targets:
             errs.append("role %s does not support target %s" % (self.role, self.target))
         for label in self.hostname.split("."):
             if not _LABEL.match(label):

@@ -1188,6 +1188,12 @@ class TestArmbian(Base):
                         "hosts": {"n2": dict({"hostname": "n2.home", "armbian": {"board": "odroidn2"}}, **over)}})
         return f.hosts["n2"]
 
+    def test_what_runs_on_debian_runs_here_extra_packages_too(self):
+        self.assertIn("armbian", self.roles["node"].targets)
+        h = self.host(bare={"packages": ["htop"]})
+        rolesmod.resolve_settings(self.roles["bare"], h, self.ms)
+        self.assertEqual(h.role_settings["packages"], ["htop"])          # was dropped: the setting said debian only
+
     def test_checks(self):
         self.assertEqual(self.host().validate(self.roles), [])
         self.assertIn("n2: armbian.board is missing (its name at dl.armbian.com, e.g. odroidn2 or odroidm1)",

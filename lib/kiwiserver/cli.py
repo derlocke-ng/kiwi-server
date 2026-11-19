@@ -1025,7 +1025,7 @@ def cmd_remove(args):
     """A machine leaves the network for good: its place on the VPN, its keys here, its block
     in the fleet file. The machine itself is not touched: wipe it, or switch it off."""
     fleet, roles, ms = load(args)
-    path, name = args.fleet, args.host
+    name = args.host
     h = fleet.hosts.get(name)
     if h is None:
         raise KiwiError("no such machine: %s" % name)
@@ -1151,7 +1151,7 @@ def cmd_list(args):
     r = Renderer(fleet, roles, out_dir, None, ms)
     domain, master_ip, mesh, _mtu = fleet_facts(fleet, roles, ms, r)
     healthmod.register({k: v for m in r.ms.modules.values() for k, v in (getattr(m, "pages", None) or {}).items()})
-    records = r.dns_records()
+    r.scan()                        # the fleet-wide facts the rows below read
     for h in fleet.hosts.values():
         errs = h.validate(roles)
         if not errs:
@@ -3751,6 +3751,7 @@ def _trust_partners(fleet, domain, tc):
     """The linked networks' CAs into this user's browsers too, those that can sign only their
     own names (federation.ca_offer); the others are named with why not."""
     import tempfile
+    from . import connect as connectmod
     try:
         found = fedmod.partners(fleet.dir)
     except KiwiError:

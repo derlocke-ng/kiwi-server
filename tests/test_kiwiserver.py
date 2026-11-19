@@ -4605,6 +4605,17 @@ class TestFederation(Base):
         rc, out, err = TestManage.run_cli(self, "federate", a, "--ca", "nobody")
         self.assertIn("no linked network called nobody", err)
 
+    def test_connect_puts_an_offered_partner_ca_into_the_browsers(self):
+        a, b, other = self.two_fleets()
+        shutil.rmtree(os.path.join(other, "secrets", "ca"), ignore_errors=True)
+        certs.ensure_ca(os.path.join(other, "secrets", "ca"), name_constraints=["internal"])
+        self.assertEqual(TestManage.run_cli(self, "federate", a, b)[0], 0)
+        from kiwiserver import connect as connectmod
+        took = []
+        with mock.patch.object(connectmod, "trust", lambda pem, domain, tc: took.append((util.read_text(pem)[:27], domain)) or (["store"], "")):
+            cli._trust_partners(config.Fleet.load(a), config.Fleet.load(a).defaults["domain"], None)
+        self.assertEqual(took, [("-----BEGIN CERTIFICATE-----", "internal")])
+
     def test_two_operators_of_one_domain_sign_each_others_names_with_their_cards(self):
         """Translated at the link between two operators: each card asks for the names the other gives
         its machines; the other's CA signs them on --accept, and the file goes back."""
@@ -4918,7 +4929,6 @@ class TestWake(Base):
     """Wake-on-LAN (wake.py): what an apply learns, which machine sends the packet, and how."""
 
     def lan_fleet(self):
-        node = self.node_gw() if hasattr(self, "node_gw") else {"preset": "minimal"}
         return self.fleet({"defaults": self.base_defaults(), "hosts": {
             "gate": {"role": "master", "target": "debian", "master": self.master()},
             "papaya": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.30/24", "gateway": "192.168.2.1"},

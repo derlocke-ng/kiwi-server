@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.240.0 — connect with a linked network's CA
+
+- **Fixed:** `kiwi-server connect` stopped with an error on a network whose linked network's CA
+  is offered to its devices (since 2.222.0): the step that puts that CA into the browsers did
+  not know the module it uses. Found by a static check of the code; a test runs that step now.
+- **Fixed:** a machine removed on the control page could show in the last look for a moment
+  after its job said done; now it is out of it before.
+- Leftovers the same check found are gone (imports and variables nothing used).
+- ROADMAP: where it stands, as of 19 November.
+
 ## 2.239.0 — a service at one address only
 
 - kiwi-modules 0.101.0: every module that publishes ports has the setting **`listen`** ("Only at

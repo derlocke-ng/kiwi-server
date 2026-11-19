@@ -13,7 +13,6 @@ admin under kiwi-users/ and are removed at the end. Needs podman with /dev/net/t
 """
 import argparse
 import os
-import re
 import statistics
 import subprocess
 import sys

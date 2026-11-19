@@ -137,6 +137,10 @@ A controller like a second computer: it joins with the invite link and reads the
 | The leash | `unlock.leash` | settings, *Disk unlock* (2.224.0) | settings, *Disk unlock* (2.224.0) |
 | Forget a kept password | `secrets forget` | *Forget* on the field | the field's clear box |
 | Wake-on-LAN | `wake`, `network.wol` | *Wake it* on a machine that is off; settings, Network | the same (2.228.0) |
+| How many rings open the control node | `unlock.control_threshold` | settings, *Disk unlock* | the same (2.233.0) |
+| A machine at another site joins over the VPN | `install.over_vpn`, `next` | settings, *It stands at another site*; Next step | the same (2.235.0) |
+| Asleep by day | `asleep: {from, until}` | settings, *Asleep from*; "asleep until" in the list, Wake | the same; *Wake it now* (2.238.0) |
+| A plan for moving the network | `move --mesh --domain` | terminal only, on purpose: just in case | terminal only (2.237.0) |
 | Tagged interfaces (VLANs) | `network.vlans` | settings, Network, *Tagged VLANs* (2.224.0) | the same (2.224.0) |
 | A linked network's CA for the devices | `federate … --ca NAME`, `connect` | Federation…, *Its certificates* | Linked networks, download (2.222.0) |
 

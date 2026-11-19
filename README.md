@@ -3,8 +3,9 @@
 Build the machines of a [Kiwi Network](https://kiwi-network.eu): write one
 `fleet.yaml`, get an **unattended install ISO** per host. Boot it, walk away,
 and the machine comes back as a `kiwi-node` or `kiwi-master` on Fedora CoreOS,
-uCore or Debian stable. It updates itself and reboots only in the window you
-chose.
+uCore or Debian stable. A board (Odroid, Banana Pi) gets its own Armbian image
+with the first boot written in ([Boards](docs/boards.md)). It updates itself and
+reboots only in the window you chose.
 
 - **`kiwi-server`**: the command-line tool
 - **Kiwi Server** (`kiwi-server-gui`): the desktop app

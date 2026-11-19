@@ -19,7 +19,6 @@ traffic leaves from the computer this runs on.
 import json
 import subprocess
 import sys
-import time
 
 from drill import Machine, kiwi, say, setup
 from kiwiserver import cli, modules as modmod, roles as rolesmod

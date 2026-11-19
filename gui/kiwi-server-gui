@@ -1742,7 +1742,6 @@ class AccessDialog(Adw.Dialog):
         threading.Thread(target=work, daemon=True).start()
 
     def build(self, rc, out, err, onion):
-        win = self.win
         try:
             data = json.loads(out) if rc == 0 else {}
         except ValueError:

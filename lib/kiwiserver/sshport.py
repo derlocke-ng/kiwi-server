@@ -7,7 +7,6 @@ logged in over the new port is 22 dropped. Back to 22: `ssh_port: 22` and one ap
 `--ssh ssh://user@address:PORT`, the port it listens on now.
 """
 from . import remote, util
-from .util import KiwiError
 
 DROP_IN = "/etc/ssh/sshd_config.d/30-kiwi-port.conf"
 

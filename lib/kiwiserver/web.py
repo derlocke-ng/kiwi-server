@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
-from . import VERSION, access as accessmod, form as formmod, health as healthmod, play as playmod, providers as providersmod, site as sitemod, util
+from . import VERSION, form as formmod, health as healthmod, play as playmod, providers as providersmod, site as sitemod, util
 from .control import ACTIONS, Control
 
 controlmod_job = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")      # a job's id, as Control.start makes it

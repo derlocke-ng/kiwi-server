@@ -9,7 +9,6 @@ Everything a role needs beyond the base system lives under a key named after
 the role (`node-cloud:`, `master:`) and is described by that role's role.yaml —
 this module only merges those blocks; roles.py validates them.
 """
-import copy
 import ipaddress
 import difflib
 import json

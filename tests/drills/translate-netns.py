@@ -38,7 +38,6 @@ if os.environ.get("KIWI_NETNS_INNER") != "1":
 
 sys.path.insert(0, os.path.join(home, "lib"))
 os.environ["KIWI_SERVER_HOME"] = home
-from kiwimodules import cli as kmcli  # noqa: E402
 
 work = tempfile.mkdtemp(prefix="kiwi-translate-")
 fails = 0

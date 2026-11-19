@@ -10090,12 +10090,16 @@ class WebBase(StoreBase):
 class TestWeb(WebBase):
     """The control page's own pages."""
 
+    def wait_look(self, seconds=60):
+        """The look a login starts writes fleet.json and status.json too: a test writes its own after it."""
+        end = time.time() + seconds
+        while self.c.looking and time.time() < end:
+            time.sleep(0.05)
+        self.assertFalse(self.c.looking, "the look the login started did not end")
+
     def test_a_machine_with_wake_on_lan_that_does_not_answer_can_be_woken(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
-        for _ in range(200):                # the look the login started writes these files too: after it
-            if not self.c.looking:
-                break
-            time.sleep(0.05)
+        self.wait_look()                    # the look the login started writes these files too: after it
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
             {"name": n, "hostname": n + ".home", "role": "node", "modules": [], "sites": [], "next": "", "wol": n == "fig"}
             for n in ("fig", "papaya")]}))
@@ -10231,10 +10235,7 @@ class TestWeb(WebBase):
     def test_home_and_a_machine_in_plain_words(self):
         self.ask("/login", {"password": self.PW})
         self.assertIn("Checking your machines", self.ask("/")[1])                 # the look the login started
-        for _ in range(200):
-            if not self.c.looking:
-                break
-            time.sleep(0.05)
+        self.wait_look()
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"groups": {"devices": "10.9.3.0/24"}, "hosts": [
             {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "backup"],
              "sites": ["cloud.papaya.home", "vault.papaya.home"], "vpn_ip": "10.9.0.2", "next": ""},
@@ -10344,10 +10345,7 @@ class TestWeb(WebBase):
     def test_the_frame_the_numbers_and_the_picture(self):
         from kiwiserver import web
         self.ask("/login", {"password": self.PW})
-        for _ in range(200):
-            if not self.c.looking:
-                break
-            time.sleep(0.05)
+        self.wait_look()
         gb = 1048576
         facts = {"load": [1.0, 1, 1], "cpus": 4, "memory": {"total": 8 * gb, "available": gb}, "running": 5, "expected": 6,
                  "disks": [{"mount": "/var", "size": 100 * gb, "used": 10 * gb}, {"mount": "/mnt/data", "size": 100 * gb, "used": 95 * gb}],
@@ -10391,10 +10389,7 @@ class TestWeb(WebBase):
 
     def test_a_warning_says_what_to_do_and_can_be_left_out(self):
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
-        for _ in range(200):
-            if not self.c.looking:
-                break
-            time.sleep(0.05)
+        self.wait_look()
         info = {"hosts": [{"name": "a", "hostname": "a.home", "role": "node", "phase": "applied", "modules": [], "sites": []}]}
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps(info))
         problem = {"level": "warn", "text": "the disk is not encrypted: whoever takes it can read everything on it",
@@ -10598,10 +10593,7 @@ class TestWeb(WebBase):
         self.assertIn("Not checked for 2 hours", self.ask("/status")[1])
         # the people who run it see the same on Home, with the machine to open
         self.ask("/login", {"password": self.PW})
-        for _ in range(200):
-            if not self.c.looking:
-                break
-            time.sleep(0.05)
+        self.wait_look()
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
             {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": [], "sites": ["cloud.papaya.home"], "phase": "applied"}]}))
         util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": now, "hosts": [

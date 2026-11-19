@@ -60,7 +60,7 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    knows its name.
 3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option; still
    none in 2025.89, Debian trixie, checked 19 November),
-   rings on more than one machine, a third share for papaya. The control node's
+   rings on more than one machine (papaya has three since 19 November). The control node's
    own unlock takes several rings since 2.219.0 (`unlock.control: [house,
    attic]`); the leash and ring rotation (`rotate FLEET ring NAME`) are there
    since 2.220.0.

@@ -1199,7 +1199,8 @@ def say_picture(rows, out=print):
         if r["power_cut"] == "waits":
             out("%-*s  after a power cut: waits for a person" % (width, ""))
         elif r["needs"]:
-            out("%-*s  after a power cut: opens, as long as %s starts too" % (width, "", " and ".join(r["needs"])))
+            out("%-*s  after a power cut: opens, as long as %s start%s too"
+                % (width, "", " and ".join(r["needs"]), "s" if len(r["needs"]) == 1 else ""))
         else:
             out("%-*s  after a power cut: opens, also with one of its rings' machines off" % (width, ""))
 

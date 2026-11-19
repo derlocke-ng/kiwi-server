@@ -1371,7 +1371,7 @@ class UnlockDialog(Adw.Dialog):
             if m["power_cut"] == "waits":
                 cut = "After a power cut it waits for a person."
             elif m["needs"]:
-                cut = "After a power cut it opens, as long as %s starts too." % " and ".join(m["needs"])
+                cut = "After a power cut it opens, as long as %s start%s too." % (" and ".join(m["needs"]), "s" if len(m["needs"]) == 1 else "")
             else:
                 cut = "After a power cut it opens, also with one of its rings' machines off."
             row = long_row(m["name"], "%s, with %d of: %s. %s" % (m["way"], m["threshold"], rings, cut))

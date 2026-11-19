@@ -705,7 +705,7 @@ class Fleet:
     @classmethod
     def load(cls, path):
         if not os.path.isfile(path):
-            raise KiwiError("fleet file not found: %s" % path)
+            raise KiwiError("fleet file not found: %s" % util.shown_path(os.path.abspath(path)))
         try:
             data = yaml.safe_load(util.read_text(path))
         except yaml.YAMLError as e:

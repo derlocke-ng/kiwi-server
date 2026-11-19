@@ -181,6 +181,78 @@ def lan_view(lan, found, domain):
     return rows
 
 
+def vlan_problems(vlans, address="", mesh="", lan=None):
+    """What is wrong with a machine's network.vlans (docs/design/lans.md, step 2), in sentences:
+    each {id: 1-4094, address: 192.168.20.5/24, name, interface}; a VLAN named as a group of the
+    home network has its address in that group's subnet."""
+    if not isinstance(vlans, list):
+        return ["network.vlans: a list, like [{id: 20, address: 192.168.20.5/24, name: iot}]"]
+    bad, ids, nets = [], set(), []
+    try:
+        home = ipaddress.ip_interface(str(address)).network if address else None
+    except ValueError:
+        home = None
+    for v in vlans:
+        if not isinstance(v, dict):
+            bad.append("network.vlans: %r is not {id, address}" % (v,))
+            continue
+        vid = v.get("id")
+        if not isinstance(vid, int) or isinstance(vid, bool) or not 1 <= vid <= 4094:
+            bad.append("network.vlans: id %r is not a VLAN number (1 to 4094)" % (vid,))
+            continue
+        if vid in ids:
+            bad.append("network.vlans: VLAN %d twice" % vid)
+        ids.add(vid)
+        try:
+            ifc = ipaddress.ip_interface(str(v.get("address") or ""))
+        except ValueError:
+            bad.append("network.vlans: VLAN %d: address %r is not like 192.168.20.5/24" % (vid, v.get("address")))
+            continue
+        net = ifc.network
+        if ifc.version != 4 or not net.is_private or net.prefixlen > 30 or ifc.ip in (net.network_address, net.broadcast_address):
+            bad.append("network.vlans: VLAN %d: %s is not a private IPv4 address in a network like /24" % (vid, ifc))
+            continue
+        if home is not None and net.overlaps(home):
+            bad.append("network.vlans: VLAN %d: %s is in the machine's own network %s" % (vid, net, home))
+        if mesh:
+            try:
+                if net.overlaps(ipaddress.ip_network(str(mesh), strict=False)):
+                    bad.append("network.vlans: VLAN %d: %s is in the VPN's mesh %s" % (vid, net, mesh))
+            except ValueError:
+                pass
+        for other, o in nets:
+            if net.overlaps(o):
+                bad.append("network.vlans: VLAN %d: %s overlaps VLAN %d's" % (vid, net, other))
+        nets.append((vid, net))
+        name = v.get("name")
+        if name is not None and not NAME.match(str(name)):
+            bad.append("network.vlans: VLAN %d: %r is not a name (small letters, digits and -)" % (vid, name))
+        g = (lan or {}).get(str(name)) if name else None
+        if isinstance(g, dict) and g.get("subnet"):
+            try:
+                if ifc.ip not in ipaddress.ip_network(str(g["subnet"]), strict=False):
+                    bad.append("network.vlans: VLAN %d is called %s, but %s is not in that group's subnet %s"
+                               % (vid, name, ifc.ip, g["subnet"]))
+            except ValueError:
+                pass
+        card = v.get("interface")
+        if card is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", str(card)):
+            bad.append("network.vlans: VLAN %d: interface %r is not a card's name like eth0" % (vid, card))
+        for k in set(v) - {"id", "address", "name", "interface"}:
+            bad.append("network.vlans: VLAN %d: %s is not a setting of a VLAN (id, address, name, interface)" % (vid, k))
+    return bad
+
+
+def stack_vlans(network):
+    """kiwi-stack's KS_STACK_VLANS of a machine's network block: "ID ADDRESS [CARD]" per VLAN, the
+    card its own or the machine's network.interface; none: the card of the default route."""
+    out = []
+    for v in network.get("vlans") or []:
+        card = str(v.get("interface") or network.get("interface") or "")
+        out.append(("%s %s %s" % (v["id"], v["address"], card)).strip())
+    return out
+
+
 def lan_problems(lan, mesh="", vpn_groups=()):
     """What is wrong with the groups of the home network, in sentences."""
     bad, seen = [], []

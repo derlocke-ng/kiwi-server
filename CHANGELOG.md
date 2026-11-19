@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.223.0 — a machine on tagged VLANs
+
+- **`network.vlans`** in a machine's block: `[{id: 20, address: 192.168.20.5/24, name: iot}]`.
+  The next apply makes the tagged interface (`eth0.20`) with its address and no default route;
+  `kiwi-vlans.service` makes it again at boot (kiwi-stack 0.9.18, kiwi-modules 0.98.0). The card:
+  the VLAN's `interface:`, else the machine's `network.interface`, else the card of the default
+  route. A VLAN taken out loses its interface with the next apply.
+- `validate` checks each VLAN: its number, a private address with its network that is not the
+  machine's own network, the mesh or another VLAN's; a VLAN named as a group of the home network
+  has its address in that group's subnet, whose rules then hold on the VLAN.
+- `tests/drills/vlan-netns.py`: a switch with VLAN filtering, rootless; 12 checks.
+- `federate` says "what each shares is as it was" when linking two networks again.
+
 ## 2.222.0 — a linked network's certificates on your devices
 
 - **A network's card carries its CA's certificate** (public), and `kiwi-server federate` keeps it

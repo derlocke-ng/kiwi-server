@@ -32,6 +32,7 @@ KS_STACK_VPN_DEPENDENTS=('kn-transmission' 'kn-jdownloader')
 KS_STACK_MESH_SUBNET='10.8.0.0/16'
 KS_STACK_MESH_VIA='172.128.0.2'
 KS_STACK_LAN_RULES=()
+KS_STACK_VLANS=()
 KS_STACK_HOSTS=('10.8.0.1 gate.home' '10.8.0.1 wg.gate.home' '10.8.0.1 pihole.gate.home' '127.0.0.1 m1.home' '127.0.0.1 pihole.m1.home' '127.0.0.1 dl.m1.home' '127.0.0.1 jd.m1.home' '127.0.0.1 portainer.m1.home' '10.8.0.25 sh3.home' '10.8.0.25 cloud.sh3.home' '10.8.0.25 vault.sh3.home' '10.8.0.25 portainer.sh3.home' '10.8.0.9 min.home')
 KS_STACK_RUNTIME='podman'
 KS_STACK_QUADLETS=('kiwi-stack.target' 'kn-dhcphelper.container' 'kn-jdownloader.container' 'kn-nginx.container' 'kn-pihole.container' 'kn-portainer.container' 'kn-sftp.container' 'kn-transmission.container' 'kn-vpn-client.container' 'knet-node.network')

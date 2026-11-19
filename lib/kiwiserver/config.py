@@ -68,6 +68,8 @@ DEFAULTS = {
         # each other there; a machine at another site (a friend's, an office) over the VPN, also
         # when its LAN has the same numbers as the home's (two routers of one make)
         "site": "home",
+        # tagged interfaces (docs/design/lans.md, step 2): [{id: 20, address: 192.168.20.5/24, name: iot}]
+        "vlans": [],
     },
     "updates": {
         # When an update may REBOOT the machine. Updates themselves are fetched
@@ -499,6 +501,12 @@ class Host:
                     ipaddress.ip_address(str(d))
                 except ValueError:
                     errs.append("network.dns entry %r is not an IP address" % d)
+        if n.get("vlans"):
+            from . import access as accessmod
+            fd = self.fleet.defaults
+            errs += accessmod.vlan_problems(n["vlans"], n.get("address") or "",
+                                            (fd.get("master") or {}).get("mesh_subnet") or "",
+                                            (fd.get("lan") or {}).get("groups") or {})
         u = c["updates"]
         for d in u.get("days") or []:
             if str(d) not in DAYS:

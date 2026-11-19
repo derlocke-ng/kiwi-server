@@ -149,4 +149,10 @@ other account.
 - **First** where a public service needs accounts: git over Tor (Forgejo signs in through
   Kanidm, which does not work there). Services with accounts of their own (Jabber, BTCPay)
   need nothing.
+- **A VPN name for a public instance**, so people at home do not take the long way through the
+  master or Tor: `<site>-public.<machine>.home`, on the mesh only. The public name itself keeps
+  resolving to the master everywhere (decided 16 November). Only where it works: Jabber (an app
+  connects there and still speaks to its public domain, with its real certificate) and apps
+  that take several addresses (PrivateBin, Paperless, BTCPay). An app with one address
+  (Forgejo, Kanidm) would only send the browser on to its public name or onion: none for it.
 

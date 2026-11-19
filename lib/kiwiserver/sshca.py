@@ -60,7 +60,8 @@ def fingerprint(fleet):
 def sign(fleet, pubkey, identity, principals, days, host=False):
     """The certificate (text) for an OpenSSH public key (text)."""
     if not exists(fleet):
-        raise KiwiError("the fleet has no SSH CA: kiwi-server sshca %s init" % os.path.basename(fleet.path))
+        from .cli import typed_path
+        raise KiwiError("the fleet has no SSH CA: kiwi-server sshca %s init" % typed_path(fleet.path))
     with tempfile.TemporaryDirectory() as d:
         key = os.path.join(d, "key.pub")
         util.write_text(key, pubkey.strip() + "\n", 0o600)

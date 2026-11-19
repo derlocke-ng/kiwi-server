@@ -136,18 +136,12 @@ def _lan_ip(h):
     return str(net["address"]).split("/")[0]
 
 
-def _q(path):
-    """A path for a command line: quoted where it must be, a leading ~/ left outside the quotes
-    so the shell still expands it."""
-    if path.startswith("~/"):
-        return "~/" + shlex.quote(path[2:])
-    return shlex.quote(path)
 
 
 def rebuild_commands(h, fleet_arg):
     """What installs a machine anew from a terminal: one command per line. A machine its
     router gives an address is set up at the address it has right now."""
-    f = _q(fleet_arg)
+    f = fleet_arg
     if (h.cfg.get("vps") or {}).get("provider") in providers.PROVIDERS:
         return "kiwi-server next %s %s --yes" % (f, h.name)        # makes the media and installs it there
     if _lan_ip(h) or h.role == "master":
@@ -169,7 +163,7 @@ def copy_check(fleet, state, applied, fleet_arg, now):
         places.append((rec["local"]["time"], "in " + str(rec["local"].get("dir") or "a folder")))
     if rec.get("fetched"):
         places.append((rec["fetched"], "downloaded from the control page"))
-    f = _q(fleet_arg)
+    f = fleet_arg
     fix = ("Save it now: \"Save it now\" or \"Fetch a copy\" on the Backups page, \"Back up the network now\" in the "
            "app, or kiwi-server backup %s (--local <folder> for a USB stick)." % f)
     if not places:
@@ -187,7 +181,7 @@ def copy_check(fleet, state, applied, fleet_arg, now):
 
 
 def data_checks(fleet, ms, hosts, applied, said, looked, fleet_arg, now):
-    out, f = [], _q(fleet_arg)
+    out, f = [], fleet_arg
     for h in hosts.values():
         mods = [m for m in h.modules if keeps_data(ms.get(m))]
         if not mods:
@@ -248,7 +242,7 @@ def unlock_checks(fleet, hosts, fleet_arg):
     want = [h for h in fleet.hosts.values() if ((h.cfg.get("unlock") or {}).get("rings"))]
     if not want:
         return []
-    f = _q(fleet_arg)
+    f = fleet_arg
 
     def resolve(x):
         if x.name not in hosts:
@@ -362,7 +356,7 @@ def power_cut_checks(fleet, hosts, fleet_arg):
 
 
 def master_checks(fleet, roles, hosts, applied, fleet_arg):
-    out, f = [], _q(fleet_arg)
+    out, f = [], fleet_arg
     control = any("control" in h.modules for h in hosts.values())
     for h in fleet.hosts.values():
         if not _is_master(h, roles):
@@ -432,7 +426,7 @@ def ways_check(fleet, fleet_arg):
     if not st.exists():
         return _check("keys", False, "The network's keys are plain files in its folder, and there is no recovery key.",
                       "kiwi-server secrets init %s puts them in one encrypted file and gives you a recovery key."
-                      % _q(fleet_arg))
+                      % fleet_arg)
     others = [n for n, _k in st.ways() if n != "recovery"]
     fix = ("Let a second computer manage it: Computers, Add a computer on the control page, or Join a network in the "
            "app on that computer. A home server that looks after it (in the app) is a control node.")
@@ -467,7 +461,7 @@ def rebuild_order(fleet, roles, hosts):
 
 
 def cases(fleet, roles, ms, hosts, state, fleet_arg):
-    f = _q(fleet_arg)
+    f = fleet_arg
     masters = [h for h in fleet.hosts.values() if _is_master(h, roles)]
     others = [h for h in fleet.hosts.values() if not _is_master(h, roles)]
     backed = [h for h in hosts.values() if "backup" in h.modules]
@@ -589,7 +583,7 @@ def cases(fleet, roles, ms, hosts, state, fleet_arg):
 def report(fleet, roles, ms, status=None, fleet_arg=None, now=None):
     from . import cli
     now = now if now is not None else time.time()
-    fleet_arg = cli.shown_path(os.path.abspath(fleet_arg or fleet.path))      # as a person types it: ~/kiwi/fleet.yaml
+    fleet_arg = cli.typed_path(fleet_arg or fleet.path)      # as a person types it: ~/kiwi/fleet.yaml
     state = cli.fleet_state(fleet)
     applied = state.get("applied") or {}
     hosts = _resolved(fleet, roles, ms)

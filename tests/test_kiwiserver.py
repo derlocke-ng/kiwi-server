@@ -13875,6 +13875,15 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
 
+    def test_a_machines_parts_are_named_by_their_title_first(self):
+        cookie, _csrf = self.made()
+        node = self.node()
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": time.time(), "hosts": [
+            {"host": node, "ok": True, "state": "ok", "notes": ["certificates good for 60 days"], "facts": {}, "problems": []}]}))
+        body = self.ask("/hosts/%s" % node, cookie=cookie)[1]
+        self.assertRegex(body, r'<dt>Parts</dt><dd>VPN connection <code class="sm">vpn-client</code>')
+        self.assertNotRegex(body, r"<dt>Parts</dt><dd>vpn-client,")
+
     def test_a_problem_shows_what_to_do_as_buttons_and_links(self):
         cookie, _csrf = self.made()
         node = self.node()

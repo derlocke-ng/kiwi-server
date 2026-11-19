@@ -1660,7 +1660,7 @@ class FederationDialog(Adw.Dialog):
     """The partner networks in federation.yaml and what each may reach here."""
 
     def __init__(self, win):
-        super().__init__(title="Federation", content_width=620, content_height=600)
+        super().__init__(title="Linked networks", content_width=620, content_height=600)
         self.win = win
         self.path = os.path.join(os.path.dirname(win.doc.path), "federation.yaml")
         try:
@@ -4683,7 +4683,7 @@ class Window(Adw.ApplicationWindow):
         manage = Gio.Menu()                     # who may do what, and where modules come from
         manage.append("Who may reach what…", "win.access")
         manage.append("Accounts…", "win.accounts")
-        manage.append("Federation…", "win.federation")
+        manage.append("Linked networks…", "win.federation")
         manage.append("Module sources…", "win.sources")
         manage.append("SSH certificates…", "win.sshca")
         manage.append("Activity…", "win.activity")

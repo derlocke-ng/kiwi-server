@@ -666,7 +666,7 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 
 {% endif %}{% if tab == "services" %}
 {% if tiles %}<h2>Its services</h2><div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
-<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% else %}<p class="muted">No services of its own: its parts are {{ m.modules|join(", ") or "none" }}.</p>{% endif %}
+<b>{{ t.label }}</b><span>{{ t.site }}</span></a>{% endfor %}</div>{% else %}<p class="muted">No services of its own: its parts are {{ (m.modules|parts) or "none" }}.</p>{% endif %}
 
 {% include "logins.html" %}
 {% if m.facts.services %}<h2 id="containers">Its containers</h2>
@@ -708,7 +708,7 @@ stopped until you start it or the machine restarts.</p>
 {% if m.facts.backup and m.facts.backup.age is not none %}<dt>Last backup</dt><dd>{{ age(m.facts.backup.age) }} ago</dd>{% endif %}
 {% if m.facts.reboot %}<dt>Updates</dt><dd>installed, it restarts in its update window</dd>{% endif %}
 {% if m.vpn_ip %}<dt>VPN address</dt><dd>{{ m.vpn_ip }}</dd>{% endif %}
-<dt>Parts</dt><dd>{{ m.modules|join(", ") }}</dd></dl>
+<dt>Parts</dt><dd>{{ m.modules|parts }}</dd></dl>
 {% if m.notes %}<ul class="muted">{% for n in m.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
 {% if m.output %}<details><summary>What the machine said, word for word</summary><pre>{{ m.output }}</pre></details>{% endif %}</div>{% endif %}
 <form method="post" action="/hosts/{{ m.name }}/script" target="_blank" class="muted small">{{ tok }}<button
@@ -1786,6 +1786,19 @@ def make_app(control: Control):
     # the network's own name, colour and words on the pages for everyone (the control module's settings)
     from .facts import QUIETABLE
     env.globals.update(quietable=QUIETABLE)
+
+    def parts(names):
+        """A machine's parts by one name each (docs/design/ui.md): the module's title first, its
+        technical name small after it: "Ad blocker (Pi-hole) dns"."""
+        try:
+            titles = {m["name"]: m.get("title") for m in (control.schema() or {}).get("modules") or []}
+        except (KiwiError, OSError, ValueError, KeyError):
+            titles = {}
+        esc = markupsafe.escape
+        return markupsafe.Markup(", ".join(
+            '%s <code class="sm">%s</code>' % (esc(titles[n]), esc(n)) if titles.get(n) and titles[n] != n else str(esc(n))
+            for n in names or []))
+    env.filters["parts"] = parts
     env.globals.update(brand_name=os.environ.get("KIWI_BRAND", ""), brand_accent=re.sub(r"[^#0-9a-fA-F]", "", os.environ.get("KIWI_ACCENT", ""))[:7],
                        about_text=os.environ.get("KIWI_ABOUT", ""), contact=os.environ.get("KIWI_CONTACT", ""))
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),

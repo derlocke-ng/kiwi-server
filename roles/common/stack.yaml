@@ -68,6 +68,12 @@ settings:
     label: Groups of the home network
     help: "Filled in by kiwi-server from the fleet's lan.groups (docs/design/lans.md): per group of the home network what it may open on this machine, as 'SUBNET PORTS' with PORTS all, none, or tcp:443,tcp:22 … kiwi-stack keeps them in the nftables table kiwi_lan; DNS, DHCP and ping stay open to everyone."
     default: []
+  - key: vlans
+    group: Generated
+    type: list
+    label: Tagged interfaces (VLANs)
+    help: "Filled in by kiwi-server from the machine's network.vlans (docs/design/lans.md, step 2): 'ID ADDRESS [CARD]' per VLAN, like '20 192.168.20.5/24 eth0'. kiwi-stack makes the tagged interface (eth0.20) with that address and no default route, and kiwi-vlans.service makes it again at boot. No card: the card of the default route."
+    default: []
   - key: pub_iface
     group: Stack
     label: LAN interface

@@ -3671,6 +3671,43 @@ class TestAccess(Base):
         rc, out, err = TestManage.run_cli(self, "access", f.path, "pub", "--new", "--lan", "8.8.8.0/24")
         self.assertIn("not a private IPv4 network", err)
 
+    def test_a_machine_on_a_tagged_vlan(self):
+        """docs/design/lans.md, step 2: network.vlans checked, and handed to kiwi-stack (KS_STACK_VLANS)."""
+        f = self.net()
+        data = yaml.safe_load(util.read_text(f.path))
+        data["defaults"]["lan"] = {"groups": {"iot": {"subnet": "192.168.20.0/24", "reach": ["cloud.papaya"]}}}
+        data["hosts"]["papaya"].setdefault("network", {})["vlans"] = [
+            {"id": 20, "address": "192.168.20.30/24", "name": "iot"}, {"id": 30, "address": "192.168.30.30/24", "interface": "eth1"}]
+        write(f.path, yaml.safe_dump(data))
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        self.assertEqual(fleet.errors, [])
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        node = fleet.hosts["papaya"]
+        r.bundle(node, r.prepare(node))
+        card = node.cfg["network"].get("interface") or ""             # no card of its own: the machine's, else kiwi-stack finds it
+        self.assertEqual(node.role_settings["vlans"], [("20 192.168.20.30/24 " + card).strip(), "30 192.168.30.30/24 eth1"])
+        # what is wrong is said
+        vp = cli.accessmod.vlan_problems
+        lan = {"iot": {"subnet": "192.168.20.0/24"}}
+        self.assertEqual(vp([{"id": 20, "address": "192.168.20.5/24", "name": "iot"}], "192.168.1.30/24", "10.8.0.0/16", lan), [])
+        for vlans, said in (([{"id": 0, "address": "192.168.20.5/24"}], "not a VLAN number"),
+                            ([{"id": 20, "address": "192.168.20.5/24"}, {"id": 20, "address": "192.168.21.5/24"}], "VLAN 20 twice"),
+                            ([{"id": 20, "address": "192.168.20.5"}], "not a private IPv4 address in a network"),
+                            ([{"id": 20, "address": "8.8.8.5/24"}], "not a private IPv4"),
+                            ([{"id": 20, "address": "192.168.1.40/24"}], "the machine's own network"),
+                            ([{"id": 20, "address": "10.8.5.1/24"}], "the VPN's mesh"),
+                            ([{"id": 20, "address": "192.168.20.5/24"}, {"id": 21, "address": "192.168.20.6/25"}], "overlaps VLAN 20"),
+                            ([{"id": 30, "address": "192.168.30.5/24", "name": "iot"}], "not in that group's subnet"),
+                            ([{"id": 20, "address": "192.168.20.5/24", "interface": "eth0; reboot"}], "not a card's name"),
+                            ([{"id": 20, "address": "192.168.20.5/24", "pvid": 1}], "not a setting of a VLAN"),
+                            ({"id": 20}, "a list")):
+            self.assertTrue(any(said in x for x in vp(vlans, "192.168.1.30/24", "10.8.0.0/16", lan)), (vlans, said))
+        data["hosts"]["papaya"]["network"]["vlans"] = [{"id": 5000, "address": "192.168.20.30/24"}]
+        write(f.path, yaml.safe_dump(data))
+        rc, out, err = TestManage.run_cli(self, "validate", f.path)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not a VLAN number", err + out)
+
     def test_a_gateway_keeps_a_group_of_the_home_network_out_of_the_rest_of_the_mesh(self):
         machines = [{"name": "gate", "hostname": "gate.home", "ip": "10.8.0.1", "master": True},
                     {"name": "papaya", "hostname": "papaya.home", "ip": "10.8.0.25", "master": False},

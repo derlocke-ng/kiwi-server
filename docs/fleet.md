@@ -135,6 +135,17 @@ never rotates a password.
 
 ## Addresses
 
+A machine on tagged VLANs (a managed switch, a trunk to the machine) gets an
+interface per VLAN, with no default route on it (docs/design/lans.md):
+
+```yaml
+network:
+  address: 192.168.1.30/24
+  vlans:
+    - { id: 20, address: 192.168.20.5/24, name: iot }     # name: a group of the home network
+    - { id: 30, address: 192.168.30.5/24, interface: eth1 }
+```
+
 Static addresses without typing them: `network: { dhcp: false, gateway: …,
 iprange: 192.168.1.20-192.168.1.99 }` in the defaults hands each static host
 the next free address in file order; a host's own `address:` is reserved

@@ -588,6 +588,9 @@ class Renderer:
                 rp = host.module_settings["reverse-proxy"]
                 rp["federation"] = fedmod.admin_rules(rp.get("federation"), self._partners, host.name, pages,
                                                      str(self.fleet.defaults.get("domain") or "home"))
+        if host.cfg["network"].get("vlans"):
+            # its tagged interfaces: kiwi-stack makes them (docs/design/lans.md, step 2)
+            host.role_settings["vlans"] = accessmod.stack_vlans(host.cfg["network"])
         if role.node_type != "master" and self._lan:
             # what each group of the home network may open here: kiwi-stack's nftables kiwi_lan
             host.role_settings["lan_rules"] = accessmod.lan_ports(self._lan, host.name, host.hostname)
@@ -4541,8 +4544,11 @@ def cmd_federate(args):
         else:
             util.say("%s leaves by its own way again. Apply %s's master, then %s's" % (na, na, nb))
         return
-    util.say("%s and %s are linked; nothing is shared yet: share and from in each federation.yaml, then apply both masters"
-             % (na, nb))
+    if fedmod.partners(fa.dir)[nb]["share"] or fedmod.partners(fb.dir)[na]["share"]:
+        util.say("%s and %s are linked; what each shares is as it was" % (na, nb))
+    else:
+        util.say("%s and %s are linked; nothing is shared yet: share and from in each federation.yaml, then apply both masters"
+                 % (na, nb))
 
 
 def cmd_unlock(args):

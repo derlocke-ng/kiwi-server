@@ -395,6 +395,97 @@ UNIT
     systemctl enable -q kiwi-lan.service 2>/dev/null || true
 }
 
+ks_vlan_name() { # PARENT ID   — the tagged interface's name: eth0.20, or vlan20 where that is too long
+    local n="$1.$2"
+    (( ${#n} <= 15 )) && echo "$n" || echo "vlan$2"
+}
+
+ks_vlan_lines() { # KS_STACK_VLANS ("ID ADDRESS [PARENT]") as "PARENT ID ADDRESS NAME"; no parent: the default route's card
+    local v id addr parent def
+    [[ -v KS_STACK_VLANS ]] || return 0          # a bundle from before 0.9.18
+    def=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}')
+    for v in "${KS_STACK_VLANS[@]}"; do
+        read -r id addr parent <<<"$v"
+        parent=${parent:-$def}
+        if [[ ! $id =~ ^[0-9]+$ ]] || (( id < 1 || id > 4094 )) || [[ ! $addr =~ ^[0-9.]+/[0-9]+$ ]]; then
+            ks_warn "vlan $v: not ID ADDRESS/PREFIX, left out"; continue
+        fi
+        [[ -n $parent ]] || { ks_warn "vlan $id: no card named and no default route to find one, left out"; continue; }
+        echo "$parent $id $addr $(ks_vlan_name "$parent" "$id")"
+    done
+}
+
+KS_VLANS_UP='#!/bin/bash
+# kiwi-server: this machine'"'"'s tagged interfaces (network.vlans in the fleet file), kept by
+# kiwi-vlans.service. Each line of the file: PARENT ID ADDRESS NAME. No default route on them.
+f=${1:-/etc/kiwi-server/vlans}
+rc=0
+while read -r parent id addr name; do
+    [[ -n ${name:-} && ${parent:0:1} != "#" ]] || continue
+    if ! ip link show dev "$name" >/dev/null 2>&1; then
+        ip link add link "$parent" name "$name" type vlan id "$id" || { rc=1; continue; }
+    fi
+    ip addr replace "$addr" dev "$name" || rc=1
+    ip link set dev "$name" up || rc=1
+done < "$f"
+exit $rc
+'
+
+ks_vlans() { # the tagged interfaces of KS_STACK_VLANS, kept across reboots by kiwi-vlans.service; none: gone
+    local f=${KS_VLANS_FILE:-/etc/kiwi-server/vlans} up=${KS_VLANS_BIN:-/usr/local/sbin/kiwi-vlans} old new line name
+    local unit=${KS_SYSTEMD_DIR:-/etc/systemd/system}/kiwi-vlans.service
+    new=$(ks_vlan_lines)
+    old=$(grep -v '^#' "$f" 2>/dev/null || true)
+    # what is no more, or changed: its interface goes (the address with it), before the new ones come
+    while read -r line; do
+        [[ -n $line ]] || continue
+        if ! grep -qxF "$line" <<<"$new"; then
+            name=${line##* }
+            ip link del dev "$name" 2>/dev/null || true
+        fi
+    done <<<"$old"
+    if [[ -z $new ]]; then
+        if [[ -f $f ]]; then
+            ks_say "tagged interfaces (VLANs): none any more"
+            systemctl disable -q kiwi-vlans.service 2>/dev/null || true
+            rm -f "$f" "$up" "$unit"
+        fi
+        return 0
+    fi
+    install -d -m 0755 "$(dirname "$f")" "$(dirname "$up")"
+    { echo "# kiwi-server: PARENT ID ADDRESS NAME (network.vlans in the fleet file)"; echo "$new"; } > "$f.new"
+    mv "$f.new" "$f"
+    printf '%s' "$KS_VLANS_UP" > "$up.new"
+    chmod 0755 "$up.new"
+    mv "$up.new" "$up"
+    if "$up" "$f"; then
+        ks_say "tagged interfaces (VLANs): $(awk '!/^#/ {printf "%s%s %s", sep, $4, $3; sep=", "}' "$f")"
+    else
+        ks_warn "a tagged interface did not come up (is the card there?): $(tr '\n' ' ' < "$f")"
+    fi
+    local after="" p
+    for p in $(awk '!/^#/ {print $1}' "$f" | sort -u); do
+        after+=" sys-subsystem-net-devices-$p.device"
+    done
+    ks_unit kiwi-vlans.service <<UNIT
+[Unit]
+Description=kiwi-server: this machine's tagged interfaces (VLANs)
+DefaultDependencies=no
+Wants=network-pre.target$after
+After=network-pre.target$after
+Before=network.target docker.service podman.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$up $f
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl enable -q kiwi-vlans.service 2>/dev/null || true
+}
+
 ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates exist
     local cert=$1 key=$2 cn=$3
     ks_say "no TLS certificate given — generating a self-signed one for $cn and *.$cn"
@@ -1038,6 +1129,7 @@ ks_stack_apply() {
     ks_stack_install_cli
     ks_firewall_trust_mesh
     ks_firewall_lan
+    ks_vlans
     ks_time_sync_at_boot
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
         ks_firewall_open "${KS_STACK_PORTS[@]}"

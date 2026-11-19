@@ -4452,9 +4452,11 @@ def _federation_side(args, path):
     if not vs.get("wg_host") or not vs.get("federation_secret"):
         raise KiwiError("%s: its master %s has no wg_host or no federation key" % (path, h.name))
     groups = {str(n): str(g["subnet"]) for n, g in (vs.get("groups") or {}).items() if isinstance(g, dict) and g.get("subnet")}
-    # its CA's certificate (public): the partner's devices may import it when it signs only this network's names
+    # its CA's certificate (public): the partner's devices may import it when it signs only this network's
+    # names, and it is what the partner checks the certificates this network signs for it against.
+    # Made here when the fleet has none yet, as its first render would.
     tls = fleet.defaults.get("tls") or {}
-    ca = os.path.join(fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
+    ca = os.path.join(_fleet_ca(fleet, make=tls.get("auto", True) is not False), "kiwiCA.pem")
     return fleet, os.path.basename(fleet.dir.rstrip("/")) or h.name, {
         "endpoint": str(vs["wg_host"]), "public_key": fedmod.public_key(vs["federation_secret"]),
         "mesh": h.role_settings.get("mesh_subnet") or h.role_settings_raw.get("mesh_subnet") or "10.8.0.0/16",
@@ -4520,6 +4522,84 @@ def _partner_ca(args):
     sys.stdout.write(str(p["ca"]).rstrip("\n") + "\n")
 
 
+def _fleet_ca(fleet, make=False):
+    tls = fleet.defaults.get("tls") or {}
+    ca = fleet.resolve_path(tls.get("ca_dir") or "secrets/ca")
+    if make:
+        certs.ensure_ca(ca, int(tls.get("days") or certs.DAYS), tls.get("name_constraints") or [])
+    return ca
+
+
+def _alias_requests(fleet):
+    """{machine: certificate request} for each machine of this network that has a certificate:
+    on its card, for a partner with this network's domain to sign the names it gives them."""
+    ca, domain, out = _fleet_ca(fleet), str(fleet.defaults.get("domain") or "home"), {}
+    for h in fleet.hosts.values():
+        short = h.hostname[:-len(domain) - 1] if h.hostname.endswith("." + domain) else ""
+        key = os.path.join(ca, "hosts", h.hostname, "privkey.pem")
+        if not h.standby_of and fedmod.LABEL.match(short) and os.path.isfile(key):
+            out[short] = certs.request_for(key, short)
+    return out
+
+
+def _sign_requests(fleet, name, them, alias, requests, folder):
+    """A partner's card asked (requests) for the names this network gives its machines: this
+    network's CA signs <machine>.<alias> and *.<machine>.<alias> for each request's key, into a
+    file for the partner to take (`federate THEIR-FLEET --accept`)."""
+    ca, signed = _fleet_ca(fleet, make=True), {}
+    for short, req in sorted(requests.items()):
+        try:
+            signed[short] = certs.sign_request(ca, req, ["%s.%s" % (short, alias), "*.%s.%s" % (short, alias)])
+        except KiwiError as e:
+            util.warn("%s's %s is not signed: %s" % (them, short, e))
+    if signed:
+        out = os.path.join(folder, "%s.signed-for-%s.yaml" % (name, them))
+        util.write_text(out, fedmod.signed_text(name, them, signed), 0o644)
+        util.say("%s's CA signed what its devices call %s's machines (%s): %s. Send it back; %s's operator takes it with: "
+                 "kiwi-server federate THEIR-FLEET --accept %s" % (name, them, ", ".join(sorted(signed)), out, them,
+                                                                  os.path.basename(out)))
+
+
+def _take_signed(fleet, name, raw, path):
+    """A partner's certificates for this network's machines, as the partner calls them: each one
+    kept beside the machine's own certificate when it is for this network, signed by the CA of
+    that partner's card, for the machine's key now and for the names it gives them."""
+    by, signed = str(raw.get("by") or ""), raw.get("certs") or {}
+    if raw.get("for") != name:
+        raise KiwiError("%s: these certificates are for %s, not for %s" % (path, raw.get("for"), name))
+    found = fedmod.partners(fleet.dir)
+    if by not in found:
+        raise KiwiError("%s: %s is not a partner of %s: take its card first (--accept its card)" % (path, by, name))
+    partner_ca = found[by].get("ca")
+    if not partner_ca:
+        raise KiwiError("%s: %s's CA is not known here (its card is from before 2.222.0): take its card again" % (path, by))
+    ca, domain = _fleet_ca(fleet), str(fleet.defaults.get("domain") or "home")
+    alias = "%s.%s" % (name, domain)            # how a partner with this domain calls it (federation.our_alias)
+    took, refused = [], []
+    for short, pem in sorted((str(k), str(v)) for k, v in signed.items()):
+        d = os.path.join(ca, "hosts", "%s.%s" % (short, domain))
+        key = os.path.join(d, "privkey.pem")
+        if not fedmod.LABEL.match(short) or not os.path.isfile(key):
+            why = "no machine of that name with a certificate here"
+        elif not certs.signed_by(pem, partner_ca):
+            why = "not signed by %s's CA" % by
+        elif certs.public_key(pem) != certs.public_key(key, private=True):
+            why = "for another key: it has a new one since the card; send a new card"
+        elif not {"%s.%s" % (short, alias), "*.%s.%s" % (short, alias)} <= set(certs.cert_names(pem)):
+            why = "for other names than %s.%s" % (short, alias)
+        else:
+            util.write_text(os.path.join(d, "alias-%s.pem" % by), pem, 0o644)
+            took.append(short)
+            continue
+        refused.append("%s (%s)" % (short, why))
+    if took:
+        util.say("%s's names for %s are trusted by its devices once %s are applied" % (by, ", ".join(took), ", ".join(took)))
+    if refused:
+        util.warn("left out: %s" % "; ".join(refused))
+    if not took:
+        raise KiwiError("%s: none of these certificates was taken" % path)
+
+
 def _alias_certs(signer, owner, seen, signer_name):
     """`signer` sees `owner` under a domain of its own (seen_as.domain, translated at the link): the
     signer's CA signs, for the key of each of the owner's machines that has a certificate, the names
@@ -4563,20 +4643,30 @@ def cmd_federate(args):
     if args.invite or args.accept:
         if args.other:
             raise KiwiError("--invite and --accept take one fleet file: the other network is the card")
+        import yaml
         fleet, name, entry = _federation_side(args, args.fleet)
         if args.accept:
+            try:
+                raw = yaml.safe_load(util.read_text(args.accept)) or {}
+            except (OSError, yaml.YAMLError):
+                raw = {}
+            if isinstance(raw, dict) and raw.get("federation-signed") == 1:
+                return _take_signed(fleet, name, raw, args.accept)
             them, theirs = fedmod.read_card(args.accept)
             if them == name:
                 raise KiwiError("%s: the card is of a network called %s, as this one: one of them renames its folder" % (args.accept, them))
+            requests = theirs.pop("requests", None) or {}
             seen = _seen_as(fleet, entry, them, theirs)
-            fedmod.write(fleet.dir, them, dict(theirs, seen_as=seen))
+            them = fedmod.write(fleet.dir, them, dict(theirs, seen_as=seen))
             _say_seen(them, seen)
             fedmod.partners(fleet.dir)
             util.say("%s is a partner of %s now; nothing is shared yet: share and from in %s, then apply the master"
                      % (them, name, os.path.join(fleet.dir, fedmod.FILE)))
+            if requests and (seen or {}).get("domain"):
+                _sign_requests(fleet, name, them, seen["domain"], requests, os.path.dirname(os.path.abspath(args.accept)))
         out = args.invite or os.path.join(os.path.dirname(os.path.abspath(args.accept)), "%s.card.yaml" % name)
         if args.invite or not os.path.isfile(out):
-            util.write_text(out, fedmod.card_text(name, entry), 0o644)
+            util.write_text(out, fedmod.card_text(name, entry, _alias_requests(fleet)), 0o644)
             util.say("%s's card: %s. The other network's operator takes it with: kiwi-server federate THEIR-FLEET --accept %s"
                      % (name, out, os.path.basename(out)))
         return

@@ -4601,6 +4601,60 @@ class TestFederation(Base):
         rc, out, err = TestManage.run_cli(self, "federate", a, "--ca", "nobody")
         self.assertIn("no linked network called nobody", err)
 
+    def test_two_operators_of_one_domain_sign_each_others_names_with_their_cards(self):
+        """Translated at the link between two operators: each card asks for the names the other gives
+        its machines; the other's CA signs them on --accept, and the file goes back."""
+        a, b, other = self.two_fleets()
+        data = yaml.safe_load(util.read_text(b))
+        domain = config.Fleet.load(a).defaults["domain"]
+        data["defaults"]["domain"] = domain
+        data["defaults"]["master"] = {"mesh_subnet": "10.9.0.0/16"}
+        data["hosts"]["gate"]["master"]["vpn-server"]["groups"] = {"devices": {"subnet": "10.9.3.0/24"}}
+        data["hosts"]["gate"]["master"]["vpn-server"]["server_ip"] = "10.9.0.1"
+        data["hosts"]["papaya"] = {"role": "node", "node": self.node_gw()}
+        write(b, yaml.safe_dump(data))
+        shutil.rmtree(os.path.join(other, "secrets", "ca"), ignore_errors=True)       # a CA of its own
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=b, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out-b"), None, ms)
+        r.bundle(fleet.hosts["papaya"], r.prepare(fleet.hosts["papaya"]))             # papaya's key and certificate
+        mine = os.path.basename(self.tmp)
+        card_a = os.path.join(self.tmp, "mine.card.yaml")
+        self.assertEqual(TestManage.run_cli(self, "federate", a, "--invite", card_a)[0], 0)
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", card_a)
+        self.assertEqual(rc, 0, err)
+        card_b = os.path.join(self.tmp, "other.card.yaml")
+        self.assertEqual(sorted(yaml.safe_load(util.read_text(card_b))["requests"]), ["papaya"])
+        self.assertNotIn("requests", util.read_text(os.path.join(other, "federation.yaml")))
+        rc, out, err = TestManage.run_cli(self, "federate", a, "--accept", card_b)
+        self.assertEqual(rc, 0, err)
+        signed = os.path.join(self.tmp, "%s.signed-for-other.yaml" % mine)
+        self.assertIn("--accept %s" % os.path.basename(signed), out + err)
+        self.assertNotIn("PRIVATE", util.read_text(signed))
+        # a file for someone else, or with a certificate for another key, is not taken
+        bad = yaml.safe_load(util.read_text(signed))
+        write(os.path.join(self.tmp, "x.yaml"), yaml.safe_dump(dict(bad, **{"for": "elsewhere"})))
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", os.path.join(self.tmp, "x.yaml"))
+        self.assertIn("for elsewhere, not for other", err)
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", signed)
+        self.assertEqual(rc, 0, err)
+        kept = os.path.join(other, "secrets", "ca", "hosts", "papaya." + domain, "alias-%s.pem" % mine)
+        self.assertTrue(certs.signed_by(util.read_text(kept), util.read_text(os.path.join(self.tmp, "secrets", "ca", "kiwiCA.pem"))))
+        self.assertIn("papaya.other." + domain, certs.cert_names(kept))
+        fedmod.set_share(other, mine, ["papaya"])
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=b, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out-b"), None, ms)
+        files = r.bundle(fleet.hosts["papaya"], r.prepare(fleet.hosts["papaya"])).files
+        self.assertIn("kn-nginx/alias-fullchain.pem", files)
+        # papaya's key changed since the card: refused, and said why
+        os.unlink(kept)
+        bad["certs"]["papaya"] = certs.sign_for(os.path.join(self.tmp, "secrets", "ca"), os.path.join(self.tmp, "secrets", "ca", "kiwiCA.key"),
+                                                ["papaya.other." + domain, "*.papaya.other." + domain])
+        write(os.path.join(self.tmp, "y.yaml"), yaml.safe_dump(bad))
+        rc, out, err = TestManage.run_cli(self, "federate", b, "--accept", os.path.join(self.tmp, "y.yaml"))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("for another key", err)
+        self.assertFalse(os.path.exists(kept))
+
     def test_two_operators_link_their_networks_with_cards(self):
         a, b, other = self.two_fleets()
         card = os.path.join(self.tmp, "mine.card.yaml")

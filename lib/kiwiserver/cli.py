@@ -4506,7 +4506,18 @@ def cmd_service(args):
     fleet, _roles, _ms = load(args)
     h = fleet.select([args.host])[0]
     script = service_script(args.name, args.action, args.lines)
-    sys.stdout.write(remote.run(remote.reach(h, args.ssh), script).decode(errors="replace"))
+    out = remote.run(remote.reach(h, args.ssh), script).decode(errors="replace")
+    if args.action != "logs":
+        sys.stdout.write(out)
+        return
+    if getattr(args, "raw", False):
+        sys.stdout.write(out)
+    else:
+        from . import logview
+        logview.say(out, args.name)
+    if getattr(args, "save", None):
+        util.write_text(args.save, out, 0o600)
+        util.say("the full log of %s on %s: %s" % (args.name, h.name, shown_path(os.path.abspath(args.save))))
 
 
 def cmd_disks(args):
@@ -5446,6 +5457,8 @@ def build_parser():
     s.add_argument("name", help="the service as its container is called, e.g. kn-nginx")
     s.add_argument("action", choices=["restart", "stop", "start", "logs"])
     s.add_argument("--lines", type=int, default=200, help="logs: how many of the last lines")
+    s.add_argument("--raw", action="store_true", help="logs: every line as the machine has it, podman's too")
+    s.add_argument("--save", metavar="FILE", help="logs: the full log into this file as well")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("disks", cmd_disks); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ssh", metavar="USER@ADDR")

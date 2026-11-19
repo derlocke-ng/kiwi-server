@@ -2852,6 +2852,59 @@ class SshCaDialog(Adw.Dialog):
         dlg.open(self.win, None, done)
 
 
+class ServiceLogDialog(Adw.Dialog):
+    """A service's log (`service … logs`): why it stops first, in words, then its own lines, in a
+    window large enough to read; Save… keeps the full log (every line, podman's too), Copy the shown."""
+
+    def __init__(self, win, host, name):
+        super().__init__(title="%s on %s" % (name, host), content_width=980, content_height=680)
+        self.win, self.host, self.name, self.text = win, host, name, ""
+        self.tv = Gtk.TextView(editable=False, monospace=True, left_margin=12, right_margin=12, top_margin=10,
+                               bottom_margin=10, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self.tv.get_buffer().set_text("Reading the log of %s on %s…" % (name, host))
+        bar = Adw.HeaderBar()
+        save = Gtk.Button(label="Save…", tooltip_text="The full log into a file")
+        save.connect("clicked", self.save)
+        copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy what is shown")
+        copy.connect("clicked", lambda *_: (self.get_clipboard().set(self.text), self.win.toast("Copied")))
+        bar.pack_start(save)
+        bar.pack_end(copy)
+        tb = Adw.ToolbarView(content=Gtk.ScrolledWindow(child=self.tv, vexpand=True))
+        tb.add_top_bar(bar)
+        self.set_child(tb)
+        threading.Thread(target=self.load, daemon=True).start()
+
+    def args(self, *more):
+        return ["service", self.win.doc.path, self.host, self.name, "logs"] + list(more)
+
+    def load(self):
+        rc, out, err = run_cli(self.win.cli, self.args("--lines", "500"))
+        GLib.idle_add(self.show, out if rc == 0 else (err or out or "No answer").replace("error: ", ""))
+
+    def show(self, text):
+        self.text = text
+        self.tv.get_buffer().set_text(text)
+        return False
+
+    def save(self, *_):
+        dlg = Gtk.FileDialog(title="Save the full log", initial_name="%s-%s.log" % (self.host, self.name))
+
+        def chosen(d, res):
+            try:
+                dest = d.save_finish(res).get_path()
+            except GLib.Error:
+                return
+
+            def work():
+                rc, out, err = run_cli(self.win.cli, self.args("--lines", "2000", "--raw"))
+                if rc == 0:
+                    with open(dest, "w") as fh:
+                        fh.write(out)
+                GLib.idle_add(lambda: self.win.toast("Saved: %s" % dest if rc == 0 else "Not saved: %s" % (err or "no answer").strip()))
+            threading.Thread(target=work, daemon=True).start()
+        dlg.save(self.win, None, chosen)
+
+
 class TextDialog(Adw.Dialog):
     def __init__(self, title, text, mono=True):
         super().__init__(title=title, content_width=820, content_height=620)
@@ -6008,9 +6061,12 @@ class Window(Adw.ApplicationWindow):
                 if s["running"] else ("Start", "start", None),
                 ("Log", "logs", None)]
         for label, act, ask in acts:
-            msg = {"restart": "Restarting %s on %s…", "stop": "Stopping %s on %s…", "start": "Starting %s on %s…",
-                   "logs": "The log of %s on %s…"}[act] % (n, host)
-            b = self.action_button(label, ["service", self.doc.path, host, n, act], msg, ask)
+            if act == "logs":               # a window of its own, large enough to read, with Save and Copy
+                b = Gtk.Button(label=label, valign=Gtk.Align.CENTER, css_classes=["flat"])
+                b.connect("clicked", lambda *_: ServiceLogDialog(self, host, n).present(self))
+            else:
+                msg = {"restart": "Restarting %s on %s…", "stop": "Stopping %s on %s…", "start": "Starting %s on %s…"}[act] % (n, host)
+                b = self.action_button(label, ["service", self.doc.path, host, n, act], msg, ask)
             b.set_halign(Gtk.Align.FILL)
             b.connect("clicked", lambda *_: pop.popdown())
             box.append(b)

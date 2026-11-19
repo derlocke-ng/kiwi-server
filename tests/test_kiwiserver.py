@@ -4211,6 +4211,41 @@ class TestMounts(Base):
             rc, out, err = TestManage.run_cli(self, "disks", f.path, "x", "--porcelain")
             self.assertEqual([d["NAME"] for d in json.loads(out)["disks"]], ["sda", "nvme0n1p3", "sdb1", "lychee--vg-swap_1"])
 
+    def test_a_services_log_says_first_why_it_stops_and_leaves_podmans_lines_out(self):
+        from kiwiserver import cli as climod, logview
+        cid = "d7449518a1764f50e4c4aded0081f77b56183b998d95ac7a119867be057c68e6"
+        journal = "\n".join([
+            "2026-11-19T20:51:19+01:00 quince.home systemd[1]: kn-signup.service: Failed with result 'exit-code'.",
+            "2026-11-19T20:51:34+01:00 quince.home systemd[1]: kn-signup.service: Scheduled restart job, restart counter is at 5.",
+            "2026-11-19T20:51:34+01:00 quince.home podman[803746]: 2026-11-19 20:51:34 +0100 CET container create %s (image=x)" % cid,
+            "2026-11-19T20:51:34+01:00 quince.home systemd[1]: Started kn-signup.service - kiwi stack: kn-signup.",
+            "2026-11-19T20:51:34+01:00 quince.home kn-signup[803746]: %s" % cid,
+            "2026-11-19T20:51:34+01:00 quince.home kn-signup[803776]: kiwi-server signup: error: argument --id-onion: expected one argument",
+            "2026-11-19T20:51:35+01:00 quince.home podman[803781]: 2026-11-19 20:51:35 +0100 CET container died %s (image=x)" % cid,
+            "2026-11-19T20:51:35+01:00 quince.home systemd[1]: kn-signup.service: Main process exited, code=exited, status=2/INVALIDARGUMENT"])
+        head, kept, left_out = logview.tidy(journal, "kn-signup")
+        self.assertEqual(head[0], "kn-signup keeps stopping right after it starts (5 restarts so far). Restarting it does not "
+                                  "help while the cause stays.")
+        self.assertEqual(head[1], "Its last words: kiwi-server signup: error: argument --id-onion: expected one argument")
+        self.assertEqual(left_out, 3)                                       # podman's two lines and the bare id
+        self.assertIn("20:51:34  kiwi-server signup: error: argument --id-onion: expected one argument", kept)
+        self.assertIn("20:51:35  [systemd] Main process exited, code=exited, status=2/INVALIDARGUMENT", kept)
+        self.assertEqual(logview.tidy("2026-11-19T20:51:34+01:00 h kn-x[1]: listening on :80", "kn-x")[0], [])  # all well: no words
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"x": {"role": "bare"}}})
+        keep = os.path.join(self.tmp, "kept.log")
+        with mock.patch.object(remote, "run", lambda *a, **kw: journal.encode()), \
+                mock.patch.object(remote, "reach", lambda h, o=None: "core@x"):
+            rc, out, err = TestManage.run_cli(self, "service", f.path, "x", "kn-signup", "logs", "--save", keep)
+            self.assertEqual(rc, 0, err)
+            self.assertTrue(out.startswith("kn-signup keeps stopping"), out[:300] + err[:300])
+            self.assertNotIn("container create", out)
+            self.assertIn("3 lines of podman about the container left out", out)
+            self.assertEqual(util.read_text(keep), journal)                 # the file keeps every line
+            self.assertEqual(oct(os.stat(keep).st_mode & 0o777), "0o600")
+            rc, out, err = TestManage.run_cli(self, "service", f.path, "x", "kn-signup", "logs", "--raw")
+            self.assertEqual(out, journal)
+        del climod
+
     def test_service_restarts_stops_starts_or_shows_the_log_of_one_container_of_the_stack(self):
         from kiwiserver import cli as climod
         for bad in ("nginx", "kn-x; rm -rf /", "kn-$(id)", "../kn-a", "", "kn-" + "a" * 50):
@@ -13769,6 +13804,17 @@ class TestFirstRunPage(StoreBase):
             fleet_name, plain, _kept = backup.open_copy(fh.read(), recovery)
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
+
+    def test_a_jobs_log_opens_as_text_and_downloads(self):
+        cookie, _csrf = self.made()
+        jid = self.c.start("doctor", [], wait=True)
+        status, headers, body = self.fetch("/api/jobs/%s/log?text=1" % jid, cookie)
+        self.assertEqual(status, 200)
+        self.assertNotIn("content-disposition", {k.lower() for k in headers})
+        status, headers, body2 = self.fetch("/api/jobs/%s/log?text=1&download=1" % jid, cookie)
+        self.assertEqual((status, body2), (200, body))
+        self.assertEqual(headers["content-disposition"], 'attachment; filename="kiwi-%s.log"' % jid)
+        self.assertIn("/api/jobs/%s/log?text=1" % jid, self.ask("/jobs/%s" % jid, cookie=cookie)[1])
 
     # ---- who opens whom ----
     def test_the_disk_unlock_page_and_its_api(self):

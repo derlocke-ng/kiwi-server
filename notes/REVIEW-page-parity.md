@@ -8,7 +8,7 @@ run included. Compared command by command and setting by setting.
 | # | The app has | The page | State |
 |---|---|---|---|
 | 1 | The first run: the questionnaire, the recovery key | nothing; a node waits for `control push` | **built** in 2.81.0: a machine with nothing on it shows the questionnaire, guarded by a setup code; 2.82.0: a new password by recovery key |
-| 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | **built** in 2.83.0 from one shared list of fields (`form.py`). Left: the VPN groups are a text box and not the app's list editor, a file setting is a typed path, `unlock.control`, removing a machine |
+| 2 | Every setting: machine, role, preset, modules and their settings, groups, exit, backup retention, defaults | reads only; Help says "use the app" | **built** in 2.83.0 from one shared list of fields (`form.py`). Left: the VPN groups are a text box and not the app's list editor, a file setting is a typed path. The disk unlock (rings, threshold, SSH, control rings, leash) and a machine's VLANs: in both since 2.224.0 |
 | 3 | Add a machine, make its install media, set it up the first time ("Connect it", "Set it up") | shows the next step as text | **built** in 2.82.0: "Still to set up" with one button per step, media made in memory and fetched from the page, "Add a machine at home" |
 | 4 | Restore: snapshots, one module, "Restore all", "Start new" | points to the app | **built** in 2.85.0: "Bring something back" per machine (a part to a snapshot, or everything to the newest). "Start new" for a rebuilt machine: 2.144.0, under Backups |
 | 5 | Unlock a machine whose disk waits at boot | a hint to go to the computer | **built** in 2.85.0: "Unlock it" on the machine's page (forwards its ring; handing over the key by hand stays in the terminal) |
@@ -72,14 +72,14 @@ Since 2.98.0, in all three: admin pages as a class of their own and the level "e
 
 Since 2.127.0 to 2.133.0 (16 November 2026): **Accounts** (the accounts module and Jabber's sign-up page:
 requests, invite codes, accounts and their password links) on the page, in the app (menu, "Accounts…") and
-in the terminal (`kiwi-server accounts`). Page only for now: Connect a service to the accounts (`accounts
-connect` in a terminal), and the Settings / Admin page links under each service. The start pages and the
+in the terminal (`kiwi-server accounts`). Connect a service to the accounts: page, app (Accounts…) and
+`accounts connect`. Page only: the Settings / Admin page links under each service. The start pages and the
 front page for strangers are for everyone, not for the people who run the network: neither app nor control page.
 
 Since 2.170.0 to 2.174.0 (17 November 2026):
 - **Signed copies**: the page refuses an unsigned copy and points to `kiwi-server restore FILE --unsigned`;
   the app's Restore runs the same CLI. Gap: neither page nor app can open an unsigned copy on purpose.
-- **A new recovery key** (`secrets recovery`): terminal only. The app could offer it next to Locking…; the
+- **A new recovery key** (`secrets recovery`): the terminal and the app (Locking…, *A new recovery key…*); the
   control node has its own control password and recovery-key path already.
 - **Locking** (idle, screen, password of this computer's key): the app's Locking… and the terminal. Not on the
   page on purpose: it is about this computer's keyring. The page's own sessions end after 30 minutes unused.
@@ -133,9 +133,9 @@ A controller like a second computer: it joins with the invite link and reads the
 |---|---|---|---|
 | Groups of the home network | `access … --new --lan SUBNET` | Who may reach what, *At home* | Who may reach what, *At home* |
 | New keys for an unlock ring | `rotate … ring NAME` / `ring all` | *Replace the disk keys* (all rings) | per ring, *Replace* and *Leave out* (2.221.0) |
-| Several rings for the control node | `unlock.control: [house, attic]` | control setup: *any of … opens it* | fleet file (the control node is set up from the app) |
-| The leash | `unlock.leash` | fleet file | fleet file |
+| Several rings for the control node | `unlock.control: [house, attic]` | control setup: *any of … opens it*; settings, *Disk unlock* (2.224.0) | settings, *Disk unlock* (2.224.0) |
+| The leash | `unlock.leash` | settings, *Disk unlock* (2.224.0) | settings, *Disk unlock* (2.224.0) |
 | Forget a kept password | `secrets forget` | *Forget* on the field | the field's clear box |
-| Tagged interfaces (VLANs) | `network.vlans` | fleet file | fleet file (2.223.0) |
+| Tagged interfaces (VLANs) | `network.vlans` | settings, Network, *Tagged VLANs* (2.224.0) | the same (2.224.0) |
 | A linked network's CA for the devices | `federate … --ca NAME`, `connect` | Federation…, *Its certificates* | Linked networks, download (2.222.0) |
 

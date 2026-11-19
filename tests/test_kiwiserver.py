@@ -4932,6 +4932,24 @@ class TestForm(Base):
         inherited = self.field(found, "admin.password")
         self.assertEqual((inherited["set"], inherited["inherited_set"], inherited["inherited"]), (False, True, None))
 
+    def test_disk_unlock_and_vlans_are_settings_of_the_page_and_the_app(self):
+        data = yaml.safe_load(yaml.safe_dump(self.FLEET))
+        found = self.groups(data, "papaya")
+        got, wrong = formmod.changes(found, {"unlock.rings": "house attic", "unlock.control": "house", "unlock.leash": "10",
+                                             "unlock.via": "away=http://10.8.0.1:7501", "unlock.ssh": "yes",
+                                             "network.vlans": "- {id: 20, address: 192.168.20.5/24, name: iot}"})
+        self.assertEqual(wrong, {})
+        self.assertEqual(got, {("unlock", "rings"): ["house", "attic"], ("unlock", "control"): ["house"], ("unlock", "leash"): 10,
+                               ("unlock", "via"): {"away": "http://10.8.0.1:7501"}, ("unlock", "ssh"): True,
+                               ("network", "vlans"): [{"id": 20, "address": "192.168.20.5/24", "name": "iot"}]})
+        doc = formmod.Doc(data)
+        doc.apply("papaya", {".".join(k): v for k, v in got.items()})
+        found = self.groups(doc.data, "papaya")
+        self.assertEqual((self.field(found, "unlock.rings")["value"], self.field(found, "unlock.leash")["value"]),
+                         (["house", "attic"], 10))
+        self.assertEqual(self.field(found, "network.vlans")["value"], [{"id": 20, "address": "192.168.20.5/24", "name": "iot"}])
+        self.assertIn("network.vlans", formmod.changes(found, {"network.vlans": "- {id: 20, address: [unclosed"})[1])
+
     def test_only_what_was_changed_is_a_change(self):
         data = yaml.safe_load(yaml.safe_dump(self.FLEET))
         found = self.groups(data, "papaya")
@@ -12473,7 +12491,8 @@ class TestFirstRunPage(StoreBase):
         self.assertNotIn("timezone", before["hosts"][node])
         status, body, _ = self.ask(page, cookie=cookie)
         self.assertEqual(status, 200)
-        for said in ("Settings of " + node, "<h2 style=\"margin-top:0\">Machine</h2>", "<summary>Files (Nextcloud)</summary>", ">Save</button>"):
+        for said in ("Settings of " + node, "<h2 style=\"margin-top:0\">Machine</h2>", "<summary>Files (Nextcloud)</summary>", ">Save</button>",
+                     "Disk unlock", "Rings that open its disk", "Tagged VLANs"):
             self.assertIn(said, body)
         status, where, _ = self.change(page, cookie, {"f:timezone": "Europe/Vienna", "f:updates.time": "04:15"})
         self.assertEqual((status, where), (303, page + "?saved=1"))

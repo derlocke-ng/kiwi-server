@@ -74,6 +74,11 @@ BASE_GROUPS = [
                   "as home's. A name of your choice, e.g. office"),
         dict(path=("network", "interface"), type="string", label="Interface", default="",
              help="Empty: the first wired interface"),
+        dict(path=("network", "vlans"), type="object", label="Tagged VLANs", scope="host", default=[],
+             help="Only with a managed switch that sends this machine tagged frames. One line per VLAN, like "
+                  "- {id: 20, address: 192.168.20.5/24, name: iot}. The machine gets an interface on it with no "
+                  "default route; a name of a group of the home network makes that group's rules hold there",
+             doc="docs/design/lans.md"),
         dict(path=("network", "iprange"), type="string", label="Address range", scope="defaults", default="",
              help="192.168.1.20-192.168.1.99 — static hosts without an address get the next free one"),
         dict(path=("network", "mask"), type="string", label="Prefix length for the range", scope="defaults",
@@ -103,6 +108,27 @@ BASE_GROUPS = [
         dict(path=("recovery", "unlock"), type="bool", label="Open a disk that waits at boot", scope="defaults", default=True,
              help="A machine that restarted and waits with its disk locked gets its unlock ring forwarded by the control "
                   "node. Off: someone presses Unlock it"),
+    ]),
+    ("Disk unlock", [
+        dict(path=("unlock", "rings"), type="list", label="Rings that open its disk", default=[],
+             help="The unlock rings (the tang module on other machines) that open this machine's encrypted disk at boot, "
+                  "by name, space separated. Empty: someone types the passphrase or presses Unlock",
+             doc="docs/security.md"),
+        dict(path=("unlock", "threshold"), type="int", label="…how many of them", default=1,
+             help="1: any one ring opens it. 2: two of them have to answer"),
+        dict(path=("unlock", "via"), type="map", label="…reached through", default={},
+             help="One line per ring that is not on the LAN, like away=http://10.8.0.1:7501 (a machine at another site)"),
+        dict(path=("unlock", "ssh"), type="bool", label="SSH while it waits", default=False,
+             help="An SSH server in the waiting system, so that Unlock (or kiwi-server unlock) can open it from here"),
+        dict(path=("unlock", "ssh_from"), type="list", label="…only from", default=[],
+             help="Addresses or networks, space separated. CoreOS only: Debian's SSH server at boot has no such limit"),
+        dict(path=("unlock", "control"), type="list", label="Rings that open the control node", default=[],
+             help="A control node: any of these rings opens its secret store after a restart, so nobody has to log in "
+                  "after a power cut. Empty: the password, every time"),
+        dict(path=("unlock", "leash"), type="int", label="Leash, in minutes", default=0,
+             help="Carried off, it locks itself: when the rings of its own site have not answered for this long, after it "
+                  "saw them since it started, it restarts and waits locked. 0: off; at least 5. A whole house without its "
+                  "network for that long restarts too"),
     ]),
     ("Messages when something is wrong", [
         dict(path=("notify", "mail", "to"), type="list", label="Mail to", scope="defaults", default=[],

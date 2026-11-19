@@ -148,6 +148,8 @@ DEFAULTS = {
         # a control node: the ring (on another machine) that opens its secret store by itself after a
         # restart, so that nobody has to log in after a power cut. Empty: the password, every time.
         "control": "",
+        # how many of those rings must answer at once (clevis sss): 1, any one of them
+        "control_threshold": 1,
         # the leash (docs/design/control-plane.md): this machine restarts into its locked state when
         # the rings at its own site have not answered for this many minutes, after it saw them since
         # boot: carried off, it locks itself. 0: no leash. A whole house without its network for that
@@ -505,6 +507,13 @@ class Host:
                     ipaddress.ip_address(str(d))
                 except ValueError:
                     errs.append("network.dns entry %r is not an IP address" % d)
+        uc = c.get("unlock") or {}
+        ct = uc.get("control_threshold", 1)
+        from .unlock import control_rings as _control_rings
+        if not isinstance(ct, int) or isinstance(ct, bool) or ct < 1:
+            errs.append("unlock.control_threshold is a number, 1 or more: how many of its rings must answer")
+        elif _control_rings(self) and ct > len(_control_rings(self)):
+            errs.append("unlock.control_threshold is %d, but unlock.control names %d ring(s)" % (ct, len(_control_rings(self))))
         if not isinstance(n.get("wol", False), bool):
             errs.append("network.wol must be true or false")
         if n.get("mac") and not re.match(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$", str(n["mac"])):

@@ -38,7 +38,7 @@ services:
     - vault.sh3.home:172.128.0.5
     - portainer.sh3.home:172.128.0.5
   kn-nginx:
-    image: docker.io/library/nginx:1
+    image: docker.io/library/nginx:1-alpine
     container_name: kn-nginx
     networks:
       knet-node:

@@ -177,5 +177,5 @@ settings:
     default: docker.io/certbot/certbot:latest
   - key: image
     group: Advanced
-    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one."
-    default: docker.io/library/nginx:1
+    help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default is the official nginx on Alpine: the same nginx in about a third of the room (a master in RAM keeps its images in memory); docker.io/library/nginx:1 is the Debian one."
+    default: docker.io/library/nginx:1-alpine

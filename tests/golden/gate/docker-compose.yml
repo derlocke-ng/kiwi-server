@@ -129,7 +129,7 @@ services:
     - /home/user/docker/km-tor/etc:/etc/tor:z
     - /home/user/docker/km-tor/var:/var/lib/tor:z
   km-nginx:
-    image: docker.io/library/nginx:1
+    image: docker.io/library/nginx:1-alpine
     container_name: km-nginx
     network_mode: service:km-vpn-server
     restart: unless-stopped

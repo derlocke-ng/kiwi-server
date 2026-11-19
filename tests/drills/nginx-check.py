@@ -34,7 +34,7 @@ for host in hosts:
         conf = confs[0]
         d = os.path.dirname(conf)
         text = open(conf).read()
-        image = "docker.io/library/nginx:1"
+        image = "docker.io/library/nginx:1-alpine"
         m = re.search(r"image:\s*(\S*nginx\S*)", open(next(os.path.join(dp, f) for dp, _dn, fns in os.walk(tmp)
                                                           for f in fns if f == "docker-compose.yml")).read())
         if m:

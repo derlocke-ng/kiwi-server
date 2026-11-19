@@ -2,7 +2,7 @@ modes: docker-compose.yml:0600 kiwi/ca/kiwiCA.crt:0644 kiwi/env/kn-jdownloader.e
 dirs: kiwi kiwi/ca kiwi/env kn-jdownloader kn-nginx kn-pihole/etc-dnsmasq.d kn-pihole/etc-pihole kn-portainer kn-sftp kn-transmission kn-vpn-client /mnt/dl
 ports: 53/tcp 53/udp 67/udp 80/tcp 443/tcp 2224/tcp
 services: kn-vpn-client kn-pihole kn-dhcphelper kn-nginx kn-transmission kn-jdownloader kn-portainer kn-sftp
-images: docker.io/homeall/dhcphelper:latest docker.io/jlesage/jdownloader-2:latest docker.io/jmcombs/sftp docker.io/library/nginx:1 docker.io/pihole/pihole:latest docker.io/portainer/portainer-ce:lts docker.io/qmcgaw/gluetun:v3 lscr.io/linuxserver/transmission:latest
+images: docker.io/homeall/dhcphelper:latest docker.io/jlesage/jdownloader-2:latest docker.io/jmcombs/sftp docker.io/library/nginx:1-alpine docker.io/pihole/pihole:latest docker.io/portainer/portainer-ce:lts docker.io/qmcgaw/gluetun:v3 lscr.io/linuxserver/transmission:latest
 urls: Pi-hole admin: https://pihole.m1.home/admin (through the reverse proxy), http://127.0.0.1:8080/admin | Transmission: https://dl.m1.home | JDownloader: https://jd.m1.home | Portainer: https://portainer.m1.home or https://127.0.0.1:9443 on the machine | SFTP: sftp -P 2224 user@m1.home
 hosts: 10.8.0.1=gate.home 10.8.0.1=wg.gate.home 10.8.0.1=pihole.gate.home 127.0.0.1=m1.home 127.0.0.1=pihole.m1.home 127.0.0.1=dl.m1.home 127.0.0.1=jd.m1.home 127.0.0.1=portainer.m1.home 10.8.0.25=sh3.home 10.8.0.25=cloud.sh3.home 10.8.0.25=vault.sh3.home 10.8.0.25=portainer.sh3.home 10.8.0.9=min.home
 vpn_dependents: kn-transmission kn-jdownloader

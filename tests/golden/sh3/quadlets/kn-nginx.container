@@ -4,7 +4,7 @@ Description=kiwi stack: kn-nginx
 StartLimitIntervalSec=0
 
 [Container]
-Image=docker.io/library/nginx:1
+Image=docker.io/library/nginx:1-alpine
 ContainerName=kn-nginx
 Network=knet-node.network
 IP=172.128.0.5

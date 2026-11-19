@@ -4895,6 +4895,10 @@ class TestMovePlan(Base):
         self.assertIn("the network at home 192.168.2.0/24 (papaya) overlaps", out + err)
         self.assertIn(".local is mDNS", out + err)
         self.assertIn("move to what?", TestManage.run_cli(self, "move", f.path)[2])
+        rc, out, err = TestManage.run_cli(self, "move", f.path, "--domain", "lan")     # allowed, with a warning
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Take care: domain 'lan'", out + err)
+        self.assertNotIn("To do for people: domain", out + err)
 
 
 class TestFirstContact(Base):

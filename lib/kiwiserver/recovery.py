@@ -237,6 +237,42 @@ def data_checks(fleet, ms, hosts, applied, said, looked, fleet_arg, now):
     return out
 
 
+def _place(h, roles):
+    """Where a machine stands, for "elsewhere": a master at a hoster is not at home; else its
+    network.site (home by default)."""
+    role = roles.get(h.role)
+    if role is not None and role.node_type == "master" and not (h.role_settings or {}).get("at_home"):
+        return "hoster"
+    return unlockmod._site(h)
+
+
+def copies_check(fleet, roles, ms, hosts):
+    """3-2-1 (the owner, 19 Nov): the data, two copies of it, one of them elsewhere. One line for
+    the network; a machine with no backup at all is a gap of its own (data_checks)."""
+    few, home_only = [], []
+    for h in sorted(hosts.values(), key=lambda x: x.name):
+        if not any(keeps_data(ms.get(m)) for m in h.modules) or "backup" not in h.modules:
+            continue
+        others = [x for x in dict.fromkeys(_server_host(fleet, u) for u in _servers(h)) if x != h.name]
+        if not others:
+            continue
+        if len(others) < 2:
+            few.append(h.name)
+        mine = _place(h, roles)
+        if all(o in fleet.hosts and _place(fleet.hosts[o], roles) == mine for o in others):
+            home_only.append(h.name)
+    if not few and not home_only:
+        return [_check("copies", True, "Every machine with data keeps two copies of it, one of them elsewhere (3-2-1).")]
+    bits = []
+    if few:
+        bits.append("%s keep%s one copy only" % (names(few), "s" if len(few) == 1 else ""))
+    if home_only:
+        bits.append("%s keep%s every copy in the same place as the machine" % (names(home_only), "s" if len(home_only) == 1 else ""))
+    return [_check("copies", None, "3-2-1 (two copies, one elsewhere): %s." % "; ".join(bits),
+                   "A second backup server, and one at another place (a machine at a friend's, network.site), "
+                   "keeps a copy when one place burns.")]
+
+
 def unlock_checks(fleet, hosts, fleet_arg):
     want = [h for h in fleet.hosts.values() if ((h.cfg.get("unlock") or {}).get("rings"))]
     if not want:
@@ -590,6 +626,7 @@ def report(fleet, roles, ms, status=None, fleet_arg=None, now=None):
     looked = (status or {}).get("time")
     checks = ([copy_check(fleet, state, applied, fleet_arg, now)]
               + data_checks(fleet, ms, hosts, applied, said, looked, fleet_arg, now)
+              + copies_check(fleet, roles, ms, hosts)
               + unlock_checks(fleet, hosts, fleet_arg)
               + power_cut_checks(fleet, hosts, fleet_arg)
               + master_checks(fleet, roles, hosts, applied, fleet_arg)

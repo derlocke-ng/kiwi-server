@@ -5166,6 +5166,13 @@ class TestAwayRing(Base):
             self.assertEqual(compose["services"]["km-tang-away"]["network_mode"], "service:km-vpn-server")
 
 
+class TestCount(unittest.TestCase):
+    def test_one_day_two_days(self):
+        self.assertEqual([util.count(n, "day") for n in (0, 1, 1.7, 2)], ["0 days", "1 day", "1 day", "2 days"])
+        self.assertEqual(recovery.age(60), "1 minute")
+        self.assertEqual(facts.lasts(1), "1 day")
+
+
 class TestPlan(unittest.TestCase):
     def test_a_container_restarts_when_its_quadlet_or_a_file_it_mounts_changed(self):
         class B:
@@ -5764,6 +5771,8 @@ class TestPrune(Base):
             backup.record_prune(f, ["store"], [], now=90 * 86400)
             self.assertEqual(backup.prune_note(f, "store", now=100 * 86400)[0], None)
             self.assertIn("pruned 10 days ago", backup.prune_note(f, "store", now=100 * 86400)[1])
+            self.assertIn("pruned 1 day ago", backup.prune_note(f, "store", now=91 * 86400)[1])
+            self.assertIn("pruned today", backup.prune_note(f, "store", now=90 * 86400 + 60)[1])
             self.assertEqual(backup.prune_note(f, "store", now=115 * 86400)[0], "warn")      # 25 days
             backup.record_prune(f, ["store"], ["papaya.kiwi"], now=99 * 86400)
             self.assertIn("failed for papaya.kiwi", backup.prune_note(f, "store", now=100 * 86400)[1])

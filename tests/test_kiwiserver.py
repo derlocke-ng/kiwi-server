@@ -3360,7 +3360,7 @@ class TestCheck(Base):
         with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@gate"):
             rc, out, err = TestManage.run_cli(self, "check", f.path)
         self.assertEqual(rc, 1)
-        self.assertIn("2 checks failed", err)
+        self.assertIn("2 of 5 checks failed: https pihole.gate.kiwi, dns quad9.net", err)
         self.assertRegex(out, r"ok +gate +https wg.gate.kiwi 403")
         self.assertRegex(out, r"FAILED gate +https pihole.gate.kiwi 000")
         self.assertRegex(out, r"FAILED gate +dns +quad9.net none")

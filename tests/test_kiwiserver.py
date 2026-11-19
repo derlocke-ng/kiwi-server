@@ -4893,6 +4893,14 @@ class TestCompletion(unittest.TestCase):
         self.assertEqual([c for c in named if c not in offered], [])
         self.assertEqual(self.complete("kiwi-server", "rec"), ["recovery"])
 
+    def test_the_help_names_every_command_people_run(self):
+        import argparse
+        from kiwiserver import cli as climod
+        subs = next(a for a in climod.build_parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
+        named = set(re.findall(r"^  kiwi-server ([a-z][a-z-]*)", climod.USAGE, re.M))
+        inner = {"agent", "notify", "serve-public", "recover", "help", "version"}    # the machines' and the control node's own
+        self.assertEqual(sorted(set(subs) - named - inner), [])
+
     def test_rotate_offers_its_kinds(self):
         self.assertEqual(self.complete("kiwi-server", "rotate", "fleet.yaml", ""), ["ssh", "seed", "ring"])
 

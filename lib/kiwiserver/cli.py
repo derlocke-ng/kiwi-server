@@ -5123,6 +5123,9 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server openwrt <fleet> --wireguard FILE [--full] | --via NODE|IP
                                                 a uci script that joins an OpenWrt router to the mesh
   kiwi-server apply <fleet> <host...>           re-render and run the role script on a running machine (SSH)
+  kiwi-server next <fleet> [host] [--yes]       the next step of building the network, done: run it again until all runs
+  kiwi-server adopt <fleet> <host> --as USER@ADDR
+                                                a board that runs Debian already becomes the host, then it is applied
   kiwi-server take-in <fleet> <address> --code CODE --preset P [--name N]
                                                 a machine the starter stick runs, waiting at home: taken in and set up
   kiwi-server serve <fleet> [--listen A:P]      the control node: web pages and API (--set-password first)
@@ -5138,6 +5141,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 then control requests|accept|deny <fleet> [name]
   kiwi-server watch <fleet> [host...]           send the role to a RAM master that booted (--timer on: every minute)
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
+  kiwi-server service <fleet> <host> <name> restart|stop|start|logs
+                                                one service of a machine's stack by hand, e.g. kn-nginx
   kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
   kiwi-server remove <fleet> <host> [--yes]     a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]
@@ -5181,6 +5186,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
+  kiwi-server sources <fleet> [add|update|remove LINK] | sources new DIR
+                                                module sources: modules from other repositories, pinned to a commit
   kiwi-server targets                           coreos, ucore, debian, armbian, coreos-ram
   kiwi-server toolchain [status|build]          butane / coreos-installer / xorriso, native or container
   kiwi-server doctor                            is everything here?

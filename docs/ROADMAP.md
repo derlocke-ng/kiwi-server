@@ -65,8 +65,9 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    since 2.220.0.
 4. **The image:** the phoenix spin with the container images inside, the join
    token instead of per-host media, and hosters without our own install media.
-5. **At home:** netboot (PXE) and Wake-on-LAN, and a node that sleeps and wakes
-   for the night's backups.
+5. **At home:** netboot (PXE), and a node that sleeps and wakes for the night's
+   backups. Wake-on-LAN is there since 2.228.0 (`network.wol`, `kiwi-server wake`,
+   *Wake it*), proven up to the card in a drill; waking real hardware is untested.
 6. **A master in RAM, room for its updates:** its /var is half its memory (crumble:
    95 % full with its own images). Since 2.209.0 (kiwi-stack 0.9.16) an update on a
    nearly full disk takes one image at a time, proven on crumble. Left: room for

@@ -74,6 +74,11 @@ BASE_GROUPS = [
                   "as home's. A name of your choice, e.g. office"),
         dict(path=("network", "interface"), type="string", label="Interface", default="",
              help="Empty: the first wired interface"),
+        dict(path=("network", "wol"), type="bool", label="Wake-on-LAN", default=False,
+             help="On: its card wakes on the signal another machine of its LAN sends (Wake it, kiwi-server wake). "
+                  "Some machines also need it switched on in their firmware; it takes at the next start"),
+        dict(path=("network", "mac"), type="string", label="…its card's MAC", scope="host", default="",
+             help="Empty: learned at each apply. Only for a machine that has not been applied yet, like aa:bb:cc:dd:ee:ff"),
         dict(path=("network", "vlans"), type="object", label="Tagged VLANs", scope="host", default=[],
              help="Only with a managed switch that sends this machine tagged frames. One line per VLAN, like "
                   "- {id: 20, address: 192.168.20.5/24, name: iot}. The machine gets an interface on it with no "

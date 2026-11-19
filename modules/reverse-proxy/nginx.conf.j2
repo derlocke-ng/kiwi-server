@@ -333,10 +333,18 @@ http {
     }
 {% endif %}
 {% for s in servers %}
+{# a partner with this network's own domain sees it as <its name>.<domain> (federation, translated
+   at the link): the same site answers that name too; with a certificate the partner's CA signed
+   (alias_fullchain) in a server of its own, which the partner's devices trust #}
+{% set al = (federation or {}).get('alias') %}
+{% set suffix = '.' ~ al.domain if al else '' %}
+{% set alias_name = (s.server_name[:-(suffix | length)] ~ '.' ~ al['as']) if al and s.server_name.endswith(suffix) else '' %}
+{% set own_block = alias_name and alias_fullchain_present %}
+{% for v in ['site'] + (['alias'] if own_block else []) %}
 
-    # {{ s.comment }}
+    # {{ s.comment }}{{ ', as a partner network sees it' if v == 'alias' else '' }}
     server {
-{% if s.public and via %}
+{% if s.public and via and v == 'site' %}
         # from the VPN, as every site of this machine
         listen 443 ssl;
         # open to the internet through the master: it hands the connection on, with the visitor's address in front
@@ -350,11 +358,14 @@ http {
         listen {{ tls_listen }};
 {% endif %}
         http2 on;
-{# a partner with this network's own domain sees it as <its name>.<domain> (federation, translated
-   at the link): the same site answers that name too #}
-{% set al = (federation or {}).get('alias') %}
-{% set suffix = '.' ~ al.domain if al else '' %}
-        server_name {{ s.server_name }}{{ (' ' ~ s.server_name[:-(suffix | length)] ~ '.' ~ al['as']) if al and s.server_name.endswith(suffix) else '' }};
+{% if v == 'alias' %}
+        server_name {{ alias_name }};
+        # signed by the partner's own CA, which its devices trust (kiwi-server federate)
+        ssl_certificate     /etc/nginx/alias-fullchain.pem;
+        ssl_certificate_key /etc/nginx/privkey.pem;
+{% else %}
+        server_name {{ s.server_name }}{{ (' ' ~ alias_name) if alias_name and not own_block else '' }};
+{% endif %}
 {% set fed = federation or {} %}
 {% set fn = (fed.names or {}).get(s.server_name) %}
 {% if fn %}
@@ -375,7 +386,7 @@ http {
 {% for c in (acc.names or {}).get(s.server_name, acc.others or []) %}
         deny {{ c }};      # a VPN group that reaches this machine for other services only
 {% endfor %}
-{% if s.public %}
+{% if s.public and v == 'site' %}
         ssl_certificate     /etc/nginx/acme/{{ s.server_name }}/fullchain.pem;
         ssl_certificate_key /etc/nginx/acme/{{ s.server_name }}/privkey.pem;
 {% if rate_limit %}
@@ -435,6 +446,7 @@ http {
         }
 {% endfor %}
     }
+{% endfor %}
 {% endfor %}
 {% for s in servers if s.alias and s.alias != s.server_name %}
 

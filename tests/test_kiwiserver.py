@@ -4496,6 +4496,34 @@ class TestFederation(Base):
         h = fb.hosts["papaya"]
         h.module_settings = {"reverse-proxy": {"federation": rules}}
         self.assertEqual(cli.host_aliases(h), ["papaya.other." + domain])
+        # A's CA signs papaya's names under that alias, for papaya's own key: A's devices trust them
+        def render_papaya():
+            fleet, roles, ms = cli.load(argparse.Namespace(fleet=b, roles_dir=None))
+            r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out-b"), None, ms)
+            node = fleet.hosts["papaya"]
+            return r.bundle(node, r.prepare(node)).files
+        render_papaya()                                   # papaya's own certificate and key first
+        rc, out, err = TestManage.run_cli(self, "federate", a, b)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("CA signed what its devices call other's machines (papaya", out + err)
+        hostdir = os.path.join(other, "secrets", "ca", "hosts", "papaya." + domain)
+        signed = os.path.join(hostdir, "alias-%s.pem" % list(name_a)[0])
+        self.assertEqual(sorted(certs.cert_names(signed)), ["*.papaya.other." + domain, "papaya.other." + domain])
+        a_ca = os.path.join(self.tmp, "secrets", "ca", "kiwiCA.pem")
+        self.assertEqual(subprocess.run(["openssl", "verify", "-CAfile", a_ca, signed], capture_output=True).returncode, 0)
+        files = render_papaya()
+        nginx = files["kn-nginx/nginx.conf"][0]
+        self.assertIn("ssl_certificate     /etc/nginx/alias-fullchain.pem;", nginx)
+        self.assertEqual(files["kn-nginx/alias-fullchain.pem"][0].decode() if isinstance(files["kn-nginx/alias-fullchain.pem"][0], bytes)
+                         else files["kn-nginx/alias-fullchain.pem"][0], util.read_text(signed))
+        # a new key for papaya (its own certificate issued again): the old one's is left out, and said
+        for f in ("privkey.pem", "cert.pem", "fullchain.pem"):
+            os.unlink(os.path.join(hostdir, f))
+        with mock.patch.object(util, "warn") as warned:
+            files = render_papaya()
+        self.assertNotIn("kn-nginx/alias-fullchain.pem", files)
+        self.assertNotIn("/etc/nginx/alias-fullchain.pem", files["kn-nginx/nginx.conf"][0])
+        self.assertIn("is for its old key", " ".join(str(c) for c in warned.call_args_list))
 
     def test_from_takes_the_partners_groups_by_name_or_its_addresses(self):
         a, b, other = self.two_fleets()

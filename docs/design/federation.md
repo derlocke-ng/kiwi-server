@@ -153,12 +153,17 @@ How A's devices come to trust B's certificates, two cases, decided on 19 Novembe
   `kiwi-server connect` puts it into this computer's browsers beside A's own. A CA without a
   name constraint, or one that permits other names, is not offered, and the page says why. The
   CA stays out of the machines' settings.
-- *B has A's domain* (translated), not built yet: B's CA is constrained to `home` too, so importing it would let
-  B sign A's own names. Instead A's CA signs B's alias names for B's key: B sends a request for
-  `*.papaya.kiwi2.home` (one per shared machine), A signs only names under the alias it gave B,
-  and B's nginx serves that certificate on the alias names (SNI). A's devices trust it through
-  A's own CA; nothing of B's is imported. With one operator `federate` does both sides; between
-  two, the request and the signed certificate travel like the cards.
+- *B has A's domain* (translated): B's CA is constrained to `home` too, so importing it would let
+  B sign A's own names. Instead A's CA signs B's alias names for B's key, built in 2.226.0 for one
+  operator: `federate A B` has A's CA sign `papaya.kiwi2.home` and `*.papaya.kiwi2.home` for
+  the key of each of B's machines that has a certificate, into B's
+  `secrets/ca/hosts/<host>/alias-<A>.pem`. B's nginx (kiwi-modules 0.99.0) gives the alias names
+  a server of their own with it (SNI), same rules and locations. A's devices trust it through
+  A's own CA; nothing of B's is imported. It is used only while it fits the machine's key: a
+  certificate of B's own issued again brings a new key, and nginx would not start with the old
+  one, so the render leaves it out and says to link again. A machine without a certificate yet
+  gets one after its first apply and a second `federate`. Between two operators (not built):
+  the request and the signed certificate would travel like the cards.
 
 **What does not change.** `share` and `from` are written in the partner's own words, as now;
 the TXT records, the picture and the access manager show the alias names.

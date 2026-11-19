@@ -22,6 +22,9 @@ services:
       - {{ docker_dir }}/{{ container_prefix }}-nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
+{% if alias_fullchain_present %}
+      - {{ docker_dir }}/{{ container_prefix }}-nginx/alias-fullchain.pem:/etc/nginx/alias-fullchain.pem:ro,z
+{% endif %}
 {% if onion_fullchain_present %}
       - {{ docker_dir }}/{{ container_prefix }}-nginx/onion-fullchain.pem:/etc/nginx/onion-fullchain.pem:ro,z
       - {{ docker_dir }}/{{ container_prefix }}-nginx/onion-privkey.pem:/etc/nginx/onion-privkey.pem:ro,z

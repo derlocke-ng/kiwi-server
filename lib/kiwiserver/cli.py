@@ -101,6 +101,31 @@ def host_aliases(host):
     return []
 
 
+def alias_cert(host, key, alias):
+    """The certificate a partner's CA signed for this machine's name under that partner's alias
+    (secrets/ca/hosts/<hostname>/alias-<partner>.pem, `federate` writes it), when it fits: this
+    machine's key now (a new key leaves nginx unable to start with the old one), both names, and
+    not run out. None: the alias name shows the machine's own certificate, as before."""
+    import glob
+    mine = None
+    for path in sorted(glob.glob(os.path.join(os.path.dirname(key), "alias-*.pem"))):
+        partner = os.path.basename(path)[len("alias-"):-len(".pem")]
+        pem = util.read_text(path)
+        mine = mine or certs.public_key(key, private=True)
+        if certs.public_key(pem) != mine:
+            util.warn("%s: the certificate %s signed for %s is for its old key: link again (kiwi-server federate) for a "
+                      "new one; until then that name shows this network's own" % (host.name, partner, alias))
+        elif not {alias, "*." + alias} <= set(certs.cert_names(path)):
+            util.warn("%s: the certificate %s signed is for other names than %s: link again" % (host.name, partner, alias))
+        elif not certs.cert_valid(path, 0):
+            util.warn("%s: the certificate %s signed for %s has run out: link again" % (host.name, partner, alias))
+        else:
+            if not certs.cert_valid(path, 30):
+                util.warn("%s: the certificate %s signed for %s runs out within 30 days: link again" % (host.name, partner, alias))
+            return pem
+    return None
+
+
 def linked_networks(fleet):
     """[{name, mesh, exit, internet, shared, reach}] of the networks linked to this one, nothing
     secret: for the picture of the network (reach: what each may reach here, as `share` names it).
@@ -483,6 +508,11 @@ class Renderer:
         mf["reverse-proxy/tls_privkey"] = util.read_bytes(key)
         host.module_settings["reverse-proxy"]["tls_fullchain"] = "fullchain.pem"
         host.module_settings["reverse-proxy"]["tls_privkey"] = "privkey.pem"
+        aliases = host_aliases(host)
+        pem = alias_cert(host, key, aliases[0]) if aliases else None
+        if pem:         # the name a partner gives it, with a certificate the partner's CA signed
+            mf["reverse-proxy/alias_fullchain"] = pem.encode()
+            host.module_settings["reverse-proxy"]["alias_fullchain"] = "alias-fullchain.pem"
 
     def ca_cert(self, host):
         """The fleet CA, embedded so the machine trusts the others' services.
@@ -4490,6 +4520,39 @@ def _partner_ca(args):
     sys.stdout.write(str(p["ca"]).rstrip("\n") + "\n")
 
 
+def _alias_certs(signer, owner, seen, signer_name):
+    """`signer` sees `owner` under a domain of its own (seen_as.domain, translated at the link): the
+    signer's CA signs, for the key of each of the owner's machines that has a certificate, the names
+    the signer's devices use (papaya.kiwi2.home, *.papaya.kiwi2.home), into the owner's secrets
+    beside the machine's own certificate (alias-<signer>.pem). Its nginx shows it on those names
+    (reverse-proxy alias_fullchain) while it fits the machine's key. Nothing secret leaves a fleet."""
+    alias = (seen or {}).get("domain")
+    if not alias:
+        return
+    tls = signer.defaults.get("tls") or {}
+    signer_ca = signer.resolve_path(tls.get("ca_dir") or "secrets/ca")
+    certs.ensure_ca(signer_ca, int(tls.get("days") or certs.DAYS), tls.get("name_constraints") or [])
+    owner_ca = owner.resolve_path((owner.defaults.get("tls") or {}).get("ca_dir") or "secrets/ca")
+    domain = str(owner.defaults.get("domain") or "home")
+    signed, later = [], []
+    for h in sorted(owner.hosts.values(), key=lambda x: x.name):
+        if h.standby_of or not h.hostname.endswith("." + domain):
+            continue
+        key = os.path.join(owner_ca, "hosts", h.hostname, "privkey.pem")
+        if not os.path.isfile(key):
+            later.append(h.name)
+            continue
+        short = h.hostname[:-len(domain) - 1]
+        pem = certs.sign_for(signer_ca, key, ["%s.%s" % (short, alias), "*.%s.%s" % (short, alias)])
+        util.write_text(os.path.join(owner_ca, "hosts", h.hostname, "alias-%s.pem" % signer_name), pem, 0o644)
+        signed.append(h.name)
+    if signed:
+        util.say("%s's CA signed what its devices call %s's machines (%s): apply them for their pages to be trusted there"
+                 % (signer_name, os.path.basename(owner.dir.rstrip("/")), ", ".join(signed)))
+    if later:
+        util.say("%s: no certificate of their own yet; after their first apply, link again for theirs" % ", ".join(later))
+
+
 def cmd_federate(args):
     """Link two networks this computer holds both fleets of: each master's link key, address,
     mesh and DNS into the other's federation.yaml. What each shares stays empty until written.
@@ -4530,6 +4593,8 @@ def cmd_federate(args):
     na = fedmod.write(fb.dir, na, dict(ea, seen_as=seen_a))
     _say_seen(nb, seen_b)
     _say_seen(na, seen_a)
+    _alias_certs(fa, fb, seen_b, na)        # a translated partner's names, signed by the CA of the side that uses them
+    _alias_certs(fb, fa, seen_a, nb)
     if args.exit or args.no_exit:
         # the first network leaves to the internet through the second, over the link: the
         # first says so (exit), the second allows it (internet)

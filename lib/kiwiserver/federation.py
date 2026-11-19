@@ -265,7 +265,8 @@ def admin_rules(rules, found, host, admin, domain):
     if not found or not admin:
         return rules
     everyone = [p["as"] for p in found.values() if p.get("as")]
-    rules = {"names": dict((rules or {}).get("names") or {}), "deny": list((rules or {}).get("deny") or [])}
+    # the rest (the name a partner of this network's own domain gives it: alias) as it was
+    rules = dict(rules or {}, names=dict((rules or {}).get("names") or {}), deny=list((rules or {}).get("deny") or []))
     for site in admin:
         short = site[:-len(domain) - 1] if site.endswith("." + domain) else site        # control.papaya
         allow = [p["as"] for p in found.values() if p.get("as") and short in p["share"]]

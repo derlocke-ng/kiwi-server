@@ -185,9 +185,14 @@ the same numbers as the home's (two routers of one make give out the same range)
 without it, home would send the machine's name to an address in its own LAN.
 
 An encrypted machine there opens its disk at boot from a ring at its own site, or
-from a ring on the master (`tang` on the master): the master lets in the addresses
-the network's machines last connected from, wherever they are. A ring at home is no
-help to it: its initramfs has no VPN yet.
+from a ring at home through the master: the master only passes the ring's port on over
+the VPN (`vpn-server.unlock_relay`, docs/security.md) and keeps no key, and it lets in
+only the addresses the network's machines last connected from. A ring at home is no
+help to it directly: its initramfs has no VPN yet.
+
+A ring served by the master itself (`tang` on the master) works too, but then its keys
+lie on a rented server: whoever copies them there and also gets hold of the machine can
+open its disk. kiwi-server does not suggest it; the relay is the way.
 
 ## Phones and laptops: 1280
 

@@ -138,7 +138,21 @@ node to do everything, and can start a new network with the install media.
 7. A kit release with pills, chips, list, item page and timeline; the app uses them; linked
    networks as a choice.
 
-## Open
+## Decided (the owner, 19 November 2026)
 
-- Is `network.site` the grouping meant by main building, CEO, IT?
-- May linked networks exchange a summary of their machines' state?
+- **A site is where machines stand** (`network.site`): a building, a part of one, a remote
+  building, a home, a friend's home.
+- **A linked network shows only what it allowed us**: as a rule the services we may reach, no
+  summary of its machines. One kiwi network is one organisation (a main master, perhaps
+  standby masters, many nodes); a linked one is another: a sister company that shares more, a
+  competitor sharing resources for a project, a friend's network to play together over the VPN.
+- **What is ugly in the app** is the machine's page itself: the size of its Overview, and
+  Settings with its module and system tabs under "Machine kiwi-node / master". That page is
+  what step 6 and 7 rebuild, not only the dialogs.
+- **Who it is for:** people interested in IT, who know what an IP address is or can look it up.
+  The page and the apps use the proper words where a thing has one; the docs explain them
+  simply. Not a tool for people who want nothing explained, and not one that hides its terms.
+- **Automated to the end:** a network runs without its admin doing anything. Things break; then
+  the admin changes the disk or replaces the machine, and the software does the rest. Every
+  place where a person still has to act is a gap to close, and until then the page says
+  exactly what to do, with the button.

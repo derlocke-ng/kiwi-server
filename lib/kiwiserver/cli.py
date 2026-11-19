@@ -4845,6 +4845,27 @@ def cmd_wake(args):
     util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, typed_path(args.fleet)))
 
 
+def cmd_power(args):
+    """Switch a machine off or restart it, after saying what that means for it (power.py)."""
+    from . import power as powermod
+    fleet, roles, ms = load(args)
+    host = fleet.select([args.host])[0]
+    if host.role in roles:
+        rolesmod.resolve_settings(roles[host.role], host, ms)       # its modules: the control page, say
+    words = powermod.what(host, roles, args.action)
+    if args.porcelain:
+        print(json.dumps({"host": host.name, "action": args.action, "what": words}))
+        return
+    for w in words:
+        print(w)
+    sys.stdout.flush()
+    if args.dry_run:
+        return
+    if not args.yes:
+        raise KiwiError("nothing done: add --yes to %s %s" % ("switch off" if args.action == "off" else "restart", host.name))
+    powermod.run(host, args.action, args.ssh)
+
+
 def cmd_unlock(args):
     """A machine waiting at boot for a ring it cannot reach by itself: forward the ring in."""
     fleet, roles, ms = load(args)
@@ -5193,6 +5214,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server rotate <fleet> [ssh|seed|ring NAME|ring all]
                                                 new keys: what is due, or one kind
   kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
+  kiwi-server power <fleet> <host> off|restart  switch it off or restart it (says first what that means)
   kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
@@ -5482,6 +5504,11 @@ def build_parser():
     s.add_argument("--internet", choices=["yes", "no"], help="may the group leave to the internet through the VPN")
     s.add_argument("--admin", choices=["yes", "no"], help="may the group open the admin pages: the control page, Portainer, Pi-hole and the like")
     s.add_argument("--lan", metavar="SUBNET", help="with --new: a group of the home network, this subnet at home (a guest Wi-Fi, a VLAN)")
+    s = sub("power", cmd_power); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("action", choices=["off", "restart"])
+    s.add_argument("--yes", action="store_true", help="do it (without: only say what it means)")
+    s.add_argument("--dry-run", action="store_true", help="only say what it means")
+    s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host", nargs="?",
                                                                           help="none: who opens whom")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")

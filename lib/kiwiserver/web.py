@@ -654,7 +654,15 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <p>Sets the machine up the way your network's settings say: new settings, updates of its services, repairs.
 <span class="muted">Services that changed restart for a moment. Safe to run again.</span></p>
 <a class="btn" href="/hosts/{{ m.name }}/settings">Settings</a>
-<p>What this machine does and how: its parts, its address, its updates. <span class="muted">Apply brings a change to it.</span></p></div></div>
+<p>What this machine does and how: its parts, its address, its updates. <span class="muted">Apply brings a change to it.</span></p>
+{% set big = (" It is the master: the VPN and everything reached through it stop until it is back." if m.role == "master" else "")
+   ~ (" It runs this page: the page goes away until it is back." if "control" in (m.modules or []) else "") %}
+<form method="post" action="/run" onsubmit="return confirm('Restart {{ m.name }}? It is gone for a few minutes, then back by itself.{{ big }}')">{{ tok }}
+<input type="hidden" name="action" value="reboot"><input type="hidden" name="host" value="{{ m.name }}"><button>Restart</button></form>
+<p>Shuts it down and starts it again. <span class="muted">Its disk opens again the way it always does.</span></p>
+<form method="post" action="/run" onsubmit="return confirm('Switch {{ m.name }} off? It stays off.{{ big }}{{ ' Wake-on-LAN starts it again.' if m.wol else ' Only someone at the machine, or its provider, can switch it on again.' }}')">{{ tok }}
+<input type="hidden" name="action" value="poweroff"><input type="hidden" name="host" value="{{ m.name }}"><button>Switch off</button></form>
+<p>Shuts it down. <span class="muted">{{ "Wake it starts it again." if m.wol else "It stays off until someone switches it on." }}</span></p></div></div>
 
 {% endif %}{% if tab == "services" %}
 {% if tiles %}<h2>Its services</h2><div class="tiles">{% for t in tiles %}<a class="tile" href="https://{{ t.site }}" target="_blank" rel="noopener">
@@ -1483,7 +1491,7 @@ JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "
 FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's phases before it is set up
 VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
-        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "wake": "Waking", "remove": "Removing",
+        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "wake": "Waking", "remove": "Removing", "reboot": "Restarting", "poweroff": "Switching off",
         "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
         "rotate-ring": "Replacing the keys of an unlock ring",
         "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
@@ -2923,7 +2931,7 @@ def make_app(control: Control):
         if not j:
             return RedirectResponse("/activity", status_code=303)
         what = " ".join(j["hosts"]) or "all machines"
-        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "wake", "remove", "start-new", "prune", "service") else "")
+        title = "%s %s" % (VERB.get(j["action"], j["action"]), what if j["action"] in ("status", "plan", "apply", "save", "setup", "build", "restore", "unlock", "wake", "remove", "start-new", "prune", "service", "reboot", "poweroff") else "")
         say = {"waiting": "Waiting for another task to finish…", "running": "Working… this can take a few minutes.",
                "ok": "Done.", "failed": "That did not work. The lines below say why."}
         if j["action"] == "plan":

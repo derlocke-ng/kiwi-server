@@ -5958,7 +5958,45 @@ class Window(Adw.ApplicationWindow):
             parts.append(self.services_group(f, name))
         parts.append(self.network_group(name, st, live, f))
         parts.append(self.deploy_group(name, st, f))
+        if live and live.get("ok"):
+            parts.append(self.power_group(name))
         self.host_column.show(parts)
+
+    def power_group(self, name):
+        """Restart it or switch it off (`kiwi-server power`): asks first, with what that means for it."""
+        g = Adw.PreferencesGroup(title="Power")
+        for label, act, sub in (("Restart", "restart", "Gone for a few minutes, then back by itself"),
+                                ("Switch off", "off", "It stays off until someone switches it on")):
+            row = plain_row(label, sub)
+            b = Gtk.Button(label=label, valign=Gtk.Align.CENTER, css_classes=["flat"])
+            b.connect("clicked", lambda _b, a=act, lab=label: self.power_ask(name, a, lab))
+            row.add_suffix(b)
+            g.add(row)
+        return g
+
+    def power_ask(self, name, act, label):
+        def work():
+            rc, out, err = run_cli(self.cli, ["power", self.doc.path, name, act, "--porcelain"])
+            try:
+                words = json.loads(out)["what"] if rc == 0 else None
+            except (ValueError, KeyError):
+                words = None
+            GLib.idle_add(ask, words, err)
+
+        def ask(words, err):
+            if words is None:
+                self.alert("Not possible", (err or "no answer").strip().replace("error: ", ""))
+                return False
+            dlg = Adw.AlertDialog(heading="%s %s?" % (label, name), body=" ".join(words))
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("go", label)
+            dlg.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+            dlg.set_close_response("cancel")
+            dlg.connect("response", lambda _d, r: r == "go" and self.spawn(
+                ["power", self.doc.path, name, act, "--yes"], "%s %s…" % ("Restarting" if act == "restart" else "Switching off", name)))
+            dlg.present(self)
+            return False
+        threading.Thread(target=work, daemon=True).start()
 
     def action_button(self, label, args, msg, ask=None):
         """A button that runs the CLI with its output in the log, after `ask` (heading, body, verb)."""

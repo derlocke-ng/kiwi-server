@@ -13805,6 +13805,17 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
 
+    def test_a_machine_restarts_or_switches_off_from_its_page(self):
+        cookie, _csrf = self.made()
+        node = self.node()
+        body = self.ask("/hosts/%s" % node, cookie=cookie)[1]
+        for words in ('name="action" value="reboot"', 'name="action" value="poweroff"', "Switch off", "Restart"):
+            self.assertIn(words, body)
+        self.assertEqual(self.c.argv("poweroff", [node])[-3:], [node, "off", "--yes"])
+        self.assertEqual(self.c.argv("reboot", [node])[-3:], [node, "restart", "--yes"])
+        with self.assertRaises(KiwiError):
+            self.c.argv("reboot", [])
+
     def test_a_jobs_log_opens_as_text_and_downloads(self):
         cookie, _csrf = self.made()
         jid = self.c.start("doctor", [], wait=True)
@@ -13993,6 +14004,30 @@ class TestRecovery(Base):
         only = dict(sorbet, unlock=dict(sorbet["unlock"], openers=[]))
         f3 = self.network(sorbet=only, lychee=lychee)
         self.assertEqual(unlock.openers(f3.hosts["sorbet"], servers), [])
+
+    def test_power_says_what_switching_off_means_and_does_it_only_when_told(self):
+        from kiwiserver import power as powermod
+        f = self.network()
+        sorbet, quince = f.hosts["sorbet"], f.hosts["quince"]
+        off = powermod.what(sorbet, self.roles, "off")
+        self.assertIn("It is the master: the VPN and everything reached through it stop until it is back.", off)
+        self.assertIn("Start it again at its provider.", off)
+        self.assertIn("Only someone at the machine can switch it on again.", powermod.what(quince, self.roles, "off"))
+        self.assertTrue(powermod.what(quince, self.roles, "restart")[0].startswith("quince restarts"))
+        with self.assertRaises(KiwiError):
+            powermod.what(quince, self.roles, "explode")
+        told = []
+        with mock.patch.object(remote, "run", lambda t, sc, *a, **kw: told.append(sc) or b"ok"), \
+                mock.patch.object(remote, "reach", lambda h, o=None: "core@quince"):
+            rc, out, err = self.run_cli("power", f.path, "quince", "off")
+            self.assertEqual(rc, 1)
+            self.assertIn("add --yes", err)
+            self.assertEqual(told, [])                                   # said, not done
+            rc, out, err = self.run_cli("power", f.path, "quince", "restart", "--yes")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(told, ["systemctl reboot --no-block; echo ok"])
+            rc, out, err = self.run_cli("power", f.path, "sorbet", "off", "--porcelain")
+            self.assertIn("It is the master", " ".join(json.loads(out)["what"]))
 
     def test_who_opens_whom(self):
         rows = {r["name"]: r for r in unlock.picture(self.network(), self.roles, self.ms)}

@@ -51,9 +51,11 @@ ACTIONS = {
     "doctor": ("doctor", False),        # are this node's own tools here (install media, checks)
     "adopt": ("adopt", True),           # a waiting starter, taken in (take_in)
     "service": ("service", True),       # one container of a machine's stack: restart, stop, start, logs
+    "reboot": ("power", True),          # a machine restarted, or switched off (power.py)
+    "poweroff": ("power", True),
 }
 CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "rotate-ring", "setup", "build", "restore", "unlock", "remove",
-           "start-new", "prune", "service"}
+           "start-new", "prune", "service", "reboot", "poweroff"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
 
@@ -1065,6 +1067,10 @@ class Control:
             if hosts[0] == os.environ.get("KIWI_CONTROL_HOST"):
                 raise KiwiError("this is the machine the page runs on: it cannot remove itself")
             return list(self.kiwi) + ["remove", self.fleet_path, hosts[0], "--yes"]
+        if action in ("reboot", "poweroff"):    # the page asked first, with what it means
+            if len(hosts) != 1:
+                raise KiwiError("which machine?")
+            return list(self.kiwi) + ["power", self.fleet_path, hosts[0], "off" if action == "poweroff" else "restart", "--yes"]
         if action == "wake":                # Wake-on-LAN, from a machine of its LAN
             if len(hosts) != 1:
                 raise KiwiError("which machine?")

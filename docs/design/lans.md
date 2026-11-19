@@ -69,8 +69,8 @@ node on a trunk port (untagged 1, tagged 20), a device on an access port of VLAN
 node there, an untagged device with an address of VLAN 20 does not, the group's ports hold.
 
 Left: a service bound to one VLAN only (its module's `listen`), for example a Pi-hole for the IoT
-network that knows no other names; and a VLAN on the control page and in the app (now the fleet
-file only).
+network that knows no other names. On the control page and in the app a machine's VLANs are a
+setting (Network, *Tagged VLANs*) since 2.224.0.
 
 ## Step 3: the gateway per VLAN
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.224.0 — the disk unlock and VLANs in the settings
+
+- **Settings, *Disk unlock*** on the control page and in the app: the rings that open a machine's
+  disk, how many of them, the way to a ring at another site, SSH while it waits (and from where),
+  the rings that open the control node, and the leash. Until now the fleet file only.
+- **Settings, Network, *Tagged VLANs*** (a machine's `network.vlans`, as YAML lines).
+- The notes on what the page and the app offer are brought up to date: the app has had *A new
+  recovery key…* and *Connect a service to the accounts* for a while.
+
 ## 2.223.0 — a machine on tagged VLANs
 
 - **`network.vlans`** in a machine's block: `[{id: 20, address: 192.168.20.5/24, name: iot}]`.

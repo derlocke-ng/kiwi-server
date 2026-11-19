@@ -78,6 +78,11 @@ Two paths, both kept:
   The controller renders on demand, so the token is the only thing a person
   types. The controller's image is the toolchain image (butane,
   coreos-installer, xorriso), so it also builds and serves per-host ISOs.
+  Decided on 19 November 2026 (the owner): no join endpoint on the Internet.
+  The master opens the website, the services and the VPN, nothing more, and
+  `control.<host>` answers on the mesh only. A machine at another site comes
+  onto the VPN first instead: its media carry a one-time join peer, and its
+  setup comes over the mesh (`install.over_vpn`, built in 2.235.0; join.py).
 
 With the image (next section) the generic ISO is the stock Fedora CoreOS
 live ISO plus a small Ignition that switches the installed system to the

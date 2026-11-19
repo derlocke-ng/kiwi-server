@@ -81,8 +81,9 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
    docs/design/lans.md): groups of the home network (a subnet at home given what it
    may reach, kept by each node and the gateway) since 2.217.0 and 2.218.0, tagged
    interfaces per machine (`network.vlans`) since 2.223.0, also a setting on the
-   page and in the app since 2.224.0. Left: a service on one VLAN only, and the
-   gateway's DHCP, DNS and routing per VLAN.
+   page and in the app since 2.224.0, a service at one VLAN's address only
+   (`listen`, every module) since 2.239.0. Left: the gateway's DHCP, DNS and
+   routing per VLAN.
 8. **Moving a whole network to another mesh or domain**, for just in case
    (docs/design/federation.md): the plan since 2.237.0 (`kiwi-server move FLEET
    --mesh … --domain …`, changes nothing); left: the move itself, which must pin

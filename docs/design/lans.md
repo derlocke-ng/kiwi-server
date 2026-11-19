@@ -68,8 +68,10 @@ Proven without a switch in `tests/drills/vlan-netns.py`: a Linux bridge with VLA
 node on a trunk port (untagged 1, tagged 20), a device on an access port of VLAN 20 reaches the
 node there, an untagged device with an address of VLAN 20 does not, the group's ports hold.
 
-Left: a service bound to one VLAN only (its module's `listen`), for example a Pi-hole for the IoT
-network that knows no other names. On the control page and in the app a machine's VLANs are a
+A service answers at one VLAN only since 2.239.0 (kiwi-modules 0.101.0): every module that
+publishes ports has the setting `listen` ("Only at this address", Advanced), and its ports are
+bound to that address. Left: a second Pi-hole for an IoT network that knows no other names
+(a module runs once per machine). On the control page and in the app a machine's VLANs are a
 setting (Network, *Tagged VLANs*) since 2.224.0.
 
 ## Step 3: the gateway per VLAN

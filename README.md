@@ -64,8 +64,8 @@ Step by step: [docs/getting-started.md](docs/getting-started.md).
 | [Example setups](docs/examples.md) | pictures of possible networks and what each part does |
 | [The fleet file](docs/fleet.md) | the settings, the role block, names and the domain |
 | [Roles and modules](docs/roles.md) | master and node, presets, a public hub, Jabber, [accounts](docs/roles.md#accounts), the LAN cache, writing a role |
-| [The network](docs/network.md) | joining the mesh, DNS, the MTU, federation, [routers](docs/routers.md) |
-| [Machines](docs/machines.md) | targets, the output, first boot, updates, a master in RAM |
+| [The network](docs/network.md) | joining the mesh, DNS, the MTU, machines at another site, federation, [routers](docs/routers.md) |
+| [Machines](docs/machines.md) | targets, the output, first boot, updates, a master in RAM, Wake-on-LAN, asleep by day |
 | [The control node](docs/control.md) | kiwi-server on a home node, with a page for the phone; the start page, the status page and the front page for strangers |
 | [Boards](docs/boards.md) | Odroid and other arm64 boards: `kiwi-server adopt` |
 | [Backups](docs/backups.md) | the fleet directory, each machine's data, restore |

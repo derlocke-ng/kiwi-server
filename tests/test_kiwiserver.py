@@ -5186,6 +5186,9 @@ class TestPlan(unittest.TestCase):
         x = planmod.compare(B, want, have, ["kn-a", "kn-b", "kn-gone"])
         self.assertEqual((x["restart"], x["new_services"], x["removed_services"]), (["kn-a"], ["kn-c"], ["kn-gone"]))
         self.assertEqual(planmod.compare(B, want, dict(want), B.services)["changed"], [])
+        have = dict(want, **{planmod.CLI: "older"})                     # a new kiwi-stack: the tool changes, nothing restarts
+        x = planmod.compare(B, want, have, B.services)
+        self.assertEqual((x["changed"], x["restart"]), ([{"path": "/usr/local/bin/kiwi-stack", "new": False}], []))
 
 
 class TestBackups(unittest.TestCase):

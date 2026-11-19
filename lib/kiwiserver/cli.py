@@ -2644,7 +2644,7 @@ def cmd_plan(args):
         if not x["changed"] and not x["removed_services"]:
             print(head + "nothing changes")
             continue
-        bits = ["%d files" % len(x["changed"])]
+        bits = ["%d file%s" % (len(x["changed"]), "" if len(x["changed"]) == 1 else "s")]
         for key, word in (("restart", "restarts"), ("new_services", "new"), ("removed_services", "goes")):
             if x[key]:
                 bits.append("%s %s" % (word, " ".join(x[key])))

@@ -190,8 +190,11 @@ BASE_GROUPS = [
         dict(path=("unlock", "ssh_from"), type="list", label="…only from", default=[],
              help="Addresses or networks, space separated. CoreOS only: Debian's SSH server at boot has no such limit"),
         dict(path=("unlock", "control"), type="list", label="Rings that open the control node", default=[],
-             help="A control node: any of these rings opens its secret store after a restart, so nobody has to log in "
-                  "after a power cut. Empty: the password, every time"),
+             help="A control node: these rings open its key store after a restart, so it works again before anyone "
+                  "logs in after a power cut. Logging in to the page still takes the password. Empty: the store opens "
+                  "at the first login"),
+        dict(path=("unlock", "control_threshold"), type="int", label="…how many of them", default=1,
+             help="1: any one of them opens it. 2 or more: that many have to answer together"),
         dict(path=("unlock", "leash"), type="int", label="Leash, in minutes", default=0,
              help="Carried off, it locks itself: when the rings of its own site have not answered for this long, after it "
                   "saw them since it started, it restarts and waits locked. 0: off; at least 5. A whole house without its "

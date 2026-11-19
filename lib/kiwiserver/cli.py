@@ -3068,12 +3068,16 @@ def cmd_control(args):
                 missed.append("%s (%s)" % (ring, str(e)[:120]))
                 continue
             found.append({"ring": ring, "server": server.name, "url": where, "adv": adv})
+        t = int((h.cfg.get("unlock") or {}).get("control_threshold") or 1)
         if not found:
             raise KiwiError("%s: none of its rings answered: %s" % (h.name, "; ".join(missed)))
+        if len(found) < t:
+            raise KiwiError("%s: %d of its rings must answer together (unlock.control_threshold), %d did: %s"
+                            % (h.name, t, len(found), "; ".join(missed)))
         for m in missed:
             util.warn("the ring %s did not answer: the control node opens by the others" % m)
-        # one ring: as before (clevis tang); several: any one of them opens it (clevis sss, t=1)
-        print(json.dumps(dict(found[0], rings=found) if len(found) == 1 else {"rings": found}))
+        # one ring: as before (clevis tang); several: clevis sss, t of them together (1: any one)
+        print(json.dumps(dict(found[0], rings=found, threshold=1) if len(found) == 1 else {"rings": found, "threshold": t}))
         return
     if args.action == "run":            # an action as a job on the control node: this copy goes there first
         if not args.link:

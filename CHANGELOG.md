@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.233.0 — how many rings open the control node
+
+- **`unlock.control_threshold`**: how many of the rings in `unlock.control` must answer together
+  before the control node's key store opens after a restart (clevis sss), as `unlock.threshold`
+  does for a disk. 1 (the default) is any one of them, as before. A setting on the page and in
+  the app (*Disk unlock*, "…how many of them"); `validate` says when it is more than the rings
+  named. Logging in to the page always takes the password: this is only about the key store.
+
 ## 2.232.0 — a quieter status
 
 - kiwi-stack 0.9.22: `kiwi-server status` no longer shows podman's

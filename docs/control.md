@@ -243,8 +243,17 @@ papaya:
   unlock: { control: [house, attic] }   # lychee's ring or medlar's: either opens it
 ```
 
-A ring that does not answer when the key is made is left out with a note; the
-next login tries again. `kiwi-server recovery` counts each of them when it says
+Or ask for more than one at once, as a disk's `unlock.threshold` does
+(clevis sss): with `control_threshold: 2` two of them have to answer together.
+
+```yaml
+papaya:
+  unlock: { control: [house, attic, home], control_threshold: 2 }
+```
+
+Both are also settings of the machine on the page and in the app (*Disk unlock*).
+A ring that does not answer when the key is made is left out with a note, as long
+as enough others answer; the next login tries again. `kiwi-server recovery` counts each of them when it says
 which machines come back by themselves after a power cut.
 A stolen disk alone opens nothing; a thief would also need to reach the ring
 on your network, the same trade your encrypted disks make. The app's control

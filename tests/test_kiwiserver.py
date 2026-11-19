@@ -4694,6 +4694,20 @@ class TestFirstContact(Base):
         self.assertIn("--ssh core@192.168.2.30", err)
 
 
+class TestControlThreshold(Base):
+    def test_how_many_rings_open_the_control_node_is_checked(self):
+        def fleet(control, t):
+            return self.fleet({"defaults": self.base_defaults(), "hosts": {
+                "gate": {"role": "master", "target": "debian", "master": self.master()},
+                "papaya": {"role": "bare", "unlock": {"control": control, "control_threshold": t}}}})
+        rc, out, err = TestManage.run_cli(self, "validate", fleet(["house", "attic"], 2).path)
+        self.assertNotIn("control_threshold", err + out)
+        rc, out, err = TestManage.run_cli(self, "validate", fleet(["house"], 2).path)
+        self.assertIn("unlock.control_threshold is 2, but unlock.control names 1 ring(s)", err + out)
+        rc, out, err = TestManage.run_cli(self, "validate", fleet(["house"], 0).path)
+        self.assertIn("unlock.control_threshold is a number, 1 or more", err + out)
+
+
 class TestWake(Base):
     """Wake-on-LAN (wake.py): what an apply learns, which machine sends the packet, and how."""
 
@@ -9298,6 +9312,12 @@ class TestControl(StoreBase):
         self.assertEqual(json.loads(args.split(" ", 2)[2])["t"], 1)
         self.assertEqual(len(json.loads(args.split(" ", 2)[2])["pins"]["tang"]), 2)
         self.assertEqual(fresh.auto_state(), {"ring": "house, attic", "server": "lychee, medlar"})
+        # unlock.control_threshold 2: both have to answer together (clevis sss, t=2)
+        fresh.kiwi = [sys.executable, "-c", "print(%r)" % json.dumps(dict(two, threshold=2))]
+        fresh.login(self.PW)
+        self.assertEqual(fresh.arm_auto(), "house, attic (2 of 2 together)")
+        args = util.read_text(os.path.join(self.keyring, "clevis-args"))
+        self.assertEqual(json.loads(args.split(" ", 2)[2])["t"], 2)
         # the owner takes unlock.control away again: the next login removes what the ring could open
         fresh.kiwi = [sys.executable, "-c", "print('{}')"]
         fresh.login(self.PW)

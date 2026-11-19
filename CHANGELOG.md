@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.220.0 — the leash
+## 2.220.0 — the leash, and new keys for a ring
 
 - **`unlock: { leash: 10 }`** (docs/design/control-plane.md, ROADMAP's unlock list): a machine that
   saw the rings of its own site since it started, and then has not reached them for that many
@@ -9,6 +9,11 @@
   away does not count; `true` is ten minutes, five the least. `apply` puts the timer on the
   machine (`kiwi-leash.timer`) and takes it away again when the setting goes. Off by default:
   a house without its network for that long restarts its leashed machines too.
+- **`kiwi-server rotate FLEET ring NAME`**: new keys for an unlock ring (`tangd-rotate-keys`, the
+  old ones kept hidden), every disk it opens bound again to them, and the old keys removed only
+  when the last machine has changed; a machine that is off meanwhile still opens and is taken by
+  the same command later (`--waive` for one gone for good). `rotate FLEET` lists each ring and
+  when its keys were last replaced (was: "the key that unlocks disks at boot: not built yet").
 
 ## 2.219.0 — the control node opens by any of several rings
 

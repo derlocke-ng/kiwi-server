@@ -1135,6 +1135,22 @@ class TestAdopt(Base):
         self.assertIn("clevis luks unbind -f", unlock.DROP_TPM_SCRIPT)
         self.assertIn("</dev/null", unlock.DROP_TPM_SCRIPT)        # unbind reads stdin: it must not read the script's
 
+    def test_a_forced_rebind_binds_again_to_the_same_rings(self):
+        """A ring's keys were rotated: the URLs are the same, the keys not, so the disk is bound again."""
+        listing = "device /dev/vda3\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"
+        tree = {"t": 1, "pins": {"tang": [{"url": "http://192.168.2.61:7500", "adv": {"payload": "x"}}]}}
+        h = types.SimpleNamespace(name="papaya", cfg={"unlock": {"rings": ["house"]}})
+        ran = []
+
+        def run(tgt, script, data=b""):
+            ran.append(script)
+            return listing.encode() if script == unlock.LIST_SCRIPT else b""
+        with mock.patch.object(remote, "run", run), mock.patch.object(util, "say", lambda *a: None):
+            self.assertFalse(unlock._rebind(h, "t", "key", tree))                    # the same: left as it is
+            self.assertNotIn(unlock.BIND_SCRIPT, ran)
+            self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
+            self.assertIn(unlock.BIND_SCRIPT, ran)
+
     def test_new_host_key_forgets_the_address(self):
         calls = []
         with mock.patch.object(remote, "KNOWN_HOSTS", "/k"):
@@ -11005,6 +11021,50 @@ class TestFolderSync(StoreBase):
         self.assertEqual(controlsync.folder_state(self.folder), "")       # no list: no fleet there (yet)
         write(os.path.join(self.folder, "requests", "x.json"), '{"name": "y", "key": "age1bad"}')
         self.assertEqual(controlsync.requests(self.folder), [])           # a request that is not one is not shown
+
+
+class TestRingRotation(Base):
+    """New keys for an unlock ring: the old ones stay (hidden) until every disk it opens is bound
+    to the new ones, so a machine that is away meanwhile still opens."""
+
+    def test_the_old_keys_go_only_when_the_last_machine_has_changed(self):
+        from kiwiserver import rotate, unlock as unlockmod
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "lychee": {"role": "bare"},
+            "papaya": {"role": "bare", "unlock": {"rings": ["house", "home"], "control": ["house"]}},
+            "quince": {"role": "bare", "unlock": {"rings": ["house"]}},
+            "lime": {"role": "bare", "unlock": {"rings": ["home"]}}}})
+        servers = {"house": (f.hosts["lychee"], 7500)}
+        done, away, said = [], {"quince"}, []
+        calls = []
+
+        def rebind(h):
+            if h.name in away:
+                raise KiwiError("unreachable: ssh: connect to host quince.home port 22: No route to host")
+            done.append(h.name)
+        with mock.patch.object(unlockmod, "rotate_ring", lambda srv, r: calls.append(("rotate", srv.name, r))), \
+                mock.patch.object(unlockmod, "finish_ring", lambda srv, r: calls.append(("finish", srv.name, r))):
+            left = rotate.ring(f, "house", servers, rebind, why="a test", say=said.append)
+            self.assertEqual((left, done, calls), (["quince"], ["papaya"], [("rotate", "lychee", "house")]))
+            self.assertIn("quince waits: unreachable", "\n".join(said))
+            self.assertEqual(rotate.ring_pending(f, "house"), ["quince"])
+            plan = {w: (st, how) for w, st, how in rotate.plan(f)}
+            self.assertEqual(plan["The keys of the unlock ring house"], ("under way: quince still on the old keys", "rotate ring house"))
+            away.clear()                                   # quince is back: the same command again
+            left = rotate.ring(f, "house", servers, rebind, say=said.append)
+            self.assertEqual((left, done), ([], ["papaya", "quince"]))
+            self.assertEqual(calls, [("rotate", "lychee", "house"), ("finish", "lychee", "house")])     # rotated once
+            self.assertIn("the control node (papaya) binds its key to the new keys with the next login", "\n".join(said))
+            self.assertTrue(rotate.plan(f) and dict((w, st) for w, st, _h in rotate.plan(f))[
+                "The keys of the unlock ring house"].startswith("replaced "))
+            # a machine left out by hand (off for good): the rest finish without it
+            calls.clear()
+            done.clear()
+            away.add("quince")
+            left = rotate.ring(f, "house", servers, rebind, waive=("quince",), say=said.append)
+            self.assertEqual((left, done, [c[0] for c in calls]), ([], ["papaya"], ["rotate", "finish"]))
+        with self.assertRaisesRegex(KiwiError, "no machine of the fleet serves the ring nowhere"):
+            rotate.ring(f, "nowhere", servers, rebind)
 
 
 class TestRotate(Base):

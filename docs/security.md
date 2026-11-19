@@ -142,6 +142,14 @@ A disk can open itself at boot. The `tang` module on one node serves a
 - A reinstalled machine shows a new host key there: `unlock --manual` gives it
   the one-time key of its new ISO and nothing else, and no ring goes to it
   before its first apply.
+- **New keys for a ring**: `kiwi-server rotate fleet.yaml ring house`. The
+  ring makes new keys and keeps the old ones hidden, every disk it opens is
+  bound again to the new ones, and the old keys go only when the last machine
+  has changed. A machine that is off meanwhile opens with the old keys; the
+  same command again takes it (`--waive NAME` leaves out one that is gone for
+  good). A control node that the ring opens binds its key again with the next
+  login on its page. `kiwi-server rotate fleet.yaml` lists each ring and when
+  its keys were last replaced.
 - **The leash** (`unlock: { leash: 10 }`, or `true` for ten minutes): a
   machine that saw the rings of its own site since it started, and then has not
   reached them for that long, restarts into its locked state. A box carried off

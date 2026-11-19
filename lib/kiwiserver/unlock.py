@@ -456,6 +456,17 @@ def _inner_port(server, ring):
     return 7500
 
 
+def rotate_ring(server, ring):
+    """New keys for a ring on its machine; the old ones stay, hidden (.<thumbprint>.jwk), so what was
+    bound to them still opens until `finish_ring`."""
+    _in_ring(server, ring, "sh -c 'o=$(stat -c %u:%g /db); /usr/libexec/tangd-rotate-keys -d /db >/dev/null && chown -R \"$o\" /db'")
+
+
+def finish_ring(server, ring):
+    """The hidden old keys of a ring gone: only the new ones open anything from now on."""
+    _in_ring(server, ring, "sh -c 'rm -f /db/.*.jwk'")
+
+
 def _in_ring(server, ring, command):
     runtime = shlex.quote(server.role_settings.get("runtime") or "podman")
     prefix = "km" if _on_master(server) else "kn"
@@ -745,8 +756,9 @@ def leash_script(host, wanted_tree):
     return LEASH_SCRIPT.replace("URLS", " ".join(urls)).replace("MINUTES", str(max(minutes, 5)))
 
 
-def bind(host, tgt, servers):
-    """Bind the disk to the host's rings; what is already right stays as it is."""
+def bind(host, tgt, servers, force=False):
+    """Bind the disk to the host's rings; what is already right stays as it is. `force`: bound
+    again even so, to the rings' keys as they are now (a ring's keys were rotated)."""
     coreos = host.target != "debian"
     if coreos:
         _coreos_key(host, tgt, servers)
@@ -756,7 +768,7 @@ def bind(host, tgt, servers):
     wanted_tree = tree(host, servers)
     if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
-    changed = _rebind(host, tgt, key, wanted_tree)
+    changed = _rebind(host, tgt, key, wanted_tree, force=force)
     if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
@@ -777,14 +789,14 @@ def bind(host, tgt, servers):
     return changed
 
 
-def _rebind(host, tgt, key, wanted_tree):
+def _rebind(host, tgt, key, wanted_tree, force=False):
     listing = remote.run(tgt, LIST_SCRIPT, (key + "\n").encode()).decode(errors="replace")
     if not listing.startswith("device "):
         raise KiwiError("%s: no disk on the machine opens with the key on record" % host.name)
     dev = listing.split()[1]
     urls = sorted(p["url"] for p in wanted_tree["pins"]["tang"])
     now = _bound(listing)
-    if [(t, u) for _s, t, u in now] == [(wanted_tree["t"], urls)]:
+    if [(t, u) for _s, t, u in now] == [(wanted_tree["t"], urls)] and not force:
         return False
     old = " ".join(s for s, _t, _u in now)
     data = "%s\n%s\n%s\n%s\n" % (key, dev, json.dumps(wanted_tree, separators=(",", ":")), old)

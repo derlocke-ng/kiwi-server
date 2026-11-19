@@ -5656,6 +5656,45 @@ class TestUnlock(Base):
             return b"updated\n" if "update-initramfs" in script else b""
         return calls, mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@%s" % h.name)
 
+    def test_a_ring_at_home_is_relayed_for_a_machine_at_another_site(self):
+        """The master passes the ring's port on over the mesh and keeps no key; the machine at the other
+        site finds the ring at the master's public address (unlock.via filled in)."""
+        node = {"vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        d = self.base_defaults(network={"dhcp": False, "gateway": "192.168.2.1", "dns": ["9.9.9.9"]})
+        for n in ("lychee", "nashi"):
+            write(os.path.join(self.tmp, "secrets", "luks", "%s.key" % n), "thediskkey\n")
+        f = self.fleet({"defaults": d, "hosts": {
+            "gate": {"role": "master", "target": "debian", "network": {"dhcp": True}, "master": self.master()},
+            "papaya": {"network": {"address": "192.168.2.30/16"}, "disk": "/dev/sda", "role": "node",
+                       "node": dict(node, vpn_ip="10.8.0.9", modules=["vpn-client", "reverse-proxy", "tang"])},
+            "lychee": {"target": "debian", "network": {"address": "192.168.2.61/16"}, "disk": "/dev/sda",
+                       "debian": {"encrypt": True}, "unlock": {"rings": ["infra"]},
+                       "role": "node", "node": dict(node, vpn_ip="10.8.0.10", preset="minimal")},
+            "nashi": {"target": "debian", "network": {"dhcp": True, "site": "friend"}, "disk": "/dev/sda",
+                      "debian": {"encrypt": True}, "unlock": {"rings": ["infra"]},
+                      "role": "node", "node": dict(node, vpn_ip="10.8.0.11", preset="minimal")}}})
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        r.scan()
+        port = unlock.relay_port("infra")
+        self.assertTrue(unlock.RELAY_BASE <= port < unlock.RELAY_BASE + unlock.RELAY_SPAN)
+        self.assertEqual(fleet.hosts["nashi"].cfg["unlock"]["via"], {"infra": "http://vpn.example.org:%d" % port})
+        self.assertFalse((fleet.hosts["lychee"].cfg["unlock"].get("via") or {}).get("infra"))   # its LAN: no relay
+        self.assertEqual(unlock.url(fleet.hosts["nashi"], "infra", fleet.hosts["papaya"], 7500), "http://vpn.example.org:%d" % port)
+        gate = fleet.hosts["gate"]
+        r.bundle(gate, r.prepare(gate))
+        self.assertEqual(gate.module_settings["vpn-server"]["unlock_relay"], {str(port): "10.8.0.9:7500"})
+        self.assertNotIn("tang", gate.modules)                           # the master keeps no ring's key
+        # a way named by hand stays the machine's own: no relay for it
+        data = yaml.safe_load(util.read_text(f.path))
+        data["hosts"]["nashi"]["unlock"]["via"] = {"infra": "http://203.0.113.5:7500"}
+        write(f.path, yaml.safe_dump(data))
+        fleet, roles, ms = cli.load(argparse.Namespace(fleet=f.path, roles_dir=None))
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, ms)
+        r.scan()
+        self.assertEqual(r._relays, {})
+        self.assertEqual(fleet.hosts["nashi"].cfg["unlock"]["via"], {"infra": "http://203.0.113.5:7500"})
+
     def test_rings_taken_out_of_the_fleet_are_unbound_with_the_key_checked_first(self):
         f = self.unlock_fleet()
         h = f.hosts["lychee"]

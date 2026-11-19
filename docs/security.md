@@ -142,6 +142,14 @@ A disk can open itself at boot. The `tang` module on one node serves a
 - A reinstalled machine shows a new host key there: `unlock --manual` gives it
   the one-time key of its new ISO and nothing else, and no ring goes to it
   before its first apply.
+- **The leash** (`unlock: { leash: 10 }`, or `true` for ten minutes): a
+  machine that saw the rings of its own site since it started, and then has not
+  reached them for that long, restarts into its locked state. A box carried off
+  while running locks itself on the way. Opened by hand without its rings, it
+  never saw them and stays up. It needs a ring on its own LAN; a ring on the
+  master far away does not count. A house without its network for that long
+  restarts its leashed machines too, so it is for the ones that hold something
+  worth it.
 - The login key for all this, `secrets/unlock_ed25519`, opens no running
   machine and can only run the unlock; on CoreOS `unlock.ssh_from` also says
   where from.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.220.0 — the leash
+
+- **`unlock: { leash: 10 }`** (docs/design/control-plane.md, ROADMAP's unlock list): a machine that
+  saw the rings of its own site since it started, and then has not reached them for that many
+  minutes, restarts into its locked state, so a box carried off while running locks itself.
+  Opened by hand without its rings it never saw them and stays up; a ring on the master far
+  away does not count; `true` is ten minutes, five the least. `apply` puts the timer on the
+  machine (`kiwi-leash.timer`) and takes it away again when the setting goes. Off by default:
+  a house without its network for that long restarts its leashed machines too.
+
 ## 2.219.0 — the control node opens by any of several rings
 
 - **`unlock.control` takes several rings** (`[house, attic]`): the control node's key is kept

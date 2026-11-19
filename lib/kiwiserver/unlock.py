@@ -659,6 +659,92 @@ def _coreos_key(host, tgt, servers):
     return state == "added"
 
 
+LEASH_PATH = "/usr/local/sbin/kiwi-leash"
+LEASH_SCRIPT = r'''#!/bin/sh
+# kiwi-server's leash (docs/design/control-plane.md): this machine saw the rings of its own site
+# since boot and has not reached them for MINUTES minutes: it was carried off, or the house is
+# without its network. It restarts into its locked state. Opened by hand without them, it never
+# saw them, and stays.
+urls="URLS"; minutes=MINUTES
+seen=/run/kiwi-leash.seen; gone=/run/kiwi-leash.gone
+for u in $urls; do
+    if curl -fs --max-time 5 -o /dev/null "$u/adv"; then
+        : > "$seen"; rm -f "$gone"; exit 0
+    fi
+done
+[ -f "$seen" ] || exit 0
+now=$(date +%s)
+[ -f "$gone" ] || { echo "$now" > "$gone"; exit 0; }
+since=$(cat "$gone")
+[ $((now - since)) -ge $((minutes * 60)) ] || exit 0
+logger -t kiwi-leash "the rings of this machine's site ($urls) have not answered for $minutes minutes: restarting into the locked state"
+systemctl reboot
+'''
+INSTALL_LEASH = r'''
+set -eu
+install -d /usr/local/sbin
+cat > %(path)s.new
+chmod 0755 %(path)s.new
+mv %(path)s.new %(path)s
+cat > /etc/systemd/system/kiwi-leash.service <<'UNIT'
+[Unit]
+Description=kiwi-server: lock again when the rings of this site are gone (the leash)
+
+[Service]
+Type=oneshot
+ExecStart=%(path)s
+UNIT
+cat > /etc/systemd/system/kiwi-leash.timer <<'UNIT'
+[Unit]
+Description=kiwi-server: the leash, every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable -q --now kiwi-leash.timer
+''' % {"path": LEASH_PATH}
+REMOVE_LEASH = """
+if [ -f /etc/systemd/system/kiwi-leash.timer ]; then
+    systemctl disable -q --now kiwi-leash.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/kiwi-leash.timer /etc/systemd/system/kiwi-leash.service %s /run/kiwi-leash.seen /run/kiwi-leash.gone
+    systemctl daemon-reload
+    echo removed
+fi
+""" % LEASH_PATH
+
+
+def leash_urls(host, wanted_tree):
+    """The ring URLs at the machine's own site (its LAN), out of the rings it is bound to."""
+    mine = _lan(host)
+    out = []
+    for p in (wanted_tree or {}).get("pins", {}).get("tang", []):
+        try:
+            h = urllib.parse.urlsplit(p["url"]).hostname
+            if mine and h and ipaddress.ip_address(h) in mine.network:
+                out.append(p["url"])
+        except ValueError:
+            continue
+    return out
+
+
+def leash_script(host, wanted_tree):
+    """The leash for this machine, or None without one. KiwiError: wanted, but no ring at its site."""
+    got = host.cfg["unlock"].get("leash")
+    minutes = 10 if got is True else int(got or 0)          # leash: true is the design's ten minutes
+    if minutes <= 0:
+        return None
+    urls = leash_urls(host, wanted_tree)
+    if not urls:
+        raise KiwiError("%s: unlock.leash needs a ring at its own site (on its LAN, a fixed address): it locks the "
+                        "machine when that ring is gone" % host.name)
+    return LEASH_SCRIPT.replace("URLS", " ".join(urls)).replace("MINUTES", str(max(minutes, 5)))
+
+
 def bind(host, tgt, servers):
     """Bind the disk to the host's rings; what is already right stays as it is."""
     coreos = host.target != "debian"
@@ -676,6 +762,12 @@ def bind(host, tgt, servers):
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")
     # and no machine restarts for updates while the rings that open it do not answer
     remote.run(tgt, INSTALL_RINGS_ANSWER, RINGS_ANSWER.encode())
+    leash = leash_script(host, wanted_tree)
+    if leash:
+        remote.run(tgt, INSTALL_LEASH, leash.encode())
+        util.say("%s: the leash is on: when the rings of its site are gone for a while it restarts locked" % host.name)
+    elif b"removed" in remote.run(tgt, REMOVE_LEASH):
+        util.say("%s: the leash is off" % host.name)
     if coreos and not host.cfg["unlock"].get("ssh") and b"updated" in remote.run(tgt, RING_TIMEOUTS_COREOS):
         util.say("%s: the unlock at boot gives a silent ring seconds, not minutes, from the next boot on" % host.name)
     if host.cfg["unlock"].get("ssh"):

@@ -3126,6 +3126,57 @@ class TestSshCa(Base):
         self.assertEqual(remote.addresses(f.hosts["away"]), [f.hosts["away"].hostname, "10.9.0.14"])
         self.assertNotIn("10.66.1.2", remote.addresses(f.hosts["gate"]))      # a master's client config is another network's
 
+class TestLeash(Base):
+    """The leash (docs/design/control-plane.md): a machine that saw the rings of its site and lost them
+    restarts into its locked state; one opened by hand without them stays."""
+
+    def host(self, leash, address="192.168.2.30/24"):
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"papaya": {
+            "role": "bare", "network": {"dhcp": False, "address": address, "gateway": "192.168.2.1"},
+            "unlock": {"rings": ["house"], "leash": leash}}}})
+        return f.hosts["papaya"]
+
+    TREE = {"t": 1, "pins": {"tang": [{"url": "http://192.168.2.61:7500"}, {"url": "http://5.45.103.177:7510"}]}}
+
+    def test_only_the_rings_of_its_own_site_hold_it(self):
+        self.assertIsNone(unlock.leash_script(self.host(0), self.TREE))
+        script = unlock.leash_script(self.host(True), self.TREE)
+        self.assertIn('urls="http://192.168.2.61:7500"; minutes=10', script)        # not the master's ring far away
+        self.assertIn('minutes=5', unlock.leash_script(self.host(2), self.TREE))     # never shorter than five
+        with self.assertRaisesRegex(KiwiError, "needs a ring at its own site"):
+            unlock.leash_script(self.host(10), {"t": 1, "pins": {"tang": [{"url": "http://5.45.103.177:7510"}]}})
+
+    def test_it_restarts_only_after_it_saw_the_ring_and_lost_it_long_enough(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        bin_ = os.path.join(d, "bin")
+        os.makedirs(bin_)
+        for name, body in (("curl", '[ -e "%s/ring-up" ]' % d), ("date", 'cat "%s/now"' % d),
+                           ("systemctl", 'echo "$@" >> "%s/reboots"' % d), ("logger", "true")):
+            write(os.path.join(bin_, name), "#!/bin/sh\n%s\n" % body)
+            os.chmod(os.path.join(bin_, name), 0o755)
+        script = os.path.join(d, "leash")
+        write(script, unlock.leash_script(self.host(10), self.TREE).replace("/run/", d + "/"))
+
+        def tick(now, up):
+            write(os.path.join(d, "now"), str(now))
+            if up:
+                write(os.path.join(d, "ring-up"), "")
+            elif os.path.exists(os.path.join(d, "ring-up")):
+                os.remove(os.path.join(d, "ring-up"))
+            subprocess.run(["sh", script], env=dict(os.environ, PATH=bin_ + ":" + os.environ["PATH"]), check=True)
+            return os.path.exists(os.path.join(d, "reboots"))
+        self.assertFalse(tick(1000, False))         # opened by hand, the ring never seen: nothing to guard
+        self.assertFalse(tick(5000, False))
+        self.assertFalse(tick(6000, True))          # the ring answers: from now on it guards
+        self.assertFalse(tick(6060, False))         # gone: the time starts
+        self.assertFalse(tick(6600, False))         # nine minutes
+        self.assertFalse(tick(6630, True))          # back: the time is gone
+        self.assertFalse(tick(6700, False))
+        self.assertFalse(tick(7200, False))
+        self.assertTrue(tick(7310, False))          # ten minutes and more without it: restart
+        self.assertEqual(util.read_text(os.path.join(d, "reboots")).split(), ["reboot"])
+
+
 class TestSshPort(Base):
     def test_targets_carry_the_port(self):
         self.assertEqual(remote.with_port("core@203.0.113.7", 41022), "ssh://core@203.0.113.7:41022")

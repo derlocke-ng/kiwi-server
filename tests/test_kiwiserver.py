@@ -14008,7 +14008,7 @@ class TestFirstRunPage(StoreBase):
         starts = lambda: util.read_text(book).split("\n")[:-1]
 
         def until(n):
-            for _ in range(100):
+            for _ in range(600):
                 if len(starts()) >= n:
                     return
                 time.sleep(0.05)
@@ -14023,7 +14023,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(len(starts()), 2)
         self.assertEqual(self.c.job(third)["state"], "waiting")
         write(go, "")
-        for _ in range(200):
+        for _ in range(1200):
             if all(j["state"] in ("ok", "failed") for j in self.c.jobs()):
                 break
             time.sleep(0.05)
@@ -14096,11 +14096,12 @@ class TestFirstRunPage(StoreBase):
         ended = lambda: all(j["state"] in ("ok", "failed") for j in self.c.jobs())
 
         def wait_jobs():
-            for _ in range(200):
-                if ended() and not self.c._retrying:
+            for _ in range(1200):                       # a minute: the tests run several at once
+                if ended() and not self.c._retrying and not self.c.looking and not self.c.look_lock.locked():
                     return
                 time.sleep(0.05)
-            self.fail("a job did not end")
+            self.fail("a job or a look did not end")
+        self.c.look = lambda: None                      # no look of the page's own beside the ones this test takes
         write(mode, "off")
         jid = self.c.start("apply", [a, b], user="admin", wait=True)
         self.assertEqual(self.c.job(jid)["state"], "failed")

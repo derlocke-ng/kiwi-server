@@ -227,6 +227,7 @@ class Control:
         self.look_lock = threading.Lock()     # one look at a time; it does not wait for a job (refresh_status)
         self._busy = None                     # the machines the running job works on; EVERY: all of them
         self._retrying = set()                # machines whose waiting apply this node started and that has not ended
+        self._book = threading.Lock()         # for _retrying
         self._reads = {}                      # what a `--porcelain` read worked out, until the fleet changes (_read_once)
         self._gen = 0                         # counted up with every job that ends: nothing kept outlives one
         self.failures = {}                    # address -> [times] of failed logins
@@ -2071,7 +2072,7 @@ class Control:
             done = set(re.findall(r"^:: (\S+): applied\s*$", fh.read(), re.M))
         names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
         wanted = [h for h in (meta.get("hosts") or names) if h in names]
-        data, before = self.waiting(), None
+        data = self.waiting()
         before = json.dumps(data, sort_keys=True)
         own = meta.get("user") == "control"
         for h in list(data):
@@ -2080,6 +2081,8 @@ class Control:
         for h in wanted:
             if h in done:
                 continue
+            if own and h not in data:       # a try of this node's own for a machine that is out of the book
+                continue                    # meanwhile (applied by a person, or given up): it stays out
             e = data.get(h) or {"since": int(self.clock()), "tries": 0, "user": meta.get("user") or ""}
             if own:
                 e["tries"] = int(e.get("tries") or 0) + 1
@@ -2088,7 +2091,9 @@ class Control:
                 self.audit("control", "gave up applying %s by itself: %d tries while it answered" % (h, e["tries"]), host=h)
                 continue
             data[h] = e
-        self._retrying -= set(wanted)
+        if own:                             # only the try itself ends the try
+            with self._book:
+                self._retrying -= set(wanted)
         if json.dumps(data, sort_keys=True) != before:
             self._write_waiting(data)
 
@@ -2098,15 +2103,17 @@ class Control:
         if not data or self.locked():
             return None
         busy = self._busy
-        back = [h for h in sorted(data) if (rows.get(h) or {}).get("state") in ("ok", "warn", "bad")
-                and h not in self._retrying and busy is not EVERY and h not in (busy or ())]
-        if not back:
-            return None
-        self._retrying |= set(back)
+        with self._book:                    # two looks at once must not both start a try for one machine
+            back = [h for h in sorted(data) if (rows.get(h) or {}).get("state") in ("ok", "warn", "bad")
+                    and h not in self._retrying and busy is not EVERY and h not in (busy or ())]
+            if not back:
+                return None
+            self._retrying |= set(back)
         try:
             jid = self.start("apply", back, user="control")
         except KiwiError as e:
-            self._retrying -= set(back)
+            with self._book:
+                self._retrying -= set(back)
             util.warn("control: the waiting applies were not started: %s" % e)
             return None
         return jid

@@ -2376,12 +2376,14 @@ class DiffDialog(Adw.Dialog):
                                           description="Nothing to decide."))
             self.set_child(tb)
             return False
-        both = any(r["who"] == "both" for r in got)
+        both = any(r["who"] == "both" and not r.get("auto") for r in got)
         g = Adw.PreferencesGroup(title="What differs", description=(
-            "Both sides changed the same thing: say below which copy counts. The other change is lost."
-            if both else "Each side changed something else: the next sync makes one copy of the two by itself."))
-        for r in got:
+            "Both sides changed the files marked red: say below which side counts for them. Everything else is "
+            "merged by itself." if both else "Nothing to decide: the next sync makes one copy of the two by itself."))
+        for r in sorted(got, key=lambda r: (bool(r.get("auto")), r["path"])):
             words, style = self.WHO[r["who"]]
+            if r.get("auto"):
+                words, style = words + ", merged by itself", "dim-label"
             name = r["path"].replace("secrets/", "secret: ").replace("fleet.yaml", "the settings (fleet.yaml)")
             row = Adw.ExpanderRow(title=GLib.markup_escape_text(name),
                                   subtitle=GLib.markup_escape_text(words + ("" if r["state"] == "changed" else ", " + r["state"])))
@@ -2400,7 +2402,7 @@ class DiffDialog(Adw.Dialog):
                     else:
                         buf.insert(end, line + "\n")
                 row.add_row(view)
-                row.set_expanded(len(got) == 1 or r["who"] == "both")
+                row.set_expanded(len(got) == 1 or (r["who"] == "both" and not r.get("auto")))
             else:
                 row.set_enable_expansion(False)
             g.add(row)
@@ -2410,9 +2412,10 @@ class DiffDialog(Adw.Dialog):
                                                   "the names that differ are shown, never a value.")
         page.add(legend)
         if both:
-            g = Adw.PreferencesGroup(title="Which copy counts?")
+            g = Adw.PreferencesGroup(title="For the files marked red, which side counts?",
+                                     description="Only those files: every other change of both sides is kept.")
             box = Gtk.Box(spacing=10, halign=Gtk.Align.START)
-            for label, how, style in (("This computer's", "push", "suggested-action"), ("The other one's", "pull", "")):
+            for label, how, style in (("This computer's", "here", "suggested-action"), ("The other one's", "there", "")):
                 b = Gtk.Button(label=label, css_classes=["pill"] + ([style] if style else []))
                 b.connect("clicked", lambda _b, h=how: self.decide(h))
                 box.append(b)
@@ -2422,15 +2425,16 @@ class DiffDialog(Adw.Dialog):
         self.set_child(tb)
         return False
 
-    def decide(self, how):
+    def decide(self, keep):
+        """Of what both changed, this side's or the other's; everything else merged (`--keep`)."""
         path = self.win.doc.path
-        rc, out, err = run_cli(self.win.cli, ["control", how, path, "--force"], timeout=180)
+        rc, out, err = run_cli(self.win.cli, ["control", "push", path, "--keep", keep], timeout=180)
         if rc != 0:
             self.win.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
             return
-        if how == "pull":
-            self.win.open_path(path, sync=False)
-        self.win.toast("In step: %s counts" % ("this computer's copy" if how == "push" else "the other copy"), "ok")
+        self.win.open_path(path, sync=False)
+        self.win.toast("In step: one copy of the two, %s for what both changed"
+                       % ("this computer's" if keep == "here" else "the other's"), "ok")
         self.close()
 
 
@@ -5310,7 +5314,7 @@ class Window(Adw.ApplicationWindow):
         what = what.replace("fleet.yaml", "the settings").replace("secrets/", "")
         dlg = Adw.AlertDialog(heading="Changed in two places",
                               body="This computer and another one both changed %s since they last agreed. "
-                                   "Which one should count? The other change is lost." % what)
+                                   "Which side counts for that? Everything else of both sides is kept." % what)
         dlg.add_response("later", "Decide later")
         dlg.add_response("show", "Show the differences")
         dlg.add_response("theirs", "The other one's")
@@ -5323,13 +5327,13 @@ class Window(Adw.ApplicationWindow):
                 return
             if r not in ("mine", "theirs"):
                 return
-            rc, out, err = run_cli(self.cli, ["control", "push" if r == "mine" else "pull", path, "--force"], timeout=180)
+            rc, out, err = run_cli(self.cli, ["control", "push", path, "--keep", "here" if r == "mine" else "there"],
+                                   timeout=180)
             if rc != 0:
                 self.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
-            elif r == "theirs":
-                self.open_path(path, sync=False)
             else:
-                self.toast("In step")
+                self.open_path(path, sync=False)
+                self.toast("In step: one copy of the two", "ok")
         dlg.connect("response", answer)
         dlg.present(self)
 

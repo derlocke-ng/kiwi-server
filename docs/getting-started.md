@@ -208,4 +208,20 @@ A master is found by its `wg_host`; any other host says `vps: { server: <id,
 name or nickname> }`. `vps install` refuses an ISO that carries the role's
 secrets, and one built for a different `disk:` than the server really has. It
 removes the ISO from netcup's store when it is done, and forgets the
-machine's old SSH host keys.
+machine's old SSH host keys. It does not send an ISO that installed the
+server once (that ISO's guard would install nothing): build it again first.
+
+Snapshots are netcup's copies of the server's disk, kept with the server (not
+a backup: they go when the server goes). One is taken while the server runs,
+in seconds; going back to one restarts the server with its disk as it was:
+
+```bash
+kiwi-server vps snapshot fleet.yaml sorbet                 # named kiwi-YYYYmmdd-HHMM, or --name
+kiwi-server vps snapshots fleet.yaml sorbet                # list them (--delete NAME removes one)
+kiwi-server vps revert fleet.yaml sorbet --name NAME --yes
+```
+
+A server that no longer starts can be started into netcup's rescue system
+(`vps rescue fleet.yaml sorbet --name on --yes`, then `--name off`). Its
+disk stays as it is; root logs in with a password netcup makes, which goes
+into the fleet's secrets (`secrets/rescue/`), not onto the screen.

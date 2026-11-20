@@ -8478,6 +8478,8 @@ class FakeNetcup:
         self.memory = 2048
         self.fail_task, self.refresh = False, "refresh-1"
         self.bootorder = ["CDROM", "HDD", "NETWORK"]
+        self.snaps, self.snap_problems, self.reverted = [], [], None
+        self.rescue = False
         fake = self
         AUTH, API = "/realms/scp/protocol/openid-connect", "/scp-core/api/v1"
         task = {"uuid": "t1", "state": "RUNNING"}
@@ -8532,6 +8534,18 @@ class FakeNetcup:
                 if path == API + "/servers/7/iso":
                     fake.attached = body["userIsoName"]
                     return self._send(202, task)
+                if path == API + "/servers/7/rescuesystem":
+                    fake.rescue = True
+                    return self._send(202, task)
+                if path == API + "/servers/7/snapshots:dryrun":
+                    return self._send(200, [{"code": "x", "message": m} for m in fake.snap_problems])
+                if path == API + "/servers/7/snapshots":
+                    fake.snaps.append({"name": body["name"], "description": body.get("description"), "online": body["onlineSnapshot"],
+                                       "creationTime": "2026-11-20T13:%02d:00Z" % len(fake.snaps)})
+                    return self._send(202, task)
+                if path.startswith(API + "/servers/7/snapshots/") and path.endswith("/revert"):
+                    fake.reverted = urllib.parse.unquote(path.split("/")[-2])
+                    return self._send(202, task)
                 self._send(404, {"message": "no such path"})
 
             def do_PUT(self):
@@ -8553,6 +8567,13 @@ class FakeNetcup:
                 fake.calls.append(("DELETE", self.path, None))
                 if self.path.endswith("/servers/7/iso"):
                     fake.attached = None
+                if self.path.endswith("/servers/7/rescuesystem"):
+                    fake.rescue = False
+                    return self._send(202, task)
+                if "/servers/7/snapshots/" in self.path:
+                    name = urllib.parse.unquote(self.path.split("/")[-1])
+                    fake.snaps = [x for x in fake.snaps if x["name"] != name]
+                    return self._send(202, task)
                 self._send(204)
 
             def do_GET(self):
@@ -8570,6 +8591,10 @@ class FakeNetcup:
                         if fake.polls_running < 0:
                             fake.state = "SHUTOFF"
                     return self._send(200, s)
+                if path == API + "/servers/7/snapshots":
+                    return self._send(200, fake.snaps)
+                if path == API + "/servers/7/rescuesystem":
+                    return self._send(200, {"active": fake.rescue, "password": "rescue-pw-of-the-test" if fake.rescue else None})
                 if path == API + "/servers/7/disks":
                     return self._send(200, [{"name": "sda", "capacityInMiB": 40960, "storageDriver": fake.driver}])
                 if path == API + "/servers/7/iso":
@@ -8632,6 +8657,84 @@ class TestVps(Base):
         write(os.path.join(self.tmp, "output", "x", "x.iso"), "ISO" * 100)
         if stack == 0:      # a bare ISO says so beside itself: the rendered role lives in the store's tmpfs
             write(os.path.join(self.tmp, "output", "x", "x.iso.bare"), "bare\n")
+
+    def test_the_rescue_system_on_and_off_with_its_password_kept_not_shown(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x", "--name", "on")
+        self.assertEqual(rc, 1)
+        self.assertIn("Add --yes", err)
+        self.assertFalse(self.api.rescue)
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x", "--name", "on", "--yes")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.api.rescue)
+        self.assertEqual([b.get("state") for m, p, b in self.api.calls if m == "PATCH"][-2:], ["OFF", "ON"])   # it restarts into it
+        kept = os.path.join(self.tmp, "secrets", "rescue", "crumble.password")
+        self.assertEqual(util.read_text(kept), "rescue-pw-of-the-test\n")
+        self.assertEqual(oct(os.stat(kept).st_mode & 0o777), "0o600")
+        self.assertNotIn("rescue-pw-of-the-test", out + err)                        # where it is, not what it is
+        self.assertIn("ssh root@203.0.113.9", out + err)
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x", "--name", "off")
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(self.api.rescue)
+        self.assertFalse(os.path.exists(kept))                                      # its password goes with it
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x")
+        self.assertIn("--name on|off", err)
+
+    def test_snapshots_at_netcup_taken_listed_reverted_and_removed(self):
+        """vps snapshot / snapshots / revert: netcup's copies of a rented machine's disk. Taken while it
+        runs only (netcup says beforehand whether it can); going back needs --yes; KIWI_NEVER guards."""
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "snapshots", f.path, "x")
+        self.assertEqual((rc, out.strip()), (0, "crumble has no snapshots at netcup"), err)
+        rc, out, err = self.run_cli("vps", "snapshot", f.path, "x", "--name", "before-update")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("snapshot before-update taken", err + out)
+        made = [b for m, p, b in self.api.calls if m == "POST" and p.endswith("/servers/7/snapshots")]
+        self.assertEqual((made[0]["name"], made[0]["onlineSnapshot"]), ("before-update", True))
+        self.assertIn("kiwi-server", made[0]["description"])
+        rc, out, err = self.run_cli("vps", "snapshot", f.path, "x")                      # a name by itself: by the time
+        self.assertEqual(rc, 0, err)
+        self.assertRegex(self.api.snaps[-1]["name"], r"^kiwi-\d{8}-\d{4}$")
+        rc, out, err = self.run_cli("vps", "snapshots", f.path, "x")
+        self.assertEqual([ln.split()[0] for ln in out.splitlines()], ["before-update", self.api.snaps[-1]["name"]])
+        # netcup cannot take one while it runs: nothing is taken, and its reason is said
+        self.api.snap_problems = ["the server has too many snapshots"]
+        rc, out, err = self.run_cli("vps", "snapshot", f.path, "x")
+        self.assertEqual(rc, 1)
+        self.assertIn("no snapshot while it runs: the server has too many snapshots", err)
+        self.assertEqual(len(self.api.snaps), 2)
+        self.api.snap_problems = []
+        # back to one: only with --yes, and only to one that exists
+        rc, out, err = self.run_cli("vps", "revert", f.path, "x", "--name", "before-update")
+        self.assertEqual(rc, 1)
+        self.assertIn("add --yes", err)
+        rc, out, err = self.run_cli("vps", "revert", f.path, "x", "--name", "nosuch", "--yes")
+        self.assertIn("has no snapshot nosuch", err)
+        self.assertIsNone(self.api.reverted)
+        rc, out, err = self.run_cli("vps", "revert", f.path, "x", "--name", "before-update", "--yes")
+        self.assertEqual((rc, self.api.reverted), (0, "before-update"), err)
+        rc, out, err = self.run_cli("vps", "snapshots", f.path, "x", "--delete", "before-update")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([x["name"] for x in self.api.snaps], [self.api.snaps[0]["name"]])
+        # a server KIWI_NEVER names is never changed: by its id, or by its address
+        for never in ("7", "203.0.113.9"):
+            before = len(self.api.calls)
+            with mock.patch.dict(os.environ, {"KIWI_NEVER": "1 %s" % never}):
+                for argv in (("snapshot", f.path, "x"), ("revert", f.path, "x", "--name", "x", "--yes"),
+                             ("restart", f.path, "x"), ("snapshots", f.path, "x", "--delete", "x")):
+                    rc, out, err = self.run_cli("vps", *argv)
+                    self.assertEqual(rc, 1, argv)
+                    self.assertIn("KIWI_NEVER", err)
+                rc, out, err = self.run_cli("vps", "snapshots", f.path, "x")              # looking is allowed
+                self.assertEqual(rc, 0, err)
+            self.assertEqual([m for m, _p, _b in self.api.calls[before:] if m != "GET"], [])
+        # and the client itself refuses, whoever calls it
+        with mock.patch.dict(os.environ, {"KIWI_NEVER": "7"}):
+            from kiwiserver import netcup
+            with self.assertRaisesRegex(KiwiError, "KIWI_NEVER"):
+                netcup.Netcup(os.path.join(self.tmp, "secrets", "netcup.token"), self.api.url).power(7, False)
 
     def test_login_keeps_only_the_refresh_token_private(self):
         f = self.vps_fleet()

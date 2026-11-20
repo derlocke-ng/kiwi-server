@@ -2138,6 +2138,8 @@ def cmd_vps(args):
             vps_snapshot(client, server, label, args.name, "kiwi-server %s, by hand" % VERSION)
         elif args.action == "revert":
             vps_revert(args, client, server, label)
+        elif args.action == "rescue":
+            vps_rescue(args, fleet, client, server, label)
         elif args.action == "install":
             vps_install(args, fleet, client, server)
         elif args.action == "restart":          # a power cycle: nothing on the server is touched
@@ -2189,6 +2191,43 @@ def vps_snapshots(args, client, server, label):
     for r in rows:
         print("%-22s %-20s %-7s %s" % (r.get("name"), (r.get("creationTime") or "")[:16].replace("T", " "),
                                        "online" if r.get("online") else "offline", r.get("description") or ""))
+
+
+def vps_rescue(args, fleet, client, server, label):
+    """`vps rescue FLEET HOST on|off`: netcup's rescue system instead of the machine's own at its
+    next start, for a machine that no longer starts. Its root password goes into the fleet's
+    secrets (secrets/rescue/<server>.password), not onto the screen."""
+    what = (args.name or "").lower()
+    if what not in ("on", "off"):
+        raise KiwiError("kiwi-server vps rescue <fleet> <host> --name on|off")
+    sid = server["id"]
+    address = next((a["ip"] for a in server.get("ipv4Addresses") or []), "<its address>")
+    path = fleet.resolve_path("secrets/rescue/%s.password" % re.sub(r"[^A-Za-z0-9_.-]", "-", str(label)))
+    if what == "on":
+        if not args.yes:
+            raise KiwiError("this restarts %s into netcup's rescue system: its services are away until it is off again. Add --yes" % label)
+        client.rescue_on(sid)
+        util.say("%s: restarting into the rescue system" % label)
+        if client.state(sid) != "SHUTOFF":
+            client.power(sid, False)
+        client.power(sid, True)
+        password = (client.rescue(sid) or {}).get("password") or ""
+        if password:
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            util.write_text(path, password + "\n", 0o600)
+        util.say("%s: in the rescue system in a minute or two: ssh root@%s (a host key of its own: ssh asks once); "
+                 "its root password is in %s. The disk is untouched; an encrypted one opens with "
+                 "cryptsetup open and the key in secrets/luks/. Afterwards: kiwi-server vps rescue %s %s --name off"
+                 % (label, address, typed_path(path) if password else "netcup's panel", typed_path(fleet.path), args.target))
+        return
+    client.rescue_off(sid)
+    util.say("%s: restarting into its own system" % label)
+    if client.state(sid) != "SHUTOFF":
+        client.power(sid, False)
+    client.power(sid, True)
+    if os.path.isfile(path):
+        os.remove(path)
+    util.say("%s: its own system starts; an encrypted disk opens through its rings as after any restart" % label)
 
 
 def vps_revert(args, client, server, label):
@@ -5842,6 +5881,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
   kiwi-server vps snapshot|snapshots|revert <fleet> <host>
                                                 netcup's snapshots of a server: take one while it runs, list, go back (--name)
+  kiwi-server vps rescue <fleet> <host> --name on|off
+                                                netcup's rescue system for a server that no longer starts (its disk untouched)
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]
                                                 get it back on a fresh machine (or restore FILE)
@@ -5973,9 +6014,9 @@ def build_parser():
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")
     s.add_argument("--write", action="store_true", help="a node's result: write wg_mtu into the fleet file")
-    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart", "snapshot", "snapshots", "revert"])
+    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart", "snapshot", "snapshots", "revert", "rescue"])
     s.add_argument("fleet")
-    s.add_argument("--name", metavar="NAME", help="snapshot: its name (default kiwi-YYYYmmdd-HHMM); revert: the snapshot to go back to")
+    s.add_argument("--name", metavar="NAME", help="snapshot: its name (default kiwi-YYYYmmdd-HHMM); revert: the snapshot to go back to; rescue: on or off")
     s.add_argument("--delete", metavar="NAME", help="snapshots: remove this one")
     s.add_argument("target", nargs="?", help="a fleet host, or a server's id, address, name or nickname")
     s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")

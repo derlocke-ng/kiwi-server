@@ -243,6 +243,21 @@ class Netcup:
         self.wait(self.api("DELETE", "/servers/%d/snapshots/%s" % (sid, urllib.parse.quote(name))),
                   "removing the snapshot %s" % name)
 
+    # ---- the rescue system ------------------------------------------------------
+    # netcup's own small Linux, started instead of the server's system at its next start: the disk
+    # stays as it is, and root logs in with a password netcup makes. For a machine that no longer
+    # starts.
+
+    def rescue(self, sid):
+        """{"active": bool, "password": str or None}"""
+        return self.api("GET", "/servers/%d/rescuesystem" % sid) or {}
+
+    def rescue_on(self, sid):
+        self.wait(self.api("POST", "/servers/%d/rescuesystem" % sid), "starting the rescue system")
+
+    def rescue_off(self, sid):
+        self.wait(self.api("DELETE", "/servers/%d/rescuesystem" % sid), "leaving the rescue system")
+
 
 def never():
     """The server ids and addresses KIWI_NEVER names: nothing here changes them."""

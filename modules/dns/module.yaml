@@ -120,7 +120,7 @@ settings:
     default: ""
   - key: fallback_dns
     label: Fallback resolvers
-    help: "Semicolon separated, tried in strict order after the first upstream. Reached directly, not through the tunnel (which is down whenever the master is), so only ever used while the master is unreachable. Empty: none."
+    help: "Semicolon separated. On a node: asked while the master does not answer, from the node's own line (the master's tunnel is down then), by the resolver in front of Pi-hole. On the master: tried in order after its VPN client's resolver; the master's traffic all leaves through its exit, so these help only when that resolver fails, not when the exit is down. Empty: none."
     default: 1.1.1.1;1.0.0.1
   - key: fallback_tls_name
     label: Fallback resolvers over TLS

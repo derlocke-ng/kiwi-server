@@ -84,4 +84,8 @@ say what 2.267.0 does.
     master while it answers and Cloudflare over TLS while it does not; the drill reaches the node by its home address and asks
     once: "answered throughout" (papaya, 3 minutes without the master). The master itself is as before (its VPN client sits
     next to it).
+50. The master's lookups while its exit is down or restarting: about five seconds each, none during gluetun's restart. Its
+    fallbacks cannot help: the VPN server's namespace (where its Pi-hole runs) routes everything through gluetun. A way out
+    would be the fallback resolver's packets marked for the host's own table (as the WireGuard server's are, fwmark 0x41),
+    which CoreDNS cannot do itself. Tried and taken out again on 20 Nov.
 

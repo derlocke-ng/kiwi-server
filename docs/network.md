@@ -105,6 +105,10 @@ DNS is one chain for the whole network:
   again, it is asked again. `dns.fallback_dns` and `dns.fallback_tls_name` say
   which resolvers and which certificate name; an empty name asks them in plain
   text.
+- The master's own Pi-hole asks its VPN client's resolver, through the exit. Its
+  fallbacks leave through the exit too (everything of the master does), so while
+  the exit is down or restarting the master's lookups wait for it (tried on 20
+  November 2026: about five seconds each, none while the exit restarted).
 - Names under the fleet's domain go to the master and never leave it.
 - Every host carries the fleet's names in its hosts file plus a route into
   the mesh through its VPN client.

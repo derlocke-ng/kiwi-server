@@ -55,14 +55,17 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 34. Backups of desktop and phone, the kiwi-desktop client, Windows.
 35. Mastodon, Matrix, email modules (the owner: not yet).
 
-## E. Docs that are stale
+## E. Docs that were stale
 
-36. ROADMAP's top says 2.239: no agent, names by service, part move, standby, switch, power,
-    Machines table.
-37. ROADMAP "Open, in order": item 2 is done, item 8 ignores the part move, scale.md's order
-    is absent.
-38. ROADMAP's lower half still says "not built" of federation, Wake-on-LAN, the sleeping node,
-    leash and ring rotation, games, netcup booting the RAM master.
-39. notes/REVIEW-page-parity.md ends at 2.239.
-40. design/website.md "designed, not built"; design/ram-master.md "Not tried: a VPS";
-    guided-session.md names 2.165; README lacks part move, standby, agent.
+36 to 40: done 20 Nov. ROADMAP's top and lower half, its "Open, in order" (now a summary of this list),
+notes/REVIEW-page-parity.md, README, design/website.md, design/ram-master.md and notes/guided-session.md
+say what 2.267.0 does.
+
+## F. Older open items, found again while the docs were brought up to date
+
+41. An OpenWrt package for the router side.
+42. Rootless podman for the parts.
+43. The orchard (several networks of one owner side by side).
+44. `from=` on the Debian target's keys.
+45. The RAM master's room (what it may hold in RAM, and how much).
+46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).

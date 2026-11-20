@@ -9135,6 +9135,20 @@ class TestWatchdog(unittest.TestCase):
         ev, done = self.step(f, {"gate": False}, state, t + 2 * 3700 + 86400 + 60)       # the next day
         self.assertEqual(done, ["gate"])
 
+    def test_a_restart_that_worked_does_not_hold_the_next_one(self):
+        # seen on sorbet 20 Nov 2026: restarted, back within minutes, gone again half an hour later, and
+        # held for the rest of the hour because of the restart that had worked
+        f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
+        self.step(f, {"gate": False}, state)
+        t = self.NOW + 4 * 60
+        self.assertEqual(self.step(f, {"gate": False}, state, t)[1], ["gate"])
+        self.step(f, {"gate": True}, state, t + 300)                                     # back
+        self.step(f, {"gate": False}, state, t + 1800)                                   # gone again
+        ev, done = self.step(f, {"gate": False}, state, t + 1800 + 4 * 60)
+        self.assertEqual(([e["kind"] for e in ev], done), (["restarted"], ["gate"]))
+        ev, done = self.step(f, {"gate": False}, state, t + 1800 + 10 * 60)            # this one did not help (yet)
+        self.assertEqual(([e["kind"] for e in ev], done), (["held"], []))
+
     def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
         f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}
         ev, done = self.step(f, {"gate": False}, state, fail=True)

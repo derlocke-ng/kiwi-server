@@ -3,13 +3,15 @@
 # the standby machine fetches the part's data every minute with a key that can do nothing else,
 # and takes the part over with a switch.
 #
-#   tests/drills/part-standby.sh FLEET PART ON STANDBY DATA_DIR
+#   tests/drills/part-standby.sh FLEET PART ON STANDBY DATA_DIR [--down]
 #
 # ON runs the part; STANDBY will keep it ready and then take it over. DATA_DIR: a folder of the
 # part's data (Vaultwarden: /home/user/docker/kn-vault). One PASS or FAIL line per check.
+# --down: ON is restarted right before the switch, so the switch happens while it does not answer
+# (its disk must open by itself at boot); afterwards the control node must take the part off it.
 set -u
 fleet=${1:?the fleet file}; part=${2:?a part}; on=${3:?the machine it runs on}; sb=${4:?the machine that keeps it ready}
-data=${5:?a folder of its data}
+data=${5:?a folder of its data}; down=${6:-}
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 fails=0
 check() { if [ "$1" = 0 ]; then say "PASS $2"; else say "FAIL $2"; fails=$((fails + 1)); fi; }
@@ -63,11 +65,27 @@ name=$(kiwi-server move "$fleet" "$part" "$on" "$sb" --porcelain 2>/dev/null | p
 kiwi-server switch "$fleet" "$part" > switch-plan.log 2>&1; check $? "the plan of the switch has nothing in its way"
 mark2="kiwi-switch $(date +%s) $RANDOM"
 at "$on" "echo '$mark2' > '$data/.kiwi-standby-marker'"
+if [ "$down" = --down ]; then
+    n=180; while [ "$n" -gt 0 ]; do [ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark2" ] && break; sleep 10; n=$((n - 10)); done
+    kiwi-server power "$fleet" "$on" restart --yes >/dev/null 2>&1; check $? "$on is told to restart: the switch happens while it is away"
+    sleep 8
+fi
 t0=$(date +%s)
 kiwi-server switch "$fleet" "$part" --yes > switch.log 2>&1; check $? "kiwi-server switch $part --yes ended well ($(( $(date +%s) - t0 )) s)"
-[ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark2" ]; check $? "what was written a moment before the switch is on $sb: nothing was lost"
+if [ "$down" = --down ]; then
+    grep -q "does not answer" switch.log; check $? "the switch went on without $on"
+    [ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark2" ]; check $? "$sb runs it with the copy it had"
+else
+    [ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark2" ]; check $? "what was written a moment before the switch is on $sb: nothing was lost"
+fi
 at "$sb" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" | grep -q -- "-$part"; check $? "$part runs on $sb"
-! at "$on" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" | grep -q -- "-$part\$"; check $? "$part no longer runs on $on"
+gone() { local out; out=$(at "$on" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" 2>/dev/null) || return 1; ! grep -q -- "-$part\$" <<<"$out"; }
+if [ "$down" = --down ]; then        # it comes back, and the control node gives it the change that waited
+    n=1200; while [ "$n" -gt 0 ] && ! gone; do sleep 20; n=$((n - 20)); done
+    gone; check $? "$on is back and no longer runs $part: the control node applied what waited ($(( (1200 - n) / 60 )) min)"
+else
+    gone; check $? "$part no longer runs on $on"
+fi
 ! at "$sb" "grep -q '^$part ' /etc/kiwi-server/standby/pull.conf 2>/dev/null"; check $? "$sb no longer fetches over the part it now runs"
 if [ -n "$name" ]; then
     ip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); code=000

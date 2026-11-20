@@ -2129,7 +2129,16 @@ def cmd_vps(args):
         if not args.target:
             raise KiwiError("which server? kiwi-server vps %s <fleet> <host or server>" % args.action)
         server = vps_server(client, fleet, args.target, args.server)
-        if args.action == "install":
+        label = server.get("nickname") or server.get("name")
+        if args.action not in ("probe", "snapshots") and netcup.untouchable(server):
+            raise KiwiError("%s is listed in KIWI_NEVER: nothing is changed there" % label)
+        if args.action == "snapshots":
+            vps_snapshots(args, client, server, label)
+        elif args.action == "snapshot":
+            vps_snapshot(client, server, label, args.name, "kiwi-server %s, by hand" % VERSION)
+        elif args.action == "revert":
+            vps_revert(args, client, server, label)
+        elif args.action == "install":
             vps_install(args, fleet, client, server)
         elif args.action == "restart":          # a power cycle: nothing on the server is touched
             label = server.get("nickname") or server.get("name")
@@ -2142,6 +2151,61 @@ def cmd_vps(args):
             print(json.dumps(netcup.probe(client, server), indent=2))
         else:
             print_probe(netcup.probe(client, server))
+
+
+def snapshot_name(when=None):
+    """kiwi-YYYYmmdd-HHMM: sorts by time, and says who made it."""
+    return time.strftime("kiwi-%Y%m%d-%H%M", time.gmtime(when or time.time()))
+
+
+def vps_snapshot(client, server, label, name=None, why=""):
+    """A snapshot of the server at netcup, while it runs when netcup allows that; otherwise
+    nothing is done and the reason is said (an offline one would switch the server off)."""
+    sid, name = server["id"], name or snapshot_name()
+    problems = client.snapshot_problems(sid, True)
+    if problems:
+        raise KiwiError("%s: no snapshot while it runs: %s" % (label, "; ".join(problems)))
+    util.say("%s: taking the snapshot %s (it keeps running)" % (label, name))
+    t0 = time.time()
+    client.snapshot(sid, name, why, online=True)
+    util.say("%s: snapshot %s taken in %d s" % (label, name, time.time() - t0))
+    return name
+
+
+def vps_snapshots(args, client, server, label):
+    sid = server["id"]
+    if args.delete:
+        if netcup.untouchable(server):
+            raise KiwiError("%s is listed in KIWI_NEVER: nothing is changed there" % label)
+        client.delete_snapshot(sid, args.delete)
+        util.say("%s: snapshot %s removed" % (label, args.delete))
+        return
+    rows = client.snapshots(sid)
+    if args.porcelain:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        print("%s has no snapshots at netcup" % label)
+    for r in rows:
+        print("%-22s %-20s %-7s %s" % (r.get("name"), (r.get("creationTime") or "")[:16].replace("T", " "),
+                                       "online" if r.get("online") else "offline", r.get("description") or ""))
+
+
+def vps_revert(args, client, server, label):
+    """The server's disk back to a snapshot: what it wrote since is gone."""
+    name = args.name
+    if not name:
+        raise KiwiError("which snapshot? kiwi-server vps revert <fleet> <host> --name NAME (kiwi-server vps snapshots)")
+    if name not in [r.get("name") for r in client.snapshots(server["id"])]:
+        raise KiwiError("%s has no snapshot %s (kiwi-server vps snapshots)" % (label, name))
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise KiwiError("this puts %s's disk back to %s, and what it wrote since is gone: add --yes" % (label, name))
+        if input("%s's disk goes back to %s; what it wrote since is gone. Type its name to go ahead: " % (label, name)).strip() != label:
+            raise KiwiError("not confirmed, nothing touched")
+    util.say("%s: back to %s" % (label, name))
+    client.revert(server["id"], name)
+    util.say("%s: its disk is as it was at %s; it starts as it was then" % (label, name))
 
 
 def cmd_recover(args):
@@ -5776,6 +5840,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
   kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
+  kiwi-server vps snapshot|snapshots|revert <fleet> <host>
+                                                netcup's snapshots of a server: take one while it runs, list, go back (--name)
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]
                                                 get it back on a fresh machine (or restore FILE)
@@ -5907,7 +5973,10 @@ def build_parser():
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")
     s.add_argument("--write", action="store_true", help="a node's result: write wg_mtu into the fleet file")
-    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart"]); s.add_argument("fleet")
+    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart", "snapshot", "snapshots", "revert"])
+    s.add_argument("fleet")
+    s.add_argument("--name", metavar="NAME", help="snapshot: its name (default kiwi-YYYYmmdd-HHMM); revert: the snapshot to go back to")
+    s.add_argument("--delete", metavar="NAME", help="snapshots: remove this one")
     s.add_argument("target", nargs="?", help="a fleet host, or a server's id, address, name or nickname")
     s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")
     s.add_argument("--yes", action="store_true", help="install: wipe the server's disk without asking")

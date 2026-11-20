@@ -231,7 +231,8 @@ brought back today ([When something breaks](recovery.md)).
 | Backups | each machine with the `backup` module sends its data to its backup machines, encrypted with restic | every night; a failed run is tried again an hour later, three more times |
 | The network's own copy | the fleet file and the secret store, encrypted, as one file, sent to the machines in `backup.hosts`; each keeps the newest ten | after every render or build, when `backup.hosts` names machines |
 | Unlock | a disk asks its rings at boot and opens when one answers; for a rented master the control node carries the ring | at every start |
-| Restart of a master | the control node switches it off and on at its hoster, when `recovery` allows it | after the minutes the fleet file sets; never twice in an hour, at most three times a day |
+| Restart of a master | the control node switches it off and on at its hoster, when `recovery` allows it | after the minutes the fleet file sets; not twice in an hour unless it answered in between, at most three times a day |
+| A part kept ready on a second machine | the control node switches it there when its machine is gone and the second machine does not reach it either ([Control](control.md#when-a-machine-does-not-answer)); the machine that was gone stops it when it is back, and keeps it ready from then on | five minutes after the machine's last report (`recovery.switch`); at most once in 30 minutes per part |
 | A master in RAM | `kiwi-server watch` sends its role and its VPN identity again | after every boot, while a control node or a timer on your computer watches |
 | A machine installed anew | it finds itself in its backups at its first set-up and restores every module | once, before it backs up again |
 | A gateway's routing | checked and put back | twice a minute |

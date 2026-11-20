@@ -29,7 +29,16 @@ at() { # MACHINE COMMAND: as root there, at its address at home
     ssh -i "$S/admin_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
         -o UserKnownHostsFile="$S/known_hosts" -o ConnectTimeout=8 "$user@$(lanof "$1")" "sudo sh -c $(printf '%q' "$2")"
 }
-runs() { at "$1" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" 2>/dev/null | grep -q -- "-$part\$"; }
+runs() {   # MACHINE: the part's container runs there (asked three times: one lost answer is no proof)
+    local n out
+    for n in 1 2 3; do
+        if out=$(at "$1" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null; echo kiwi-asked"); then
+            grep -q kiwi-asked <<<"$out" && { grep -q -- "-$part\$" <<<"$out"; return; }
+        fi
+        sleep 5
+    done
+    return 1
+}
 V="virsh -c qemu:///system"
 ssh -o BatchMode=yes -o ConnectTimeout=8 "$VMHOST" "$V domstate $on" 2>/dev/null | grep -q running; check $? "$on is a running VM on $VMHOST"
 runs "$on"; check $? "$part runs on $on"
@@ -78,7 +87,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=8 "$VMHOST" "$V start $on" >/dev/null 2>&
 # given up: its stack no longer has the part at all (the apply that waited for it), not merely
 # "not running yet" in the first seconds after a start
 t1=$(date +%s); n=$((20 * 60))
-kept() { at "$on" "ls /etc/containers/systemd/ 2>/dev/null; grep -o 'k.-$part:' /home/*/docker/docker-compose.yml 2>/dev/null" 2>/dev/null | grep -q -- "-$part"; }
+kept() { at "$on" "grep '^STACK_SERVICES=' /etc/kiwi-server/stack.env" 2>/dev/null | grep -qE -- "-$part( |\")"; }    # one of its own parts
 while [ "$n" -gt 0 ]; do
     if at "$on" true 2>/dev/null && ! kept && ! runs "$on"; then break; fi
     sleep 20; n=$((n - 20))
@@ -90,6 +99,8 @@ both=$(at "$on" "journalctl -b -u 'k?-$part.service' -o short-unix --no-pager 2>
     / Started / && !s { s = $1 } / Stopped / && s && !e { e = $1 } END { if (!s) print 0; else if (!e) print -1; else printf "%d", e - s }')
 [ "${both:--1}" -ge 0 ] && [ "${both:--1}" -le 60 ]; check $? "$on ran $part beside $sb for ${both:-?} s after it came back (60 at most)"
 runs "$sb"; check $? "$part still runs on $sb"
+at "$on" "grep '^STACK_READY=' /etc/kiwi-server/stack.env" 2>/dev/null | grep -qE -- "-$part( |\")"
+check $? "$on keeps $part ready now: the two stay a pair"
 # the control node may be in the middle of its jobs (the apply that waited): asked again for a few minutes
 n=10; while [ "$n" -gt 0 ] && ! kiwi-server control pull "$fleet" > control-pull2.log 2>&1; do sleep 30; n=$((n - 1)); done
 [ "$n" -gt 0 ]; check $? "this computer has the fleet the control node changed"

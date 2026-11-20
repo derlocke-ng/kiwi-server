@@ -2925,6 +2925,7 @@ class TestSetup(Base):
         rc, out, err = self.run_cli("list", dest, "--porcelain")
         self.assertEqual(rc, 0, err)
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual(json.loads(out)["switch_after"], 5)      # a part kept ready goes over by itself after five minutes
         self.assertEqual(hosts["trifle"]["errors"], [])
         self.assertEqual((hosts["trifle"]["phase"], hosts["mango"]["phase"], hosts["quince"]["phase"]),
                          ("build", "enroll", "enroll"))
@@ -11092,6 +11093,14 @@ class TestHealth(Base):
         did = [{"host": "sorbet", "kind": "restarted", "text": "sorbet did not answer: restarted at its provider"}]
         self.assertEqual([e["kind"] for e in health.update(st, ms, sv, did, 5000)], ["did"])
         self.assertEqual(health.update(st, ms, sv, did, 5100), [])
+        # a part switched to its standby by itself: told as done, once
+        moved = [{"host": "quince", "kind": "switch", "part": "vault", "to": "medlar",
+                  "text": "quince has not answered for 5 minutes; vault is kept ready on medlar, and medlar does not reach it "
+                          "either: vault goes to medlar"}]
+        told = health.update(st, ms, sv, moved, 5200)
+        self.assertEqual([(e["kind"], e["level"]) for e in told], [("did", "warn")])
+        self.assertIn("vault goes to medlar", health.message(told, "home")[1])
+        self.assertEqual(health.update(st, ms, sv, moved, 5300), [])
         # a page that wants a login answers; a proxy without its service does not
         seen, asked = {"a.home": (True, 200), "b.home": (False, 502)}, []
 
@@ -16099,6 +16108,7 @@ class TestRecovery(Base):
         kept = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
         machine = next(k for k in self.report(kept)[0]["cases"] if k["id"] == "machine")
         self.assertIn("Kept ready on a second machine, with its data a minute old at most: vault of papaya on lychee", machine["by_itself"])
+        self.assertIn("gone for 5 minutes and the second machine does not reach it either, the control node switches", machine["by_itself"])
         self.assertEqual((machine["how"][0]["label"], machine["how"][0]["command"], machine["how"][0]["page"]),
                          ("papaya is gone: vault goes on on lychee", "kiwi-server switch fleet.yaml vault papaya --yes",
                           "/hosts/papaya?tab=services"))

@@ -257,6 +257,17 @@ after 29 s (the container's own start).
    the control node. When the first machine comes back, the control node tells it to stand
    by: it stops the part before it could write.
 
+   Built (2.276.0 to 2.278.0) with the control node as the one that decides: when the machine
+   has been silent for five minutes since its agent's last report and the standby does not
+   reach it either (ping or SSH port, at home or by name), the control node starts the switch
+   as a job. Two that agree, not three: the control node's look and the standby; a standby
+   that still reaches the machine holds it back. A machine that comes back starts the part
+   with its stack, and its agent's first report (ten seconds after the start) gets
+   `X-Kiwi-Hold` and stops it: 13 s side by side in the drill. The switch leaves the two a
+   pair (`keep_ready` turned round). Tried with power cuts in both directions
+   (tests/drills/part-failover.sh): the part ran on the standby 10 to 11 minutes after the cut.
+   Not built: the agents' own vote, for when the control node is the one that is gone.
+
 ## Not decided
 
 - Which parts get live replication first. Proposed: the ones with a database of their own

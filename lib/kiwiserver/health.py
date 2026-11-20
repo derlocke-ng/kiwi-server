@@ -174,11 +174,12 @@ def update(state, machines, services, happened, now, after=600):
                     inc["to"] = now
     did = state.setdefault("did", {})
     for e in happened or []:
-        if e.get("kind") in ("restarted", "unlocked", "locked", "held", "tell"):
-            key = "%s:%s" % (e["host"], e["kind"])
+        if e.get("kind") in ("restarted", "unlocked", "locked", "held", "tell", "switch"):
+            key = "%s:%s%s" % (e["host"], e["kind"], ":" + e["part"] if e.get("part") else "")
             if now - did.get(key, 0) > 3600:       # the same thing said again and again is told once an hour at most
                 did[key] = now
-                events.append({"kind": "did", "level": "warn" if e["kind"] in ("restarted", "unlocked") else "bad", "text": e["text"]})
+                events.append({"kind": "did", "level": "warn" if e["kind"] in ("restarted", "unlocked", "switch") else "bad",
+                               "text": e["text"]})
     for key in [k for k, t in did.items() if now - t > 86400]:
         del did[key]
     state["incidents"] = [i for i in state.get("incidents") or [] if (i["to"] or now) > now - KEEP_DAYS * 86400][-KEEP_INCIDENTS:]

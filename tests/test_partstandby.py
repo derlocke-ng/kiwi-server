@@ -153,6 +153,21 @@ class TestStandby(unittest.TestCase):
         self.assertEqual(pull[2].decode(), "PRIVATE\n")                          # its key on standard input, not in the script
         self.assertNotIn("PRIVATE", pull[1])
 
+    def test_a_switch_leaves_the_two_a_pair(self):
+        """After a switch the machine the part left keeps it ready: a failover back is possible as soon
+        as that machine is back. A move (not a switch) ends the standby."""
+        from kiwiserver import partmove
+        raw = {"hosts": {"quince": {"role": "node", "keep_ready": {"vault": "medlar"}, "node": {"modules": ["vault"]}},
+                         "medlar": {"role": "node", "node": {"modules": ["git"]}}}}
+        q = types.SimpleNamespace(name="quince", role="node", role_settings_raw={"modules": ["vault"]})
+        m = types.SimpleNamespace(name="medlar", role="node", role_settings_raw={"modules": ["git"]})
+        after = partmove.changed_data(raw, "vault", q, m, swap_ready=True)
+        self.assertNotIn("keep_ready", after["hosts"]["quince"])
+        self.assertEqual(after["hosts"]["medlar"]["keep_ready"], {"vault": "quince"})
+        self.assertEqual(after["hosts"]["medlar"]["node"]["modules"], ["git", "vault"])
+        moved = partmove.changed_data(raw, "vault", q, m)
+        self.assertNotIn("keep_ready", moved["hosts"]["medlar"])
+
     def test_ages(self):
         self.assertEqual(ps.ages("vault 12\ncloud 4000\nnoise\n"), {"vault": 12, "cloud": 4000})
 

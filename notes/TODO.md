@@ -72,3 +72,10 @@ say what 2.267.0 does.
 44. `from=` on the Debian target's keys.
 45. The RAM master's room (what it may hold in RAM, and how much).
 46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).
+47. gluetun says its `DOT_PROVIDERS` is the old name of `DNS_UPSTREAM_RESOLVERS`: the vpn-client module should set the new one
+    (a warning in its log only; seen 20 Nov).
+48. After a restart of the VPN client its resolver takes about 75 seconds to answer (it fetches block lists it does not use,
+    all its blocking being off): Pi-hole asks its fallback meanwhile. Look for a switch that skips the fetch.
+49. The starter drill's other steps (`windows`, `typed`) need a Windows disk made on the VM's host: sh3 has no sgdisk or mkfs.ntfs,
+    so they are left out there. Make the disk here and send it.
+

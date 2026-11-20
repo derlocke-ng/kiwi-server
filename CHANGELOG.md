@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.256.0 — the Machines page is a table, by site
+
+- **Machines on the control page is a table with a row per machine, grouped by site**
+  (`network.site`), made for many machines: state, role, parts, three small meters (CPU,
+  memory, fullest disk), last backup, last seen. A site's line sums up its machines
+  ("11 fine · 1 waits for unlock"). Before, it was a grid of cards.
+- **One state per machine**: fine, wants a look, has a problem, not reachable, waits for unlock,
+  being installed, not set up yet, asleep, not checked yet. A machine that waits for its
+  disk's key or is being installed is no longer counted as "not reachable" there.
+- **Counts above the table filter on a click, and the filter is text in the page's address**
+  (`/machines?q=site:main state:down part:dns`), so a view can be bookmarked. Filters:
+  `state:`, `site:`, `part:`, `role:`, or a part of a name (docs/control.md).
+- **Ticks in the table replace "Several at once"**: tick machines, or a whole site, and Check,
+  Preview or Apply them. The limit of 50 machines per action is gone.
+- The page preview can show a company's size: `KIWI_PREVIEW_MANY=1` adds 72 made-up machines
+  at five sites (`tests/drills/page-preview.py`).
+
 ## 2.255.0 — a Debian machine on DHCP opens its disk with its rings
 
 - **Fixed: a Debian machine without a fixed address never asked its rings at boot.** Its boot

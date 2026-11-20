@@ -1,6 +1,7 @@
 """A made-up network for looking at the control page and the app: five machines that are fine,
 one that wants a look, one that does not answer. What `kiwi-server list` and `status` would say
 about them (`--porcelain`), and a fleet file with the same machines."""
+import os
 import time
 import json
 import sys
@@ -41,6 +42,34 @@ MACHINES = [
 ]
 
 
+# a company's size (docs/design/ui.md): KIWI_PREVIEW_MANY=1 adds 72 machines at five sites
+SITES = (("Main building", 30), ("IT department", 10), ("Building 2", 10), ("Building 3", 2), ("China HQ", 20))
+ODD = {3: ("warn", [{"level": "warn", "key": "reboot", "text": "an update is waiting for a reboot"}], {}),
+       11: ("down", [], {"locked": True}), 17: ("down", [], {}), 23: ("asleep", [], {}),
+       34: ("down", [], {"stage": "installing", "story": "Its install media were made 12 minutes ago and it has not answered since."}),
+       41: ("bad", [{"level": "bad", "key": "service", "text": "Files (Nextcloud): nextcloud-aio-apache is not running"}], {}),
+       58: ("warn", [{"level": "warn", "key": "disk", "text": "/var is 86 % full"}], {})}
+PARTS = (["dns"], ["cloud", "backup"], ["git"], ["backup-server"], ["immich", "backup"], ["gateway", "dns"])
+
+
+def many(hosts, said):
+    n = 0
+    for site, count in SITES:
+        for i in range(count):
+            name = "%s%02d" % ("".join(w[0] for w in site.lower().split())[:2].ljust(2, "x"), i + 1)
+            modules = PARTS[n % len(PARTS)]
+            state, problems, more = ODD.get(n, ("ok", [], {}))
+            hosts.append({"name": name, "hostname": name + ".home", "role": "node", "modules": modules, "phase": "applied", "site": site,
+                          "sites": ["%s.%s.home" % (m, name) for m in modules if m in ("cloud", "git")], "site_labels": {},
+                          "vpn_ip": "10.9.1.%d" % (n + 1), "next": "", "errors": [], "target": "ucore", "provider": "",
+                          "address": "10.%d.0.%d" % (20 + len(site), 10 + i), "logins": []})
+            f = facts(0.2 + (n % 7) / 10, 4, (16, 4 + n % 8), [("/var", 500, 500 * (0.86 if n == 58 else 0.2 + (n % 6) / 10))], len(modules),
+                      backup=3600 * (1 + n % 30) if "backup" in modules else None) if state in ("ok", "warn", "bad") else {}
+            said.append(dict({"host": name, "target": "core@%s.home" % name, "ok": state in ("ok", "warn", "bad"), "state": state,
+                              "problems": problems, "notes": [], "facts": f, "output": ""}, **more))
+            n += 1
+
+
 def answers():
     hosts, said = [], []
     for name, role, modules, sites, state, problems, f in MACHINES:
@@ -75,6 +104,8 @@ def answers():
     linked = [{"name": "kiwi2", "mesh": "10.10.0.0/16", "exit": False, "internet": False, "shared": 2, "reach": ["cloud.papaya", "git.medlar"]}]
     sources = [{"name": "kiwi-modules-personal", "url": "https://github.com/someone/kiwi-modules-personal",
                 "commit": "d8464b8b8ffbe0ba9848fe1e2009c0e6f252204f", "tag": "v0.1.0", "modules": ["smartfritz"]}]
+    if os.environ.get("KIWI_PREVIEW_MANY"):
+        many(hosts, said)
     return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts, "module_sources": sources,
              "linked": linked},
             {"hosts": said})

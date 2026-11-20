@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
-from . import VERSION, form as formmod, health as healthmod, play as playmod, providers as providersmod, site as sitemod, util
+from . import VERSION, form as formmod, health as healthmod, machtable, play as playmod, providers as providersmod, site as sitemod, util
 from .control import ACTIONS, Control
 
 controlmod_job = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")      # a job's id, as Control.start makes it
@@ -116,6 +116,12 @@ text-decoration:none;color:var(--fg);min-width:0}.stat .lbl{display:flex;align-i
 .stat .lbl .ico{width:15px;height:15px}.stat b{font-size:1.75rem;line-height:1.2;font-weight:600;letter-spacing:-.02em}
 .stat b small{font-size:1rem;font-weight:500;color:var(--muted)}.stat .cap{color:var(--muted);font-size:.82rem;overflow-wrap:anywhere}
 .stat .track{margin-top:6px}
+.counts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.count{border:1px solid var(--line);border-radius:8px;padding:5px 11px;text-decoration:none;color:var(--fg);background:var(--card);font-size:.88rem}.count:hover,.count.on{border-color:var(--accent)}.count.bad b{color:var(--bad)}.count.warn b{color:var(--warn)}.count.ok b{color:var(--ok)}
+.mfilter{display:flex;gap:8px;margin:0 0 10px}.mfilter input{flex:1;min-width:0;margin:0}
+details.site{margin:0 0 12px}details.site>summary{padding:6px 2px;cursor:pointer}.sitec{font-size:.85rem;margin-left:6px}.sitec .ok{color:var(--ok)}.sitec .bad{color:var(--bad)}.sitec .warn{color:var(--warn)}.sitec .plain{color:var(--muted)}
+.tbl.mt{table-layout:fixed}.tbl.mt th.cm{width:17%}.tbl.mt th.cs{width:156px}.tbl.mt th.cr{width:160px}.tbl.mt th.cd{width:112px}.mini{display:inline-block;width:26px;height:8px;border-radius:3px;background:var(--line);overflow:hidden;margin-right:4px;vertical-align:middle}.tbl.mt th.cb{width:118px}.tbl.mt td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tbl.mt td,.tbl.mt th{padding-left:10px;padding-right:10px}.tbl.mt td.tick,.tbl.mt th.tick{width:30px;padding-right:0}.tbl.mt td{padding-top:8px;padding-bottom:8px}.tbl.mt .chip{margin-right:4px}.tbl.mt span.bad{color:var(--bad)}.tbl.mt span.warn{color:var(--warn)}
+.mbar{position:sticky;bottom:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--card);border:1px solid var(--accent);border-radius:10px;padding:8px 12px;margin-top:8px}.mbar[hidden]{display:none}
+@media(max-width:1400px){.tbl.mt .w4{display:none}}@media(max-width:1000px){.tbl.mt .w3{display:none}}@media(max-width:860px){.mbar{bottom:76px}}@media(max-width:600px){.tbl.mt .w2{display:none}.tbl.mt th.cm{width:auto}.tbl.mt th.cs{width:170px}}
 .machines{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .mach{display:flex;flex-direction:column;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
 text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82rem}.mach .state{font-size:.88rem}
@@ -497,20 +503,36 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 {% set running = machines|rejectattr("phase", "in", ["enroll", "build", "install", "invalid", "bare"])|list %}
 <h1>Machines</h1><div class="row"><span class="muted">{% if looked %}Checked {{ ago(looked) }} ago.{% endif %}</span>
 <form class="inline" method="post" action="/refresh">{{ tok }}<input type="hidden" name="back" value="/machines"><button>Check now</button></form></div>
-<div class="machines">{% for m in machines %}<a class="mach" href="/hosts/{{ m.name }}"><div class="row">
-<b><span class="dot {{ m.state }}{{ " busy" if looking }}"></span>{{ m.name }}</b><span class="state {{ m.state }}">{{ words(m.state) }}</span></div>
-<span class="cap">{{ kind(m.role, m.standby_of) }}{% for t in m.tags %} · {{ t }}{% endfor %}</span>
-{% for b in m.bars %}<div class="meter" title="{{ b.more }}"><span>{{ b.label }}</span><span class="track"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span><span>{{ b.pct }} %</span></div>{% endfor %}
-{% if m.chips %}<div class="chips">{% for c in m.chips[:3] %}<span class="chip">{{ c }}</span>{% endfor %}{% if m.chips|length > 3 %}<span class="chip">+{{ m.chips|length - 3 }}</span>{% endif %}</div>{% endif %}</a>
-{% endfor %}</div>{% if not machines %}<p class="muted">No machines yet.</p>{% endif %}
-{% if running|length > 1 %}<details><summary>Several at once</summary><form method="post" action="/run-many" class="card">{{ tok }}
-<p class="muted" style="margin:0 0 8px">The ticked machines, one after the other. A machine that fails does not stop the
-others; each one's History says how it went.</p>
-{% for m in running %}<label class="check"><input type="checkbox" name="host" value="{{ m.name }}"><span>{{ m.name }}
-<span class="muted small">{{ kind(m.role, m.standby_of) }}</span></span></label>{% endfor %}
-<div class="actions"><button name="action" value="status">Check them</button><button name="action" value="plan">Preview</button>
-<button class="primary" name="action" value="apply" onclick="return confirm('Apply to the ticked machines now? Services that changed restart for a moment.')">Apply</button></div>
-</form></details>{% endif %}
+{% if not machines %}<p class="muted">No machines yet.</p>{% else %}
+<div class="counts"><a class="count{{ " on" if not t.q }}" href="/machines"><b>{{ t.all }}</b> {{ "machine" if t.all == 1 else "machines" }}</a>
+{% for c in t.counts %}<a class="count {{ c.level }}{{ " on" if ("state:" ~ c.key) in t.q.split() }}" href="/machines?q={{ toggled(t.q, "state", c.key)|urlencode }}"
+title="Show only these"><b>{{ c.n }}</b> {{ c.words }}</a>{% endfor %}</div>
+<form class="mfilter" method="get" action="/machines" role="search"><input type="search" name="q" value="{{ t.q }}" aria-label="Filter the machines"
+placeholder="Filter: a name, state:down, site:{{ t.sites[0]|slug }}, part:dns, role:node"{% if t.q %} autofocus{% endif %}>
+<button>Filter</button>{% if t.q %}<a class="btn" href="/machines">Show all</a>{% endif %}</form>
+{% if t.filtered %}<p class="muted small" style="margin:0 0 8px">{{ t.shown }} of {{ t.all }} shown. This view has its own address: bookmark it.</p>{% endif %}
+{% if not t.shown %}<p class="muted">No machine matches. A filter is words like <code>state:down</code>, <code>site:NAME</code>,
+<code>part:NAME</code>, <code>role:node</code>, or a part of a machine's name; several narrow it down.</p>{% endif %}
+<form method="post" action="/run-many" id="mt">{{ tok }}
+{% for g in t.groups %}<details class="site" open><summary><b>{{ g.site }}</b> <span class="muted">({{ g.machines|length }})</span>
+<span class="sitec">{% if g.fine %}<span class="ok">all fine</span>{% else %}{% for c in g.counts %}<span class="{{ c.level }}">{{ c.n }} {{ c.words }}</span>{{ " · " if not loop.last }}{% endfor %}{% endif %}</span></summary>
+<div class="scroll"><table class="tbl mt"><thead><tr><th class="tick"><input type="checkbox" aria-label="Tick all of {{ g.site }}"
+onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type=checkbox]'))b.checked=this.checked;mtn()"></th>
+<th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb">Seen</th></tr></thead><tbody>
+{% for m in g.machines %}<tr><td class="tick">{% if m.phase not in fresh %}<input type="checkbox" name="host" value="{{ m.name }}" aria-label="Tick {{ m.name }}" onclick="mtn()">{% endif %}</td>
+<td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}</td>
+<td><span class="badge {{ level(m.st) }}{{ " busy" if looking }}"{% if m.story %} title="{{ m.story }}"{% endif %}>{{ stword(m.st) }}</span></td>
+<td class="w2">{{ kind(m.role, m.standby_of) }}</td>
+<td class="w3"{% if m.part_titles %} title="{{ m.part_titles|join(", ") }}"{% endif %}>{{ m.part_titles|join(", ") or "-" }}</td>
+<td class="w2">{% for b in m.bars %}<span class="mini" title="{{ b.label }} {{ b.pct }} %: {{ b.more }}"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span>{% else %}<span class="sm">-</span>{% endfor %}</td>
+<td class="w3">{% set bk = m.facts.backup %}{% if bk and bk.age is not none %}<span class="{{ "warn" if bk.age > 172800 }}">{{ age(bk.age) }} ago</span>{% elif bk %}<span class="bad">never</span>{% else %}<span class="sm">-</span>{% endif %}</td>
+<td class="w4 sm">{% if m.seen %}{{ ago(m.seen) }} ago{% else %}-{% endif %}</td></tr>
+{% endfor %}</tbody></table></div></details>{% endfor %}
+<div class="mbar" id="mbar" hidden><span id="mn"></span><button name="action" value="status">Check</button><button name="action" value="plan">Preview</button>
+<button class="primary" name="action" value="apply" onclick="return confirm('Apply to the ticked machines now? Services that changed restart for a moment.')">Apply</button>
+<span class="muted small">One after the other; one that fails does not stop the others.</span></div></form>
+<script>function mtn(){const n=document.querySelectorAll('#mt tbody input:checked').length,b=document.getElementById('mbar');b.hidden=!n;document.getElementById('mn').textContent=n+' ticked:'}mtn()</script>
+{% endif %}
 <details{% if take_error %} open{% endif %}><summary>A machine with the starter stick is waiting</summary>
 <form method="post" action="/machines/take-in" class="card">{{ tok }}
 <p class="muted" style="margin:0 0 8px">A machine you started from the starter stick, on this home network, shows an address and a
@@ -1799,6 +1821,8 @@ def make_app(control: Control):
             '%s <code class="sm">%s</code>' % (esc(titles[n]), esc(n)) if titles.get(n) and titles[n] != n else str(esc(n))
             for n in names or []))
     env.filters["parts"] = parts
+    env.filters["slug"] = machtable.slug
+    env.globals.update(toggled=machtable.toggled, stword=lambda k: machtable.WORDS.get(k, k), level=lambda k: machtable.LEVEL.get(k, "plain"))
     env.globals.update(brand_name=os.environ.get("KIWI_BRAND", ""), brand_accent=re.sub(r"[^#0-9a-fA-F]", "", os.environ.get("KIWI_ACCENT", ""))[:7],
                        about_text=os.environ.get("KIWI_ABOUT", ""), contact=os.environ.get("KIWI_CONTACT", ""))
     env.globals.update(version=VERSION, ago=ago, age=age, hint=hint, words=lambda s: WORDS.get(s, s),
@@ -1884,6 +1908,8 @@ def make_app(control: Control):
                         "sites": h.get("sites") or [], "vpn_ip": h.get("vpn_ip") or "", "next": h.get("next") or "",
                         "phase": h.get("phase") or "", "provider": h.get("provider") or "", "address": h.get("address") or "",
                         "here": bool(h.get("here")), "wol": bool(h.get("wol")),
+                        "locked": bool((s or {}).get("locked")), "stage": (s or {}).get("stage") or "",
+                        "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",
                         "problems": (s or {}).get("problems") or [], "notes": (s or {}).get("notes") or [],
@@ -2508,7 +2534,16 @@ def make_app(control: Control):
             return login_page()
         ms, st, _info = machines()
         from . import setup as setupmod
-        return page("machines.html", request, "/machines", machines=ms, looked=st.get("time"), looking=control.looking,
+        try:
+            titles = {m["name"]: m.get("title") for m in (control.schema() or {}).get("modules") or []}
+        except (KiwiError, OSError, ValueError, KeyError):
+            titles = {}
+        for m in ms:
+            m["kind"] = KIND.get(m["role"], m["role"])
+            m["part_titles"] = [titles.get(n) or n for n in m["modules"]]
+        t = machtable.table(ms, request.query_params.get("q") or "", titles)
+        return page("machines.html", request, "/machines", machines=ms, t=t, fresh=machtable.FRESH,
+                    looked=st.get("time"), looking=control.looking,
                     presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"),
                     take_error=request.query_params.get("take_error"), master_error=request.query_params.get("master_error"),
                     hosters={p.id: p.name for p in providersmod.PROVIDERS.values()})
@@ -2937,7 +2972,7 @@ def make_app(control: Control):
         if not u:
             return login_page()
         action = str(form.get("action") or "")
-        hosts = [str(h) for h in form.getlist("host")][:50]
+        hosts = list(dict.fromkeys(str(h) for h in form.getlist("host")))[:1000]
         if action not in ("status", "plan", "apply") or not hosts:
             return RedirectResponse("/machines", status_code=303)
         try:

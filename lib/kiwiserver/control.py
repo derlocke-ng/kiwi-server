@@ -2119,12 +2119,15 @@ class Control:
             self.looking = True             # from now, so that the page that follows says so
             threading.Thread(target=self.refresh_status, daemon=True).start()
 
-    def refresh_status(self):
+    def refresh_status(self, only=None):
         """A look at every machine. Each machine's answer is written as it comes (`status --stream`):
-        one that is off costs its own timeout, and the others are on the page meanwhile."""
+        one that is off costs its own timeout, and the others are on the page meanwhile.
+        `only`: a look at these machines alone (the ones an apply waits for, every minute); what
+        is known of the others stays, and so does the time of the last full look."""
         if self.locked():
             return None
-        self.looking = True
+        only = [n for n in (only or []) if HOST.match(n)]
+        self.looking = not only
         path = os.path.join(self.run, "status.json")
         try:
             before = self.status() or {}
@@ -2136,14 +2139,20 @@ class Control:
             wait = self.look_lock
             wait.acquire()
             asked, kept = [], set()
+            if self._busy is EVERY and only:
+                wait.release()              # a job has every machine: the next tick asks again
+                return None
             if self._busy is EVERY:
                 wait.release()
                 wait = self.lock
                 wait.acquire()
-            elif self._busy:
-                kept = set(self._busy)
+            elif self._busy or only:
                 names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
+                kept = set(self._busy or ()) | ({n for n in names if n not in only} if only else set())
                 asked = [n for n in names if n not in kept]
+                if not asked and only:      # a job has the machines this look is for
+                    wait.release()
+                    return None
                 if not asked:               # the job has every machine there is
                     wait.release()
                     wait = self.lock
@@ -2188,10 +2197,11 @@ class Control:
                         raise ValueError
                 except ValueError:
                     data = {"hosts": [], "error": (err or "".join(tail) or "no output").strip()[-500:]}
-            data["time"] = self.clock()
+            data["time"] = (before.get("time") or self.clock()) if only else self.clock()
             self._put(path, json.dumps(data))
             try:
-                self.fleet_info(fresh=True)
+                if not only:
+                    self.fleet_info(fresh=True)
             except (OSError, ValueError):
                 pass
             try:                            # a machine that is back gets the apply that waited for it
@@ -2475,6 +2485,8 @@ class Control:
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                     elif any(e.get("kind") == "waiting" for e in events):
                         last_status = now - self.status_minutes * 60 + 120      # something is gone: look again soon
+                elif self.waiting():        # an apply waits for a machine: ask that machine alone, every tick
+                    self.refresh_status(only=sorted(self.waiting()))
                 if now - self._riseup_at >= 6 * 3600:      # a Riseup certificate running out: renewed by an apply
                     self._riseup_at = now
                     for name in self.riseup_due():

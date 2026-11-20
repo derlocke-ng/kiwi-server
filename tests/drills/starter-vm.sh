@@ -38,9 +38,9 @@
 # VMHOST=NAME (an ssh name): the VM runs on that machine, not on this computer. The image is
 # built here (the toolchain is here); this checkout's code, the image and this script go to
 # VD there (default /mnt/nvme_2tb/share/virt/kiwi-starter) and the step runs there. That
-# machine needs QEMU, swtpm, python3 and curl, nothing of kiwi-server's. `windows` and `typed`
-# are left out there when it cannot make a Windows disk (sgdisk, mkfs.ntfs); `first-node` runs
-# on this computer only (it needs the hoster's token).
+# machine needs QEMU, swtpm, python3 and curl, nothing of kiwi-server's. When it cannot make a
+# Windows disk (sgdisk, mkfs.ntfs), the one for `windows` and `typed` is made here and sent;
+# `first-node` runs on this computer only (it needs the hoster's token).
 #
 # WORKDIR (default ~/kiwi-vm/starter) keeps the ISO, the disks, serial-*.log and qemu.pid.
 # Base ISO: $KIWI_STARTER_BASE, else the newest Fedora CoreOS live ISO in ~/.cache/kiwi-server.
@@ -50,6 +50,26 @@ self=$here/tests/drills/$(basename "$0")
 w=$HOME/kiwi-vm/starter
 if [ $# -ge 2 ]; then w=$1; shift; fi
 cmd=${1:-all}
+windows_disk() {    # NAME: 20 GB, GPT, a Microsoft reserved partition and a 1 GB NTFS one, as Windows leaves them
+    local start
+    # on a machine that cannot make one (the VM's host): the one made where the drill was started
+    if ! { command -v sgdisk >/dev/null && command -v mkfs.ntfs >/dev/null; } && [ -s win-template.tar.gz ]; then
+        rm -f "$1" win-template.img
+        tar -xSzf win-template.tar.gz && mv win-template.img "$1"
+        return
+    fi
+    rm -f "$1" ntfs.part
+    truncate -s 20G "$1"
+    sgdisk -n 1:2048:+16M -t 1:0c01 -c 1:"Microsoft reserved partition" \
+        -n 2:0:+1G -t 2:0700 -c 2:"Basic data partition" "$1" >/dev/null || return 1
+    start=$(sgdisk -i 2 "$1" | awk '/^First sector/ { print $3 }')
+    [ -n "$start" ] || return 1
+    truncate -s 1G ntfs.part
+    mkfs.ntfs -q -F -Q -L Windows ntfs.part >/dev/null 2>&1 || return 1
+    dd if=ntfs.part of="$1" bs=512 seek="$start" conv=notrunc,sparse status=none
+    rm -f ntfs.part
+}
+
 if [ -n "${VMHOST:-}" ] && [ "${KIWI_ON_VMHOST:-}" != 1 ]; then
     VD=${VD:-/mnt/nvme_2tb/share/virt/kiwi-starter}
     [ "$cmd" = first-node ] && { echo "first-node runs on this computer only: it needs the hoster's token" >&2; exit 2; }
@@ -64,6 +84,12 @@ if [ -n "${VMHOST:-}" ] && [ "${KIWI_ON_VMHOST:-}" != 1 ]; then
         r=$(ssh -o BatchMode=yes "$VMHOST" "cat '$VD/work/starter-debug.iso' 2>/dev/null | sha256sum | cut -c1-64")
         [ "$l" = "$r" ] || scp -q "$w/starter-debug.iso" "$VMHOST:$VD/work/starter-debug.iso" || exit 2
     fi
+    case $cmd in windows|typed|all)     # a Windows disk is made here when that machine cannot, and sent (20 GB of nothing: small)
+        if ! ssh -o BatchMode=yes "$VMHOST" "command -v sgdisk >/dev/null && command -v mkfs.ntfs >/dev/null"; then
+            mkdir -p "$w" && (cd "$w" && windows_disk win-template.img && tar -cSzf win-template.tar.gz win-template.img && rm -f win-template.img) \
+                && scp -q "$w/win-template.tar.gz" "$VMHOST:$VD/work/win-template.tar.gz" || echo "no Windows disk could be made here: windows and typed are left out" >&2
+        fi ;;
+    esac
     [ "$cmd" = build ] && exit 0
     ssh -o BatchMode=yes "$VMHOST" "cd '$VD' && KIWI_ON_VMHOST=1 TPM='${TPM:-1}' LOG='${LOG:-}' P8740='${P8740:-18740}' P80='${P80:-18080}' P8743='${P8743:-18743}' \
         bash src/tests/drills/starter-vm.sh '$VD/work' '$cmd'"
@@ -227,20 +253,6 @@ inspect() {     # LOG: no password, mDNS, a new code after the container restart
     issue=$(sh_vm 'cat /etc/issue.d/50-kiwi.issue')
     [ "$new" != "$old" ] && grep -qF "$new" <<< "$issue" && ! grep -qF "$old" <<< "$issue"
     check $? "after a restart of the container the screen shows its new code only ($old -> $new)"
-}
-
-windows_disk() {    # NAME: 20 GB, GPT, a Microsoft reserved partition and a 1 GB NTFS one, as Windows leaves them
-    local start
-    rm -f "$1" ntfs.part
-    truncate -s 20G "$1"
-    sgdisk -n 1:2048:+16M -t 1:0c01 -c 1:"Microsoft reserved partition" \
-        -n 2:0:+1G -t 2:0700 -c 2:"Basic data partition" "$1" >/dev/null || return 1
-    start=$(sgdisk -i 2 "$1" | awk '/^First sector/ { print $3 }')
-    [ -n "$start" ] || return 1
-    truncate -s 1G ntfs.part
-    mkfs.ntfs -q -F -Q -L Windows ntfs.part >/dev/null 2>&1 || return 1
-    dd if=ntfs.part of="$1" bs=512 seek="$start" conv=notrunc,sparse status=none
-    rm -f ntfs.part
 }
 
 type_serial() {     # TEXT: typed on the VM's first serial console, Enter at the end
@@ -662,8 +674,8 @@ all)
     steps="build install again two-disks small windows typed"
     if [ "${KIWI_ON_VMHOST:-}" = 1 ]; then      # on the VM's host: the image came built; a Windows disk only where it can be made
         steps="install again two-disks small"
-        if command -v sgdisk >/dev/null && command -v mkfs.ntfs >/dev/null; then steps="$steps windows typed"
-        else say "left out here: windows, typed (no sgdisk or mkfs.ntfs on this machine)"; fi
+        if { command -v sgdisk >/dev/null && command -v mkfs.ntfs >/dev/null; } || [ -s win-template.tar.gz ]; then steps="$steps windows typed"
+        else say "left out here: windows, typed (no Windows disk can be made on this machine, and none was sent)"; fi
     fi
     for c in $steps; do bash "$self" "$w" "$c" || fails=$((fails + 1)); done
     ;;

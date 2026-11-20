@@ -222,9 +222,11 @@ def _home_address_as_mesh(host, where):
     rs = host.role_settings
     if not rs.get("vpn_ip"):
         rs["vpn_ip"] = str(iface.ip)
-    # and the home network stands in for the mesh: what is "ours" (admin pages, fail2ban) is the home's
-    if rs.get("mesh_subnet") in (None, "", "10.8.0.0/16"):
-        rs["mesh_subnet"] = str(iface.network)
+    # and the home network stands in for the mesh: what is "ours" (admin pages, fail2ban) is the home's.
+    # Whatever mesh the fleet has in mind for later: this machine is on none. (Only the default mesh
+    # was replaced until 0.108.0; a new network gets a mesh of its own since kiwi-server 2.2xx, so the
+    # control page of a network without a master let the future mesh in and refused the home: 403.)
+    rs["mesh_subnet"] = str(iface.network)
 
 
 def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None, mesh_only=None):

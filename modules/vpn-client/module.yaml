@@ -126,7 +126,7 @@ settings:
     default: 0
   - key: dot_providers
     label: DNS-over-TLS provider
-    help: "gluetun resolves through DNS-over-TLS to this provider (cloudflare, google, quad9, …). On a master this is where the whole network's lookups end up, through the exit tunnel. Cloudflare and Google answer every name; quad9 leaves out names it holds to be malicious, which blocks more than your own blocklist does."
+    help: "gluetun resolves through DNS-over-TLS to this provider (cloudflare, google, quad9, …). On a master this is where the whole network's lookups end up, through the exit tunnel. Cloudflare answers every name and passes nothing about the asker on. Google answers every name too, but tells the sites' name servers the subnet the question came from (ECS): the exit's, which shows a VPN to a site you visit over your home line. quad9 leaves out names it holds to be malicious, which blocks more than your own blocklist does."
     default: cloudflare
   - key: vpn_input_ports
     group: Advanced

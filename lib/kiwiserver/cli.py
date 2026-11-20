@@ -2954,6 +2954,13 @@ def cmd_check(args):
     util.say("all %s pass" % util.count(checked, "check"))
 
 
+# The control node's own machine applies itself as a unit of its own, which outlives the connection
+# and the restart of the container that asked. %s: the command, quoted. While that unit runs, a
+# second start says so and starts nothing.
+SELF_APPLY = ("if systemctl is-active -q kiwi-self-apply.service 2>/dev/null; then echo 'kiwi-self-apply: running'; exit 0; fi; "
+              "systemctl reset-failed kiwi-self-apply 2>/dev/null; systemd-run --collect --unit=kiwi-self-apply bash -c %s")
+
+
 def cmd_apply(args):
     """Re-render a host and run the role script on it: settings changed, a
     certificate renewed, a module added — without a reinstall."""
@@ -3029,10 +3036,15 @@ def cmd_apply(args):
                 # the control node applies itself: the role may restart the container this runs in,
                 # so it runs as a unit of its own on the machine and outlives the connection
                 # a machine the starter stick installed takes away what the starter needed, when the role is in
-                remote.run(tgt, "systemctl reset-failed kiwi-self-apply 2>/dev/null; systemd-run --collect "
-                                "--unit=kiwi-self-apply bash -c %s" % shlex.quote(
-                                    "bash /var/lib/kiwi-server/role.sh --force" + (" && " + UPDATE_IMAGES if update else "")
-                                    + " && { [ ! -x %s ] || %s; }" % (startermod.DONE, startermod.DONE)))
+                # asked a second time while it still applies itself (a second "Set it up"): that is no error,
+                # the first one goes on (20 Nov 2026: "Unit kiwi-self-apply.service was already loaded")
+                out = remote.run(tgt, SELF_APPLY % shlex.quote(
+                    "bash /var/lib/kiwi-server/role.sh --force" + (" && " + UPDATE_IMAGES if update else "")
+                    + " && { [ ! -x %s ] || %s; }" % (startermod.DONE, startermod.DONE))).decode(errors="replace")
+                if "kiwi-self-apply: running" in out:
+                    util.say("%s: it is applying itself already: nothing started a second time; on the machine: "
+                             "journalctl -u kiwi-self-apply -f" % h.name)
+                    return
                 util.say("%s: applying itself, detached (this page may drop for a moment); on the machine: "
                          "journalctl -u kiwi-self-apply -f" % h.name)
                 return

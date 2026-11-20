@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.270.0 — "No master yet" opens its control page at home again
+
+Found by running the starter stick's drill on the released version (`tests/drills/starter-vm.sh
+alone`, its VM on another machine).
+
+- **Fixed (kiwi-modules 0.108.0): a network without a master refused its own home.** Its
+  control page let in the VPN the network has in mind for later and answered 403 to the home
+  network, since new networks get a mesh of their own (2.2xx). The home network stands in
+  for the mesh on a machine off the VPN, whatever mesh is planned.
+- **Fixed: a second "Set it up" while the machine applies itself ended as failed** ("Unit
+  kiwi-self-apply.service was already loaded"). It now says that the machine is applying
+  itself already and starts nothing a second time.
+- Docs: what the resolver passes on about who asks (no client subnet with Cloudflare; Google
+  passes the exit's; one of your own cannot be sent), docs/network.md, DNS.
+- The starter drill makes its Windows disk where it is started and sends it when the VM's
+  host cannot make one.
+
 ## 2.269.0 — install media left in a machine do not install it again
 
 Tried in VMs whose firmware starts from the media first (`tests/drills/install-guard-vm.sh`:

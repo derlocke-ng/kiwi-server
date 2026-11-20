@@ -39,6 +39,11 @@ This tree carries both as vendored copies pinned by release in `VENDORED`
 tree's, byte for byte (`tests/golden`). A change to them is made there,
 released by tag, and vendored here with `tools/vendor.sh`.
 
+The desktop app uses the kit of
+[kiwi-template](https://github.com/derlocke-ng/kiwi-template) (the parts every
+Kiwi app shares: window, header, job strip) the same way: a copy in `gui/kit/`,
+pinned as `kiwi-template=vX.Y.Z` in `VENDORED`. It is never edited here.
+
 ## Releases
 
 Release notes:

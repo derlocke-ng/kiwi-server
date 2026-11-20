@@ -164,7 +164,8 @@ node to do everything, and can start a new network with the install media.
 3. The store, a timer per machine, the kept answers.
 4. The Machines table on the page, with sites; no cap at 50.
 5. `/api/v1` and pushed changes; the app reads the store.
-6. The app as a package on the kit: remembered size, job strip, Preferences. No new screens.
+6. The app as a package on the kit: remembered size, job strip (built in 2.254), Preferences.
+   No new screens.
 7. A kit release with pills, chips, list, item page and timeline; the app uses them; linked
    networks as a choice.
 

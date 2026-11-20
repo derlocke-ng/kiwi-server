@@ -3040,6 +3040,12 @@ try:
     import kiwi_icon  # noqa: E402
 except ImportError:
     kiwi_icon = None
+# The job strip with the filling kiwi, and the output pane: kiwi-template's kit (gui/kit/, a copy
+# pinned in VENDORED, never edited here). Without it the app keeps its plain progress bar.
+try:
+    from kit.progress import JobArea  # noqa: E402
+except ImportError:
+    JobArea = None
 
 
 def icon_colors():
@@ -4805,7 +4811,9 @@ class Window(Adw.ApplicationWindow):
         bell.add_overlay(self.bell_badge)
         self.b_bell = Gtk.MenuButton(child=bell, popover=pop, tooltip_text="Messages: what the app said, and what to do")
         self.content_hb.pack_end(self.b_bell)
-        self.b_log = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Show output")
+        self.jobs = JobArea() if JobArea else None
+        self.b_log = (self.jobs.output_button if self.jobs
+                      else Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Show output"))
         self.content_hb.pack_end(self.b_log)
         self.b_stop = Gtk.Button(icon_name="process-stop-symbolic", tooltip_text="Stop what is running", visible=False)
         self.b_stop.add_css_class("destructive-action")
@@ -4842,19 +4850,22 @@ class Window(Adw.ApplicationWindow):
                                              min_sidebar_width=250, max_sidebar_width=340, sidebar_width_fraction=.27)
 
         # ---- log ----
-        self.logbuf = Gtk.TextBuffer()
-        self.logview = Gtk.TextView(buffer=self.logbuf, editable=False, monospace=True, top_margin=6, left_margin=6)
-        logscroll = Gtk.ScrolledWindow(child=self.logview)
-        logscroll.set_size_request(-1, 200)
-        self.logrev = Gtk.Revealer(child=logscroll, transition_type=Gtk.RevealerTransitionType.SLIDE_UP)
-        self.b_log.bind_property("active", self.logrev, "reveal-child", GObject.BindingFlags.BIDIRECTIONAL)
         self.progress = Gtk.ProgressBar(visible=False)
-
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         body.append(self.progress)
         self.split.set_vexpand(True)
         body.append(self.split)
-        body.append(self.logrev)
+        if self.jobs:                       # the kit's strip (the filling kiwi) and its output pane
+            self.logbuf, self.logview = self.jobs.buffer, self.jobs.view
+            body.append(self.jobs)
+        else:
+            self.logbuf = Gtk.TextBuffer()
+            self.logview = Gtk.TextView(buffer=self.logbuf, editable=False, monospace=True, top_margin=6, left_margin=6)
+            logscroll = Gtk.ScrolledWindow(child=self.logview)
+            logscroll.set_size_request(-1, 200)
+            self.logrev = Gtk.Revealer(child=logscroll, transition_type=Gtk.RevealerTransitionType.SLIDE_UP)
+            self.b_log.bind_property("active", self.logrev, "reveal-child", GObject.BindingFlags.BIDIRECTIONAL)
+            body.append(self.logrev)
         self.toasts = Adw.ToastOverlay(child=body)
         self.set_content(self.toasts)
 
@@ -6824,8 +6835,12 @@ class Window(Adw.ApplicationWindow):
         if self.busy:
             return
         args = self.via_control_node(args) or args
+        # several machines at once: the kiwi fills by the machine (each says ":: NAME: applied")
+        many = [a for a in args[2:] if not a.startswith("-")] if args[:1] == ["apply"] else []
+        self._job_steps = len(many) if len(many) > 1 else 0
         self.set_busy(True, msg)
-        self.b_log.set_active(True)
+        if not self.jobs:
+            self.b_log.set_active(True)     # with the strip the output opens by its button, or when a job fails
         agent_ask({"forget": True}, 2)      # what runs now may change what the resident kiwi-server keeps
         cmd = [self.cli] + list(args)
 
@@ -6839,6 +6854,8 @@ class Window(Adw.ApplicationWindow):
                 for line in proc.stdout:
                     said.append(line)
                     GLib.idle_add(self.append_log, line)
+                    if self.jobs and self._job_steps and re.match(r":: \S+: applied\s*$", line):
+                        GLib.idle_add(self.jobs.step)
                 rc = proc.wait()
             except Exception as e:  # noqa: BLE001
                 GLib.idle_add(self.append_log, "%s\n" % e)
@@ -6861,6 +6878,7 @@ class Window(Adw.ApplicationWindow):
         self.append_log("\n(stopped here%s)\n" % (", hard" if again else ""))
 
     def after_spawn(self, rc, said="", args=()):
+        self._job_ok = rc == 0
         self.set_busy(False, "")
         if rc != 0 and args[:1] == ["apply"] and "host key is not the one on record" in said:
             self.other_host_key(args, said)
@@ -6898,9 +6916,16 @@ class Window(Adw.ApplicationWindow):
 
     def set_busy(self, busy, msg):
         self.busy = busy
-        self.progress.set_visible(busy)
+        if self.jobs:                       # the kit's strip: the kiwi fills, or goes round with nothing to count
+            if busy:
+                self.jobs.start(msg or "Working…", getattr(self, "_job_steps", 0))
+            elif self.jobs.busy:
+                self.jobs.finish(getattr(self, "_job_ok", True))
+                self._job_steps, self._job_ok = 0, True
+        else:
+            self.progress.set_visible(busy)
         self.b_stop.set_visible(busy)
-        if busy and self._pulse is None:
+        if busy and self._pulse is None and not self.jobs:
             self._pulse = GLib.timeout_add(120, self._do_pulse)
         elif not busy and self._pulse is not None:
             GLib.source_remove(self._pulse)

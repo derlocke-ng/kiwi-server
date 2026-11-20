@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.254.0 — the app shows its jobs in the kit's strip
+
+- **A running job shows as a strip with the filling kiwi** under the app's window, as in
+  kiwi-updater: what runs, and for an apply to several machines how many are done ("2 of 3
+  done"). Its output opens from the strip. It is the kit of kiwi-template 0.1.3, now vendored
+  in `gui/kit/` and pinned in `VENDORED` (`tools/vendor.sh kiwi-template=vX.Y.Z`); the
+  installer copies it beside the app.
+- `tools/private-session.sh` no longer prints permission errors for processes that are not its own.
+
 ## 2.253.0 — faster pages, and a look that shows each machine as it answers
 
 - **The look at the machines writes each machine as it answers** (`status --stream`): one that is

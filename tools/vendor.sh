@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tools/vendor.sh — kiwi-server carries kiwi-modules (the renderer, the modules,
-# the profiles) and kiwi-stack (the machine side) as vendored copies pinned by
-# release tag in VENDORED. Development of those files happens in their own
+# the profiles), kiwi-stack (the machine side) and kiwi-template's kit (what every
+# Kiwi desktop app shares: gui/kit/) as vendored copies pinned by release tag in
+# VENDORED. Development of those files happens in their own
 # repositories; this tool brings a release in, or checks that the tree carries
 # exactly the pinned releases. Submodules and pip do not survive the ostree
 # desktops kiwi-updater installs onto, so the files are copied.
@@ -19,14 +20,14 @@ check=0
 [[ ${1:-} == --check ]] && { check=1; shift; }
 for arg in "$@"; do
     case $arg in
-        kiwi-modules=*|kiwi-stack=*)
+        kiwi-modules=*|kiwi-stack=*|kiwi-template=*)
             name=${arg%%=*} tag=${arg#*=}
             if grep -q "^$name=" VENDORED; then sed -i "s|^$name=.*|$name=$tag|" VENDORED; else echo "$name=$tag" >> VENDORED; fi ;;
-        *) echo "usage: tools/vendor.sh [--check] [kiwi-modules=TAG] [kiwi-stack=TAG]" >&2; exit 2 ;;
+        *) echo "usage: tools/vendor.sh [--check] [kiwi-modules=TAG] [kiwi-stack=TAG] [kiwi-template=TAG]" >&2; exit 2 ;;
     esac
 done
 pin() { sed -n "s/^$1=//p" VENDORED | head -n 1; }
-modules_tag=$(pin kiwi-modules); stack_tag=$(pin kiwi-stack)
+modules_tag=$(pin kiwi-modules); stack_tag=$(pin kiwi-stack); template_tag=$(pin kiwi-template)
 [[ -n $modules_tag && -n $stack_tag ]] || { echo "error: VENDORED must name kiwi-modules=TAG and kiwi-stack=TAG" >&2; exit 1; }
 
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
@@ -41,6 +42,7 @@ fetch() { # REPO TAG DEST — the release's tree
 }
 fetch kiwi-modules "$modules_tag" "$work/modules"
 fetch kiwi-stack "$stack_tag" "$work/stack"
+[[ -z $template_tag ]] || fetch kiwi-template "$template_tag" "$work/template"
 
 # release path : path in this tree; a trailing slash copies the tree
 map=(
@@ -55,6 +57,9 @@ for r in "$work"/modules/profiles/*/role.yaml; do
     name=$(basename "$(dirname "$r")")
     map+=("modules:profiles/$name/role.yaml:roles/$name/role.yaml")
 done
+
+# the kit of the Kiwi desktop apps, for the app (gui/kiwi-server-gui): never edited here
+[[ -z $template_tag ]] || map+=("template:src/kiwi_template/kit/:gui/kit/")
 
 drift=0
 one() { # SRC_ROOT:SRC:DST
@@ -87,7 +92,7 @@ one() { # SRC_ROOT:SRC:DST
 for m in "${map[@]}"; do one "$m"; done
 
 if [[ $check -eq 1 ]]; then
-    [[ $drift -eq 0 ]] && echo "vendor: the tree carries kiwi-modules $modules_tag and kiwi-stack $stack_tag"
+    [[ $drift -eq 0 ]] && echo "vendor: the tree carries kiwi-modules $modules_tag, kiwi-stack $stack_tag${template_tag:+ and the kit of kiwi-template $template_tag}"
     exit $drift
 fi
-echo "vendor: kiwi-modules $modules_tag and kiwi-stack $stack_tag copied in — review, run the tests, commit"
+echo "vendor: kiwi-modules $modules_tag, kiwi-stack $stack_tag${template_tag:+ and the kit of kiwi-template $template_tag} copied in — review, run the tests, commit"

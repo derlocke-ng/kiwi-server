@@ -16100,6 +16100,7 @@ class TestRecovery(Base):
         kept = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
         machine = next(k for k in self.report(kept)[0]["cases"] if k["id"] == "machine")
         self.assertIn("Kept ready on a second machine, with its data a minute old at most: vault of papaya on lychee", machine["by_itself"])
+        self.assertIn("gone for 5 minutes and the second machine does not reach it either, the control node switches", machine["by_itself"])
         self.assertEqual((machine["how"][0]["label"], machine["how"][0]["command"], machine["how"][0]["page"]),
                          ("papaya is gone: vault goes on on lychee", "kiwi-server switch fleet.yaml vault papaya --yes",
                           "/hosts/papaya?tab=services"))

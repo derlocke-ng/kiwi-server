@@ -2979,8 +2979,20 @@ def cmd_apply(args):
                 from . import opener as openermod
                 openermod.after_apply(h, tgt, servers)      # opens the way for a machine away from home (openers)
             agentmod.after_apply(fleet, h, tgt, ms)     # reports to the control node every minute (the agent)
-            if partstandby.links(fleet):                # a standby for a part: this machine gives or fetches its data
+            # a standby for a part: this machine gives or fetches its data. Also when it no longer does:
+            # a fetcher left behind would fetch the old machine's stale copy over a part that now runs
+            # here (found by the standby drill, 20 Nov 2026). The fleet remembers who has a link.
+            had = h.name in (fleet_state(fleet).get("standby_links") or [])
+            if had or any(h.name in (a, m) for a, _p, m in partstandby.links(fleet)):
                 partstandby.after_apply(fleet, h, tgt, roles, ms, r.script)
+                has = any(h.name in (a, m) for a, _p, m in partstandby.links(fleet))
+                if has != had:
+                    with book, state_lock(fleet):
+                        state = fleet_state(fleet)
+                        names = set(state.get("standby_links") or [])
+                        (names.add if has else names.discard)(h.name)
+                        state["standby_links"] = sorted(names)
+                        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)

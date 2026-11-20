@@ -110,20 +110,17 @@ The designs and the order to build in are in
    - Boards: kiwi-server does not build the encrypted Armbian image.
    - netcup: the rescue system, snapshots and user images are not used.
    - VLANs: the gateway's DHCP, DNS and routing per VLAN.
-   - Install media install again at every boot while they stay in the machine.
-     There is no guard and no `--reinstall`.
    - The Android app uses status, machines, activity and the registry only. The
      control node's other routes (2.213.0) wait for it.
 3. **The page and the app lack what the command line has.** The app's settings
-   do not go through the control node's API. Neither opens an unsigned copy of
-   the network. The page does
-   not take a `.tar.enc` copy or a synced folder.
+   do not go through the control node's API. The page does not take a
+   `.tar.enc` copy or a synced folder.
 4. **Asked for, not started.** Netboot (PXE). A backup store per service; DNS,
    DHCP and the gateway twice; site controllers; high availability at one site
    (the order is in design/scale.md). The join token, and the phoenix image
    with the container images inside. More hosters (cloud-init, Hetzner first),
-   IPv6 end to end, NFSv4 with kernel TLS. `ssh-config`, `probe`,
-   `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
+   IPv6 end to end, NFSv4 with kernel TLS. `probe`,
+   `build --boot`, `images.lock`, `migrate`, `master.exit`.
    Data kept across a reinstall on one disk (design/data-partition.md; four
    questions wait for the owner). Backups of the desktop and the phone, the
    desktop client, Windows. Mastodon, Matrix and email modules (the owner: not
@@ -154,7 +151,7 @@ two); the standby takes over instead.
   file settings with a conventional fallback, module `validate:` rules, port
   collision check, static container addresses, DNAT through the VPN client,
   nginx per service name with fleet-CA certificates, one resolver chain
-  (node Pi-hole → master Pi-hole → Quad9), Mullvad SOCKS5 records refreshed
+  (node Pi-hole → master Pi-hole → a public resolver), Mullvad SOCKS5 records refreshed
   by a host timer, client groups on the master.
 - Management: apply, status, enroll (hosts, phones, routers; groups, split
   tunnel, QR), fleet backup to the nodes and restore from one, CA, OpenWrt
@@ -260,10 +257,11 @@ Stack and first boot:
 14. The install media reinstalls the machine on every boot while the stick
     stays first in the boot order. *Since 2.7.0 the media power the machine
     off when the install is done (`install.on_done: poweroff`), so the stick
-    is removed before the next boot.* Still open: an install guard in both
-    ISOs (a fingerprint of a kiwi install on the target disk, checked by a
-    `--pre-install` script and the preseed's early command) with a
-    `--reinstall` override, for media that cannot be removed.
+    is removed before the next boot. Since 2.269.0 media that stay in do
+    not install a second time: each ISO has an id, the installer leaves it on
+    the installed system's `/boot`, and its guard looks for it before anything
+    is erased (a `--pre-install` script, the preseed's early command). An ISO
+    built again installs.* (iso.py, targets/debian.py)
 15. The role script with every secret stays at /var/lib/kiwi-server/role.sh
     for the machine's lifetime; the Debian LUKS passphrase also survives in
     d-i's saved debconf database. Shred after a successful run, clean
@@ -792,14 +790,16 @@ non-expert":
 - An audit of what leaves the network: the host's own traffic (updates,
   image pulls, the Mullvad list, backups) uses the raw ISP link; make that
   visible and optionally route it too.
-- Pi-hole DNSSEC as a one-line setting.
+- *Pi-hole DNSSEC as a one-line setting: tried and dropped on 20 November 2026. The exit's
+  resolver checks already and hands out no keys; with Pi-hole's check on, every public name
+  failed (network.md, DNS).*
 - Image digests recorded per render (`images.lock`) so a restore reproduces
   what it backs up.
 
 *Status: built are the status page and the messages (2.108.0), a new seed for
 the secrets inside the services (`rotate FLEET seed`, 2.74.0), and SSH off
 port 22 with fail2ban (2.56.0). Not built: `kiwi-stack health`, `migrate`,
-Pi-hole DNSSEC, `images.lock`.*
+`images.lock`.*
 
 Asked for by the owner in October 2026, for the test round and after:
 

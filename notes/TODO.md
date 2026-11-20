@@ -21,14 +21,17 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 10. The agent reports only: orders and the neighbours' vote are missing.
 11. ~~A standby follows folders, not named volumes.~~ Done 20 Nov: named volumes are followed (the pastebin, medlar to lychee: fetched within 60 s, switch with nothing lost). The drill found that a public name stayed dead after a move or switch: the proxy's `public` now goes along, the old one closes when nothing public is left, and the certificate is asked for again after the master's apply.
 12. A switch takes six to eight minutes: parts kept ready, the name on both machines, the
-    switch by itself (docs/design/scale.md).
+    switch by itself (docs/design/scale.md). Measured 20 Nov (vault, quince to medlar): the part
+    itself is away 55 seconds, and `switch` says so; its name follows as the machines that
+    answer for names are applied (the master next, the home's after it), which is the rest of
+    the minutes. The name on both machines is what would take those away.
 13. Moving a whole network: a plan only.
 14. UI steps 3 and 5 to 7 (docs/design/ui.md): one store, `/api/v1`, pushed changes, the app on
     the kit (the job strip is there).
-15. Boards: kiwi-server builds the encrypted Armbian image, first unlock, LUKS grown.
+15. Boards: kiwi-server builds the encrypted Armbian image, first unlock~~, LUKS grown~~. The volume is grown by the first apply now (unlock.GROW_SCRIPT; on lime, already grown by hand, an apply leaves it alone: 14476 of 14492 MiB). Open: the image itself and the first unlock at the DHCP address. Ideas, not tried (need a board flashed anew): (a) the first unlock without knowing the address: the board's link-local IPv6 address follows from its MAC (fe80::, EUI-64), so a machine of the same LAN can reach its boot system there with no scan and no DHCP lease; (b) the image: one encrypted image per board built once (CI) with a known first key, and the first apply swaps the key, binds the rings and re-encrypts with a new volume key (the published one is known to all). (b) is a decision about secrets at rest: the owner's.
 16. netcup: rescue system, snapshots, user images.
 17. VLANs: the gateway's DHCP, DNS and routing per VLAN.
-18. Install media reinstall at every boot: no guard, no `--reinstall`. (Looked at on 20 Nov: bigger than it reads. It needs a mark on the target's boot partition written by both installers, a check in both, and the stick's boot loader starting the disk when the mark is there; with VM tests for uCore and Debian, UEFI and BIOS.)
+18. ~~Install media reinstall at every boot: no guard, no `--reinstall`.~~ Done in 2.269.0: each ISO has an id, the installer leaves it on the installed system's `/boot`, its guard looks for it before anything is erased. Tried in VMs on sh3 (`tests/drills/install-guard-vm.sh`): uCore with UEFI (starts from its disk by itself), uCore with BIOS and Debian (switch themselves off), all passed; media made again install. `vps install` does not send used media twice.
 19. ~~`kiwi-stack health`: clock step, fragmentation.~~ Done in every machine's report instead (the agent sends it each minute): a clock set back is a warning until the time has caught up, packets cut into pieces a note for an hour. Tried on quince: its clock set back four minutes was in `status` within the agent's minute; pings too large for the LAN showed as pieces.
 20. kiwi-app uses status, machines, activity and the registry only.
 
@@ -40,7 +43,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 24. ~~App: a machine's History and status chips.~~ Done: "History" on a machine's page opens the control node's activity for that machine; the chips (set up, last apply, backup, fullest disk) are under its name, by the page's rules (a test holds the two equal).
 25. ~~App: open the game page.~~ Done: "Open the game page" beside "Open the status page" (the network's settings).
 26. ~~Page: link a new network by card.~~ Done: Linked networks, "Link a new network": download this network's card, paste the other's.
-27. Page and app: open an unsigned copy; page: a `.tar.enc` copy, a synced folder.
+27. ~~Page and app: open an unsigned copy~~; page: a `.tar.enc` copy, a synced folder. Unsigned: done (the app's *Open it anyway*, a tick on the page's form). Still open, and rare: the page taking a copy of the older passphrase kind, and a network kept in a synced folder.
 
 ## D. Asked for, not started
 
@@ -49,7 +52,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
     availability at one site.
 30. The join token; the phoenix image with the container images inside.
 31. More hosters (cloud-init, Hetzner first), IPv6, NFSv4 with kernel TLS.
-32. `ssh-config`, `probe`, `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
+32. ~~`ssh-config`~~ (built: `kiwi-server ssh-config FLEET [--write]`, tried on the test fleet), `probe`, `build --boot`, `images.lock`, `migrate`, ~~Pi-hole DNSSEC~~, `master.exit`. DNSSEC: tried 20 Nov as one setting on lime and on sorbet, taken out again: the exit's resolver already checks (a badly signed name gets no address) and gives out no keys, so Pi-hole's own check failed every public name (docs/network.md, DNS).
 33. Data kept across a reinstall on one disk (four questions wait for the owner,
     docs/design/data-partition.md).
 34. Backups of desktop and phone, the kiwi-desktop client, Windows.

@@ -87,6 +87,26 @@ def devices():
     return out
 
 
+def move_plan(part, src, dst):
+    """What `move FLEET PART FROM TO --porcelain` says, made up: the plan the Move page shows. A part
+    the machine does not have is stopped, as the real plan stops it."""
+    parts = next((m for name, _role, m, *_rest in MACHINES if name == src), [])
+    name = "%s.%s.home" % (part, src)
+    if part not in parts:
+        return {"part": part, "from": src, "to": dst, "name": "", "carry": False, "pins": [], "steps": [], "notes": [],
+                "stops": ["%s is not among %s's parts (%s)" % (part, src, ", ".join(parts) or "none")]}
+    return {"part": part, "from": src, "to": dst, "name": name, "carry": True, "pins": ["admin_token"], "stops": [],
+            "open": False, "closes": False,
+            "steps": ["%s stops on %s, and %s makes one last backup" % (part, src, src),
+                      "its 1 generated secret stays what it is, pinned to %s" % dst,
+                      "the fleet file: %s and its settings move from %s to %s; it stays %s" % (part, src, dst, name),
+                      "%s is applied, and gets %s's data from %s's backups" % (dst, part, src),
+                      "%s is applied (the part is gone there), then every machine the change reaches" % src,
+                      "%s starts a backup: from then on %s is in its own store" % (dst, part)],
+            "notes": ["%s's data stays on %s's disk after the move, unused: delete it there when the part runs well on %s"
+                      % (part, src, dst)]}
+
+
 def answers():
     hosts, said = [], []
     for name, role, modules, sites, state, problems, f in MACHINES:

@@ -30,9 +30,12 @@ def main():
     listed, status = madeup.answers()
     stand_in = os.path.join(case.tmp, "stand-in.py")
     with open(stand_in, "w") as fh:
-        fh.write("import sys\nwhat = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-                 "print(%r if what == 'list' else %r if what == 'status' else 'ran ' + ' '.join(sys.argv[1:]))\n"
-                 % (json.dumps(listed), json.dumps(status)))
+        fh.write("import json, sys\nsys.path.insert(0, %r)\nimport madeup\nwhat = sys.argv[1] if len(sys.argv) > 1 else ''\n"
+                 "if what == 'move' and '--porcelain' in sys.argv:      # the plan the Move page shows\n"
+                 "    print(json.dumps(madeup.move_plan(*sys.argv[3:6])))\n"
+                 "else:\n"
+                 "    print(%r if what == 'list' else %r if what == 'status' else 'ran ' + ' '.join(sys.argv[1:]))\n"
+                 % (HERE, json.dumps(listed), json.dumps(status)))
     case.c.kiwi = [sys.executable, stand_in]
     # two hidden services, made up: the Services page shows their addresses
     case.c.onion = lambda: {"%s.%s" % (x["service"], x["host"]): x for x in madeup.hidden()["services"]}

@@ -1,6 +1,7 @@
 """The command line. bin/kiwi-server execs this; kiwi-server-gui calls it
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
+import calendar
 import concurrent.futures
 import threading
 import ipaddress
@@ -1396,6 +1397,11 @@ def cmd_next(args):
         if not args.yes and not sys.stdin.isatty():     # erasing a server is never taken for granted
             raise KiwiError("installing %s erases the server at %s: run this in a terminal, or with --yes" % (h.name, who.name))
         if go("Install %s at %s now? EVERYTHING ON THAT SERVER IS ERASED." % (h.name, who.name)):
+            iso_path = os.path.join(media_dir_for(args, fleet), h.name, h.name + ".iso")
+            if media_used(fleet, h.name, media_of(iso_path)):
+                # media install a machine once (their guard): for a second install they are made anew
+                util.say("%s: its install media installed it once already: making them again" % h.name)
+                run("build", path, h.name)
             run("vps", "install", path, h.name, "--yes")    # uploads, installs, takes the media out, switches it on
             util.say("%s is installed and starting. Run this again in a minute to set it up" % h.name)
         return
@@ -1680,6 +1686,72 @@ def cmd_show(args):
         print(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
 
 
+def ssh_config_text(fleet):
+    """An ssh config for the fleet's machines, as kiwi-server itself reaches them: the admin user,
+    the port, the fleet's own key and its own list of host keys (a machine met only by kiwi-server
+    is known there, not in ~/.ssh/known_hosts). A `Host` per machine by its name, and one per
+    address it has besides: NAME-lan (a fixed address at home), NAME-vpn (on the mesh), NAME-public
+    (a master's address on the Internet), for when names do not resolve."""
+    known = os.path.join(fleet.dir, "secrets", "known_hosts")       # through the fleet's folder: the same path after every unlock
+    keys = []
+    for a in [fleet.defaults.get("admin") or {}] + [h.admin for h in fleet.hosts.values()]:
+        for k in a.get("ssh_keys") or []:
+            k = str(k)
+            if not config.is_ssh_key(k) and k.endswith(".pub") and os.path.isfile(fleet.resolve_path(k[:-4])):
+                path = os.path.join(fleet.dir, k[:-4]) if not os.path.isabs(k) else k[:-4]
+                if path not in keys:
+                    keys.append(path)
+    out = ["# kiwi-server ssh-config %s" % fleet.path,
+           "# The machines of this network. Made by kiwi-server: run it again after machines or addresses change.",
+           "# The key and the host keys live in the fleet's secrets: this works while its secret store is open."]
+    for name in sorted(fleet.hosts):
+        h = fleet.hosts[name]
+        net = h.cfg.get("network") or {}
+        more = []
+        if not net.get("dhcp", True) and net.get("address"):
+            more.append(("lan", str(net["address"]).split("/", 1)[0]))
+        vpn = (h.role_settings or {}).get("vpn_ip") or remote._mesh_address(h)
+        if vpn:
+            more.append(("vpn", str(vpn)))
+        public = ((h.role_settings_raw or {}).get("vpn-server") or {}).get("wg_host")
+        if public:
+            more.append(("public", str(public)))
+        out += ["", "Host %s %s" % (name, h.hostname), "    HostName %s" % h.hostname]
+        for kind, address in more:
+            out += ["Host %s-%s" % (name, kind), "    HostName %s" % address]
+        out += ["Host %s" % " ".join([name, h.hostname] + ["%s-%s" % (name, kind) for kind, _a in more]),
+                "    User %s" % h.admin["user"], "    Port %d" % remote.ssh_port(h)]
+        out += ["    IdentityFile %s" % k for k in keys]
+        if keys:
+            out.append("    IdentitiesOnly yes")
+        out += ["    UserKnownHostsFile %s" % known, "    StrictHostKeyChecking yes"]
+    return "\n".join(out) + "\n"
+
+
+def cmd_ssh_config(args):
+    """`ssh-config FLEET [--write]`: ssh's own configuration for the fleet's machines, printed, or
+    written to ~/.ssh/config.d/kiwi-<fleet folder>.conf (ssh reads it once ~/.ssh/config has
+    `Include config.d/*`; that file is never touched here)."""
+    fleet, _roles, _ms = load(args)
+    text = ssh_config_text(fleet)
+    if not args.write:
+        sys.stdout.write(text)
+        return
+    folder = os.path.join(os.path.expanduser("~"), ".ssh", "config.d")
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    path = os.path.join(folder, "kiwi-%s.conf" % re.sub(r"[^A-Za-z0-9_.-]", "-", os.path.basename(fleet.dir) or "fleet"))
+    util.write_text(path, text, 0o600)
+    util.say("written: %s (%s)" % (typed_path(path), util.count(len(fleet.hosts), "machine")))
+    main_config = os.path.join(os.path.expanduser("~"), ".ssh", "config")
+    try:
+        included = any(re.match(r"\s*Include\s+(~/\.ssh/)?config\.d/", ln, re.I) for ln in open(main_config, encoding="utf-8"))
+    except OSError:
+        included = False
+    if not included:
+        util.say("ssh reads it once the first line of %s is: Include config.d/*" % typed_path(main_config))
+    util.say("then: ssh %s" % sorted(fleet.hosts)[0])
+
+
 def cmd_logins(args):
     """What a person types to get into each service: the address, the user name and the
     password, from the fleet on this computer. The passwords are this command's output."""
@@ -1961,6 +2033,19 @@ def vps_boot_ram(args, fleet, client, server, h):
     util.say("%s: next: kiwi-server watch %s sends it its role once it answers" % (h.name, typed_path(fleet.path)))
 
 
+def media_of(iso_path):
+    """The id of built install media (iso.media_id, written beside the ISO), or "" for media of an older build."""
+    try:
+        return util.read_text(iso_path + ".id").strip()
+    except OSError:
+        return ""
+
+
+def media_used(fleet, name, mid):
+    """These media installed this machine already (vps install keeps that): their guard would not install it again."""
+    return bool(mid) and (fleet_state(fleet).get("installed_media") or {}).get(name) == mid
+
+
 def vps_install(args, fleet, client, server):
     h = fleet.hosts.get(args.target)
     if h is None:
@@ -1989,7 +2074,19 @@ def vps_install(args, fleet, client, server):
             raise KiwiError("this wipes %s: add --yes to go ahead" % label)
         if input("This wipes the disk of %s. Type its name to go ahead: " % label).strip() != label:
             raise KiwiError("not confirmed, nothing touched")
+    # install media do not install a machine twice (their guard, iso.py): the ISO that installed this
+    # server would start, find its own mark and switch the server off, and the old system would come
+    # up as if it were new. So the same ISO is not sent a second time: it is built again first.
+    mid = media_of(base + ".iso")
+    if media_used(fleet, h.name, mid):
+        raise KiwiError("%s.iso installed %s already, and install media do not install a machine a second time. "
+                        "Build it again, then install: kiwi-server build %s %s" % (h.name, h.name, typed_path(fleet.path), h.name))
     netcup.install(client, server, base + ".iso", _iso_key(h), lambda m: util.say("%s: %s" % (h.name, m)))
+    if mid:
+        with state_lock(fleet):
+            state = fleet_state(fleet)
+            state.setdefault("installed_media", {})[h.name] = mid
+            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     addresses = [a["ip"] for a in server.get("ipv4Addresses") or []]
     known = fleet.resolve_path("secrets/known_hosts")
     if os.path.isfile(known):                          # the reinstall made new host keys, and this is why
@@ -3104,6 +3201,31 @@ def cmd_take_in(args):
     cmd_adopt(args)
 
 
+def activity_lines(out):
+    """The control node's Activity ({jobs, entries}) as lines for the terminal: its tasks, then its log."""
+    def when(j):                        # a task's start is a number of seconds (a crash until 2.268.0); its id says the day
+        t = j.get("started")
+        if isinstance(t, (int, float)) and not isinstance(t, bool) and t:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+        return str(t or j.get("id") or "")[:16].replace("T", " ")
+    lines = ["Tasks"]
+    for j in out.get("jobs") or []:
+        lines.append("  %-16s %-8s %s %s  (%s)" % (when(j), j.get("state") or "", j.get("action") or "",
+                                                  " ".join(j.get("hosts") or []), j.get("user") or ""))
+    def logged(e):                      # the log's times are UTC; said in this computer's time, as the tasks' are
+        t = str(e.get("time") or "")
+        try:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(calendar.timegm(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))))
+        except ValueError:
+            return t[:16].replace("T", " ")
+    lines.append("Log")
+    for e in out.get("entries") or []:
+        lines.append("  %-16s %s %s  (%s%s)" % (logged(e), e.get("what") or "",
+                                               " ".join(e.get("hosts") or []), e.get("user") or "",
+                                               ", " + e["address"] if e.get("address") else ""))
+    return lines
+
+
 def cmd_control(args):
     """The fleet to the control node or back; or this computer asks to become a controller."""
     from . import controlsync
@@ -3269,16 +3391,8 @@ def cmd_control(args):
         if args.porcelain:
             print(json.dumps(out))
             return
-        print("Tasks")
-        for j in out.get("jobs") or []:
-            print("  %-16s %-8s %s %s  (%s)" % ((j.get("started") or j.get("id") or "")[:16].replace("T", " "),
-                                                j.get("state") or "", j.get("action") or "", " ".join(j.get("hosts") or []),
-                                                j.get("user") or ""))
-        print("Log")
-        for e in out.get("entries") or []:
-            print("  %-16s %s %s  (%s%s)" % ((e.get("time") or "")[:16].replace("T", " "), e.get("what") or "",
-                                             " ".join(e.get("hosts") or []), e.get("user") or "",
-                                             ", " + e["address"] if e.get("address") else ""))
+        for line in activity_lines(out):
+            print(line)
         return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
@@ -5210,6 +5324,7 @@ def cmd_switch(args):
         print("\nNothing was changed. With --yes it is done: kiwi-server switch %s %s --yes" % (typed_path(fleet.path), part))
         return
     src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
+    began = time.time()                 # the part is away from here on, until the standby is applied
 
     def again(argv):
         try:
@@ -5241,6 +5356,9 @@ def cmd_switch(args):
     if failed:
         raise KiwiError("%s is on %s in the fleet file, but %s could not be applied: kiwi-server apply %s %s"
                         % (part, dst_name, dst_name, typed_path(fleet.path), dst_name))
+    # how long the part was away, said now: what follows only tells the other machines where it is
+    util.say("%s runs on %s: it was away for %s. Now the machines the change reaches"
+             % (part, dst_name, util.count(int(time.time() - began), "second")))
     # everyone the change reaches. The machine it left, when it does not answer, is not asked now:
     # its apply goes to the control node, which keeps it and applies it the moment the machine
     # answers again (an apply that waits)
@@ -5635,6 +5753,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
   kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
+  kiwi-server ssh-config <fleet> [--write]      ssh's own configuration for the machines: `ssh papaya` with the fleet's key
   kiwi-server secrets show <fleet> <host> [setting]
                                                 print a host's password (no setting: their names)
   kiwi-server secrets init|unlock|lock|status <fleet>
@@ -5742,6 +5861,8 @@ def build_parser():
     s.add_argument("--yes", action="store_true", help="do the step without asking first")
     s = sub("show", cmd_show); s.add_argument("fleet"); s.add_argument("host")
     s = sub("logins", cmd_logins); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
+    s = sub("ssh-config", cmd_ssh_config); s.add_argument("fleet")
+    s.add_argument("--write", action="store_true", help="into ~/.ssh/config.d/ instead of printing it")
     for name, fn in (("render", cmd_render), ("build", cmd_build)):
         s = sub(name, fn); s.add_argument("fleet", nargs="?" if name == "build" else None); s.add_argument("hosts", nargs="*")
         s.add_argument("--bare", action="store_true",

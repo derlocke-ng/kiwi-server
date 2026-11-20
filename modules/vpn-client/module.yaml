@@ -24,7 +24,7 @@ firewall:
 
 env:
   optional:
-    DOT_PROVIDERS: "quad9"
+    DOT_PROVIDERS: "cloudflare"
 
 validate:
   - when: "vpn_type == 'openvpn' and vpn_provider == 'custom' and not openvpn_config_present"
@@ -126,8 +126,8 @@ settings:
     default: 0
   - key: dot_providers
     label: DNS-over-TLS provider
-    help: "gluetun resolves through DNS-over-TLS to this provider (quad9, cloudflare, google, …). On a master this is where the whole network's lookups end up, through the exit tunnel."
-    default: quad9
+    help: "gluetun resolves through DNS-over-TLS to this provider (cloudflare, google, quad9, …). On a master this is where the whole network's lookups end up, through the exit tunnel. Cloudflare and Google answer every name; quad9 leaves out names it holds to be malicious, which blocks more than your own blocklist does."
+    default: cloudflare
   - key: vpn_input_ports
     group: Advanced
     label: Ports allowed in from the tunnel

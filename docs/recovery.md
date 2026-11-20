@@ -64,6 +64,12 @@ keep running. Once it is installed anew and set up, a machine with the backup
 part finds itself in its backups and brings its data back by itself, then
 backs up as before. A machine without backups starts empty.
 
+A part that is [kept ready](backups.md#a-standby-for-a-part) on a second machine need
+not wait for the rebuild: `kiwi-server switch fleet.yaml vault` (or *Switch* on the
+machine's page, Services) gives it to that machine with the data it has, a minute old at
+most, and the part answers there about a minute later. `kiwi-server recovery` lists these
+parts in this case.
+
 **What you do.** Install it anew under the same name: make its install
 media, start the machine from them (its disk is erased), then set it up. The
 new installation's SSH key is taken as the machine's.

@@ -17,7 +17,7 @@ services:
     - TZ=Europe/Berlin
     - WIREGUARD_MTU=1376
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
-    - DOT_PROVIDERS=quad9
+    - DOT_PROVIDERS=cloudflare
     - BLOCK_MALICIOUS=off
     - UPDATER_PERIOD=24h
     networks:
@@ -89,14 +89,14 @@ services:
     - pihole.gate.home:172.64.0.3
     dns:
     - 172.64.0.3
-    - 9.9.9.9
+    - 1.1.1.1
   km-pihole:
     image: docker.io/pihole/pihole:latest
     container_name: km-pihole
     environment:
     - TZ=Europe/Berlin
     - FTLCONF_webserver_api_password=golden-pihole-master
-    - FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112
+    - FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1
     - FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/home/;hostsdir=/etc/mullvad-socks
     - FTLCONF_dns_listeningMode=all
     - FTLCONF_webserver_domain=pihole.gate.home

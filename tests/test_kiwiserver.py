@@ -4,6 +4,7 @@ Anything that needs a tool (shellcheck, butane, xorriso, cpio) uses it when it
 is on $PATH and is skipped otherwise, so the suite runs anywhere; CI installs
 all of them. No test touches the network.
 """
+import calendar
 import contextlib
 import http.server
 import hashlib
@@ -456,10 +457,127 @@ class TestDebian(Base):
         _h, ps, _files = self.make(debian={"encrypt": True})  # the same until the machine's first apply
         self.assertIn("d-i partman-crypto/passphrase password %s\n" % key, ps)
 
+    def test_install_media_left_in_do_not_install_again(self):
+        """Install media wipe the disk without asking; left in a machine that starts from them
+        first, they wiped it at every start. Each media has an id of its own, the installer leaves
+        it on the installed system's /boot, and its guard looks for it before anything is erased."""
+        self.assertNotEqual(iso.media_id(), iso.media_id())                    # a new one each time media are made
+        host, ps, files = self.make()
+        self.assertIn("d-i partman/early_command string sh /cdrom/kiwi-server/guard.sh\n", ps)       # a named disk too
+        self.assertIn("guard.sh", files)
+        self.assertIn("$(cat $S/media-id)", files["late.sh"][0])
+        self.assertIn("> $T/boot/kiwi-installed", files["late.sh"][0])
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        bin_dir = os.path.join(work, "bin")
+        os.makedirs(bin_dir)
+
+        def tool(name, text):
+            path = os.path.join(bin_dir, name)
+            with open(path, "w") as fh:
+                fh.write("#!/bin/bash\n" + text)
+            os.chmod(path, 0o755)
+        # stand-ins for the installer's world: two disks, the media (sr0) and the machine's (sda)
+        tool("udevadm", "exit 0\n")
+        tool("sleep", "exit 0\n")
+        tool("findmnt", "echo /dev/sr0\n")
+        tool("lsblk", 'case "$*" in\n'
+                      '  "-no PKNAME /dev/sr0") echo ;;\n'
+                      '  "-no PKNAME /dev/sda3") echo sda ;;\n'
+                      '  "-no PKNAME /dev/sr0p1") echo sr0 ;;\n'
+                      '  "-lnpo NAME,FSTYPE") echo "/dev/sr0p1 ext4"; echo "/dev/sda2 vfat"; echo "/dev/sda3 ext4" ;;\n'
+                      '  "-lnpo NAME,FSTYPE,LABEL") echo "/dev/sda3 ext4 boot"; echo "/dev/sda4 ext4 other" ;;\n'
+                      '  "-lnpo NAME,PARTTYPE /dev/sda") echo "/dev/sda2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B" ;;\n'
+                      'esac\n')
+        tool("mount", 'dev=${@: -2:1}; dir=${@: -1}; [ -d "%s/disks/${dev##*/}" ] || exit 1; '
+                      'echo "$dev $dir" >> %s/mounted; ln -sfn "%s/disks/${dev##*/}" "$dir/link"\n' % (work, work, work))
+        tool("umount", "rm -f \"$1/link\"\n")
+        tool("systemctl", "echo \"systemctl $*\" >> %s/did\n" % work)
+        tool("efibootmgr", 'echo "efibootmgr $*" >> %s/did\n'
+                           'case "$*" in "") [ -f %s/entry ] && echo "Boot0007* kiwi-server disk" ;; *-c*) touch %s/entry ;; esac\n'
+                           % (work, work, work))
+        # the stand-in mount hangs the disk under DIR/link: the scripts look in DIR itself, so point them there
+        look = lambda text: text.replace('"$m/', '"$m/link/')      # noqa: E731
+        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"], KIWI_EFIVARS=os.path.join(work, "no-efi"))
+        os.makedirs(os.path.join(work, "disks", "sda3"))
+        os.makedirs(os.path.join(work, "disks", "sr0p1"))
+
+        def run(text, **more):
+            path = os.path.join(work, "run.sh")
+            with open(path, "w") as fh:
+                fh.write(look(text))
+            for f in ("did", "mounted"):
+                if os.path.exists(os.path.join(work, f)):
+                    os.unlink(os.path.join(work, f))
+            r = subprocess.run(["bash", path], env=dict(env, **more), capture_output=True, text=True)
+            did = util.read_text(os.path.join(work, "did")) if os.path.exists(os.path.join(work, "did")) else ""
+            return r.returncode, did
+        guard, mark = iso.guard_script(host, "0123456789abcdef"), iso.mark_script(host, "0123456789abcdef")
+        for text in (guard, mark):
+            with open(os.path.join(work, "s.sh"), "w") as fh:
+                fh.write(text)
+            self.assertEqual(subprocess.run(["bash", "-n", os.path.join(work, "s.sh")]).returncode, 0)
+        # a machine never installed: the guard lets the install go on
+        self.assertEqual(run(guard), (0, ""))
+        # the install is done: the mark is left on the machine's boot partition, with this media's id
+        self.assertEqual(run(mark)[0], 0)
+        marked = util.read_text(os.path.join(work, "disks", "sda3", iso.MARK))
+        self.assertRegex(marked, r"^%s 0123456789abcdef 20\d\d-\d\d-\d\dT\d\d:\d\dZ\n$" % host.name)
+        # started again with the media left in: nothing is installed, the machine is switched off (no UEFI)
+        rc, did = run(guard)
+        self.assertEqual((rc, did), (1, "systemctl --no-block poweroff\n"))
+        # with UEFI: the disk is put first and the machine restarts into it
+        os.makedirs(os.path.join(work, "efi"))
+        rc, did = run(guard, KIWI_EFIVARS=os.path.join(work, "efi"))
+        self.assertEqual(rc, 1)
+        self.assertIn("efibootmgr -q -c -d /dev/sda -p", did)
+        self.assertIn("\\EFI\\fedora\\shimx64.efi", did)
+        self.assertIn("efibootmgr -q -n 0007", did)
+        self.assertTrue(did.endswith("systemctl --no-block reboot\n"))
+        # media made again have another id: they install (that is how a machine is installed again on purpose)
+        self.assertEqual(run(iso.guard_script(host, "ffffffffffffffff")), (0, ""))
+        # a mark on the media itself is not the machine's
+        os.unlink(os.path.join(work, "disks", "sda3", iso.MARK))
+        with open(os.path.join(work, "disks", "sr0p1", iso.MARK), "w") as fh:
+            fh.write(marked)
+        self.assertEqual(run(guard), (0, ""))
+
+        # Debian: the same in the installer's small shell
+        tool("modprobe", "exit 0\n")
+        tool("logger", "exit 0\n")
+        tool("poweroff", "echo poweroff >> %s/did; kill $PPID\n" % work)
+        tool("list-devices", "echo /dev/sda1\n")
+        os.makedirs(os.path.join(work, "disks", "sda1"))
+        os.makedirs(os.path.join(work, "cdrom"))
+        d_guard = files["guard.sh"][0].replace("S=/cdrom/kiwi-server", "S=%s/cdrom" % work).replace("m=/tmp/kiwi-guard", "m=%s/mnt" % work)
+        d_guard = d_guard.replace("$m/kiwi-installed $m/boot/kiwi-installed", "$m/link/kiwi-installed $m/link/boot/kiwi-installed")
+        dpath = os.path.join(work, "dguard.sh")
+        with open(dpath, "w") as fh:
+            fh.write(d_guard)
+
+        def drun():
+            if os.path.exists(os.path.join(work, "did")):
+                os.unlink(os.path.join(work, "did"))
+            r = subprocess.run(["sh", dpath], env=env, capture_output=True, text=True)
+            return r.returncode, util.read_text(os.path.join(work, "did")) if os.path.exists(os.path.join(work, "did")) else ""
+        self.assertEqual(drun(), (0, ""))                                       # media without an id (made before this): as ever
+        with open(os.path.join(work, "cdrom", "media-id"), "w") as fh:
+            fh.write("0123456789abcdef\n")
+        self.assertEqual(drun(), (0, ""))                                       # nothing installed yet
+        os.makedirs(os.path.join(work, "disks", "sda1", "boot"))
+        with open(os.path.join(work, "disks", "sda1", "boot", iso.MARK), "w") as fh:
+            fh.write("%s 0123456789abcdef 2026-11-20T10:00Z\n" % host.name)
+        rc, did = drun()
+        self.assertNotEqual(rc, 0)                                              # it never goes on to the partitioning
+        self.assertEqual(did, "poweroff\n")
+        with open(os.path.join(work, "cdrom", "media-id"), "w") as fh:
+            fh.write("ffffffffffffffff\n")
+        self.assertEqual(drun(), (0, ""))                                       # other media: they install
+
     def test_disk_auto_lets_the_installer_find_the_one_disk(self):
         _h, ps, _files = self.make(disk="auto")
         self.assertNotIn("d-i partman-auto/disk string", ps)
-        self.assertIn("d-i partman/early_command string D=$(for d in $(list-devices disk)", ps)
+        self.assertIn("d-i partman/early_command string sh /cdrom/kiwi-server/guard.sh; D=$(for d in $(list-devices disk)", ps)
         self.assertIn('debconf-set partman-auto/disk "$D"', ps)       # only when there is exactly one
         self.assertIn("readlink -f /sys/block/${d##*/} | grep -q /usb ||", ps)   # a USB backup disk is never chosen
         from kiwiserver import iso
@@ -1172,6 +1290,117 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_ssh_config_names_every_machine_with_the_fleets_key(self):
+        """`ssh-config`: ssh's own configuration for the machines, as kiwi-server reaches them. Printed
+        without --write; nothing of the computer's own ~/.ssh is read or touched then."""
+        f = self.fleet({"defaults": self.base_defaults(admin={"user": "core", "ssh_port": 41022,
+                                                              "ssh_keys": ["secrets/admin_ed25519.pub"]}),
+                        "hosts": {"papaya": {"network": {"dhcp": False, "address": "192.168.2.30/24", "gateway": "192.168.2.1"}},
+                                  "lychee": {}}})
+        write(os.path.join(self.tmp, "secrets", "admin_ed25519"), "private")
+        write(os.path.join(self.tmp, "secrets", "admin_ed25519.pub"), "ssh-ed25519 AAAA test")
+        text = cli.ssh_config_text(f)
+        self.assertIn("Host papaya papaya.kiwi\n    HostName papaya.kiwi\n", text)
+        self.assertIn("Host papaya-lan\n    HostName 192.168.2.30\n", text)
+        self.assertNotIn("lychee-lan", text)                                    # its address comes by DHCP: no fixed one to name
+        block = text[text.index("Host papaya papaya.kiwi papaya-lan"):]
+        self.assertIn("    User core\n    Port 41022\n", block)
+        self.assertIn("    IdentityFile %s\n    IdentitiesOnly yes\n" % os.path.join(self.tmp, "secrets", "admin_ed25519"), block)
+        self.assertIn("    UserKnownHostsFile %s\n    StrictHostKeyChecking yes\n" % os.path.join(self.tmp, "secrets", "known_hosts"), block)
+        self.assertNotIn("private", text)                                       # the key's path, never the key
+        # ssh itself takes it
+        path = os.path.join(self.tmp, "ssh.conf")
+        write(path, text)
+        if shutil.which("ssh"):
+            r = subprocess.run(["ssh", "-F", path, "-G", "papaya-lan"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            got = dict(ln.split(" ", 1) for ln in r.stdout.splitlines() if " " in ln)
+            self.assertEqual((got["hostname"], got["user"], got["port"], got["stricthostkeychecking"]),
+                             ("192.168.2.30", "core", "41022", "true"))
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(home)
+        def run_cli(*args):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                try:
+                    rc = cli.main(list(args))
+                except SystemExit as e:
+                    rc = e.code
+            return rc or 0, out.getvalue(), err.getvalue()
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            rc, out, err = run_cli("ssh-config", f.path)
+            self.assertEqual((rc, out), (0, text), err)
+            self.assertEqual(os.listdir(home), [])                              # printed only
+            rc, out, err = run_cli("ssh-config", f.path, "--write")
+            self.assertEqual(rc, 0, err)
+        made = os.path.join(home, ".ssh", "config.d")
+        self.assertEqual(len(os.listdir(made)), 1)
+        self.assertEqual(oct(os.stat(os.path.join(made, os.listdir(made)[0])).st_mode & 0o777), "0o600")
+        self.assertFalse(os.path.exists(os.path.join(home, ".ssh", "config")))  # the computer's own file is the owner's
+        self.assertIn("Include config.d/*", out + err)
+
+    def test_an_encrypted_boards_volume_is_grown_to_its_disk(self):
+        """Armbian grows the partition at the first start, not the encrypted volume in it: an apply
+        does (unlock.GROW_SCRIPT), once, with the disk's key, and leaves a volume of full size alone."""
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        os.makedirs(os.path.join(work, "bin"))
+        os.makedirs(os.path.join(work, "run"))
+
+        def tool(name, text):
+            path = os.path.join(work, "bin", name)
+            write(path, "#!/bin/bash\n" + text)
+            os.chmod(path, 0o755)
+        tool("findmnt", 'echo "${ROOT:-/dev/mapper/armbian-root}"\n')
+        tool("cryptsetup", 'echo "cryptsetup $*" >> %s/did\n'
+                           'case "$1" in status) [ "$2" = armbian-root ] || exit 1; echo "  type:    LUKS2"; echo "  device:  %s/part" ;;\n'
+                           '  resize) cat "${2#--key-file=}" >> %s/key-seen ;; esac\n' % (work, work, work))
+        tool("blockdev", 'case "$2" in */part) echo 64000000000 ;; *) echo "${HAVE:-8000000000}" ;; esac\n')
+        tool("resize2fs", 'echo "resize2fs $*" >> %s/did\n' % work)
+        script = unlock.GROW_SCRIPT.replace("mktemp -d /run/kiwi-luks.XXXXXX", "mktemp -d %s/run/kiwi-luks.XXXXXX" % work)
+        script = script.replace('[ -b "$part" ]', '[ -e "$part" ]')            # the stand-in partition is a plain file
+        write(os.path.join(work, "part"), "")
+        path = os.path.join(work, "grow.sh")
+        write(path, script)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        env = dict(os.environ, PATH=os.path.join(work, "bin") + os.pathsep + os.environ["PATH"])
+
+        def run(**more):
+            for f in ("did", "key-seen"):
+                if os.path.exists(os.path.join(work, f)):
+                    os.unlink(os.path.join(work, f))
+            r = subprocess.run(["bash", path], input="the disk's key\n", env=dict(env, **more), capture_output=True, text=True)
+            did = util.read_text(os.path.join(work, "did")) if os.path.exists(os.path.join(work, "did")) else ""
+            return r.returncode, r.stdout.strip(), did
+        rc, out, did = run()                                                    # 8 GB in a 64 GB partition
+        self.assertEqual((rc, out), (0, "grown 53405"))
+        self.assertIn("cryptsetup resize --key-file=", did)
+        self.assertIn("resize2fs /dev/mapper/armbian-root", did)
+        self.assertEqual(util.read_text(os.path.join(work, "key-seen")), "the disk's key")
+        self.assertEqual(os.listdir(os.path.join(work, "run")), [])            # the key's folder is gone again
+        rc, out, did = run(HAVE="63983222784")                                  # full size but for its header: left alone
+        self.assertEqual((rc, out), (0, "full size"))
+        self.assertNotIn("resize", did)
+        rc, out, did = run(ROOT="/dev/mmcblk1p2")                               # not encrypted: nothing
+        self.assertEqual((rc, did), (0, ""))
+        rc, out, did = run(ROOT="/dev/mapper/vg-root")                          # a volume group inside (Debian): not this way
+        self.assertEqual(rc, 0)
+        self.assertNotIn("resize", did)
+        # an apply runs it for a board, and says so when it grew
+        said, ran = [], []
+        h = types.SimpleNamespace(name="lime", target="armbian", cfg={"unlock": {"rings": ["house"]}})
+        with mock.patch.object(remote, "run", lambda tgt, script, data=b"": ran.append(script) or (b"grown 53405\n" if script == unlock.GROW_SCRIPT else b"")), \
+                mock.patch.object(unlock, "_rebind", lambda *a, **k: False), mock.patch.object(unlock.luks, "current_key", lambda h: "k"), \
+                mock.patch.object(unlock, "tree", lambda *a: {}), mock.patch.object(unlock, "forwarded", lambda h: False), \
+                mock.patch.object(unlock, "leash_script", lambda *a: ""), mock.patch.object(unlock, "debian_like", lambda h: True), \
+                mock.patch.object(unlock, "_ip_setting", lambda h: ""), mock.patch.object(util, "say", lambda *a: said.append(a[0])):
+            try:
+                unlock.bind(h, "t", [])
+            except Exception:           # what follows the binding needs more of a machine than this stand-in has
+                pass
+        self.assertIn(unlock.GROW_SCRIPT, ran)
+        self.assertIn("lime: its encrypted volume now fills its disk (52 GiB more)", said)
+
     def test_the_scripts_that_bind_again_parse_and_say_what_they_do(self):
         for name in ("REGEN_SCRIPT", "BIND_SCRIPT"):
             path = os.path.join(self.tmp, name + ".sh")
@@ -1364,8 +1593,10 @@ class TestIso(Base):
         f2 = self.fleet({"defaults": self.base_defaults(install={"on_done": "reboot"}), "hosts": {"a": {}}})
         calls.clear()
         iso.coreos_iso(FakeTC(), f2.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
-        self.assertNotIn("--post-install", calls[2])
         self.assertNotIn("--live-karg-append", calls[2])
+        after = util.read_text(calls[2][calls[2].index("--post-install") + 1])      # the mark is left all the same
+        self.assertNotIn("systemctl poweroff", after)
+        self.assertIn(iso.MARK, after)
         # disk: auto: no device is named; a script of the live system finds the machine's one disk
         f3 = self.fleet({"defaults": self.base_defaults(disk="auto", install={"on_done": "reboot"}), "hosts": {"a": {}}})
         self.assertEqual(f3.hosts["a"].validate(self.roles), [])
@@ -1719,7 +1950,7 @@ class TestModules(Base):
         host, role, spec = self.spec("m1", role="node", **{"node": self.node_gw(preset="gateway")})
         b = modmod.Renderer(self.ms).render(spec)
         svcs = b.compose["services"]
-        self.assertEqual(svcs["kn-portainer"]["dns"], [b.container_ips["dns"], "9.9.9.9"])
+        self.assertEqual(svcs["kn-portainer"]["dns"], [b.container_ips["dns"], "1.1.1.1"])
         self.assertNotIn("dns", svcs["kn-pihole"])
         self.assertNotIn("dns", svcs["kn-vpn-client"])
         self.assertIn("DNS=%s" % b.container_ips["dns"], b.quadlets["kn-portainer.container"])
@@ -1731,7 +1962,7 @@ class TestModules(Base):
         host, role, spec = self.spec("gate", role="master", **{"master": self.master()})
         b = modmod.Renderer(self.ms).render(spec)
         self.assertEqual(b.compose["services"]["km-vpn-client"]["dns"] if "dns" in b.compose["services"]["km-vpn-client"] else None, None)
-        self.assertEqual(b.compose["services"]["km-vpn-server"]["dns"], ["172.64.0.3", "9.9.9.9"])
+        self.assertEqual(b.compose["services"]["km-vpn-server"]["dns"], ["172.64.0.3", "1.1.1.1"])
         # no masquerade on DNAT'd flows: the host routes the mesh back through the VPN client
         host, role, spec = self.spec("sh3", role="node", **{"node": self.node_cloud(preset="cloud")})
         rules = modmod.Renderer(self.ms).render(spec).files["kn-vpn-client/post-rules.txt"][0]
@@ -1762,8 +1993,8 @@ class TestModules(Base):
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
         self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
-        # the master's Pi-hole first, Quad9 only while the master is unreachable; fleet names go to the master
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", svcs["kn-pihole"]["environment"])
+        # the master's Pi-hole first, a public resolver only while the master is unreachable; fleet names go to the master
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", svcs["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
@@ -1844,11 +2075,12 @@ class TestModules(Base):
             modmod.Renderer(self.ms).render(clash)
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
-        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
+        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1", svcs["km-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
-        self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
+        self.assertIn("DOT_PROVIDERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
+        self.assertIn("BLOCK_MALICIOUS=off", svcs["km-vpn-client"]["environment"])         # what is blocked is the blocklist's
         env = svcs["km-vpn-client"]["environment"]
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)
         self.assertIn("WIREGUARD_PRIVATE_KEY=k", env)
@@ -2039,7 +2271,7 @@ class TestModules(Base):
         spec.master_ip = ""   # no master known: the VPN client's resolver first, nothing forwarded
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
-        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
@@ -8496,6 +8728,27 @@ class TestVps(Base):
         self.assertEqual(self.api.calls[3][2], {"userIsoName": "kiwi-x.iso", "changeBootDeviceToCdrom": True})
         self.assertIn("next: kiwi-server apply", out)
 
+    def test_the_same_iso_is_not_sent_to_a_server_twice(self):
+        """Install media do not install a machine a second time (their guard): the ISO that installed
+        the server would find its own mark and switch it off, and the old system would start as if
+        it were new. The second `vps install` with the same ISO says to build it again."""
+        f = self.vps_fleet()
+        self.logged_in()
+        self.built()
+        iso_id = os.path.join(self.tmp, "output", "x", "x.iso.id")
+        write(iso_id, "0123456789abcdef\n")
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
+        before = len(self.api.calls)
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 1)
+        self.assertIn("installed x already", err)
+        self.assertIn("kiwi-server build", err)
+        self.assertEqual([m for m, _p, _b in self.api.calls[before:] if m in ("PUT", "PATCH", "POST", "DELETE")], [])   # nothing touched
+        write(iso_id, "fedcba9876543210\n")                                         # built again: other media
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
+
     def test_a_ram_master_boots_its_image_and_keeps_it_attached(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
             "x": {"role": "bare", "target": "coreos-ram", "vps": {"server": 7}}}})
@@ -9479,7 +9732,7 @@ class TestCli(Base):
         m1, b = r.script(f.hosts["m1"])
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
         # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)
@@ -10250,6 +10503,20 @@ class TestControl(StoreBase):
             with self.assertRaisesRegex(KiwiError, why):
                 c.restore_run(*args, address=why)
             nothing_there()
+        # a copy without a signature (made before 2.170.0): refused, and opened when that is asked for on purpose;
+        # a copy with another network's signature never is
+        manifest, files = backup.read_copy(copy)
+        older = backup.pack(manifest["fleet"], files)
+        with self.assertRaisesRegex(KiwiError, "Open it without a signature"):
+            c.restore_run(c.setup_code(), new, older, recovery, address="no signature")
+        nothing_there()
+        with self.assertRaisesRegex(KiwiError, "not your network's"):
+            c.restore_run(c.setup_code(), new, backup.pack(manifest["fleet"], files, key="someone else's"), recovery,
+                          address="forged", unsigned=True)
+        nothing_there()
+        other = controlmod.Control(os.path.join(self.tmp, "node2", "fleet.yaml"), kiwi_cmd=fake, run_dir=os.path.join(self.tmp, "ram3"))
+        self.assertTrue(other.restore_run(other.setup_code(), new, older, recovery, address="192.168.1.9", unsigned=True))
+        self.assertIn("from a copy without a signature", json.dumps(other.audit_tail(5)))
         self.assertTrue(c.restore_run(c.setup_code(), new, copy, recovery, address="192.168.1.9"))
         self.assertFalse(c.fresh())
         self.assertEqual(sorted(n for n in os.listdir(folder) if not os.path.islink(os.path.join(folder, n))),
@@ -10570,6 +10837,93 @@ class TestHealth(Base):
         health.probe(["cloud.papaya.home", "chat.example.org"], one=where, at={"chat.example.org": "203.0.113.7"})
         self.assertEqual(sorted(how), [("chat.example.org", "203.0.113.7"), ("cloud.papaya.home", None)])
 
+    def test_a_mail_goes_out_in_a_real_smtp_conversation(self):
+        """The mail of a notification against a small SMTP server of the test's own: STARTTLS with
+        a certificate the test's CA signed, a login, two receivers, the message with its other
+        letters. With smtplib stood in for (the next test) a message no server takes would pass."""
+        import base64
+        import email
+        import email.policy
+        import socketserver
+        import ssl as sslmod
+        from kiwiserver import notify
+        ca = os.path.join(self.tmp, "ca")
+        key, full = certs.ensure_host_cert(ca, "localhost")
+        got = {}
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                def say(text):
+                    self.wfile.write(text.encode())
+                    self.wfile.flush()
+                say("220 test ESMTP\r\n")
+                tls = False
+                while True:
+                    line = self.rfile.readline().decode(errors="replace").strip()
+                    if not line:
+                        break
+                    cmd = line.split(" ", 1)[0].upper()
+                    if cmd == "EHLO":
+                        say("250-test\r\n%s250 8BITMIME\r\n" % ("250-AUTH PLAIN LOGIN\r\n" if tls else "250-STARTTLS\r\n"))
+                    elif cmd == "STARTTLS":
+                        say("220 go ahead\r\n")
+                        ctx = sslmod.SSLContext(sslmod.PROTOCOL_TLS_SERVER)
+                        ctx.load_cert_chain(full, key)
+                        try:
+                            self.connection = ctx.wrap_socket(self.connection, server_side=True)
+                        except (OSError, sslmod.SSLError):
+                            got["refused"] = True          # the client did not trust the certificate
+                            return
+                        self.rfile, self.wfile, tls = self.connection.makefile("rb"), self.connection.makefile("wb"), True
+                    elif cmd == "AUTH":
+                        got["auth"], got["auth_over_tls"] = line, tls
+                        say("235 ok\r\n")
+                    elif cmd == "MAIL":
+                        got["from"] = line
+                        say("250 ok\r\n")
+                    elif cmd == "RCPT":
+                        got.setdefault("to", []).append(line)
+                        say("250 ok\r\n")
+                    elif cmd == "DATA":
+                        say("354 end with a dot\r\n")
+                        data = b""
+                        while True:
+                            more = self.rfile.readline()
+                            if more in (b".\r\n", b""):
+                                break
+                            data += more
+                        got["data"] = data
+                        say("250 queued\r\n")
+                    elif cmd == "QUIT":
+                        say("221 bye\r\n")
+                        break
+                    else:
+                        say("502 not here\r\n")
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        cfg = {"mail": {"to": ["a@example.org", "b@example.org"], "host": "localhost", "port": server.server_address[1],
+                        "user": "kiwi", "password": "the mail password", "from": "kiwi@example.org"}}
+        # a server whose certificate nobody here knows: no mail, no password sent, and the reason said without it
+        sent = notify.send(cfg, "Kiwi home: Käse", "Wrong: lychee does not answer")
+        self.assertEqual([(c, ok) for c, ok, _why in sent], [("mail", False)])
+        self.assertNotIn("the mail password", sent[0][2])
+        self.assertNotIn("auth", got)
+        # with the CA known (as a public mail server's is): the mail goes out
+        with mock.patch.dict(os.environ, {"SSL_CERT_FILE": os.path.join(ca, "kiwiCA.pem")}):
+            sent = notify.send(cfg, "Kiwi home: Käse", "Wrong: lychee does not answer")
+        self.assertEqual(sent, [("mail", True, "")])
+        self.assertTrue(got["auth_over_tls"])                                   # the password only inside TLS
+        self.assertEqual(base64.b64decode(got["auth"].split()[2]), b"\0kiwi\0the mail password")
+        self.assertIn("<kiwi@example.org>", got["from"])
+        self.assertEqual(len(got["to"]), 2)
+        msg = email.message_from_bytes(got["data"], policy=email.policy.default)
+        self.assertEqual((msg["Subject"], msg["From"], msg["To"]), ("Kiwi home: Käse", "kiwi@example.org", "a@example.org, b@example.org"))
+        self.assertEqual(msg.get_content().strip(), "Wrong: lychee does not answer")
+        self.assertTrue(msg["Date"] and msg["Message-ID"].endswith("@example.org>"))
+
     def test_messages_go_out_by_mail_push_and_webhook(self):
         import http.server
         from kiwiserver import notify
@@ -10715,6 +11069,13 @@ class TestMadeUpNetwork(unittest.TestCase):
             self.assertEqual({"host", "target", "ok", "output", "state", "problems", "notes", "facts"} - set(h), set())
         self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]),
                          sorted(h["name"] for h in listed["hosts"] if not h.get("standby_of")))     # a standby is its master's block
+        # its plan of a move has what the real plan has (the Move page reads it)
+        from kiwiserver import partmove
+        real = partmove.plan(type("F", (), {"hosts": {}})(), {}, type("M", (), {"modules": {}})(), "vault", "a", "b")
+        made = madeup.move_plan("vault", "papaya", "lychee")
+        self.assertEqual(set(real) - {"data", "name_setting", "name_value"} - set(made), set())
+        self.assertTrue(made["steps"] and not made["stops"])
+        self.assertTrue(madeup.move_plan("vault", "lychee", "papaya")["stops"])           # lychee has no vault
         r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "drills", "madeup.py"), "status", "x", "--porcelain"],
                            capture_output=True, text=True)
         self.assertEqual(json.loads(r.stdout), status)
@@ -10925,8 +11286,14 @@ class TestWeb(WebBase):
 
 
     def test_home_and_a_machine_in_plain_words(self):
+        # the look the login starts is held until the page was asked for: on a fast machine it was over
+        # before, and the page rightly no longer said so (CI, 20 Nov 2026)
+        hold, real = threading.Event(), self.c.refresh_status
+        self.c.refresh_status = lambda *a, **k: (hold.wait(30), real(*a, **k))[1]
         self.ask("/login", {"password": self.PW})
         self.assertIn("Checking your machines", self.ask("/")[1])                 # the look the login started
+        hold.set()
+        self.c.refresh_status = real
         self.wait_look()
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"groups": {"devices": "10.9.3.0/24"}, "hosts": [
             {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "backup"],
@@ -12001,6 +12368,15 @@ class TestControllers(StoreBase):
         self.assertEqual(rc, 0, out)
         self.assertIn("Log\n", out)
         self.assertIn("fetched the fleet", out)
+        # with tasks in it: a task's start is a number (the command crashed on it until 2.268.0)
+        lines = cli.activity_lines({"jobs": [{"id": "20261120-105236-0d461b", "action": "move", "hosts": ["medlar", "quince"],
+                                              "user": "desk", "state": "ok", "started": 1795171956.48, "ended": 1795172357.9},
+                                             {"id": "20261119-070000-aaaaaa", "action": "apply", "hosts": ["a"], "state": "failed"}],
+                                    "entries": [{"time": "2026-11-20T10:52:36", "what": "moved", "hosts": ["medlar"], "user": "desk"}]})
+        self.assertRegex(lines[1], r"^  2026-11-20 \d\d:\d\d +ok +move medlar quince  \(desk\)$")
+        self.assertRegex(lines[2], r"^  20261119-070000- +failed +apply a")
+        utc = time.strftime("%Y-%m-%d %H:%M", time.localtime(calendar.timegm((2026, 11, 20, 10, 52, 36))))
+        self.assertEqual(lines[3:], ["Log", "  %s moved medlar  (desk)" % utc])        # the log's UTC, in this computer's time
         req = urllib.request.Request(self.url + "/api/activity")
         with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets nothing
             urllib.request.urlopen(req, timeout=10)
@@ -15279,6 +15655,15 @@ class TestRecovery(Base):
                          "kiwi-server build fleet.yaml lychee\nkiwi-server next fleet.yaml lychee --yes")
         self.assertIn("--ssh core@<its address> --new-host-key", rebuild["rebuild:quince"]["command"])   # its router's address
         self.assertIn("unlock:papaya", rebuild)
+        self.assertNotIn("Kept ready", by["machine"]["by_itself"])                  # no part has a standby here
+        # a part kept ready on a second machine: the case of a dead machine says so, and how to switch
+        papaya = f.raw["hosts"]["papaya"]
+        kept = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
+        machine = next(k for k in self.report(kept)[0]["cases"] if k["id"] == "machine")
+        self.assertIn("Kept ready on a second machine, with its data a minute old at most: vault of papaya on lychee", machine["by_itself"])
+        self.assertEqual((machine["how"][0]["label"], machine["how"][0]["command"], machine["how"][0]["page"]),
+                         ("papaya is gone: vault goes on on lychee", "kiwi-server switch fleet.yaml vault papaya --yes",
+                          "/hosts/papaya?tab=services"))
         self.assertNotIn("rebuild:sorbet", rebuild)                 # the master has its own case
         self.assertEqual([h["app"] for h in by["computer"]["how"]], [None, "rotate"])
         self.assertEqual([h["app"] for h in by["network"]["how"]], ["restore-copy", "copy"])

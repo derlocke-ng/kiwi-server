@@ -4116,7 +4116,7 @@ class CopyDialog(Adw.Dialog):
             into, n = os.path.expanduser("~/kiwi"), 2
             while os.path.exists(into) and os.listdir(into):
                 into, n = os.path.expanduser("~/kiwi-%d" % n), n + 1
-            args = ["restore", self.file, "--into", into]
+            args = ["restore", self.file, "--into", into] + (["--unsigned"] if getattr(self, "unsigned", False) else [])
         else:
             into, args = self.file, ["backup", win.doc.path, "--local", self.file]
 
@@ -4132,10 +4132,14 @@ class CopyDialog(Adw.Dialog):
     def done(self, rc, out, into):
         lines = [ln.replace(":: ", "").replace("error: ", "") for ln in out.strip().splitlines() if ln.strip()]
         if rc != 0:
-            self.note.set_label((lines or ["It did not work."])[-1])
+            unsigned = self.restore and "has no signature" in out and not getattr(self, "unsigned", False)
+            self.note.set_label("This copy has no signature, so nobody can tell whether it was changed. Copies carry one "
+                                "since 2.170.0. Open it only when it is an older copy of yours."
+                                if unsigned else (lines or ["It did not work."])[-1])
             self.note.set_css_classes(["error"])
             self.note.set_visible(True)
-            self.go.set_label("Restore it" if self.restore else "Save the copy")
+            self.unsigned = unsigned            # the next press opens it on purpose (restore --unsigned)
+            self.go.set_label("Open it anyway" if unsigned else "Restore it" if self.restore else "Save the copy")
             self.go.set_sensitive(True)
             return False
         if self.restore:

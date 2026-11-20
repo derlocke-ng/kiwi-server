@@ -15,6 +15,7 @@ exactly like the stock image.
 import hashlib
 import os
 import re
+import secrets
 import shutil
 
 from . import util
@@ -45,6 +46,102 @@ def fcos_base_iso(tc, stream, cache_dir):
     if not lines or not os.path.isfile(lines[-1]):
         raise KiwiError("coreos-installer download did not report an ISO path:\n%s" % (r.stdout or r.stderr))
     return lines[-1]
+
+
+# ---- a stick left in the machine must not install it again ---------------------------
+# Install media wipe the disk without asking. Left in a machine whose firmware starts from them
+# first, they wiped it again at every start. So every install media has an id of its own (a
+# new one each time it is made), the installer leaves it on the installed system's boot
+# partition (MARK), and before anything is erased the installer looks for it there (the guard).
+# Found: nothing is installed. On UEFI the disk is put first and the machine restarts into it;
+# elsewhere it says so and powers off. To install again on purpose: make the media again (a new
+# id), or add kiwi.reinstall to the kernel line at the media's boot menu.
+MARK = "kiwi-installed"
+
+
+def media_id():
+    return secrets.token_hex(8)
+
+
+GUARD_SCRIPT = r"""#!/bin/bash
+# kiwi-server: the guard. This install media installed this machine already: not again.
+kiwi_guard() {
+    local id=@ID@ src parent live p m f hit= disk esp num label arch entry t
+    case " $(cat /proc/cmdline) " in *" kiwi.reinstall "*) return 0 ;; esac
+    udevadm settle --timeout=30 2>/dev/null || true
+    src=$(findmnt -no SOURCE /run/media/iso 2>/dev/null || true)
+    if [ -n "$src" ]; then parent=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1); live=${parent:+/dev/$parent}; live=${live:-$src}; fi
+    m=$(mktemp -d)
+    while read -r p; do
+        [ -n "$p" ] || continue
+        [ "/dev/$(lsblk -no PKNAME "$p" 2>/dev/null | head -1)" = "${live:-none}" ] && continue
+        mount -o ro "$p" "$m" 2>/dev/null || continue
+        for f in "$m/@MARK@" "$m/boot/@MARK@"; do
+            if [ -f "$f" ] && grep -q " $id " "$f"; then hit=$(head -n 1 "$f"); disk=/dev/$(lsblk -no PKNAME "$p" | head -1); fi
+        done
+        umount "$m" 2>/dev/null || true
+        [ -n "$hit" ] && break
+    done < <(lsblk -lnpo NAME,FSTYPE | awk '$2 == "ext4" { print $1 }')
+    rmdir "$m" 2>/dev/null || true
+    [ -n "$hit" ] || return 0
+    say() { for t in /dev/console /dev/tty1 /dev/ttyS0; do printf '%s\n' "$1" > "$t" 2>/dev/null || true; done; }
+    say ""
+    say "kiwi-server: @HOST@ is installed already (${hit##* }), by this install media: nothing is installed again."
+    say "Take the install media out. To install it again on purpose: make the install media again."
+    if [ -d "${KIWI_EFIVARS:-/sys/firmware/efi/efivars}" ] && command -v efibootmgr >/dev/null 2>&1; then
+        # UEFI: the disk first from now on, so the machine starts by itself with the media left in
+        label="kiwi-server disk"
+        case "$(uname -m)" in aarch64) arch=aa64 ;; *) arch=x64 ;; esac
+        esp=$(lsblk -lnpo NAME,PARTTYPE "$disk" | awk 'tolower($2) == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" { print $1; exit }')
+        entry=$(efibootmgr 2>/dev/null | sed -n "s/^Boot\([0-9A-Fa-f]\{4\}\)[* ] *$label.*/\1/p" | head -n 1)
+        if [ -z "$entry" ] && [ -n "$esp" ]; then
+            num=$(cat "/sys/class/block/${esp##*/}/partition" 2>/dev/null)
+            efibootmgr -q -c -d "$disk" -p "$num" -L "$label" -l "\EFI\fedora\shim$arch.efi" 2>/dev/null                 && entry=$(efibootmgr 2>/dev/null | sed -n "s/^Boot\([0-9A-Fa-f]\{4\}\)[* ] *$label.*/\1/p" | head -n 1)
+        fi
+        if [ -n "$entry" ] && efibootmgr -q -n "$entry" 2>/dev/null; then
+            say "It starts from its disk now."
+            sleep 5
+            systemctl --no-block reboot
+            exit 1
+        fi
+    fi
+    say "It is switched off in a minute: take the media out, then switch it on."
+    sleep 60
+    systemctl --no-block poweroff
+    exit 1
+}
+kiwi_guard
+"""
+
+MARK_SCRIPT = r"""#!/bin/bash
+# kiwi-server: the install is done. This media's id goes onto the installed system's boot
+# partition: the guard finds it there when the media is started in this machine again.
+kiwi_mark() {
+    local src parent live p m
+    udevadm settle --timeout=30 2>/dev/null || true
+    src=$(findmnt -no SOURCE /run/media/iso 2>/dev/null || true)
+    if [ -n "$src" ]; then parent=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1); live=${parent:+/dev/$parent}; live=${live:-$src}; fi
+    m=$(mktemp -d)
+    while read -r p; do
+        [ -n "$p" ] || continue
+        [ "/dev/$(lsblk -no PKNAME "$p" 2>/dev/null | head -1)" = "${live:-none}" ] && continue
+        if mount "$p" "$m" 2>/dev/null; then
+            printf '%s %s %s\n' "@HOST@" "@ID@" "$(date -u +%Y-%m-%dT%H:%MZ)" > "$m/@MARK@" && echo "kiwi-server: marked $p as installed by this media"
+            umount "$m" 2>/dev/null || true
+        fi
+    done < <(lsblk -lnpo NAME,FSTYPE,LABEL | awk '$2 == "ext4" && $3 == "boot" { print $1 }')
+    rmdir "$m" 2>/dev/null || true
+}
+kiwi_mark
+"""
+
+
+def guard_script(host, mid):
+    return GUARD_SCRIPT.replace("@ID@", mid).replace("@HOST@", host.name).replace("@MARK@", MARK)
+
+
+def mark_script(host, mid):
+    return MARK_SCRIPT.replace("@ID@", mid).replace("@HOST@", host.name).replace("@MARK@", MARK)
 
 
 POWEROFF_SCRIPT = """#!/bin/bash
@@ -150,30 +247,33 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
         raise KiwiError("%s: disk: is required to build an unattended ISO" % host.name)
     base = fcos_base_iso(tc, host.cfg["coreos"]["stream"], cache_dir)
     argv = ["coreos-installer", "iso", "customize", "--dest-ignition", ign_path]
-    pre_text = ""
+    mid = media_id()
+    pre_text = guard_script(host, mid)          # first of all: this media installed the machine already?
     if getattr(host, "unlock_standin", False):
-        pre_text += TPM_CHECK_SCRIPT.replace("@HOST@", host.name)
+        pre_text += TPM_CHECK_SCRIPT.replace("@HOST@", host.name).split("\n", 1)[1]
     if disk == "auto":
-        pre_text += AUTO_DISK_SCRIPT if not pre_text else AUTO_DISK_SCRIPT.split("\n", 1)[1]
+        pre_text += AUTO_DISK_SCRIPT.split("\n", 1)[1]
     else:
         argv += ["--dest-device", disk]
-    if pre_text:
-        pre = os.path.join(util.parent(ign_path), host.name + ".pre-install.sh")
-        util.write_text(pre, pre_text if pre_text.startswith("#!") else "#!/bin/bash\n" + pre_text, mode=0o700)
-        argv += ["--pre-install", pre]
+    pre = os.path.join(util.parent(ign_path), host.name + ".pre-install.sh")
+    util.write_text(pre, pre_text, mode=0o700)
+    argv += ["--pre-install", pre]
     co = host.cfg["coreos"]
     if co.get("console"):
         argv += ["--dest-console", str(co["console"])]
     for k in co.get("kernel_arguments") or []:
         argv += ["--dest-karg-append", str(k)]
+    post = os.path.join(util.parent(ign_path), host.name + ".post-install.sh")
+    post_text = mark_script(host, mid)
     if (host.cfg.get("install") or {}).get("on_done", "poweroff") == "poweroff":
         # the live system would reboot into the installed disk — with the stick
-        # or the provider's ISO still first in the boot order, that is another
-        # install. Skip the reboot and power off from a post-install script
-        # instead; the script sits next to the Ignition, which is mounted already.
-        post = os.path.join(util.parent(ign_path), host.name + ".post-install.sh")
-        util.write_text(post, POWEROFF_SCRIPT, mode=0o700)
-        argv += ["--live-karg-append", "coreos.inst.skip_reboot", "--post-install", post]
+        # or the provider's ISO still first in the boot order, that boots the
+        # media again (the guard then stops it). Skip the reboot and power off
+        # from the post-install script instead, so the media can be taken out.
+        post_text += POWEROFF_SCRIPT.split("\n", 1)[1]
+        argv += ["--live-karg-append", "coreos.inst.skip_reboot"]
+    util.write_text(post, post_text, mode=0o700)
+    argv += ["--post-install", post]
     from .targets import coreos as coreos_t
     live_bu = os.path.join(util.parent(ign_path), host.name + ".live.bu")
     live_ign = os.path.join(util.parent(ign_path), host.name + ".live.ign")
@@ -186,6 +286,7 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
     tc.run(argv, mounts=[util.parent(ign_path), util.parent(out_iso), cache_dir])
     if os.path.isfile(out_iso):
         os.chmod(out_iso, 0o600)   # it carries the Ignition config and every secret in it
+    util.write_text(out_iso + ".id", mid + "\n", 0o644)     # which media these are (vps install: not the same twice)
     return out_iso
 
 
@@ -295,6 +396,10 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
     if os.path.isdir(workdir):
         shutil.rmtree(workdir)
     os.makedirs(workdir, mode=0o700)
+    # this media's own id (a new one each time it is made): the installer leaves it on the installed
+    # system, and its guard looks for it before anything is erased
+    mid = media_id()
+    util.write_text(os.path.join(files_dir, "media-id"), mid + "\n", 0o644)
     try:
         _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir)
     finally:
@@ -302,6 +407,7 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
         shutil.rmtree(workdir, ignore_errors=True)
     if os.path.isfile(out_iso):
         os.chmod(out_iso, 0o600)
+    util.write_text(out_iso + ".id", mid + "\n", 0o644)     # which media these are (vps install: not the same twice)
     return out_iso
 
 

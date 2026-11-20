@@ -59,7 +59,7 @@ keeps the backups.
 | TV, phones, laptops at home | nothing extra | they use `lime` as DNS server and gateway |
 
 `lime` can be an Odroid or another arm64 board ([Boards](boards.md)). Its
-Pi-hole asks the master's Pi-hole first and Quad9 only while the master
+Pi-hole asks the master's Pi-hole first and a public resolver only while the master
 cannot be reached ([The network](network.md#dns)). `papaya` can add to its
 backups on `lychee` but not delete them, so a machine that is taken over
 cannot destroy them ([Backups](backups.md#pruning)).

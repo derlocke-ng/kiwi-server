@@ -20,7 +20,7 @@
 {% endif %}
 {% endif %}
 {% if not chain %}
-{% set _ = chain.append('9.9.9.9;149.112.112.112') %}
+{% set _ = chain.append('1.1.1.1;1.0.0.1') %}
 {% endif %}
 {% set upstreams = chain | join(';') %}
 {# no-hosts: podman copies the host's /etc/hosts into the container, where the node's

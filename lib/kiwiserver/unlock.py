@@ -92,6 +92,27 @@ for slot in $old; do clevis luks unbind -f -d "$dev" -s "$slot" || exit 1; done
 '''
 
 
+# An encrypted board (armbian.encrypt): at its first start Armbian grows the partition to the
+# disk's size, but not the encrypted volume inside it, so a 64 GB card held an 8 GB root until
+# someone ran two commands by hand. stdin: the disk's key (cryptsetup asks for it to resize).
+# stdout: `grown MIB`, or why nothing was done.
+GROW_SCRIPT = luks._PRELUDE + r'''
+IFS= read -r key
+printf %s "$key" > "$d/key"
+root=$(findmnt -no SOURCE /)
+case "$root" in /dev/mapper/*) ;; *) echo "the root is not an encrypted volume"; exit 0 ;; esac
+name=${root#/dev/mapper/}
+part=$(cryptsetup status "$name" 2>/dev/null | sed -n 's/^ *device: *//p')
+[ -b "$part" ] || { echo "the root is not directly on an encrypted volume"; exit 0; }
+have=$(blockdev --getsize64 "$root"); room=$(blockdev --getsize64 "$part")
+# the volume's header takes 16 MiB; with more than 64 MiB unused the volume was never grown
+if [ $((room - have)) -le 67108864 ]; then echo "full size"; exit 0; fi
+cryptsetup resize --key-file="$d/key" "$name" || exit 1
+resize2fs "$root" >/dev/null 2>&1 || exit 1
+echo "grown $(( (room - have) / 1048576 ))"
+'''
+
+
 # On CoreOS Ignition binds the disk at the first boot and nobody ever had a key for it.
 # This adds one a person can type, opened with the ring's own share. stdin: the new key.
 ADD_KEY_SCRIPT = luks._PRELUDE + r'''
@@ -898,6 +919,10 @@ def bind(host, tgt, servers, force=False):
     if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
     changed = _rebind(host, tgt, key, wanted_tree, force=force)
+    if host.target == "armbian":        # the encrypted volume to the size of its disk, once
+        grown = re.search(r"^grown (\d+)", remote.run(tgt, GROW_SCRIPT, (key + "\n").encode()).decode(errors="replace"), re.M)
+        if grown:
+            util.say("%s: its encrypted volume now fills its disk (%d GiB more)" % (host.name, round(int(grown.group(1)) / 1024)))
     if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")

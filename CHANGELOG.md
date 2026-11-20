@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.269.0 — install media left in a machine do not install it again
+
+Tried in VMs whose firmware starts from the media first (`tests/drills/install-guard-vm.sh`:
+uCore with UEFI and with BIOS, Debian).
+
+- **The guard.** Install media wipe the disk without asking; left in a machine that starts
+  from them first, they wiped it again at every start. Each ISO now has an id of its own, the
+  installer leaves it on the installed system (`/boot/kiwi-installed`), and before anything
+  is erased it looks for it there. Found: nothing is installed and the screen says so. A
+  uCore machine with UEFI puts its disk first and restarts into it; any other switches
+  itself off after a minute. An ISO built again has a new id and installs: that is how a
+  machine is installed again on purpose (docs/getting-started.md).
+  `kiwi-server vps install` does not send the ISO that installed a server a second time (it
+  would switch the server off untouched): it says to build it again, and `kiwi-server next`
+  builds it again by itself.
+- An encrypted board's volume is grown to its disk by the first apply (Armbian's first
+  start grows the partition only).
+- `kiwi-server recovery` (and the Recovery page) names the parts of a dead machine that are kept
+  ready on another one, and the switch that brings them up there.
+- `kiwi-server ssh-config FLEET [--write]`: ssh's own configuration for the machines, with the
+  fleet's key and host keys: `ssh papaya`, and `papaya-lan`, `papaya-vpn`, `sorbet-public` for
+  when names do not resolve (docs/machines.md, A shell on a machine).
+- **The resolvers answer every name** (kiwi-modules 0.107.0, kiwi-stack 0.9.24). The default was
+  Quad9, which leaves out names it holds to be malicious: a site was blocked that no blocklist
+  of the network named. The VPN client's DNS over TLS now goes to Cloudflare, and so do the
+  fallbacks reached directly. A fleet that set `dot_providers` or `fallback_dns` keeps its own.
+- **Fixed: `kiwi-server control activity` crashed** as soon as the control node had run a
+  task. Its log's times are in this computer's time now, as the tasks' are.
+- A copy of the network without a signature (made before 2.170.0) can be opened on purpose
+  in the app (*Open it anyway*) and on the control node's first page (a tick), as
+  `restore --unsigned` does. A copy with a wrong signature is never opened.
+- `kiwi-server switch` says how long the part was away as soon as its standby runs it; what
+  follows only tells the other machines where it is.
+- Tests: a notification's mail goes through a real SMTP conversation (STARTTLS, login); the
+  page preview shows the plan of a move.
+
 ## 2.268.0 — move and switch on the page and in the app; three things found on real machines
 
 Tried on the test machines before the release: `tests/drills/part-standby.sh` (a named volume, a

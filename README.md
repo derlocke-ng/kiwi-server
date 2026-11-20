@@ -24,8 +24,8 @@ reboots only in the window you chose.
   [another machine](docs/backups.md#moving-a-part-to-another-machine) with its
   data, its secrets and its name
 - **A standby for a part**: a second machine fetches the part's data every
-  minute and [takes the part over](docs/backups.md#a-standby-for-a-part) when
-  you say so
+  minute and [takes the part over](docs/backups.md#a-standby-for-a-part) within
+  a minute, when you say so or by itself when the first machine is gone
 - **Names by service**: a part can be
   [named for itself](docs/network.md#names-by-service), `paste.home` instead of
   `paste.quince.home`

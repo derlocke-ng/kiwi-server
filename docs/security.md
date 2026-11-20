@@ -185,6 +185,15 @@ A disk can open itself at boot. The `tang` module on one node serves a
   machine can open.
 - Back up the rings' keys: the `backup` module keeps them.
 
+## The agents' reports
+
+Each machine's agent signs its report to the control node with a key of its own,
+`derive(seed, machine, "agent", "key")`, kept on the machine in `/etc/kiwi-server/agent/key`
+(root only, on its encrypted disk). The key can do one thing: say how that machine is. A
+machine that was broken into can lie about itself and about nothing else. The report is the
+output of the same script the control node runs over SSH for its look; it holds no password
+and no key. It travels over HTTPS with the fleet's CA, on the VPN or the home network.
+
 ## SSH
 
 - **The machines' SSH host keys** are kept in `secrets/known_hosts`. The first

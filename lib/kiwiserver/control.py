@@ -228,6 +228,9 @@ class Control:
         self._busy = None                     # the machines the running job works on; EVERY: all of them
         self._retrying = set()                # machines whose waiting apply this node started and that has not ended
         self._book = threading.Lock()         # for _retrying
+        self._boots = {}                      # machine -> the boot its last report came from
+        self._reported_at = {}                # machine -> when its last report was taken
+        self._coming = set()                  # machines a look after their report is under way for
         self._reads = {}                      # what a `--porcelain` read worked out, until the fleet changes (_read_once)
         self._gen = 0                         # counted up with every job that ends: nothing kept outlives one
         self.failures = {}                    # address -> [times] of failed logins
@@ -2118,6 +2121,81 @@ class Control:
             return None
         return jid
 
+    # ---- the machines' own reports (machineagent.py) -----------------------------------------
+    @property
+    def reports_dir(self):
+        return os.path.join(self.run, "reports")
+
+    def _agent_keys(self):
+        """{machine: its key for reports}, from the seed; kept while the fleet's files stay."""
+        from . import machineagent as agent, config
+
+        def read():
+            fleet = config.Fleet.load(self.fleet_path)
+            return {h.name: agent.key(fleet, h) for h in fleet.hosts.values()}
+        return self._read_once("agent-keys", read)
+
+    def report(self, name, when, boot, sign, body):
+        """A machine's agent says how the machine is. None when taken; else why not (the page
+        answers 403 with it). A report that is taken is the machine's state for the next look,
+        and a machine that was away gets what waited for it at once."""
+        from . import machineagent as agent
+        if self.locked():
+            return "the control node is locked"
+        if not HOST.match(name or ""):
+            return "no such machine"
+        try:
+            key = self._agent_keys().get(name)
+        except (KiwiError, OSError, ValueError) as e:
+            return "the fleet could not be read: %s" % e
+        if not key:
+            return "no such machine"
+        why = agent.check(key, name, when, boot, sign, body, now=self.clock())
+        if why:
+            return why
+        last = self._reported_at.get(name, 0)
+        if self.clock() - last < 10:        # it reports every minute; more often is nothing to keep
+            return None
+        self._reported_at[name] = self.clock()
+        os.makedirs(self.reports_dir, mode=0o700, exist_ok=True)
+        path = os.path.join(self.reports_dir, name + ".txt")
+        tmp = "%s.%d.tmp" % (path, threading.get_ident())
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:
+            fh.write(body)
+        os.replace(tmp, path)
+        before = self._boots.get(name)
+        self._boots[name] = boot
+        row = next((h for h in (self.status() or {}).get("hosts") or [] if h.get("host") == name), None)
+        away = row is None or row.get("state") not in ("ok", "warn", "bad")
+        if away or name in self.waiting() or (before is not None and before != boot):
+            # it is back (or started anew): look at it now, from its report, and give it what waited
+            threading.Thread(target=self._back, args=(name,), daemon=True).start()
+        return None
+
+    def _back(self, name):
+        with self._book:
+            if name in self._coming:
+                return
+            self._coming.add(name)
+        try:
+            self.refresh_status(only=[name])
+        except Exception as e:              # a look that fails must not end with a traceback in a thread
+            util.warn("control: the look at %s after its report failed: %s" % (name, e))
+        finally:
+            with self._book:
+                self._coming.discard(name)
+
+    def reported(self):
+        """{machine: seconds since its last report} for the machines that have one."""
+        out, now = {}, time.time()
+        try:
+            for f in os.listdir(self.reports_dir):
+                if f.endswith(".txt"):
+                    out[f[:-4]] = int(now - os.path.getmtime(os.path.join(self.reports_dir, f)))
+        except OSError:
+            pass
+        return out
+
     looking = False                         # a look at every machine is under way
 
     def look(self):
@@ -2166,7 +2244,8 @@ class Control:
                     wait.acquire()
                     kept = set()
             try:
-                p = subprocess.Popen(list(self.kiwi) + ["status", self.fleet_path, "--porcelain", "--stream"] + asked,
+                p = subprocess.Popen(list(self.kiwi) + ["status", self.fleet_path, "--porcelain", "--stream",
+                                                         "--reports", self.reports_dir] + asked,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
                                      cwd=self.fleet_dir)
                 for line in p.stdout:
@@ -2492,8 +2571,12 @@ class Control:
                         last_status = now - self.status_minutes * 60 + 180      # look again when it had time to start
                     elif any(e.get("kind") == "waiting" for e in events):
                         last_status = now - self.status_minutes * 60 + 120      # something is gone: look again soon
-                elif self.waiting():        # an apply waits for a machine: ask that machine alone, every tick
-                    self.refresh_status(only=sorted(self.waiting()))
+                else:
+                    # every tick: the machines an apply waits for (asked alone), and the ones whose agent
+                    # reported since (read from their report, no login): the page is a minute behind, not ten
+                    some = set(self.waiting()) | {n for n, age in self.reported().items() if age < 90}
+                    if some:
+                        self.refresh_status(only=sorted(some))
                 if now - self._riseup_at >= 6 * 3600:      # a Riseup certificate running out: renewed by an apply
                     self._riseup_at = now
                     for name in self.riseup_due():

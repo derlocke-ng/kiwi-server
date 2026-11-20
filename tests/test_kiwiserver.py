@@ -2995,6 +2995,55 @@ class TestSetup(Base):
                                       d["defaults"].__setitem__("names", "sideways")))
         self.assertIn("is not one of machine, service", namesmod.errors(f, ms)[0])
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_the_look_takes_a_fresh_report_instead_of_a_login(self):
+        from kiwiserver import machineagent as agentmod
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        reports = os.path.join(self.tmp, "reports")
+        os.makedirs(reports)
+        write(os.path.join(reports, "quince.txt"), "all is well\n" + facts.MARK + "\n")
+        asked, keep = [], remote.run
+
+        def no_login(tgt, script, *a, **kw):
+            asked.append(tgt)
+            raise KiwiError("ssh: connect to host: No route to host")
+        remote.run = no_login
+        try:
+            rc, out, _err = self.run_cli("status", dest, "quince", "mango", "--porcelain", "--stream", "--reports", reports)
+        finally:
+            remote.run = keep
+        rows = {r["host"]: r for r in (json.loads(x) for x in out.splitlines() if x.startswith("{"))}
+        self.assertTrue(rows["quince"]["ok"])                                   # from its report: nobody logged in to it
+        self.assertEqual(rows["mango"]["state"], "down")                        # no report: asked, and it does not answer
+        self.assertEqual(len(asked), 1)
+        os.utime(os.path.join(reports, "quince.txt"), (time.time() - 600, time.time() - 600))
+        self.assertIsNone(agentmod.fresh_report(reports, "quince"))            # an old report is not how it is now
+        # what an apply puts on the machine: its key over stdin, where to report, the facts script
+        fleet = config.Fleet.load(dest)
+        ms = cli.modset(fleet)
+        ran = []
+        runner = lambda tgt, script, data=None: ran.append((script, data))
+        agentmod.after_apply(fleet, fleet.hosts["quince"], "core@quince", ms, runner=runner)
+        self.assertEqual(ran, [])                                               # a network without a control node: no agent
+        data = yaml.safe_load(util.read_text(dest))
+        block = data["hosts"]["mango"].setdefault("node", {})
+        block["modules"] = list(block.get("modules") or []) + ["control"]
+        write(dest, yaml.safe_dump(data, sort_keys=False))
+        fleet = config.Fleet.load(dest)
+        certs.ensure_ca(fleet.resolve_path("secrets/ca"))                      # (an apply has rendered by then: the CA is there)
+        del ran[:]
+        agentmod.after_apply(fleet, fleet.hosts["quince"], "core@quince", ms, runner=runner)
+        script, data = ran[0]
+        self.assertEqual(data.decode(), agentmod.key(fleet, fleet.hosts["quince"]))
+        self.assertNotIn(data.decode(), script)                                 # the key is not in the script
+        self.assertIn("NAME=quince", script)
+        self.assertIn("URL=https://control.mango.home\n", script)
+        self.assertIn(facts.MARK, script)                                        # the same facts the look asks for
+        self.assertIn("kiwi-agent.timer", script)
+
     def test_a_new_release_alone_is_no_change(self):
         import hashlib
         a = "#!/bin/bash\n# kiwi-server 2.197.0 — role script for host lychee\nKS_VERSION='2.197.0'\necho hi\n"
@@ -14079,6 +14128,77 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.c.refresh_status()["hosts"], [{"host": "a", "ok": True}])
         self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
         self.assertEqual(self.c.refresh_status()["error"], "error: boom")
+
+    def test_a_machine_reports_and_is_looked_at_without_a_login(self):
+        """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and
+        a machine that was away is looked at, and given what waited for it, the moment it reports."""
+        import urllib.error
+        import urllib.request
+        from kiwiserver import machineagent as agentmod
+        cookie, _csrf = self.made()
+        a, b = sorted(self.data()["hosts"])[:2]
+        fleet = config.Fleet.load(self.c.fleet_path)
+        key = agentmod.key(fleet, fleet.hosts[b])
+        body = b"what the machine says about itself\n"
+        self.c.look = lambda: None
+
+        def post(name, sign, when=None, raw=body):
+            when = when or int(time.time())
+            req = urllib.request.Request(self.url + "/api/report", data=raw, method="POST", headers={
+                "X-Kiwi-Host": name, "X-Kiwi-Time": str(when), "X-Kiwi-Boot": "boot1", "X-Kiwi-Sign": sign(when),
+                "Content-Type": "text/plain"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code
+        good = lambda when: agentmod.signature(key, b, when, "boot1", body)
+        # the stand-in for kiwi-server: `status` says ok for a machine with a report in --reports, else down;
+        # `apply` applies what it is given
+        script = ("import json, os, sys\n"
+                  "what, argv = sys.argv[1], sys.argv[2:]\n"
+                  "names = [x for x in argv if x in %r]\n"
+                  "if what == 'apply':\n"
+                  "    for h in names: print(':: %%s: applied' %% h)\n"
+                  "if what == 'status':\n"
+                  "    d = argv[argv.index('--reports') + 1] if '--reports' in argv else ''\n"
+                  "    for h in names or %r:\n"
+                  "        up = os.path.isfile(os.path.join(d, h + '.txt'))\n"
+                  "        print(json.dumps({'host': h, 'ok': up, 'state': 'ok' if up else 'down', 'problems': [], 'notes': [], 'facts': {}}), flush=True)\n"
+                  % ([a, b], [a, b]))
+        self.c.kiwi = [sys.executable, "-c", script]
+        row = lambda host, state: {"host": host, "ok": state == "ok", "state": state, "problems": [], "notes": [], "facts": {}}
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1, "hosts": [row(a, "ok"), row(b, "down")]}))
+        state = lambda: {h["host"]: h["state"] for h in self.c.status()["hosts"]}
+
+        def settle():
+            for _ in range(1200):
+                if not self.c._coming and not self.c._retrying and all(j["state"] in ("ok", "failed") for j in self.c.jobs()):
+                    return
+                time.sleep(0.05)
+            self.fail("it did not settle")
+        # not its signature, not a machine, an old report: refused, and nothing is kept
+        self.assertEqual(post(b, lambda when: "0" * 64), 403)
+        self.assertEqual(post("nobody", good), 403)
+        self.assertEqual(post(b, good, when=int(time.time()) - 3600), 403)
+        self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", b"other")), 403)
+        self.assertEqual(self.c.reported(), {})
+        self.assertEqual(state()[b], "down")
+        # its own: kept, and the machine that was away is looked at from the report at once
+        self.assertEqual(post(b, good), 200)
+        settle()
+        self.assertEqual(util.read_text(os.path.join(self.c.reports_dir, b + ".txt")).encode(), body)
+        self.assertEqual(state(), {a: "ok", b: "ok"})
+        self.assertEqual(list(self.c.reported()), [b])
+        # an apply that waited for it runs the moment it reports
+        self.c._write_waiting({b: {"since": 1, "tries": 0, "user": "admin"}})
+        self.c._reported_at.clear()
+        self.assertEqual(post(b, good), 200)
+        settle()
+        self.assertEqual(self.c.waiting(), {})
+        own = [j for j in self.c.jobs() if j["user"] == "control"]
+        self.assertEqual((len(own), own[0]["hosts"], own[0]["state"]), (1, [b], "ok"))
 
     def test_jobs_on_different_machines_run_side_by_side(self):
         cookie, _csrf = self.made()

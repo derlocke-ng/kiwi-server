@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.264.0 — the agent: machines report by themselves
+
+- **Every machine runs a small agent** (`kiwi-agent`, installed by an apply when the network
+  has a control node). Once a minute it sends the control node how the machine is, signed
+  with a key of its own. The control node looks from these reports instead of logging in to
+  every machine: the pages are a minute behind, not ten.
+- **A machine that starts is seen at once**, and an apply that waited for it runs at once
+  (before: within a minute, by the control node asking).
+- A machine whose agent is silent is still asked over SSH, as before. `kiwi-server status …
+  --reports DIR` is what the control node runs.
+- Design: the agent, and the order to build in (docs/design/scale.md). This is the agent's
+  first step; taking orders and the neighbours' vote for a failover come on top of it.
+
 ## 2.263.0 — names by service: paste.home
 
 - **`names: service`** (under `defaults:`, or on one machine): a part that runs on one machine

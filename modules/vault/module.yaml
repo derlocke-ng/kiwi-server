@@ -53,6 +53,11 @@ logins:
     when: admin_token_hashed
     note: "The network keeps only a hash of this page's token. Type the password the hash was made from."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is vault.<machine>.<domain>; kiwi-server can name it vault.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: vault_domain, word: vault, url: true }
+
 nginx:
   upstream:
     name: vaultwarden

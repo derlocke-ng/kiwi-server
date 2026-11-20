@@ -59,6 +59,11 @@ logins:
     password: admin_password
     note: "The admin of BTCPay Server, made at its first start. A password changed inside BTCPay stays changed. Nobody else can register."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is pay.<machine>.<domain>; kiwi-server can name it pay.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: pay_hostname, word: pay }
+
 nginx:
   server_name: "{{ pay_host }}"
   # its name on the VPN stays, and sends the browser on to the name it was given

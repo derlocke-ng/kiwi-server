@@ -118,6 +118,29 @@ public is reached the way strangers reach it, through the master; what the
 network keeps for itself has a name under the fleet's domain. A service you
 want both ways is better two: a public one and an internal one.
 
+### Names by service
+
+By default a part is named after its machine: the pastebin on quince is `paste.quince.home`.
+With `names: service` a part that runs on one machine only is named for itself:
+
+```yaml
+defaults:
+  names: service        # paste.home, cloud.home, git.home (default: machine)
+```
+
+- The name stays when the part moves to another machine: links, bookmarks and the server
+  address in a client do not change.
+- `names:` can also stand on one machine, to try it there first.
+- A name you set by hand in the part's own settings always counts.
+- A part that runs on two machines keeps its machines' names on both.
+- Two parts can never have one name: kiwi-server names both and stops.
+- The control page and the backup server keep their machine's name: computers that joined
+  and the backups point at it.
+- After changing it, apply the machine and the machines that answer for names
+  (`kiwi-server apply … --changed`). The old name keeps opening for Nextcloud, Forgejo,
+  Vaultwarden, the pastebin and Firefox Sync (it sends the browser on); for the other parts
+  only the new name answers.
+
 ### Mullvad's SOCKS5 proxies
 
 Every Mullvad server runs a SOCKS5 proxy, reachable through the master's

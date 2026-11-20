@@ -33,6 +33,11 @@ storage:
 urls:
   - "Firefox Sync: in Firefox, about:config, identity.sync.tokenserver.uri = https://{{ sync_host }}/1.0/sync/1.5 (before signing in to sync)"
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is ffsync.<machine>.<domain>; kiwi-server can name it ffsync.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: sync_hostname, word: ffsync }
+
 nginx:
   upstream:
     name: ffsync

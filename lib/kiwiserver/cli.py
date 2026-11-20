@@ -18,7 +18,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import asleep as asleepmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
+from . import asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -824,6 +824,8 @@ def load(args, need_roles=True):
         store.touch(st, args.fleet)     # in use: it locks itself the idle time from now (the app's looks do not count)
     roles = rolesmod.discover() if need_roles else None
     ms = modset(fleet) if need_roles else None
+    if ms is not None:
+        namesmod.assign(fleet, ms)      # names by service: in memory, before anything renders or lists
     return fleet, roles, ms
 
 

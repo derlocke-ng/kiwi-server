@@ -39,6 +39,11 @@ storage:
 urls:
   - "Pastebin: https://{{ paste_host }}"
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is paste.<machine>.<domain>; kiwi-server can name it paste.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: paste_domain, word: paste }
+
 nginx:
   upstream:
     name: privatebin

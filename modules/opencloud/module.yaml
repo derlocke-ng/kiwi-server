@@ -45,6 +45,11 @@ logins:
     password: admin_password
     note: "This password was set when OpenCloud first started. If someone changed it inside OpenCloud, the new one is not known here."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is opencloud.<machine>.<domain>; kiwi-server can name it opencloud.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: opencloud_domain, word: opencloud }
+
 nginx:
   upstream:
     name: opencloud

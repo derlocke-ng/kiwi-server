@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.259.0 — many machines: side by side, all at once, an apply that waits, shorter labels
+
+- **Jobs on different machines run side by side on the control node.** Before, one lock held
+  every job behind the one that ran. Now two applies, checks, previews or restarts that name
+  different machines run at the same time; a job on the same machine waits its turn; a job
+  that changes more than its machines (Update everything, a removal, a rotation, a restore)
+  and an apply to the control node's own machine still run alone.
+- **An apply works on all its machines at once**, not on six. `--at-once N` or `KIWI_AT_ONCE`
+  says fewer for a small control node. The look asks all machines at once as well (was 8).
+- **An apply that did not reach a machine waits for it.** A machine that was off no longer
+  ends as "failed" and stays so: the look that sees it answer again applies it by itself (a
+  job by `control`). Machines shows "apply waits"; a machine that answers and still fails is
+  tried three times, then left to a person.
+- **A role script is rendered once per change, not at every apply.** The check "which other
+  machines does this change reach" kept rendering every machine (0.15 to 0.2 s each). The
+  fingerprints are now kept while nothing a script is made from has changed, an hour at most.
+- What the fleet remembers (`.kiwi-state.json`) is written under a lock across processes, so
+  two applies at once do not lose each other's lines.
+- **Shorter labels**: Access rules (was "Who may reach what"), Controllers (was "Computers"),
+  Take in a machine, Add a machine, Updates, Lost device.
+
 ## 2.258.0 — the look at the machines does not wait for a job
 
 - **The control node looks at the machines while a job runs.** Before, the look waited for the

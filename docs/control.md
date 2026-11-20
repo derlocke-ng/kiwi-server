@@ -464,6 +464,27 @@ access to the machines, its log comes here as it is written, and what the job
 changed comes back. Without a control node, or for a first apply over SSH, the
 computer applies itself as before.
 
+### Many machines
+
+- **Jobs on different machines run side by side.** Two applies, checks, previews or restarts
+  that name different machines do not wait for each other. A job on the same machine waits
+  for the one before it. A job that changes more than its machines (Update everything, a
+  removal, a rotation, a restore, a backup of the network) runs alone, and so does an apply
+  to the machine the control page runs on, because it restarts the page.
+- **An apply works on all its machines at once.** The masters still go one after the other,
+  then the machines that answer for names or open disks, then the rest. For a small control
+  node or a thin uplink, `kiwi-server apply … --at-once 8` (or `KIWI_AT_ONCE=8` in its
+  environment) works on at most eight at a time.
+- **An apply that did not reach a machine waits for it.** A machine that was off, asleep or
+  cut off keeps its apply: the next look that sees it answer applies it, as a job by
+  `control`, with nobody asking. Machines shows "apply waits" beside its name until then. A
+  machine that answers and still fails is tried three times, then left to you: its History
+  has each try.
+- **A role script is rendered once per change.** After an apply, kiwi-server says which other
+  machines the change reaches. It keeps each machine's fingerprint beside the output while
+  nothing a script is made from has changed (an hour at most), instead of rendering every
+  machine again each time.
+
 ## When a machine does not answer
 
 The control node looks at every machine every ten minutes. One that does not

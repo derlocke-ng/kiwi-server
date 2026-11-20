@@ -1406,6 +1406,14 @@ def _state_path(fleet):
     return fleet.resolve_path(".kiwi-state.json")
 
 
+def state_lock(fleet):
+    """One at a time, across processes, for reading, changing and writing what the fleet remembers:
+    two applies at once (two jobs on the control node) must not write over each other's lines."""
+    d = fleet.resolve_path("output")
+    os.makedirs(d, exist_ok=True)
+    return util.dir_lock(d)
+
+
 def fleet_state(fleet):
     """What this fleet's folder remembers about its machines, nothing secret: when each was
     last applied. It goes with the folder to another computer."""
@@ -1418,15 +1426,16 @@ def fleet_state(fleet):
 def record_applied(fleet, *names, only_new=False):
     """Remember that these machines have their role. `only_new`: for machines `status` found
     with a role applied, which an older release or another computer applied; their time stays."""
-    state = fleet_state(fleet)
-    applied = state.setdefault("applied", {})
-    new = [n for n in names if not (only_new and n in applied)]
-    if not new:
-        return
-    for n in new:
-        applied[n] = int(time.time())
     try:
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        with state_lock(fleet):
+            state = fleet_state(fleet)
+            applied = state.setdefault("applied", {})
+            new = [n for n in names if not (only_new and n in applied)]
+            if not new:
+                return
+            for n in new:
+                applied[n] = int(time.time())
+            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     except OSError:
         if not only_new:
             raise
@@ -1440,9 +1449,10 @@ def record_backup_clients(fleet, host):
     """Remember whose backups this server was told to take when it got its role."""
     if "backup-server" not in host.role_settings_raw:
         return
-    state = fleet_state(fleet)
-    state.setdefault("backup_clients", {})[host.name] = _backup_clients(host)
-    util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    with state_lock(fleet):
+        state = fleet_state(fleet)
+        state.setdefault("backup_clients", {})[host.name] = _backup_clients(host)
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
 
 
 def backup_untold(fleet):
@@ -1488,29 +1498,94 @@ def _same_as_told(script, told):
 def record_rendered(fleet, name, script):
     """What a machine got with its last apply, as a fingerprint of its role script (the same
     settings render the same script, byte for byte)."""
-    state = fleet_state(fleet)
-    state.setdefault("rendered", {})[name] = _fingerprint(script)
     try:
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        with state_lock(fleet):
+            state = fleet_state(fleet)
+            state.setdefault("rendered", {})[name] = _fingerprint(script)
+            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     except OSError:
         pass
+
+
+def inputs_key(fleet, ms):
+    """One fingerprint of everything a role script is rendered from: this release, the fleet's files,
+    what the fleet remembers (without when and what was applied), the secrets by name, size and
+    time, the roles and the modules. The same key: every machine's script is the same as before."""
+    d = hashlib.sha256()
+
+    def put(*parts):
+        d.update(("\x00".join(str(x) for x in parts) + "\n").encode())
+
+    def tree(label, root):
+        for at, dirs, files in os.walk(root):
+            dirs.sort()
+            for f in sorted(files):
+                try:
+                    st = os.stat(os.path.join(at, f))
+                except OSError:
+                    continue
+                put(label, os.path.relpath(os.path.join(at, f), root), st.st_size, st.st_mtime_ns)
+    put("release", VERSION, os.environ.get("KIWI_CONTROL_HOST", ""), os.environ.get("KIWI_STARTER", ""))
+    folder = os.path.dirname(os.path.abspath(fleet.path))
+    for f in sorted(os.listdir(folder)):
+        if f.endswith((".yaml", ".yml")):
+            with open(os.path.join(folder, f), "rb") as fh:
+                put("file", f, hashlib.sha256(fh.read()).hexdigest())
+    put("state", json.dumps({k: v for k, v in fleet_state(fleet).items() if k not in ("applied", "rendered")}, sort_keys=True))
+    tree("secrets", os.environ.get("KIWI_SECRETS_DIR") or fleet.resolve_path("secrets"))
+    tree("roles", rolesmod.roles_dir())
+    for name, path in sorted({(m.name, m.dir) for m in ms.modules.values()}):
+        tree("module " + name, path)
+    return d.hexdigest()
+
+
+KEPT_FOR = 3600     # seconds: rendering also renews what is about to run out (certificates), which no key shows
+
+
+def _judged_path(r):
+    return os.path.join(r.out_dir, ".rendered-prints.json")
 
 
 def changed_since_apply(fleet, roles, r, skip=()):
     """Machines whose role script is another now than the one their last apply sent: a setting of
     theirs changed, or one elsewhere that reaches them (a new name the DNS machines must know, a
     public name the master hands on, a new client of a backup server). A machine this computer
-    never applied with this release is not judged."""
+    never applied with this release is not judged.
+
+    A script is rendered once per change, not once per question (the owner, 20 Nov 2026: "why all
+    machines, and not just what changed?!"): its fingerprint is kept beside the output under the
+    key of everything it was rendered from (`inputs_key`), and read from there while that key
+    stays, for an hour at most. KIWI_RENDER_ALWAYS=1 renders every time, as before."""
     told, out = fleet_state(fleet).get("rendered") or {}, []
+    kept, key, dirty = {}, None, False
+    if os.environ.get("KIWI_RENDER_ALWAYS") != "1":
+        try:
+            key = inputs_key(fleet, r.ms)
+            memo = json.loads(util.read_text(_judged_path(r)))
+            fresh = memo.get("key") == key and 0 <= time.time() - (memo.get("time") or 0) < KEPT_FOR
+            kept = dict(memo.get("prints") or {}) if fresh else {}
+        except (OSError, ValueError, AttributeError):
+            kept = {}
     for h in fleet.hosts.values():
         if h.name in skip or h.name not in told or h.role not in roles or h.validate(roles):
+            continue
+        if told[h.name].startswith("v2:") and h.name in kept:
+            if kept[h.name] != told[h.name]:
+                out.append(h.name)
             continue
         try:
             script, _b = r.script(h)
         except KiwiError:
             continue
+        kept[h.name], dirty = _fingerprint(script), True
         if not _same_as_told(script, told[h.name]):
             out.append(h.name)
+    if key and dirty:
+        try:
+            os.makedirs(r.out_dir, exist_ok=True)
+            util.write_text(_judged_path(r), json.dumps({"key": key, "time": int(time.time()), "prints": kept}, sort_keys=True), 0o600)
+        except OSError:
+            pass
     return out
 
 
@@ -2919,7 +2994,7 @@ def cmd_apply(args):
                 one(h, "")
             continue
         util.say("at once: %s" % ", ".join(h.name for h in wave))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(wave))) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=at_once(len(wave), getattr(args, "at_once", None))) as pool:
             list(pool.map(lambda h: one(h, h.name), wave))
     for server, new in sorted(backup_untold(fleet).items()):
         util.warn("%s does not take the backups of %s yet: kiwi-server apply %s %s"
@@ -2930,6 +3005,17 @@ def cmd_apply(args):
                   % (", ".join(others), "s" if len(others) == 1 else "ve", shown_path(fleet.path)))
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
+
+
+def at_once(n, asked=None):
+    """How many machines are worked on at the same time: all of them (the owner, 20 Nov 2026: "why
+    not n+1"). The work is done on the machines; this computer waits for them. `--at-once N` or
+    KIWI_AT_ONCE=N says fewer, for a small control node or a thin uplink."""
+    try:
+        limit = int(asked or os.environ.get("KIWI_AT_ONCE") or 0)
+    except ValueError:
+        limit = 0
+    return max(1, min(n, limit) if limit > 0 else n)
 
 
 def apply_waves(fleet, roles, hosts):
@@ -3567,7 +3653,7 @@ def cmd_status(args):
         return {"host": h.name, "target": tgt, "ok": True, "output": human, "state": state,
                 "problems": problems, "notes": notes, "facts": measured}
     if getattr(args, "stream", False):  # each machine's row as one line of JSON, as it answers (the control node's look)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=at_once(len(hosts))) as pool:
             for fut in concurrent.futures.as_completed([pool.submit(ask, h) for h in hosts]):
                 o = fut.result()
                 if o["ok"] and o["facts"].get("applied"):
@@ -3576,7 +3662,7 @@ def cmd_status(args):
                     name_under_parts(fleet.hosts[o["host"]], roles, ms, o["problems"])
                 print(json.dumps(o), flush=True)
         return
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=at_once(len(hosts))) as pool:
         out = list(pool.map(ask, hosts))
     record_applied(fleet, *[o["host"] for o in out if o["ok"] and o["facts"].get("applied")], only_new=True)
     for o in out:                       # one after the other: the renderer is not shared between threads
@@ -5414,6 +5500,8 @@ def build_parser():
     s = sub("apply", cmd_apply); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--changed", action="store_true",
                    help="every machine with changes not applied yet (its role script is another now), besides those named")
+    s.add_argument("--at-once", type=int, metavar="N",
+                   help="at most N machines at the same time (default: all that may go together)")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
     s.add_argument("--new-host-key", action="store_true",

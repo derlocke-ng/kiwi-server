@@ -521,7 +521,7 @@ placeholder="Filter: a name, state:down, site:{{ t.sites[0]|slug }}, part:dns, r
 onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type=checkbox]'))b.checked=this.checked;mtn()"></th>
 <th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb">Seen</th></tr></thead><tbody>
 {% for m in g.machines %}<tr><td class="tick">{% if m.phase not in fresh %}<input type="checkbox" name="host" value="{{ m.name }}" aria-label="Tick {{ m.name }}" onclick="mtn()">{% endif %}</td>
-<td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% if g.masters and m.site and m.site != "home" %} <span class="sm">{{ m.site }}</span>{% endif %}{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}</td>
+<td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% if g.masters and m.site and m.site != "home" %} <span class="sm">{{ m.site }}</span>{% endif %}{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}{% if m.waiting %} <span class="sm warn" title="An apply did not reach it. It gets it by itself when it answers again.">apply waits</span>{% endif %}</td>
 <td><span class="badge {{ level(m.st) }}{{ " busy" if looking }}"{% if m.story %} title="{{ m.story }}"{% endif %}>{{ stword(m.st) }}</span></td>
 <td class="w2">{{ kind(m.role, m.standby_of) }}</td>
 <td class="w3"{% if m.part_titles %} title="{{ m.part_titles|join(", ") }}"{% endif %}>{{ m.part_titles|join(", ") or "-" }}</td>
@@ -642,6 +642,7 @@ without your VPN. <a href="/access#tor">Make a service a hidden service, or say 
 <h1><span class="dot {{ m.state }}"></span>{{ m.name }} <span class="state {{ m.state }}" style="font-size:1rem">{{ words(m.state) }}</span></h1>
 <p class="muted">{{ kind(m.role, m.standby_of) }}{% for t in m.tags %} · {{ t }}{% endfor %} · {{ m.hostname }}{% if m.facts.os %} · {{ m.facts.os }}{% endif %}</p>
 {% if chips %}<div class="chips">{% for c in chips %}<span class="chip {{ c.level }}">{{ c.text }}</span>{% endfor %}</div>{% endif %}
+{% if m.waiting %}<p class="banner warn">An apply did not reach this machine. It gets it by itself as soon as it answers again; nothing to do here.</p>{% endif %}
 <nav class="tabs">{% for t, label in (("overview", "Overview"), ("services", "Services"), ("history", "History"), ("backups", "Backups")) %}
 <a href="/hosts/{{ m.name }}{{ '' if t == 'overview' else '?tab=' ~ t }}" class="{{ 'on' if tab == t }}">{{ label }}</a>{% endfor %}
 <a href="/hosts/{{ m.name }}/settings">Settings</a></nav>
@@ -1913,6 +1914,7 @@ def make_app(control: Control):
         st = control.status() or {}
         info = control.fleet_info() or {}
         said = {h.get("host"): h for h in st.get("hosts") or []}
+        waits = control.waiting()
         out = []
         for h in info.get("hosts") or []:
             s = said.get(h["name"])
@@ -1922,6 +1924,7 @@ def make_app(control: Control):
                         "phase": h.get("phase") or "", "provider": h.get("provider") or "", "address": h.get("address") or "",
                         "here": bool(h.get("here")), "wol": bool(h.get("wol")),
                         "locked": bool((s or {}).get("locked")), "stage": (s or {}).get("stage") or "",
+                        "waiting": h["name"] in waits,
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",

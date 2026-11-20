@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.267.0 — a part moves, and has a standby: tried on real machines
+
+Everything here was run on the test machines before it was released (a uCore and a Debian
+machine, both ways): `tests/drills/part-move.sh`, `tests/drills/part-standby.sh`.
+
+- **A standby for a part** (`keep_ready: { vault: medlar }` on the machine that runs it): the
+  standby machine fetches the part's folders every minute with a key that can only read
+  them. `kiwi-server standby` says how old each copy is; `kiwi-server switch FLEET PART`
+  gives the part to its standby, also while the machine it runs on does not answer. That
+  machine then gets the change from the control node the moment it answers again
+  (docs/backups.md, A standby for a part).
+- **Fixed: a part under a name its machine's own name does not cover had no valid
+  certificate.** A machine's certificate held its name and `*.<machine>.<domain>` only. A
+  part named by service (`vault.home`, 2.263) or one that moved and kept its name
+  (`vault.quince.home` on medlar) answered, and every browser refused it. A machine's
+  certificate now holds every name its parts answer to.
+- **`kiwi-server move` now looks before it starts and puts things back when it fails.** The
+  plan renders both machines as they would be after the move and stops on what an apply
+  would refuse (a hidden service on the old machine that still names the part). If the new
+  machine cannot be applied or the data does not arrive, the fleet file goes back, the part
+  leaves the new machine and starts again where it was. A failed restore shows restic's own
+  lines.
+- kiwi-modules 0.105.0: a restore leaves SELinux labels alone (a part could not move between
+  uCore and Debian), and a clearer message when a backup or a restore runs already.
+
 ## 2.266.0 — a part moves to another machine
 
 - **`kiwi-server move FLEET PART FROM TO`** moves a part with its data, its secrets and its

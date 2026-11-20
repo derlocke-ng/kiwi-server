@@ -15359,6 +15359,14 @@ class TestFirstRunPage(StoreBase):
         cli.record_applied(fleet, b)
         self.c._reported_at.clear()
         self.assertEqual((post(b, good), heard[-1]), (200, None))
+        # held for a part, which the fleet file gives that machine again (switched back from a computer): not held
+        cli.hold_back(fleet, b, ["kn-vault"], "vault")
+        self.c._reported_at.clear()
+        with mock.patch.object(self.c, "fleet_info", lambda fresh=False: {"hosts": [{"name": b, "modules": []}]}):
+            self.assertEqual((post(b, good), heard[-1]), (200, "kn-vault"))
+        self.c._reported_at.clear()
+        with mock.patch.object(self.c, "fleet_info", lambda fresh=False: {"hosts": [{"name": b, "modules": ["vault"]}]}):
+            self.assertEqual((post(b, good), heard[-1]), (200, None))
 
     def test_jobs_on_different_machines_run_side_by_side(self):
         cookie, _csrf = self.made()

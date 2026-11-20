@@ -1550,13 +1550,17 @@ def switch_after(fleet):
     return after if on else 0
 
 
-def hold_back(fleet, name, containers):
+def hold_back(fleet, name, containers, part=None):
     """Containers a machine must not run when it answers again (a part that was switched away
-    while it was gone): told to its agent with every report until its next apply."""
+    while it was gone): told to its agent with every report until its next apply. With `part`, the
+    hold ends by itself where the fleet file gives that part to the machine again."""
     with state_lock(fleet):
         state = fleet_state(fleet)
         held = state.setdefault("hold", {})
         held[name] = sorted(set(held.get(name) or []) | set(containers))
+        if part:
+            of = state.setdefault("hold_parts", {}).setdefault(name, {})
+            of.update({c: part for c in containers})
         util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
 
 
@@ -1572,6 +1576,9 @@ def unhold(fleet, name, containers):
             held[name] = left
         else:
             held.pop(name)
+        of = (state.get("hold_parts") or {}).get(name) or {}
+        for c in containers:
+            of.pop(c, None)
         util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
 
 
@@ -1589,6 +1596,7 @@ def record_applied(fleet, *names, only_new=False):
                 applied[n] = int(time.time())
                 if not only_new:
                     (state.get("hold") or {}).pop(n, None)      # applied: what it holds back is gone from it
+                    (state.get("hold_parts") or {}).pop(n, None)
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     except OSError:
         if not only_new:
@@ -5722,7 +5730,7 @@ def cmd_switch(args):
     elif services:
         # when it comes back, its stack starts the part before its apply takes it away: its agent's
         # first report gets told to hold those containers back (machineagent.py), until that apply
-        hold_back(fleet, src_name, services)
+        hold_back(fleet, src_name, services, part)
     else:
         util.warn("%s: which containers of %s run there could not be worked out (%s): when it is back, apply it before "
                   "anything else, or the part runs there too" % (src_name, part, why_not or "none found"))

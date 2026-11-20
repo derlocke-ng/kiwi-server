@@ -3135,6 +3135,31 @@ class TestSetup(Base):
         self.assertIn("paste", after["fig"]["node"]["modules"])
         self.assertEqual(after["fig"]["node"]["paste"]["paste_domain"], "paste.quince.home")
         self.assertNotIn("paste", after["quince"]["node"])                          # its settings went with it
+        # a part with a public name: the new machine's proxy opens to the Internet as the old one's is
+        pub = yaml.safe_load(util.read_text(dest))
+        pub["hosts"]["quince"]["node"]["paste"] = {"paste_domain": "paste.example.org"}
+        pub["hosts"]["quince"]["node"].setdefault("reverse-proxy", {}).update(public=True, acme_email="me@example.org")
+        fpub = config.Fleet(dest, pub)
+        pp = partmove.plan(fpub, roles, ms, "paste", "quince", "fig", applied=both)
+        self.assertTrue(pp["open"])
+        self.assertEqual(pp["name"], "paste.example.org")
+        opened = pp["data"]["hosts"]["fig"]["node"]["reverse-proxy"]
+        self.assertEqual((opened["public"], opened["acme_email"]), (True, "me@example.org"))
+        self.assertTrue(any("proxy opens to the Internet" in x for x in pp["steps"]))
+        self.assertFalse(pp["closes"])
+        # the part was the old machine's last public name: its proxy closes, or the proxy's own check would stop the apply
+        def last_one(fl, h):
+            node = fl.raw["hosts"][h.name]["node"]
+            if (node.get("reverse-proxy") or {}).get("public") and "paste" not in (node.get("modules") or []):
+                raise util.KiwiError("%s: reverse-proxy.public: no site has a name outside the fleet's domain (hub_domain)" % h.name)
+        pc = partmove.plan(fpub, roles, ms, "paste", "quince", "fig", applied=both, render=last_one)
+        self.assertEqual(pc["stops"], [])
+        self.assertTrue(pc["closes"])
+        self.assertIs(pc["data"]["hosts"]["quince"]["node"]["reverse-proxy"]["public"], False)
+        self.assertTrue(pc["data"]["hosts"]["fig"]["node"]["reverse-proxy"]["public"])
+        self.assertTrue(any("closes to the Internet" in x for x in pc["steps"]))
+        self.assertFalse(p["open"])                                                # a name inside the network: nothing opens
+        self.assertNotIn("reverse-proxy", {k for k in after["fig"]["node"] if k == "reverse-proxy" and after["fig"]["node"][k].get("public")})
         # what stops it
         stop = lambda *a, **k: " ".join(partmove.plan(fleet, roles, ms, *a, **k)["stops"])
         self.assertIn("is not among mango's parts", stop("paste", "mango", "fig"))

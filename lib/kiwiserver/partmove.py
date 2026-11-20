@@ -38,7 +38,19 @@ def _docker_dir(host):
     return str((host.role_settings_raw or {}).get("docker_dir") or "")
 
 
-def changed_data(raw, part, src, dst, name_setting=None, name_value=None):
+PROXY = "reverse-proxy"
+LAST_PUBLIC = "no site has a name outside the fleet's domain"     # the proxy's own check, when `public` has nothing left
+OPEN_KEYS = ("public", "acme_email", "acme_staging")       # what makes a public name answer: carried to the new machine
+
+
+def is_public(name, host):
+    """A name outside the fleet's domain: the Internet's, answered through the master with a
+    certificate from Let's Encrypt (reverse-proxy.public)."""
+    domain = str(host.cfg.get("domain") or "")
+    return bool(name) and not (name == host.hostname or (domain and name.endswith("." + domain)))
+
+
+def changed_data(raw, part, src, dst, name_setting=None, name_value=None, open_too=False):
     """The fleet file's data with the part moved: off `src`'s list and settings, onto `dst`'s. A
     standby the part had (keep_ready) ends with the move: the part is elsewhere now."""
     data = copy.deepcopy(raw)
@@ -63,6 +75,15 @@ def changed_data(raw, part, src, dst, name_setting=None, name_value=None):
         settings[name_setting] = name_value
     if settings:
         d_block[part] = settings
+    if open_too:                        # a public name: the new machine's proxy opens to the Internet as the old one's is
+        was = s_block.get(PROXY) if isinstance(s_block.get(PROXY), dict) else {}
+        was = dict((src.role_settings_raw or {}).get(PROXY) or {}, **was)
+        now = d_block.setdefault(PROXY, {})
+        if isinstance(now, dict):
+            for k in OPEN_KEYS:
+                if k in was and k not in now:
+                    now[k] = was[k]
+            now["public"] = True
     return data
 
 
@@ -128,36 +149,65 @@ def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, 
             out["name_setting"] = nb["setting"]
             out["name_value"] = str(hand) if hand else (("https://" + name) if nb["url"] else name)
     out["pins"] = [s.key for s in m.settings if getattr(s, "generate", False)]
-    data = changed_data(fleet.raw, part, src, dst, out["name_setting"], out["name_value"])
+    # a public name answers only where the proxy is open to the Internet (20 Nov 2026: the pastebin
+    # moved, that setting stayed behind, and its public name was dead)
+    opened = lambda h: bool(((h.role_settings_raw or {}).get(PROXY) or {}).get("public"))
+    open_too = bool(nb) and is_public(out["name"], src) and opened(src) and not opened(dst)
+    out["open"] = open_too
+    data = changed_data(fleet.raw, part, src, dst, out["name_setting"], out["name_value"], open_too)
     out["data"] = data
-    try:                                # the fleet as it would be: does the new machine take the part?
-        after = config.Fleet(fleet.path, copy.deepcopy(data))
-        for e in after.hosts[dst_name].validate(roles) + after.hosts[src_name].validate(roles):
-            stops.append(e)
-        namesmod.assign(after, ms)
-        if render is not None and not stops:
-            for n in (dst_name, src_name):
-                try:
-                    render(after, after.hosts[n])
-                except KiwiError as e:
-                    more = (" (something else on %s still refers to %s: take it out there first)" % (src_name, part)
-                            if n == src_name else "")
-                    stops.append("after the move %s%s" % (e, more))
-    except KiwiError as e:
-        stops.append(str(e))
+    def tried(data):
+        """What is in the way with the fleet as `data` has it: does the new machine take the part,
+        and does the old one stand without it?"""
+        found = []
+        try:
+            after = config.Fleet(fleet.path, copy.deepcopy(data))
+            for e in after.hosts[dst_name].validate(roles) + after.hosts[src_name].validate(roles):
+                found.append(e)
+            namesmod.assign(after, ms)
+            if render is not None and not found:
+                for n in (dst_name, src_name):
+                    try:
+                        render(after, after.hosts[n])
+                    except KiwiError as e:
+                        more = (" (something else on %s still refers to %s: take it out there first)" % (src_name, part)
+                                if n == src_name else "")
+                        found.append("after the move %s%s" % (e, more))
+        except KiwiError as e:
+            found.append(str(e))
+        return found
+
+    found = tried(data)
+    closes = False
+    if found and nb and is_public(out["name"], src) and opened(src) and any(LAST_PUBLIC in e for e in found):
+        # the part was the last public name there: the old machine's proxy closes to the Internet,
+        # it would refuse to be open with nothing to show
+        closed = copy.deepcopy(data)
+        closed["hosts"][src_name].setdefault(src.role, {}).setdefault(PROXY, {})["public"] = False
+        again = tried(closed)
+        if not again:
+            data, found, closes = closed, again, True
+            out["data"] = data
+    stops.extend(found)
+    out["closes"] = closes
     if not backup:
         notes.append("%s keeps no data of its own to carry: only its settings and secrets move" % part)
     notes.append("%s's data stays on %s's disk after the move, unused: delete it there when the part runs well on %s"
                  % (part, src_name, dst_name))
+    if nb and is_public(out["name"], src):
+        notes.append("%s is a public name: it answers from %s once the master is applied too (the move does that) and "
+                     "%s has its certificate from Let's Encrypt, a minute or two" % (out["name"], dst_name, dst_name))
     out["steps"] = [
         "%s stops on %s%s" % (part, src_name, ", and %s makes one last backup" % src_name if backup else ""),
         ("its %d generated secret%s stay%s what they are, pinned to %s" % (
             len(out["pins"]), "" if len(out["pins"]) == 1 else "s", "s" if len(out["pins"]) == 1 else "", dst_name))
         if out["pins"] else "it has no generated secrets",
-        "the fleet file: %s and its settings move from %s to %s%s" % (
-            part, src_name, dst_name, "; it stays %s" % out["name"] if out["name"] else ""),
+        "the fleet file: %s and its settings move from %s to %s%s%s" % (
+            part, src_name, dst_name, "; it stays %s" % out["name"] if out["name"] else "",
+            "; %s's proxy opens to the Internet for that name, as %s's is" % (dst_name, src_name) if open_too else ""),
         "%s is applied%s" % (dst_name, ", and gets %s's data from %s's backups" % (part, src_name) if backup else ""),
-        "%s is applied (the part is gone there), then every machine the change reaches" % src_name,
+        "%s is applied (the part is gone there%s), then every machine the change reaches" % (
+            src_name, "; its proxy closes to the Internet, no public name is left there" if closes else ""),
     ] + (["%s starts a backup: from then on %s is in its own store" % (dst_name, part)] if backup else [])
     return out
 

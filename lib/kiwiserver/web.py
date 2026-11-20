@@ -818,8 +818,10 @@ while, and when it is fine again. What everyone on your network sees without a l
 <a href="/api/jobs/{{ job.id }}/log?text=1&amp;download=1">Download</a></p></details>
 <script>
 const say={{ say|tojson }};let off=0;const log=document.getElementById("log"),el=document.getElementById("say");
-async function poll(){const r=await fetch("/api/jobs/{{ job.id }}/log?offset="+off);if(!r.ok)return;
-const d=await r.json();log.textContent+=d.text;off=d.offset;el.textContent=say[d.state];
+let away=0;async function poll(){let r;try{r=await fetch("/api/jobs/{{ job.id }}/log?offset="+off)}catch(e){r={ok:false,status:0}}
+if(!r.ok){if(r.status==404&&away){el.textContent="This page restarted while the job ran (an apply to its own machine does that), and the job ended with it. Start it again: an apply that has nothing left to do ends at once.";el.className="banner warn";return}
+away=1;el.textContent="This page is away for a moment (an apply to its own machine restarts it). Waiting for it…";el.className="banner warn";setTimeout(poll,3000);return}
+let d;try{d=await r.json()}catch(e){el.textContent="This page restarted while the job ran, and the job ended with it. Log in again and start it once more: an apply that has nothing left to do ends at once.";el.className="banner warn";return}away=0;log.textContent+=d.text;off=d.offset;el.textContent=say[d.state];
 el.className="banner "+(d.state=="ok"?"ok":d.state=="failed"?"bad":"warn");
 if(d.state=="failed")log.parentElement.open=true;
 const u=log.textContent.match(/https:\\/\\/[^\\s"']+/g),o=document.getElementById("open");
@@ -1367,7 +1369,7 @@ it. Version {{ version }}.</p>
 user name of each service and show the password when you ask.</dd>
 <dt>…change a setting?</dt><dd>Open the machine from <a href="/">Home</a> and choose <em>Settings</em>. What all machines
 share is under <a href="/settings">Settings for every machine</a>. Then <em>Apply</em> brings it to the machine.</dd>
-<dt>…bring something back that broke?</dt><dd><a href="/recovery">If something breaks</a> says what happens by
+<dt>…bring something back that broke?</dt><dd><a href="/recovery">Recovery</a> says what happens by
 itself and what to press: for a service's data, a lost machine, the master, a lost phone or computer. It also says
 now whether you could.</dd>
 <dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine at home</em>.</dd>
@@ -1465,7 +1467,7 @@ TEMPLATES["rebuild.html"] = """{% if m.phase == "applied" %}{% from "step.html" 
 is. One that does not is erased and installed anew at {{ m.provider }}.{% else %}Its install media erase the disk of the machine they start.{% endif %}</p>
 <p class="muted">{% if "backup" in m.modules %}Once it is set up, it finds itself in its backups and brings its data
 back by itself, then backs up as before.{% elif m.role == "master" %}It keeps no data of its own. Its place on the VPN
-comes back from the copy the fleet keeps of it; <a href="/recovery">If something breaks</a> says whether there is one.
+comes back from the copy the fleet keeps of it; <a href="/recovery">Recovery</a> says whether there is one.
 {% else %}It has no backups: after the set-up it starts empty.{% endif %}</p>
 {% if "backup" in m.modules and m.state != "down" %}<div class="card"><p><strong>First: save its data.</strong>
 {{ m.name }} still answers. Installed anew, it gets back what its last backup holds{% if m.facts.backup and m.facts.backup.age is not none %},
@@ -1476,7 +1478,7 @@ and that one is {{ age(m.facts.backup.age) }} old{% endif %}. What changed since
 
 # if something breaks: the report of `kiwi-server recovery`, its checks and its cases
 TEMPLATES["breaks.html"] = """{% extends "base.html" %}{% block main %}
-<p><a href="/">← Home</a></p><h1>If something breaks</h1>
+<p><a href="/">← Home</a></p><h1>Recovery</h1>
 <p class="muted">Before anything breaks: could you bring your network back? When something breaks: what happens by
 itself, and what you do.</p>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
@@ -1574,7 +1576,7 @@ NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/se
        ("/devices", "Devices", "phone", "Access"), ("/accounts", "Accounts", "people", "Access"),
        ("/access", "Who may reach what", "shield", "Access"),
        ("/federation", "Linked networks", "link", "Access"),
-       ("/backups", "Backups", "box", "Safety"), ("/recovery", "If something breaks", "buoy", "Safety"),
+       ("/backups", "Backups", "box", "Safety"), ("/recovery", "Recovery", "buoy", "Safety"),
        ("/unlock", "Disk unlock", "lock", "Safety"),
        ("/controllers", "Computers", "screen", "Safety"),
        ("/activity", "Activity", "pulse", "More"), ("/settings", "Settings", "sliders", "More"),
@@ -3574,7 +3576,7 @@ def make_app(control: Control):
 
     @app.get("/recovery")
     def recovery(request: Request):
-        """If something breaks: could the network be brought back, and what to do (recovery.py)."""
+        """Recovery: could the network be brought back, and what to do (recovery.py)."""
         if not user(request):
             return login_page()
         try:

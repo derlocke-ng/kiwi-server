@@ -1,7 +1,15 @@
 # Changelog
 
-## 2.257.0 — masters as their own group, and the Devices table
+## 2.257.0 — masters as their own group, the Devices table, a job that outlives a page restart
 
+- **A job no longer ends with "the control node lost job … (502)" when the control page
+  restarts under it.** An apply to the control node's own machine restarts the page, and its
+  jobs live in memory. `kiwi-server control run` (what the app's buttons use) now waits for
+  the page (up to 5 minutes), goes on if the job is still there, and runs an apply once more
+  if the job ended with the page: an apply that has nothing left to do ends at once. The
+  page's own view of a job says the same instead of standing still.
+- **"If something breaks" is called Recovery**: in the menu, on its page, in the app and in
+  the hints' buttons. The command was `kiwi-server recovery` already.
 - **The masters and their standbys are a group of their own** at the top of the Machines table,
   not machines of the site "home". A master's own site, if the fleet file names one, shows
   beside its name and still filters (`site:`).

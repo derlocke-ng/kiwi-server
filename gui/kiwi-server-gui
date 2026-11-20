@@ -1386,7 +1386,7 @@ class UnlockDialog(Adw.Dialog):
 
 
 class RecoveryDialog(Adw.Dialog):
-    """If something breaks (`recovery --porcelain`): could the network come back, as rows with
+    """Recovery (`recovery --porcelain`): could the network come back, as rows with
     an icon, gaps first; then each case to open, with a button where the app does what it needs."""
     ICONS = {True: ("emblem-ok-symbolic", "success"), False: ("dialog-warning-symbolic", "warning"),
              None: ("dialog-question-symbolic", "dim-label")}
@@ -1394,7 +1394,7 @@ class RecoveryDialog(Adw.Dialog):
                "restore-copy": "Restore…", "rotate": "Replace…", "device": "Devices…"}
 
     def __init__(self, win):
-        super().__init__(title="If something breaks", content_width=680, content_height=720)
+        super().__init__(title="Recovery", content_width=680, content_height=720)
         self.win = win
         # what the machines said at the last look: how old each one's backup is
         self.looked = {"hosts": list(win.live.values()), "time": win.checked} if win.live else None
@@ -4683,7 +4683,7 @@ class Window(Adw.ApplicationWindow):
         net.append("Update everything…", "win.update-all")
         net.append("Back up the network now", "win.backup-now")
         net.append("Save a copy of the network…", "win.copy")
-        net.append("If something breaks…", "win.recovery")
+        net.append("Recovery…", "win.recovery")
         net.append("Disk unlock…", "win.unlock-picture")
         section.append_submenu("This network", net)
         manage = Gio.Menu()                     # who may do what, and where modules come from

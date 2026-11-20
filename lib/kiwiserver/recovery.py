@@ -1,4 +1,4 @@
-"""If something breaks (docs/recovery.md): could this network be brought back, and what to do
+"""Recovery (docs/recovery.md): could this network be brought back, and what to do
 when a part of it is lost. `kiwi-server recovery <fleet>`; the control page's "If something
 breaks" and the app's dialog of that name show the same report.
 
@@ -653,7 +653,7 @@ def human(rep, width=96):
     gaps = sum(1 for c in rep["checks"] if c["ok"] is False)
     lines.append("  %s" % ("%d gap%s: the lines marked gap say what to do." % (gaps, "" if gaps == 1 else "s")
                            if gaps else "No gaps."))
-    lines += ["", "If something breaks. What happens by itself in each case: the control page, the app, or --porcelain."]
+    lines += ["", "If something breaks: what happens by itself in each case is on the control page (Recovery), in the app, or --porcelain."]
     for k in rep["cases"]:
         lines += ["", "  " + k["title"]]
         for h in k["how"]:

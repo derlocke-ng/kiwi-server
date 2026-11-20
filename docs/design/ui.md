@@ -70,7 +70,7 @@ v Main building (12)   11 fine · 1 waits for unlock
 ```
 lime  [waits for unlock]        Main building · Home server (node)
 Reinstalled 21:40 from lime-encrypted.img (admin). First start: waits for its disk's key.
-[Unlock it]   Disk unlock   If something breaks
+[Unlock it]   Disk unlock   Recovery
 Overview | Services | History | Backups | Settings
 ```
 

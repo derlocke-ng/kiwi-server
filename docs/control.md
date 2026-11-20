@@ -23,7 +23,7 @@ that booted. The page:
 | **The status page for strangers** | under a public name (`control: { public_status_hostname: … }`): the services open to the Internet, whether they work, how to get an account |
 
 The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
-what, Linked networks); *Safety* (Backups, If something breaks, Computers); *More*.
+what, Linked networks); *Safety* (Backups, Recovery, Computers); *More*.
 On a computer the menu is at the side, with how the machines are below it; on a phone
 it is a bar at the bottom, with the rest under "More". The page follows the device's
 light or dark setting, and the moon button switches it (kept in a cookie of that
@@ -113,6 +113,11 @@ step as a button:
 
 A machine's page has tabs: Overview, Services (with the logins), History (what was done to it
 and how it ended), Backups and Settings.
+
+A job that restarts the control page itself (an apply to the machine the page runs on) does
+not get lost: the page's view of the job and `kiwi-server control run` wait for the page to
+come back. If the job ended with the page, an apply is run once more by `control run`; on the
+page, start it again. An apply that has nothing left to do ends at once.
 
 ### The Machines table
 

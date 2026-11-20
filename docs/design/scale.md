@@ -222,6 +222,11 @@ neighbours' vote with the standby.
 
 ## Next: a switch in seconds, then by itself
 
+Measured on 20 November 2026 (Vaultwarden from a uCore machine to a Debian one, 2.269): the
+part is away for 55 seconds, the time its standby takes to be applied. Its name follows as
+the machines that answer for names are applied, the master first and the home's after it:
+that is the rest of the six to eight minutes the command takes.
+
 What makes a switch slow is that the standby machine learns about the part only at the
 switch: its containers are made, its proxy gets the name, the machines that answer for names
 are told. All of that can be there before:

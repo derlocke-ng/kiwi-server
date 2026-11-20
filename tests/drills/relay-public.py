@@ -97,9 +97,10 @@ def selftest():
             and sign(bytes(32), secret, bytes(32)).hex().upper() == want)
 
 
-def event(secret, kind, content, tags=()):
+def event(secret, kind, content, tags=(), back=0):
+    """`back`: dated that many seconds ago (a phone's slow clock; a sealed message is dated back on purpose)."""
     pub = public(secret).hex()
-    body = [0, pub, int(time.time()), kind, [list(t) for t in tags], content]
+    body = [0, pub, int(time.time()) - back, kind, [list(t) for t in tags], content]
     eid = hashlib.sha256(json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode()).digest()
     return {"id": eid.hex(), "pubkey": pub, "created_at": body[2], "kind": kind, "tags": body[4], "content": content,
             "sig": sign(eid, secret, secrets.token_bytes(32)).hex()}
@@ -251,6 +252,20 @@ def main():
     back = ws.wait("EVENT", note["id"])
     say(bool(back), "and read back from the relay")
     ws.send(["CLOSE", "drill"])
+    # a note dated back: a phone's clock is seconds off, a sealed message up to two days on purpose
+    # (20 Nov 2026: with keep_days 0 the relay refused all but the very second it was in)
+    days = int(conf.get("keep_days") or 0)
+    for back, words in ((5, "five seconds"), (3600, "an hour"), (2 * 86400 - 60, "two days")):
+        if days and back > days * 86400:
+            continue
+        old = event(listed, 1, "kiwi-server drill: dated %s back" % words, back=back)
+        ws.send(["EVENT", old])
+        r = ws.wait("OK", old["id"])
+        say(bool(r and r[2]), "a note dated %s back is taken%s" % (words, "" if r and r[2] else " (%s)" % (r[3] if r else "no answer")))
+        if r and r[2]:
+            rid = event(listed, 5, "drill over", [("e", old["id"])])
+            ws.send(["EVENT", rid])
+            ws.wait("OK", rid["id"])
 
     # 3. a key nobody knows is refused: unproven, and after proving who it is (NIP-42)
     other = Socket(args.public, name)

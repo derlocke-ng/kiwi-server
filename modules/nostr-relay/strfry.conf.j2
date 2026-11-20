@@ -13,7 +13,9 @@ dbParams {
 events {
     maxEventSize = {{ max_event_bytes }}
     rejectEventsNewerThanSeconds = 900
-    rejectEventsOlderThanSeconds = {{ (keep_days * 86400) if keep_days else 0 }}
+    # 0 here would refuse every event not dated this very second (found 20 Nov 2026: a note dated
+    # five seconds back got "created_at too early"). No limit is a span longer than the clock runs.
+    rejectEventsOlderThanSeconds = {{ (keep_days * 86400) if keep_days else 3153600000 }}
     rejectEphemeralEventsOlderThanSeconds = 60
     ephemeralEventsLifetimeSeconds = 300
     maxNumTags = 2000

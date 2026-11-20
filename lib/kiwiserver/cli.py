@@ -1306,6 +1306,8 @@ def cmd_list(args):
                                              for x in fleet.module_sources],
                           # the networks linked to this one (federation.yaml): what the picture shows of them
                           "linked": linked_networks(fleet),
+                          # a part kept ready goes to its standby by itself after this many minutes (0: by hand)
+                          "switch_after": switch_after(fleet),
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
@@ -1526,6 +1528,13 @@ def fleet_state(fleet):
         return json.loads(util.read_text(_state_path(fleet)))
     except (OSError, ValueError):
         return {}
+
+
+def switch_after(fleet):
+    """Minutes after which a part kept ready goes to its standby by itself; 0: only by hand."""
+    from . import watchdog
+    on, after = watchdog.switch_policy(fleet)
+    return after if on else 0
 
 
 def hold_back(fleet, name, containers):

@@ -2925,6 +2925,7 @@ class TestSetup(Base):
         rc, out, err = self.run_cli("list", dest, "--porcelain")
         self.assertEqual(rc, 0, err)
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual(json.loads(out)["switch_after"], 5)      # a part kept ready goes over by itself after five minutes
         self.assertEqual(hosts["trifle"]["errors"], [])
         self.assertEqual((hosts["trifle"]["phase"], hosts["mango"]["phase"], hosts["quince"]["phase"]),
                          ("build", "enroll", "enroll"))

@@ -6131,10 +6131,13 @@ class Window(Adw.ApplicationWindow):
     def move_group(self, name):
         """A part of this machine to another machine (`kiwi-server move`), and the parts another machine
         keeps ready (`keep_ready`): each with Switch (`kiwi-server switch`)."""
+        after = int(self.fleet_info.get("switch_after") or 0)
+        by_itself = (": by itself when this machine has been gone for %d minutes and the second one does not reach it "
+                     "either (Settings for every machine: When a machine is gone)" % after) if after else ""
         g = Adw.PreferencesGroup(title="Its parts on other machines",
                                  description="A part moves with its data, its secrets and its name. A part that is kept ready "
                                              "has its data copied to a second machine every minute (Settings: Parts kept ready "
-                                             "on another machine), and that machine can take it over.")
+                                             "on another machine), and that machine can take it over%s." % by_itself)
         row = plain_row("Move a part to another machine", "First what would happen, then the move")
         b = Gtk.Button(label="Move…", valign=Gtk.Align.CENTER, css_classes=["flat"])
         b.connect("clicked", lambda *_: MoveDialog(self, name).present(self))
@@ -6646,6 +6649,7 @@ class Window(Adw.ApplicationWindow):
             self.fleet_info["groups"] = listing.get("groups") or {}      # where a new device may go
             self.fleet_info["changed"] = listing.get("changed") or []    # changes not applied yet
             self.fleet_info["linked"] = listing.get("linked") or []      # networks linked to this one: in the picture
+            self.fleet_info["switch_after"] = listing.get("switch_after") or 0     # a part kept ready goes over by itself
         if err:
             self.append_log(err + "\n")
             self.toast(err.splitlines()[-1])

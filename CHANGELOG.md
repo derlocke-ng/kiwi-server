@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.276.0 — a part goes to its standby by itself
+
+- **Failover by itself**: when the machine that runs a part kept ready elsewhere has not
+  answered for five minutes, and the machine that keeps it ready cannot reach it either (ping or
+  its SSH port, at home or by name), the control node switches the part there as a job, as the
+  page's Switch does, and Activity says why. If the standby still reaches it, only the way to the
+  control node is cut, and nothing is switched. Once in 30 minutes per part.
+  `recovery: { switch: { after: 5 } }`; `{ do: tell }` or `false` leaves it to a person; "When a
+  machine is gone" on the page and in the app (docs/control.md).
+- The control node's restart hold of an hour no longer holds after a restart that worked (the
+  machine answered in between): written in docs/control.md now.
+
 ## 2.275.0 — a switch in seconds
 
 - **A part switched to its standby answers within a minute** instead of six to eight

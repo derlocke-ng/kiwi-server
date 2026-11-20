@@ -103,6 +103,9 @@ say what 2.267.0 does.
 56. ~~The watchdog held a restart for an hour after one that had worked~~ (master-gone drill, 20 Nov): fixed.
 57. ~~A switch in seconds~~ (item 12): 2.275.0. Vaultwarden ran on its standby 6 s after the switch began, the Pi-holes pointed
     its name there after 12–16 s, it answered after 29–37 s (was 6–8 min). By itself: 2.276.0 (recovery.switch, five minutes,
-    the standby must not reach the machine either). Tried with a power cut (part-failover.sh): switched after 10 min, name and
-    data there; the machine that came back ran the part 2 min 20 s beside it, fixed in 2.277.0 (the agent holds it back).
+    the standby must not reach the machine either). Tried with power cuts (part-failover.sh): switched after 6.5 min since 2.278.0
+    (counted from the last report), the returning machine stops its copy within 13 s (2.277.0, the agent's hold), the two stay a
+    pair (2.278.0), a standby that is behind is a warning and not switched to by itself (2.280.0). Open: the control node's own
+    machine (its parts switch by hand: nothing decides when the control node is the one gone; a vote between agents, or a second
+    control node, both need the owner's word), and data the returning machine had newer than a stale copy (kept only by its backups).
 

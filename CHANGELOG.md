@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.281.0 — what the machine a part left had written is kept
+
+- **A standby's first fetch over a folder that holds data keeps that data beside it first**
+  (`<folder>.kept-<date>`, hard links, 14 days): the machine a part left may have written after
+  the copy it now fetches, and the fetch replaces the folder with the copy. A switch clears the
+  taking machine's mark of a whole copy, so the day it keeps the part ready again this applies.
+- Tried on 2.280.0: the power-cut drill (quince off with Vaultwarden): on medlar by itself after
+  7 min 36 s with a fresh copy, quince's own copy ran 7 s after its start, the pair kept, 0 wrong.
+
 ## 2.280.0 — a standby that is behind says so, and is not switched to by itself
 
 - **A copy kept ready that is more than ten minutes old is a warning** on the standby (page,

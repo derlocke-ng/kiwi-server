@@ -341,6 +341,10 @@ What to know:
   kept ready (see [security](security.md#a-standbys-key)).
 - A standby is not a backup: what is deleted on the first machine is deleted on the second
   a minute later.
+- When a machine starts to keep a part ready over a folder that holds data already (it ran
+  the part before a switch, and may have written after the copy it now fetches), that data
+  is kept beside the folder as `<folder>.kept-<date>` first, for 14 days (hard links: little
+  room), and the journal says so (`journalctl -t kiwi-standby`).
 - A copy kept ready that is more than ten minutes old is a warning on the standby (the page,
   `status`, the messages), with what its last fetch said: a switch by itself would start
   with that copy.

@@ -12,7 +12,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 4. The guided session from the docs (notes/guided-session.md: its remarks are empty).
 5. Phones following the standby master by DDNS.
 6. A real mail from the notifications.
-7. The public relay: a listed key posting from outside; a renewal that is due.
+7. ~~The public relay: a listed key posting from outside~~; a renewal that is due. The relay: done 20 Nov (tests/drills/relay-public.py, 0 wrong three times): a listed key posts, strangers are refused, the members' list works. It found that the default `keep_days: 0` refused every note not dated this very second (fixed in the module). Still open: a certificate renewal that is due (none is 60 days old yet).
 8. Authenticator account and code, Firefox sync from a browser, Jabber clients.
 9. ~~The agent on the control node's own machine.~~ Done 20 Nov: it was installed, but its reports got 403 (the control page's proxy did not admit the machine itself); `/api/report` needs no address rule now (kiwi-modules). papaya reports 200.
 

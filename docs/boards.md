@@ -89,6 +89,8 @@ lime:
 - Proven on an Odroid N2+ (19 November 2026): flashed anew, its first start brought its
   services and its ring's keys back from the backup by itself; bound to three rings it opens by
   itself 48 seconds after a restart, and opens the way for the master as an opener.
-- By hand until kiwi-server builds the image: the image itself, the first unlock at the
-  address DHCP gave it, and growing the encrypted volume to the disk's size (Armbian grows the
-  partition only: `cryptsetup resize`, then `resize2fs`).
+- The first `apply` grows the encrypted volume to the disk's size (Armbian's first start
+  grows the partition only), with the disk's key and once: a volume of full size is left
+  alone.
+- By hand until kiwi-server builds the image: the image itself, and the first unlock at the
+  address DHCP gave it.

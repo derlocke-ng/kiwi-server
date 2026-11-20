@@ -110,8 +110,6 @@ The designs and the order to build in are in
    - Boards: kiwi-server does not build the encrypted Armbian image.
    - netcup: the rescue system, snapshots and user images are not used.
    - VLANs: the gateway's DHCP, DNS and routing per VLAN.
-   - Install media install again at every boot while they stay in the machine.
-     There is no guard and no `--reinstall`.
    - The Android app uses status, machines, activity and the registry only. The
      control node's other routes (2.213.0) wait for it.
 3. **The page and the app lack what the command line has.** The app's settings
@@ -259,10 +257,11 @@ Stack and first boot:
 14. The install media reinstalls the machine on every boot while the stick
     stays first in the boot order. *Since 2.7.0 the media power the machine
     off when the install is done (`install.on_done: poweroff`), so the stick
-    is removed before the next boot.* Still open: an install guard in both
-    ISOs (a fingerprint of a kiwi install on the target disk, checked by a
-    `--pre-install` script and the preseed's early command) with a
-    `--reinstall` override, for media that cannot be removed.
+    is removed before the next boot. Since 2.269.0 media that stay in do
+    not install a second time: each ISO has an id, the installer leaves it on
+    the installed system's `/boot`, and its guard looks for it before anything
+    is erased (a `--pre-install` script, the preseed's early command). An ISO
+    built again installs.* (iso.py, targets/debian.py)
 15. The role script with every secret stays at /var/lib/kiwi-server/role.sh
     for the machine's lifetime; the Debian LUKS passphrase also survives in
     d-i's saved debconf database. Shred after a successful run, clean

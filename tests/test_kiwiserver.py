@@ -1290,6 +1290,68 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_an_encrypted_boards_volume_is_grown_to_its_disk(self):
+        """Armbian grows the partition at the first start, not the encrypted volume in it: an apply
+        does (unlock.GROW_SCRIPT), once, with the disk's key, and leaves a volume of full size alone."""
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        os.makedirs(os.path.join(work, "bin"))
+        os.makedirs(os.path.join(work, "run"))
+
+        def tool(name, text):
+            path = os.path.join(work, "bin", name)
+            write(path, "#!/bin/bash\n" + text)
+            os.chmod(path, 0o755)
+        tool("findmnt", 'echo "${ROOT:-/dev/mapper/armbian-root}"\n')
+        tool("cryptsetup", 'echo "cryptsetup $*" >> %s/did\n'
+                           'case "$1" in status) [ "$2" = armbian-root ] || exit 1; echo "  type:    LUKS2"; echo "  device:  %s/part" ;;\n'
+                           '  resize) cat "${2#--key-file=}" >> %s/key-seen ;; esac\n' % (work, work, work))
+        tool("blockdev", 'case "$2" in */part) echo 64000000000 ;; *) echo "${HAVE:-8000000000}" ;; esac\n')
+        tool("resize2fs", 'echo "resize2fs $*" >> %s/did\n' % work)
+        script = unlock.GROW_SCRIPT.replace("mktemp -d /run/kiwi-luks.XXXXXX", "mktemp -d %s/run/kiwi-luks.XXXXXX" % work)
+        script = script.replace('[ -b "$part" ]', '[ -e "$part" ]')            # the stand-in partition is a plain file
+        write(os.path.join(work, "part"), "")
+        path = os.path.join(work, "grow.sh")
+        write(path, script)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        env = dict(os.environ, PATH=os.path.join(work, "bin") + os.pathsep + os.environ["PATH"])
+
+        def run(**more):
+            for f in ("did", "key-seen"):
+                if os.path.exists(os.path.join(work, f)):
+                    os.unlink(os.path.join(work, f))
+            r = subprocess.run(["bash", path], input="the disk's key\n", env=dict(env, **more), capture_output=True, text=True)
+            did = util.read_text(os.path.join(work, "did")) if os.path.exists(os.path.join(work, "did")) else ""
+            return r.returncode, r.stdout.strip(), did
+        rc, out, did = run()                                                    # 8 GB in a 64 GB partition
+        self.assertEqual((rc, out), (0, "grown 53405"))
+        self.assertIn("cryptsetup resize --key-file=", did)
+        self.assertIn("resize2fs /dev/mapper/armbian-root", did)
+        self.assertEqual(util.read_text(os.path.join(work, "key-seen")), "the disk's key")
+        self.assertEqual(os.listdir(os.path.join(work, "run")), [])            # the key's folder is gone again
+        rc, out, did = run(HAVE="63983222784")                                  # full size but for its header: left alone
+        self.assertEqual((rc, out), (0, "full size"))
+        self.assertNotIn("resize", did)
+        rc, out, did = run(ROOT="/dev/mmcblk1p2")                               # not encrypted: nothing
+        self.assertEqual((rc, did), (0, ""))
+        rc, out, did = run(ROOT="/dev/mapper/vg-root")                          # a volume group inside (Debian): not this way
+        self.assertEqual(rc, 0)
+        self.assertNotIn("resize", did)
+        # an apply runs it for a board, and says so when it grew
+        said, ran = [], []
+        h = types.SimpleNamespace(name="lime", target="armbian", cfg={"unlock": {"rings": ["house"]}})
+        with mock.patch.object(remote, "run", lambda tgt, script, data=b"": ran.append(script) or (b"grown 53405\n" if script == unlock.GROW_SCRIPT else b"")), \
+                mock.patch.object(unlock, "_rebind", lambda *a, **k: False), mock.patch.object(unlock.luks, "current_key", lambda h: "k"), \
+                mock.patch.object(unlock, "tree", lambda *a: {}), mock.patch.object(unlock, "forwarded", lambda h: False), \
+                mock.patch.object(unlock, "leash_script", lambda *a: ""), mock.patch.object(unlock, "debian_like", lambda h: True), \
+                mock.patch.object(unlock, "_ip_setting", lambda h: ""), mock.patch.object(util, "say", lambda *a: said.append(a[0])):
+            try:
+                unlock.bind(h, "t", [])
+            except Exception:           # what follows the binding needs more of a machine than this stand-in has
+                pass
+        self.assertIn(unlock.GROW_SCRIPT, ran)
+        self.assertIn("lime: its encrypted volume now fills its disk (52 GiB more)", said)
+
     def test_the_scripts_that_bind_again_parse_and_say_what_they_do(self):
         for name in ("REGEN_SCRIPT", "BIND_SCRIPT"):
             path = os.path.join(self.tmp, name + ".sh")

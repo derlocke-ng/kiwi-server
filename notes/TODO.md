@@ -25,7 +25,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 13. Moving a whole network: a plan only.
 14. UI steps 3 and 5 to 7 (docs/design/ui.md): one store, `/api/v1`, pushed changes, the app on
     the kit (the job strip is there).
-15. Boards: kiwi-server builds the encrypted Armbian image, first unlock, LUKS grown.
+15. Boards: kiwi-server builds the encrypted Armbian image, first unlock~~, LUKS grown~~. The volume is grown by the first apply now (unlock.GROW_SCRIPT; on lime: to see). Open: the image itself and the first unlock at the DHCP address.
 16. netcup: rescue system, snapshots, user images.
 17. VLANs: the gateway's DHCP, DNS and routing per VLAN.
 18. Install media reinstall at every boot: no guard, no `--reinstall`. (Looked at on 20 Nov: bigger than it reads. It needs a mark on the target's boot partition written by both installers, a check in both, and the stick's boot loader starting the disk when the mark is there; with VM tests for uCore and Debian, UEFI and BIOS.)

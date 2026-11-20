@@ -20,7 +20,7 @@ KS_STACK_USER='core'
 KS_STACK_PREFIX='kn'
 KS_STACK_MODULES=('vpn-client' 'dns' 'dhcp-relay' 'reverse-proxy' 'downloader' 'gateway' 'portainer' 'sftp')
 KS_STACK_DIRS=('kiwi' 'kiwi/ca' 'kiwi/env' 'kn-jdownloader' 'kn-nginx' 'kn-pihole' 'kn-pihole/etc-dnsmasq.d' 'kn-pihole/etc-pihole' 'kn-portainer' 'kn-sftp' 'kn-transmission' 'kn-vpn-client' '/mnt/dl')
-KS_STACK_PORTS=('53/tcp' '53/udp' '67/udp' '80/tcp' '443/tcp' '2224/tcp')
+KS_STACK_PORTS=('53/tcp' '53/udp' '123/udp' '67/udp' '80/tcp' '443/tcp' '2224/tcp')
 KS_STACK_UNITS=('kn-gateway.service' 'kn-pihole-blocklist.service' 'kn-pihole-blocklist.timer')
 KS_STACK_SYSCTL=('net.ipv4.ip_forward=1')
 KS_STACK_KMODS=('tun')
@@ -33,6 +33,7 @@ KS_STACK_MESH_SUBNET='10.8.0.0/16'
 KS_STACK_MESH_VIA='172.128.0.2'
 KS_STACK_LAN_RULES=()
 KS_STACK_VLANS=()
+KS_STACK_NTP=()
 KS_STACK_HOSTS=('10.8.0.1 gate.home' '10.8.0.1 wg.gate.home' '10.8.0.1 pihole.gate.home' '127.0.0.1 m1.home' '127.0.0.1 pihole.m1.home' '127.0.0.1 dl.m1.home' '127.0.0.1 jd.m1.home' '127.0.0.1 portainer.m1.home' '10.8.0.25 sh3.home' '10.8.0.25 cloud.sh3.home' '10.8.0.25 vault.sh3.home' '10.8.0.25 portainer.sh3.home' '10.8.0.9 min.home')
 KS_STACK_RUNTIME='podman'
 KS_STACK_QUADLETS=('kiwi-stack.target' 'kn-dhcphelper.container' 'kn-dns-up.container' 'kn-jdownloader.container' 'kn-nginx.container' 'kn-pihole.container' 'kn-portainer.container' 'kn-sftp.container' 'kn-transmission.container' 'kn-vpn-client.container' 'knet-node.network')

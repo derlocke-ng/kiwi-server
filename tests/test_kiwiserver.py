@@ -3972,6 +3972,42 @@ class TestSeedGuard(Base):
         self.assertFalse(os.path.exists(seed))
 
 
+class TestLocalTime(Base):
+    def test_machines_ask_their_sites_time_server_first(self):
+        """A Pi-hole serves the time (dns.ntp): the machines on its LAN at its site ask it first, the
+        others on the VPN ask the master's; the two that serve it, and the master, ask the pool."""
+        node = {"vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "lime": {"role": "node", "network": {"dhcp": False, "address": "192.168.7.64/24", "gateway": "192.168.7.1"},
+                     "node": dict(node, vpn_ip="10.8.0.9", modules=["vpn-client", "dns", "reverse-proxy"])},
+            "near": {"role": "node", "target": "debian",
+                     "network": {"dhcp": False, "address": "192.168.7.31/24", "gateway": "192.168.7.1"},
+                     "node": dict(node, vpn_ip="10.8.0.10", preset="minimal")},
+            "friend": {"role": "node", "target": "debian",
+                       "network": {"dhcp": False, "address": "192.168.7.32/24", "gateway": "192.168.7.1", "site": "friend"},
+                       "node": dict(node, vpn_ip="10.8.0.12", preset="minimal")},
+            "roamer": {"role": "node", "target": "debian", "network": {"dhcp": True},
+                       "node": dict(node, vpn_ip="10.8.0.13", preset="minimal")}}})
+        r = cli.Renderer(f, rolesmod.discover(), self.tmp, None, modmod.discover())
+        got = {}
+        for name in f.hosts:
+            h = f.hosts[name]
+            got[name] = r.time_servers(h, r.prepare(h))
+        self.assertEqual(got, {"gate": [], "lime": [], "near": ["192.168.7.64"], "friend": ["10.8.0.1"], "roamer": ["10.8.0.1"]})
+        # in the stack: kiwi-stack reads it from the manifest
+        _script, bundle = r.script(f.hosts["near"])
+        self.assertIn("KS_STACK_NTP=('192.168.7.64')", util.read_text(os.path.join(bundle, "stack.sh"))
+                      if isinstance(bundle, str) else "\n".join(__import__("kiwimodules.manifest", fromlist=["x"]).stack_vars(f.hosts["near"], bundle)))
+        # a Pi-hole that does not serve the time is asked by nobody; then the master's is
+        lime = dict(f.raw["hosts"]["lime"])
+        lime["node"] = dict(lime["node"], dns={"ntp": False})
+        f2 = self.fleet({"defaults": f.raw["defaults"], "hosts": dict(f.raw["hosts"], lime=lime)})
+        r2 = cli.Renderer(f2, rolesmod.discover(), self.tmp, None, modmod.discover())
+        h = f2.hosts["near"]
+        self.assertEqual(r2.time_servers(h, r2.prepare(h)), ["10.8.0.1"])
+
+
 class TestLocalCache(Base):
     def test_nodes_on_the_caches_lan_use_it_and_nobody_else(self):
         node = {"vpn-client": {"wireguard_config": "secrets/wg.conf"}}

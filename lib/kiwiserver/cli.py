@@ -381,6 +381,8 @@ class Renderer:
         recs, needs_ca, master_ip, node_lan = [], False, "", []
         master_host, public_host, vpn_ips = None, "", {}
         self._caches = []       # (LAN interface, hostname, registries, apt, site) of the nodes that run the cache module
+        self._clocks = []       # (LAN interface, name, site) of the nodes whose Pi-hole serves the time (dns.ntp)
+        self._master_clock = False      # the master's Pi-hole serves the time at its mesh address
         open_nodes = []         # (name, mesh address, public names, ports) of the nodes open to the internet
         mesh_only = []          # names whose service answers at the mesh address only: never a home address for them
         for h in self.fleet.hosts.values():
@@ -420,6 +422,11 @@ class Renderer:
                     if "cache" in h.modules:
                         c = h.module_settings["cache"]
                         self._caches.append((lan, h.hostname, list(c.get("registries") or []), bool(c.get("apt")), site_of(h)))
+                    if "dns" in h.modules and (h.module_settings.get("dns") or {}).get("ntp", True):
+                        self._clocks.append((lan, h.name, site_of(h)))
+                if role.node_type == "master" and not h.standby_of and "dns" in h.modules \
+                        and (h.module_settings.get("dns") or {}).get("ntp", True):
+                    self._master_clock = True
                 names = [h.hostname] + modmod.Renderer(self.ms).service_names(spec)
                 self._admin[h.hostname] = modmod.Renderer(self.ms).admin_names(spec)
                 # a VPN name that sends on to a public one: in the DNS and the certificate, but no service of its own
@@ -496,6 +503,26 @@ class Renderer:
             rs["registry_mirrors"] = {r: "cache.%s/%s" % (name, r) for r in registries}
         if not rs.get("apt_proxy") and apt and host.target in ("debian", "armbian"):
             rs["apt_proxy"] = "http://%s:3142" % lan.ip
+
+    def time_servers(self, host, role):
+        """The time servers this machine asks first (kiwi-stack puts them before the public pool):
+        a Pi-hole that serves the time on its own LAN at its site, else the master's at its mesh
+        address for a machine on the VPN. None for a machine that serves the time itself, and for
+        the master: they ask the public pool."""
+        self.scan()
+        if role.node_type == "master":
+            return []
+        mine = "dns" in (host.modules or []) and (host.module_settings.get("dns") or {}).get("ntp", True)
+        if mine:
+            return []
+        own = static_lan(host)
+        here = site_of(host)
+        near = [str(lan.ip) for lan, name, site in self._clocks if own and lan.ip in own.network and site == here and name != host.name]
+        if near:
+            return near[:2]
+        if self._master_clock and self._master_ip and "vpn-client" in (host.modules or []):
+            return [self._master_ip]
+        return []
 
     def lan_addresses(self, host, role):
         """{mesh address: LAN address} of the fleet's nodes on this node's own LAN.
@@ -659,6 +686,9 @@ class Renderer:
         if host.cfg["network"].get("vlans"):
             # its tagged interfaces: kiwi-stack makes them (docs/design/lans.md, step 2)
             host.role_settings["vlans"] = accessmod.stack_vlans(host.cfg["network"])
+        if role.stack:
+            # the time: its site's Pi-hole first, else the master's (kiwi-stack, before the public pool)
+            host.role_settings["ntp_servers"] = self.time_servers(host, role)
         if role.node_type != "master" and self._lan:
             # what each group of the home network may open here: kiwi-stack's nftables kiwi_lan
             host.role_settings["lan_rules"] = accessmod.lan_ports(self._lan, host.name, host.hostname)

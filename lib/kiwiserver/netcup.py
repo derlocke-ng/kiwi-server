@@ -115,8 +115,15 @@ class Netcup:
     def _keep(self, t):
         self.access = t["access_token"]
         self.expires = time.time() + int(t.get("expires_in") or 300)
+        try:
+            was = json.loads(util.read_bytes(self.token_path).decode()).get("refresh_token")
+        except (OSError, ValueError, AttributeError):
+            was = None
+        if was == t["refresh_token"]:
+            return                      # the same: the file stays as it is (a copy elsewhere does not see a change)
         os.makedirs(os.path.dirname(self.token_path), mode=0o700, exist_ok=True)
-        util.write_bytes(self.token_path, json.dumps({"refresh_token": t["refresh_token"]}).encode(), 0o600)
+        # when it was kept: two copies of a fleet that both signed in again keep the newer (merge.py)
+        util.write_bytes(self.token_path, json.dumps({"refresh_token": t["refresh_token"], "at": int(time.time())}).encode(), 0o600)
 
     def _token(self):
         if self.access and time.time() < self.expires - 20:

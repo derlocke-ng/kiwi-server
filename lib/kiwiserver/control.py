@@ -2304,6 +2304,15 @@ class Control:
             with self._book:
                 self._coming.discard(name)
 
+    SILENT = 150        # seconds without a report from a machine whose agent reports every minute
+
+    def went_silent(self):
+        """Machines the last look calls up whose agent has not reported for SILENT seconds (within
+        the hour: an agent that never came back is the full look's to find)."""
+        rows = {h.get("host"): h for h in (self.status() or {}).get("hosts") or []}
+        return sorted(n for n, age in self.reported().items()
+                      if self.SILENT < age < 3600 and (rows.get(n) or {}).get("state") in ("ok", "warn", "bad"))
+
     def reported(self):
         """{machine: seconds since its last report} for the machines that have one."""
         out, now = {}, time.time()
@@ -2679,6 +2688,11 @@ class Control:
                         stop.wait(30)
                     continue
                 self.reload_if_pushed()
+                if now - last_status < self.status_minutes * 60 and self.went_silent():
+                    # a machine's agent stopped reporting: the look, and what the fleet allows done
+                    # about a machine that is gone, come now and not at the next ten minutes (the
+                    # master-gone drill, 20 Nov 2026: sorbet off at 16:21, restarted at 16:37)
+                    last_status = 0
                 if now - last_status >= self.status_minutes * 60:
                     last_status = now
                     self.refresh_status()

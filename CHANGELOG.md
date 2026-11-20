@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.273.0 — a copy of the backups at another place
+
+- **A copy at another place** (kiwi-modules 0.111.0): a backup store keeps an encrypted copy of
+  everything it holds in a WebDAV folder (1&1 SmartDrive, a Nextcloud, a storage box), brought
+  up to date every night by rclone and encrypted once more before it leaves, names included,
+  with a key from the seed. Tried with a stand-in WebDAV server (tests/drills/backup-offsite.sh,
+  0 wrong): 1.8 GB in 44 s, nothing readable at the place, a repository back byte for byte, the
+  next night's run 12 s (docs/backups.md, A copy at another place).
+- **A machine that is gone is noticed sooner**: when a machine's agent stops reporting, the
+  control node looks at once instead of at its next ten-minute look, and the fleet's recovery
+  policy (restart at the provider after 3 minutes) acts minutes earlier. The master-gone drill
+  took 17 minutes to restart the master before.
+- **Fixed: a sync stopped at "secrets/netcup.token changed on both sides"** after the control
+  node and a computer had both used the netcup login (its refresh token changes when used).
+  The newer is kept; the file is written only when the token changed.
+
 ## 2.272.0 — the time from the network; a sync that keeps both sides' settings
 
 - **The time from the network** (kiwi-modules 0.110.0, kiwi-stack 0.9.25). Every Pi-hole answers

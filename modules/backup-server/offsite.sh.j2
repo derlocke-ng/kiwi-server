@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# kiwi-server: the copy of {{ hostname }}'s backup store at another place ({{ offsite_url }}).
+# rclone brings it up to date: what is new here goes there, what was pruned here goes there too.
+# Encrypted once more before it leaves, names included (rclone crypt, a key from the fleet's
+# seed): every machine's backups are encrypted with its own restic key already, and the place
+# sees neither those nor which machine they are of.
+#
+#   backup-offsite.sh                 bring the copy up to date
+#   backup-offsite.sh list            what the copy holds (the names, decrypted here)
+#   backup-offsite.sh restore NAME DIR    one machine's repository from the copy into DIR
+set -u
+dir={{ docker_dir }}/{{ container_prefix }}-backup-server
+data={{ data_path }}
+rt={{ runtime }}
+image={{ offsite_image }}
+# shellcheck disable=SC1091
+set -a; . "$dir/offsite.env" || exit 1; set +a
+run=$(mktemp -d /run/kiwi-offsite.XXXXXX) || exit 1
+trap 'rm -rf "$run"' EXIT
+obscure() { printf '%s' "$1" | "$rt" run --rm -i --network none "$image" obscure - 2>/dev/null | tail -n 1; }
+{
+    echo "RCLONE_CONFIG_DAV_TYPE=webdav"
+    echo "RCLONE_CONFIG_DAV_URL=$OFFSITE_URL"
+    echo "RCLONE_CONFIG_DAV_VENDOR=other"
+    echo "RCLONE_CONFIG_DAV_USER=$OFFSITE_USER"
+    echo "RCLONE_CONFIG_DAV_PASS=$(obscure "$OFFSITE_PASS")"
+    echo "RCLONE_CONFIG_KIWI_TYPE=crypt"
+    echo "RCLONE_CONFIG_KIWI_REMOTE=dav:"
+    echo "RCLONE_CONFIG_KIWI_PASSWORD=$(obscure "$OFFSITE_KEY")"
+    echo "RCLONE_CONFIG_KIWI_PASSWORD2=$(obscure "$(printf '%s salt' "$OFFSITE_KEY" | sha256sum | cut -c1-32)")"
+    echo "RCLONE_CONFIG_KIWI_FILENAME_ENCRYPTION=standard"
+    echo "RCLONE_CONFIG_KIWI_DIRECTORY_NAME_ENCRYPTION=true"
+} > "$run/env"
+chmod 0600 "$run/env"
+grep -q '^RCLONE_CONFIG_DAV_PASS=.' "$run/env" || { echo "the account's password could not be prepared (is $image there?)"; exit 1; }
+ca=()
+if [[ -s $dir/offsite-ca.pem ]]; then     # a WebDAV server whose own CA signed its certificate
+    cp "$dir/offsite-ca.pem" "$run/ca.pem" && ca=(--ca-cert /kiwi/ca.pem)
+fi
+rclone() { "$rt" run --rm --env-file "$run/env" -v "$data:/data:ro,z" -v "$run:/kiwi:ro,z" "$image" "$@" "${ca[@]}"; }
+skip=(--exclude "/*/locks/**")
+{% if offsite_bwlimit %}
+skip+=(--bwlimit "{{ offsite_bwlimit }}")
+{% endif %}
+case "${1:-}" in
+    list)    rclone lsf --dirs-only kiwi:; exit $? ;;
+    restore) [[ -n ${2:-} && -n ${3:-} ]] || { echo "usage: backup-offsite.sh restore NAME DIR"; exit 2; }
+             mkdir -p "$3" && "$rt" run --rm --env-file "$run/env" -v "$3:/back:z" -v "$run:/kiwi:ro,z" "$image" copy "kiwi:$2" /back --transfers 4 "${ca[@]}"
+             exit $? ;;
+esac
+started=$(date +%s)
+# first what is new (the packs), then the rest with what was pruned: a copy cut off half way still
+# holds every snapshot that was whole before it began
+rclone copy /data kiwi: "${skip[@]}" --exclude "/*/snapshots/**" --exclude "/*/index/**" --transfers 4 --stats-one-line --stats 0 \
+    && rclone sync /data kiwi: "${skip[@]}" --transfers 4 --stats-one-line --stats 0
+rc=$?
+if (( rc == 0 )); then
+    date -u +%FT%TZ > "$dir/offsite-last"
+    echo "the copy at the other place is up to date ($(( $(date +%s) - started )) s)"
+else
+    echo "the copy at the other place could not be brought up to date (rclone: $rc); it is tried again tomorrow"
+fi
+exit "$rc"

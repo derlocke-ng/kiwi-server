@@ -26,7 +26,9 @@ trap cleanup EXIT
 vh_prepare; check $? "the VM's folder on ${VMHOST:-this computer}: $VD"
 tunnel_up 7611 7612 7613 7614 $KSPORT; check $? "the test rings and the kickstart reach ${VMHOST:-the VM}"
 
-if ! vh '[ -s disk.qcow2.installed ]'; then
+[ -z "${FRESH-}" ] || vh 'rm -f disk.qcow2.installed bound'    # FRESH=1: install anew
+if ! vh '[ -e disk.qcow2.installed ]'; then
+    vh 'rm -f bound'    # a new disk is not bound yet
     [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N "" -C kiwi-desktop-drill -f "$KEY"
     label=$(xorriso -indev "$iso" -pvd_info 2>/dev/null | sed -n 's/^Volume Id *: //p')
     mkdir -p ks

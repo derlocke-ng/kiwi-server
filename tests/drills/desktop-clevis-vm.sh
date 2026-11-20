@@ -11,6 +11,7 @@
 # here); tests/drills/lib-desktop-vm.sh has the parts. One PASS or FAIL line per check.
 #
 #   VMHOST=sh3 tests/drills/desktop-clevis-vm.sh [WORKDIR]     (default ~/kiwi-vm/desktop/debian)
+#   FRESH=1 installs anew; without it an installed and bound VM is used again.
 set -u
 {
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,7 +31,9 @@ vh_prepare; check $? "the VM's folder on ${VMHOST:-this computer}: $VD"
 tunnel_up 7611 7612 7613 7614; check $? "the test rings reach ${VMHOST:-the VM}"
 
 # ---- the desktop's install media: kiwi-server's Debian, encrypted, with GNOME and clevis ------
-if ! vh '[ -s disk.qcow2.installed ]'; then
+[ -z "${FRESH-}" ] || vh 'rm -f disk.qcow2.installed bound'    # FRESH=1: install anew
+if ! vh '[ -e disk.qcow2.installed ]'; then
+    vh 'rm -f bound'    # a new disk is not bound yet
     rm -rf fleet; mkdir -p fleet
     cat > answers.json <<'EOF'
 {"domain": "home", "timezone": "UTC", "keyboard": "us", "locale": "en_US.UTF-8", "master_where": "none",

@@ -3044,6 +3044,48 @@ class TestSetup(Base):
         self.assertIn(facts.MARK, script)                                        # the same facts the look asks for
         self.assertIn("kiwi-agent.timer", script)
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_the_control_node_updating_itself_takes_the_newest_control_image(self):
+        """An apply pins the control page's image to the release that applies it. The control node
+        updating its own machine must not: pinned to itself it never got a newer release."""
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        wg = ("[Interface]\nPrivateKey = dGVzdC1wcml2YXRlLWtleS1ub3QtcmVhbC0wMDAwMDAwMDAwMDA=\nAddress = 10.8.0.%d/24\n"
+              "DNS = 10.8.0.1\n\n[Peer]\nPublicKey = dGVzdC1zZXJ2ZXItcHVibGljLWtleS1ub3QtcmVhbC0wMDAwMDA=\n"
+              "AllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n")
+        for i, h in enumerate(config.Fleet.load(dest).hosts.values()):
+            write(os.path.join(self.tmp, "secrets", "%s.conf" % h.hostname), wg % (20 + i))
+        roles = rolesmod.discover()
+        first = config.Fleet.load(dest)
+        r0 = cli.Renderer(first, roles, os.path.join(self.tmp, "out0"), None, cli.modset(first))
+        r0.script(first.hosts["mango"])
+        data = yaml.safe_load(util.read_text(dest))
+        data["hosts"]["mango"].setdefault("node", {})["modules"] = list(first.hosts["mango"].modules) + ["control"]
+        write(dest, yaml.safe_dump(data, sort_keys=False))
+
+        def image(updating, me):
+            fleet = config.Fleet.load(dest)
+            r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+            r.updating = updating
+            keep = os.environ.get("KIWI_CONTROL_HOST")
+            if me:
+                os.environ["KIWI_CONTROL_HOST"] = me
+            try:
+                script = r.script(fleet.hosts["mango"])[0]
+            finally:
+                os.environ.pop("KIWI_CONTROL_HOST", None)
+                if keep:
+                    os.environ["KIWI_CONTROL_HOST"] = keep
+            script = script.decode() if isinstance(script, bytes) else script
+            return sorted(set(re.findall(r"kiwi-server-control:[0-9.]+", script)))
+        pinned = ["kiwi-server-control:" + VERSION]
+        self.assertEqual(image(False, None), pinned)                # a computer applies it: this release's page
+        self.assertEqual(image(False, "mango"), pinned)             # the control node applies itself: as it is
+        self.assertEqual(image(True, "quince"), pinned)             # another machine's update
+        self.assertEqual(image(True, "mango"), ["kiwi-server-control:2"])     # its own update: the newest of the major tag
+
     def test_a_new_release_alone_is_no_change(self):
         import hashlib
         a = "#!/bin/bash\n# kiwi-server 2.197.0 — role script for host lychee\nKS_VERSION='2.197.0'\necho hi\n"

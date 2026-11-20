@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.282.0 — the switch, reviewed
+
+A review of the switch by itself and the pair found ways to a part running on two machines,
+a lost kept copy and a switch for no reason. Fixed:
+
+- **A part on two machines**: the machine a part left kept running it after its apply, now that
+  it keeps it ready (kiwi-stack 0.9.28 stops it); a switch whose old machine answers but whose
+  containers there cannot be worked out switches nothing; a failing last fetch no longer counts
+  as the old machine not answering; the fleet file is written before the part starts on the
+  standby; a hold ends where the fleet file gives the part back to the machine.
+- **A lost kept copy**: the copy is made once per first fetch by a marker, again after another
+  switch, never skipped because of an older one, and a folder that cannot be copied is not
+  fetched over.
+- **A switch for no reason**: a machine asleep by its window is not gone; a standby at another
+  site counts only while the master answers (it reaches the machine over the VPN only); gone not
+  before the last look that saw the machine answer; an unknown policy word means by hand.
+- A standby without what the part needs keeps nothing ready, with a warning, instead of failing
+  its applies. The address in the standby's reach check is quoted as an argument.
+- Tried before this release (2.281.0): the copy kept beside the folder (quince, 32 KB), two
+  switches and their pair, 0 wrong each.
+
 ## 2.281.0 — what the machine a part left had written is kept
 
 - **A standby's first fetch over a folder that holds data keeps that data beside it first**

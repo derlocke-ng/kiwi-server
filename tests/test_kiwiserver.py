@@ -4,6 +4,7 @@ Anything that needs a tool (shellcheck, butane, xorriso, cpio) uses it when it
 is on $PATH and is skipped otherwise, so the suite runs anywhere; CI installs
 all of them. No test touches the network.
 """
+import calendar
 import contextlib
 import http.server
 import hashlib
@@ -10703,6 +10704,93 @@ class TestHealth(Base):
         health.probe(["cloud.papaya.home", "chat.example.org"], one=where, at={"chat.example.org": "203.0.113.7"})
         self.assertEqual(sorted(how), [("chat.example.org", "203.0.113.7"), ("cloud.papaya.home", None)])
 
+    def test_a_mail_goes_out_in_a_real_smtp_conversation(self):
+        """The mail of a notification against a small SMTP server of the test's own: STARTTLS with
+        a certificate the test's CA signed, a login, two receivers, the message with its other
+        letters. With smtplib stood in for (the next test) a message no server takes would pass."""
+        import base64
+        import email
+        import email.policy
+        import socketserver
+        import ssl as sslmod
+        from kiwiserver import notify
+        ca = os.path.join(self.tmp, "ca")
+        key, full = certs.ensure_host_cert(ca, "localhost")
+        got = {}
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                def say(text):
+                    self.wfile.write(text.encode())
+                    self.wfile.flush()
+                say("220 test ESMTP\r\n")
+                tls = False
+                while True:
+                    line = self.rfile.readline().decode(errors="replace").strip()
+                    if not line:
+                        break
+                    cmd = line.split(" ", 1)[0].upper()
+                    if cmd == "EHLO":
+                        say("250-test\r\n%s250 8BITMIME\r\n" % ("250-AUTH PLAIN LOGIN\r\n" if tls else "250-STARTTLS\r\n"))
+                    elif cmd == "STARTTLS":
+                        say("220 go ahead\r\n")
+                        ctx = sslmod.SSLContext(sslmod.PROTOCOL_TLS_SERVER)
+                        ctx.load_cert_chain(full, key)
+                        try:
+                            self.connection = ctx.wrap_socket(self.connection, server_side=True)
+                        except (OSError, sslmod.SSLError):
+                            got["refused"] = True          # the client did not trust the certificate
+                            return
+                        self.rfile, self.wfile, tls = self.connection.makefile("rb"), self.connection.makefile("wb"), True
+                    elif cmd == "AUTH":
+                        got["auth"], got["auth_over_tls"] = line, tls
+                        say("235 ok\r\n")
+                    elif cmd == "MAIL":
+                        got["from"] = line
+                        say("250 ok\r\n")
+                    elif cmd == "RCPT":
+                        got.setdefault("to", []).append(line)
+                        say("250 ok\r\n")
+                    elif cmd == "DATA":
+                        say("354 end with a dot\r\n")
+                        data = b""
+                        while True:
+                            more = self.rfile.readline()
+                            if more in (b".\r\n", b""):
+                                break
+                            data += more
+                        got["data"] = data
+                        say("250 queued\r\n")
+                    elif cmd == "QUIT":
+                        say("221 bye\r\n")
+                        break
+                    else:
+                        say("502 not here\r\n")
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        cfg = {"mail": {"to": ["a@example.org", "b@example.org"], "host": "localhost", "port": server.server_address[1],
+                        "user": "kiwi", "password": "the mail password", "from": "kiwi@example.org"}}
+        # a server whose certificate nobody here knows: no mail, no password sent, and the reason said without it
+        sent = notify.send(cfg, "Kiwi home: Käse", "Wrong: lychee does not answer")
+        self.assertEqual([(c, ok) for c, ok, _why in sent], [("mail", False)])
+        self.assertNotIn("the mail password", sent[0][2])
+        self.assertNotIn("auth", got)
+        # with the CA known (as a public mail server's is): the mail goes out
+        with mock.patch.dict(os.environ, {"SSL_CERT_FILE": os.path.join(ca, "kiwiCA.pem")}):
+            sent = notify.send(cfg, "Kiwi home: Käse", "Wrong: lychee does not answer")
+        self.assertEqual(sent, [("mail", True, "")])
+        self.assertTrue(got["auth_over_tls"])                                   # the password only inside TLS
+        self.assertEqual(base64.b64decode(got["auth"].split()[2]), b"\0kiwi\0the mail password")
+        self.assertIn("<kiwi@example.org>", got["from"])
+        self.assertEqual(len(got["to"]), 2)
+        msg = email.message_from_bytes(got["data"], policy=email.policy.default)
+        self.assertEqual((msg["Subject"], msg["From"], msg["To"]), ("Kiwi home: Käse", "kiwi@example.org", "a@example.org, b@example.org"))
+        self.assertEqual(msg.get_content().strip(), "Wrong: lychee does not answer")
+        self.assertTrue(msg["Date"] and msg["Message-ID"].endswith("@example.org>"))
+
     def test_messages_go_out_by_mail_push_and_webhook(self):
         import http.server
         from kiwiserver import notify
@@ -12134,6 +12222,15 @@ class TestControllers(StoreBase):
         self.assertEqual(rc, 0, out)
         self.assertIn("Log\n", out)
         self.assertIn("fetched the fleet", out)
+        # with tasks in it: a task's start is a number (the command crashed on it until 2.268.0)
+        lines = cli.activity_lines({"jobs": [{"id": "20261120-105236-0d461b", "action": "move", "hosts": ["medlar", "quince"],
+                                              "user": "desk", "state": "ok", "started": 1795171956.48, "ended": 1795172357.9},
+                                             {"id": "20261119-070000-aaaaaa", "action": "apply", "hosts": ["a"], "state": "failed"}],
+                                    "entries": [{"time": "2026-11-20T10:52:36", "what": "moved", "hosts": ["medlar"], "user": "desk"}]})
+        self.assertRegex(lines[1], r"^  2026-11-20 \d\d:\d\d +ok +move medlar quince  \(desk\)$")
+        self.assertRegex(lines[2], r"^  20261119-070000- +failed +apply a")
+        utc = time.strftime("%Y-%m-%d %H:%M", time.localtime(calendar.timegm((2026, 11, 20, 10, 52, 36))))
+        self.assertEqual(lines[3:], ["Log", "  %s moved medlar  (desk)" % utc])        # the log's UTC, in this computer's time
         req = urllib.request.Request(self.url + "/api/activity")
         with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets nothing
             urllib.request.urlopen(req, timeout=10)

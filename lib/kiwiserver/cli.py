@@ -1,6 +1,7 @@
 """The command line. bin/kiwi-server execs this; kiwi-server-gui calls it
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
+import calendar
 import concurrent.futures
 import threading
 import ipaddress
@@ -3104,6 +3105,31 @@ def cmd_take_in(args):
     cmd_adopt(args)
 
 
+def activity_lines(out):
+    """The control node's Activity ({jobs, entries}) as lines for the terminal: its tasks, then its log."""
+    def when(j):                        # a task's start is a number of seconds (a crash until 2.268.0); its id says the day
+        t = j.get("started")
+        if isinstance(t, (int, float)) and not isinstance(t, bool) and t:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+        return str(t or j.get("id") or "")[:16].replace("T", " ")
+    lines = ["Tasks"]
+    for j in out.get("jobs") or []:
+        lines.append("  %-16s %-8s %s %s  (%s)" % (when(j), j.get("state") or "", j.get("action") or "",
+                                                  " ".join(j.get("hosts") or []), j.get("user") or ""))
+    def logged(e):                      # the log's times are UTC; said in this computer's time, as the tasks' are
+        t = str(e.get("time") or "")
+        try:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(calendar.timegm(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))))
+        except ValueError:
+            return t[:16].replace("T", " ")
+    lines.append("Log")
+    for e in out.get("entries") or []:
+        lines.append("  %-16s %s %s  (%s%s)" % (logged(e), e.get("what") or "",
+                                               " ".join(e.get("hosts") or []), e.get("user") or "",
+                                               ", " + e["address"] if e.get("address") else ""))
+    return lines
+
+
 def cmd_control(args):
     """The fleet to the control node or back; or this computer asks to become a controller."""
     from . import controlsync
@@ -3269,16 +3295,8 @@ def cmd_control(args):
         if args.porcelain:
             print(json.dumps(out))
             return
-        print("Tasks")
-        for j in out.get("jobs") or []:
-            print("  %-16s %-8s %s %s  (%s)" % ((j.get("started") or j.get("id") or "")[:16].replace("T", " "),
-                                                j.get("state") or "", j.get("action") or "", " ".join(j.get("hosts") or []),
-                                                j.get("user") or ""))
-        print("Log")
-        for e in out.get("entries") or []:
-            print("  %-16s %s %s  (%s%s)" % ((e.get("time") or "")[:16].replace("T", " "), e.get("what") or "",
-                                             " ".join(e.get("hosts") or []), e.get("user") or "",
-                                             ", " + e["address"] if e.get("address") else ""))
+        for line in activity_lines(out):
+            print(line)
         return
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":

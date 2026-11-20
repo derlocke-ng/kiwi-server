@@ -124,6 +124,13 @@ over TLS by the master's VPN client through the exit (`vpn-client.dot_providers`
 2.269.0 the default was Quad9, which leaves out names it holds to be malicious: a
 site was blocked that no blocklist of the network named.
 
+Nothing about who asks is passed on: Cloudflare sends the sites' name servers no
+client subnet (ECS). Google does, and through a VPN exit that is the exit's subnet,
+which shows a VPN to a site you visit over your home line. A subnet of your own
+choosing cannot be sent instead: the VPN client's forwarder drops it (tried on 20
+November 2026). One leak test still shows the exit's subnet with Cloudflare: Akamai's
+`whoami.ds.akahelp.net`, the one name Cloudflare makes an exception for.
+
 Signed names (DNSSEC) are checked where the chain ends, by that resolver. A badly
 signed name gets no address there, and so nowhere in the network.
 Pi-hole's own check stays off: that resolver hands out answers, not the keys a

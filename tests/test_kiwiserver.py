@@ -1290,6 +1290,34 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_a_second_set_it_up_does_not_start_the_self_apply_twice(self):
+        """The control node's own machine applies itself as a unit that outlives the connection. Asked
+        again while that unit runs (a second "Set it up" on the starter's page), nothing is started and
+        it says so; systemd refused the second unit, and the job ended as failed (20 Nov 2026)."""
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        os.makedirs(os.path.join(work, "bin"))
+        for name, text in (("systemctl", 'echo "systemctl $*" >> %s/did\n[ "$1" = is-active ] && exit ${ACTIVE:-3}\nexit 0\n' % work),
+                           ("systemd-run", 'echo "systemd-run $*" >> %s/did\n' % work)):
+            path = os.path.join(work, "bin", name)
+            write(path, "#!/bin/bash\n" + text)
+            os.chmod(path, 0o755)
+        env = dict(os.environ, PATH=os.path.join(work, "bin") + os.pathsep + os.environ["PATH"])
+        script = cli.SELF_APPLY % shlex.quote("bash /var/lib/kiwi-server/role.sh --force")
+
+        def run(**more):
+            if os.path.exists(os.path.join(work, "did")):
+                os.unlink(os.path.join(work, "did"))
+            r = subprocess.run(["bash", "-c", script], env=dict(env, **more), capture_output=True, text=True)
+            return r.returncode, r.stdout.strip(), util.read_text(os.path.join(work, "did"))
+        rc, out, did = run()                                                     # not running: started
+        self.assertEqual((rc, out), (0, ""))
+        self.assertIn("systemd-run --collect --unit=kiwi-self-apply bash -c bash /var/lib/kiwi-server/role.sh --force", did)
+        self.assertIn("systemctl reset-failed kiwi-self-apply", did)
+        rc, out, did = run(ACTIVE="0")                                           # still running: said, nothing started
+        self.assertEqual((rc, out), (0, "kiwi-self-apply: running"))
+        self.assertNotIn("systemd-run", did)
+
     def test_ssh_config_names_every_machine_with_the_fleets_key(self):
         """`ssh-config`: ssh's own configuration for the machines, as kiwi-server reaches them. Printed
         without --write; nothing of the computer's own ~/.ssh is read or touched then."""

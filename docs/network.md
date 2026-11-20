@@ -148,6 +148,16 @@ second check needs, and with the check on every public name failed (tried on a
 node and on a master, 20 November 2026). A master with `upstream_dns` of its
 own gets whatever those resolvers do.
 
+### The time
+
+Every Pi-hole of the network answers time questions (NTP, port 123) from its
+machine's clock, which the machine's own time service keeps right; Pi-hole
+never sets the clock itself. The machines at a site ask the Pi-hole on their
+LAN first (two at most), the others on the VPN ask the master's, and the
+public pool stays behind them, so a machine keeps its time when one of them
+is away. Devices on the LAN can ask it too, and get it with DHCP where Pi-hole
+is the DHCP server. `dns.ntp: false` switches a Pi-hole's time server off.
+
 ### Names by service
 
 By default a part is named after its machine: the pastebin on quince is `paste.quince.home`.

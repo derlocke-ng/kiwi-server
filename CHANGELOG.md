@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.272.0 — the time from the network; a sync that keeps both sides' settings
+
+- **The time from the network** (kiwi-modules 0.110.0, kiwi-stack 0.9.25). Every Pi-hole answers
+  time questions (NTP, port 123); the machines at a site ask the one on their LAN first, the
+  others the master's, the public pool behind them; devices on the LAN can ask it too (and get
+  it with DHCP where Pi-hole hands out addresses). Pi-hole no longer sets the machine's clock
+  itself: it did so every hour beside the machine's own time service. `dns.ntp: false` switches
+  a Pi-hole's time server off (docs/network.md, The time).
+- **A sync keeps both sides' settings** when the control page and a computer changed different
+  settings in the fleet file: it is merged key by key. Only the same setting changed on both
+  sides, or a file with comments further down, still asks which copy counts.
+
 ## 2.271.0 — a home that goes on without its master; netcup's snapshots and rescue system
 
 - **Fixed: while the master was away, a node's Pi-hole gave the names of the Internet no answer**

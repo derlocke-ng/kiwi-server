@@ -188,9 +188,20 @@ it wait for `kiwi-stack restore` instead.
 ### A copy at another place
 
 For 3-2-1 (three copies, two kinds of place, one elsewhere), a backup store can
-keep a copy of everything it holds in a WebDAV folder at another place: a
-storage account such as 1&1's SmartDrive (`https://sd2dav.1und1.de/…`), a
-Nextcloud, a storage box.
+keep a copy of everything it holds at another place. `offsite_url` says where:
+
+| The place | `offsite_url` | `offsite_user` |
+|---|---|---|
+| 1&1 SmartDrive (WebDAV) | `https://sd2dav.1und1.de/kiwi` | the e-mail address or customer number |
+| A Nextcloud (WebDAV) | `https://HOST/remote.php/dav/files/USER/kiwi` | the Nextcloud user (with a second login factor: an app password as the password) |
+| Any other WebDAV folder | `https://HOST/PATH` | the account there |
+| A Hetzner Storage Box (SFTP) | `sftp://uNNNNN.your-storagebox.de:23/kiwi` | `uNNNNN` |
+| Any SFTP account (a friend's server) | `sftp://HOST:PORT/FOLDER` | the account there |
+
+An SFTP folder is in the account's home. The place's host key is taken at the
+first copy and kept in `offsite-known_hosts` beside the store, as ssh does: a
+different key later stops the copy. Delete that file only when the place really
+changed its key.
 
 ```yaml
 hosts:
@@ -288,8 +299,10 @@ hosts:
 ```
 
 After an apply of both machines, medlar fetches the part's folders from quince every minute
-(rsync over SSH). The part does not run on medlar; its data waits where the part would look
-for it there.
+(rsync over SSH). The part does not run on medlar, but it is made there: its images are
+pulled and its containers prepared with quince's settings and secrets, without a site,
+port or timer of their own. `kiwi-stack ready list` on medlar shows them. Its data waits
+where the part looks for it.
 
 ```bash
 kiwi-server standby ~/kiwi/fleet.yaml               # which part is kept ready where, and how old each copy is
@@ -299,16 +312,17 @@ kiwi-server switch ~/kiwi/fleet.yaml vault --yes    # medlar takes the part over
 
 A switch works whether quince answers or not. If it answers, the part stops there and medlar
 fetches once more, so nothing is lost. If it does not, the part goes on with the copy medlar
-has: at most the last minute is missing. The part keeps its name and its secrets, as in a
-move. quince gets the change the moment it answers again and then no longer runs the part.
+has: at most the last minute is missing. Then the containers kept ready start on medlar at
+once (`kiwi-stack ready start`), and the apply that follows makes the part medlar's own and
+gives it its site. The part keeps its name and its secrets, as in a move. quince gets the
+change the moment it answers again and then no longer runs the part.
 
 What to know:
 
 - A folder a database lives in is read with the part's containers paused, for as long as
   the read takes (the same care the backup takes). With little change per minute that is a
   moment.
-- Only folders are followed. A part that keeps its data in a named volume is not kept ready
-  yet; an apply says so.
+- Folders and named volumes are followed.
 - Both machines must be of one kind (two nodes) with the same stack folder.
 - The standby's key can do one thing on the machine that runs the part: read the folders
   kept ready (see [security](security.md#a-standbys-key)).

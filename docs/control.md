@@ -335,6 +335,7 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/status` | the last look at the machines: `time`, `error`, and per machine `host`, `state` (ok, warn, bad, down), `problems` (each with `text`, `hint`), `notes` |
 | `GET /api/machines` | what the fleet file says of the machines (`kiwi-server list --porcelain`), without the paths on the control node; `{}` while it is locked |
 | `GET /api/activity` | the newest tasks and who did what |
+| `GET /api/v1/events` | changes as they happen (server-sent events): `change` with `{"mark": …}` at once and whenever the last look, a job, the activity log, the fleet or a waiting apply changed; then ask for what you show. A comment every 20 seconds keeps the stream open through proxies; `gone` when the login ended |
 | `POST /api/jobs` | starts an action as a job, as the page's buttons do: `{action, hosts}` (apply, update, status, plan, check, backup …) gives `{job}`; the History names the computer |
 | `GET /api/jobs/{job}/log?offset=N` | the job's log from `offset` on: `text`, `offset`, `state` (waiting, running, ok, failed) |
 | `GET /api/devices` | the phones and laptops on the VPN by name, the groups, the group a new one goes into |
@@ -352,9 +353,16 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `POST /api/accounts` | the Accounts page's buttons: `{op, name, hint, note, uses, days}` with `op` one of invite, accept, deny, revoke, create, link, delete, admins, games, connect (and `jabber-invite`, `jabber-accept`, `jabber-deny`, `jabber-revoke`) gives `{done, shown}`; `shown` is a new invite code or password link, given this once |
 | `GET /api/hosts/{name}/logins` | a machine's logins with their passwords (`label`, `module`, `address`, `user`, `password`, `note`), never cached; the activity log says which computer was shown them |
 
-`/api/status` and `/api/machines` also answer the page's login, only read, and are
-asked at every refresh: they leave no line in the activity log. The Android app
-(kiwi-app) reads its Home, Machines and Services from them.
+`/api/status`, `/api/machines` and `/api/v1/events` also answer the page's login,
+only read: they leave no line in the activity log, and they do not keep a login
+alive. The Android app (kiwi-app) reads its Home, Machines and Services from them.
+`/api/v1/status`, `/api/v1/machines` and `/api/v1/activity` are the same answers
+under the API's first version number; the routes without it stay.
+
+The page's own Home, Machines, Services, Activity, Backups and a machine's page
+follow `/api/v1/events`: when something changes they take the new state without
+loading themselves again. A page on which you ticked, typed or clicked something
+keeps it and says "Something changed meanwhile" with a link instead.
 
 **The registry, for everyone on the network.** A person who does not run the
 network still wants to know what is in it for them. `https://status.<host>/api/registry`
@@ -466,6 +474,10 @@ kiwi-server control activity ~/kiwi/fleet.yaml
 ```
 
 It holds names and times, no output and no secret.
+
+`kiwi-server control watch ~/kiwi/fleet.yaml` prints a line whenever something
+there changes (a look, a job, the activity), until the stream ends. The app
+follows it: it asks again at once instead of once a minute.
 
 ## One admin: applies run on the control node
 

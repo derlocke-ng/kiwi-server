@@ -9135,6 +9135,20 @@ class TestWatchdog(unittest.TestCase):
         ev, done = self.step(f, {"gate": False}, state, t + 2 * 3700 + 86400 + 60)       # the next day
         self.assertEqual(done, ["gate"])
 
+    def test_a_restart_that_worked_does_not_hold_the_next_one(self):
+        # seen on sorbet 20 Nov 2026: restarted, back within minutes, gone again half an hour later, and
+        # held for the rest of the hour because of the restart that had worked
+        f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
+        self.step(f, {"gate": False}, state)
+        t = self.NOW + 4 * 60
+        self.assertEqual(self.step(f, {"gate": False}, state, t)[1], ["gate"])
+        self.step(f, {"gate": True}, state, t + 300)                                     # back
+        self.step(f, {"gate": False}, state, t + 1800)                                   # gone again
+        ev, done = self.step(f, {"gate": False}, state, t + 1800 + 4 * 60)
+        self.assertEqual(([e["kind"] for e in ev], done), (["restarted"], ["gate"]))
+        ev, done = self.step(f, {"gate": False}, state, t + 1800 + 10 * 60)            # this one did not help (yet)
+        self.assertEqual(([e["kind"] for e in ev], done), (["held"], []))
+
     def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
         f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}
         ev, done = self.step(f, {"gate": False}, state, fail=True)
@@ -11504,6 +11518,41 @@ class TestWeb(WebBase):
 
 
 
+    def test_pages_follow_pushed_changes(self):
+        import http.client
+        self.assertEqual(self.ask("/api/v1/events")[0], 401)                 # a login or a computer's key only
+        self.ask("/login", {"password": self.PW})
+        self.wait_look()
+        code, body = self.ask("/")
+        mark = re.search(r'<meta name="kiwi-mark" content="([0-9a-f]{16})">', body).group(1)
+        self.assertEqual(mark, self.c.changes())                             # the page says what it was made at
+        self.assertIn('new EventSource("/api/v1/events")', body)
+        self.assertNotIn("kiwi-mark", self.ask("/help")[1])                  # a page without the network's state
+        self.assertEqual(self.ask("/api/v1/status")[0], 200)                 # the API's first version: the same answers
+        conn = http.client.HTTPConnection(self.url.split("//")[1], timeout=10)
+        conn.request("GET", "/api/v1/events", headers={"Cookie": self.cookie})
+        r = conn.getresponse()
+        self.assertEqual((r.status, r.getheader("content-type").split(";")[0]), (200, "text/event-stream"))
+
+        def event():
+            lines = []
+            while True:
+                line = r.readline().decode().rstrip("\n")
+                if not line:
+                    if lines:
+                        return lines
+                    continue
+                if not line.startswith(":"):
+                    lines.append(line)
+        self.assertEqual(event(), ["event: change", 'data: {"mark": "%s"}' % mark])       # at once: the mark as it is
+        self.c._put(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1, "hosts": []}))
+        first, data = event()
+        self.assertEqual(first, "event: change")
+        self.assertNotEqual(json.loads(data[6:])["mark"], mark)                          # a new look: a new mark
+        conn.close()
+        # the stream keeps no login alive: its path is one of the page's own
+        self.assertNotIn("set-cookie", {k.lower() for k in r.headers.keys()})
+
     def test_home_and_a_machine_in_plain_words(self):
         # the look the login starts is held until the page was asked for: on a fast machine it was over
         # before, and the page rightly no longer said so (CI, 20 Nov 2026)
@@ -12193,6 +12242,21 @@ class TestWeb(WebBase):
                                                      "internet": False}}, "phone"))
             self.assertEqual(api("POST", "/api/federation", "tok", {"elsewhere": {}})[0], 400)
             self.assertEqual(api("POST", "/api/federation", "tok", {"kiwi2": {"share": "cloud"}})[0], 400)
+
+    def test_a_computer_follows_the_control_nodes_changes(self):
+        """`kiwi-server control watch` (the app): the marks as they come, with the computer's token."""
+        from kiwiserver import controlsync
+        api = controlsync.Api(self.url)
+        with self.assertRaisesRegex(KiwiError, r"does not send its changes \(401\)"):
+            next(api.events())
+        api.token = "tok-pc"
+        os.makedirs(self.c.run, exist_ok=True)
+        with mock.patch.object(self.c, "controller", lambda t: "pc" if t == "tok-pc" else None):
+            marks = api.events()
+            self.assertEqual(next(marks), self.c.changes())                        # at once: as it is
+            self.c._put(os.path.join(self.c.run, "status.json"), json.dumps({"time": 2, "hosts": []}))
+            self.assertEqual(next(marks), self.c.changes())                        # a new look
+            marks.close()
 
     def test_a_controller_reads_the_status_and_the_machines(self):
         """The Android app is a controller: it reads with its token what the page reads with its login."""
@@ -15582,6 +15646,21 @@ class TestRecovery(Base):
     def report(self, f, status=None, now=None):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
+
+    def test_a_standby_has_its_part_made_and_not_started(self):
+        """keep_ready: the standby renders the part as the machine that runs it has it (its settings, its
+        secrets), made and not started; a switch starts it there (kiwi-stack ready start)."""
+        papaya = self.network().raw["hosts"]["papaya"]
+        f = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out"), None, self.ms)
+        script, b = r.script(f.hosts["lychee"])
+        self.assertEqual((b.ready, b.ready_services, b.module_services.get("vault")), (["vault"], ["kn-vault"], ["kn-vault"]))
+        self.assertNotIn("kn-vault", b.services)
+        self.assertIn("KS_STACK_READY=('kn-vault')", script)
+        own = r.script(f.hosts["papaya"])[1]
+        self.assertEqual((own.ready, "kn-vault" in own.services), ([], True))
+        self.assertEqual(b.compose["services"]["kn-vault"]["image"], own.compose["services"]["kn-vault"]["image"])
+        self.assertEqual(r.script(f.hosts["quince"])[1].ready, [])                    # it keeps nothing ready
 
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod

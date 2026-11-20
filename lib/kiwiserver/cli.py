@@ -707,10 +707,30 @@ class Renderer:
                 if ends:
                     vc.update(standby_endpoints=ends, standby_ping=self._master_ip)
         spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
-                                   lan_addresses=self.lan_addresses(host, role), mesh_only=self._mesh_only)
+                                   lan_addresses=self.lan_addresses(host, role), mesh_only=self._mesh_only,
+                                   ready=self.ready_parts(host))
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b
+
+    def ready_parts(self, host):
+        """{part: (settings, files)} of the parts this machine keeps ready for the one that runs them
+        (keep_ready), resolved as there: its settings, its secrets. Their containers are made here and
+        not started; a switch starts them (kiwi-stack ready start)."""
+        out = {}
+        for src_name, part, dst_name in partstandby.links(self.fleet):
+            src = self.fleet.hosts.get(src_name)
+            if dst_name != host.name or part in (host.modules or []) or src is None or src.role not in self.roles:
+                continue
+            try:
+                self.prepare(src)
+            except KiwiError as e:
+                util.warn("%s: %s is not kept ready here: %s cannot be rendered (%s)" % (host.name, part, src_name, str(e)[:120]))
+                continue
+            if part in src.modules:
+                out[part] = (dict(src.module_settings[part]),
+                             {k: v for k, v in (src.module_files or {}).items() if k.startswith(part + "/")})
+        return out
 
     def script(self, host):
         role = self.prepare(host)
@@ -3532,6 +3552,10 @@ def cmd_control(args):
                                    module=getattr(args, "part", None) or "", at=getattr(args, "at", None) or ""):
             sys.exit(1)
         return
+    if args.action == "watch":          # the control node's changes, a line each, as they come: for the app
+        for mark in controlsync.watch_api(fleet_dir, key):
+            print("change", mark, flush=True)
+        sys.exit(1)                     # the stream ended: whoever reads it opens it again
     if args.action == "activity":       # the control page's Activity: tasks, and who did what
         out = controlsync.activity_api(fleet_dir, key)
         if args.porcelain:
@@ -5527,6 +5551,20 @@ def cmd_switch(args):
         util.say("%s does not answer (%s): %s goes on with the copy %s has" % (src_name, str(e).splitlines()[-1][:80], part, dst_name))
     # nothing is fetched over the part once it runs here
     remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true" % (partstandby.UNIT, partstandby.UNIT))
+    # kept ready there (its containers made, its images there): it starts now, and the apply below
+    # makes it that machine's own
+    try:
+        ready = (Renderer(fleet, roles, out_dir, None, ms).script(dst)[1].module_services or {}).get(part) or []
+    except KiwiError:
+        ready = []
+    if ready:
+        try:
+            remote.run(d_tgt, "kiwi-stack ready start %s" % " ".join(shlex.quote(c) for c in ready))
+            util.say("%s: %s runs there, %s after the switch began (it was kept ready)"
+                     % (dst_name, part, util.count(int(time.time() - began), "second")))
+        except KiwiError as e:
+            util.say("%s: what was kept ready of %s did not start (%s): the apply starts it"
+                     % (dst_name, part, str(e).splitlines()[-1][:100]))
     n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
     if n:
         util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
@@ -6121,7 +6159,8 @@ def build_parser():
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
-    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run"])
+    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run",
+                                      "watch"])
     s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
                                            "run: the action (apply, update, status, plan, check, backup …)")

@@ -165,7 +165,7 @@ node to do everything, and can start a new network with the install media.
    look that writes each machine as it answers (2.253); the look beside a running job (2.258).
 4. The Machines table on the page, with sites; no cap at 50. Built in 2.256 (the column
    last apply comes with step 3's store).
-5. `/api/v1` and pushed changes; the app reads the store.
+5. `/api/v1` and pushed changes; the app reads the store. Built: `/api/v1/events` and the pages that follow it, `/api/v1/status`, `machines`, `activity`. The app follows them (`control watch`).
 6. The app as a package on the kit: remembered size, job strip (built in 2.254), Preferences.
    No new screens.
 7. A kit release with pills, chips, list, item page and timeline; the app uses them; linked

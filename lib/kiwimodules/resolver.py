@@ -229,11 +229,19 @@ def _home_address_as_mesh(host, where):
     rs["mesh_subnet"] = str(iface.network)
 
 
-def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None, mesh_only=None):
+def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None, mesh_only=None, ready=None):
+    """`ready`: {part: (settings, files)} of parts kept ready here for the machine they run on,
+    resolved as there (its settings, its secrets): see StackSpec.ready."""
     rs = host.role_settings
     vpn_ip = rs.get("vpn_ip") or ""
     if not vpn_ip and "vpn-server" in host.modules:
         vpn_ip = host.module_settings["vpn-server"].get("server_ip") or ""
+    config, files = dict(host.module_settings), dict(host.module_files)
+    for part, (settings, part_files) in (ready or {}).items():
+        if part in host.modules:
+            continue
+        config[part] = dict(settings)
+        files.update({k: v for k, v in (part_files or {}).items() if k.startswith(part + "/")})
     return modmod.StackSpec(
         node_type=role.node_type, hostname=host.hostname, modules=host.modules,
         without=("vpn-client",) if rs.get("vpn") is False and role.node_type != "master" else (),
@@ -242,7 +250,7 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_add
         wg_mtu=rs.get("wg_mtu") or None, bridge_mtu=rs.get("bridge_mtu") or None,
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
         pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {}, at_home=bool(rs.get("at_home")),
-        module_config=host.module_settings, files=host.module_files,
+        module_config=config, files=files, ready=[p for p in (ready or {}) if p not in host.modules],
         dns_records=dns_records or [], lan_addresses=lan_addresses or {}, mesh_only=mesh_only or [],
         service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",

@@ -46,6 +46,9 @@ if ! grep -q "$sb: keeps ready: $part of $on" apply-link.log; then      # the ho
     kiwi-server apply "$fleet" "$sb" >> apply-link.log 2>&1
 fi
 grep -q "$sb: keeps ready: $part of $on" apply-link.log; check $? "$sb fetches them"
+# the part itself is made there and not started (kiwi-stack ready): a switch starts it at once
+ready=$(at "$sb" "kiwi-stack ready list" 2>/dev/null | grep -- "-$part")
+[ -n "$ready" ] && ! grep -qE ' (active|running)$' <<<"$ready"; check $? "$sb has $part made and not started (${ready:-nothing kept ready})"
 n=240; while [ "$n" -gt 0 ]; do a=$(age); [ "$a" -ge 0 ] && [ "$a" -lt 90 ] && break; sleep 10; n=$((n - 10)); done
 a=$(age); [ "$a" -ge 0 ] && [ "$a" -lt 90 ]; check $? "kiwi-server standby: its copy is current (${a} s)"
 mark="kiwi-standby $(date +%s) $RANDOM"
@@ -72,6 +75,8 @@ if [ "$down" = --down ]; then
 fi
 t0=$(date +%s)
 kiwi-server switch "$fleet" "$part" --yes > switch.log 2>&1; check $? "kiwi-server switch $part --yes ended well ($(( $(date +%s) - t0 )) s)"
+grep -q "it was kept ready" switch.log; check $? "$part started from what was kept ready ($(grep -o '[0-9]* seconds\? after the switch began' switch.log | head -1))"
+grep -E "it was away for|after the switch began" switch.log | sed 's/^/    /'
 if [ "$down" = --down ]; then
     grep -q "does not answer" switch.log; check $? "the switch went on without $on"
     [ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark2" ]; check $? "$sb runs it with the copy it had"

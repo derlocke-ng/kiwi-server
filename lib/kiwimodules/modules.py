@@ -348,6 +348,9 @@ def _port_range(text):
     return lo, hi
 
 
+READY = util.READY      # the compose profile of the services of a part kept ready (StackSpec.ready)
+
+
 class StackSpec:
     """Everything the renderer needs for one host."""
 
@@ -355,13 +358,17 @@ class StackSpec:
                  docker_subnet=None, mtu=None, timezone="UTC", vpn_ip="", pub_iface="",
                  variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None, mesh_only=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
-                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=(), at_home=False):
+                 ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=(), at_home=False,
+                 ready=()):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
         self.hostname = hostname
         self.modules = list(modules)
         self.without = tuple(without or ())     # requirements left out: ("vpn-client",) on a machine with no VPN
+        # parts kept ready for another machine (a standby): their containers made and their images
+        # here, not started; no site, backup, port or unit of theirs. A switch starts them (READY)
+        self.ready = tuple(m for m in (ready or ()) if m not in self.modules)
         self.at_home = bool(at_home)            # a master at home: its own connection is the home line
         self.docker_dir = docker_dir.rstrip("/")
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
@@ -424,6 +431,8 @@ class Bundle:
         self.quadlets = {}         # podman: file name -> unit text (.container, .network, the target)
         self.images = []           # every image the stack pulls
         self.module_services = {}  # module -> its containers
+        self.ready = []            # the parts kept ready for another machine (StackSpec.ready)
+        self.ready_services = []   # their containers: made, not started
 
     def add_file(self, rel, content, mode=0o644):
         rel = rel.strip("/")
@@ -666,7 +675,7 @@ class Renderer:
             if out:
                 body["ports"] = out
 
-    def render_compose(self, spec, ordered, base, bundle):
+    def render_compose(self, spec, ordered, base, bundle, ready=()):
         services, volumes, networks = {}, {}, {}
         module_services = {}
         for name in ordered:
@@ -687,6 +696,11 @@ class Renderer:
                 if svc in services:
                     raise KiwiError("service %s is defined by two modules" % svc)
                 services[svc] = body
+                if name in ready:               # made, not started: `up` leaves a service of a profile alone
+                    body = services[svc] = dict(body or {}, profiles=[READY])
+                    bundle.ready_services.append(svc)
+                    module_services.setdefault(name, []).append(svc)
+                    continue
                 bundle.services.append(svc)
                 module_services.setdefault(name, []).append(svc)
                 bundle.service_modules[str((body or {}).get("container_name") or svc)] = name
@@ -708,7 +722,8 @@ class Renderer:
         # with it (kiwi-stack vpn-restart), or they keep a namespace that is gone
         vpn = "service:%s-vpn-client" % base["container_prefix"]
         bundle.vpn_dependents = [str((body or {}).get("container_name") or svc)
-                                 for svc, body in services.items() if (body or {}).get("network_mode") == vpn]
+                                 for svc, body in services.items() if (body or {}).get("network_mode") == vpn
+                                 and svc not in bundle.ready_services]      # (a restart would start one kept ready)
         compose = {"services": services}
         if volumes:
             compose["volumes"] = volumes
@@ -1005,14 +1020,24 @@ class Renderer:
 
     # ---- the bundle --------------------------------------------------------------------
     def render(self, spec):
-        ordered = self.ms.resolve(spec.modules, spec.node_type, spec.without)
+        own = self.ms.resolve(spec.modules, spec.node_type, spec.without)
+        ordered = list(own)
+        if spec.ready:
+            every = self.ms.resolve(list(spec.modules) + list(spec.ready), spec.node_type, spec.without)
+            lacking = [n for n in every if n not in own and n not in spec.ready]
+            if lacking:
+                raise KiwiError("%s keeps %s ready, but has no %s, which %s needs" % (
+                    spec.hostname, ", ".join(spec.ready), ", ".join(lacking), "it" if len(spec.ready) == 1 else "they"))
+            # after the machine's own: their addresses come last and move no other container's
+            ordered += [n for n in every if n not in own]
+        ready = [n for n in ordered if n not in own]
         base = self.base_context(spec, ordered)
         bundle = Bundle()
         bundle.container_ips = dict(base["container_ips"])
         prefix = base["container_prefix"]
 
         # cross-module facts first: the compose fragments read them too
-        upstreams, servers = self.nginx_blocks(spec, ordered, base)
+        upstreams, servers = self.nginx_blocks(spec, own, base)
         base["upstreams"], base["servers"] = upstreams, servers
         # with a public reverse proxy, a site is public when its name is outside the
         # fleet's domain; every other site then answers the mesh only
@@ -1025,21 +1050,21 @@ class Renderer:
         # knows which names and ports to hand on (exposed)
         base["via"] = str(rp.get("via") or "")
         base["exposed"] = rp.get("exposed") or {}
-        base["f2b_jails"] = self.login_jails(spec, ordered, base)
-        base["module_rules"] = self.vpn_rules(spec, ordered, base)
+        base["f2b_jails"] = self.login_jails(spec, own, base)
+        base["module_rules"] = self.vpn_rules(spec, own, base)
         # the proxy answers at the mesh address for a module's site, and for the machine's own page
         # (its name and its registry, which kiwi-server names) also when no module has one
-        own = (spec.module_config.get("reverse-proxy") or {}).get("machine_page") if "reverse-proxy" in ordered else ""
+        own_page = (spec.module_config.get("reverse-proxy") or {}).get("machine_page") if "reverse-proxy" in ordered else ""
         base["enable_vpn_dnat"] = bool(base["proxy_ip"]) and (any(
-            self.ms.get(n).needs_vpn_dnat for n in ordered) or bool(own))
+            self.ms.get(n).needs_vpn_dnat for n in ordered if n not in ready) or bool(own_page))
         if not spec.vpn_ip:
-            at_mesh = [n for n in ordered if self.ms.get(n).needs_vpn_dnat] if base["enable_vpn_dnat"] else []
+            at_mesh = [n for n in own if self.ms.get(n).needs_vpn_dnat] if base["enable_vpn_dnat"] else []
             if (spec.module_config.get("vpn-client") or {}).get("extra_dnat_rules"):
                 at_mesh.append("vpn-client.extra_dnat_rules")
             if at_mesh:
                 raise KiwiError("%s: the stack setting vpn_ip (this host's mesh address) is required — "
                                 "%s are reachable at the mesh address" % (spec.hostname, ", ".join(at_mesh)))
-        bundle.add_file("docker-compose.yml", self.render_compose(spec, ordered, base, bundle), 0o600)
+        bundle.add_file("docker-compose.yml", self.render_compose(spec, ordered, base, bundle, ready), 0o600)
         bundle.runtime = spec.runtime
         bundle.images = sorted({str((b or {}).get("image")) for b in bundle.compose["services"].values() if (b or {}).get("image")})
         if spec.ca_cert:
@@ -1056,7 +1081,7 @@ class Renderer:
             mod = self.ms.get(name)
             ctx = self.module_context(spec, ordered, base, name)
             if name == "backup":
-                ctx["backup_sources"] = self.backup_sources(spec, ordered, base, bundle)
+                ctx["backup_sources"] = self.backup_sources(spec, own, base, bundle)
             for c in mod.checks:
                 try:
                     hit = self.env.compile_expression(c["when"])(**ctx)
@@ -1077,6 +1102,8 @@ class Renderer:
                 text = self.render_text(mod.template(key), dict(ctx, output=key), "modules/%s/%s" % (name, fname))
                 where = "modules/%s/module.yaml outputs.%s" % (name, key)
                 if out.get("kind") == "host_unit":
+                    if name in ready:           # its timers and services come with the switch
+                        continue
                     unit = self.expand(out.get("name") or fname.replace(".j2", ""), ctx, where)
                     if unit in bundle.units:
                         raise KiwiError("two modules want to install the host unit %s" % unit)
@@ -1125,6 +1152,8 @@ class Renderer:
                     # template is an error either way
                     if bm.get("required", True) or "is not set" not in str(e):
                         raise
+            if name in ready:
+                continue
             for entry in mod.open_ports:         # a template may come out as several, or none
                 for p in self.expand(entry, ctx, "modules/%s/module.yaml network.open_ports" % name).split():
                     if p not in bundle.ports:
@@ -1156,7 +1185,8 @@ class Renderer:
             dirs.add(d.rstrip("/"))
         bundle.dirs = sorted(dirs, key=lambda p: (os.path.isabs(p), p))
         bundle.prefix = prefix
-        bundle.modules = ordered
+        bundle.modules = own
+        bundle.ready = ready
         bundle.vpn_dependents = list(getattr(bundle, "vpn_dependents", []))
         bundle.mesh_via = base["mesh_via"]
         bundle.mesh_subnet = spec.mesh_subnet if base["mesh_via"] else ""

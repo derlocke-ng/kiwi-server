@@ -54,7 +54,8 @@ recovery:
 The permission is the policy itself: only someone who can open the network's keys can
 change the fleet file, and the control node can only act with what the store holds (the
 provider's token). Guards that no policy switches off: every act is written to Activity;
-the same machine is not acted on twice within an hour, nor more than three times a day; the
+the same machine is not acted on twice within an hour unless it answered in between (then the
+act worked, and a new outage is a new one), nor more than three times a day; the
 control node does nothing when it cannot reach the provider or anything else outside, since
 then it is the one that is cut off.
 

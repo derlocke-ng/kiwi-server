@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.274.0 — pages that follow changes; a standby with its part made; SFTP for the offsite copy
+
+- **The control page follows changes** (`/api/v1/events`, server-sent events): Home, Machines,
+  Services, Activity, Backups and a machine's page take the new state when a look, a job or an
+  apply changes something, without loading themselves again; a page someone has ticked or typed
+  on keeps it and says "Something changed meanwhile". `/api/v1/status`, `machines`, `activity`
+  are the API's first version. A joined app follows the same stream (`kiwi-server control
+  watch`) and asks again within ten seconds instead of once a minute.
+- **A standby has its part made** (kiwi-modules 0.112.0, kiwi-stack 0.9.26): the machine that
+  keeps a part ready pulls its images and prepares its containers with the settings and secrets
+  of the machine that runs it, without starting them (`kiwi-stack ready list`). A switch starts
+  them at once, before the standby's apply. Tried with Vaultwarden from medlar (Debian) to quince
+  (uCore): it ran on quince 6 seconds after the switch began, nothing was lost, 0 wrong
+  (tests/drills/part-standby.sh). Its name follows with the apply (217 s here): the name on both
+  machines before a switch is the next step.
+- **The copy at another place over SFTP** (a Hetzner Storage Box, a friend's server), its host
+  key kept at the first copy; a Nextcloud's own WebDAV kind. Tried with stand-in servers
+  (tests/drills/backup-offsite.sh … sftp: 0 wrong).
+- **Fixed: a master that came back after a restart was not restarted again for an hour** when it
+  went away a second time (the master-gone drill: 34 minutes). A machine that answered after the
+  restart lifts that hold; three restarts a day stay the limit.
+
 ## 2.273.0 — a copy of the backups at another place
 
 - **A copy at another place** (kiwi-modules 0.111.0): a backup store keeps an encrypted copy of

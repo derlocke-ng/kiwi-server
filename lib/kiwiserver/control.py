@@ -2153,6 +2153,25 @@ class Control:
         util.write_text(tmp, text, 0o600)
         os.replace(tmp, path)
 
+    def changes(self):
+        """A mark that moves whenever something a page shows has changed: the last look, the
+        fleet as the pages know it, a job, the audit log, the applies that wait for their machine.
+        File times only, so it is cheap: the pages' event stream asks for it every second."""
+        mark = []
+        for path in (os.path.join(self.run, "status.json"), os.path.join(self.run, "fleet.json"),
+                     os.path.join(self.dir, "audit.jsonl"), self._waiting_path()):
+            try:
+                st = os.stat(path)
+                mark.append("%d.%d" % (st.st_mtime_ns, st.st_size))
+            except OSError:
+                mark.append("-")
+        try:
+            for name in sorted(f for f in os.listdir(self.jobs_dir) if f.endswith(".json"))[-3:]:
+                mark.append("%s.%d" % (name, os.stat(os.path.join(self.jobs_dir, name)).st_mtime_ns))
+        except OSError:
+            pass
+        return hashlib.sha256("|".join(mark).encode()).hexdigest()[:16]
+
     def status(self):
         """The last `status --porcelain`, or None."""
         path = os.path.join(self.run, "status.json")

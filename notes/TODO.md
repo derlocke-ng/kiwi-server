@@ -89,3 +89,23 @@ say what 2.267.0 does.
     timesyncd/chrony, with SYS_TIME); each machine asks its site's Pi-hole on its LAN first, else the master's on the mesh,
     the pool behind. Tried on the test network: quince (chrony) and medlar (timesyncd) take their time from lime; lime's
     and papaya's servers answer stratum 2 on the LAN; check 43/43.
+52. ~~A true offsite copy~~ (the owner 20 Nov: his spare WebDAV at 1&1, encrypted, "don't trust this cloud"): built in 2.273.0
+    (backup-server.offsite_url, rclone crypt with a key from the seed, names encrypted too); drill backup-offsite.sh 0 wrong.
+    For his network: offsite_url and offsite_user on his backup store, the password through the page or the app (it goes into
+    the store). Open: the providers registry for backup places (the owner's idea: 1&1, Nextcloud, storage boxes, later S3/SFTP
+    as kinds next to WebDAV), when the second kind comes; `kiwi-server backups --offsite` to restore without logging in to the
+    store's machine.
+53. ~~After this computer's reboot `ssh sh3` was refused~~: the owner loaded the key again (20 Nov, 17:00); jinja2 for
+    Python 3.15 is installed too.
+54. ~~Backup places of another kind~~ (the owner: "use the providers repo for backup providers too"): SFTP built (a Hetzner
+    Storage Box, a friend's server; the host key kept at the first copy) and a Nextcloud's own WebDAV kind; the places are a
+    table in docs/backups.md. The kiwi-providers repository on GitHub is still empty: the hosters (netcup) and the backup
+    places move there together, when a second hoster comes (its first commit would have to go to main).
+55. ~~Pushed changes~~ (ui.md step 5): /api/v1/events, the pages that follow it, `control watch` for the app.
+56. ~~The watchdog held a restart for an hour after one that had worked~~ (master-gone drill, 20 Nov): fixed.
+57. A switch in seconds (item 12), plan: the part on its standby as compose services with `profiles: [kiwi-ready]` (made and
+    pulled, not started; `--remove-orphans` leaves them), its secrets as on the machine it runs on (the pins switch writes
+    today), no proxy site and no backup for it there; a switch then starts them (`compose --profile kiwi-ready up -d …`)
+    while the apply follows. The name on both machines (the standby's proxy passing on) is the second half. Both runtimes:
+    compose and quadlets (kiwimodules/quadlet.py).
+

@@ -797,6 +797,8 @@ ks_stack_unpack() {
         old_rt=$(sed -n 's/^STACK_RUNTIME=//p' "$KS_STACK_ENV")
         old_dir=$(sed -n 's/^STACK_DIR=//p' "$KS_STACK_ENV")
         old_services=$(sed -n 's/^STACK_SERVICES="\(.*\)"$/\1/p' "$KS_STACK_ENV")
+        # and those of parts it kept ready (one started by a switch runs until it goes here)
+        old_services+=" $(sed -n 's/^STACK_READY="\(.*\)"$/\1/p' "$KS_STACK_ENV")"
     fi
     if [[ -n $old_rt && ( $old_rt != "$KS_STACK_RUNTIME" || ( -n $old_dir && $old_dir != "$dd" ) ) ]] && [[ -x /usr/local/bin/kiwi-stack ]]; then
         # the installed kiwi-stack still speaks the old runtime and directory: take that stack
@@ -813,7 +815,7 @@ ks_stack_unpack() {
         # unit would stay (a target does not stop what merely wants it)
         for svc in $old_services; do
             keep=0
-            for u in "${KS_STACK_SERVICES[@]}"; do [[ $u == "$svc" ]] && keep=1; done
+            for u in "${KS_STACK_SERVICES[@]}" "${KS_STACK_READY[@]}"; do [[ $u == "$svc" ]] && keep=1; done
             (( keep )) && continue
             [[ $svc =~ ^[A-Za-z0-9_.-]+$ ]] || continue
             ks_say "stopping $svc — no module runs it any more"
@@ -905,6 +907,7 @@ ks_stack_unpack() {
         echo "STACK_USER=$u"
         echo "STACK_RUNTIME=$KS_STACK_RUNTIME"
         echo "STACK_SERVICES=\"${KS_STACK_SERVICES[*]}\""
+        echo "STACK_READY=\"${KS_STACK_READY[*]:-}\""
         echo "STACK_PREFIX=$KS_STACK_PREFIX"
         echo "STACK_VPN_CONTAINER=$KS_STACK_VPN_CONTAINER"
         echo "STACK_VPN_DEPENDENTS=\"${KS_STACK_VPN_DEPENDENTS[*]}\""
@@ -917,6 +920,19 @@ ks_stack_unpack() {
         echo "STACK_SEED_ID=${KS_SEED_ID:-}"
         echo "STACK_AUTO_UPDATE=${KS_STACK_AUTO_UPDATE:-registry}"
     } | ks_write "$KS_STACK_ENV" 0644
+}
+
+ks_stack_ready() {   # the parts kept ready for another machine: made here, not started
+    # Their images were pulled with the others. A quadlet without [Install] is all podman needs;
+    # docker gets the containers made (a profile no `up` starts). `kiwi-stack ready start` (a switch)
+    # starts them.
+    [[ -n ${KS_STACK_READY[*]:-} ]] || return 0
+    if [[ $KS_STACK_RUNTIME == docker ]]; then
+        docker compose --file "$KS_STACK_DIR/docker-compose.yml" --profile kiwi-ready up --no-start "${KS_STACK_READY[@]}" >/dev/null 2>&1 \
+            || ks_warn "the parts kept ready here could not be made (${KS_STACK_READY[*]}): a switch makes them then"
+    fi
+    ks_say "kept ready for another machine, not started: ${KS_STACK_READY[*]}"
+    return 0
 }
 
 ks_image_here() { # IMAGE
@@ -1240,6 +1256,7 @@ ks_stack_apply() {
     fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
+    ks_stack_ready
     ks_stack_prune
     for unit in "${KS_STACK_UNITS[@]}"; do
         systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]

@@ -13,9 +13,10 @@ node is what stays in the house. That is how a rented master comes back after a 
 
 `tell` says it (the page shows it). `restart` is a power cycle through the machine's
 provider: it destroys nothing. `reinstall` is not built yet and is read as `restart`.
-Guards no policy switches off: the same machine is not acted on twice within an hour nor
-more than three times a day, and nothing is done when the provider cannot be asked, since
-then this computer is the one that is cut off.
+Guards no policy switches off: the same machine is not acted on twice within an hour (unless
+it answered in between: then the act worked, and a new outage is a new one) nor more than
+three times a day, and nothing is done when the provider cannot be asked, since then this
+computer is the one that is cut off.
 """
 from . import util
 from .util import KiwiError
@@ -50,10 +51,13 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
     gone for its `after` sends the devices to its standby, and back when it answers (moved).
     Returns the events: [{host, kind: waiting|tell|restarted|held|moved, text}]."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
-    pointed = state.setdefault("pointed", {})
+    pointed, back = state.setdefault("pointed", {}), state.setdefault("back", {})
     for name in list(gone):
         if said.get(name) or name not in kinds:
             del gone[name]                      # back, or no longer a machine of the network
+    for name in acted:
+        if said.get(name):
+            back[name] = now                    # it answered after an act: the act worked
     for name, there in list(pointed.items()):   # its devices went to the standby: back once it answers
         if said.get(name) and point:
             try:
@@ -123,7 +127,7 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
             events.append({"host": name, "kind": "held",
                            "text": what + ". It was restarted %d times today and is still gone: look at it" % len(times)})
             continue
-        if times and now - times[-1] < AGAIN_AFTER:
+        if times and now - times[-1] < AGAIN_AFTER and back.get(name, 0) <= times[-1]:
             events.append({"host": name, "kind": "held", "text": what + ". It was restarted %s ago: waiting for it"
                            % util.count((now - times[-1]) / 60, "minute")})
             continue

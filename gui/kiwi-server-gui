@@ -4737,6 +4737,7 @@ class Window(Adw.ApplicationWindow):
         self.checked = None       # when the machines last answered
         self.polling = False
         self.generation = 0       # one per fleet opened: an answer about the previous one is dropped
+        self.watching, self.watcher, self.watch_due, self.last_poll = None, None, False, 0     # control watch
         self.busy = False
         self._pulse = None
         self.current_scope = None
@@ -5501,8 +5502,9 @@ class Window(Adw.ApplicationWindow):
             self.toast("A build is running — wait for it to finish")
             return True
         if self.doc.dirty:
-            self.confirm_discard(self.destroy)
+            self.confirm_discard(lambda: (self.stop_watch(), self.destroy()))
             return True
+        self.stop_watch()
         return False
 
     # ---- what is known about a host ----
@@ -6523,10 +6525,69 @@ class Window(Adw.ApplicationWindow):
         if self.is_active() and self.doc.path and (not self.checked or time.time() - self.checked > POLL_SECONDS):
             self.poll()
 
+    def watch_control(self):
+        """A computer joined to a control node follows its changes (kiwi-server control watch): a look,
+        a job or an apply there is asked for at once, not at the next minute. Opened again a minute after
+        its stream ended; given up with the fleet."""
+        path, gen = self.doc.path, self.generation
+        if not path or self.watching == gen or not os.path.isfile(os.path.join(os.path.dirname(path), "control", "remote")):
+            return
+        self.stop_watch()
+        self.watching = gen
+
+        def worker():
+            while self.watching == gen:
+                try:
+                    p = subprocess.Popen([self.cli, "control", "watch", path], stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                except OSError:
+                    return
+                self.watcher, first = p, True
+                for _line in p.stdout:
+                    if self.watching != gen:
+                        break
+                    if first:               # the mark as it is: nothing new yet
+                        first = False
+                        continue
+                    GLib.idle_add(self.poll_soon)
+                p.kill()
+                p.wait()
+                for _ in range(60):
+                    if self.watching != gen:
+                        return
+                    time.sleep(1)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def stop_watch(self):
+        self.watching = None
+        p, self.watcher = self.watcher, None
+        if p and p.poll() is None:
+            p.kill()
+
+    WATCH_GAP = 10      # seconds: changes that come close together are asked for once
+
+    def poll_soon(self):
+        if self.watch_due:
+            return False
+        wait = max(0, self.WATCH_GAP - (time.time() - (self.last_poll or 0)))
+        self.watch_due = True
+
+        def go():
+            self.watch_due = False
+            if self.polling:            # a look is on its way: one more after it
+                GLib.timeout_add_seconds(self.WATCH_GAP, lambda: (self.poll_soon(), False)[1])
+            else:
+                self.poll()
+            return False
+        GLib.timeout_add(int(wait * 1000) + 1, go)
+        return False
+
     def poll(self):
         """Ask again: the store, the fleet (quick), then the machines. Reads only."""
         if not self.doc.path or self.polling or self.busy:
             return
+        self.last_poll = time.time()
+        self.watch_control()
         self.polling = True
         self.b_refresh.set_sensitive(False)
         self.update_rows()

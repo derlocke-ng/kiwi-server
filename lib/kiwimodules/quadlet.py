@@ -13,7 +13,7 @@ error at render time rather than a surprise on the host.
 import json
 import re
 
-from .util import KiwiError
+from .util import READY, KiwiError
 
 KNOWN_SERVICE_KEYS = {
     "image", "container_name", "environment", "volumes", "networks", "network_mode", "ports", "expose",
@@ -218,9 +218,11 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
     # a cold image pull or a dependency that is not up yet must not exhaust the
     # start limit and leave the unit dead until the next boot
     unit.append("StartLimitIntervalSec=0")
+    # a part kept ready for another machine: nothing starts it but a switch (kiwi-stack ready start)
+    install = [] if READY in (body.get("profiles") or []) else \
+        ["", "[Install]", "WantedBy=kiwi-stack.target"] + ["WantedBy=%s" % _unit_name(r) for r in requires]
     text = ["# kiwi-server stack — generated; the fleet file is the place to change it",
-            "[Unit]"] + unit + ["", "[Container]"] + container + ["", "[Service]"] + svc + \
-           ["", "[Install]", "WantedBy=kiwi-stack.target"] + ["WantedBy=%s" % _unit_name(r) for r in requires] + [""]
+            "[Unit]"] + unit + ["", "[Container]"] + container + ["", "[Service]"] + svc + install + [""]
     return "\n".join(text), ("\n".join(env_lines) + "\n") if env_lines else None
 
 

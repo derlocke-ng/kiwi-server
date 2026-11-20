@@ -94,7 +94,10 @@ Once a minute while the window has the focus the app asks
 `kiwi-server status --porcelain`, which is also where it is decided what counts
 as a problem. On a computer joined to a control node that is the control
 node's own look: it watches the machines all the time, and they report to it
-by themselves, so nothing is asked of the machines from here. Without a
+by themselves, so nothing is asked of the machines from here. The app also
+follows the control node's changes (`kiwi-server control watch`): when a look,
+a job or an apply there changes something, it asks within ten seconds instead
+of at the next minute. Without a
 control node, or when its word on a machine is older than 15 minutes, the
 machines are asked from here, over SSH and read-only. A machine is reached at
 its name, or at another address of it the fleet has already met, so `.home`

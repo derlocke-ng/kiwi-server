@@ -13953,6 +13953,55 @@ class TestFirstRunPage(StoreBase):
         self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
         self.assertEqual(self.c.refresh_status()["error"], "error: boom")
 
+    def test_a_look_does_not_wait_for_a_job_on_another_machine(self):
+        cookie, _csrf = self.made()
+        a, b = sorted(self.data()["hosts"])[:2]
+        row = lambda host, state: {"host": host, "ok": True, "state": state, "problems": [], "notes": [], "facts": {}}
+        path = os.path.join(self.c.run, "status.json")
+        util.write_text(path, json.dumps({"time": 1, "hosts": [row(a, "ok"), row(b, "ok")]}))
+        mark = os.path.join(self.tmp, "go2")
+        # the stand-in answers "warn" for every machine it is asked about (all of them when none is named)
+        script = ("import json, os, sys, time\n"
+                  "asked = [x for x in sys.argv[1:] if x in %r] or %r\n"
+                  "for h in asked:\n"
+                  "    if h == %r:\n"
+                  "        while not os.path.exists(%r): time.sleep(0.05)\n"
+                  "    print(json.dumps({'host': h, 'ok': True, 'state': 'warn', 'problems': [], 'notes': [], 'facts': {}}), flush=True)\n"
+                  % ([a, b], [a, b], b, mark))
+        self.c.kiwi = [sys.executable, "-c", script]
+        states = lambda: {h["host"]: h["state"] for h in self.c.status()["hosts"]}
+        write(mark, "")
+        with self.c.lock:                           # a job runs, on machine a only
+            self.c._busy = {a}
+            t = threading.Thread(target=self.c.refresh_status)
+            t.start()
+            t.join(10)
+            self.assertFalse(t.is_alive())          # the look did not wait for the job
+            self.assertEqual(states(), {a: "ok", b: "warn"})    # b was asked; a keeps what was known
+            self.c._busy = controlmod.EVERY         # a job on every machine: the look waits for it, as before
+            t = threading.Thread(target=self.c.refresh_status)
+            t.start()
+            time.sleep(0.4)
+            self.assertTrue(t.is_alive())
+            self.c._busy = None
+        t.join(10)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(states(), {a: "warn", b: "warn"})
+        # a job that begins while the look is under way: its machine keeps what was known
+        os.remove(mark)
+        util.write_text(path, json.dumps({"time": 1, "hosts": [row(a, "ok"), row(b, "ok")]}))
+        t = threading.Thread(target=self.c.refresh_status)
+        t.start()
+        for _ in range(100):
+            if states()[a] == "warn":
+                break
+            time.sleep(0.05)
+        self.c._busy = {b}
+        write(mark, "")
+        t.join(10)
+        self.c._busy = None
+        self.assertEqual(states(), {a: "warn", b: "ok"})
+
     def test_reads_are_kept_until_the_fleet_changes(self):
         cookie, _csrf = self.made()
         calls = []

@@ -22,6 +22,13 @@ if "--minutes" in sys.argv:
     del sys.argv[i:i + 2]
 args, fleet, m = setup(__doc__.splitlines()[0], roles=("master", "node"))
 master, node = m["master"], m["node"]
+# the node by its address at home: by name this computer may ask the master's DNS, which is what
+# goes away here (the drill then counted its own lost way to the node as a silent Pi-hole)
+net = node.host.cfg.get("network") or {}
+if not net.get("dhcp", True) and net.get("address"):
+    from kiwiserver import remote
+    node.target = remote.with_port("%s@%s" % (node.host.admin["user"], str(net["address"]).split("/")[0]),
+                                   remote.ssh_port(node.host))
 unit = "km-vpn-server.service"
 server_ip = master.host.module_settings["vpn-server"].get("server_ip") or "10.8.0.1"
 client = node.out("podman ps --format '{{.Names}}' | grep -E '^kn-vpn-client$'")
@@ -40,9 +47,9 @@ def reaches_master():
 
 
 def lan_dns():
-    """An uncached name, as a client on the LAN asks: 5 seconds, twice. Any answer counts
-    (NXDOMAIN too); dig exits 9 when nothing came back."""
-    q = "podman exec %s dig +time=5 +tries=2 kiwi-drill-$(date +%%s%%N).quad9.net @127.0.0.1" % pihole
+    """An uncached name, asked once with 4 seconds to answer (a client that asks a second time is
+    slow already). Any answer counts (NXDOMAIN too); dig exits 9 when nothing came back."""
+    q = "podman exec %s dig +time=4 +tries=1 kiwi-drill-$(date +%%s%%N).example.org @127.0.0.1" % pihole
     return node.run(q, 30)[0] == 0
 
 

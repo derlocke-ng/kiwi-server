@@ -74,7 +74,19 @@ if [ "$down" = --down ]; then
     sleep 8
 fi
 t0=$(date +%s)
-kiwi-server switch "$fleet" "$part" --yes > switch.log 2>&1; check $? "kiwi-server switch $part --yes ended well ($(( $(date +%s) - t0 )) s)"
+kiwi-server switch "$fleet" "$part" --yes > switch.log 2>&1 &
+sw=$!
+# meanwhile: when does its name answer from the standby (its proxy, at its address)?
+sbip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); answered=""
+while kill -0 "$sw" 2>/dev/null; do
+    if [ -n "$name" ] && [ -z "$answered" ] && [ -n "$sbip" ]; then
+        c=$(curl -s -m 3 -o /dev/null -w '%{http_code}' --cacert "$S/ca/kiwiCA.pem" --resolve "${name#https://}:443:$sbip" "https://${name#https://}/")
+        case $c in 2*|3*) answered=$(( $(date +%s) - t0 )) ;; esac
+    fi
+    sleep 2
+done
+wait "$sw"; check $? "kiwi-server switch $part --yes ended well ($(( $(date +%s) - t0 )) s)"
+[ -n "$answered" ]; check $? "its name answered from $sb ${answered:-?} s after the switch began, before the switch ended"
 grep -q "it was kept ready" switch.log; check $? "$part started from what was kept ready ($(grep -o '[0-9]* seconds\? after the switch began' switch.log | head -1))"
 grep -E "it was away for|after the switch began" switch.log | sed 's/^/    /'
 if [ "$down" = --down ]; then

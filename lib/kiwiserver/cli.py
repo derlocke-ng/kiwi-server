@@ -551,8 +551,9 @@ class Renderer:
         self.scan()
         under = "." + host.hostname
         own = "." + host.domain if getattr(host, "domain", "") else None
-        more = [n for n in self._names.get(host.hostname, [])
+        more = [n for n in self._names.get(host.hostname, []) + self.ready_names(host)
                 if own and n.endswith(own) and n != host.hostname and not (n.endswith(under) and "." not in n[:-len(under)])]
+        more = list(dict.fromkeys(more))
         key, full = certs.ensure_host_cert(self.ca_dir(host), host.hostname,
                                            days=int(tls.get("cert_days") or certs.CERT_DAYS),
                                            ca_days=int(tls.get("days") or certs.DAYS),
@@ -728,8 +729,26 @@ class Renderer:
                 util.warn("%s: %s is not kept ready here: %s cannot be rendered (%s)" % (host.name, part, src_name, str(e)[:120]))
                 continue
             if part in src.modules:
-                out[part] = (dict(src.module_settings[part]),
-                             {k: v for k, v in (src.module_files or {}).items() if k.startswith(part + "/")})
+                settings = dict(src.module_settings[part])
+                nb = getattr(self.ms.modules.get(part), "named_by", None)
+                if nb and not settings.get(nb["setting"]):
+                    # its name as it answers there (after that machine): its site here answers to the same
+                    name = namesmod.name_of(self.fleet, src, part, self.ms, namesmod.plan(self.fleet, self.ms))
+                    if name:
+                        settings[nb["setting"]] = ("https://" + name) if nb.get("url") else name
+                out[part] = (settings, {k: v for k, v in (src.module_files or {}).items() if k.startswith(part + "/")})
+        return out
+
+    def ready_names(self, host):
+        """The names of the parts this machine keeps ready: its certificate carries them, so that they
+        answer here the moment a switch starts them (kiwi-stack ready start)."""
+        out = []
+        for src_name, part, dst_name in partstandby.links(self.fleet):
+            src = self.fleet.hosts.get(src_name)
+            if dst_name == host.name and src is not None:
+                name = namesmod.name_of(self.fleet, src, part, self.ms, namesmod.plan(self.fleet, self.ms))
+                if name:
+                    out.append(name)
         return out
 
     def script(self, host):
@@ -5559,9 +5578,10 @@ def cmd_switch(args):
         ready = []
     if ready:
         try:
-            remote.run(d_tgt, "kiwi-stack ready start %s" % " ".join(shlex.quote(c) for c in ready))
-            util.say("%s: %s runs there, %s after the switch began (it was kept ready)"
-                     % (dst_name, part, util.count(int(time.time() - began), "second")))
+            said = remote.run(d_tgt, "kiwi-stack ready start %s 2>&1" % " ".join(shlex.quote(c) for c in ready)).decode(errors="replace")
+            util.say("%s: %s runs there, %s after the switch began (it was kept ready)%s"
+                     % (dst_name, part, util.count(int(time.time() - began), "second"),
+                        "; its name answers there" if "the proxy answers for them now" in said else ""))
         except KiwiError as e:
             util.say("%s: what was kept ready of %s did not start (%s): the apply starts it"
                      % (dst_name, part, str(e).splitlines()[-1][:100]))

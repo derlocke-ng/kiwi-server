@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The backup store's copy at another place, for real (backup-server.offsite_url): a stand-in WebDAV
 # server on one machine of the fleet (rclone serve webdav, with that machine's certificate from the
-# fleet's CA), the backup store of another machine copied there, then:
+# fleet's CA), or a stand-in SFTP server (rclone serve sftp; its host key is kept at the first copy),
+# the backup store of another machine copied there, then:
 #   - the place holds no name it could read (no machine's name, no restic file name)
 #   - the copy's names come back decrypted on the store's machine (backup-offsite.sh list)
 #   - one machine's repository comes back from it byte for byte (backup-offsite.sh restore)
@@ -9,11 +10,12 @@
 # Afterwards the fleet file is as before (the offsite settings taken out again, the store applied)
 # and the stand-in is gone.
 #
-#   tests/drills/backup-offsite.sh FLEET STORE DAV_MACHINE REPO
+#   tests/drills/backup-offsite.sh FLEET STORE DAV_MACHINE REPO [webdav|sftp]
 #     STORE: a machine with backup-server; DAV_MACHINE: where the stand-in runs; REPO: a small
 #     repository in the store to bring back (e.g. lime.home)
 set -u
 fleet=${1:?the fleet file}; store=${2:?the backup store machine}; dav=${3:?the machine for the stand-in}; repo=${4:?a repository}
+kind=${5:-webdav}
 here=$(cd "$(dirname "$0")/../.." && pwd)
 ks=("$here/bin/kiwi-server")
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -33,15 +35,23 @@ at() {  # MACHINE COMMAND: as root there, by its home address
 }
 image=docker.io/rclone/rclone:1.75.2
 pw=$(head -c 18 /dev/urandom | base64 | tr -d '/+=')
-url="https://$dav.$domain:18443/kiwi"
-
-# the stand-in on DAV_MACHINE, with its own certificate (the fleet's CA signed it)
-at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav; mkdir -p /var/kiwi-drill-dav/kiwi
-  d=\$(ls -d /home/*/docker/kn-nginx | head -1)
-  podman run -d --name kiwi-drill-dav -p 18443:18443 -v \$d/fullchain.pem:/c.pem:ro,z -v \$d/privkey.pem:/k.pem:ro,z \
-    -v /var/kiwi-drill-dav:/data:z $image serve webdav /data --addr :18443 --cert /c.pem --key /k.pem --user drill --pass '$pw' >/dev/null
-  sleep 3; podman ps --format '{{.Names}}' | grep -qx kiwi-drill-dav"
-check $? "a stand-in WebDAV server runs on $dav ($url)"
+if [ "$kind" = sftp ]; then
+    url="sftp://$dav.$domain:18022/kiwi"
+    # the stand-in on DAV_MACHINE, with a host key of its own
+    at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav; mkdir -p /var/kiwi-drill-dav/kiwi
+      podman run -d --name kiwi-drill-dav -p 18022:18022 -v /var/kiwi-drill-dav:/data:z $image serve sftp /data --addr :18022 --user drill --pass '$pw' >/dev/null
+      sleep 3; podman ps --format '{{.Names}}' | grep -qx kiwi-drill-dav"
+    check $? "a stand-in SFTP server runs on $dav ($url)"
+else
+    url="https://$dav.$domain:18443/kiwi"
+    # the stand-in on DAV_MACHINE, with its own certificate (the fleet's CA signed it)
+    at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav; mkdir -p /var/kiwi-drill-dav/kiwi
+      d=\$(ls -d /home/*/docker/kn-nginx | head -1)
+      podman run -d --name kiwi-drill-dav -p 18443:18443 -v \$d/fullchain.pem:/c.pem:ro,z -v \$d/privkey.pem:/k.pem:ro,z \
+        -v /var/kiwi-drill-dav:/data:z $image serve webdav /data --addr :18443 --cert /c.pem --key /k.pem --user drill --pass '$pw' >/dev/null
+      sleep 3; podman ps --format '{{.Names}}' | grep -qx kiwi-drill-dav"
+    check $? "a stand-in WebDAV server runs on $dav ($url)"
+fi
 
 # the store's copy there: the account in the fleet file, its password then into the secret store
 python3 - "$fleet" "$store" "$url" "$pw" "$S/ca/kiwiCA.pem" <<'EOF'
@@ -51,7 +61,9 @@ d = yaml.safe_load(open(p))
 h = d["hosts"][store]
 role = next(k for k, b in h.items() if isinstance(b, dict) and "backup-server" in (b.get("modules") or []))
 b = h[role].setdefault("backup-server", {})
-b.update(offsite_url=url, offsite_user="drill", offsite_password=pw, offsite_ca=open(ca).read())
+b.update(offsite_url=url, offsite_user="drill", offsite_password=pw)
+if url.startswith("https://"):
+    b["offsite_ca"] = open(ca).read()
 head = "".join(l for l in open(p) if l.startswith("#"))
 open(p, "w").write(head + yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=1000))
 EOF
@@ -62,6 +74,10 @@ t0=$(date +%s)
 at "$store" "systemctl start kn-backup-offsite.service"; check $? "the first copy ($(( $(date +%s) - t0 )) s)"
 sd=$(at "$store" "ls -d /home/*/docker | head -1")      # its stack folder (its admin user may be another)
 at "$store" "test -s $sd/kn-backup-server/offsite-last"; check $? "it marks when the copy was last whole"
+if [ "$kind" = sftp ]; then
+    at "$store" "grep -q '^\[$dav.$domain\]:18022 ' $sd/kn-backup-server/offsite-known_hosts"
+    check $? "the stand-in's host key is kept on $store"
+fi
 names=$(at "$dav" "find /var/kiwi-drill-dav/kiwi -printf '%f\n'")
 n=$(printf '%s\n' "$names" | wc -l)
 ! printf '%s\n' "$names" | grep -qiE "\.home|$domain|snapshots|index|keys|config|data"
@@ -95,6 +111,6 @@ EOF
 "${ks[@]}" apply "$fleet" "$store" > apply-off.log 2>&1; check $? "$store applied without it again"
 ! at "$store" "systemctl cat kn-backup-offsite.timer >/dev/null 2>&1"; check $? "no copy timer is left on $store"
 at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav"
-at "$store" "rm -rf /var/kiwi-drill-back /var/kiwi-drill-a /var/kiwi-drill-b"
+at "$store" "rm -rf /var/kiwi-drill-back /var/kiwi-drill-a /var/kiwi-drill-b $sd/kn-backup-server/offsite-known_hosts"
 say "$fails wrong"
 exit "$fails"

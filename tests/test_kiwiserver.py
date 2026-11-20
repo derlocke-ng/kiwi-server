@@ -10913,6 +10913,13 @@ class TestWeb(WebBase):
         self.assertIn('action="/devices/download"', body)
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone", "csrf": tok}), (200, conf))
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone"})[0], 303)   # no token: nothing
+        there = self.ask("/devices")[1]                                           # the list is a table
+        self.assertIn('<table class="tbl dt">', there)
+        self.assertIn("<b>annas-phone</b>", there)
+        self.assertIn("Everything", there)                                        # all of its traffic goes through the VPN
+        self.assertNotIn("PrivateKey", there)
+        self.assertIn("No device matches", self.ask("/devices?q=nobody")[1])      # the filter, in the address
+        self.assertIn("<b>annas-phone</b>", self.ask("/devices?q=anna")[1])
         # a laptop at home: only the network through the tunnel, and what to do so that its own names still work
         self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
                        "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write("

@@ -2154,6 +2154,46 @@ class Control:
             return []
         return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".conf") and HOST.match(f[:-5]))
 
+    def device_rows(self):
+        """Every device with what its file says: [{name, address, group, split}]. Its address and
+        what goes through the tunnel are read; its key stays where it is."""
+        import ipaddress
+        names = self.devices()
+        if not names:
+            return []
+        d = os.path.join(self.fleet_dir, "secrets", "devices")
+        groups = (self.fleet_info() or {}).get("groups") or {}
+
+        def read():
+            nets = []
+            for g, cidr in groups.items():
+                try:
+                    nets.append((g, ipaddress.ip_network(str(cidr), strict=False)))
+                except ValueError:
+                    pass
+            out = []
+            for n in names:
+                try:
+                    text = util.read_text(os.path.join(d, n + ".conf"))
+                except OSError:
+                    text = ""
+                m = re.search(r"^\s*Address\s*=\s*([0-9A-Fa-f.:]+)", text, re.M)
+                allowed = re.search(r"^\s*AllowedIPs\s*=\s*(.*)$", text, re.M)
+                addr, group = (m.group(1) if m else ""), ""
+                try:
+                    ip = ipaddress.ip_address(addr) if addr else None
+                    group = next((g for g, net in nets if ip is not None and ip in net), "")
+                except ValueError:
+                    pass
+                out.append({"name": n, "address": addr, "group": group,
+                            "split": bool(allowed) and "0.0.0.0/0" not in allowed.group(1)})
+            return out
+        try:
+            changed = os.stat(d).st_mtime_ns
+        except OSError:
+            changed = 0
+        return self._read_once("devices", read, also=(tuple(names), changed, tuple(sorted(groups.items()))))
+
     def device_config(self, name):
         """A device's WireGuard config (from the open store), or None."""
         if self.locked() or not HOST.match(name or ""):

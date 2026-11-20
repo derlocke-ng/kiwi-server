@@ -116,8 +116,9 @@ and how it ended), Backups and Settings.
 
 ### The Machines table
 
-Machines is a table with a row per machine, grouped by site (where the machines stand:
-`network.site` in the fleet file). Each row has the machine's state, its role, its parts,
+Machines is a table with a row per machine. The masters and their standbys come first, as a
+group of their own; the other machines are grouped by site (where they stand: `network.site`
+in the fleet file). Each row has the machine's state, its role, its parts,
 three small meters (CPU, memory, the fullest disk; point at one for the numbers), its last
 backup and when it was last seen. A site's line says how its
 machines are ("11 fine · 1 waits for unlock").
@@ -140,6 +141,14 @@ Several filters narrow the list; the same kind twice is either-or (`state:down s
 
 Tick machines (the box in a site's heading ticks the whole site) and a bar appears: Check,
 Preview or Apply the ticked ones, one after the other.
+
+### The Devices table
+
+Devices lists every phone and laptop on the VPN in a table: its name, its group, its address
+on the VPN, and whether everything or only the network goes through the VPN. With more than
+one group, the counts above the table filter by group on a click. The filter is text in the
+page's address, as on Machines: `group:staff`, a part of a name, or the start of an address
+(`10.9.8`). Each row has *QR code* (shows the device's code and file again) and *Remove*.
 
 "Add a machine at home" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.

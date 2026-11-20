@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.257.0 — masters as their own group, and the Devices table
+
+- **The masters and their standbys are a group of their own** at the top of the Machines table,
+  not machines of the site "home". A master's own site, if the fleet file names one, shows
+  beside its name and still filters (`site:`).
+- **Devices is a table**, made for hundreds of devices: name, group, address on the VPN, and
+  whether everything or only the network goes through the VPN. Counts by group filter on a
+  click; the filter is text in the address (`group:staff`, a part of a name, the start of an
+  address). A page with 350 devices is a quarter of the size the old list would have been.
+- The page preview's made-up network has devices with addresses and groups
+  (`KIWI_PREVIEW_MANY=1`: 350 more).
+
 ## 2.256.0 — the Machines page is a table, by site
 
 - **Machines on the control page is a table with a row per machine, grouped by site**

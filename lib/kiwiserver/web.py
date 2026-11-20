@@ -121,7 +121,8 @@ text-decoration:none;color:var(--fg);min-width:0}.stat .lbl{display:flex;align-i
 details.site{margin:0 0 12px}details.site>summary{padding:6px 2px;cursor:pointer}.sitec{font-size:.85rem;margin-left:6px}.sitec .ok{color:var(--ok)}.sitec .bad{color:var(--bad)}.sitec .warn{color:var(--warn)}.sitec .plain{color:var(--muted)}
 .tbl.mt{table-layout:fixed}.tbl.mt th.cm{width:17%}.tbl.mt th.cs{width:156px}.tbl.mt th.cr{width:160px}.tbl.mt th.cd{width:112px}.mini{display:inline-block;width:26px;height:8px;border-radius:3px;background:var(--line);overflow:hidden;margin-right:4px;vertical-align:middle}.tbl.mt th.cb{width:118px}.tbl.mt td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tbl.mt td,.tbl.mt th{padding-left:10px;padding-right:10px}.tbl.mt td.tick,.tbl.mt th.tick{width:30px;padding-right:0}.tbl.mt td{padding-top:8px;padding-bottom:8px}.tbl.mt .chip{margin-right:4px}.tbl.mt span.bad{color:var(--bad)}.tbl.mt span.warn{color:var(--warn)}
 .mbar{position:sticky;bottom:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--card);border:1px solid var(--accent);border-radius:10px;padding:8px 12px;margin-top:8px}.mbar[hidden]{display:none}
-@media(max-width:1400px){.tbl.mt .w4{display:none}}@media(max-width:1000px){.tbl.mt .w3{display:none}}@media(max-width:860px){.mbar{bottom:76px}}@media(max-width:600px){.tbl.mt .w2{display:none}.tbl.mt th.cm{width:auto}.tbl.mt th.cs{width:170px}}
+.tbl.dt td{padding-top:7px;padding-bottom:7px}.tbl.dt td.acts{text-align:right;white-space:nowrap}.tbl.dt td.acts button{padding:4px 10px}
+@media(max-width:1400px){.tbl.mt .w4{display:none}}@media(max-width:1000px){.tbl.mt .w3,.tbl.dt .w3{display:none}}@media(max-width:600px){.tbl.dt .w2{display:none}}@media(max-width:860px){.mbar{bottom:76px}}@media(max-width:600px){.tbl.mt .w2{display:none}.tbl.mt th.cm{width:auto}.tbl.mt th.cs{width:170px}}
 .machines{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .mach{display:flex;flex-direction:column;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
 text-decoration:none;color:var(--fg)}.mach .cap{color:var(--muted);font-size:.82rem}.mach .state{font-size:.88rem}
@@ -520,7 +521,7 @@ placeholder="Filter: a name, state:down, site:{{ t.sites[0]|slug }}, part:dns, r
 onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type=checkbox]'))b.checked=this.checked;mtn()"></th>
 <th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb">Seen</th></tr></thead><tbody>
 {% for m in g.machines %}<tr><td class="tick">{% if m.phase not in fresh %}<input type="checkbox" name="host" value="{{ m.name }}" aria-label="Tick {{ m.name }}" onclick="mtn()">{% endif %}</td>
-<td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}</td>
+<td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% if g.masters and m.site and m.site != "home" %} <span class="sm">{{ m.site }}</span>{% endif %}{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}</td>
 <td><span class="badge {{ level(m.st) }}{{ " busy" if looking }}"{% if m.story %} title="{{ m.story }}"{% endif %}>{{ stword(m.st) }}</span></td>
 <td class="w2">{{ kind(m.role, m.standby_of) }}</td>
 <td class="w3"{% if m.part_titles %} title="{{ m.part_titles|join(", ") }}"{% endif %}>{{ m.part_titles|join(", ") or "-" }}</td>
@@ -855,11 +856,21 @@ so that only the network's names are asked through it and the computer's own nam
 <span class="muted small">(a laptop at home, say): its own Internet stays as it is. Without it, everything goes through the VPN.</span></span></label>
 <div class="actions"><button class="primary">Add it</button></div></form>
 <h2>Devices on your VPN</h2>
-{% for d in devices %}<div class="card row"><strong>{{ d }}</strong>
-<span><form class="inline" method="post" action="/devices/show">{{ tok }}<input type="hidden" name="name" value="{{ d }}"><button>Show its QR code</button></form>
-<form class="inline" method="post" action="/devices/remove" onsubmit="return confirm('Take {{ d }} off the VPN? Its connection stops working at once.')">{{ tok }}
-<input type="hidden" name="name" value="{{ d }}"><button>Remove</button></form></span></div>
-{% else %}<p class="muted">None yet.</p>{% endfor %}
+{% if not t.all %}<p class="muted">None yet.</p>{% else %}
+{% if t.groups|length > 1 %}<div class="counts"><a class="count{{ " on" if not t.q }}" href="/devices"><b>{{ t.all }}</b> {{ "device" if t.all == 1 else "devices" }}</a>
+{% for g in t.groups %}<a class="count{{ " on" if ("group:" ~ g.group) in t.q.split() }}" href="/devices?q={{ toggled(t.q, "group", g.group)|urlencode }}"
+title="Show only this group"><b>{{ g.n }}</b> {{ g.group }}</a>{% endfor %}</div>{% endif %}
+{% if t.all > 8 or t.q %}<form class="mfilter" method="get" action="/devices" role="search"><input type="search" name="q" value="{{ t.q }}"
+aria-label="Filter the devices" placeholder="Filter: a part of a name, an address, group:NAME"{% if t.q %} autofocus{% endif %}>
+<button>Filter</button>{% if t.q %}<a class="btn" href="/devices">Show all</a>{% endif %}</form>{% endif %}
+{% if t.filtered %}<p class="muted small" style="margin:0 0 8px">{{ t.shown }} of {{ t.all }} shown.</p>{% endif %}
+{% if not t.shown %}<p class="muted">No device matches.</p>{% else %}
+<form method="post" action="/devices/show">{{ tok }}<div class="scroll"><table class="tbl dt"><thead><tr><th>Device</th><th class="w2">Group</th><th class="w2">Address</th><th class="w3">Through the VPN</th><th></th></tr></thead><tbody>
+{% for d in t.devices %}<tr><td><b>{{ d.name }}</b></td><td class="w2">{{ d.group or "-" }}</td><td class="w2"><code class="sm">{{ d.address or "-" }}</code></td>
+<td class="w3">{{ "Only the network" if d.split else "Everything" }}</td>
+<td class="acts"><button name="name" value="{{ d.name }}" formaction="/devices/show">QR code</button>
+<button name="name" value="{{ d.name }}" formaction="/devices/remove" onclick="return confirm('Take '+this.value+' off the VPN? Its connection stops working at once.')">Remove</button></td></tr>
+{% endfor %}</tbody></table></div></form>{% endif %}{% endif %}
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
 <details><summary>A phone was lost or stolen</summary><p class="muted">Remove it here. From that moment it cannot reach
 your network, even with the WireGuard app still on it.</p></details>
@@ -3074,7 +3085,8 @@ def make_app(control: Control):
     # ---- devices ------------------------------------------------------------------------
     def devices_page(request, **kw):
         info = control.fleet_info() or {}
-        return page("devices.html", request, "/devices", devices=control.devices(),
+        q = request.query_params.get("q") or "" if request.method == "GET" else ""
+        return page("devices.html", request, "/devices", devices=control.devices(), t=machtable.device_table(control.device_rows(), q),
                     groups=sorted(info.get("groups") or {}), default_group=info.get("default_group"), **kw)
 
     @app.get("/devices")

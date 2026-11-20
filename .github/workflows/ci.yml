@@ -1,5 +1,9 @@
 name: ci
-on: [push, pull_request]
+# once per change: for a pull request, and for what lands on main (a branch's own push ran it a second time)
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
   check:

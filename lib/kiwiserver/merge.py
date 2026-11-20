@@ -6,6 +6,8 @@ changed here, changed there, or on both sides. A file one side changed is taken 
 side. A file both changed is merged when it is a list that only grows (the machines' host
 keys), and named otherwise: then a person says which copy counts.
 """
+import json
+import hashlib
 import difflib
 import os
 import re
@@ -57,11 +59,64 @@ def masked(line):
     return _LONG_TOKEN.sub("•••", line)
 
 
+def _names(data):
+    """The names in a secret file, never its values: the keys of a JSON or YAML mapping, the
+    variables of KEY=value lines, the first word of other lines when it is no secret itself
+    (a host in known_hosts). None when the file is not text of that kind."""
+    try:
+        text = data.decode()
+    except UnicodeDecodeError:
+        return None
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return {str(k): hashlib.sha256(json.dumps(v, sort_keys=True).encode()).hexdigest() for k, v in obj.items()}
+    except ValueError:
+        pass
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("-----"):
+            continue
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*[=:]\s*(.*)$", line)
+        if not m:
+            return None                 # not a file of names and values: nothing of it is shown
+        out[m.group(1)] = hashlib.sha256(m.group(2).encode()).hexdigest()
+    return out or None
+
+
+def secret_summary(here, there):
+    """Lines a person may read about two versions of a secret file: how big each is, and, where
+    the file is a list of names with values, which names were added, removed or changed. No
+    value, and nothing a value could be worked out from."""
+    def size(data):
+        if data is None:
+            return "not there"
+        text = data.decode(errors="replace")
+        return "%d bytes, %d line%s" % (len(data), len(text.splitlines()), "" if len(text.splitlines()) == 1 else "s")
+    lines = ["  the other copy: %s" % size(there), "  this computer:  %s" % size(here)]
+    a, b = (_names(there) if there is not None else {}), (_names(here) if here is not None else {})
+    if a is None or b is None:
+        lines.append("  Its content is secret as a whole: only that the two differ can be said.")
+        return lines
+    for name in sorted(set(a) | set(b)):
+        if name not in a:
+            lines.append("+ %s (only on this computer)" % name)
+        elif name not in b:
+            lines.append("- %s (only in the other copy)" % name)
+        elif a[name] != b[name]:
+            lines.append("@ %s has another value on each side" % name)
+    if len(lines) == 2:
+        lines.append("  The same names with the same values: the files differ only in their order or spacing.")
+    return lines
+
+
 def differences(base, here, there):
     """What differs between this copy and the other one, for a person to see before saying
     which counts: [{path, who, state, lines}]. who: here, there or both (who changed it since
     the last sync; unknown without a base). lines: of the fleet files a diff with every
-    secret value hidden; of the secrets only that they differ, never what they hold."""
+    secret value hidden; of the known hosts which hosts each side has more; of the other
+    secrets their sizes and the names that differ (secret_summary), never what they hold."""
     out = []
     for path in sorted(set(here) | set(there)):
         h, t = here.get(path), there.get(path)
@@ -78,6 +133,13 @@ def differences(base, here, there):
             old = [masked(x) for x in (t or b"").decode(errors="replace").splitlines()]
             new = [masked(x) for x in (h or b"").decode(errors="replace").splitlines()]
             row["lines"] = list(difflib.unified_diff(old, new, "the other copy", "this computer", n=2, lineterm=""))[2:]
+        elif path in LISTS:             # host keys are public: which hosts each side has more
+            old = set((t or b"").decode(errors="replace").splitlines())
+            new = set((h or b"").decode(errors="replace").splitlines())
+            row["lines"] = (["- %s (only in the other copy)" % " ".join(x.split()[:2]) for x in sorted(old - new)] +
+                            ["+ %s (only on this computer)" % " ".join(x.split()[:2]) for x in sorted(new - old)])
+        else:
+            row["lines"] = secret_summary(h, t)
         out.append(row)
     return out
 

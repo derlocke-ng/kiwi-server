@@ -427,7 +427,17 @@ The app does it by itself: it fetches when a fleet is opened and sends after
 a save. When two sides changed different things since they last agreed (you
 added a device here, the control node learned a host key there), the two
 become one copy by themselves. Only when both changed the same thing, the
-settings file say, the app asks which one counts. By hand:
+settings file say, the app asks which one counts.
+
+Before you say which, the app shows what differs (*This copy and the other*), and
+`kiwi-server control diff ~/kiwi/fleet.yaml` prints the same. A row opens:
+
+- the settings file: its lines, with every secret value hidden;
+- the known host keys: which hosts each side has more (the keys are public);
+- any other secret file: how big it is on each side and, where it is a list of names with
+  values, which names were added, removed or have another value. Never a value.
+
+By hand:
 
 ```bash
 kiwi-server control pull ~/kiwi/fleet.yaml    # before working here

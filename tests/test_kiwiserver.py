@@ -10108,12 +10108,32 @@ class TestControlSync(StoreBase):
         found = {r["path"]: r for r in rows}
         self.assertEqual((found["fleet.yaml"]["who"], found["secrets/here.conf"]["who"]), ("there", "here"))
         self.assertEqual(found["secrets/here.conf"]["state"], "only here")
-        self.assertEqual(found["secrets/here.conf"]["lines"], [])                 # of a secret, only its name
+        here = found["secrets/here.conf"]["lines"]                                # of a secret: its size, never what it holds
+        self.assertIn("  the other copy: not there", here)
+        self.assertTrue(any("this computer:  18 bytes, 1 line" in x for x in here), here)
+        self.assertNotIn("from this computer", json.dumps(rows))
         self.assertIn("-# admin_password: •••", found["fleet.yaml"]["lines"])
         self.assertNotIn("hunter2", json.dumps(rows))
         self.assertEqual(merge.masked("    wg_password: s3cr3t"), "    wg_password: •••")
         self.assertEqual(merge.masked("PrivateKey = " + "A" * 43 + "="), "PrivateKey = •••")
         self.assertEqual(merge.masked("    hostname: papaya"), "    hostname: papaya")
+        # a secret file of names and values: which names differ, and no value
+        old = b'{"a.home/vault/admin_token": "ONE-secret-value", "a.home/git/key": "same"}'
+        new = b'{"a.home/vault/admin_token": "TWO-secret-value", "a.home/git/key": "same", "b.home/paste/salt": "x"}'
+        lines = merge.secret_summary(new, old)
+        self.assertIn("@ a.home/vault/admin_token has another value on each side", lines)
+        self.assertIn("+ b.home/paste/salt (only on this computer)", lines)
+        self.assertFalse(any("git/key" in x for x in lines))                        # the same on both sides: not named
+        self.assertFalse(any(v in " ".join(lines) for v in ("ONE-secret", "TWO-secret", "same")))
+        env = merge.secret_summary(b"RESTIC_PASSWORD=aaa\nUSER=x\n", b"RESTIC_PASSWORD=bbb\nUSER=x\n")
+        self.assertIn("@ RESTIC_PASSWORD has another value on each side", env)
+        self.assertNotIn("aaa", " ".join(env))
+        key = merge.secret_summary(b"-----BEGIN KEY-----\nAAAA\n-----END KEY-----\n", b"\x00\x01binary")
+        self.assertTrue(any("secret as a whole" in x for x in key))
+        self.assertNotIn("AAAA", " ".join(key))
+        hosts = merge.differences({}, {"secrets/known_hosts": b"a.home ssh-ed25519 AAAAkey1\nb.home ssh-ed25519 AAAAkey2\n"},
+                                  {"secrets/known_hosts": b"a.home ssh-ed25519 AAAAkey1\n"})
+        self.assertEqual(hosts[0]["lines"], ["+ b.home ssh-ed25519 (only on this computer)"])
 
     def test_which_control_node(self):
         with self.assertRaisesRegex(KiwiError, "no host has the control module"):

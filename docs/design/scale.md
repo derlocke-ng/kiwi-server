@@ -109,14 +109,72 @@ control node.
 **7. Load balancing**, when a service needs it: the same part on several machines behind
 the reverse proxy. Only for parts that keep no data of their own.
 
+## Staying up: what operators do, and what fits here
+
+Researched 20 November 2026 (the owner: "how do others handle 24/7 … it goes down, 5 seconds
+later another container somewhere is up"). The sources are the projects' own documents.
+
+**How a service stays up through updates and failures elsewhere:**
+
+| Building block | What it needs |
+|---|---|
+| The same service twice behind a load balancer; update one, then the other | a service that keeps no data of its own, or shares it |
+| One address that moves to a second machine (VRRP, keepalived) | two machines on one LAN; takes 3 to 4 seconds |
+| A database that copies itself and switches (Patroni, Galera) | three voters; a switch takes 25 to 35 seconds |
+| A disk that is written on two machines at once (DRBD) | two machines and a third voter, a LAN between them |
+| Three voters | so that a machine that only lost its network stops writing, instead of two machines both believing they are the one |
+
+**Five seconds** is real only when a second copy is already running: an address that moves,
+a proxy that sends to the other one. That fits DNS, DHCP, the gateway and the reverse proxy.
+A service with one writer (files and a database, as Nextcloud is by default) must be started
+elsewhere with its data already there: tens of seconds with a replicated disk, under a
+minute as an honest promise. Operators who restart a failed service elsewhere wait longer by
+default (Proxmox about two minutes, Kubernetes five).
+
+**Between sites, latency is the limit, not bandwidth.** On fibre two homes are 5 to 30 ms
+apart. Writing on both sides at once makes every write wait that long (DRBD lost more than
+half its write speed at 20 ms added). So between sites: copies that are seconds behind, for
+files and disks; writing at once only for a small database. A gigabit line makes those copies
+and a full restore fast, which is what counts there.
+
+**What this becomes here**, per part, the owner choosing the level:
+
+| Level | How | Down for | Lost |
+|---|---|---|---|
+| Backup (every part) | a backup store per service, restore tried on another machine | a restore | up to a day |
+| Standby | the part is set up on a second machine, its image there, stopped; its data copied every minute (the owner's idea, 20 November). A switch starts it and moves the name. Also between sites. | about a minute | up to a minute |
+| High availability, one site | a moving address, the data on two machines at once (a replicated disk, or the database's own replication), three voters | under a minute | nothing |
+| Twice at once | the network's basics: DNS, DHCP, the gateway, the reverse proxy; later parts that can share their data | seconds | nothing |
+
+- **The network's basics twice.** Two DNS machines are handed to every device already where
+  two exist; one moving address makes the switch invisible. Two DHCP servers share the
+  range. The default gateway is a moving address between two gateway machines: every device
+  keeps the one gateway it knows, with nothing installed on it. A tool on a person's
+  computer (kiwi-desktop) is for what the LAN cannot do: choosing the master to reach from
+  outside.
+- **Updates without an outage** follow from a standby: update the standby, switch, update
+  the first.
+- **A backup store per service**, not per machine (the owner's question). The service's
+  history moves with it, a restore of one service is clean, a leaked key opens one service.
+  The cost: nothing is shared between services' stores, and there are more keys and more
+  stores to tidy; the keys derive from the seed and the control node tidies. The backup
+  server stays append-only: a machine that was broken into cannot delete history.
+- **A fast rebuild** is what the design has: the system is an image, the fleet file says
+  what runs, only data is backed up. Images of whole machines are for machines nobody can
+  describe.
+- **Not used:** Ceph (4 GB of memory per disk, built for more machines), GlusterFS (fading),
+  MinIO (no longer maintained), Longhorn (needs Kubernetes). For files across sites, Garage
+  is the one made for home lines; for SQLite (Vaultwarden), Litestream copies every second.
+
 ## Order
 
-1. Machines report in.
-2. Names by service.
-3. Move a service (plan, then the move), with a drill on the test machines.
-4. Warm standby, then failover by itself with three voters.
-5. Site controllers (controllers.md, step 4).
-6. Live replication, part by part, each with its own drill.
+1. A backup store per service; names by service.
+2. Move a service (plan, then the move), with a drill on the test machines.
+3. Standby: the part set up on a second machine, its data copied every minute, a switch by
+   hand. Then the switch by itself, with three voters.
+4. The network's basics twice: DNS, DHCP, the gateway, with a moving address.
+5. Machines report in; site controllers (controllers.md, step 4).
+6. High availability at one site, part by part, each with its own drill.
 7. Teams; load balancing.
 
 ## Not decided

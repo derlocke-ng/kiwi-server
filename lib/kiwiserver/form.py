@@ -50,6 +50,10 @@ BASE_GROUPS = [
                   "removed. Its stick carries that key until then: keep it safe"),
         dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
              help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
+        dict(path=("names",), type="enum", label="Names of its parts", options=["machine", "service"], default="machine",
+             help="machine: a part is named after its machine (paste.quince.home). service: a part that runs on one machine only "
+                  "is named for itself (paste.home) and keeps that name when it moves to another machine. The control page and "
+                  "the backup server keep their machine's name. After a change, apply the machine and those that answer for names"),
         dict(path=("timezone",), type="string", label="Time zone", default="UTC", help="An IANA name, e.g. Europe/Berlin: the clock of logs, backups and the reboot time"),
         dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8", help="Language and formats of the system, e.g. de_DE.UTF-8"),
         dict(path=("keyboard",), type="string", label="Keyboard layout", default="us",

@@ -966,6 +966,12 @@ class Form:
                     status.connect("activated", lambda *_, h=host: Gtk.UriLauncher.new(
                         "https://control.%s/status" % h).launch(self.win, None, None))
                     g.add(status)
+                    play = (getattr(self.win, "fleet_info", None) or {}).get("play") or {}
+                    if play.get("site"):    # where the people of its group start and stop the game servers
+                        games = Adw.ButtonRow(title="Open the game page", end_icon_name="adw-external-link-symbolic")
+                        games.connect("activated", lambda *_, site=play["site"]: Gtk.UriLauncher.new(
+                            "https://%s/play/" % site).launch(self.win, None, None))
+                        g.add(games)
             if title in ADVANCED_SECTIONS:
                 advanced.append(g)
                 continue
@@ -6418,6 +6424,7 @@ class Window(Adw.ApplicationWindow):
         if listing:
             self.status = {h["name"]: h for h in listing["hosts"]}
             self.fleet_info = {k: listing.get(k) or "" for k in ("domain", "mesh", "master_ip")}
+            self.fleet_info["play"] = listing.get("play") or {}      # the game page, if the network has one
             self.fleet_info["groups"] = listing.get("groups") or {}      # where a new device may go
             self.fleet_info["changed"] = listing.get("changed") or []    # changes not applied yet
             self.fleet_info["linked"] = listing.get("linked") or []      # networks linked to this one: in the picture

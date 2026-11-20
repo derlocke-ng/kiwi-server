@@ -6,7 +6,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 
 ## A. Shipped, never tried on real machines
 
-1. `names: service` on a live machine.
+1. ~~`names: service` on a live machine.~~ Done 20 Nov on quince: `ffsync.home` and `pay.home` resolve, answer with a valid certificate, the old name sends on.
 2. Wake-on-LAN waking real hardware.
 3. The starter stick and "No master yet" on a real machine.
 4. The guided session from the docs (notes/guided-session.md: its remarks are empty).
@@ -35,10 +35,10 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 ## C. The page and the app lack what the command line has
 
 21. `move PART`, `standby`, `switch`, `keep_ready`.
-22. `names: service`: no settings field.
+22. ~~`names: service`: no settings field.~~ Done: "Names of its parts" in the shared settings (page and app).
 23. App: settings edits through the control node's API.
 24. App: a machine's History and status chips.
-25. App: open the game page.
+25. ~~App: open the game page.~~ Done: "Open the game page" beside "Open the status page" (the network's settings).
 26. Page: link a new network by card.
 27. Page and app: open an unsigned copy; page: a `.tar.enc` copy, a synced folder.
 

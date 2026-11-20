@@ -189,6 +189,9 @@ def switches(fleet, links, said, state, now, sees, copy_age=None):
     for src, part, dst in links:
         if said.get(src, True) or src not in gone:
             continue
+        h = fleet.hosts.get(src)
+        if "control" in ((getattr(h, "modules", None) or []) + list(((getattr(h, "role_settings_raw", None) or {}).get("modules")) or [])):
+            continue        # the control node's own machine: whoever reads this is not it (a computer's `gone`)
         minutes = int((now - gone[src]) / 60)
         what = "%s has not answered for %d minute%s; %s is kept ready on %s" % (src, minutes, "" if minutes == 1 else "s", part, dst)
         key = "%s/%s" % (src, part)

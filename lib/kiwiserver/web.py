@@ -768,7 +768,8 @@ stopped until you start it or the machine restarts.</p>
 {% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 {% if m.phase not in fresh and (targets or standby) %}<h2 id="move">Move a part, or keep it ready</h2>
 <p class="muted small">A part moves to another machine with its data, its secrets and its name. A part that is kept ready has its
-data copied to a second machine every minute, and that machine can take it over{% if switch_after %}: by itself when this machine
+data copied to a second machine every minute, and that machine can take it over{% if switch_after and "control" in m.modules %}:
+when you say so, as this machine runs the control node, which is the one that switches by itself{% elif switch_after %}: by itself when this machine
 has been gone for {{ switch_after }} minutes and the second one does not reach it either (<a href="/settings">When a machine is gone</a>){% endif %}.</p>
 {% for l in standby %}<div class="card row"><div><b>{{ ptitle(l.part) }}</b> is kept ready on <a href="/hosts/{{ l.ready_on }}">{{ l.ready_on }}</a>:
 {% if l.age is none %}no copy there yet{% elif l.age < 90 %}its copy is current{% else %}its copy is {{ age(l.age) }} old{% endif %}.</div>

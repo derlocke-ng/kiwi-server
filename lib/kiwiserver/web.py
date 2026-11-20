@@ -3048,6 +3048,25 @@ def make_app(control: Control):
             return JSONResponse({"error": str(e)}, status_code=400)
         return {"job": jid}
 
+    @app.post("/api/report")
+    async def agent_report(request: Request):
+        """A machine's agent says how the machine is (machineagent.py). No login: the report is signed
+        with the machine's own key, which only the seed gives."""
+        from . import machineagent as agentmod
+        try:
+            size = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            size = 0
+        if size > agentmod.LIMIT:
+            return JSONResponse({"error": "too big"}, status_code=413)
+        body = await request.body()
+        h = request.headers
+        why = control.report(h.get("x-kiwi-host") or "", h.get("x-kiwi-time") or "", h.get("x-kiwi-boot") or "",
+                             h.get("x-kiwi-sign") or "", body)
+        if why:
+            return JSONResponse({"error": why}, status_code=503 if "locked" in why else 403)
+        return {"ok": True}
+
     @app.get("/api/jobs/{jid}/log")
     def job_log(request: Request, jid: str, offset: int = 0, text: int = 0, download: int = 0):
         """A job's log: in pieces for the page that follows it, or whole as text (text=1), to read

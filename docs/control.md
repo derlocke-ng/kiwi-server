@@ -495,9 +495,27 @@ computer applies itself as before.
   nothing a script is made from has changed (an hour at most), instead of rendering every
   machine again each time.
 
+## The agent: machines report by themselves
+
+Every machine of a network with a control node runs a small agent (`kiwi-agent`, a timer; an
+apply installs it). Once a minute it tells the control node how the machine is: the same
+facts the control node otherwise logs in for (services, disks, load, updates waiting,
+backups). So:
+
+- the pages are at most a minute behind, without a login to every machine;
+- a machine that starts is seen at once, and an apply that waited for it runs at once;
+- a machine whose agent is silent for a few minutes is asked over SSH, as before.
+
+A report is signed with a key of the machine's own (it derives from the seed, by the
+machine's name) and sent over the network's own HTTPS to `/api/report` on the control page.
+The control node takes a report only with that machine's signature and a time within five
+minutes of its own. The agent changes nothing on its machine; it holds no secret of another
+machine. On the machine: `systemctl status kiwi-agent.timer`, `journalctl -t kiwi-agent`.
+
 ## When a machine does not answer
 
-The control node looks at every machine every ten minutes. One that does not
+The control node looks at every machine every ten minutes, and every minute at the machines
+that reported. One that does not
 answer is named on Home, with how long it has been gone. By default nothing
 more happens. The fleet file can allow more:
 

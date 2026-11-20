@@ -18,7 +18,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
+from . import machineagent as agentmod, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -2963,6 +2963,7 @@ def cmd_apply(args):
             if servers and unlock.wanted(h):
                 from . import opener as openermod
                 openermod.after_apply(h, tgt, servers)      # opens the way for a machine away from home (openers)
+            agentmod.after_apply(fleet, h, tgt, ms)     # reports to the control node every minute (the agent)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)
@@ -3621,7 +3622,10 @@ def cmd_status(args):
     def ask(h):
         tgt = remote.reach(h, args.ssh)
         try:
-            human, data = facts.split(remote.run(tgt, facts.SCRIPT).decode(errors="replace"))
+            said = agentmod.fresh_report(getattr(args, "reports", None), h.name) if not args.ssh else None
+            if said is None:            # no report of its agent from the last minutes: log in and ask
+                said = remote.run(tgt, facts.SCRIPT).decode(errors="replace")
+            human, data = facts.split(said)
         except KiwiError as e:
             if asleepmod.now_asleep(h):         # sleeping, as it should by its window: no problem, no message
                 return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "asleep", "locked": False,
@@ -5580,6 +5584,8 @@ def build_parser():
     s = sub("status", cmd_status); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s.add_argument("--stream", action="store_true", help="each machine as one line of JSON, as it answers")
+    s.add_argument("--reports", metavar="DIR", help="the folder with the machines' own reports (the agent): a machine "
+                   "that reported in the last minutes is not logged in to")
     s = sub("connect", cmd_connect); s.add_argument("fleet")
     s.add_argument("--name", help="what this computer is called on the VPN (default: its own name)")
     s.add_argument("--group", help="a client group of the master")

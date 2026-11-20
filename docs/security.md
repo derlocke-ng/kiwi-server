@@ -194,6 +194,21 @@ machine that was broken into can lie about itself and about nothing else. The re
 output of the same script the control node runs over SSH for its look; it holds no password
 and no key. It travels over HTTPS with the fleet's CA, on the VPN or the home network.
 
+## A standby's key
+
+A machine that keeps another machine's part ready ([backups](backups.md#a-standby-for-a-part))
+fetches its folders with a key of its own (`secrets/standby/<machine>_ed25519`, on the
+standby in `/etc/kiwi-server/standby/key`). On the machine that runs the part the key is in
+root's `authorized_keys` with a forced command and `restrict`: whatever the standby asks, the
+sender (`/usr/local/sbin/kiwi-standby-send`) runs, and it accepts one request only: rsync
+reading one of the folders kept ready. Not writing, not another folder, not a shell. For
+root to sign in with such a key and no other way, that machine's sshd gets
+`PermitRootLogin forced-commands-only`. The standby trusts the machine by its SSH host key,
+which an apply puts on record.
+
+A standby machine that was broken into can read the parts it keeps ready. It cannot change
+them on the machine that runs them.
+
 ## SSH
 
 - **The machines' SSH host keys** are kept in `secrets/known_hosts`. The first

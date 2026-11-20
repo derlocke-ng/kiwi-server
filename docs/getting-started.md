@@ -147,10 +147,19 @@ asking.** `disk: auto` takes the machine's one disk and stops when there are
 several; a device such as `/dev/nvme0n1` names it.
 
 CoreOS and Debian install and then **power off** (`install.on_done:
-poweroff`, the default). Remove the stick or the provider's ISO before the
-machine boots again: media left first in the boot order would reinstall on
-every boot. `install: { on_done: reboot }` goes straight into the installed
-system instead.
+poweroff`, the default), so that you can take the stick or the provider's ISO
+out. `install: { on_done: reboot }` goes straight into the installed system
+instead.
+
+Install media that stay in the machine do not install it a second time. Each
+ISO has an id of its own, the installer leaves it on the installed system
+(`/boot/kiwi-installed`), and before anything is erased it looks for it there.
+When it finds it, nothing is installed and the screen says so. A uCore machine
+with UEFI then puts its disk first and restarts into it; any other machine
+switches itself off after a minute, and starts from its disk once the media
+are out. To install a machine again on purpose, build its ISO again: the new
+one has a new id. (Or add `kiwi.reinstall` to the kernel line at the ISO's
+boot menu.)
 
 Powered on again, the machine sets up its base system on first boot
 (hostname, network, the admin user, the update policy). uCore reboots twice

@@ -83,7 +83,10 @@ kiwi-server secrets copy-key ~/kiwi/fleet.yaml --identity recovery.key
 ```
 
 An older copy of yours has no signature; `restore … --unsigned` opens it
-(anyone could make a copy without one, so only for one you know is yours).
+(anyone could make a copy without one, so only for one you know is yours). The
+app says so when it meets one and has *Open it anyway*; the control node's
+first page has the tick *Open it without a signature*. A copy with a wrong
+signature is never opened.
 
 **The recovery key is lost, or someone saw it.** It was shown once, when the
 store was made, and no command shows it again. While a computer still opens the

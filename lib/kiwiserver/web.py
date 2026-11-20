@@ -303,8 +303,9 @@ terminal, or with <code>podman logs kn-control</code>. It proves that this is yo
 The password of the page you had before stops working.</p>
 <input id="b-pw" type="password" name="password" autocomplete="new-password" required>
 <label for="b-pw2">The password again</label><input id="b-pw2" type="password" name="again" autocomplete="new-password" required>
-<p class="muted">A copy carries no signature. When it is back, look at the machines' names on the first page: they
-should be yours.</p>
+<label style="display:flex;gap:8px;align-items:flex-start;font-weight:400"><input type="checkbox" name="unsigned" value="1" style="width:auto;margin-top:3px">
+<span>Open it without a signature. Only for a copy of yours made before 2.170.0: nobody can tell whether such a copy was changed.</span></label>
+<p class="muted">When it is back, look at the machines' names on the first page: they should be yours.</p>
 <div class="actions"><button class="primary">Bring my network back</button></div></form></details>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
 <form method="post" action="/setup" autocomplete="off">
@@ -2530,7 +2531,7 @@ def make_app(control: Control):
             return await again("That is not the setup code. After five wrong tries, wait ten minutes.", code)
         try:
             token = await run_in_threadpool(control.restore_run, code, pw, files["copy"], fields.get("recovery", ""),
-                                            address(request))
+                                            address(request), fields.get("unsigned") == "1")
         except KiwiError as e:
             await asyncio.sleep(1)
             said = str(e)

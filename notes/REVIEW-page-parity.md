@@ -17,7 +17,6 @@ Checked by searching the page's code (`lib/kiwiserver/web.py`) and the app's
 | The app | Settings saved through the control node's API | the page (`/api/settings`); the app changes its own copy and sends it with `control push` |
 | The app | Machines as a table by site with filters and ticks; Devices as a table with filters | the page (2.256.0, 2.257.0); the app keeps its own overview and lists |
 | The app | Link a new network by card | the page, *Link a new network* (next release); the app links two networks only when this computer holds both fleet files |
-| Both | Open an unsigned copy on purpose | `kiwi-server restore FILE --unsigned` |
 | Both, on purpose | The plan for moving the whole network | `kiwi-server move FLEET --mesh … --domain …` |
 
 Everything else compared below is in both, or is left out on one side on purpose, and its
@@ -101,7 +100,7 @@ front page for strangers are for everyone, not for the people who run the networ
 
 Since 2.170.0 to 2.174.0 (17 November 2026):
 - **Signed copies**: the page refuses an unsigned copy and points to `kiwi-server restore FILE --unsigned`;
-  the app's Restore runs the same CLI. Gap: neither page nor app can open an unsigned copy on purpose.
+  the app's Restore runs the same CLI. Since the next release both open one on purpose (the app: *Open it anyway*; the page: a tick on the form).
 - **A new recovery key** (`secrets recovery`): the terminal and the app (Locking…, *A new recovery key…*); the
   control node has its own control password and recovery-key path already.
 - **Locking** (idle, screen, password of this computer's key): the app's Locking… and the terminal. Not on the

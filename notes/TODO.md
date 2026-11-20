@@ -40,7 +40,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 24. ~~App: a machine's History and status chips.~~ Done: "History" on a machine's page opens the control node's activity for that machine; the chips (set up, last apply, backup, fullest disk) are under its name, by the page's rules (a test holds the two equal).
 25. ~~App: open the game page.~~ Done: "Open the game page" beside "Open the status page" (the network's settings).
 26. ~~Page: link a new network by card.~~ Done: Linked networks, "Link a new network": download this network's card, paste the other's.
-27. Page and app: open an unsigned copy; page: a `.tar.enc` copy, a synced folder.
+27. ~~Page and app: open an unsigned copy~~; page: a `.tar.enc` copy, a synced folder. Unsigned: done (the app's *Open it anyway*, a tick on the page's form). Still open, and rare: the page taking a copy of the older passphrase kind, and a network kept in a synced folder.
 
 ## D. Asked for, not started
 

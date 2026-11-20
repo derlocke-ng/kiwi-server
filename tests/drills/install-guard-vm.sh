@@ -45,6 +45,26 @@ start() {   # LOG media|disk: with the media it is the first boot device, as a s
         -display none -chardev socket,id=s0,path=serial.sock,server=on,wait=off,logfile='$log' -serial chardev:s0 \
         -monitor unix:monitor.sock,server=on,wait=off -daemonize -pidfile qemu.pid"
 }
+# A uCore machine restarts twice by itself in its first minutes (its image is changed over): a
+# question asked in such a moment gets no answer. Asked again until one comes.
+ask() {     # COMMAND: its output; fails only when no answer came within two minutes
+    local out rc n=24
+    while [ "$n" -gt 0 ]; do
+        out=$(vssh "$1" 2>/dev/null); rc=$?
+        [ "$rc" != 255 ] && { printf '%s' "$out"; return 0; }
+        sleep 5; n=$((n - 1))
+    done
+    return 1
+}
+settled() { # the first start's own restarts are over: up for two minutes in one piece
+    local n=120 up
+    while [ "$n" -gt 0 ]; do
+        up=$(vssh 'cut -d. -f1 /proc/uptime' 2>/dev/null)
+        [ "${up:-0}" -ge 120 ] && return 0
+        sleep 10; n=$((n - 1))
+    done
+    return 1
+}
 off_within() { local n=$1; while [ "$n" -gt 0 ] && vm_running; do sleep 10; n=$((n - 10)); done; ! vm_running; }
 build() {   # the media, from the fleet as it is: a new id each time
     "${ks[@]}" build fleet/fleet.yaml kumquat >build.log 2>&1 || return 1
@@ -83,10 +103,11 @@ off_within 2400; check $? "installed, and switched itself off ($(( $(date +%s) -
 
 # ---- 2. from its disk: the mark is there, a marker file is written ---------------------------
 start first.log disk
-up_within 900; check $? "it starts from its disk and answers"
-mark=$(vssh 'sudo cat /boot/kiwi-installed' 2>/dev/null)
+up_within 900 && settled; check $? "it starts from its disk and answers"
+mark=$(ask 'sudo cat /boot/kiwi-installed')
 grep -q "^kumquat [0-9a-f]\{16\} 20" <<< "$mark"; check $? "the media's id is on its /boot (${mark:-nothing})"
-vssh 'echo kept | sudo tee /var/kiwi-drill-marker >/dev/null; sync'
+ask 'echo kept | sudo tee /var/kiwi-drill-marker >/dev/null; sync' >/dev/null
+[ "$(ask 'sudo cat /var/kiwi-drill-marker')" = kept ]; check $? "a marker file is on its disk"
 vssh 'sudo systemctl poweroff' 2>/dev/null; off_within 120 || vm_stop
 
 # ---- 3. started again with the media left in --------------------------------------------------
@@ -104,8 +125,8 @@ else
     start after.log disk
     up_within 900; check $? "from its disk it starts as before"
 fi
-[ "$(vssh 'sudo cat /var/kiwi-drill-marker' 2>/dev/null)" = kept ]; check $? "what was on its disk is still there"
-[ "$(vssh 'sudo cat /boot/kiwi-installed' 2>/dev/null)" = "$mark" ]; check $? "it was not installed a second time (the same mark)"
+[ "$(ask 'sudo cat /var/kiwi-drill-marker')" = kept ]; check $? "what was on its disk is still there"
+[ "$(ask 'sudo cat /boot/kiwi-installed')" = "$mark" ]; check $? "it was not installed a second time (the same mark)"
 vssh 'sudo systemctl poweroff' 2>/dev/null; off_within 120 || vm_stop
 
 # ---- 4. media made again install: that is how a machine is installed again on purpose ---------
@@ -114,9 +135,9 @@ t0=$(date +%s)
 start reinstall.log media
 off_within 2400; check $? "the new media install, and the machine switches itself off ($(( $(date +%s) - t0 )) s)"
 start second.log disk
-up_within 900; check $? "it starts from its disk"
-[ -z "$(vssh 'sudo cat /var/kiwi-drill-marker' 2>/dev/null)" ]; check $? "the disk was erased: the marker file is gone"
-new=$(vssh 'sudo cat /boot/kiwi-installed' 2>/dev/null)
+up_within 900 && settled; check $? "it starts from its disk"
+[ "$(ask 'sudo test -e /var/kiwi-drill-marker && echo there || echo gone')" = gone ]; check $? "the disk was erased: the marker file is gone"
+new=$(ask 'sudo cat /boot/kiwi-installed')
 [ -n "$new" ] && [ "$new" != "$mark" ]; check $? "and it carries the new media's id"
 vm_stop
 say "$([ "$fails" = 0 ] && echo "all passed" || echo "$fails failed")"

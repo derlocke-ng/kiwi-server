@@ -5210,6 +5210,7 @@ def cmd_switch(args):
         print("\nNothing was changed. With --yes it is done: kiwi-server switch %s %s --yes" % (typed_path(fleet.path), part))
         return
     src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
+    began = time.time()                 # the part is away from here on, until the standby is applied
 
     def again(argv):
         try:
@@ -5241,6 +5242,9 @@ def cmd_switch(args):
     if failed:
         raise KiwiError("%s is on %s in the fleet file, but %s could not be applied: kiwi-server apply %s %s"
                         % (part, dst_name, dst_name, typed_path(fleet.path), dst_name))
+    # how long the part was away, said now: what follows only tells the other machines where it is
+    util.say("%s runs on %s: it was away for %s. Now the machines the change reaches"
+             % (part, dst_name, util.count(int(time.time() - began), "second")))
     # everyone the change reaches. The machine it left, when it does not answer, is not asked now:
     # its apply goes to the control node, which keeps it and applies it the moment the machine
     # answers again (an apply that waits)

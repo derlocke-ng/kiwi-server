@@ -482,8 +482,10 @@ class Control:
     # The other thing a machine with nothing on it can do: take a copy of a network (backup.py,
     # the kind a store's keys encrypt) and the recovery key that opens it. The same guard as
     # the first run, and the same rule: it is opened in RAM and reaches the disk encrypted only.
-    def restore_run(self, code, password, archive, recovery, address="?"):
-        """A network from its copy, with a new password for this page. Returns a session token."""
+    def restore_run(self, code, password, archive, recovery, address="?", unsigned=False):
+        """A network from its copy, with a new password for this page. Returns a session token.
+        `unsigned`: a copy without a signature is opened too (an older copy of one's own, on
+        purpose); a wrong signature never is."""
         from . import backup as backupmod
         with self.lock:
             if not self.fresh():
@@ -503,11 +505,12 @@ class Control:
             if kind != "store":
                 raise KiwiError("that file is not a copy of a network")
             try:
-                fleet_name, plain, kept = backupmod.open_copy(archive, recovery)
+                fleet_name, plain, kept = backupmod.open_copy(archive, recovery, unsigned_ok=bool(unsigned))
             except KiwiError as e:
-                if "no signature" in str(e):       # a choice for the terminal, with its own words
-                    raise KiwiError("this copy has no signature: an older copy of yours comes back with "
-                                    "`kiwi-server restore FILE --unsigned` on a computer")
+                if "no signature" in str(e):       # a choice, made on purpose: the form has a tick for it
+                    raise KiwiError("this copy has no signature, so nobody can tell whether it was changed. Copies "
+                                    "carry one since 2.170.0. If it is an older copy of yours, tick \"Open it without a "
+                                    "signature\" and send it again")
                 if "does not open" in str(e):       # guessed keys wait as guessed passwords do
                     self.failures.setdefault(address, []).append(self.clock())
                     self.audit("admin", "a copy was not brought back: the recovery key does not open it", address=address)
@@ -544,7 +547,8 @@ class Control:
                 shutil.rmtree(tmp, ignore_errors=True)
             self.store = storemod.Store(self.fleet_dir)
             self._setup_code = None
-        self.audit("admin", "the network was brought back from a copy on this machine's page%s" % (
+        self.audit("admin", "the network was brought back from a copy%s on this machine's page%s" % (
+            " without a signature" if unsigned and "signature" not in backupmod.read_copy(archive)[0] else "",
             "; %d of its files have no place on a control node and were left out" % len(left) if left else ""), address=address)
         return self.login(password, address)
 

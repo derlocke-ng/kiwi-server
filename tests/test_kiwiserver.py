@@ -10369,6 +10369,20 @@ class TestControl(StoreBase):
             with self.assertRaisesRegex(KiwiError, why):
                 c.restore_run(*args, address=why)
             nothing_there()
+        # a copy without a signature (made before 2.170.0): refused, and opened when that is asked for on purpose;
+        # a copy with another network's signature never is
+        manifest, files = backup.read_copy(copy)
+        older = backup.pack(manifest["fleet"], files)
+        with self.assertRaisesRegex(KiwiError, "Open it without a signature"):
+            c.restore_run(c.setup_code(), new, older, recovery, address="no signature")
+        nothing_there()
+        with self.assertRaisesRegex(KiwiError, "not your network's"):
+            c.restore_run(c.setup_code(), new, backup.pack(manifest["fleet"], files, key="someone else's"), recovery,
+                          address="forged", unsigned=True)
+        nothing_there()
+        other = controlmod.Control(os.path.join(self.tmp, "node2", "fleet.yaml"), kiwi_cmd=fake, run_dir=os.path.join(self.tmp, "ram3"))
+        self.assertTrue(other.restore_run(other.setup_code(), new, older, recovery, address="192.168.1.9", unsigned=True))
+        self.assertIn("from a copy without a signature", json.dumps(other.audit_tail(5)))
         self.assertTrue(c.restore_run(c.setup_code(), new, copy, recovery, address="192.168.1.9"))
         self.assertFalse(c.fresh())
         self.assertEqual(sorted(n for n in os.listdir(folder) if not os.path.islink(os.path.join(folder, n))),

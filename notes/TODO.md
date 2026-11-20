@@ -103,9 +103,9 @@ say what 2.267.0 does.
     places move there together, when a second hoster comes (its first commit would have to go to main).
 55. ~~Pushed changes~~ (ui.md step 5): /api/v1/events, the pages that follow it, `control watch` for the app.
 56. ~~The watchdog held a restart for an hour after one that had worked~~ (master-gone drill, 20 Nov): fixed.
-57. A switch in seconds (item 12), plan: the part on its standby as compose services with `profiles: [kiwi-ready]` (made and
-    pulled, not started; `--remove-orphans` leaves them), its secrets as on the machine it runs on (the pins switch writes
-    today), no proxy site and no backup for it there; a switch then starts them (`compose --profile kiwi-ready up -d …`)
-    while the apply follows. The name on both machines (the standby's proxy passing on) is the second half. Both runtimes:
-    compose and quadlets (kiwimodules/quadlet.py).
+57. A switch in seconds (item 12). First half in 2.274.0: the part made on its standby (profile kiwi-ready, quadlets
+    without [Install]), started by the switch before the apply: Vaultwarden ran on quince 6 s after the switch began
+    (part-standby.sh, 0 wrong). Second half (branch ready-site): the standby's proxy config with the ready parts' sites
+    (nginx-ready.conf), put in place by `kiwi-stack ready start`, and their names in its certificate. Then: by itself
+    (the agents' vote, scale.md step 4); names by service where DNS has to change (both addresses).
 

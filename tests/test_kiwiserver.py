@@ -12809,7 +12809,7 @@ class TestControllers(StoreBase):
         self.assertNotEqual(rc, 0)
         self.assertIn("changed on both sides since the last sync: fleet.yaml", out)
         rc, out = self.laptop_does("pull")
-        self.assertIn("Which copy counts?", out)                                          # both changed it: the owner decides
+        self.assertIn("Which counts for that?", out)                                     # both changed it: the owner decides
         self.assertEqual(self.laptop_does("pull", "--force")[0], 0)
         self.assertIn("# from the node", util.read_text(self.laptop))
         # removed: it gets nothing any more, and the store is no longer encrypted to it
@@ -12962,7 +12962,7 @@ class TestFolderSync(StoreBase):
         rc, out, err = self.run_cli("control", "push", self.f.path)
         self.assertIn("changed on both sides since the last sync: fleet.yaml", err)
         rc, out, err = self.run_cli("control", "pull", self.f.path)
-        self.assertIn("Which copy counts?", err)                 # the same file on both sides: the owner decides
+        self.assertIn("Which counts for that?", err)            # the same file on both sides: the owner decides
         rc, out, err = self.run_cli("control", "pull", self.f.path, "--force")
         self.assertEqual(rc, 0, err)
         self.assertIn("# from the laptop", util.read_text(self.f.path))

@@ -3600,14 +3600,14 @@ def cmd_control(args):
         return
     if args.action in ("push", "pull") and folder and (args.dir or not controlsync.remote_of(fleet_dir)):
         if args.action == "push":
-            n = controlsync.push_dir(fleet_dir, fleet_name, folder, args.force)
+            n = controlsync.push_dir(fleet_dir, fleet_name, folder, args.force, keep=getattr(args, "keep", None))
             util.say("the folder %s holds this copy now (%d files, encrypted)" % (folder, n))
             waiting = controlsync.requests(folder)
             for r in waiting:
                 util.say("%s (the computer %s) asks to join: kiwi-server control accept %s %s"
                          % (r["name"], r["host"], args.fleet, r["name"]))
         else:
-            n = controlsync.pull_dir(fleet_dir, fleet_name, folder, args.force, key)
+            n = controlsync.pull_dir(fleet_dir, fleet_name, folder, args.force, key, keep=getattr(args, "keep", None))
             util.say("nothing new there: this copy is newer, kiwi-server control push %s sends it" % fleet_name if n is None else "%d files from %s: this copy is the folder's" % (n, folder) if n else "in step with %s" % folder)
         return
     if args.action == "invite":

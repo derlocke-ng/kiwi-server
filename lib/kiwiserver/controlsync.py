@@ -796,7 +796,7 @@ def _plain_store(fleet_dir):
     return st
 
 
-def push_dir(fleet_dir, fleet_name, folder, force=False):
+def push_dir(fleet_dir, fleet_name, folder, force=False, keep=None):
     st = _plain_store(fleet_dir)
     folder = os.path.abspath(os.path.expanduser(folder))
     there = folder_state(folder)
@@ -806,7 +806,7 @@ def push_dir(fleet_dir, fleet_name, folder, force=False):
         if not key:
             raise KiwiError("the folder's copy changed since this computer last synced, and this computer's key "
                             "is not in the keyring: kiwi-server control pull first, or push --force")
-        _reconcile(fleet_dir, fleet_name, st, _folder_files(folder), key, "the folder's copy")
+        _reconcile(fleet_dir, fleet_name, st, _folder_files(folder), key, "the folder's copy", keep)
     blobs = _blobs(fleet_dir, fleet_name, st)
     os.makedirs(os.path.join(folder, "control"), exist_ok=True)
     manifest = os.path.join(folder, MANIFEST)
@@ -831,7 +831,7 @@ def _folder_files(folder):
     return {n: util.read_bytes(os.path.join(folder, n)) for n in ON_NODE if os.path.isfile(os.path.join(folder, n))}
 
 
-def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None):
+def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None, keep=None):
     folder = os.path.abspath(os.path.expanduser(folder))
     st = storemod.Store(fleet_dir)
     here, then = _stamp(fleet_dir, FOLDER_STAMP)
@@ -849,7 +849,7 @@ def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None):
         return 0
     got = _folder_files(folder)
     if changed_here:                    # both changed: push_dir makes one copy of the two and saves it there
-        return push_dir(fleet_dir, fleet_name, folder)
+        return push_dir(fleet_dir, fleet_name, folder, keep=keep)
     if not st.exists():                     # a new computer: the list of keys first, to find its own
         util.write_bytes(st.recipients, got["secrets.recipients"], 0o644)
     key = key or storemod.keyring_key(st.store_id())

@@ -16,7 +16,8 @@ CI runs on every push:
 Locally:
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 tests/run-parallel.py              # every test, one process per core
+python3 -m unittest discover -s tests -v   # one after the other, each test named
 bash tests/cli.sh
 ```
 

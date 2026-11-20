@@ -26,6 +26,6 @@ jobs:
       - name: the tree carries the pinned kiwi-modules and kiwi-stack releases
         run: bash tools/vendor.sh --check
       - name: unit tests (rendered scripts are shellchecked, Butane validated, Debian ISO rebuilt on a mock)
-        run: python3 -m unittest discover -s tests -v
+        run: python3 tests/run-parallel.py       # several at once: nine minutes one after the other
       - name: cli smoke test
         run: bash tests/cli.sh

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.261.0 — the tests run several at once; one try per waiting machine
+
+- **Fixed: two looks at the same moment could each start an apply for one waiting machine**,
+  and a late try could put a machine back among the waiting ones after the control node had
+  given up on it. A try is now started under a lock, only the try itself ends it, and a
+  machine that left the book stays out.
+- **The unit tests run several at once** (`tests/run-parallel.py`, one process per core, the
+  tests dealt out evenly): 64 seconds instead of six and a half minutes on a 16-core computer,
+  and CI uses it (the tests were nine of its ten minutes).
+
 ## 2.260.0 — a waiting apply is picked up within a minute; the design for many machines
 
 - **A machine whose apply waits is asked every minute**, alone, instead of at the next look at

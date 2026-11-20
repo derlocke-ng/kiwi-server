@@ -3,7 +3,7 @@
 the file dialog in front of it (a desktop portal would open that on the real screen).
 
     tools/private-session.sh sh -c 'gtk4-broadwayd :7 & sleep 1; GDK_BACKEND=broadway BROADWAY_DISPLAY=:7 \
-        tools/gui-preview.py unlock ~/kiwi/fleet.yaml'          (or: wizard /tmp/x/fleet.yaml)
+        tools/gui-preview.py unlock ~/kiwi/fleet.yaml'          (or: wizard /tmp/x/fleet.yaml, move PATH)
 Only inside tools/private-session.sh: with the desktop's own runtime folder a preview's bus
 started a second document portal, and the desktop lost its /run/user/$UID/doc (19 Nov 2026).
 
@@ -54,8 +54,8 @@ def private_or_refuse():
 
 def main():
     private_or_refuse()
-    if len(sys.argv) != 3 or sys.argv[1] not in ("wizard", "unlock"):
-        sys.exit("usage: tools/gui-preview.py wizard|unlock PATH/fleet.yaml")
+    if len(sys.argv) != 3 or sys.argv[1] not in ("wizard", "unlock", "move"):
+        sys.exit("usage: tools/gui-preview.py wizard|unlock|move PATH/fleet.yaml")
     path = os.path.abspath(sys.argv[2])
 
     def activate(app):
@@ -64,6 +64,14 @@ def main():
         if sys.argv[1] == "unlock":
             w.doc = type("Doc", (), {"path": path})()
             gui.UnlockDialog(w).present(w)
+            return
+        if sys.argv[1] == "move":           # the move dialog of a made-up machine with two others of its kind
+            w.doc = type("Doc", (), {"path": path})()
+            w.cli = CLI
+            w.status = {"quince": {"role": "node", "modules": ["vault", "paste", "backup"], "keep_ready": {"vault": "medlar"}},
+                        "medlar": {"role": "node", "modules": ["git"]}, "lychee": {"role": "node", "modules": []},
+                        "sorbet": {"role": "master", "modules": []}}
+            gui.MoveDialog(w, "quince").present(w)
             return
         data = json.loads(subprocess.run([CLI, "init", "--questions"], capture_output=True, text=True, check=True).stdout)
         gui.SetupWizard(w, path, data).present(w)

@@ -3142,7 +3142,7 @@ def make_app(control: Control):
         at, module = str(body.get("at") or ""), str(body.get("module") or "")
         try:
             jid = control.start(action, hosts, user=who, at=at if action in ("setup", "restore", "service") else "",
-                                module=module if action in ("restore", "service", "rotate-ring") else "")
+                                module=module if action in ("restore", "service", "rotate-ring", "move", "switch") else "")
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return {"job": jid}

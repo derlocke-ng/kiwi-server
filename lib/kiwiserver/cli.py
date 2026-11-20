@@ -3260,7 +3260,8 @@ def cmd_control(args):
             from .control import ACTIONS
             raise KiwiError("which action? kiwi-server control run <fleet> apply <machine…> (as the page's buttons: %s)"
                             % ", ".join(sorted(ACTIONS)))
-        if not controlsync.run_api(fleet_dir, fleet_name, args.link, args.more or [], key):
+        if not controlsync.run_api(fleet_dir, fleet_name, args.link, args.more or [], key,
+                                   module=getattr(args, "part", None) or "", at=getattr(args, "at", None) or ""):
             sys.exit(1)
         return
     if args.action == "activity":       # the control page's Activity: tasks, and who did what
@@ -5799,6 +5800,8 @@ def build_parser():
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
                                            "run: the action (apply, update, status, plan, check, backup …)")
     s.add_argument("more", nargs="*", help="run: the machines")
+    s.add_argument("--part", metavar="NAME", help="run: the part (move, switch), the container (service) or the ring the action is for")
+    s.add_argument("--at", metavar="WHAT", help="run: what to do with it (service: restart, stop, start) or a snapshot's time (restore)")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
     s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")

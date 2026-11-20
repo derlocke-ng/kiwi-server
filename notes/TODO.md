@@ -34,7 +34,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 
 ## C. The page and the app lack what the command line has
 
-21. `move PART`, `standby`, `switch`, `keep_ready`.
+21. ~~`move PART`, `standby`, `switch`, `keep_ready`.~~ Done: the machine's page (Services: plan, Move it, Keep it ready, Switch), the app (Move…, Switch; through the control node), the setting "Parts kept ready on another machine". Not yet clicked on the live control page.
 22. ~~`names: service`: no settings field.~~ Done: "Names of its parts" in the shared settings (page and app).
 23. App: settings edits through the control node's API.
 24. App: a machine's History and status chips.

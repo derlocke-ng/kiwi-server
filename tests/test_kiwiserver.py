@@ -14287,6 +14287,17 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.c.move_plan(part, a, b)["steps"], plan["steps"])
         with self.assertRaisesRegex(KiwiError, "which part"):
             self.c.move_plan("no part!", a, b)
+        # the machine's Services tab offers it, to the machines of its kind
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": a, "hostname": a + ".home", "role": "node", "modules": [part, "backup"], "sites": [], "next": "", "phase": "applied",
+             "keep_ready": {}},
+            {"name": b, "hostname": b + ".home", "role": "node", "modules": ["backup"], "sites": [], "next": "", "phase": "applied"},
+            {"name": "top", "hostname": "top.home", "role": "master", "modules": [], "sites": [], "next": "", "phase": "applied"}]}))
+        tab = self.ask("/hosts/%s?tab=services" % a, cookie=cookie)[1]
+        self.assertIn('<h2 id="move">Move a part, or keep it ready</h2>', tab)
+        self.assertIn('<option value="%s">%s</option>' % (b, b), tab)
+        self.assertNotIn('<option value="top">', tab)                        # a master is another kind of machine
+        self.assertIn('<option value="%s">' % part, tab)
         status, body, _ = self.ask("/hosts/%s/move?part=%s&to=%s" % (a, part, b), cookie=cookie)
         self.assertEqual(status, 200)
         self.assertIn("makes one last backup", body)                         # the plan, before anything is done

@@ -11504,6 +11504,41 @@ class TestWeb(WebBase):
 
 
 
+    def test_pages_follow_pushed_changes(self):
+        import http.client
+        self.assertEqual(self.ask("/api/v1/events")[0], 401)                 # a login or a computer's key only
+        self.ask("/login", {"password": self.PW})
+        self.wait_look()
+        code, body = self.ask("/")
+        mark = re.search(r'<meta name="kiwi-mark" content="([0-9a-f]{16})">', body).group(1)
+        self.assertEqual(mark, self.c.changes())                             # the page says what it was made at
+        self.assertIn('new EventSource("/api/v1/events")', body)
+        self.assertNotIn("kiwi-mark", self.ask("/help")[1])                  # a page without the network's state
+        self.assertEqual(self.ask("/api/v1/status")[0], 200)                 # the API's first version: the same answers
+        conn = http.client.HTTPConnection(self.url.split("//")[1], timeout=10)
+        conn.request("GET", "/api/v1/events", headers={"Cookie": self.cookie})
+        r = conn.getresponse()
+        self.assertEqual((r.status, r.getheader("content-type").split(";")[0]), (200, "text/event-stream"))
+
+        def event():
+            lines = []
+            while True:
+                line = r.readline().decode().rstrip("\n")
+                if not line:
+                    if lines:
+                        return lines
+                    continue
+                if not line.startswith(":"):
+                    lines.append(line)
+        self.assertEqual(event(), ["event: change", 'data: {"mark": "%s"}' % mark])       # at once: the mark as it is
+        self.c._put(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1, "hosts": []}))
+        first, data = event()
+        self.assertEqual(first, "event: change")
+        self.assertNotEqual(json.loads(data[6:])["mark"], mark)                          # a new look: a new mark
+        conn.close()
+        # the stream keeps no login alive: its path is one of the page's own
+        self.assertNotIn("set-cookie", {k.lower() for k in r.headers.keys()})
+
     def test_home_and_a_machine_in_plain_words(self):
         # the look the login starts is held until the page was asked for: on a fast machine it was over
         # before, and the page rightly no longer said so (CI, 20 Nov 2026)

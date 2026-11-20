@@ -188,9 +188,20 @@ it wait for `kiwi-stack restore` instead.
 ### A copy at another place
 
 For 3-2-1 (three copies, two kinds of place, one elsewhere), a backup store can
-keep a copy of everything it holds in a WebDAV folder at another place: a
-storage account such as 1&1's SmartDrive (`https://sd2dav.1und1.de/…`), a
-Nextcloud, a storage box.
+keep a copy of everything it holds at another place. `offsite_url` says where:
+
+| The place | `offsite_url` | `offsite_user` |
+|---|---|---|
+| 1&1 SmartDrive (WebDAV) | `https://sd2dav.1und1.de/kiwi` | the e-mail address or customer number |
+| A Nextcloud (WebDAV) | `https://HOST/remote.php/dav/files/USER/kiwi` | the Nextcloud user (with a second login factor: an app password as the password) |
+| Any other WebDAV folder | `https://HOST/PATH` | the account there |
+| A Hetzner Storage Box (SFTP) | `sftp://uNNNNN.your-storagebox.de:23/kiwi` | `uNNNNN` |
+| Any SFTP account (a friend's server) | `sftp://HOST:PORT/FOLDER` | the account there |
+
+An SFTP folder is in the account's home. The place's host key is taken at the
+first copy and kept in `offsite-known_hosts` beside the store, as ssh does: a
+different key later stops the copy. Delete that file only when the place really
+changed its key.
 
 ```yaml
 hosts:

@@ -34,8 +34,59 @@ COPY_MAX = 64 * 1024 * 1024         # a copy of a network is a few hundred KB; a
 # the kiwi icon (data/icons), inline: the pages answer under many names, a path of its own might not pass
 FAVICON = '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij48Y2lyY2xlIGN4PSI2NCIgY3k9IjY0IiByPSI1OCIgZmlsbD0iIzhCNjEwMCIvPjxjaXJjbGUgY3g9IjY0IiBjeT0iNjQiIHI9IjUxIiBmaWxsPSIjRTdCNjQzIi8+PGcgZmlsbD0iIzQ3MkQwMCI+PGVsbGlwc2UgY3g9IjY0IiBjeT0iMzMiIHJ4PSI0IiByeT0iNS42Ii8+PGVsbGlwc2UgY3g9IjkwLjgiIGN5PSI0OC41IiByeD0iNCIgcnk9IjUuNiIgdHJhbnNmb3JtPSJyb3RhdGUoNjAgOTAuOCA0OC41KSIvPjxlbGxpcHNlIGN4PSI5MC44IiBjeT0iNzkuNSIgcng9IjQiIHJ5PSI1LjYiIHRyYW5zZm9ybT0icm90YXRlKDEyMCA5MC44IDc5LjUpIi8+PGVsbGlwc2UgY3g9IjY0IiBjeT0iOTUiIHJ4PSI0IiByeT0iNS42Ii8+PGVsbGlwc2UgY3g9IjM3LjIiIGN5PSI3OS41IiByeD0iNCIgcnk9IjUuNiIgdHJhbnNmb3JtPSJyb3RhdGUoNjAgMzcuMiA3OS41KSIvPjxlbGxpcHNlIGN4PSIzNy4yIiBjeT0iNDguNSIgcng9IjQiIHJ5PSI1LjYiIHRyYW5zZm9ybT0icm90YXRlKDEyMCAzNy4yIDQ4LjUpIi8+PC9nPjxjaXJjbGUgY3g9IjY0IiBjeT0iNjQiIHI9IjIxIiBmaWxsPSIjRkVGNERGIi8+PGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNjQgNjQpIHNjYWxlKDAuOTUpIHRyYW5zbGF0ZSgtNjQgLTY0KSI+PHBhdGggZD0iTTU2IDU0LjVINzJhMiAyIDAgMCAxIDIgMnYzYTIgMiAwIDAgMS0yIDJINTZhMiAyIDAgMCAxLTItMnYtM2EyIDIgMCAwIDEgMi0yWk01NiA2Ni41SDcyYTIgMiAwIDAgMSAyIDJ2M2EyIDIgMCAwIDEtMiAySDU2YTIgMiAwIDAgMS0yLTJ2LTNhMiAyIDAgMCAxIDItMloiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzQ3MkQwMCIgc3Ryb2tlLXdpZHRoPSIzLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvZz48L3N2Zz4=">'
 
+# Pushed changes (docs/design/ui.md, step 5): a page that shows the network's state follows
+# /api/v1/events and takes its new content when the mark there moves, without a reload. Someone who
+# has typed, ticked, opened or clicked something on it keeps the page as it is and gets a line
+# that says so instead. A hidden tab lets go of its stream (a browser keeps only six per address).
+LIVE = """<script>(function () {
+  var meta = document.querySelector('meta[name="kiwi-mark"]'), es = null, touched = false;
+  if (!meta || !window.EventSource || !window.fetch || !window.DOMParser) return;
+  var mark = meta.content;
+  function main() { return document.querySelector("main"); }
+  /* what a person does (not "toggle": an open <details> sends one by itself as the page loads) */
+  ["input", "change", "click", "keydown"].forEach(function (t) {
+    document.addEventListener(t, function (e) {
+      var m = main(); if (m && m.contains(e.target) && !(t === "click" && e.target.closest("a"))) touched = true;
+    }, true);
+  });
+  function say() {
+    if (document.getElementById("kiwi-changed")) return;
+    var b = document.createElement("div"); b.id = "kiwi-changed"; b.className = "banner";
+    b.innerHTML = 'Something changed meanwhile. <a href="">Show it</a>';
+    main().insertBefore(b, main().firstChild);
+  }
+  function take() {
+    if (touched) return say();
+    var u = new URL(location.href); u.searchParams.set("auto", "1");
+    fetch(u, {cache: "no-store", credentials: "same-origin", redirect: "manual"}).then(function (r) {
+      if (r.status !== 200) throw 0; return r.text();
+    }).then(function (t) {
+      var d = new DOMParser().parseFromString(t, "text/html"), nm = d.querySelector('meta[name="kiwi-mark"]');
+      if (!nm) { stop(); return; }                  /* the login ended: the page stays as it is */
+      if (touched) return say();
+      [["main"], ["aside.side"], ["header.top"]].forEach(function (p) {
+        var n = d.querySelector(p[0]), o = document.querySelector(p[0]); if (n && o) o.innerHTML = n.innerHTML;
+      });
+      main().querySelectorAll("script").forEach(function (old) {
+        var x = document.createElement("script"); x.textContent = old.textContent; old.replaceWith(x);
+      });
+      mark = nm.content;
+    }).catch(function () {});
+  }
+  function stop() { if (es) { es.close(); es = null; } }
+  function start() {
+    if (es) return;
+    es = new EventSource("/api/v1/events");
+    es.addEventListener("change", function (e) { var m = JSON.parse(e.data).mark; if (m !== mark) { mark = m; take(); } });
+    es.addEventListener("gone", stop);
+  }
+  document.addEventListener("visibilitychange", function () { document.hidden ? stop() : start(); });
+  if (!document.hidden) start();
+})();</script>"""
+
 BASE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+{% if live %}<meta name="kiwi-mark" content="{{ mark }}">{% endif %}
 <title>{% block title %}Kiwi{% endblock %}</title>
 """ + FAVICON + """
 <script>(function(){var t=document.cookie.match(/(?:^|; )kiwi_theme=(light|dark)/);if(t)document.documentElement.dataset.theme=t[1]})()</script>
@@ -194,7 +245,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:8px 0}dt{colo
 <main>{% block main %}{% endblock %}</main></div>
 <nav class="bar">{{ links(navitems[:3], "") }}{% if navitems|length > 3 or not open_frame %}<details><summary>{{ icon("more") }}<span>More</span></summary>
 <div class="sheet">{{ links(navitems[3:], "nav") }}{% if not open_frame %}<form method="post" action="/logout">{{ tok }}<button>Log out</button></form>{% endif %}</div></details>{% endif %}</nav></div>
-{% else %}<main>{{ self.main() }}</main>{% endif %}</body></html>"""
+{% else %}<main>{{ self.main() }}</main>{% endif %}{% if live %}""" + LIVE + """{% endif %}</body></html>"""
 
 STEP = """{% macro step(m, tok) %}<div class="card"><div class="row"><strong>{{ m.name }}</strong>
 <span class="muted">{{ kind(m.role, m.standby_of) }}</span></div>
@@ -1923,7 +1974,7 @@ def make_app(control: Control):
                        kind=lambda r, standby_of="": ("Standby of %s" % standby_of) if standby_of else KIND.get(r, r), verb=lambda a: VERB.get(a, a), jobword=lambda s: JOBWORD.get(s, s),
                        to_text=formmod.to_text, icon=icon, size=size, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
-    PASSIVE = ("/setup/hoster/", "/machines/hoster/", "/static/", "/favicon")
+    PASSIVE = ("/setup/hoster/", "/machines/hoster/", "/static/", "/favicon", "/api/v1/events")
 
     @app.middleware("http")
     async def keep_session(request: Request, call_next):
@@ -1946,6 +1997,8 @@ def make_app(control: Control):
             tok = markupsafe.Markup('<input type="hidden" name="csrf" value="%s">'
                                     % control.csrf(request.cookies.get(COOKIE)))
         kw.setdefault("alone", alone())
+        if kw.get("live"):
+            kw["mark"] = control.changes()
         frame = ({"counts": {}, "total": 0, "domain": ""} if kw.get("open_frame") else shell_state()) if nav else None
         return HTMLResponse(env.get_template(template).render(tok=tok, nav=nav, shell=frame, **kw))
 
@@ -2617,7 +2670,7 @@ def make_app(control: Control):
         devs = control.devices()
         up = {m["name"] for m in ms if m["state"] in ("ok", "warn", "bad")}
         silent = [s for s in control.health().get("services") or [] if not s["ok"] and s["host"] in up]
-        return page("index.html", request, "/", machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
+        return page("index.html", request, "/", live=True, machines=ms, tiles=with_logins(tiles(ms), _info), looked=st.get("time"),
                     changed=[n for n in (_info or {}).get("changed") or [] if n != os.environ.get("KIWI_CONTROL_HOST")]
                             + [n for n in (_info or {}).get("changed") or [] if n == os.environ.get("KIWI_CONTROL_HOST")],
                     stats=stats(ms, devs), wide=picture(ms, len(devs), 4, (_info or {}).get("linked")),
@@ -2639,7 +2692,7 @@ def make_app(control: Control):
             m["kind"] = KIND.get(m["role"], m["role"])
             m["part_titles"] = [titles.get(n) or n for n in m["modules"]]
         t = machtable.table(ms, request.query_params.get("q") or "", titles)
-        return page("machines.html", request, "/machines", machines=ms, t=t, fresh=machtable.FRESH,
+        return page("machines.html", request, "/machines", live=True, machines=ms, t=t, fresh=machtable.FRESH,
                     looked=st.get("time"), looking=control.looking,
                     presets=setupmod.PRESETS, add_error=request.query_params.get("add_error"),
                     take_error=request.query_params.get("take_error"), master_error=request.query_params.get("master_error"),
@@ -2670,7 +2723,7 @@ def make_app(control: Control):
             t["since"] = (rows.get(t["site"]) or {}).get("since")
             by.setdefault(t["machine"], []).append(t)
         everything = [t for _m, ts in by.items() for t in ts]
-        return page("services.html", request, "/services", by_machine=list(by.items()), everything=everything, now=now,
+        return page("services.html", request, "/services", live=True, by_machine=list(by.items()), everything=everything, now=now,
                     up=sum(1 for t in everything if t["asked"] and not t["down"]), down=sum(1 for t in everything if t["down"]),
                     public=sum(1 for t in everything if t["public"]), tor=sum(1 for t in everything if t["onion"]))
 
@@ -2770,7 +2823,7 @@ def make_app(control: Control):
         mine = [e for e in control.audit_tail(600) if name in (e.get("hosts") or [])]
         jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
         standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
-        return page("host.html", request, "/", m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
+        return page("host.html", request, "/", live=True, m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
                     chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby,
                     targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
 
@@ -3196,6 +3249,7 @@ def make_app(control: Control):
         return {"text": text, "offset": off, "state": control.job(jid)["state"]}
 
     @app.get("/api/status")
+    @app.get("/api/v1/status")
     def api_status(request: Request):
         """The last look at the machines: for the page's login and for a controller (the Android app).
         Only reads, and is asked at every refresh: no line in the activity."""
@@ -3204,6 +3258,7 @@ def make_app(control: Control):
         return control.status() or {}
 
     @app.get("/api/machines")
+    @app.get("/api/v1/machines")
     def api_machines(request: Request):
         """What the fleet file says of the machines (`list --porcelain`), without the paths on this
         machine that a phone has no use for. {} while the fleet is locked. Only reads, as /api/status."""
@@ -3474,7 +3529,7 @@ def make_app(control: Control):
         if not user(request):
             return login_page()
         ms, _st, _info = machines()
-        return page("backups.html", request, "/backups", machines=ms)
+        return page("backups.html", request, "/backups", live=True, machines=ms)
 
     @app.get("/backups/{name}")
     def snapshots(request: Request, name: str):
@@ -3766,7 +3821,7 @@ def make_app(control: Control):
     def activity(request: Request):
         if not user(request):
             return login_page()
-        return page("activity.html", request, "/activity", jobs=control.jobs(15), entries=control.audit_tail(40))
+        return page("activity.html", request, "/activity", live=True, jobs=control.jobs(15), entries=control.audit_tail(40))
 
     @app.get("/audit")
     def audit():
@@ -3946,6 +4001,7 @@ def make_app(control: Control):
             return JSONResponse({"error": str(e)}, status_code=409)
 
     @app.get("/api/activity")
+    @app.get("/api/v1/activity")
     def api_activity(request: Request):
         """The Activity page for a computer that manages the network (`control activity`, the app's
         Activity…): the newest tasks and the log of who did what. Names and times; no output, no secret."""
@@ -3953,6 +4009,35 @@ def make_app(control: Control):
             return JSONResponse({"error": "who?"}, status_code=401)
         keep = ("id", "action", "hosts", "user", "state", "started", "ended", "rc")
         return {"jobs": [{k: j.get(k) for k in keep} for j in control.jobs(15)], "entries": control.audit_tail(40)}
+
+    EVENT_QUIET = 20            # seconds: a comment then, so that no proxy closes a quiet stream
+
+    @app.get("/api/v1/events")
+    async def api_events(request: Request):
+        """Pushed changes (server-sent events): `change` with a mark at once and whenever something a
+        page shows changed (control.changes); the page, the app and the phone then ask for what they
+        show. `gone` when the login ended. Does not keep a login alive."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        from fastapi.responses import StreamingResponse
+
+        async def stream():
+            last, quiet = None, 0
+            while not await request.is_disconnected():
+                if quiet >= EVENT_QUIET:
+                    if not (user(request) or bearer(request)):
+                        yield "event: gone\ndata: {}\n\n"
+                        return
+                    yield ": still here\n\n"
+                    quiet = 0
+                mark = await run_in_threadpool(control.changes)
+                if mark != last:
+                    yield "event: change\ndata: %s\n\n" % json.dumps({"mark": mark})
+                    last, quiet = mark, 0
+                await asyncio.sleep(1)
+                quiet += 1
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
     @app.get("/api/fleet/revision")
     def api_revision(request: Request):
@@ -4045,6 +4130,9 @@ def serve_public(folder, listen="0.0.0.0:8741"):
                 proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
 
 
+STOP_WAIT = 3       # seconds a stopping page waits for open requests: a page's event stream never ends by itself
+
+
 def serve(control: Control, listen="127.0.0.1:8740", https=None, tls_dir=None):
     """The pages on `listen`. With `https` (ADDR:PORT): the pages there, with a certificate of their own,
     and `listen` only sends the browser on to them."""
@@ -4063,9 +4151,10 @@ def serve(control: Control, listen="127.0.0.1:8740", https=None, tls_dir=None):
                                                   log_level="warning"))
             threading.Thread(target=plain.run, daemon=True).start()
             uvicorn.run(make_app(control), host=shost.strip("[]"), port=int(sport), log_level="warning",
-                        ssl_keyfile=key, ssl_certfile=cert, proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
+                        ssl_keyfile=key, ssl_certfile=cert, proxy_headers=True, forwarded_allow_ips=util.forwarded_allow(),
+                        timeout_graceful_shutdown=STOP_WAIT)
         else:
             uvicorn.run(make_app(control), host=host.strip("[]"), port=int(port), log_level="warning",
-                        proxy_headers=True, forwarded_allow_ips=util.forwarded_allow())
+                        proxy_headers=True, forwarded_allow_ips=util.forwarded_allow(), timeout_graceful_shutdown=STOP_WAIT)
     finally:
         stop.set()

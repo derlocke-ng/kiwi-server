@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.285.0 — a switch with your OK; the app keeps working while it waits
+
+- **A machine that does not answer offers to switch its parts kept ready** (its problem row, in
+  the app and on the page: "Switch vault to medlar"). The control node's own machine is switched
+  away from this way only, with a person's OK (the owner, 21 Nov); when it is the one gone, the app
+  runs the switch itself instead of through it.
+- **Fixed: "Update everything" in the app ran on this computer**, not as the control node's update
+  job: it looked for the list of machines in the wrong place.
+- **The app no longer freezes** while a sync choice is made (that can take half a minute) or the
+  access settings are saved: both run in the background with a word on screen.
+
 ## 2.284.0 — a sync that asks less, and four times faster
 
 - **A sync asks only about what really needs a person.** The store's JSON maps (the machines'

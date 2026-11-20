@@ -594,8 +594,12 @@ the VPN only, so its word counts only while the master answers. Nor is a part
 switched by itself when the copy there was more than ten minutes behind
 already when the machine fell silent: that would lose what came since. The
 page and the messages say so, and a person decides (Switch on the machine's
-page). A machine asleep by its window (`asleep`) is not gone, and the control
-node's own machine is switched away from by hand only. The switch runs as a job, as the page's Switch
+page). A machine asleep by its window (`asleep`) or switched off on purpose
+(`kiwi-server power … off`, until it answers again) is not gone. The control
+node's own machine is switched away from with a person's OK only: its problem
+row in the app and on the page (and on every gone machine's) offers "Switch
+vault to medlar", and the app runs that switch itself when the control node is
+the machine that is gone. The switch runs as a job, as the page's Switch
 button does, and Activity says why. Each part is switched by itself at most
 once in 30 minutes. When the machine that was gone starts again, its stack
 starts the part too; its agent's first report, about ten seconds after

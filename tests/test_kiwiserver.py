@@ -15843,6 +15843,20 @@ class TestRecovery(Base):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
 
+    def test_a_machine_that_is_gone_offers_its_parts_kept_ready(self):
+        """The owner, 21 Nov 2026: the control node's own machine switches on the OK of a person (the app,
+        kiwi-server): its problem row offers the switch, as every gone machine's does."""
+        papaya = self.network().raw["hosts"]["papaya"]
+        f = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
+        buf = io.StringIO()
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), \
+                mock.patch.object(remote, "run", mock.Mock(side_effect=KiwiError("ssh: connect to host: No route to host"))), \
+                mock.patch.object(cli.unlock, "waiting_at", lambda h: None), contextlib.redirect_stdout(buf):
+            cli.main(["status", f.path, "papaya", "--porcelain", "--direct"])
+        row = next(h for h in json.loads(buf.getvalue())["hosts"] if h["host"] == "papaya")
+        acts = row["problems"][0]["actions"]
+        self.assertEqual(acts[0], {"label": "Switch vault to lychee", "run": "switch", "part": "vault"})
+
     def test_a_standby_has_its_part_made_and_not_started(self):
         """keep_ready: the standby renders the part as the machine that runs it has it (its settings, its
         secrets), made and not started; a switch starts it there (kiwi-stack ready start)."""

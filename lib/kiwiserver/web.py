@@ -1608,8 +1608,10 @@ if h.page.startswith("/") and not h.page.startswith("//") %}<a class="btn" href=
 TEMPLATES["acts.html"] = """{% macro acts(m, p, tok) %}{% set list = p.actions if p.actions else
 ([{"label": "Unlock it", "run": "unlock"}] if "disk is locked" in p.text|lower else []) %}{% if list %}<div class="actions">
 {% for a in list %}{% if a.run %}<form class="inline" method="post" action="/run"{% if a.run == "apply" %}
-onsubmit="return confirm('Apply to {{ m.name }} now? Services that changed restart for a moment.')"{% endif %}>{{ tok }}
+onsubmit="return confirm('Apply to {{ m.name }} now? Services that changed restart for a moment.')"{% elif a.run == "switch" %}
+onsubmit="return confirm('{{ a.label }} now? It goes on with the copy there; when {{ m.name }} is back it gives the part up.')"{% endif %}>{{ tok }}
 <input type="hidden" name="action" value="{{ a.run }}"><input type="hidden" name="host" value="{{ m.name }}">
+{% if a.part %}<input type="hidden" name="module" value="{{ a.part }}">{% endif %}
 <button{% if loop.first %} class="primary"{% endif %}>{{ a.label }}</button></form>
 {% elif a.page and a.page.startswith("/") and not a.page.startswith("//") %}<a class="btn" href="{{ a.page }}">{{ a.label }}</a>{% endif %}{% endfor %}
 </div>{% endif %}{% endmacro %}"""
@@ -3147,7 +3149,7 @@ def make_app(control: Control):
             return JSONResponse({"error": "unknown action"}, status_code=400)
         try:
             jid = control.start(action, [host] if host else [], user=u, at=at if action in ("setup", "restore", "service") else "",
-                                module=module if action in ("restore", "service", "rotate-ring") else "")
+                                module=module if action in ("restore", "service", "rotate-ring", "switch") else "")
         except KiwiError as e:
             if action == "backup":              # said where the button is
                 ms, _st, _info = machines()

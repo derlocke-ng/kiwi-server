@@ -163,16 +163,22 @@ class Gate:
         self._asking = 0            # waiting to hold it alone: no new job starts, so they get their turn
         self._at_work = {}          # a job's token -> its machines
 
-    def acquire(self, blocking=True):
+    def acquire(self, blocking=True, timeout=None):
+        """Alone; False when not `blocking` and taken, or still taken after `timeout` seconds."""
         with self._c:
             if not blocking and (self._alone or self._at_work):
                 return False
+            end = None if timeout is None else time.monotonic() + timeout
             self._asking += 1
             try:
                 while self._alone or self._at_work:
-                    self._c.wait()
+                    left = None if end is None else end - time.monotonic()
+                    if left is not None and left <= 0:
+                        return False
+                    self._c.wait(left)
             finally:
                 self._asking -= 1
+                self._c.notify_all()        # (a job that waited for this one to stop asking)
             self._alone = True
             return True
 
@@ -993,18 +999,31 @@ class Control:
         from . import controlsync
         return controlsync.node_digest(self.fleet_dir)
 
+    EXPORT_WAIT = 5     # seconds a fetch waits for running jobs; then it gets the copy as it rests
+
     def export(self):
-        """(revision, {name: bytes}) of the encrypted fleet as it rests here."""
+        """(revision, {name: bytes}) of the encrypted fleet as it rests here. While a job runs (a
+        switch, an apply of many machines: minutes) a computer's fetch does not wait for it: it
+        gets the copy as it rests, read in one piece, and what the job changes comes with the next."""
         from . import controlsync
-        with self.lock:
-            if not self.locked() and not self._pushed():
-                self.save_fleet()
-            files = {}
-            for name in controlsync.ON_NODE:
-                path = os.path.join(self.fleet_dir, name)
-                if os.path.isfile(path):
-                    files[name] = util.read_bytes(path)
-            return controlsync.node_digest(self.fleet_dir), files
+
+        def read():
+            return {name: util.read_bytes(os.path.join(self.fleet_dir, name)) for name in controlsync.ON_NODE
+                    if os.path.isfile(os.path.join(self.fleet_dir, name))}
+        if self.lock.acquire(timeout=self.EXPORT_WAIT):
+            try:
+                if not self.locked() and not self._pushed():
+                    self.save_fleet()
+                return controlsync.node_digest(self.fleet_dir), read()
+            finally:
+                self.lock.release()
+        for _ in range(10):
+            files = read()
+            revision = controlsync.node_digest(self.fleet_dir)
+            if read() == files:             # no file was replaced meanwhile: one piece
+                return revision, files
+            time.sleep(0.3)
+        raise KiwiError("the fleet is being written just now: ask again in a moment")
 
     def replace(self, base, files, name):
         """A controller's push: taken when it builds on what is here. Returns the new revision,
@@ -2272,6 +2291,16 @@ class Control:
             fleet = config.Fleet.load(self.fleet_path)
             return {h.name: agent.key(fleet, h) for h in fleet.hosts.values()}
         return self._read_once("agent-keys", read)
+
+    def hold(self, name):
+        """The containers a machine is to hold back (cli.hold_back: a part switched away while it was
+        gone), until its next apply: what its agent is told with a report."""
+        try:
+            with open(os.path.join(self.fleet_dir, ".kiwi-state.json")) as fh:
+                held = (json.load(fh).get("hold") or {}).get(name) or []
+        except (OSError, ValueError, AttributeError):
+            return []
+        return [c for c in held if isinstance(c, str) and HOST.match(c)]
 
     def report(self, name, when, boot, sign, body):
         """A machine's agent says how the machine is. None when taken; else why not (the page

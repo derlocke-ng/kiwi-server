@@ -194,6 +194,11 @@ machine that was broken into can lie about itself and about nothing else. The re
 output of the same script the control node runs over SSH for its look; it holds no password
 and no key. It travels over HTTPS with the fleet's CA, on the VPN or the home network.
 
+The answer can carry one order: the names of containers to stop (`X-Kiwi-Hold`), those of a
+part that went to its standby while the machine was gone. The agent takes it only from the
+control page whose certificate the fleet's CA signed, takes only names of letters, digits and
+dashes, and only stops: it starts nothing and removes nothing.
+
 ## A standby's key
 
 A machine that keeps another machine's part ready ([backups](backups.md#a-standby-for-a-part))

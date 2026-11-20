@@ -25,25 +25,37 @@ LIMIT = 512 * 1024  # bytes of a report
 SCRIPT = r'''#!/bin/bash
 # kiwi-server: this machine's agent (docs/design/scale.md). Every minute it tells the control node
 # how this machine is: what the control node used to log in for. Signed with a key of this
-# machine's own, sent over the network's own HTTPS. It changes nothing here.
+# machine's own, sent over the network's own HTTPS. It changes one thing here, when told: the
+# containers of a part that went to its standby while this machine was gone stop (X-Kiwi-Hold),
+# until the apply that takes the part away from here.
 d=/etc/kiwi-server/agent
 exec 9>/run/kiwi-agent.lock; flock -n 9 || exit 0
 . "$d/conf" || exit 0
-body=$(mktemp) || exit 0; trap 'rm -f "$body"' EXIT
+body=$(mktemp) || exit 0; head=$(mktemp) || exit 0; trap 'rm -f "$body" "$head"' EXIT
 timeout 45 bash "$d/facts.sh" > "$body" 2>/dev/null
 now=$(date +%s); boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 sum=$(sha256sum "$body" | cut -d' ' -f1)
 sign=$(printf '%s\n%s\n%s\n%s' "$NAME" "$now" "$boot" "$sum" | openssl dgst -sha256 -hmac "$(cat "$d/key")" -r 2>/dev/null | cut -d' ' -f1)
 if [ -z "$sign" ]; then out="no signature (is openssl there?)"; else
-out=$(curl -sS --max-time 20 --cacert "$d/ca.pem" -o /dev/null -w '%{http_code}' -X POST \
+out=$(curl -sS --max-time 20 --cacert "$d/ca.pem" -o /dev/null -D "$head" -w '%{http_code}' -X POST \
     -H "Content-Type: text/plain" -H "X-Kiwi-Host: $NAME" -H "X-Kiwi-Time: $now" -H "X-Kiwi-Boot: $boot" \
     -H "X-Kiwi-Sign: $sign" --data-binary @"$body" "$URL/api/report" 2>&1 | tail -1)
 fi
 [ "$out" = "$(cat /run/kiwi-agent.last 2>/dev/null)" ] || { logger -t kiwi-agent "report to $URL: $out"; echo "$out" > /run/kiwi-agent.last; }
+if [ "$out" = 200 ]; then
+    for c in $(sed -n 's/^[Xx]-[Kk]iwi-[Hh]old: *//p' "$head" | tr -d '\r'); do
+        case $c in *[!a-z0-9-]*|"") continue ;; esac
+        if systemctl is-active -q "$c.service" 2>/dev/null; then
+            systemctl stop "$c.service" && logger -t kiwi-agent "stopped $c: its part runs on its standby now"
+        elif command -v docker >/dev/null 2>&1 && [ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" = true ]; then
+            docker stop "$c" >/dev/null && logger -t kiwi-agent "stopped $c: its part runs on its standby now"
+        fi
+    done
+fi
 '''
 SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node how this machine is\nAfter=network-online.target\n\n"
            "[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH)
-TIMER = ("[Unit]\nDescription=kiwi-server: report to the control node every minute\n\n[Timer]\nOnBootSec=20s\n"
+TIMER = ("[Unit]\nDescription=kiwi-server: report to the control node every minute\n\n[Timer]\nOnBootSec=10s\n"
          "OnUnitActiveSec=1min\nAccuracySec=5s\n\n[Install]\nWantedBy=timers.target\n")
 INSTALL = r'''set -eu
 install -d -m 0700 %(dir)s

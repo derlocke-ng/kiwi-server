@@ -81,7 +81,14 @@ while [ "$n" -gt 0 ]; do
     sleep 20; n=$((n - 20))
 done
 at "$on" true 2>/dev/null && ! runs "$on"; check $? "$on is back and no longer runs $part ($(( ($(date +%s) - t1) / 60 )) min)"
+# how long it ran the part beside its standby after the power came back: its agent's first report
+# holds it back (X-Kiwi-Hold), before the apply that takes the part away
+both=$(at "$on" "journalctl -b -u 'k?-$part.service' -o short-unix --no-pager 2>/dev/null" | awk '
+    / Started / && !s { s = $1 } / Stopped / && s && !e { e = $1 } END { if (!s) print 0; else if (!e) print -1; else printf "%d", e - s }')
+[ "${both:--1}" -ge 0 ] && [ "${both:--1}" -le 60 ]; check $? "$on ran $part beside $sb for ${both:-?} s after it came back (60 at most)"
 runs "$sb"; check $? "$part still runs on $sb"
-kiwi-server control pull "$fleet" > control-pull2.log 2>&1; check $? "this computer has the fleet the control node changed"
+# the control node may be in the middle of its jobs (the apply that waited): asked again for a few minutes
+n=10; while [ "$n" -gt 0 ] && ! kiwi-server control pull "$fleet" > control-pull2.log 2>&1; do sleep 30; n=$((n - 1)); done
+[ "$n" -gt 0 ]; check $? "this computer has the fleet the control node changed"
 say "$fails wrong"
 exit $((fails > 0))

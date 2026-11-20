@@ -1528,6 +1528,16 @@ def fleet_state(fleet):
         return {}
 
 
+def hold_back(fleet, name, containers):
+    """Containers a machine must not run when it answers again (a part that was switched away
+    while it was gone): told to its agent with every report until its next apply."""
+    with state_lock(fleet):
+        state = fleet_state(fleet)
+        held = state.setdefault("hold", {})
+        held[name] = sorted(set(held.get(name) or []) | set(containers))
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+
+
 def record_applied(fleet, *names, only_new=False):
     """Remember that these machines have their role. `only_new`: for machines `status` found
     with a role applied, which an older release or another computer applied; their time stays."""
@@ -1540,6 +1550,8 @@ def record_applied(fleet, *names, only_new=False):
                 return
             for n in new:
                 applied[n] = int(time.time())
+                if not only_new:
+                    (state.get("hold") or {}).pop(n, None)      # applied: what it holds back is gone from it
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     except OSError:
         if not only_new:
@@ -5623,10 +5635,13 @@ def cmd_switch(args):
         except SystemExit as e:
             return e.code if isinstance(e.code, int) else 1
     # the machine it leaves, if it answers: the part stops there, and the standby fetches once more
-    src_up = True
+    src_up, services = True, []
     try:
         _script, bundle = Renderer(fleet, roles, out_dir, None, ms).script(src)
         services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
+    except KiwiError:
+        pass
+    try:
         s_tgt = remote.reach(src, None)
         for c in services:
             remote.run(s_tgt, service_script(c, "stop"))
@@ -5636,6 +5651,10 @@ def cmd_switch(args):
     except KiwiError as e:
         src_up = False
         util.say("%s does not answer (%s): %s goes on with the copy %s has" % (src_name, str(e).splitlines()[-1][:80], part, dst_name))
+        if services:
+            # when it comes back, its stack starts the part before its apply takes it away: its agent's
+            # first report gets told to hold those containers back (machineagent.py), until that apply
+            hold_back(fleet, src_name, services)
     # nothing is fetched over the part once it runs here
     remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true" % (partstandby.UNIT, partstandby.UNIT))
     # kept ready there (its containers made, its images there): it starts now, and the apply below

@@ -657,7 +657,7 @@ Kanidm's own pages, which show the kiwi too:
 **Messages** go out when something has been wrong for ten minutes, and once more
 when it is fine again: a machine or a service that does not answer, a problem a
 machine reports (a full disk, a backup that is too old), and what the control
-node did by itself (a master restarted, a disk opened). "Settings for every
+node did by itself (a master restarted, a disk opened, a part switched to its standby). "Settings for every
 machine" has the fields, under "Messages when something is wrong":
 
 ```yaml

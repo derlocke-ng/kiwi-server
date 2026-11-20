@@ -5576,7 +5576,7 @@ RELOAD_NAMES = (". /etc/kiwi-server/stack.env 2>/dev/null; d=%(dir)s; [ -d \"$d\
                 "${STACK_RUNTIME:-podman} exec %(pihole)s pihole reloaddns >/dev/null 2>&1; echo kiwi-told")
 
 
-def point_moving_name(args, name):
+def point_moving_name(args, name, skip=()):
     """Right after a switch wrote the fleet file: every machine that answers for names gets its file
     of the names that can move as it has it now (the name at its new machine), and reloads it. In
     seconds, where an apply of each of them takes minutes; their applies follow. A machine that does
@@ -5587,7 +5587,7 @@ def point_moving_name(args, name):
     r.also_moving = {name}
     told = []
     for h in fleet.hosts.values():
-        if h.standby_of or h.role not in roles:
+        if h.standby_of or h.role not in roles or h.name in skip:      # (one that does not answer: its apply waits)
             continue
         try:
             role = r.prepare(h)
@@ -5692,7 +5692,7 @@ def cmd_switch(args):
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
     if p["name"]:
-        told = point_moving_name(args, p["name"])
+        told = point_moving_name(args, p["name"], skip=() if src_up else (src_name,))
         if told:
             util.say("%s points at %s now on %s (%s after the switch began)" % (
                 p["name"], dst_name, ", ".join(told), util.count(int(time.time() - began), "second")))

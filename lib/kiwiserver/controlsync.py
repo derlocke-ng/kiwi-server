@@ -544,7 +544,7 @@ def other_copy(fleet_dir, fleet=None, host=None, tgt=None, key=None):
     raise KiwiError("this fleet is not shared with a control node or a synced folder")
 
 
-def _reconcile(fleet_dir, fleet_name, st, got, key, other):
+def _reconcile(fleet_dir, fleet_name, st, got, key, other, keep=None):
     """Both copies changed since they last agreed: this copy becomes the two together. `got`
     is the other side's files as they travel. Returns the paths taken from there; raises when
     a file changed on both sides, or when there is nothing to compare with."""
@@ -557,10 +557,11 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other):
     if base is None:
         raise KiwiError("%s changed, and so did this copy, since they last agreed: kiwi-server control pull "
                         "--force takes that one, push --force this one" % other)
-    merged, theirs, both = merge.merge(base, here, there)
+    merged, theirs, both = merge.merge(base, here, there, keep=keep)
     if both:
-        raise KiwiError("changed on both sides since the last sync: %s. Which copy counts? kiwi-server control pull "
-                        "--force takes %s, push --force this one" % (", ".join(both), other))
+        raise KiwiError("changed on both sides since the last sync: %s. Which counts for that? kiwi-server control push "
+                        "--keep here keeps this computer's, --keep there %s; everything else is merged either way"
+                        % (", ".join(both), other))
     merge.put_tree(fleet_dir, fleet_name, PLAIN, merged)
     for name in ("secrets.recipients", "control/salt"):
         if name in merged:
@@ -692,7 +693,7 @@ def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=
     return state == "ok"
 
 
-def push_api(fleet_dir, fleet_name, force=False, key=None):
+def push_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
     st = _store(fleet_dir)
     api, _key = api_for(fleet_dir, key)
     status, out = api.call("GET", "/api/fleet/revision")
@@ -708,7 +709,7 @@ def push_api(fleet_dir, fleet_name, force=False, key=None):
             raise KiwiError("the control node refused (%d)" % status)
         there = out["revision"]
         _reconcile(fleet_dir, fleet_name, st, {n: base64.b64decode(b) for n, b in out["files"].items() if n in ON_NODE},
-                   _key, "the control node's copy")
+                   _key, "the control node's copy", keep)
     blobs = _blobs(fleet_dir, fleet_name, st)
     status, out = api.call("PUT", "/api/fleet", {"base": there, "files": {
         n: base64.b64encode(b).decode() for n, b in blobs.items()}})
@@ -721,7 +722,7 @@ def push_api(fleet_dir, fleet_name, force=False, key=None):
     return len(blobs)
 
 
-def pull_api(fleet_dir, fleet_name, force=False, key=None):
+def pull_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
     st = storemod.Store(fleet_dir)
     here, then = _stamp(fleet_dir)
     changed_here = False
@@ -738,7 +739,7 @@ def pull_api(fleet_dir, fleet_name, force=False, key=None):
         return 0
     got = {n: base64.b64decode(b) for n, b in out["files"].items() if n in ON_NODE}
     if changed_here:                    # both changed: push_api makes one copy of the two and sends it
-        return push_api(fleet_dir, fleet_name, key=key)
+        return push_api(fleet_dir, fleet_name, key=key, keep=keep)
     n = _take(fleet_dir, fleet_name, st, got, key)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
     _save_base(fleet_dir, fleet_name, st)

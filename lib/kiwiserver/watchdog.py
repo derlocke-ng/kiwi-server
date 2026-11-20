@@ -61,10 +61,11 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
     Returns the events: [{host, kind: waiting|tell|restarted|held|moved, text}]."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
     pointed, back = state.setdefault("pointed", {}), state.setdefault("back", {})
-    seen_ok = state.setdefault("seen_ok", {})
+    seen_ok, off = state.setdefault("seen_ok", {}), state.setdefault("off", {})
     for name in kinds:
         if said.get(name):
             seen_ok[name] = now                 # the last look that saw it answer
+            off.pop(name, None)                 # switched off on purpose, and on again: as any other
     for name in list(gone):
         if said.get(name) or name not in kinds:
             del gone[name]                      # back, or no longer a machine of the network
@@ -106,6 +107,10 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
                 events.append({"host": name, "kind": "unlocked", "text": what + ": its ring was forwarded, it starts now"})
             continue
         if said.get(name, True):
+            continue
+        if name in off:                         # switched off on purpose (power off): not gone, nothing done
+            gone.pop(name, None)
+            events.append({"host": name, "kind": "off", "text": "%s is switched off on purpose" % name})
             continue
         # gone since the report that did not come after its last one (the agent reports every minute), not
         # since this look: a look comes minutes after a machine fell silent
@@ -196,7 +201,7 @@ def switches(fleet, links, said, state, now, sees, copy_age=None, independent=No
     on, after = switch_policy(fleet)
     gone, done, events = state.get("gone") or {}, state.setdefault("switched", {}), []
     for src, part, dst in links:
-        if said.get(src, True) or src not in gone:
+        if said.get(src, True) or src not in gone or src in (state.get("off") or {}):
             continue
         h = fleet.hosts.get(src)
         if "control" in ((getattr(h, "modules", None) or []) + list(((getattr(h, "role_settings_raw", None) or {}).get("modules")) or [])):

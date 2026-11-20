@@ -9226,6 +9226,17 @@ class TestWatchdog(unittest.TestCase):
         own.hosts["pi"].role_settings_raw = {"modules": ["control", "vault"]}
         self.assertEqual(watchdogmod.switches(own, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh), [])
 
+    def test_a_machine_switched_off_on_purpose_is_left_alone(self):
+        """The owner, 21 Nov 2026: "power off should hold the switch"."""
+        f = self.fleet(master={"after": 5, "do": "restart"})
+        state, done = {"off": {"gate": self.NOW - 3600}}, []
+        ev = watchdogmod.step(f, {"gate": "master"}, {"gate": False}, state, self.NOW, done.append)
+        self.assertEqual((done, [e["kind"] for e in ev]), ([], ["off"]))
+        self.assertEqual(watchdogmod.switches(f, [("gate", "vault", "pi")], {"gate": False, "pi": True}, state, self.NOW + 900,
+                                              lambda s, m: False), [])
+        watchdogmod.step(f, {"gate": "master"}, {"gate": True}, state, self.NOW + 1000, done.append)      # on again
+        self.assertEqual(state["off"], {})
+
     def test_gone_counts_from_the_last_look_that_saw_it_when_that_is_later(self):
         f = self.fleet(master={"after": 5, "do": "restart"})
         done, state = [], {}
@@ -13387,6 +13398,42 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(merged, {"fleet.yaml": "v2", "secrets/seed": "s", "secrets/a.conf": "A",
                                   "secrets/new-here": "h", "secrets/new-there": "t"})      # `gone` was removed here
         self.assertEqual((theirs, both), (["secrets/a.conf", "secrets/new-there"], []))
+
+    def test_the_stores_json_maps_merge_key_by_key_and_the_newer_entry_wins(self):
+        """The owner, 21 Nov 2026: a sync asked him to choose between two copies of macs.json that
+        differed only in when each side last saw lychee and quince, and pins.json, which only one
+        side had changed. Neither needs a person."""
+        from kiwiserver import merge
+        mac = lambda m, seen: {"mac": m, "card": "enp1s0", "seen": seen}                     # noqa: E731
+        base = {"secrets/macs.json": json.dumps({"lychee": mac("aa", 100), "quince": mac("bb", 100)}),
+                "secrets/pins.json": json.dumps({"x/vault/admin": "p1"})}
+        here = {"secrets/macs.json": json.dumps({"lychee": mac("aa", 300), "quince": mac("bb", 150)}),
+                "secrets/pins.json": json.dumps({"x/vault/admin": "p1", "y/paste/key": "new"})}
+        there = {"secrets/macs.json": json.dumps({"lychee": mac("aa", 200), "quince": mac("bb", 250)}),
+                 "secrets/pins.json": json.dumps({"x/vault/admin": "p1", "z/git/key": "theirs"})}
+        merged, _theirs, both = self.merge(base, here, there)
+        self.assertEqual(both, [])
+        macs = json.loads(merged["secrets/macs.json"])
+        self.assertEqual((macs["lychee"]["seen"], macs["quince"]["seen"]), (300, 250))    # the newer of each
+        self.assertEqual(sorted(json.loads(merged["secrets/pins.json"])), ["x/vault/admin", "y/paste/key", "z/git/key"])
+        # one key both changed, with no time to say which is newer: a person, for that file only
+        both_pins = {"secrets/pins.json": json.dumps({"x/vault/admin": "mine"})}, {"secrets/pins.json": json.dumps({"x/vault/admin": "yours"})}
+        _m, _t, both = self.merge({"secrets/pins.json": base["secrets/pins.json"], "fleet.yaml": "a: 1\n"},
+                                  dict(both_pins[0], **{"fleet.yaml": "a: 2\n"}), dict(both_pins[1], **{"fleet.yaml": "a: 1\n"}))
+        self.assertEqual(both, ["secrets/pins.json"])
+        enc = lambda d: {k: v.encode() for k, v in d.items()}                               # noqa: E731
+        merged, _t, both = merge.merge(enc({"secrets/pins.json": base["secrets/pins.json"], "fleet.yaml": "a: 1\n"}),
+                                       enc(dict(both_pins[0], **{"fleet.yaml": "a: 2\n"})),
+                                       enc(dict(both_pins[1], **{"fleet.yaml": "a: 1\n"})), keep="there")
+        self.assertEqual((both, json.loads(merged["secrets/pins.json"])["x/vault/admin"], merged["fleet.yaml"]),
+                         ([], "yours", b"a: 2\n"))                  # theirs for what both changed; the rest merged
+        # what the dialog shows: merged by itself or not, and the MACs as they are, with the newer side
+        rows = {r["path"]: r for r in merge.differences(enc(base), enc(here), enc(there))}
+        self.assertTrue(rows["secrets/macs.json"]["auto"] and rows["secrets/pins.json"]["auto"])
+        text = "\n".join(rows["secrets/macs.json"]["lines"])
+        self.assertIn("@ lychee (newer: this computer)", text)
+        self.assertIn("mac aa", text)
+        self.assertNotIn("new", "\n".join(rows["secrets/pins.json"]["lines"]).replace("+ y/paste/key", ""))   # no pin's value
 
     def test_host_keys_of_both_sides_are_kept(self):
         base = {"secrets/known_hosts": "a k1\n"}

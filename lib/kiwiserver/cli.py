@@ -1550,6 +1550,19 @@ def switch_after(fleet):
     return after if on else 0
 
 
+def mark_off(fleet, name, off):
+    """A machine switched off on purpose (power off), or no longer: the watchdog leaves one that is
+    off alone (no switch of its parts, no restart) until it answers again."""
+    with state_lock(fleet):
+        state = fleet_state(fleet)
+        marks = state.setdefault("off", {})
+        if off:
+            marks[name] = int(time.time())
+        elif marks.pop(name, None) is None:
+            return
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+
+
 def hold_back(fleet, name, containers, part=None):
     """Containers a machine must not run when it answers again (a part that was switched away
     while it was gone): told to its agent with every report until its next apply. With `part`, the
@@ -3689,7 +3702,7 @@ def cmd_control(args):
     if controlsync.remote_of(fleet_dir) and not args.ssh:      # joined: through the control node's API
         if args.action == "push":
             try:
-                n = controlsync.push_api(fleet_dir, fleet_name, args.force, key)
+                n = controlsync.push_api(fleet_dir, fleet_name, args.force, key, keep=getattr(args, "keep", None))
             except KiwiError as e:
                 if "does not know a controller" in str(e):
                     # a node whose copy is damaged (or was installed anew) knows no computer any more
@@ -3703,7 +3716,7 @@ def cmd_control(args):
                           "call a machine's settings wrong. Update it: kiwi-server apply %s <its machine> --update"
                           % (old, VERSION, fleet_name))
         else:
-            n = controlsync.pull_api(fleet_dir, fleet_name, args.force, key)
+            n = controlsync.pull_api(fleet_dir, fleet_name, args.force, key, keep=getattr(args, "keep", None))
             util.say("nothing new there: this copy is newer, kiwi-server control push %s sends it" % fleet_name if n is None else "%d files from the control node: this copy is its" % n if n else "in step with the control node")
         return
     fleet, roles, ms = load(args)                               # the first controller: over SSH
@@ -5826,6 +5839,7 @@ def cmd_wake(args):
     fleet, _roles, _ms = load(args, need_roles=False)
     host = fleet.select([args.host])[0]
     wakemod.wake(fleet, host, mac=args.mac, address=args.address, via=args.via)
+    mark_off(fleet, host.name, False)
     util.say("%s: it takes a minute or two to start; kiwi-server status %s shows when it answers" % (host.name, typed_path(args.fleet)))
 
 
@@ -5847,6 +5861,9 @@ def cmd_power(args):
         return
     if not args.yes:
         raise KiwiError("nothing done: add --yes to %s %s" % ("switch off" if args.action == "off" else "restart", host.name))
+    if args.action == "off":
+        # off on purpose: not gone. Nothing switches its parts away and nothing restarts it, until it answers again
+        mark_off(fleet, host.name, True)
     powermod.run(host, args.action, args.ssh)
 
 
@@ -6367,6 +6384,8 @@ def build_parser():
     s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")
     s.add_argument("--to", metavar="HOST", help="which control node, when several hosts have the module")
     s.add_argument("--force", action="store_true", help="overwrite a side that changed since the last sync")
+    s.add_argument("--keep", choices=["here", "there"], help="push, pull: of a file both sides changed, keep this computer's "
+                                                             "(here) or the other's (there); everything else is merged")
     s.add_argument("--identity", metavar="FILE",
                    help="a file with this computer's age secret key, instead of the keyring (join writes it)")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the control node")

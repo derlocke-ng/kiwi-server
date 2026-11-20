@@ -9,6 +9,7 @@ setting on the page, another's in the app); it is named otherwise: then a person
 copy counts.
 """
 import json
+import time
 import hashlib
 import difflib
 import os
@@ -24,6 +25,11 @@ LISTS = ("secrets/known_hosts", "secrets/known_hosts.initramfs")    # lines; bot
 # YAML files merged key by key: the page changes one machine's setting, the app another's, and
 # both are kept. Only a key both sides changed, to different values, needs a person.
 YAMLS = ("fleet.yaml", "federation.yaml")
+# The secret store's JSON maps, merged key by key as well (a machine's MAC on one side, a pin on
+# the other); of one key both changed, the entry with the later "seen" or "at" counts.
+JSONS = ("secrets/macs.json", "secrets/pins.json")
+# Files of the store that hold nothing secret: what differs in them is shown as it is.
+OPEN = ("secrets/macs.json",)
 _MISSING, _CONFLICT = object(), object()
 
 
@@ -55,6 +61,43 @@ def _merge_value(b, h, t):
                 out[k] = v
         return out
     return _CONFLICT
+
+
+def _when(v):
+    """The time a JSON entry says it was seen or kept (seen, at), or None."""
+    if isinstance(v, dict):
+        for k in ("seen", "at"):
+            if isinstance(v.get(k), (int, float)):
+                return v[k]
+    return None
+
+
+def merge_json(b, h, t):
+    """Three JSON maps (bytes; base may be None) merged key by key, as bytes, or None when a key
+    changed on both sides and no time says which is newer."""
+    try:
+        bd = json.loads(b.decode()) if b is not None else {}
+        hd, td = json.loads(h.decode()), json.loads(t.decode())
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not all(isinstance(x, dict) for x in (bd, hd, td)):
+        return None
+    out = {}
+    for k in list(hd) + [k for k in td if k not in hd] + [k for k in bd if k not in hd and k not in td]:
+        hv, tv = hd.get(k, _MISSING), td.get(k, _MISSING)
+        v = _merge_value(bd.get(k, _MISSING), hv, tv)
+        if v is _CONFLICT:
+            wh, wt = _when(hv), _when(tv)
+            if wh is None or wt is None:
+                return None
+            v = hv if wh >= wt else tv
+        if v is not _MISSING:
+            out[k] = v
+    if out == hd:
+        return h
+    if out == td:
+        return t
+    return (json.dumps(out, indent=1, sort_keys=True) + "\n").encode()
 
 
 def _inner_comments(text):
@@ -96,9 +139,11 @@ def merge_yaml(b, h, t):
     return (("\n".join(head) + "\n") if head else "").encode() + text.encode()
 
 
-def merge(base, here, there):
+def merge(base, here, there, keep=None):
     """({path: content} to hold from now on, paths taken from there, paths both changed).
-    The three arguments are {path: bytes}; a path that is missing is a file that is not there."""
+    The three arguments are {path: bytes}; a path that is missing is a file that is not there.
+    `keep` ("here" or "there"): a file both changed is taken from that side, everything else is
+    merged as always (a person's answer to "which counts?", for what both changed only)."""
     merged, theirs, both = {}, [], []
     for path in sorted(set(base) | set(here) | set(there)):
         b, h, t = base.get(path), here.get(path), there.get(path)
@@ -120,6 +165,14 @@ def merge(base, here, there):
         elif path in YAMLS and h is not None and t is not None and merge_yaml(b, h, t) is not None:
             pick = merge_yaml(b, h, t)
             theirs.append(path)
+        elif path in JSONS and h is not None and t is not None and merge_json(b, h, t) is not None:
+            pick = merge_json(b, h, t)
+            theirs.append(path)
+        elif keep == "there":
+            pick = t
+            theirs.append(path)
+        elif keep == "here":
+            pick = h
         else:
             both.append(path)
             pick = h
@@ -212,6 +265,13 @@ def differences(base, here, there):
             who = "there" if h == b else "here" if t == b else "both"
         row = {"path": path, "who": who, "state": "only here" if t is None else "only there" if h is None else "changed",
                "lines": []}
+        # does the next sync make one of the two by itself? Then there is nothing to decide about it
+        if base is not None:
+            b = base.get(path)
+            one = lambda x: {} if x is None else {path: x}          # noqa: E731
+            row["auto"] = not merge(one(b), one(h), one(t))[2]
+        else:
+            row["auto"] = False
         if path in ("fleet.yaml", "federation.yaml"):
             old = [masked(x) for x in (t or b"").decode(errors="replace").splitlines()]
             new = [masked(x) for x in (h or b"").decode(errors="replace").splitlines()]
@@ -221,10 +281,46 @@ def differences(base, here, there):
             new = set((h or b"").decode(errors="replace").splitlines())
             row["lines"] = (["- %s (only in the other copy)" % " ".join(x.split()[:2]) for x in sorted(old - new)] +
                             ["+ %s (only on this computer)" % " ".join(x.split()[:2]) for x in sorted(new - old)])
+        elif path in OPEN:
+            row["lines"] = open_summary(h, t)
         else:
             row["lines"] = secret_summary(h, t)
         out.append(row)
     return out
+
+
+def open_summary(here, there):
+    """Of a JSON map of the store that holds nothing secret (the machines' MACs): each entry that
+    differs, as it is on each side, and which side has it newer."""
+    def load(data):
+        try:
+            v = json.loads(data.decode()) if data is not None else {}
+            return v if isinstance(v, dict) else {}
+        except (ValueError, UnicodeDecodeError):
+            return {}
+
+    def said(v):
+        if v is _MISSING:
+            return "not there"
+        if isinstance(v, dict):
+            parts = ["%s %s" % (k, v[k]) for k in sorted(v) if k not in ("seen", "at")]
+            w = _when(v)
+            if w is not None:
+                parts.append("seen %s" % time.strftime("%d %b %H:%M", time.localtime(w)))
+            return ", ".join(parts)
+        return str(v)
+    a, b = load(there), load(here)
+    lines = []
+    for k in sorted(set(a) | set(b)):
+        tv, hv = a.get(k, _MISSING), b.get(k, _MISSING)
+        if tv == hv:
+            continue
+        wt, wh = _when(tv), _when(hv)
+        newer = "" if wt is None or wh is None else (" (newer: this computer)" if wh > wt else " (newer: the other copy)" if wt > wh else "")
+        lines.append("@ %s%s" % (k, newer))
+        lines.append("    this computer:  %s" % said(hv))
+        lines.append("    the other copy: %s" % said(tv))
+    return lines or ["  The same entries: the files differ only in their order or spacing."]
 
 
 def read_tree(root):

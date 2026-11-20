@@ -456,10 +456,127 @@ class TestDebian(Base):
         _h, ps, _files = self.make(debian={"encrypt": True})  # the same until the machine's first apply
         self.assertIn("d-i partman-crypto/passphrase password %s\n" % key, ps)
 
+    def test_install_media_left_in_do_not_install_again(self):
+        """Install media wipe the disk without asking; left in a machine that starts from them
+        first, they wiped it at every start. Each media has an id of its own, the installer leaves
+        it on the installed system's /boot, and its guard looks for it before anything is erased."""
+        self.assertNotEqual(iso.media_id(), iso.media_id())                    # a new one each time media are made
+        host, ps, files = self.make()
+        self.assertIn("d-i partman/early_command string sh /cdrom/kiwi-server/guard.sh\n", ps)       # a named disk too
+        self.assertIn("guard.sh", files)
+        self.assertIn("$(cat $S/media-id)", files["late.sh"][0])
+        self.assertIn("> $T/boot/kiwi-installed", files["late.sh"][0])
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        bin_dir = os.path.join(work, "bin")
+        os.makedirs(bin_dir)
+
+        def tool(name, text):
+            path = os.path.join(bin_dir, name)
+            with open(path, "w") as fh:
+                fh.write("#!/bin/bash\n" + text)
+            os.chmod(path, 0o755)
+        # stand-ins for the installer's world: two disks, the media (sr0) and the machine's (sda)
+        tool("udevadm", "exit 0\n")
+        tool("sleep", "exit 0\n")
+        tool("findmnt", "echo /dev/sr0\n")
+        tool("lsblk", 'case "$*" in\n'
+                      '  "-no PKNAME /dev/sr0") echo ;;\n'
+                      '  "-no PKNAME /dev/sda3") echo sda ;;\n'
+                      '  "-no PKNAME /dev/sr0p1") echo sr0 ;;\n'
+                      '  "-lnpo NAME,FSTYPE") echo "/dev/sr0p1 ext4"; echo "/dev/sda2 vfat"; echo "/dev/sda3 ext4" ;;\n'
+                      '  "-lnpo NAME,FSTYPE,LABEL") echo "/dev/sda3 ext4 boot"; echo "/dev/sda4 ext4 other" ;;\n'
+                      '  "-lnpo NAME,PARTTYPE /dev/sda") echo "/dev/sda2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B" ;;\n'
+                      'esac\n')
+        tool("mount", 'dev=${@: -2:1}; dir=${@: -1}; [ -d "%s/disks/${dev##*/}" ] || exit 1; '
+                      'echo "$dev $dir" >> %s/mounted; ln -sfn "%s/disks/${dev##*/}" "$dir/link"\n' % (work, work, work))
+        tool("umount", "rm -f \"$1/link\"\n")
+        tool("systemctl", "echo \"systemctl $*\" >> %s/did\n" % work)
+        tool("efibootmgr", 'echo "efibootmgr $*" >> %s/did\n'
+                           'case "$*" in "") [ -f %s/entry ] && echo "Boot0007* kiwi-server disk" ;; *-c*) touch %s/entry ;; esac\n'
+                           % (work, work, work))
+        # the stand-in mount hangs the disk under DIR/link: the scripts look in DIR itself, so point them there
+        look = lambda text: text.replace('"$m/', '"$m/link/')      # noqa: E731
+        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"], KIWI_EFIVARS=os.path.join(work, "no-efi"))
+        os.makedirs(os.path.join(work, "disks", "sda3"))
+        os.makedirs(os.path.join(work, "disks", "sr0p1"))
+
+        def run(text, **more):
+            path = os.path.join(work, "run.sh")
+            with open(path, "w") as fh:
+                fh.write(look(text))
+            for f in ("did", "mounted"):
+                if os.path.exists(os.path.join(work, f)):
+                    os.unlink(os.path.join(work, f))
+            r = subprocess.run(["bash", path], env=dict(env, **more), capture_output=True, text=True)
+            did = util.read_text(os.path.join(work, "did")) if os.path.exists(os.path.join(work, "did")) else ""
+            return r.returncode, did
+        guard, mark = iso.guard_script(host, "0123456789abcdef"), iso.mark_script(host, "0123456789abcdef")
+        for text in (guard, mark):
+            with open(os.path.join(work, "s.sh"), "w") as fh:
+                fh.write(text)
+            self.assertEqual(subprocess.run(["bash", "-n", os.path.join(work, "s.sh")]).returncode, 0)
+        # a machine never installed: the guard lets the install go on
+        self.assertEqual(run(guard), (0, ""))
+        # the install is done: the mark is left on the machine's boot partition, with this media's id
+        self.assertEqual(run(mark)[0], 0)
+        marked = util.read_text(os.path.join(work, "disks", "sda3", iso.MARK))
+        self.assertRegex(marked, r"^%s 0123456789abcdef 20\d\d-\d\d-\d\dT\d\d:\d\dZ\n$" % host.name)
+        # started again with the media left in: nothing is installed, the machine is switched off (no UEFI)
+        rc, did = run(guard)
+        self.assertEqual((rc, did), (1, "systemctl --no-block poweroff\n"))
+        # with UEFI: the disk is put first and the machine restarts into it
+        os.makedirs(os.path.join(work, "efi"))
+        rc, did = run(guard, KIWI_EFIVARS=os.path.join(work, "efi"))
+        self.assertEqual(rc, 1)
+        self.assertIn("efibootmgr -q -c -d /dev/sda -p", did)
+        self.assertIn("\\EFI\\fedora\\shimx64.efi", did)
+        self.assertIn("efibootmgr -q -n 0007", did)
+        self.assertTrue(did.endswith("systemctl --no-block reboot\n"))
+        # media made again have another id: they install (that is how a machine is installed again on purpose)
+        self.assertEqual(run(iso.guard_script(host, "ffffffffffffffff")), (0, ""))
+        # a mark on the media itself is not the machine's
+        os.unlink(os.path.join(work, "disks", "sda3", iso.MARK))
+        with open(os.path.join(work, "disks", "sr0p1", iso.MARK), "w") as fh:
+            fh.write(marked)
+        self.assertEqual(run(guard), (0, ""))
+
+        # Debian: the same in the installer's small shell
+        tool("modprobe", "exit 0\n")
+        tool("logger", "exit 0\n")
+        tool("poweroff", "echo poweroff >> %s/did; kill $PPID\n" % work)
+        tool("list-devices", "echo /dev/sda1\n")
+        os.makedirs(os.path.join(work, "disks", "sda1"))
+        os.makedirs(os.path.join(work, "cdrom"))
+        d_guard = files["guard.sh"][0].replace("S=/cdrom/kiwi-server", "S=%s/cdrom" % work).replace("m=/tmp/kiwi-guard", "m=%s/mnt" % work)
+        d_guard = d_guard.replace("$m/kiwi-installed $m/boot/kiwi-installed", "$m/link/kiwi-installed $m/link/boot/kiwi-installed")
+        dpath = os.path.join(work, "dguard.sh")
+        with open(dpath, "w") as fh:
+            fh.write(d_guard)
+
+        def drun():
+            if os.path.exists(os.path.join(work, "did")):
+                os.unlink(os.path.join(work, "did"))
+            r = subprocess.run(["sh", dpath], env=env, capture_output=True, text=True)
+            return r.returncode, util.read_text(os.path.join(work, "did")) if os.path.exists(os.path.join(work, "did")) else ""
+        self.assertEqual(drun(), (0, ""))                                       # media without an id (made before this): as ever
+        with open(os.path.join(work, "cdrom", "media-id"), "w") as fh:
+            fh.write("0123456789abcdef\n")
+        self.assertEqual(drun(), (0, ""))                                       # nothing installed yet
+        os.makedirs(os.path.join(work, "disks", "sda1", "boot"))
+        with open(os.path.join(work, "disks", "sda1", "boot", iso.MARK), "w") as fh:
+            fh.write("%s 0123456789abcdef 2026-11-20T10:00Z\n" % host.name)
+        rc, did = drun()
+        self.assertNotEqual(rc, 0)                                              # it never goes on to the partitioning
+        self.assertEqual(did, "poweroff\n")
+        with open(os.path.join(work, "cdrom", "media-id"), "w") as fh:
+            fh.write("ffffffffffffffff\n")
+        self.assertEqual(drun(), (0, ""))                                       # other media: they install
+
     def test_disk_auto_lets_the_installer_find_the_one_disk(self):
         _h, ps, _files = self.make(disk="auto")
         self.assertNotIn("d-i partman-auto/disk string", ps)
-        self.assertIn("d-i partman/early_command string D=$(for d in $(list-devices disk)", ps)
+        self.assertIn("d-i partman/early_command string sh /cdrom/kiwi-server/guard.sh; D=$(for d in $(list-devices disk)", ps)
         self.assertIn('debconf-set partman-auto/disk "$D"', ps)       # only when there is exactly one
         self.assertIn("readlink -f /sys/block/${d##*/} | grep -q /usb ||", ps)   # a USB backup disk is never chosen
         from kiwiserver import iso
@@ -1364,8 +1481,10 @@ class TestIso(Base):
         f2 = self.fleet({"defaults": self.base_defaults(install={"on_done": "reboot"}), "hosts": {"a": {}}})
         calls.clear()
         iso.coreos_iso(FakeTC(), f2.hosts["a"], ign, os.path.join(self.tmp, "o", "a.iso"), self.tmp)
-        self.assertNotIn("--post-install", calls[2])
         self.assertNotIn("--live-karg-append", calls[2])
+        after = util.read_text(calls[2][calls[2].index("--post-install") + 1])      # the mark is left all the same
+        self.assertNotIn("systemctl poweroff", after)
+        self.assertIn(iso.MARK, after)
         # disk: auto: no device is named; a script of the live system finds the machine's one disk
         f3 = self.fleet({"defaults": self.base_defaults(disk="auto", install={"on_done": "reboot"}), "hosts": {"a": {}}})
         self.assertEqual(f3.hosts["a"].validate(self.roles), [])

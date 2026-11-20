@@ -88,10 +88,12 @@ def preseed(host, version):
         "### partitioning — THE WHOLE DISK IS WIPED WITHOUT ASKING",
         # disk: auto. The one disk that holds no mounted file system (the install media does) and is not
         # on USB (a backup disk left plugged in): with none or several the installer asks at the console
-        ("d-i partman/early_command string D=$(for d in $(list-devices disk); do grep -q \"^$d\" /proc/mounts || "
+        # first of all the guard: this install media installed the machine already? Then nothing is erased
+        ("d-i partman/early_command string sh %s/guard.sh; D=$(for d in $(list-devices disk); do grep -q \"^$d\" /proc/mounts || "
          "readlink -f /sys/block/${d##*/} | grep -q /usb || echo $d; done); "
-         "[ \"$(echo $D | wc -w)\" = 1 ] && debconf-set partman-auto/disk \"$D\" && debconf-set grub-installer/bootdev \"$D\""
-         if c.get("disk") == "auto" else "d-i partman-auto/disk string %s" % (c.get("disk") or "/dev/sda")),
+         "[ \"$(echo $D | wc -w)\" = 1 ] && debconf-set partman-auto/disk \"$D\" && debconf-set grub-installer/bootdev \"$D\"" % CDROM_DIR
+         if c.get("disk") == "auto" else
+         "d-i partman/early_command string sh %s/guard.sh\nd-i partman-auto/disk string %s" % (CDROM_DIR, c.get("disk") or "/dev/sda")),
         "d-i partman-auto/method string %s" % ("crypto" if d.get("encrypt") else d["partitioning"]),
         "d-i partman-auto-lvm/guided_size string max",
         "d-i partman-lvm/device_remove_lvm boolean true",
@@ -213,8 +215,56 @@ def late_script(host):
         L += ["install -d -m 0700 $T/etc/wireguard",
               "install -m 0600 $S/kiwi-join.conf $T/etc/wireguard/kiwi-join.conf",
               "in-target systemctl enable wg-quick@kiwi-join.service"]
-    L += ["in-target systemctl enable kiwi-role.service", "exit 0", ""]
+    L += ["in-target systemctl enable kiwi-role.service",
+          "# this media's id on the installed system's /boot: its guard finds it when the media starts here again",
+          "if [ -s $S/media-id ]; then echo \"%s $(cat $S/media-id) $(date -u +%%Y-%%m-%%dT%%H:%%MZ)\" > $T/boot/%s || true; fi" % (host.name, MARK),
+          "exit 0", ""]
     return "\n".join(L)
+
+
+MARK = "kiwi-installed"         # iso.MARK: the same file name on a uCore machine's boot partition
+
+
+def guard_script(host):
+    """Run by the installer before it partitions (partman/early_command), in its small shell: install
+    media left in a machine must not install it again (iso.py says more). The media's id is on the
+    media (media-id); the installer left it on the installed system's /boot. Found there: nothing
+    is erased, the machine is told why and switched off. Nothing found, or nothing readable: the
+    install goes on as it always did."""
+    return "\n".join([
+        "#!/bin/sh",
+        "# kiwi-server: the guard. This install media installed this machine already: not again.",
+        "S=%s" % CDROM_DIR,
+        "[ -s $S/media-id ] || exit 0",
+        "id=$(cat $S/media-id)",
+        "case \" $(cat /proc/cmdline) \" in *\" kiwi.reinstall \"*) exit 0 ;; esac",
+        "modprobe ext4 2>/dev/null || true",
+        "m=/tmp/kiwi-guard; mkdir -p $m",
+        "hit=",
+        "for p in $(list-devices partition 2>/dev/null); do",
+        "    grep -q \"^$p \" /proc/mounts && continue",
+        "    mount -t ext4 -o ro \"$p\" $m 2>/dev/null || continue",
+        "    for f in $m/%s $m/boot/%s; do" % (MARK, MARK),
+        "        if [ -f \"$f\" ] && grep -q \" $id \" \"$f\"; then hit=$(head -n 1 \"$f\"); fi",
+        "    done",
+        "    umount $m 2>/dev/null || true",
+        "    [ -n \"$hit\" ] && break",
+        "done",
+        "[ -n \"$hit\" ] || exit 0",
+        "logger -t kiwi-server \"%s is installed already (${hit##* }) by this install media: nothing is installed again\"" % host.name,
+        "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do",
+        "    for t in /dev/console /dev/tty1 /dev/ttyS0; do",
+        "        printf '\\n\\nkiwi-server: %s is installed already (%%s), by this install media: nothing is installed again.\\n"
+        "Take the install media out, then switch the machine on. It is switched off in a minute.\\n"
+        "To install it again on purpose: make the install media again.\\n' \"${hit##* }\" > $t 2>/dev/null || true" % host.name,
+        "    done",
+        "    sleep 5",
+        "done",
+        "sync",
+        "poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger",
+        "sleep 3600",
+        "",
+    ])
 
 
 def reboot_units(host):
@@ -247,6 +297,7 @@ def iso_files(host, role_script):
     out = {
         **ssh_files,
         "late.sh": (late_script(host), 0o755),
+        "guard.sh": (guard_script(host), 0o755),
         "role.sh": (role_script, 0o600),
         "kiwi-role.service": (role_unit(host), 0o644),
         "kiwi-reboot-if-required.service": (svc, 0o644),

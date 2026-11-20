@@ -1,0 +1,24 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: kn-dns-up
+BindsTo=kn-pihole.service
+After=kn-pihole.service
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/coredns/coredns:1.12.4
+ContainerName=kn-dns-up
+Network=container:kn-pihole
+AutoUpdate=registry
+Volume=/home/user/docker/kn-pihole/Corefile:/Corefile:ro,z
+Exec=-conf /Corefile
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target
+WantedBy=kn-pihole.service

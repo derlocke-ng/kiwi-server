@@ -23,6 +23,10 @@
 {% set _ = chain.append('1.1.1.1;1.0.0.1') %}
 {% endif %}
 {% set upstreams = chain | join(';') %}
+{% if dns_up %}
+{# a node: the resolver in front (Corefile.j2) chooses between the master and the fallbacks #}
+{% set upstreams = '127.0.0.1#5335' %}
+{% endif %}
 {# no-hosts: podman copies the host's /etc/hosts into the container, where the node's
    own names point at 127.0.0.1 — dnsmasq would serve that to every client #}
 {% set lines = ['strict-order', 'no-hosts'] %}
@@ -136,4 +140,21 @@ services:
 {% if mullvad_socks %}
       # root's, written by the host timer: read-only in here
       - {{ docker_dir }}/{{ container_prefix }}-pihole/mullvad-socks:/etc/mullvad-socks:ro,z
+{% endif %}
+{% if dns_up %}
+  # in front of Pi-hole, in its network: the master's Pi-hole while it answers, the fallbacks while it does not
+  {{ container_prefix }}-dns-up:
+    image: {{ up_image }}
+    container_name: {{ container_prefix }}-dns-up
+    network_mode: "service:{{ container_prefix }}-{{ network_mode or 'pihole' }}"
+    depends_on:
+      - {{ container_prefix }}-{{ network_mode or 'pihole' }}
+    command: ["-conf", "/Corefile"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-pihole/Corefile:/Corefile:ro,z
 {% endif %}

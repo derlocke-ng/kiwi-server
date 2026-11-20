@@ -17,6 +17,11 @@ derived:
   shares_proxy_namespace: "{{ 'yes' if network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else '' }}"
   web_port_effective: "{{ web_port or (8081 if (network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode) else 80) }}"
   federation_ask: "{{ 'yes' if node_type == 'master' and (module_config.get('vpn-server') or {}).get('federation') else '' }}"
+  # a node's way to the names of the Internet: the master's Pi-hole while it answers, the fallbacks
+  # (over TLS) while it does not, switched by a small resolver in front of Pi-hole (Corefile.j2).
+  # Pi-hole's own order switched only when a client asked a second time: while the master was down
+  # a lookup took five seconds, or got no answer (the master-down drill, 20 Nov 2026)
+  dns_up: "{{ 'yes' if node_type != 'master' and master_ip and fallback_dns and not upstream_dns and not legacy_env else '' }}"
 
 network:
   listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp"]
@@ -35,6 +40,7 @@ validate:
 
 templates:
   compose: docker-compose.yml.j2
+  corefile: Corefile.j2
   mullvad_socks_script: mullvad-socks.sh.j2
   mullvad_socks_service: mullvad-socks.service.j2
   mullvad_socks_timer: mullvad-socks.timer.j2
@@ -62,6 +68,8 @@ outputs:
   blocklist_timer: { kind: host_unit, name: "{{ container_prefix }}-pihole-blocklist.timer" }
   # the linked networks whose DNS kiwi-server's status asks what they open to this one
   federation_ask: { path: "kiwi/federation-ask", mode: 0644, when: federation_ask }
+  # the resolver in front of Pi-hole on a node (dns_up above)
+  corefile: { path: "{{ container_prefix }}-pihole/Corefile", mode: 0644, when: dns_up }
 
 storage:
   bind_mounts:
@@ -114,6 +122,15 @@ settings:
     label: Fallback resolvers
     help: "Semicolon separated, tried in strict order after the first upstream. Reached directly, not through the tunnel (which is down whenever the master is), so only ever used while the master is unreachable. Empty: none."
     default: 1.1.1.1;1.0.0.1
+  - key: fallback_tls_name
+    label: Fallback resolvers over TLS
+    help: "On a node, the fallback resolvers are asked over TLS (port 853) and must show a certificate for this name, so the home line's provider does not read the names while the master is away. Empty: asked in plain text on port 53."
+    default: cloudflare-dns.com
+  - key: up_image
+    group: Advanced
+    label: Image of the resolver in front of Pi-hole
+    help: "On a node: CoreDNS, which asks the master while it answers and the fallbacks while it does not."
+    default: docker.io/coredns/coredns:1.12.4
   - key: network_mode
     group: Advanced
     label: Share a container's network

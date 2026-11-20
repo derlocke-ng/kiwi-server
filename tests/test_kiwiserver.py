@@ -2021,8 +2021,12 @@ class TestModules(Base):
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
         self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
-        # the master's Pi-hole first, a public resolver only while the master is unreachable; fleet names go to the master
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", svcs["kn-pihole"]["environment"])
+        # the master's Pi-hole first, a public resolver (over TLS) only while the master does not answer, chosen by
+        # the resolver in front of Pi-hole; the fleet's names go to the master
+        self.assertIn("FTLCONF_dns_upstreams=127.0.0.1#5335", svcs["kn-pihole"]["environment"])
+        self.assertEqual(svcs["kn-dns-up"]["network_mode"], "service:kn-pihole")
+        core = b.files["kn-pihole/Corefile"][0]
+        self.assertIn("forward . 10.8.0.1 tls://1.1.1.1 tls://1.0.0.1 {", core if isinstance(core, str) else core.decode())
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
@@ -9866,8 +9870,8 @@ class TestCli(Base):
         self.assertNotIn(("10.8.0.25", "*.sh3.kiwi"), recs)
         m1, b = r.script(f.hosts["m1"])
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
-        # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        # the master's address comes from the fleet's master host: DNS upstream (through the resolver in front), forward, hosts block
+        self.assertIn("FTLCONF_dns_upstreams=127.0.0.1#5335", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)

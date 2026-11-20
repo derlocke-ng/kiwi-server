@@ -74,5 +74,7 @@ say what 2.267.0 does.
 46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).
 47. gluetun says its `DOT_PROVIDERS` is the old name of `DNS_UPSTREAM_RESOLVERS`: the vpn-client module should set the new one
     (a warning in its log only; seen 20 Nov).
-48. After a restart of the VPN client its resolver takes about 75 seconds to answer (it fetches block lists it does not use,
-    all its blocking being off): Pi-hole asks its fallback meanwhile. Look for a switch that skips the fetch.
+48. After a restart of the master's VPN client its resolver answers only when the tunnel is up: 75 seconds on 20 Nov, because
+    the first exit servers it tried did not pass its start check (several tries of six seconds). Pi-hole asks its fallback
+    meanwhile, directly. Nothing to fix in the resolver; gluetun's start check also asks for NET_RAW (ICMP), which the
+    container does not have: see whether giving it makes the check quicker.

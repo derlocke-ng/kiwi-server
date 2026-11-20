@@ -13222,6 +13222,21 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(merged["secrets/known_hosts"], "a k1\nb k2\nc k3\n")
         self.assertEqual(both, [])
 
+    def test_a_login_both_sides_renewed_keeps_the_newer(self):
+        """netcup's refresh token changes when it is used: the control node and a computer both used
+        it, and the next sync stopped at "secrets/netcup.token changed on both sides" (20 Nov 2026)."""
+        old, mine, theirs = ('{"refresh_token": "r0"}', '{"refresh_token": "r1", "at": 1000}', '{"refresh_token": "r2", "at": 2000}')
+        merged, taken, both = self.merge({"secrets/netcup.token": old}, {"secrets/netcup.token": mine}, {"secrets/netcup.token": theirs})
+        self.assertEqual((merged["secrets/netcup.token"], taken, both), (theirs, ["secrets/netcup.token"], []))
+        merged, taken, both = self.merge({"secrets/netcup.token": old}, {"secrets/netcup.token": theirs}, {"secrets/netcup.token": mine})
+        self.assertEqual((merged["secrets/netcup.token"], taken, both), (theirs, [], []))
+        merged, taken, both = self.merge({"secrets/netcup.token": old}, {"secrets/netcup.token": '{"refresh_token": "a"}'},
+                                         {"secrets/netcup.token": '{"refresh_token": "b"}'})
+        self.assertEqual((merged["secrets/netcup.token"], both), ('{"refresh_token": "b"}', []))   # neither says when: the other side's
+        # anything else in secrets/ that both changed is still a person's to decide
+        merged, taken, both = self.merge({"secrets/seed": "a"}, {"secrets/seed": "b"}, {"secrets/seed": "c"})
+        self.assertEqual(both, ["secrets/seed"])
+
     def test_the_fleet_file_is_merged_key_by_key(self):
         """The page changes one machine's setting, a computer another's: both are kept. Only a key
         both changed, to different values, is named for a person to decide."""
@@ -15153,6 +15168,14 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.c.waiting(), {})
         own = [j for j in self.c.jobs() if j["user"] == "control"]
         self.assertEqual((len(own), own[0]["hosts"], own[0]["state"]), (1, [b], "ok"))
+        # its agent falls silent while the last look calls it up: the next look comes at once, not in ten minutes
+        self.assertEqual(self.c.went_silent(), [])
+        old = time.time() - 200
+        os.utime(os.path.join(self.c.reports_dir, b + ".txt"), (old, old))
+        self.assertEqual(self.c.went_silent(), [b])
+        gone = time.time() - 7200                                              # silent for hours: the full look's to find
+        os.utime(os.path.join(self.c.reports_dir, b + ".txt"), (gone, gone))
+        self.assertEqual(self.c.went_silent(), [])
 
     def test_jobs_on_different_machines_run_side_by_side(self):
         cookie, _csrf = self.made()

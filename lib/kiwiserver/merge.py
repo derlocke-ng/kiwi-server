@@ -27,6 +27,18 @@ YAMLS = ("fleet.yaml", "federation.yaml")
 _MISSING, _CONFLICT = object(), object()
 
 
+def _is_token(path):
+    return path.startswith("secrets/") and path.endswith(".token") and "/" not in path[len("secrets/"):]
+
+
+def _token_at(data):
+    """When a login token was kept (its "at"), 0 when it does not say."""
+    try:
+        return int(json.loads(data.decode()).get("at") or 0)
+    except (ValueError, AttributeError, TypeError):
+        return 0
+
+
 def _merge_value(b, h, t):
     if h == t or t == b:
         return h
@@ -100,6 +112,11 @@ def merge(base, here, there):
             lines += [x for x in t.decode(errors="replace").splitlines() if x not in lines]
             pick = ("\n".join(lines) + "\n").encode()
             theirs.append(path)
+        elif _is_token(path) and h is not None and t is not None:
+            # a login both sides renewed (netcup's refresh token changes when it is used): the newer
+            pick = h if _token_at(h) > _token_at(t) else t
+            if pick is t:
+                theirs.append(path)
         elif path in YAMLS and h is not None and t is not None and merge_yaml(b, h, t) is not None:
             pick = merge_yaml(b, h, t)
             theirs.append(path)

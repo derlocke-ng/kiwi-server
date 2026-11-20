@@ -4126,12 +4126,12 @@ def parse_snapshots(text):
     return servers
 
 
-def restore_from(fleet, roles, ms, dst, src, parts, at=None, tgt=None):
+def restore_from(fleet, roles, ms, dst, src, parts, at=None, tgt=None, out_dir=None):
     """`parts` on `dst` from the copies `src` made of them (a part that moved, partmove.py): `src`'s
     way into its backups goes to `dst` on standard input for this one run and is not kept there.
     Returns what the machine said."""
     from . import partmove
-    rolesmod.resolve_settings(roles[src.role], src, ms)
+    Renderer(fleet, roles, out_dir or fleet.resolve_path("output"), None, ms).script(src)     # (as an apply renders it)
     if "backup" not in (src.modules or []):
         raise KiwiError("%s has no backup module: there are no copies of it to take from" % src.name)
     env = partmove.way_in(src.module_settings.get("backup"), src)
@@ -5030,9 +5030,10 @@ def move_part(args, part, src_name, dst_name):
                   % (typed_path(fleet.path), part, src_name, dst_name))
             return
     src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
-    rolesmod.resolve_settings(roles[src.role], src, ms)
-    spec = modmod.Renderer(ms).render(rolesmod.stack_spec(src, roles[src.role]))
-    services = sorted(c for c, mod in (getattr(spec, "service_modules", {}) or {}).items() if mod == part)
+    # rendered as an apply renders it: only then its settings hold what the network adds (20 Nov 2026:
+    # resolved alone, a machine with a public name was refused for want of its master)
+    _script, bundle = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).script(src)
+    services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
     s_tgt, d_tgt = remote.reach(src, None), remote.reach(dst, None)
     # 1. it stops where it is, and that machine makes its last copy of it
     for c in services:

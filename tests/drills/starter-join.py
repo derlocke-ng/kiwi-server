@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Drill: a machine that booted the starter stick and waits on the home network is taken
-into a network, the way the control page's "A machine with the starter stick is waiting"
+into a network, the way the control page's "Take in a machine"
 form does it (Control.take_in), run here on the operator's computer.
 
     tests/drills/starter-join.py FLEET ADDRESS CODE [--preset minimal] [--name plum]

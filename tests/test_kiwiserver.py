@@ -2887,6 +2887,46 @@ class TestSetup(Base):
         self.assertIn(node, changed)
         dns = [h.name for h in ok if "dns" in fleet.hosts[h.name].modules]
         self.assertTrue(dns and all(d in changed for d in dns), (dns, changed))       # they must learn paste.<node>
+        # asked again with nothing changed: the same answer, and no script is rendered for it
+        calls, real = [], r.script
+        r.script = lambda h: (calls.append(h.name), real(h))[1]
+        self.assertEqual(cli.changed_since_apply(fleet, roles, r), changed)
+        self.assertEqual(calls, [])
+        self.assertEqual(cli.changed_since_apply(fleet, roles, r, skip={node}), [c for c in changed if c != node])
+        self.assertEqual(calls, [])
+        os.environ["KIWI_RENDER_ALWAYS"] = "1"                                       # the way out: render every time
+        try:
+            self.assertEqual(cli.changed_since_apply(fleet, roles, r), changed)
+        finally:
+            del os.environ["KIWI_RENDER_ALWAYS"]
+        self.assertTrue(calls)
+        del calls[:]
+        keep, cli.KEPT_FOR = cli.KEPT_FOR, 0                                          # kept too long ago: rendered again
+        try:
+            self.assertEqual(cli.changed_since_apply(fleet, roles, r), changed)
+        finally:
+            cli.KEPT_FOR = keep
+        self.assertTrue(calls)
+        del calls[:]
+        write(dest, util.read_text(dest) + "\n# a line more\n")                      # the fleet file is another: rendered again
+        fleet = config.Fleet.load(dest)
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+        real2 = r.script
+        r.script = lambda h: (calls.append(h.name), real2(h))[1]
+        self.assertEqual(cli.changed_since_apply(fleet, roles, r), changed)
+        self.assertTrue(calls)
+
+    def test_as_many_machines_at_once_as_there_are(self):
+        self.assertEqual(cli.at_once(70), 70)                                         # no fixed number
+        self.assertEqual(cli.at_once(70, 8), 8)                                       # --at-once 8
+        self.assertEqual(cli.at_once(3, 8), 3)
+        self.assertEqual(cli.at_once(0), 1)
+        os.environ["KIWI_AT_ONCE"] = "4"
+        try:
+            self.assertEqual(cli.at_once(70), 4)
+            self.assertEqual(cli.at_once(70, 2), 2)                                   # what is asked wins
+        finally:
+            del os.environ["KIWI_AT_ONCE"]
 
     def test_a_new_release_alone_is_no_change(self):
         import hashlib
@@ -13608,7 +13648,7 @@ class TestFirstRunPage(StoreBase):
         master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
         write(config.Fleet.load(path).resolve_path("secrets/%s.home.conf" % node), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.9/32\n")
         body = self.ask("/access", cookie=cookie)[1]
-        self.assertIn("Who may reach what", body)
+        self.assertIn("<h1>Access rules</h1>", body)
         for g in ("guests", "pentest", "devices", "routers", "family"):
             self.assertIn("<strong>%s</strong>" % g, body)
         self.assertIn('name="apps.family" style="width:auto" checked', body)       # the people of the house: every app
@@ -13952,6 +13992,145 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.c.refresh_status()["hosts"], [{"host": "a", "ok": True}])
         self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
         self.assertEqual(self.c.refresh_status()["error"], "error: boom")
+
+    def test_jobs_on_different_machines_run_side_by_side(self):
+        cookie, _csrf = self.made()
+        a, b = sorted(self.data()["hosts"])[:2]
+        book, go = os.path.join(self.tmp, "book"), os.path.join(self.tmp, "go3")
+        script = ("import os, sys, time\n"
+                  "if sys.argv[1] != 'apply': sys.exit(0)\n"
+                  "names = [x for x in sys.argv[2:] if x in %r]\n"
+                  "open(%r, 'a').write('start %%s\\n' %% ' '.join(names))\n"
+                  "while not os.path.exists(%r): time.sleep(0.05)\n"
+                  "for h in names: print(':: %%s: applied' %% h)\n" % ([a, b], book, go))
+        self.c.kiwi = [sys.executable, "-c", script]
+        write(book, "")
+        starts = lambda: util.read_text(book).split("\n")[:-1]
+
+        def until(n):
+            for _ in range(100):
+                if len(starts()) >= n:
+                    return
+                time.sleep(0.05)
+        self.c.start("apply", [a], user="admin")
+        self.c.start("apply", [b], user="admin")
+        until(2)
+        self.assertEqual(sorted(starts()), ["start " + a, "start " + b])      # both run, neither has ended
+        self.assertEqual(self.c._busy, {a, b})                                # the look leaves both alone
+        third = self.c.start("apply", [a], user="admin")                      # the same machine: after the first
+        every = self.c.start("update", user="admin")                          # the whole network: after all of them
+        time.sleep(0.5)
+        self.assertEqual(len(starts()), 2)
+        self.assertEqual(self.c.job(third)["state"], "waiting")
+        write(go, "")
+        for _ in range(200):
+            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()):
+                break
+            time.sleep(0.05)
+        self.assertEqual([j["state"] for j in self.c.jobs()].count("ok") >= 3, True)
+        self.assertEqual(len(starts()), 4)
+        self.assertIsNone(self.c._busy)
+        self.assertEqual(self.c.job(every)["state"] in ("ok", "failed"), True)
+        # a job on the machine this page runs on has the node to itself: its apply restarts the page
+        os.environ["KIWI_CONTROL_HOST"] = a
+        try:
+            self.assertIs(self.c._machines_of({"action": "apply", "hosts": [a]}), controlmod.EVERY)
+            self.assertEqual(self.c._machines_of({"action": "apply", "hosts": [b]}), {b})
+        finally:
+            del os.environ["KIWI_CONTROL_HOST"]
+        self.assertIs(self.c._machines_of({"action": "remove", "hosts": [b]}), controlmod.EVERY)
+
+    def test_the_gate(self):
+        g, seen = controlmod.Gate(), []
+
+        def job(names, hold):
+            with g.machines(names):
+                seen.append(("in", tuple(names)))
+                hold.wait(5)
+                seen.append(("out", tuple(names)))
+        h1, h2 = threading.Event(), threading.Event()
+        t1 = threading.Thread(target=job, args=(["a"], h1)); t1.start()
+        t2 = threading.Thread(target=job, args=(["b"], h2)); t2.start()
+        for _ in range(100):
+            if len(seen) == 2:
+                break
+            time.sleep(0.01)
+        self.assertEqual(sorted(seen), [("in", ("a",)), ("in", ("b",))])     # side by side
+        self.assertTrue(g.locked())
+        self.assertFalse(g.acquire(blocking=False))                           # not alone while they work
+        alone = []
+        t3 = threading.Thread(target=lambda: (g.acquire(), alone.append("alone"), g.release())); t3.start()
+        time.sleep(0.1)
+        late = threading.Thread(target=job, args=(["c"], threading.Event())); late.start()   # comes after the one who asked
+        time.sleep(0.1)
+        self.assertEqual((alone, len(seen)), ([], 2))                         # both wait: the asker for the jobs, the job for the asker
+        h1.set(); h2.set()
+        for t in (t1, t2, t3, late):
+            t.join(10)
+        self.assertEqual(alone, ["alone"])
+        self.assertLess(seen.index(("out", ("b",))), seen.index(("in", ("c",))))
+        self.assertFalse(g.locked())
+
+    def test_an_apply_that_did_not_reach_a_machine_waits_for_it(self):
+        cookie, _csrf = self.made()
+        a, b = sorted(self.data()["hosts"])[:2]
+        mode = os.path.join(self.tmp, "mode")
+        # the stand-in: `apply` applies a, and b only when the file says "up"; `status` says b down or ok by the same file
+        script = ("import json, sys\n"
+                  "up = open(%r).read().strip()\n"
+                  "what, names = sys.argv[1], [x for x in sys.argv[2:] if x in %r]\n"
+                  "if what == 'apply':\n"
+                  "    bad = 0\n"
+                  "    for h in names:\n"
+                  "        if h == %r and up != 'up':\n"
+                  "            print('error: %%s: ssh: connect to host: No route to host' %% h); bad = 1\n"
+                  "        else:\n"
+                  "            print(':: %%s: applied' %% h)\n"
+                  "    sys.exit(bad)\n"
+                  "if what == 'status':\n"
+                  "    for h in %r:\n"
+                  "        st = 'down' if h == %r and up == 'off' else 'ok'\n"
+                  "        print(json.dumps({'host': h, 'ok': st == 'ok', 'state': st, 'problems': [], 'notes': [], 'facts': {}}), flush=True)\n"
+                  % (mode, [a, b], b, [a, b], b))
+        self.c.kiwi = [sys.executable, "-c", script]
+        ended = lambda: all(j["state"] in ("ok", "failed") for j in self.c.jobs())
+
+        def wait_jobs():
+            for _ in range(200):
+                if ended() and not self.c._retrying:
+                    return
+                time.sleep(0.05)
+            self.fail("a job did not end")
+        write(mode, "off")
+        jid = self.c.start("apply", [a, b], user="admin", wait=True)
+        self.assertEqual(self.c.job(jid)["state"], "failed")
+        self.assertEqual(sorted(self.c.waiting()), [b])                     # a got it; b's apply waits
+        self.assertEqual(self.c.waiting()[b]["user"], "admin")
+        self.c.refresh_status()                                             # b is still off: nothing is started
+        wait_jobs()
+        self.assertEqual(len(self.c.jobs()), 1)
+        self.assertIn("apply waits", self.ask("/machines", cookie=cookie)[1])
+        self.assertIn("gets it by itself", self.ask("/hosts/" + b, cookie=cookie)[1])
+        write(mode, "up")                                                   # b is back: the look applies it
+        self.c.refresh_status()
+        wait_jobs()
+        jobs = self.c.jobs()
+        own = [j for j in jobs if j["user"] == "control"]
+        self.assertEqual((len(jobs), len(own), own[0]["hosts"], own[0]["state"]), (2, 1, [b], "ok"))
+        self.assertEqual(self.c.waiting(), {})
+        self.assertNotIn("apply waits", self.ask("/machines", cookie=cookie)[1])
+        # a machine that answers and still fails: tried a few times, then left to a person
+        write(mode, "half")                                                 # status says ok, apply fails
+        self.c.start("apply", [b], user="admin", wait=True)
+        self.assertEqual(sorted(self.c.waiting()), [b])
+        for _ in range(self.c.RETRIES + 2):
+            self.c.refresh_status()
+            wait_jobs()
+        self.assertEqual(self.c.waiting(), {})                              # given up
+        own = [j for j in self.c.jobs(50) if j["user"] == "control" and j["state"] == "failed"]
+        self.assertEqual(len(own), self.c.RETRIES)
+        with open(os.path.join(self.c.dir, "audit.jsonl")) as fh:
+            self.assertIn("gave up applying %s by itself" % b, fh.read())
 
     def test_a_look_does_not_wait_for_a_job_on_another_machine(self):
         cookie, _csrf = self.made()

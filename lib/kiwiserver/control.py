@@ -149,6 +149,62 @@ def _ask_starter(address, body, timeout=30):
 EVERY = "every machine"         # Control._busy while a job works on all of them
 
 
+class Gate:
+    """The control node's lock (the owner, 20 Nov 2026: one lock for everything is not how a network
+    of many machines works). `with gate:` is alone, as a plain lock was: what changes the fleet's
+    files or the store waits for every job and holds new ones off. `with gate.machines(names):` is
+    a job on these machines: it runs beside jobs on other machines, and after one on the same."""
+
+    def __init__(self):
+        self._c = threading.Condition()
+        self._alone = False         # held alone
+        self._asking = 0            # waiting to hold it alone: no new job starts, so they get their turn
+        self._at_work = {}          # a job's token -> its machines
+
+    def acquire(self, blocking=True):
+        with self._c:
+            if not blocking and (self._alone or self._at_work):
+                return False
+            self._asking += 1
+            try:
+                while self._alone or self._at_work:
+                    self._c.wait()
+            finally:
+                self._asking -= 1
+            self._alone = True
+            return True
+
+    def release(self):
+        with self._c:
+            self._alone = False
+            self._c.notify_all()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+
+    def locked(self):
+        with self._c:
+            return self._alone or bool(self._at_work)
+
+    @contextlib.contextmanager
+    def machines(self, names):
+        names, token = set(names), object()
+        with self._c:
+            while self._alone or self._asking or any(names & w for w in self._at_work.values()):
+                self._c.wait()
+            self._at_work[token] = names
+        try:
+            yield
+        finally:
+            with self._c:
+                del self._at_work[token]
+                self._c.notify_all()
+
+
 class Control:
     def __init__(self, fleet_path, kiwi_cmd=None, status_minutes=10, watch_seconds=60, clock=time.time, run_dir=None):
         self.fleet_path = os.path.abspath(fleet_path)
@@ -165,9 +221,12 @@ class Control:
         self.watch_seconds = watch_seconds
         self._riseup_at = 0         # when Riseup certificates were last looked at (loop)
         self.clock = clock
-        self.lock = threading.Lock()          # one job at a time: two applies never cross
+        self.lock = Gate()                    # alone for what changes the fleet; jobs on different machines side by side
+        self._ending = threading.Lock()       # what a job does when it ends, one job at a time
+        self._working = {}                    # a running job's id -> its machines, or EVERY
         self.look_lock = threading.Lock()     # one look at a time; it does not wait for a job (refresh_status)
         self._busy = None                     # the machines the running job works on; EVERY: all of them
+        self._retrying = set()                # machines whose waiting apply this node started and that has not ended
         self._reads = {}                      # what a `--porcelain` read worked out, until the fleet changes (_read_once)
         self._gen = 0                         # counted up with every job that ends: nothing kept outlives one
         self.failures = {}                    # address -> [times] of failed logins
@@ -1133,14 +1192,31 @@ class Control:
     def _working_on(self, meta):
         """While a job runs: the machines the look leaves alone. One in the middle of an apply
         would look broken."""
-        self._busy = set(meta["hosts"]) if meta.get("hosts") and meta["action"] != "update" else EVERY
+        def union():
+            mine = list(self._working.values())
+            return None if not mine else EVERY if any(m is EVERY for m in mine) else set().union(*mine)
+        self._working[meta["id"]] = self._machines_of(meta)
+        self._busy = union()
         try:
             yield
         finally:
-            self._busy = None
+            self._working.pop(meta["id"], None)
+            self._busy = union()
+
+    # the jobs that work on the machines they name and on nothing the others share: they run side by side
+    SIDE_BY_SIDE = ("apply", "status", "plan", "reboot", "poweroff", "service")
+
+    def _machines_of(self, meta):
+        """The machines a job works on, or EVERY: a job without names, or one that changes more
+        than its machines (a removal, a rotation, a restore), has the node to itself."""
+        me = os.environ.get("KIWI_CONTROL_HOST")    # its own apply restarts this page, and every job with it
+        if meta.get("hosts") and meta["action"] in self.SIDE_BY_SIDE and not (me in meta["hosts"] and meta["action"] == "apply"):
+            return set(meta["hosts"])
+        return EVERY
 
     def _run(self, meta, argv):
-        with self.lock, self._working_on(meta):
+        mine = self._machines_of(meta)
+        with (self.lock if mine is EVERY else self.lock.machines(mine)), self._working_on(meta):
             meta.update(state="running", started=self.clock())
             self._write(meta)
             log = os.path.join(self.jobs_dir, meta["id"] + ".log")
@@ -1152,19 +1228,26 @@ class Control:
                 except OSError as e:
                     fh.write("could not start: %s\n" % e)
                     rc = 127
-            try:
-                if not self._pushed():      # a push during the job wins: the next look takes it
-                    self.save_fleet()
-            except (KiwiError, OSError) as e:
-                util.warn("control: the fleet file was not saved: %s" % e)
-            if meta["action"] == "remove" and rc == 0:      # gone from the last look before the job says done:
-                try:                                        # a page that reads "ok" never sees it half there
-                    self._forget_in_status(meta["hosts"])
-                except (OSError, ValueError) as e:
-                    util.warn("control: the last look still names %s: %s" % (", ".join(meta["hosts"]), e))
-            self._gen += 1          # whatever a job did: nothing that was read before it is kept
-            meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
-            self._write(meta)
+            with self._ending:      # one job's ending at a time: the fleet's files, the book of waiting applies
+                try:
+                    if not self._pushed():      # a push during the job wins: the next look takes it
+                        self.save_fleet()
+                except (KiwiError, OSError) as e:
+                    util.warn("control: the fleet file was not saved: %s" % e)
+                if meta["action"] == "remove" and rc == 0:      # gone from the last look before the job says done:
+                    try:                                        # a page that reads "ok" never sees it half there
+                        self._forget_in_status(meta["hosts"])
+                        self.forget_waiting(*meta["hosts"])
+                    except (OSError, ValueError) as e:
+                        util.warn("control: the last look still names %s: %s" % (", ".join(meta["hosts"]), e))
+                if meta["action"] in ("apply", "update"):
+                    try:
+                        self._note_applied(meta)
+                    except (OSError, ValueError) as e:
+                        util.warn("control: what waits for its apply was not written: %s" % e)
+                self._gen += 1          # whatever a job did: nothing that was read before it is kept
+                meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
+                self._write(meta)
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
             failed = self._failed_hosts(meta) if len(meta["hosts"]) > 1 and meta["state"] == "failed" else None
             if failed:                          # several at once: each machine's own result
@@ -1955,6 +2038,79 @@ class Control:
         except (OSError, ValueError):
             return None
 
+    # ---- applies that wait for their machine ------------------------------------------
+    # The owner, 20 Nov 2026: a machine that is off must not end as "failed" and stay so. A machine
+    # that an apply did not reach keeps it: the look that sees it answer again applies it, without
+    # anyone asking. One that answers and still fails is tried RETRIES times, then left to a person.
+    RETRIES = 3
+
+    def _waiting_path(self):
+        return os.path.join(self.dir, "waiting.json")
+
+    def waiting(self):
+        """{machine: {since, tries, user}}: the applies that wait for their machine."""
+        try:
+            data = json.loads(util.read_text(self._waiting_path()))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_waiting(self, data):
+        util.write_text(self._waiting_path(), json.dumps(data, sort_keys=True), 0o600)
+
+    def forget_waiting(self, *names):
+        """Take machines out of the book (a person said so, or the machine left the network)."""
+        data = self.waiting()
+        if any(data.pop(n, None) for n in names):
+            self._write_waiting(data)
+
+    def _note_applied(self, meta):
+        """After an apply: the machines its log says were applied leave the book; the others of
+        the job are in it. A try this node made by itself counts; the last one gives up."""
+        with open(os.path.join(self.jobs_dir, meta["id"] + ".log"), errors="replace") as fh:
+            done = set(re.findall(r"^:: (\S+): applied\s*$", fh.read(), re.M))
+        names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
+        wanted = [h for h in (meta.get("hosts") or names) if h in names]
+        data, before = self.waiting(), None
+        before = json.dumps(data, sort_keys=True)
+        own = meta.get("user") == "control"
+        for h in list(data):
+            if h in done or h not in names:
+                del data[h]
+        for h in wanted:
+            if h in done:
+                continue
+            e = data.get(h) or {"since": int(self.clock()), "tries": 0, "user": meta.get("user") or ""}
+            if own:
+                e["tries"] = int(e.get("tries") or 0) + 1
+            if e["tries"] >= self.RETRIES:
+                data.pop(h, None)
+                self.audit("control", "gave up applying %s by itself: %d tries while it answered" % (h, e["tries"]), host=h)
+                continue
+            data[h] = e
+        self._retrying -= set(wanted)
+        if json.dumps(data, sort_keys=True) != before:
+            self._write_waiting(data)
+
+    def _apply_who_is_back(self, rows):
+        """After a look: the machines whose apply waits and that answer now get it, as one job."""
+        data = self.waiting()
+        if not data or self.locked():
+            return None
+        busy = self._busy
+        back = [h for h in sorted(data) if (rows.get(h) or {}).get("state") in ("ok", "warn", "bad")
+                and h not in self._retrying and busy is not EVERY and h not in (busy or ())]
+        if not back:
+            return None
+        self._retrying |= set(back)
+        try:
+            jid = self.start("apply", back, user="control")
+        except KiwiError as e:
+            self._retrying -= set(back)
+            util.warn("control: the waiting applies were not started: %s" % e)
+            return None
+        return jid
+
     looking = False                         # a look at every machine is under way
 
     def look(self):
@@ -2038,6 +2194,10 @@ class Control:
                 self.fleet_info(fresh=True)
             except (OSError, ValueError):
                 pass
+            try:                            # a machine that is back gets the apply that waited for it
+                self._apply_who_is_back({h.get("host"): h for h in data.get("hosts") or []})
+            except (OSError, ValueError) as e:
+                util.warn("control: the waiting applies were not looked at: %s" % e)
             return data
         finally:
             # over only once what it found is written: a page that says "checking" until then never

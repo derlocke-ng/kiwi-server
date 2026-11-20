@@ -192,7 +192,7 @@ new. Then replace the keys that open your machines, and the secrets inside
 your services. If it knew the password of the control page, change that too.
 
 - In the app: the menu, **A computer was lost or stolen…**
-- On the control page: **Computers**, **Remove**, then the steps under
+- On the control page: **Controllers**, **Remove**, then the steps under
   **If a computer was lost or stolen**.
 - In a terminal:
 

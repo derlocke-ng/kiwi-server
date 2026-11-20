@@ -1687,7 +1687,7 @@ class FederationDialog(Adw.Dialog):
             g = Adw.PreferencesGroup(title=name)
             g.set_header_suffix(info_button("%s at %s, %s, its names .%s" % (
                 name, p.get("endpoint", "?"), p.get("mesh", "?"), p.get("domain", "?"))))
-            share = Adw.EntryRow(title="Shared here (ticked under “Who may reach what…”)", text=" ".join(p.get("share") or []))
+            share = Adw.EntryRow(title="Shared here (ticked under “Access rules…”)", text=" ".join(p.get("share") or []))
             frm = Adw.EntryRow(title="From", text=" ".join(p.get("from") or []))
             g.add(share)
             g.add(frm)
@@ -1784,7 +1784,7 @@ class AccessDialog(Adw.Dialog):
     service. Reads and writes through `kiwi-server access`, as the control page does."""
 
     def __init__(self, win):
-        super().__init__(title="Who may reach what", content_width=660, content_height=700)
+        super().__init__(title="Access rules", content_width=660, content_height=700)
         self.win = win
         # the rules are read beside the window, which stays usable meanwhile
         self.set_child(Adw.StatusPage(title="Reading the rules…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
@@ -4687,7 +4687,7 @@ class Window(Adw.ApplicationWindow):
         net.append("Disk unlock…", "win.unlock-picture")
         section.append_submenu("This network", net)
         manage = Gio.Menu()                     # who may do what, and where modules come from
-        manage.append("Who may reach what…", "win.access")
+        manage.append("Access rules…", "win.access")
         manage.append("Accounts…", "win.accounts")
         manage.append("Linked networks…", "win.federation")
         manage.append("Module sources…", "win.sources")
@@ -6469,7 +6469,7 @@ class Window(Adw.ApplicationWindow):
             return
         if self.doc.dirty and not self.save():
             return
-        dlg = Adw.AlertDialog(heading="A machine with the starter stick is waiting",
+        dlg = Adw.AlertDialog(heading="Take in a machine",
                               body="It shows an address and a setup code on its screen. Type both here: the code shows "
                                    "that you are at that machine. Then it joins this network and is set up.")
         address = Gtk.Entry(placeholder_text="Its address, like 192.168.1.40")

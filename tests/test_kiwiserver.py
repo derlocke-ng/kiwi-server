@@ -9191,6 +9191,18 @@ class TestWatchdog(unittest.TestCase):
         ev = watchdogmod.switches(self.fleet(switch={"after": 20}), links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}},
                                   self.NOW + 6 * 60, sees)
         self.assertEqual([e["kind"] for e in ev], ["waiting"])
+        # the copy there: fresh when the machine fell silent (it has not been fetched since), or behind already
+        seen["lab"] = False
+        fresh = lambda standby, part: 6 * 60 + 40                                         # noqa: E731
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees, fresh)
+        self.assertEqual([e["kind"] for e in ev], ["switch"])
+        stale = lambda standby, part: 3 * 3600                                            # noqa: E731
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees, stale)
+        self.assertEqual([e["kind"] for e in ev], ["tell"])
+        self.assertIn("behind already when pi fell silent", ev[0]["text"])
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees,
+                                  lambda standby, part: None)
+        self.assertIn("lab has no copy of it", ev[0]["text"])
 
     def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
         f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}

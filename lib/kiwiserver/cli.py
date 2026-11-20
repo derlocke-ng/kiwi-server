@@ -2427,7 +2427,12 @@ def cmd_recover(args):
                                                                      or (fleet.defaults.get("admin") or {}).get("ssh_port") or 22)))
         out = remote.run(remote.reach(fleet.hosts[standby], None), script).decode(errors="replace")
         return "kiwi-sees" in out
-    events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees)
+    def copy_age(standby, part):
+        """How old the standby's copy of the part is (seconds), or None."""
+        out = remote.run(remote.reach(fleet.hosts[standby], None), partstandby.AGE).decode(errors="replace")
+        return partstandby.ages(out).get(part)
+    events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees,
+                                copy_age)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)

@@ -157,6 +157,7 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
 
 
 SWITCH_AFTER = 5            # minutes a machine is gone before its parts kept ready elsewhere go there
+COPY_LAG = 600              # seconds a copy kept ready may have been behind when its machine went silent
 SWITCH_AGAIN = 1800         # seconds before the same part is switched by itself once more
 
 
@@ -174,10 +175,13 @@ def switch_policy(fleet):
     return sw.get("do", "switch") != "tell", after
 
 
-def switches(fleet, links, said, state, now, sees):
+def switches(fleet, links, said, state, now, sees, copy_age=None):
     """After step(): the parts kept ready on another machine whose machine is gone. `links`:
     [(machine it runs on, part, standby)]; `said` as for step(); `state` the fleet's state, with
-    step()'s `gone`; `sees(standby, machine)` whether the standby reaches that machine itself.
+    step()'s `gone`; `sees(standby, machine)` whether the standby reaches that machine itself;
+    `copy_age(standby, part)` how old the standby's copy is (seconds, None: none). A copy that was
+    behind already when the machine went silent is not switched to by itself: that would lose
+    what came since, and the machine, once back, would take the old copy over its own.
     Returns events: kind `switch` (with `part`: the control node starts the switch), or waiting,
     held, tell."""
     on, after = switch_policy(fleet)
@@ -211,6 +215,18 @@ def switches(fleet, links, said, state, now, sees):
             events.append({"host": src, "kind": "held", "part": part,
                            "text": what + ": %s still reaches it, so only the way from here is cut; nothing is switched" % dst})
             continue
+        if copy_age is not None:
+            try:
+                age = copy_age(dst, part)
+            except KiwiError:
+                age = None
+            behind = None if age is None else age - (now - gone[src])      # how far behind it was when the machine fell silent
+            if behind is None or behind > COPY_LAG:
+                events.append({"host": src, "kind": "tell", "part": part, "text": what + ": %s, so nothing is switched by itself "
+                               "(kiwi-server switch, by hand, if that copy will do)" % (
+                                   "%s has no copy of it" % dst if age is None else
+                                   "its copy there was %d minutes behind already when %s fell silent" % (behind // 60, src))})
+                continue
         done[key] = now
         events.append({"host": src, "kind": "switch", "part": part, "to": dst,
                        "text": what + ", and %s does not reach it either: %s goes to %s" % (dst, part, dst)})

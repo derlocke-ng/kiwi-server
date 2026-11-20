@@ -2129,7 +2129,18 @@ def cmd_vps(args):
         if not args.target:
             raise KiwiError("which server? kiwi-server vps %s <fleet> <host or server>" % args.action)
         server = vps_server(client, fleet, args.target, args.server)
-        if args.action == "install":
+        label = server.get("nickname") or server.get("name")
+        if args.action not in ("probe", "snapshots") and netcup.untouchable(server):
+            raise KiwiError("%s is listed in KIWI_NEVER: nothing is changed there" % label)
+        if args.action == "snapshots":
+            vps_snapshots(args, client, server, label)
+        elif args.action == "snapshot":
+            vps_snapshot(client, server, label, args.name, "kiwi-server %s, by hand" % VERSION)
+        elif args.action == "revert":
+            vps_revert(args, client, server, label)
+        elif args.action == "rescue":
+            vps_rescue(args, fleet, client, server, label)
+        elif args.action == "install":
             vps_install(args, fleet, client, server)
         elif args.action == "restart":          # a power cycle: nothing on the server is touched
             label = server.get("nickname") or server.get("name")
@@ -2142,6 +2153,99 @@ def cmd_vps(args):
             print(json.dumps(netcup.probe(client, server), indent=2))
         else:
             print_probe(netcup.probe(client, server))
+
+
+def snapshot_name(when=None):
+    """kiwi-YYYYmmdd-HHMM: sorts by time, and says who made it."""
+    return time.strftime("kiwi-%Y%m%d-%H%M", time.gmtime(when or time.time()))
+
+
+def vps_snapshot(client, server, label, name=None, why=""):
+    """A snapshot of the server at netcup, while it runs when netcup allows that; otherwise
+    nothing is done and the reason is said (an offline one would switch the server off)."""
+    sid, name = server["id"], name or snapshot_name()
+    problems = client.snapshot_problems(sid, True)
+    if problems:
+        raise KiwiError("%s: no snapshot while it runs: %s" % (label, "; ".join(problems)))
+    util.say("%s: taking the snapshot %s (it keeps running)" % (label, name))
+    t0 = time.time()
+    client.snapshot(sid, name, why, online=True)
+    util.say("%s: snapshot %s taken in %d s" % (label, name, time.time() - t0))
+    return name
+
+
+def vps_snapshots(args, client, server, label):
+    sid = server["id"]
+    if args.delete:
+        if netcup.untouchable(server):
+            raise KiwiError("%s is listed in KIWI_NEVER: nothing is changed there" % label)
+        client.delete_snapshot(sid, args.delete)
+        util.say("%s: snapshot %s removed" % (label, args.delete))
+        return
+    rows = client.snapshots(sid)
+    if args.porcelain:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        print("%s has no snapshots at netcup" % label)
+    for r in rows:
+        print("%-22s %-20s %-7s %s" % (r.get("name"), (r.get("creationTime") or "")[:16].replace("T", " "),
+                                       "online" if r.get("online") else "offline", r.get("description") or ""))
+
+
+def vps_rescue(args, fleet, client, server, label):
+    """`vps rescue FLEET HOST on|off`: netcup's rescue system instead of the machine's own at its
+    next start, for a machine that no longer starts. Its root password goes into the fleet's
+    secrets (secrets/rescue/<server>.password), not onto the screen."""
+    what = (args.name or "").lower()
+    if what not in ("on", "off"):
+        raise KiwiError("kiwi-server vps rescue <fleet> <host> --name on|off")
+    sid = server["id"]
+    address = next((a["ip"] for a in server.get("ipv4Addresses") or []), "<its address>")
+    path = fleet.resolve_path("secrets/rescue/%s.password" % re.sub(r"[^A-Za-z0-9_.-]", "-", str(label)))
+    if what == "on":
+        if not args.yes:
+            raise KiwiError("this restarts %s into netcup's rescue system: its services are away until it is off again. Add --yes" % label)
+        # netcup starts the rescue system only for a server that is off (it says so with a 400)
+        util.say("%s: switching it off, then on into the rescue system" % label)
+        if client.state(sid) != "SHUTOFF":
+            client.power(sid, False)
+        client.rescue_on(sid)
+        client.power(sid, True)
+        password = (client.rescue(sid) or {}).get("password") or ""
+        if password:
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            util.write_text(path, password + "\n", 0o600)
+        util.say("%s: in the rescue system in a minute or two: ssh root@%s (a host key of its own: ssh asks once); "
+                 "its root password is in %s. The disk is untouched; an encrypted one opens with "
+                 "cryptsetup open and the key in secrets/luks/. Afterwards: kiwi-server vps rescue %s %s --name off"
+                 % (label, address, typed_path(path) if password else "netcup's panel", typed_path(fleet.path), args.target))
+        return
+    util.say("%s: switching it off, then on into its own system" % label)
+    if client.state(sid) != "SHUTOFF":
+        client.power(sid, False)
+    client.rescue_off(sid)
+    client.power(sid, True)
+    if os.path.isfile(path):
+        os.remove(path)
+    util.say("%s: its own system starts; an encrypted disk opens through its rings as after any restart" % label)
+
+
+def vps_revert(args, client, server, label):
+    """The server's disk back to a snapshot: what it wrote since is gone."""
+    name = args.name
+    if not name:
+        raise KiwiError("which snapshot? kiwi-server vps revert <fleet> <host> --name NAME (kiwi-server vps snapshots)")
+    if name not in [r.get("name") for r in client.snapshots(server["id"])]:
+        raise KiwiError("%s has no snapshot %s (kiwi-server vps snapshots)" % (label, name))
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise KiwiError("this puts %s's disk back to %s, and what it wrote since is gone: add --yes" % (label, name))
+        if input("%s's disk goes back to %s; what it wrote since is gone. Type its name to go ahead: " % (label, name)).strip() != label:
+            raise KiwiError("not confirmed, nothing touched")
+    util.say("%s: back to %s" % (label, name))
+    client.revert(server["id"], name)
+    util.say("%s: its disk is as it was at %s; it starts as it was then" % (label, name))
 
 
 def cmd_recover(args):
@@ -3765,11 +3869,42 @@ def _first_boot_waits(h):
     return None
 
 
+CONTROL_LOOK_AGE = 900      # seconds: the control node's word on a machine is taken while it is younger (it
+                            # looks at all every 10 minutes, at a machine whose agent reported every minute)
+
+
+def status_from_control(fleet, args):
+    """For a program that reads all machines (the app, --porcelain): the control node's last look,
+    when this computer is joined to one, instead of a login to every machine from here. The
+    control node looks all the time, and the machines report to it by themselves. None when it
+    cannot say, or its look is old: then the machines are asked from here, as before."""
+    from . import controlsync
+    if (args.hosts or args.ssh or getattr(args, "reports", None) or getattr(args, "stream", False) or getattr(args, "direct", False)
+            or not args.porcelain or os.environ.get("KIWI_CONTROL_HOST") or not controlsync.remote_of(fleet.dir)):
+        return None
+    try:
+        seen = controlsync.status_api(fleet.dir)
+    except (KiwiError, OSError, ValueError) as e:
+        util.warn("the control node did not say how the machines are (%s): asking them from here" % str(e)[:120])
+        return None
+    when = seen.get("time") if isinstance(seen.get("time"), (int, float)) else 0
+    names = set(fleet.hosts)
+    rows = [h for h in seen.get("hosts") or [] if h.get("host") in names]
+    fresh = lambda h: time.time() - max(when, h.get("seen") if isinstance(h.get("seen"), (int, float)) else 0) <= CONTROL_LOOK_AGE  # noqa: E731
+    if not rows or {h["host"] for h in rows} != names or not all(fresh(h) for h in rows):
+        return None             # a machine it does not know yet, or an old word on one: asked from here
+    return {"hosts": rows, "from": "control", "time": when}
+
+
 def cmd_status(args):
     """What a running machine says: when its role was applied, what its stack
     is doing, and what is wrong with it. Every host at once, so one that is
     off costs the others nothing."""
     fleet, roles, ms = load(args)
+    seen = status_from_control(fleet, args)
+    if seen is not None:
+        print(json.dumps(seen, indent=2))
+        return
     hosts = fleet.select(args.hosts)
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
@@ -3779,7 +3914,8 @@ def cmd_status(args):
     def ask(h):
         tgt = remote.reach(h, args.ssh)
         try:
-            said = agentmod.fresh_report(getattr(args, "reports", None), h.name) if not args.ssh else None
+            got = agentmod.fresh_report_at(getattr(args, "reports", None), h.name) if not args.ssh else None
+            said, came = got if got else (None, None)
             if said is None:            # no report of its agent from the last minutes: log in and ask
                 said = remote.run(tgt, facts.SCRIPT).decode(errors="replace")
             human, data = facts.split(said)
@@ -3804,7 +3940,9 @@ def cmd_status(args):
             return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down", "locked": bool(at),
                     "story": st["text"] if st else "", "stage": st["stage"] if st else "",
                     "problems": problems, "notes": [], "facts": {}}
-        measured = facts.parse(data)
+        # a report's time is the one it came at, up to a minute ago: measured against now, every clock
+        # looked a minute late ("the clock is -38 s off", the control page, 20 Nov 2026)
+        measured = facts.parse(data, local_now=came)
         state, problems, notes = facts.assess(measured, quiet=h.cfg.get("quiet") or [])
         if "backup-server" in (h.modules or []):
             level, text = backupmod.prune_note(fleet, h.name)
@@ -5776,6 +5914,10 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
   kiwi-server vps list|probe <fleet> [server]   netcup's servers; what one really is, its disk: among it
   kiwi-server vps install <fleet> <host>        wipe a netcup server and install the host's built ISO
+  kiwi-server vps snapshot|snapshots|revert <fleet> <host>
+                                                netcup's snapshots of a server: take one while it runs, list, go back (--name)
+  kiwi-server vps rescue <fleet> <host> --name on|off
+                                                netcup's rescue system for a server that no longer starts (its disk untouched)
   kiwi-server backup <fleet> [host...]          the fleet directory, encrypted, to its nodes (or --local DIR)
   kiwi-server restore --from user@node [--into DIR]
                                                 get it back on a fresh machine (or restore FILE)
@@ -5907,7 +6049,10 @@ def build_parser():
     s.add_argument("--master", help="which master, when the fleet has more than one")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the machine that measures: the node, or for a device the master")
     s.add_argument("--write", action="store_true", help="a node's result: write wg_mtu into the fleet file")
-    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart"]); s.add_argument("fleet")
+    s = sub("vps", cmd_vps); s.add_argument("action", choices=["login", "list", "probe", "install", "restart", "snapshot", "snapshots", "revert", "rescue"])
+    s.add_argument("fleet")
+    s.add_argument("--name", metavar="NAME", help="snapshot: its name (default kiwi-YYYYmmdd-HHMM); revert: the snapshot to go back to; rescue: on or off")
+    s.add_argument("--delete", metavar="NAME", help="snapshots: remove this one")
     s.add_argument("target", nargs="?", help="a fleet host, or a server's id, address, name or nickname")
     s.add_argument("--server", help="the netcup server, when the host does not say (vps.server in the fleet)")
     s.add_argument("--yes", action="store_true", help="install: wipe the server's disk without asking")
@@ -6017,6 +6162,8 @@ def build_parser():
     s.add_argument("--stream", action="store_true", help="each machine as one line of JSON, as it answers")
     s.add_argument("--reports", metavar="DIR", help="the folder with the machines' own reports (the agent): a machine "
                    "that reported in the last minutes is not logged in to")
+    s.add_argument("--direct", action="store_true", help="--porcelain: ask the machines from here even when this computer "
+                   "is joined to a control node (whose last look is read otherwise)")
     s = sub("connect", cmd_connect); s.add_argument("fleet")
     s.add_argument("--name", help="what this computer is called on the VPN (default: its own name)")
     s.add_argument("--group", help="a client group of the master")

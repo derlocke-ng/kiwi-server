@@ -14,7 +14,7 @@ services:
     - TZ=Europe/Berlin
     - WIREGUARD_MTU=1376
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=10s
-    - DOT_PROVIDERS=cloudflare
+    - DNS_UPSTREAM_RESOLVERS=cloudflare
     - BLOCK_MALICIOUS=off
     - FIREWALL_VPN_INPUT_PORTS=80,443,22
     networks:
@@ -45,7 +45,7 @@ services:
     environment:
     - TZ=Europe/Berlin
     - FTLCONF_webserver_api_password=golden-pihole-m1
-    - FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1
+    - FTLCONF_dns_upstreams=127.0.0.1#5335
     - FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/home/10.8.0.1
     - FTLCONF_dns_listeningMode=all
     - FTLCONF_webserver_domain=pihole.m1.home
@@ -69,6 +69,22 @@ services:
     volumes:
     - /home/user/docker/kn-pihole/etc-pihole:/etc/pihole:z
     - /home/user/docker/kn-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
+  kn-dns-up:
+    image: docker.io/coredns/coredns:1.12.4
+    container_name: kn-dns-up
+    network_mode: service:kn-pihole
+    depends_on:
+    - kn-pihole
+    command:
+    - -conf
+    - /Corefile
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+    volumes:
+    - /home/user/docker/kn-pihole/Corefile:/Corefile:ro,z
   kn-dhcphelper:
     image: docker.io/homeall/dhcphelper:latest
     container_name: kn-dhcphelper

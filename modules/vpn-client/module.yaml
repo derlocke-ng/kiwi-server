@@ -24,6 +24,7 @@ firewall:
 
 env:
   optional:
+    # gluetun's DNS_UPSTREAM_RESOLVERS (DOT_PROVIDERS before), in the fleet file as dot_providers
     DOT_PROVIDERS: "cloudflare"
 
 validate:

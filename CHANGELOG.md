@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.271.0 — a home that goes on without its master; netcup's snapshots and rescue system
+
+- **Fixed: while the master was away, a node's Pi-hole gave the names of the Internet no answer**
+  (kiwi-modules 0.109.0). It moved on to its fallback only when a client asked a second time,
+  so every lookup took five seconds or failed. Now a small resolver in front of a node's Pi-hole
+  (CoreDNS) asks the master while it answers and Cloudflare over TLS while it does not: the first
+  question takes about two seconds, the ones after it are as fast as before. Tried with the
+  master's VPN switched off for three minutes: the home's Pi-hole answered throughout. The
+  master-down drill reaches the node by its home address now; by name it had counted its own
+  lost way to the node as a silent Pi-hole.
+- **netcup snapshots**: `kiwi-server vps snapshot|snapshots|revert FLEET HOST`. One is taken
+  while the server runs (13 seconds on sorbet); going back restarts the server with its disk as
+  it was (sorbet answered again by itself 4 minutes later).
+- **netcup's rescue system**: `kiwi-server vps rescue FLEET HOST --name on|off`, for a server
+  that no longer starts. Its root password goes into the fleet's secrets, not onto the screen.
+- Every change at netcup refuses a server that `KIWI_NEVER` names, by id or address (the guard
+  the drills use next to a live network).
+- The VPN client uses gluetun's current name for its resolver setting (`DNS_UPSTREAM_RESOLVERS`).
+- **The app reads the control node's look** instead of logging in to every machine from this
+  computer: `status --porcelain` on a computer joined to a control node gives the control node's
+  word on each machine (a second, not a minute), as long as it saw each one in the last 15
+  minutes; otherwise, or with `--direct`, the machines are asked from here as before.
+- **Fixed: the control page warned that clocks were half a minute off** that were right. A
+  machine's report, up to a minute old, was measured against the time it was read, not the time
+  it came.
+
 ## 2.270.0 — "No master yet" opens its control page at home again
 
 Found by running the starter stick's drill on the released version (`tests/drills/starter-vm.sh

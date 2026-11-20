@@ -21,7 +21,7 @@ Environment=SERVER_COUNTRIES=Germany
 Environment=TZ=Europe/Berlin
 Environment=WIREGUARD_MTU=1376
 Environment=WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
-Environment=DOT_PROVIDERS=cloudflare
+Environment=DNS_UPSTREAM_RESOLVERS=cloudflare
 Environment=BLOCK_MALICIOUS=off
 Environment=UPDATER_PERIOD=24h
 EnvironmentFile=/home/user/docker/kiwi/env/km-vpn-client.env

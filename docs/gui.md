@@ -90,11 +90,16 @@ A host has two tabs:
 
 ## How it talks to the machines
 
-The machines are asked once a minute while the window has the focus, over SSH
-and read-only, through `kiwi-server status --porcelain`, which is also where
-it is decided what counts as a problem. A machine is reached at its name, or
-at another address of it the fleet has already met, so `.home` names need not
-resolve on this computer; `apply --ssh` once introduces a new one.
+Once a minute while the window has the focus the app asks
+`kiwi-server status --porcelain`, which is also where it is decided what counts
+as a problem. On a computer joined to a control node that is the control
+node's own look: it watches the machines all the time, and they report to it
+by themselves, so nothing is asked of the machines from here. Without a
+control node, or when its word on a machine is older than 15 minutes, the
+machines are asked from here, over SSH and read-only. A machine is reached at
+its name, or at another address of it the fleet has already met, so `.home`
+names need not resolve on this computer; `apply --ssh` once introduces a new
+one.
 
 A locked secret store shows a banner with *Unlock*, and the corner of the
 sidebar locks it again.

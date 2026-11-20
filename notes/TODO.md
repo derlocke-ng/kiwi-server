@@ -8,7 +8,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 
 1. ~~`names: service` on a live machine.~~ Done 20 Nov on quince: `ffsync.home` and `pay.home` resolve, answer with a valid certificate, the old name sends on.
 2. ~~Wake-on-LAN waking real hardware.~~ Tried 20 Nov on lime (ODROID-N2+, Armbian, the only real board at home): the card is armed at the apply and after a restart, the packet from papaya arrives (3 of 3), and the board stays off (the owner switched it off and had to use its button). The kernel has no wake-up line for its card (`eth_wake_irq not found`); docs/machines.md says so. Open: a PC or another board that does wake.
-3. The starter stick and "No master yet" on a real machine.
+3. The starter stick and "No master yet" on a real machine. In a VM on sh3 20 Nov (`VMHOST=sh3 tests/drills/starter-vm.sh`): install 17/17, "No master yet" 15/15 on 2.270.0 (it found two bugs, fixed in 2.270.0). A real machine still to do: with the owner.
 4. The guided session from the docs (notes/guided-session.md: its remarks are empty).
 5. Phones following the standby master by DDNS.
 6. A real mail from the notifications.
@@ -29,7 +29,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 14. UI steps 3 and 5 to 7 (docs/design/ui.md): one store, `/api/v1`, pushed changes, the app on
     the kit (the job strip is there).
 15. Boards: kiwi-server builds the encrypted Armbian image, first unlock~~, LUKS grown~~. The volume is grown by the first apply now (unlock.GROW_SCRIPT; on lime, already grown by hand, an apply leaves it alone: 14476 of 14492 MiB). Open: the image itself and the first unlock at the DHCP address. Ideas, not tried (need a board flashed anew): (a) the first unlock without knowing the address: the board's link-local IPv6 address follows from its MAC (fe80::, EUI-64), so a machine of the same LAN can reach its boot system there with no scan and no DHCP lease; (b) the image: one encrypted image per board built once (CI) with a known first key, and the first apply swaps the key, binds the rings and re-encrypts with a new volume key (the published one is known to all). (b) is a decision about secrets at rest: the owner's.
-16. netcup: rescue system, snapshots, user images.
+16. netcup: rescue system, ~~snapshots~~, user images. Snapshots done 20 Nov: `vps snapshot|snapshots|revert`; the drill on sorbet (tests/drills/vps-snapshot.sh): taken in 13 s while it runs, revert 30 s, sorbet back by itself 4 min later with its disk as at the snapshot. The rescue system: `vps rescue --name on|off`, tried on sorbet (tests/drills/vps-rescue.sh, 0 wrong: netcup needs the server off first; the rescue system answered on 22 with its own host key after 108 s; back with its pinned key 103 s after off). Open: user images.
 17. VLANs: the gateway's DHCP, DNS and routing per VLAN.
 18. ~~Install media reinstall at every boot: no guard, no `--reinstall`.~~ Done in 2.269.0: each ISO has an id, the installer leaves it on the installed system's `/boot`, its guard looks for it before anything is erased. Tried in VMs on sh3 (`tests/drills/install-guard-vm.sh`): uCore with UEFI (starts from its disk by itself), uCore with BIOS and Debian (switch themselves off), all passed; media made again install. `vps install` does not send used media twice.
 19. ~~`kiwi-stack health`: clock step, fragmentation.~~ Done in every machine's report instead (the agent sends it each minute): a clock set back is a warning until the time has caught up, packets cut into pieces a note for an hour. Tried on quince: its clock set back four minutes was in `status` within the agent's minute; pings too large for the LAN showed as pieces.
@@ -72,9 +72,20 @@ say what 2.267.0 does.
 44. `from=` on the Debian target's keys.
 45. The RAM master's room (what it may hold in RAM, and how much).
 46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).
-47. gluetun says its `DOT_PROVIDERS` is the old name of `DNS_UPSTREAM_RESOLVERS`: the vpn-client module should set the new one
-    (a warning in its log only; seen 20 Nov).
+47. ~~gluetun's `DOT_PROVIDERS` is now `DNS_UPSTREAM_RESOLVERS`~~: the vpn-client module sets the new name (kiwi-modules, next release).
+
 48. After a restart of the master's VPN client its resolver answers only when the tunnel is up: 75 seconds on 20 Nov, because
     the first exit servers it tried did not pass its start check (several tries of six seconds). Pi-hole asks its fallback
     meanwhile, directly. Nothing to fix in the resolver; gluetun's start check also asks for NET_RAW (ICMP), which the
     container does not have: see whether giving it makes the check quicker.
+49. ~~A node's Pi-hole while the master is away~~: found 20 Nov, fixed the same day. It answered public names only when a client
+    asked a second time (Pi-hole's strict order moves on only then): one question got nothing in 12 s. The master-down drill
+    did not see it, as it reached the node by a name the master answers. Now a CoreDNS in front of a node's Pi-hole asks the
+    master while it answers and Cloudflare over TLS while it does not; the drill reaches the node by its home address and asks
+    once: "answered throughout" (papaya, 3 minutes without the master). The master itself is as before (its VPN client sits
+    next to it).
+50. The master's lookups while its exit is down or restarting: about five seconds each, none during gluetun's restart. Its
+    fallbacks cannot help: the VPN server's namespace (where its Pi-hole runs) routes everything through gluetun. A way out
+    would be the fallback resolver's packets marked for the host's own table (as the WireGuard server's are, fwmark 0x41),
+    which CoreDNS cannot do itself. Tried and taken out again on 20 Nov.
+

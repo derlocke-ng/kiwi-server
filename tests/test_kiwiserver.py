@@ -1290,6 +1290,35 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_a_joined_computer_reads_the_control_nodes_look(self):
+        """`status --porcelain` (what the app asks) on a computer joined to a control node: the control
+        node's last look, not a login to every machine from here; asked from here when it is old,
+        when a machine is missing from it, with --direct, or when the control node does not answer."""
+        from kiwiserver import controlsync
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}, "b": {}}})
+        args = argparse.Namespace(hosts=[], ssh=None, reports=None, stream=False, direct=False, porcelain=True)
+        now = time.time()
+        look = {"time": now - 300, "hosts": [{"host": "a", "state": "ok", "seen": now - 30}, {"host": "b", "state": "down"},
+                                              {"host": "gone", "state": "ok"}]}
+        with mock.patch.object(controlsync, "remote_of", lambda d: {"url": "https://control.x"}), \
+                mock.patch.object(controlsync, "status_api", lambda d: look), mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):
+            got = cli.status_from_control(f, args)
+            self.assertEqual((got["from"], [h["host"] for h in got["hosts"]]), ("control", ["a", "b"]))   # not the one it no longer has
+            for change in ({"direct": True}, {"hosts": ["a"]}, {"porcelain": False}, {"stream": True}, {"reports": "/x"}):
+                self.assertIsNone(cli.status_from_control(f, argparse.Namespace(**dict(vars(args), **change))), change)
+            look["time"] = now - 2000                                            # b's word is old now (a's is fresh)
+            self.assertIsNone(cli.status_from_control(f, args))
+            look["time"], look["hosts"] = now - 60, look["hosts"][:1]            # b is not in it
+            self.assertIsNone(cli.status_from_control(f, args))
+        with mock.patch.object(controlsync, "remote_of", lambda d: None):          # not joined: asked from here
+            self.assertIsNone(cli.status_from_control(f, args))
+
+        def refuses(d):
+            raise KiwiError("the control node refused (401)")
+        with mock.patch.object(controlsync, "remote_of", lambda d: {"url": "https://control.x"}), \
+                mock.patch.object(controlsync, "status_api", refuses), mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):
+            self.assertIsNone(cli.status_from_control(f, args))
+
     def test_a_second_set_it_up_does_not_start_the_self_apply_twice(self):
         """The control node's own machine applies itself as a unit that outlives the connection. Asked
         again while that unit runs (a second "Set it up" on the starter's page), nothing is started and
@@ -2021,8 +2050,12 @@ class TestModules(Base):
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
         self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
-        # the master's Pi-hole first, a public resolver only while the master is unreachable; fleet names go to the master
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", svcs["kn-pihole"]["environment"])
+        # the master's Pi-hole first, a public resolver (over TLS) only while the master does not answer, chosen by
+        # the resolver in front of Pi-hole; the fleet's names go to the master
+        self.assertIn("FTLCONF_dns_upstreams=127.0.0.1#5335", svcs["kn-pihole"]["environment"])
+        self.assertEqual(svcs["kn-dns-up"]["network_mode"], "service:kn-pihole")
+        core = b.files["kn-pihole/Corefile"][0]
+        self.assertIn("forward . 10.8.0.1 tls://1.1.1.1 tls://1.0.0.1 {", core if isinstance(core, str) else core.decode())
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
@@ -2107,7 +2140,7 @@ class TestModules(Base):
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
-        self.assertIn("DOT_PROVIDERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
+        self.assertIn("DNS_UPSTREAM_RESOLVERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
         self.assertIn("BLOCK_MALICIOUS=off", svcs["km-vpn-client"]["environment"])         # what is blocked is the blocklist's
         env = svcs["km-vpn-client"]["environment"]
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)
@@ -3282,6 +3315,19 @@ class TestSetup(Base):
         self.assertTrue(rows["quince"]["ok"])                                   # from its report: nobody logged in to it
         self.assertEqual(rows["mango"]["state"], "down")                        # no report: asked, and it does not answer
         self.assertEqual(len(asked), 1)
+        # a report's clock is measured against the time it came, not the time it is read: one that came a
+        # minute ago from a machine whose clock is right is not "a minute off"
+        came = int(time.time()) - 60
+        write(os.path.join(reports, "quince.txt"), "all is well\n%s\nnow=%d\nos=Debian\nclock=yes\n" % (facts.MARK, came))
+        os.utime(os.path.join(reports, "quince.txt"), (came, came))
+        remote.run = no_login
+        try:
+            rc, out, _err = self.run_cli("status", dest, "quince", "--porcelain", "--stream", "--reports", reports)
+        finally:
+            remote.run = keep
+        row = next(json.loads(x) for x in out.splitlines() if x.startswith("{"))
+        self.assertEqual(row["facts"]["skew"], 0)
+        self.assertFalse([p for p in row["problems"] if p["key"] == "clock"], row["problems"])
         os.utime(os.path.join(reports, "quince.txt"), (time.time() - 600, time.time() - 600))
         self.assertIsNone(agentmod.fresh_report(reports, "quince"))            # an old report is not how it is now
         # what an apply puts on the machine: its key over stdin, where to report, the facts script
@@ -8478,6 +8524,8 @@ class FakeNetcup:
         self.memory = 2048
         self.fail_task, self.refresh = False, "refresh-1"
         self.bootorder = ["CDROM", "HDD", "NETWORK"]
+        self.snaps, self.snap_problems, self.reverted = [], [], None
+        self.rescue = False
         fake = self
         AUTH, API = "/realms/scp/protocol/openid-connect", "/scp-core/api/v1"
         task = {"uuid": "t1", "state": "RUNNING"}
@@ -8532,6 +8580,20 @@ class FakeNetcup:
                 if path == API + "/servers/7/iso":
                     fake.attached = body["userIsoName"]
                     return self._send(202, task)
+                if path == API + "/servers/7/rescuesystem":
+                    if fake.state != "SHUTOFF":         # as netcup: only for a server that is off
+                        return self._send(400, {"message": "Server must be in state 'SHUTOFF'. (current state: '%s')" % fake.state})
+                    fake.rescue = True
+                    return self._send(202, task)
+                if path == API + "/servers/7/snapshots:dryrun":
+                    return self._send(200, [{"code": "x", "message": m} for m in fake.snap_problems])
+                if path == API + "/servers/7/snapshots":
+                    fake.snaps.append({"name": body["name"], "description": body.get("description"), "online": body["onlineSnapshot"],
+                                       "creationTime": "2026-11-20T13:%02d:00Z" % len(fake.snaps)})
+                    return self._send(202, task)
+                if path.startswith(API + "/servers/7/snapshots/") and path.endswith("/revert"):
+                    fake.reverted = urllib.parse.unquote(path.split("/")[-2])
+                    return self._send(202, task)
                 self._send(404, {"message": "no such path"})
 
             def do_PUT(self):
@@ -8553,6 +8615,15 @@ class FakeNetcup:
                 fake.calls.append(("DELETE", self.path, None))
                 if self.path.endswith("/servers/7/iso"):
                     fake.attached = None
+                if self.path.endswith("/servers/7/rescuesystem"):
+                    if fake.state != "SHUTOFF":
+                        return self._send(400, {"message": "Server must be in state 'SHUTOFF'. (current state: '%s')" % fake.state})
+                    fake.rescue = False
+                    return self._send(202, task)
+                if "/servers/7/snapshots/" in self.path:
+                    name = urllib.parse.unquote(self.path.split("/")[-1])
+                    fake.snaps = [x for x in fake.snaps if x["name"] != name]
+                    return self._send(202, task)
                 self._send(204)
 
             def do_GET(self):
@@ -8570,6 +8641,10 @@ class FakeNetcup:
                         if fake.polls_running < 0:
                             fake.state = "SHUTOFF"
                     return self._send(200, s)
+                if path == API + "/servers/7/snapshots":
+                    return self._send(200, fake.snaps)
+                if path == API + "/servers/7/rescuesystem":
+                    return self._send(200, {"active": fake.rescue, "password": "rescue-pw-of-the-test" if fake.rescue else None})
                 if path == API + "/servers/7/disks":
                     return self._send(200, [{"name": "sda", "capacityInMiB": 40960, "storageDriver": fake.driver}])
                 if path == API + "/servers/7/iso":
@@ -8632,6 +8707,84 @@ class TestVps(Base):
         write(os.path.join(self.tmp, "output", "x", "x.iso"), "ISO" * 100)
         if stack == 0:      # a bare ISO says so beside itself: the rendered role lives in the store's tmpfs
             write(os.path.join(self.tmp, "output", "x", "x.iso.bare"), "bare\n")
+
+    def test_the_rescue_system_on_and_off_with_its_password_kept_not_shown(self):
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x", "--name", "on")
+        self.assertEqual(rc, 1)
+        self.assertIn("Add --yes", err)
+        self.assertFalse(self.api.rescue)
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x", "--name", "on", "--yes")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.api.rescue)
+        self.assertEqual([b.get("state") for m, p, b in self.api.calls if m == "PATCH"][-2:], ["OFF", "ON"])   # it restarts into it
+        kept = os.path.join(self.tmp, "secrets", "rescue", "crumble.password")
+        self.assertEqual(util.read_text(kept), "rescue-pw-of-the-test\n")
+        self.assertEqual(oct(os.stat(kept).st_mode & 0o777), "0o600")
+        self.assertNotIn("rescue-pw-of-the-test", out + err)                        # where it is, not what it is
+        self.assertIn("ssh root@203.0.113.9", out + err)
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x", "--name", "off")
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(self.api.rescue)
+        self.assertFalse(os.path.exists(kept))                                      # its password goes with it
+        rc, out, err = self.run_cli("vps", "rescue", f.path, "x")
+        self.assertIn("--name on|off", err)
+
+    def test_snapshots_at_netcup_taken_listed_reverted_and_removed(self):
+        """vps snapshot / snapshots / revert: netcup's copies of a rented machine's disk. Taken while it
+        runs only (netcup says beforehand whether it can); going back needs --yes; KIWI_NEVER guards."""
+        f = self.vps_fleet()
+        self.logged_in()
+        rc, out, err = self.run_cli("vps", "snapshots", f.path, "x")
+        self.assertEqual((rc, out.strip()), (0, "crumble has no snapshots at netcup"), err)
+        rc, out, err = self.run_cli("vps", "snapshot", f.path, "x", "--name", "before-update")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("snapshot before-update taken", err + out)
+        made = [b for m, p, b in self.api.calls if m == "POST" and p.endswith("/servers/7/snapshots")]
+        self.assertEqual((made[0]["name"], made[0]["onlineSnapshot"]), ("before-update", True))
+        self.assertIn("kiwi-server", made[0]["description"])
+        rc, out, err = self.run_cli("vps", "snapshot", f.path, "x")                      # a name by itself: by the time
+        self.assertEqual(rc, 0, err)
+        self.assertRegex(self.api.snaps[-1]["name"], r"^kiwi-\d{8}-\d{4}$")
+        rc, out, err = self.run_cli("vps", "snapshots", f.path, "x")
+        self.assertEqual([ln.split()[0] for ln in out.splitlines()], ["before-update", self.api.snaps[-1]["name"]])
+        # netcup cannot take one while it runs: nothing is taken, and its reason is said
+        self.api.snap_problems = ["the server has too many snapshots"]
+        rc, out, err = self.run_cli("vps", "snapshot", f.path, "x")
+        self.assertEqual(rc, 1)
+        self.assertIn("no snapshot while it runs: the server has too many snapshots", err)
+        self.assertEqual(len(self.api.snaps), 2)
+        self.api.snap_problems = []
+        # back to one: only with --yes, and only to one that exists
+        rc, out, err = self.run_cli("vps", "revert", f.path, "x", "--name", "before-update")
+        self.assertEqual(rc, 1)
+        self.assertIn("add --yes", err)
+        rc, out, err = self.run_cli("vps", "revert", f.path, "x", "--name", "nosuch", "--yes")
+        self.assertIn("has no snapshot nosuch", err)
+        self.assertIsNone(self.api.reverted)
+        rc, out, err = self.run_cli("vps", "revert", f.path, "x", "--name", "before-update", "--yes")
+        self.assertEqual((rc, self.api.reverted), (0, "before-update"), err)
+        rc, out, err = self.run_cli("vps", "snapshots", f.path, "x", "--delete", "before-update")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([x["name"] for x in self.api.snaps], [self.api.snaps[0]["name"]])
+        # a server KIWI_NEVER names is never changed: by its id, or by its address
+        for never in ("7", "203.0.113.9"):
+            before = len(self.api.calls)
+            with mock.patch.dict(os.environ, {"KIWI_NEVER": "1 %s" % never}):
+                for argv in (("snapshot", f.path, "x"), ("revert", f.path, "x", "--name", "x", "--yes"),
+                             ("restart", f.path, "x"), ("snapshots", f.path, "x", "--delete", "x")):
+                    rc, out, err = self.run_cli("vps", *argv)
+                    self.assertEqual(rc, 1, argv)
+                    self.assertIn("KIWI_NEVER", err)
+                rc, out, err = self.run_cli("vps", "snapshots", f.path, "x")              # looking is allowed
+                self.assertEqual(rc, 0, err)
+            self.assertEqual([m for m, _p, _b in self.api.calls[before:] if m != "GET"], [])
+        # and the client itself refuses, whoever calls it
+        with mock.patch.dict(os.environ, {"KIWI_NEVER": "7"}):
+            from kiwiserver import netcup
+            with self.assertRaisesRegex(KiwiError, "KIWI_NEVER"):
+                netcup.Netcup(os.path.join(self.tmp, "secrets", "netcup.token"), self.api.url).power(7, False)
 
     def test_login_keeps_only_the_refresh_token_private(self):
         f = self.vps_fleet()
@@ -9759,8 +9912,8 @@ class TestCli(Base):
         self.assertNotIn(("10.8.0.25", "*.sh3.kiwi"), recs)
         m1, b = r.script(f.hosts["m1"])
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
-        # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        # the master's address comes from the fleet's master host: DNS upstream (through the resolver in front), forward, hosts block
+        self.assertIn("FTLCONF_dns_upstreams=127.0.0.1#5335", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)

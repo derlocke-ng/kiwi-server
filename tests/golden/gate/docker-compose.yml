@@ -17,7 +17,7 @@ services:
     - TZ=Europe/Berlin
     - WIREGUARD_MTU=1376
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
-    - DOT_PROVIDERS=cloudflare
+    - DNS_UPSTREAM_RESOLVERS=cloudflare
     - BLOCK_MALICIOUS=off
     - UPDATER_PERIOD=24h
     networks:

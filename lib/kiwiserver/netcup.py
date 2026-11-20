@@ -27,6 +27,7 @@ API = "/scp-core/api/v1"
 # said /dev/vda for a SATA disk and stopped in the live system
 DEVICE_BY_DRIVER = {"VIRTIO": "/dev/vda", "VIRTIO_SCSI": "/dev/sda", "SATA": "/dev/sda", "IDE": "/dev/sda"}
 
+NEVER = "KIWI_NEVER"     # servers never to change, by id or address, space separated (a guard for tests next to live ones)
 POLL_SECONDS = 15
 TASK_SECONDS = 2
 INSTALL_TIMEOUT = 3600
@@ -67,6 +68,10 @@ class Netcup:
             raise KiwiError("netcup's login answered %d with something that is not JSON" % status)
 
     def api(self, method, path, body=None, query=None, content_type="application/json"):
+        if method != "GET":                     # nothing that changes a server listed in KIWI_NEVER
+            sid = path.split("/")[2] if path.startswith("/servers/") else ""
+            if sid and sid.split(":")[0] in never():
+                raise KiwiError("netcup server %s is listed in %s: nothing is changed there" % (sid.split(":")[0], NEVER))
         url = self.base + API + path + ("?" + urllib.parse.urlencode(query) if query else "")
         headers = {"Authorization": "Bearer " + self._token(), "Accept": "application/json"}
         data = json.dumps(body).encode() if body is not None else None
@@ -208,6 +213,62 @@ class Netcup:
     def attached_iso(self, sid):
         d = self.api("GET", "/servers/%d/iso" % sid) or {}
         return d.get("iso") if d.get("isoAttached") else None
+
+    # ---- snapshots ------------------------------------------------------------
+    # A snapshot is netcup's copy of the server's disk at that moment, kept with the server (not a
+    # backup: it goes with the server). Online, it is taken while the server runs; netcup says
+    # beforehand (dry run) whether that is possible.
+
+    def snapshots(self, sid):
+        return sorted(self.api("GET", "/servers/%d/snapshots" % sid) or [], key=lambda x: x.get("creationTime") or "")
+
+    def snapshot_problems(self, sid, online):
+        """What stands in the way of a snapshot: netcup's own words, [] when nothing does."""
+        try:
+            found = self.api("POST", "/servers/%d/snapshots:dryrun" % sid, {"onlineSnapshot": bool(online)}) or []
+        except KiwiError as e:
+            return [str(e)]
+        return [str(x.get("message") or x.get("code") or x) for x in found if isinstance(x, dict)] if isinstance(found, list) else []
+
+    def snapshot(self, sid, name, description="", online=True):
+        self.wait(self.api("POST", "/servers/%d/snapshots" % sid,
+                           {"name": name, "description": description or None, "onlineSnapshot": bool(online)}),
+                  "the snapshot %s" % name)
+
+    def revert(self, sid, name):
+        self.wait(self.api("POST", "/servers/%d/snapshots/%s/revert" % (sid, urllib.parse.quote(name))),
+                  "going back to the snapshot %s" % name)
+
+    def delete_snapshot(self, sid, name):
+        self.wait(self.api("DELETE", "/servers/%d/snapshots/%s" % (sid, urllib.parse.quote(name))),
+                  "removing the snapshot %s" % name)
+
+    # ---- the rescue system ------------------------------------------------------
+    # netcup's own small Linux, started instead of the server's system at its next start: the disk
+    # stays as it is, and root logs in with a password netcup makes. For a machine that no longer
+    # starts.
+
+    def rescue(self, sid):
+        """{"active": bool, "password": str or None}"""
+        return self.api("GET", "/servers/%d/rescuesystem" % sid) or {}
+
+    def rescue_on(self, sid):
+        self.wait(self.api("POST", "/servers/%d/rescuesystem" % sid), "starting the rescue system")
+
+    def rescue_off(self, sid):
+        self.wait(self.api("DELETE", "/servers/%d/rescuesystem" % sid), "leaving the rescue system")
+
+
+def never():
+    """The server ids and addresses KIWI_NEVER names: nothing here changes them."""
+    return set(os.environ.get(NEVER, "").split())
+
+
+def untouchable(server):
+    """Is this server one KIWI_NEVER names, by its id or one of its addresses?"""
+    names = never()
+    return bool(names) and (str(server.get("id")) in names
+                            or any(a.get("ip") in names for a in server.get("ipv4Addresses") or []))
 
 
 def device_for(disk):

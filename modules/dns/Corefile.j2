@@ -1,0 +1,16 @@
+# kiwi-server: in front of Pi-hole on {{ hostname }}. The names of the Internet go to the master's
+# Pi-hole while it answers; while it does not (its tunnel or the master down), to the fallbacks,
+# {{ 'over TLS (' ~ fallback_tls_name ~ ')' if fallback_tls_name else 'in plain text' }}. A master that stops answering is seen at the first question
+# that gets no answer within two seconds; then it is asked again every second until it answers.
+.:5335 {
+    bind 127.0.0.1
+    forward . {{ master_ip }}{% for f in (fallback_dns | string).split(';') if f.strip() %} {{ 'tls://' if fallback_tls_name else '' }}{{ f.strip() | replace('#', ':') }}{% endfor %} {
+{% if fallback_tls_name %}
+        tls_servername {{ fallback_tls_name }}
+{% endif %}
+        policy sequential
+        health_check 1s
+        max_fails 2
+    }
+    errors
+}

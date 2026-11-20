@@ -14269,6 +14269,36 @@ class TestFirstRunPage(StoreBase):
         self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
         self.assertEqual(self.c.refresh_status()["error"], "error: boom")
 
+    def test_a_new_network_is_linked_from_the_page_by_card(self):
+        """The page gives this network's card and takes another's (`federate --invite / --accept`):
+        before, linking a new network needed a computer with the fleet."""
+        cookie, csrf = self.made()
+        script = ("import sys\n"
+                  "a = sys.argv\n"
+                  "if a[1] == 'federate' and '--invite' in a:\n"
+                  "    open(a[a.index('--invite') + 1], 'w').write('federation-card: 1\\nname: mine\\nmesh: 10.9.0.0/16\\n')\n"
+                  "if a[1] == 'federate' and '--accept' in a:\n"
+                  "    card = open(a[a.index('--accept') + 1]).read()\n"
+                  "    if 'federation-card' not in card:\n"
+                  "        sys.stderr.write('error: this is not a card\\n'); sys.exit(1)\n"
+                  "    print(':: other is a partner of mine now; nothing is shared yet')\n")
+        self.c.kiwi = [sys.executable, "-c", script]
+        page = self.ask("/federation", cookie=cookie)[1]
+        self.assertIn("<summary>Link a new network</summary>", page)
+        self.assertIn('href="/federation/card.yaml"', page)
+        self.assertNotIn("it is done on the computer that has them", page)
+        status, card, _ = self.ask("/federation/card.yaml", cookie=cookie)
+        self.assertEqual((status, card), (200, "federation-card: 1\nname: mine\nmesh: 10.9.0.0/16\n"))
+        self.assertEqual(self.ask("/federation/card.yaml")[0], 303)                  # not without a login
+        status, body, _ = self.ask("/federation/card", {"card": "federation-card: 1\nname: other\n", "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("other is a partner of mine now", body)
+        self.assertEqual(self.c.audit_tail(5)[0]["what"], "linked with another network (its card taken)")
+        status, body, _ = self.ask("/federation/card", {"card": "something else", "csrf": csrf}, cookie=cookie)
+        self.assertIn("this is not a card", body)                                    # said on the page, nothing taken
+        self.assertEqual(self.ask("/federation/card", {"card": "federation-card: 1"}, cookie=cookie)[0], 303)   # no token: nothing
+        self.assertFalse([f for f in os.listdir(self.c.run) if f.startswith("tmp")])  # the pasted card is not kept
+
     def test_a_part_moves_and_switches_from_the_page(self):
         """Move, keep ready and switch on a machine's page (the Services tab): the plan first, then a
         job that runs the same command as a terminal would."""

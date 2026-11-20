@@ -970,9 +970,20 @@ time: <strong>what it has now is replaced.</strong> The part stops for a moment.
 
     "federation.html": """{% extends "base.html" %}{% block main %}
 <p><a href="/">← Home</a></p><h1>Linked networks</h1>
-<p class="muted">Other networks this one is linked to. Each reaches here only what is shared with it. Linking a new
-network needs both networks' settings, so it is done on the computer that has them:
-<code>kiwi-server federate</code>, or "Federation…" in the app.</p>
+<p class="muted">Other networks this one is linked to. Each reaches here only what is shared with it.</p>
+{% if said %}<div class="banner ok">{% for x in said %}{{ x }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}
+<details{% if card_error %} open{% endif %}><summary>Link a new network</summary><div class="card">
+<p>Two networks link by giving each other their card. A card holds nothing secret: the master's address, its public
+link key, the network's addresses and the ending of its names.</p>
+<ol><li>Give the other network this network's card: <a class="btn" href="/federation/card.yaml" download>Download this network's card</a></li>
+<li>Take theirs: paste the text of their card here.</li>
+<li>They take yours the same way (their control page, or <code>kiwi-server federate THEIR-FLEET --accept CARD</code>).</li></ol>
+<form method="post" action="/federation/card">{{ tok }}
+<label for="card">The other network's card</label>
+<textarea id="card" name="card" rows="8" spellcheck="false" required placeholder="federation-card: 1 ..."></textarea>
+{% if card_error %}<p class="bad">{{ card_error }}</p>{% endif %}
+<div class="actions"><button class="primary">Take their card</button></div></form>
+<p class="muted small">Nothing is shared by linking. Afterwards say here what each may reach, then apply the master.</p></div></details>
 {% if saved %}<p class="banner ok">Saved. Apply this network's master, and the machines that share something, to bring it there.</p>{% endif %}
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
 {% if partners %}<form method="post" action="/federation">{{ tok }}
@@ -3671,6 +3682,28 @@ def make_app(control: Control):
         if not user(request):
             return login_page()
         return federation_page(request, saved=request.query_params.get("saved") == "1")
+
+    @app.get("/federation/card.yaml")
+    def federation_card(request: Request):
+        """This network's card, to give to a network someone else runs."""
+        if not user(request):
+            return login_page()
+        try:
+            text = control.federation_card()
+        except KiwiError as e:
+            return federation_page(request, card_error=str(e))
+        return PlainTextResponse(text, headers={"Content-Disposition": 'attachment; filename="network.card.yaml"'})
+
+    @app.post("/federation/card")
+    def federation_take(request: Request, card: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            said = control.take_card(card, user=u)
+        except KiwiError as e:
+            return federation_page(request, card_error=str(e))
+        return federation_page(request, said=said)
 
     @app.post("/federation")
     async def federation_do(request: Request):

@@ -1330,6 +1330,70 @@ class Control:
                          "mark": hashlib.sha256(pem.encode()).hexdigest()[:8] if pem else ""}
         return out
 
+    def federation_card(self):
+        """This network's card for a network someone else runs (`federate --invite`): its master's
+        address, its link key (the public one), its mesh and its names. Nothing changes."""
+        import shutil
+        import tempfile
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        tmp = tempfile.mkdtemp(dir=self.run)
+        try:
+            path = os.path.join(tmp, "card.yaml")
+            r = subprocess.run(list(self.kiwi) + ["federate", self.fleet_path, "--invite", path], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+            if r.returncode or not os.path.isfile(path):
+                raise KiwiError((r.stderr.strip().splitlines() or ["the card could not be made"])[-1].replace("error: ", ""))
+            return util.read_text(path)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def take_card(self, text, user="admin"):
+        """Another network's card, taken (`federate --accept`): it is a partner from now on, and
+        nothing is shared with it yet. Returns what was said, line by line."""
+        import shutil
+        import tempfile
+        from . import federation as fedmod
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        text = str(text or "")
+        if not text.strip() or len(text) > 65536:
+            raise KiwiError("paste the other network's card: the whole text of its card file")
+        with self.lock:
+            tmp = tempfile.mkdtemp(dir=self.run)
+            try:
+                path = os.path.join(tmp, "partner.card.yaml")
+                util.write_text(path, text if text.endswith("\n") else text + "\n", 0o600)
+                r = subprocess.run(list(self.kiwi) + ["federate", self.fleet_path, "--accept", path], capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+                if r.returncode:
+                    raise KiwiError((r.stderr.strip().splitlines() or ["the card was not taken"])[-1].replace("error: ", ""))
+                said = [x.lstrip(": ").strip() for x in r.stdout.splitlines() if x.strip()]
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            self._keep_in_ram(fedmod.FILE)      # a first link made the file: it belongs with the fleet's files, encrypted on disk
+            self.save_fleet()
+        self.audit(user, "linked with another network (its card taken)")
+        self._gen += 1
+        self.fleet_info(fresh=True)
+        return said
+
+    def _keep_in_ram(self, name):
+        """A fleet file a command just made beside the others (the first federation.yaml): on a
+        control node it goes into RAM like them, a link in its place, and is saved encrypted."""
+        path = self._fleet_file(name)
+        if name in self._saved or os.path.islink(path) or not os.path.isfile(path):
+            return
+        fleet = self._fleet_file("fleet.yaml")
+        if not os.path.islink(fleet):           # the fleet's files are plain here (serve on one's own computer): as they are
+            return
+        ram = os.path.dirname(os.path.realpath(fleet))
+        data = util.read_bytes(path)
+        util.write_bytes(os.path.join(ram, name), data, 0o600)
+        os.remove(path)
+        os.symlink(os.path.join(ram, name), path)
+        self._saved[name] = ""                  # never saved yet: save_fleet encrypts it now
+
     def save_federation(self, changes, user="admin"):
         """{partner: {share: [...], from: [...], exit: bool, internet: bool}} into federation.yaml.
         The file says no when the change makes no sense (two exits, out through each other)."""

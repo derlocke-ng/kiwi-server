@@ -28,7 +28,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 15. Boards: kiwi-server builds the encrypted Armbian image, first unlock, LUKS grown.
 16. netcup: rescue system, snapshots, user images.
 17. VLANs: the gateway's DHCP, DNS and routing per VLAN.
-18. Install media reinstall at every boot: no guard, no `--reinstall`.
+18. Install media reinstall at every boot: no guard, no `--reinstall`. (Looked at on 20 Nov: bigger than it reads. It needs a mark on the target's boot partition written by both installers, a check in both, and the stick's boot loader starting the disk when the mark is there; with VM tests for uCore and Debian, UEFI and BIOS.)
 19. `kiwi-stack health`: clock step, fragmentation.
 20. kiwi-app uses status, machines, activity and the registry only.
 
@@ -39,7 +39,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 23. App: settings edits through the control node's API.
 24. App: a machine's History and status chips.
 25. ~~App: open the game page.~~ Done: "Open the game page" beside "Open the status page" (the network's settings).
-26. Page: link a new network by card.
+26. ~~Page: link a new network by card.~~ Done: Linked networks, "Link a new network": download this network's card, paste the other's.
 27. Page and app: open an unsigned copy; page: a `.tar.enc` copy, a synced folder.
 
 ## D. Asked for, not started

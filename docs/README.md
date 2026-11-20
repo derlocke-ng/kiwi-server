@@ -49,6 +49,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Who opens whom](design/unlock.md) | the ways a disk opens at boot, openers, one picture for page and apps |
 | [The page and the apps as server management](design/ui.md) | the machines table by site, a machine's story and states, one name per thing, speed, the app on the shared kit |
 | [Many machines, and services that move](design/scale.md) | why not Ansible or one cluster, what 2.259 built, machines that report in, names by service, moving a service, standby and failover, site controllers |
+| [One truth, permissions and policy](design/authority.md) | what is wrong with how kiwi-server decides things by itself, and the rebuild: one writer of the fleet, permissions that run out, one policy table per part, a second control node. Not built |
 | [Services for the public](design/public-services.md) | accounts, sign-up, landing page, status |
 | [A public website](design/website.md) | the front page from a pinned repository of pages |
 

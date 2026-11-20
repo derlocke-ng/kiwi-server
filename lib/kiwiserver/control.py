@@ -2297,10 +2297,20 @@ class Control:
         gone), until its next apply: what its agent is told with a report."""
         try:
             with open(os.path.join(self.fleet_dir, ".kiwi-state.json")) as fh:
-                held = (json.load(fh).get("hold") or {}).get(name) or []
+                state = json.load(fh)
+            held = (state.get("hold") or {}).get(name) or []
+            parts = (state.get("hold_parts") or {}).get(name) or {}
         except (OSError, ValueError, AttributeError):
             return []
-        return [c for c in held if isinstance(c, str) and HOST.match(c)]
+        # a part the fleet file gives this machine again (switched back, from wherever) is not held back
+        mine = set()
+        if parts:
+            try:
+                mine = set(next((h.get("modules") or [] for h in (self.fleet_info() or {}).get("hosts") or []
+                                 if h.get("name") == name), []))
+            except (KiwiError, OSError, ValueError):
+                return []           # not known now: nothing is stopped on a guess
+        return [c for c in held if isinstance(c, str) and HOST.match(c) and parts.get(c) not in mine]
 
     def report(self, name, when, boot, sign, body):
         """A machine's agent says how the machine is. None when taken; else why not (the page

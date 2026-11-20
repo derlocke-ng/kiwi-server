@@ -61,6 +61,10 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
     Returns the events: [{host, kind: waiting|tell|restarted|held|moved, text}]."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
     pointed, back = state.setdefault("pointed", {}), state.setdefault("back", {})
+    seen_ok = state.setdefault("seen_ok", {})
+    for name in kinds:
+        if said.get(name):
+            seen_ok[name] = now                 # the last look that saw it answer
     for name in list(gone):
         if said.get(name) or name not in kinds:
             del gone[name]                      # back, or no longer a machine of the network
@@ -106,7 +110,9 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         # gone since the report that did not come after its last one (the agent reports every minute), not
         # since this look: a look comes minutes after a machine fell silent
         heard = (last or {}).get(name)
-        since = gone.setdefault(name, min(now, heard + REPORT_EVERY) if heard and now - heard < 3600 else now)
+        since = min(now, heard + REPORT_EVERY) if heard and now - heard < 3600 else now
+        # not before the last look that saw it answer (an agent that stopped reporting while the machine ran on)
+        since = gone.setdefault(name, min(now, max(since, seen_ok.get(name, 0))))
         minutes = int((now - since) / 60)
         after, do = policy(fleet, kind)
         what = "%s%s has not answered for %d minute%s" % (name, " (the master)" if kind == "master" else "", minutes,
@@ -167,19 +173,22 @@ def switch_policy(fleet):
     sw = rec.get("switch", {})
     if sw is False:
         return False, SWITCH_AFTER
-    sw = sw if isinstance(sw, dict) else {}
+    if not isinstance(sw, dict):
+        return False, SWITCH_AFTER          # a word where a block belongs: by hand, the safe side
     try:
         after = max(1, int(sw.get("after", SWITCH_AFTER)))
     except (TypeError, ValueError):
         after = SWITCH_AFTER
-    return sw.get("do", "switch") != "tell", after
+    return sw.get("do", "switch") == "switch", after        # tell, or a word it does not know: by hand
 
 
-def switches(fleet, links, said, state, now, sees, copy_age=None):
+def switches(fleet, links, said, state, now, sees, copy_age=None, independent=None):
     """After step(): the parts kept ready on another machine whose machine is gone. `links`:
     [(machine it runs on, part, standby)]; `said` as for step(); `state` the fleet's state, with
     step()'s `gone`; `sees(standby, machine)` whether the standby reaches that machine itself;
-    `copy_age(standby, part)` how old the standby's copy is (seconds, None: none). A copy that was
+    `copy_age(standby, part)` how old the standby's copy is (seconds, None: none); `independent(standby,
+    machine)` whether the standby's word counts beside the control node's (not when both reach the
+    machine the same way, the VPN, and that way is down). A copy that was
     behind already when the machine went silent is not switched to by itself: that would lose
     what came since, and the machine, once back, would take the old copy over its own.
     Returns events: kind `switch` (with `part`: the control node starts the switch), or waiting,
@@ -207,6 +216,11 @@ def switches(fleet, links, said, state, now, sees, copy_age=None):
         if not said.get(dst):
             events.append({"host": src, "kind": "held", "part": part,
                            "text": what + ", which does not answer either: nothing is switched"})
+            continue
+        if independent is not None and not independent(dst, src):
+            events.append({"host": src, "kind": "held", "part": part,
+                           "text": what + ": %s is at another site and the master does not answer, so %s may only be cut off "
+                                          "the same way; nothing is switched" % (dst, src)})
             continue
         try:
             seen = sees(dst, src)

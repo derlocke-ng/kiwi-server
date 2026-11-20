@@ -83,12 +83,21 @@ while read -r part from dir here; do
     # The first fetch of a part over a folder that holds data already (this machine ran the part
     # before a switch, and may have written after the copy it now fetches was made): what it holds
     # is kept beside it first, linked, not copied, for 14 days. --delete would take it for good.
-    if [[ ! -e $d/state/$part.ok && -d $here && -n $(ls -A "$here" 2>/dev/null) ]] && ! compgen -G "$here.kept-*" >/dev/null; then
-        k="$here.kept-$(date +%Y%m%d-%H%M)"
-        # (touched: cp -a keeps the folder's own old time, which the clean-up below goes by)
-        cp -al "$here" "$k" && touch "$k" && logger -t kiwi-standby "$part: what $here held is kept in $k"
-    fi
+    # Once per first fetch (state/PART.keeping, gone with the first whole fetch); a folder that
+    # could not be kept is not fetched over.
     find "$(dirname "$here")" -maxdepth 1 -name "$(basename "$here").kept-*" -mtime +14 -exec rm -rf {} + 2>/dev/null
+    if [[ ! -e $d/state/$part.ok && -d $here && -n $(ls -A "$here" 2>/dev/null) ]] && ! grep -qxF "$here" "$d/state/$part.keeping" 2>/dev/null; then
+        k="$here.kept-$(date +%Y%m%d-%H%M%S)"
+        # (touched: cp -a keeps the folder's own old time, which the clean-up above goes by)
+        if cp -al "$here" "$k" && touch "$k"; then
+            echo "$here" >> "$d/state/$part.keeping"
+            logger -t kiwi-standby "$part: what $here held is kept in $k"
+        else
+            rm -rf "$k"; bad[$part]=1
+            logger -t kiwi-standby "$part: what $here holds could not be kept beside it: it is not fetched over"
+            continue
+        fi
+    fi
     mkdir -p "$here"
     if ! rsync -a --delete --numeric-ids --timeout=120 \
         -e "ssh -i $d/key -o UserKnownHostsFile=$d/known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes" \
@@ -99,7 +108,7 @@ while read -r part from dir here; do
     fi
 done < "$d/pull.conf"
 for part in "${!seen[@]}"; do
-    [[ -n ${bad[$part]:-} ]] || { date +%s > "$d/state/$part.ok"; rm -f "$d/state/$part.said"; }
+    [[ -n ${bad[$part]:-} ]] || { date +%s > "$d/state/$part.ok"; rm -f "$d/state/$part.said" "$d/state/$part.keeping"; }
 done
 '''
 

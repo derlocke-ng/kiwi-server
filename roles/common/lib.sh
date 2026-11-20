@@ -927,6 +927,16 @@ ks_stack_ready() {   # the parts kept ready for another machine: made here, not 
     # docker gets the containers made (a profile no `up` starts). `kiwi-stack ready start` (a switch)
     # starts them.
     [[ -n ${KS_STACK_READY[*]:-} ]] || return 0
+    # One that runs is one this machine ran as its own until now (a switch moved the part away while
+    # it was gone): it stops, before the standby's fetch writes under it. Its part runs elsewhere.
+    local svc
+    for svc in "${KS_STACK_READY[@]}"; do
+        if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active "$svc.service" 2>/dev/null; then
+            systemctl stop "$svc.service" && ks_say "$svc stopped: its part runs on another machine now, this one keeps it ready"
+        elif [[ $KS_STACK_RUNTIME == docker ]] && [[ $(docker inspect -f '{{.State.Running}}' "$svc" 2>/dev/null) == true ]]; then
+            docker stop "$svc" >/dev/null && ks_say "$svc stopped: its part runs on another machine now, this one keeps it ready"
+        fi
+    done
     if [[ $KS_STACK_RUNTIME == docker ]]; then
         docker compose --file "$KS_STACK_DIR/docker-compose.yml" --profile kiwi-ready up --no-start "${KS_STACK_READY[@]}" >/dev/null 2>&1 \
             || ks_warn "the parts kept ready here could not be made (${KS_STACK_READY[*]}): a switch makes them then"

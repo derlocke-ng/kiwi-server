@@ -729,6 +729,19 @@ class Renderer:
                 util.warn("%s: %s is not kept ready here: %s cannot be rendered (%s)" % (host.name, part, src_name, str(e)[:120]))
                 continue
             if part in src.modules:
+                # what the part needs must be among this machine's own parts: else it is not kept ready here,
+                # and this machine renders as it is (an error here would stop its applies altogether)
+                node_type = self.roles[host.role].node_type
+                without = ("vpn-client",) if (host.role_settings or {}).get("vpn") is False and node_type != "master" else ()
+                try:          # as kiwi-modules works it out (StackSpec.ready): its needs beside this machine's own parts
+                    need = self.ms.resolve(list(host.modules or []) + [part], node_type, without)
+                except KiwiError:
+                    need = [part]
+                lacking = [n for n in need if n != part and n not in (host.modules or [])]
+                if lacking:
+                    util.warn("%s: %s of %s is not kept ready here: it needs %s, which %s does not run"
+                              % (host.name, part, src_name, ", ".join(lacking), host.name))
+                    continue
                 settings = dict(src.module_settings[part])
                 nb = getattr(self.ms.modules.get(part), "named_by", None)
                 if nb and not settings.get(nb["setting"]):
@@ -1537,13 +1550,35 @@ def switch_after(fleet):
     return after if on else 0
 
 
-def hold_back(fleet, name, containers):
+def hold_back(fleet, name, containers, part=None):
     """Containers a machine must not run when it answers again (a part that was switched away
-    while it was gone): told to its agent with every report until its next apply."""
+    while it was gone): told to its agent with every report until its next apply. With `part`, the
+    hold ends by itself where the fleet file gives that part to the machine again."""
     with state_lock(fleet):
         state = fleet_state(fleet)
         held = state.setdefault("hold", {})
         held[name] = sorted(set(held.get(name) or []) | set(containers))
+        if part:
+            of = state.setdefault("hold_parts", {}).setdefault(name, {})
+            of.update({c: part for c in containers})
+        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+
+
+def unhold(fleet, name, containers):
+    """Containers a machine runs again (a part switched back to it): no longer held back there."""
+    with state_lock(fleet):
+        state = fleet_state(fleet)
+        held = state.get("hold") or {}
+        if name not in held:
+            return
+        left = sorted(set(held[name]) - set(containers))
+        if left:
+            held[name] = left
+        else:
+            held.pop(name)
+        of = (state.get("hold_parts") or {}).get(name) or {}
+        for c in containers:
+            of.pop(c, None)
         util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
 
 
@@ -1561,6 +1596,7 @@ def record_applied(fleet, *names, only_new=False):
                 applied[n] = int(time.time())
                 if not only_new:
                     (state.get("hold") or {}).pop(n, None)      # applied: what it holds back is gone from it
+                    (state.get("hold_parts") or {}).pop(n, None)
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     except OSError:
         if not only_new:
@@ -2370,7 +2406,8 @@ def cmd_recover(args):
         with contextlib.redirect_stdout(buf):
             main(["status", args.fleet, "--porcelain"])
         seen = json.loads(buf.getvalue() or "{}")
-    said = {h["host"]: bool(h.get("ok")) for h in seen.get("hosts") or []}
+    # asleep by its window: not gone (nothing restarts it, nothing switches away from it)
+    said = {h["host"]: bool(h.get("ok")) or h.get("state") == "asleep" for h in seen.get("hosts") or []}
     waits = {h["host"]: bool(h.get("locked")) for h in seen.get("hosts") or []}      # there, its disk locked: not gone
 
     def open_it(name):
@@ -2422,7 +2459,7 @@ def cmd_recover(args):
         if not addrs:
             raise KiwiError("%s has no address to try" % machine)
         script = ("for a in %s; do ping -c 2 -W 2 \"$a\" >/dev/null 2>&1 && { echo kiwi-sees; exit 0; }; "
-                  "timeout 3 bash -c \"exec 3<>/dev/tcp/$a/%d\" 2>/dev/null && { echo kiwi-sees; exit 0; }; done; echo kiwi-not"
+                  "timeout 3 bash -c 'exec 3<>\"/dev/tcp/$1/%d\"' _ \"$a\" 2>/dev/null && { echo kiwi-sees; exit 0; }; done; echo kiwi-not"
                   % (" ".join(shlex.quote(a) for a in addrs), int((h.cfg.get("admin") or {}).get("ssh_port")
                                                                      or (fleet.defaults.get("admin") or {}).get("ssh_port") or 22)))
         out = remote.run(remote.reach(fleet.hosts[standby], None), script).decode(errors="replace")
@@ -2431,8 +2468,14 @@ def cmd_recover(args):
         """How old the standby's copy of the part is (seconds), or None."""
         out = remote.run(remote.reach(fleet.hosts[standby], None), partstandby.AGE).decode(errors="replace")
         return partstandby.ages(out).get(part)
+    def independent(standby, machine):
+        """Whether the standby's word counts beside the control node's: at the same site it asks over the LAN;
+        at another site only over the VPN, and then only while the master answers (else both lost the same way)."""
+        if site_of(fleet.hosts[standby]) == site_of(fleet.hosts[machine]):
+            return True
+        return any(said.get(n) for n, k in kinds.items() if k == "master")
     events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees,
-                                copy_age)
+                                copy_age, independent)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
@@ -5658,36 +5701,55 @@ def cmd_switch(args):
         except SystemExit as e:
             return e.code if isinstance(e.code, int) else 1
     # the machine it leaves, if it answers: the part stops there, and the standby fetches once more
-    src_up, services = True, []
+    src_up, services, why_not = True, [], ""
     try:
         _script, bundle = Renderer(fleet, roles, out_dir, None, ms).script(src)
         services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
-    except KiwiError:
-        pass
+    except KiwiError as e:
+        why_not = str(e).splitlines()[-1][:120]
     try:
         s_tgt = remote.reach(src, None)
-        for c in services:
-            remote.run(s_tgt, service_script(c, "stop"))
-        util.say("%s: %s stopped" % (src_name, part))
-        remote.run(d_tgt, partstandby.PULL_PATH)
-        util.say("%s: fetched its data once more" % dst_name)
+        remote.run(s_tgt, "true")
     except KiwiError as e:
         src_up = False
         util.say("%s does not answer (%s): %s goes on with the copy %s has" % (src_name, str(e).splitlines()[-1][:80], part, dst_name))
-        if services:
-            # when it comes back, its stack starts the part before its apply takes it away: its agent's
-            # first report gets told to hold those containers back (machineagent.py), until that apply
-            hold_back(fleet, src_name, services)
+    if src_up:
+        # it answers: the part stops there before it starts anywhere else, or nothing is switched (it would run twice)
+        if why_not or not services:
+            raise KiwiError("%s answers, but which containers of %s run there could not be worked out (%s): nothing was switched"
+                            % (src_name, part, why_not or "none found"))
+        for c in services:
+            remote.run(s_tgt, service_script(c, "stop"))
+        util.say("%s: %s stopped" % (src_name, part))
+        try:
+            remote.run(d_tgt, partstandby.PULL_PATH)
+            util.say("%s: fetched its data once more" % dst_name)
+        except KiwiError as e:
+            util.warn("%s: the last fetch did not work (%s): it goes on with the copy it has"
+                      % (dst_name, str(e).splitlines()[-1][:80]))
+    elif services:
+        # when it comes back, its stack starts the part before its apply takes it away: its agent's
+        # first report gets told to hold those containers back (machineagent.py), until that apply
+        hold_back(fleet, src_name, services, part)
+    else:
+        util.warn("%s: which containers of %s run there could not be worked out (%s): when it is back, apply it before "
+                  "anything else, or the part runs there too" % (src_name, part, why_not or "none found"))
     # nothing is fetched over the part once it runs here; and the day it is kept ready here again (the pair
     # turned round), its first fetch finds data of its own in the folder and keeps it (partstandby.PULL)
     remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true; rm -f %s/state/%s.ok"
                % (partstandby.UNIT, partstandby.UNIT, partstandby.DIR, shlex.quote(part)))
-    # kept ready there (its containers made, its images there): it starts now, and the apply below
-    # makes it that machine's own
+    n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
+    if n:
+        util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
     try:
         ready = (Renderer(fleet, roles, out_dir, None, ms).script(dst)[1].module_services or {}).get(part) or []
     except KiwiError:
         ready = []
+    partmove.write_fleet(fleet, p["data"])
+    util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
+    unhold(fleet, dst_name, set(ready) | set(services))      # it runs there now: an old hold must not stop it
+    # kept ready there (its containers made, its images there): it starts now, and the apply below
+    # makes it that machine's own
     if ready:
         try:
             said = remote.run(d_tgt, "kiwi-stack ready start %s 2>&1" % " ".join(shlex.quote(c) for c in ready)).decode(errors="replace")
@@ -5697,11 +5759,6 @@ def cmd_switch(args):
         except KiwiError as e:
             util.say("%s: what was kept ready of %s did not start (%s): the apply starts it"
                      % (dst_name, part, str(e).splitlines()[-1][:100]))
-    n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
-    if n:
-        util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
-    partmove.write_fleet(fleet, p["data"])
-    util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
     if p["name"]:
         told = point_moving_name(args, p["name"], skip=() if src_up else (src_name,))
         if told:

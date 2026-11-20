@@ -71,16 +71,19 @@ done
 [ -n "$moved" ]; check $? "the control node switched $part to $sb by itself (${moved:-never} s after the power went)"
 [ -z "$name" ] || { [ -n "$answered" ]; check $? "$name answers from $sb (${answered:-never} s)"; }
 [ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark" ]; check $? "the data came along: the marker is there"
-kiwi-server control activity "$fleet" 2>/dev/null | grep -i "switched $part" | tail -1 | sed 's/^/    /'
+kiwi-server control activity "$fleet" 2>/dev/null | grep -i "switched $part" | head -1 | sed 's/^/    /'
 
 # the power comes back: the part must leave the machine that was gone
 ssh -o BatchMode=yes -o ConnectTimeout=8 "$VMHOST" "$V start $on" >/dev/null 2>&1; check $? "$on has its power again"
+# given up: its stack no longer has the part at all (the apply that waited for it), not merely
+# "not running yet" in the first seconds after a start
 t1=$(date +%s); n=$((20 * 60))
+kept() { at "$on" "ls /etc/containers/systemd/ 2>/dev/null; grep -o 'k.-$part:' /home/*/docker/docker-compose.yml 2>/dev/null" 2>/dev/null | grep -q -- "-$part"; }
 while [ "$n" -gt 0 ]; do
-    if at "$on" true 2>/dev/null && ! runs "$on"; then break; fi
+    if at "$on" true 2>/dev/null && ! kept && ! runs "$on"; then break; fi
     sleep 20; n=$((n - 20))
 done
-at "$on" true 2>/dev/null && ! runs "$on"; check $? "$on is back and no longer runs $part ($(( ($(date +%s) - t1) / 60 )) min)"
+at "$on" true 2>/dev/null && ! kept && ! runs "$on"; check $? "$on is back and gave $part up ($(( ($(date +%s) - t1) / 60 )) min)"
 # how long it ran the part beside its standby after the power came back: its agent's first report
 # holds it back (X-Kiwi-Hold), before the apply that takes the part away
 both=$(at "$on" "journalctl -b -u 'k?-$part.service' -o short-unix --no-pager 2>/dev/null" | awk '

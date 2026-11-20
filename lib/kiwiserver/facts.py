@@ -42,9 +42,10 @@ kv clock "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
 bt=$(awk '/^btime /{print $2}' /proc/stat 2>/dev/null)
 if [ -n "$bt" ] && mkdir -p /run/kiwi-server 2>/dev/null && [ -w /run/kiwi-server ]; then
     was=$(cat /run/kiwi-server/btime 2>/dev/null)
-    if [ -n "$was" ] && [ $((was - bt)) -ge 5 ]; then echo "$(date +%s) $((was - bt))" > /run/kiwi-server/clock-back; fi
+    # when: by the time the machine has been up, not by the clock that is in doubt
+    if [ -n "$was" ] && [ $((was - bt)) -ge 5 ]; then echo "$(cut -d. -f1 /proc/uptime) $((was - bt))" > /run/kiwi-server/clock-back; fi
     echo "$bt" > /run/kiwi-server/btime
-    if [ -f /run/kiwi-server/clock-back ]; then kv clock_back "$(cat /run/kiwi-server/clock-back)"; fi
+    if read -r at by < /run/kiwi-server/clock-back 2>/dev/null; then kv clock_back "$(( $(cut -d. -f1 /proc/uptime) - at )) $by"; fi
 fi
 if [ -e /run/reboot-required ] || [ -e /run/ostree/staged-deployment ]; then kv reboot yes; fi
 kv failed "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
@@ -134,9 +135,9 @@ if [ -w /run/kiwi-server ]; then
         if [ -n "$c" ] && [ -n "${rt:-}" ]; then fr=$((fr + $("$rt" exec "$c" cat /proc/net/snmp 2>/dev/null | frag_of))); fi
     done
     was=$(cat /run/kiwi-server/frag 2>/dev/null)
-    if [ -n "$was" ] && [ "$fr" -gt "$was" ]; then echo "$(date +%s) $((fr - was))" > /run/kiwi-server/frag-seen; fi
+    if [ -n "$was" ] && [ "$fr" -gt "$was" ]; then echo "$(cut -d. -f1 /proc/uptime) $((fr - was))" > /run/kiwi-server/frag-seen; fi
     echo "$fr" > /run/kiwi-server/frag
-    if [ -f /run/kiwi-server/frag-seen ]; then kv fragmented "$(cat /run/kiwi-server/frag-seen)"; fi
+    if read -r at by < /run/kiwi-server/frag-seen 2>/dev/null; then kv fragmented "$(( $(cut -d. -f1 /proc/uptime) - at )) $by"; fi
 fi
 """
 
@@ -182,12 +183,12 @@ def _int(value, default=0):
         return default
 
 
-def _pair(value, word):
-    """"WHEN N" as {"at": WHEN, word: N}, or None."""
+def _pair(value, word, now):
+    """"AGO N" (seconds ago, a number) as {"at": when by this computer's clock, word: N}, or None."""
     parts = str(value or "").split()
     if len(parts) != 2 or not all(x.isdigit() for x in parts):
         return None
-    return {"at": int(parts[0]), word: int(parts[1])}
+    return {"at": int(now) - int(parts[0]), word: int(parts[1])}
 
 
 def lasts_s(seconds):
@@ -267,8 +268,8 @@ def parse(data, local_now=None):
         "disks": list(disks.values()),
         "clock_synced": raw.get("clock") == "yes",
         # the clock was set back (when, by how many seconds); packets were cut into pieces (when, how many)
-        "clock_back": _pair(raw.get("clock_back"), "by"),
-        "fragmented": _pair(raw.get("fragmented"), "count"),
+        "clock_back": _pair(raw.get("clock_back"), "by", local_now if local_now is not None else time.time()),
+        "fragmented": _pair(raw.get("fragmented"), "count", local_now if local_now is not None else time.time()),
         "skew": remote_now - int(local_now if local_now is not None else time.time()) if remote_now else 0,
         "reboot": raw.get("reboot") == "yes",
         # a game server asleep whose stop ended with an error code of its own is no failure (Zandronum)
@@ -424,19 +425,16 @@ def assess(f, quiet=(), now=None):
     if abs(f.get("skew", 0)) > 30:
         problems.append(warn("the clock is %+d s off from this computer's" % f["skew"], "clock"))
     now = int(now if now is not None else time.time())
-    # both times are the machine's own, and its clock is the one in doubt: said in this computer's time
-    skew = f.get("skew", 0)
-    back = f.get("clock_back")
-    if back and now < back["at"] - skew + back["by"] + CLOCK_MARGIN:
+    back = f.get("clock_back")         # its times: this computer's (the machine says how long ago, by its uptime)
+    if back and now < back["at"] + back["by"] + CLOCK_MARGIN:
         # WireGuard refuses handshakes dated before the last one it took: until the time has caught up
-        at = back["at"] - skew
         problems.append(warn("its clock was set back %s at %s: until %s the VPN's other ends may refuse it"
-                             % (lasts_s(back["by"]), time.strftime("%H:%M", time.localtime(at)),
-                                time.strftime("%H:%M", time.localtime(at + back["by"]))), "clock-back"))
+                             % (lasts_s(back["by"]), time.strftime("%H:%M", time.localtime(back["at"])),
+                                time.strftime("%H:%M", time.localtime(back["at"] + back["by"]))), "clock-back"))
     frag = f.get("fragmented")
-    if frag and now - (frag["at"] - skew) < FRAGMENT_SHOWN:
+    if frag and now - frag["at"] < FRAGMENT_SHOWN:
         notes.append("packets were cut into pieces here (%d, last at %s): a tunnel's MTU is larger than its path carries; "
-                     "kiwi-server mtu measures it" % (frag["count"], time.strftime("%H:%M", time.localtime(frag["at"] - skew))))
+                     "kiwi-server mtu measures it" % (frag["count"], time.strftime("%H:%M", time.localtime(frag["at"]))))
     if f.get("reboot"):
         notes.append("an update is waiting for a reboot")
     if f.get("banned"):

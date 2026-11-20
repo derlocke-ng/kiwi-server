@@ -8401,7 +8401,7 @@ class TestVps(Base):
         """A clock set back keeps WireGuard's other ends from taking this machine's handshakes until
         the time has caught up: a warning for that long. Packets cut into pieces: a note for an hour."""
         base = "now=10000\nos=Debian\nclock=yes\n"
-        f = facts.parse(base + "clock_back=9000 3600\nfragmented=9900 42\n", local_now=10000)
+        f = facts.parse(base + "clock_back=1000 3600\nfragmented=100 42\n", local_now=10000)     # 1000 s and 100 s ago
         self.assertEqual((f["clock_back"], f["fragmented"]), ({"at": 9000, "by": 3600}, {"at": 9900, "count": 42}))
         _state, problems, notes = facts.assess(f, now=10000)
         back = [x for x in problems if x["key"] == "clock-back"]
@@ -8413,9 +8413,8 @@ class TestVps(Base):
         self.assertFalse([x for x in problems if x["key"] == "clock-back"])
         _state, _problems, notes = facts.assess(f, now=9900 + facts.FRAGMENT_SHOWN + 1)
         self.assertFalse(any("pieces" in n for n in notes))
-        # the machine's clock is the one in doubt: the times are said in this computer's
-        late = facts.parse("now=9760\nos=Debian\nclock=yes\nclock_back=9700 240\n", local_now=10000)     # its clock: 240 s behind
-        self.assertEqual(late["skew"], -240)
+        # the machine's clock is the one in doubt: it says how long ago, and the times are this computer's
+        late = facts.parse("now=9760\nos=Debian\nclock=yes\nclock_back=60 240\n", local_now=10000)     # its clock: 240 s behind
         _state, problems, _notes = facts.assess(late, now=10000)
         text = next(x["text"] for x in problems if x["key"] == "clock-back")
         self.assertIn("at %s: until %s" % (time.strftime("%H:%M", time.localtime(9940)), time.strftime("%H:%M", time.localtime(10180))), text)

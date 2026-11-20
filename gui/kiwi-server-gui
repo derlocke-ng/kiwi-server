@@ -358,6 +358,15 @@ def run_cli(cli, args, timeout=120, input=None):
         return 1, "", str(e)
 
 
+def run_cli_then(cli, args, done, timeout=120):
+    """run_cli in a thread, `done(rc, out, err)` back on the window's thread: the window stays alive
+    while kiwi-server works (a sync with the control node can take half a minute)."""
+    def work():
+        rc, out, err = run_cli(cli, args, timeout)
+        GLib.idle_add(lambda: (done(rc, out, err), False)[1])
+    threading.Thread(target=work, daemon=True).start()
+
+
 def machine_chips(phase, modules, facts, applied=None, now=None):
     """One look at a machine, part by part, as the chips on its page on the control node (web.py,
     machine_chips; a test holds the two to the same rules): set up or not, its last apply that
@@ -2050,15 +2059,24 @@ class AccessDialog(Adw.Dialog):
         if not calls and not tor:
             self.close()
             return
-        for cmd, args in [("access", a) for a in calls] + [("onion", a) for a in tor]:
-            rc, out, err = run_cli(self.win.cli, [cmd, self.win.doc.path] + args)
-            if rc != 0:
-                self.win.toast("%s: %s" % (args[0], (err.strip().splitlines() or ["not saved"])[-1].replace("error: ", "")))
-                return
-        path = self.win.doc.path
-        self.close()
-        self.win.open_path(path, sync=False)        # the fleet file changed under the app
-        self.win.toast("Saved — apply the master, and the machines whose services are named")
+        path, cli, steps = self.win.doc.path, self.win.cli, [("access", a) for a in calls] + [("onion", a) for a in tor]
+        self.win.toast("Saving…")
+
+        def work():
+            for cmd, args in steps:
+                rc, out, err = run_cli(cli, [cmd, path] + args)
+                if rc != 0:
+                    why = "%s: %s" % (args[0], (err.strip().splitlines() or ["not saved"])[-1].replace("error: ", ""))
+                    GLib.idle_add(lambda: (self.win.toast(why), False)[1])
+                    return
+            GLib.idle_add(saved)
+
+        def saved():
+            self.close()
+            self.win.open_path(path, sync=False)        # the fleet file changed under the app
+            self.win.toast("Saved — apply the master, and the machines whose services are named")
+            return False
+        threading.Thread(target=work, daemon=True).start()
 
 
 class SourcesDialog(Adw.Dialog):
@@ -2428,14 +2446,19 @@ class DiffDialog(Adw.Dialog):
     def decide(self, keep):
         """Of what both changed, this side's or the other's; everything else merged (`--keep`)."""
         path = self.win.doc.path
-        rc, out, err = run_cli(self.win.cli, ["control", "push", path, "--keep", keep], timeout=180)
-        if rc != 0:
-            self.win.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
-            return
-        self.win.open_path(path, sync=False)
-        self.win.toast("In step: one copy of the two, %s for what both changed"
-                       % ("this computer's" if keep == "here" else "the other's"), "ok")
-        self.close()
+        self.set_child(Adw.StatusPage(title="Making one copy of the two…",
+                                      child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
+
+        def done(rc, out, err):
+            if rc != 0:
+                self.win.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
+                self.load()
+                return
+            self.win.open_path(path, sync=False)
+            self.win.toast("In step: one copy of the two, %s for what both changed"
+                           % ("this computer's" if keep == "here" else "the other's"), "ok")
+            self.close()
+        run_cli_then(self.win.cli, ["control", "push", path, "--keep", keep], done, timeout=180)
 
 
 class ActivityDialog(Adw.Dialog):
@@ -5327,13 +5350,15 @@ class Window(Adw.ApplicationWindow):
                 return
             if r not in ("mine", "theirs"):
                 return
-            rc, out, err = run_cli(self.cli, ["control", "push", path, "--keep", "here" if r == "mine" else "there"],
-                                   timeout=180)
-            if rc != 0:
-                self.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
-            else:
-                self.open_path(path, sync=False)
-                self.toast("In step: one copy of the two", "ok")
+            self.toast("Making one copy of the two…")
+
+            def done(rc, out, err):
+                if rc != 0:
+                    self.toast("Not in step: %s" % ((err or out).strip().splitlines() or ["?"])[-1][:160])
+                else:
+                    self.open_path(path, sync=False)
+                    self.toast("In step: one copy of the two", "ok")
+            run_cli_then(self.cli, ["control", "push", path, "--keep", "here" if r == "mine" else "there"], done, timeout=180)
         dlg.connect("response", answer)
         dlg.present(self)
 

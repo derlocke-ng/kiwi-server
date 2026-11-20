@@ -299,8 +299,10 @@ hosts:
 ```
 
 After an apply of both machines, medlar fetches the part's folders from quince every minute
-(rsync over SSH). The part does not run on medlar; its data waits where the part would look
-for it there.
+(rsync over SSH). The part does not run on medlar, but it is made there: its images are
+pulled and its containers prepared with quince's settings and secrets, without a site,
+port or timer of their own. `kiwi-stack ready list` on medlar shows them. Its data waits
+where the part looks for it.
 
 ```bash
 kiwi-server standby ~/kiwi/fleet.yaml               # which part is kept ready where, and how old each copy is
@@ -310,16 +312,17 @@ kiwi-server switch ~/kiwi/fleet.yaml vault --yes    # medlar takes the part over
 
 A switch works whether quince answers or not. If it answers, the part stops there and medlar
 fetches once more, so nothing is lost. If it does not, the part goes on with the copy medlar
-has: at most the last minute is missing. The part keeps its name and its secrets, as in a
-move. quince gets the change the moment it answers again and then no longer runs the part.
+has: at most the last minute is missing. Then the containers kept ready start on medlar at
+once (`kiwi-stack ready start`), and the apply that follows makes the part medlar's own and
+gives it its site. The part keeps its name and its secrets, as in a move. quince gets the
+change the moment it answers again and then no longer runs the part.
 
 What to know:
 
 - A folder a database lives in is read with the part's containers paused, for as long as
   the read takes (the same care the backup takes). With little change per minute that is a
   moment.
-- Only folders are followed. A part that keeps its data in a named volume is not kept ready
-  yet; an apply says so.
+- Folders and named volumes are followed.
 - Both machines must be of one kind (two nodes) with the same stack folder.
 - The standby's key can do one thing on the machine that runs the part: read the folders
   kept ready (see [security](security.md#a-standbys-key)).

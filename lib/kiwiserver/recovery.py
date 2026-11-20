@@ -524,16 +524,22 @@ def cases(fleet, roles, ms, hosts, state, fleet_arg):
                              "/backups/%s" % h.name, "snapshots:%s" % h.name) for h in backed]})
 
     # a machine
+    from . import partstandby
+    ready = [(a, part, m) for a, part, m in partstandby.links(fleet)]      # (runs it, the part, keeps it ready)
     out.append({"id": "machine", "title": "A machine is dead or was replaced",
                 "by_itself": "Nothing installs it again by itself; the other machines keep running. Once it is "
                              "installed anew and set up, a machine with the backup part finds itself in its backups and "
                              "brings its data back by itself, then backs up as before. A machine without backups starts "
-                             "empty.",
+                             "empty." + ("" if not ready else " Kept ready on a second machine, with its data a minute "
+                             "old at most: %s. Nothing switches by itself: you say so, and the part runs there a minute later."
+                             % names(["%s of %s on %s" % (part, a, m) for a, part, m in ready])),
                 "you": "Install it anew under the same name: make its install media, start the machine from them (its "
                        "disk is erased), then Set it up. A machine that only waits at start with a locked disk is not "
                        "lost: Unlock it on its page." + (" Encrypted here: %s." % names(ring_hosts) if ring_hosts else ""),
-                "how": [_how("Rebuild %s" % h.name, rebuild_commands(h, fleet_arg), "/hosts/%s#rebuild" % h.name,
-                             "rebuild:%s" % h.name) for h in others]
+                "how": [_how("%s is gone: %s goes on on %s" % (a, part, m), "kiwi-server switch %s %s %s --yes" % (f, part, a),
+                             "/hosts/%s?tab=services" % a, None) for a, part, m in ready]
+                + [_how("Rebuild %s" % h.name, rebuild_commands(h, fleet_arg), "/hosts/%s#rebuild" % h.name,
+                        "rebuild:%s" % h.name) for h in others]
                 + [_how("Unlock %s" % n, "kiwi-server unlock %s %s" % (f, n), None, "unlock:%s" % n) for n in ring_hosts]})
 
     # the master

@@ -15648,6 +15648,15 @@ class TestRecovery(Base):
                          "kiwi-server build fleet.yaml lychee\nkiwi-server next fleet.yaml lychee --yes")
         self.assertIn("--ssh core@<its address> --new-host-key", rebuild["rebuild:quince"]["command"])   # its router's address
         self.assertIn("unlock:papaya", rebuild)
+        self.assertNotIn("Kept ready", by["machine"]["by_itself"])                  # no part has a standby here
+        # a part kept ready on a second machine: the case of a dead machine says so, and how to switch
+        papaya = f.raw["hosts"]["papaya"]
+        kept = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
+        machine = next(k for k in self.report(kept)[0]["cases"] if k["id"] == "machine")
+        self.assertIn("Kept ready on a second machine, with its data a minute old at most: vault of papaya on lychee", machine["by_itself"])
+        self.assertEqual((machine["how"][0]["label"], machine["how"][0]["command"], machine["how"][0]["page"]),
+                         ("papaya is gone: vault goes on on lychee", "kiwi-server switch fleet.yaml vault papaya --yes",
+                          "/hosts/papaya?tab=services"))
         self.assertNotIn("rebuild:sorbet", rebuild)                 # the master has its own case
         self.assertEqual([h["app"] for h in by["computer"]["how"]], [None, "rotate"])
         self.assertEqual([h["app"] for h in by["network"]["how"]], ["restore-copy", "copy"])

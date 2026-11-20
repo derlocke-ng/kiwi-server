@@ -195,8 +195,15 @@ node's logins for looking, and it is what failover needs on the machines themsel
 - **Watches its neighbours.** Each agent asks two or three others whether they answer. Three
   that agree a machine is gone is the vote a failover needs; one machine that lost its own
   network sees that it is the one cut off, and stops its standby parts' writers.
-- **Speaks only on the VPN**, to the control node and to its neighbours; it holds no secret
-  of another machine.
+- **Speaks on the network's own ways only**: at one site over the LAN (the fleet's names
+  resolve to LAN addresses there, from each machine's own hosts file, so neither the master
+  nor a DNS machine is needed), between sites over the VPN. Always HTTPS with the fleet's CA,
+  and signed with the machine's key: what it sends is encrypted and cannot be forged. It
+  holds no secret of another machine.
+- **When the master is gone** (the owner, 20 November): a site goes on by itself, its agents
+  and its control node see each other on the LAN. Between sites the standby master
+  (standby.md) is the way, and a control node per site keeps each site managed while the VPN
+  is cut.
 
 Built in steps: reports and "I am up" first (the look without logins), then orders, then the
 neighbours' vote with the standby.

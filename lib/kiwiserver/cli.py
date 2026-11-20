@@ -613,8 +613,13 @@ class Renderer:
             host.module_settings["hub"].update(self._turn)
         if "control" in host.modules and host.module_settings["control"].get("image") == CONTROL_IMAGE_MAJOR:
             # the control part of this very kiwi-server: its exact image, so that an apply brings the
-            # page of the release that applies it (an image already there is not pulled again)
-            host.module_settings["control"]["image"] = CONTROL_IMAGE_MAJOR.rsplit(":", 1)[0] + ":" + VERSION
+            # page of the release that applies it (an image already there is not pulled again).
+            # Not when the control node updates its own machine: pinned to itself it could never get
+            # a newer release (20 Nov 2026: it stayed three releases behind). Then the major tag
+            # stays, and the update pulls the newest release of it.
+            own_update = getattr(self, "updating", False) and host.name == os.environ.get("KIWI_CONTROL_HOST")
+            if not own_update:
+                host.module_settings["control"]["image"] = CONTROL_IMAGE_MAJOR.rsplit(":", 1)[0] + ":" + VERSION
         if role.node_type != "master" and "dns" in host.modules and self._partners:
             # a node's Pi-hole asks its master for the linked networks' names (the master asks the partner)
             host.module_settings["dns"]["partner_domains"] = sorted({fedmod.seen(p)[1] for p in self._partners.values() if fedmod.seen(p)[1]})
@@ -2863,6 +2868,7 @@ def cmd_apply(args):
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
     failed = []
     update = getattr(args, "update", False)
+    r.updating = bool(update)       # (the control node updating its own machine takes the newest control image)
     # every role script first, one after the other (the renderer is not shared between threads), and the
     # rings once: then the machines themselves, several at once
     servers = None

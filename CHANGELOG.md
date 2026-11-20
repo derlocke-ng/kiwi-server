@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.265.0 — the control node can update itself
+
+- **"Update everything" on the control page brings the control page itself to the newest
+  release.** An apply sets the control page's image to the release of the kiwi-server that
+  applies it; a control node applying its own machine therefore stayed on its own release for
+  ever, and only an apply from a computer with the newer kiwi-server moved it. Now, when the
+  control node updates its own machine, the image stays on the major tag and the update pulls
+  the newest release of it. A plain apply changes nothing about this.
+
 ## 2.264.0 — the agent: machines report by themselves
 
 - **Every machine runs a small agent** (`kiwi-agent`, installed by an apply when the network

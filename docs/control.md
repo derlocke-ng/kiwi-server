@@ -474,6 +474,14 @@ access to the machines, its log comes here as it is written, and what the job
 changed comes back. Without a control node, or for a first apply over SSH, the
 computer applies itself as before.
 
+### The control node's own release
+
+The control page is part of kiwi-server, as an image. An apply from a computer brings the page
+of that computer's kiwi-server. From the page, **Update everything** also updates the page
+itself: the control node pulls the newest release of its image when it updates its own machine
+(its own machine comes last, and the page is away for a moment). `/healthz` on the control
+page says which release it runs.
+
 ### Many machines
 
 - **Jobs on different machines run side by side.** Two applies, checks, previews or restarts

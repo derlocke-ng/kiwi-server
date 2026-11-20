@@ -242,6 +242,15 @@ are told. All of that can be there before:
 3. **A switch is then two steps on the standby machine**: start the part's containers, and
    tell its proxy to answer itself. Seconds, and nothing else in the network changes at that
    moment. The fleet file follows afterwards.
+Built (2.274.0 and after): 1 as `profiles: [kiwi-ready]` (quadlets without `[Install]`,
+`kiwi-stack ready`); 2 differently from the plan above: the standby's proxy has the part's site
+in a second config (`nginx-ready.conf`) that the switch puts in place, and the machines that
+answer for names keep the names of parts kept ready in a hosts file of their own that the
+switch rewrites (no second address in normal times, and no request passed between machines,
+whose access rules would see the wrong address); 3 as `kiwi-stack ready start` plus that file.
+Measured: Vaultwarden ran on its standby 6 s after the switch began, its name answered there
+after 29 s (the container's own start).
+
 4. **By itself**: the standby's agent watches the machine that runs the part. When that one
    does not answer and two others agree (the agents' vote; a machine that lost only its own
    network sees it is the one cut off and does nothing), the standby does step 3 and tells

@@ -359,7 +359,7 @@ class StackSpec:
                  variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None, mesh_only=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
                  ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=(), at_home=False,
-                 ready=()):
+                 ready=(), moving=()):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -369,6 +369,9 @@ class StackSpec:
         # parts kept ready for another machine (a standby): their containers made and their images
         # here, not started; no site, backup, port or unit of theirs. A switch starts them (READY)
         self.ready = tuple(m for m in (ready or ()) if m not in self.modules)
+        # names of parts that may move to another machine (a part kept ready there): the dns part
+        # serves them from a file of their own, which a switch rewrites in a moment (moving.hosts)
+        self.moving = sorted(set(moving or ()))
         self.at_home = bool(at_home)            # a master at home: its own connection is the home line
         self.docker_dir = docker_dir.rstrip("/")
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
@@ -561,6 +564,7 @@ class Renderer:
             "mesh_ips": sorted({ip for ip, _n in spec.dns_records}),
             "dns_records": list(spec.dns_records),
             "lan_addresses": dict(spec.lan_addresses), "mesh_only": sorted(spec.mesh_only),
+            "moving_names": list(spec.moving),
             "master_ip": spec.master_ip, "mesh_subnet": spec.mesh_subnet, "domain": spec.domain,
             "runtime": spec.runtime,
             # the mesh is behind the WireGuard server on a master, behind the VPN client on a node;
@@ -1045,6 +1049,14 @@ class Renderer:
         for s in servers:
             s["public"] = public and not (s["server_name"] + ".").endswith(".%s." % spec.domain)
         base["public_names"] = [s["server_name"] for s in servers if s["public"]]
+        # the proxy as it is once the parts kept ready run here: a switch puts it in place
+        # (kiwi-stack ready start) and their names answer here in seconds, before the apply
+        ready_proxy = None
+        if ready:
+            r_up, r_servers = self.nginx_blocks(spec, ordered, base)
+            for s in r_servers:
+                s["public"] = public and not (s["server_name"] + ".").endswith(".%s." % spec.domain)
+            ready_proxy = {"upstreams": r_up, "servers": r_servers}
         rp = spec.module_config.get("reverse-proxy") or {}
         # a node's public names come through the master (via: its mesh address); the master
         # knows which names and ports to hand on (exposed)
@@ -1111,6 +1123,10 @@ class Renderer:
                     continue
                 rel = self.expand(out.get("path") or "%s/%s" % (name, fname.replace(".j2", "")), ctx, where)
                 bundle.add_file(rel, text, int(out.get("mode", 0o644)))
+                if name == "reverse-proxy" and key == "nginx" and ready_proxy:
+                    text = self.render_text(mod.template(key), dict(ctx, output=key, **ready_proxy),
+                                            "modules/%s/%s" % (name, fname))
+                    bundle.add_file(re.sub(r"\.conf$", "", rel) + "-ready.conf", text, int(out.get("mode", 0o644)))
             # embedded files (file-type settings): where the module says they go
             for s in mod.settings:
                 if s.type != "file":

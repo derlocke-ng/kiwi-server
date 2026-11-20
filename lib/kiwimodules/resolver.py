@@ -229,7 +229,8 @@ def _home_address_as_mesh(host, where):
     rs["mesh_subnet"] = str(iface.network)
 
 
-def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None, mesh_only=None, ready=None):
+def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_addresses=None, mesh_only=None, ready=None,
+               moving=None):
     """`ready`: {part: (settings, files)} of parts kept ready here for the machine they run on,
     resolved as there (its settings, its secrets): see StackSpec.ready."""
     rs = host.role_settings
@@ -250,7 +251,7 @@ def stack_spec(host, role, dns_records=None, master_ip="", ca_cert=None, lan_add
         wg_mtu=rs.get("wg_mtu") or None, bridge_mtu=rs.get("bridge_mtu") or None,
         timezone=host.cfg.get("timezone") or "UTC", vpn_ip=vpn_ip,
         pub_iface=rs.get("pub_iface") or "", variables=rs.get("variables") or {}, at_home=bool(rs.get("at_home")),
-        module_config=config, files=files, ready=[p for p in (ready or {}) if p not in host.modules],
+        module_config=config, files=files, ready=[p for p in (ready or {}) if p not in host.modules], moving=moving or (),
         dns_records=dns_records or [], lan_addresses=lan_addresses or {}, mesh_only=mesh_only or [],
         service_user=service_user(host),
         master_ip=rs.get("master_ip") or master_ip or "", mesh_subnet=rs.get("mesh_subnet") or "10.8.0.0/16",

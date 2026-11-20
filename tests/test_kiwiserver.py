@@ -15661,6 +15661,19 @@ class TestRecovery(Base):
         self.assertEqual((own.ready, "kn-vault" in own.services), ([], True))
         self.assertEqual(b.compose["services"]["kn-vault"]["image"], own.compose["services"]["kn-vault"]["image"])
         self.assertEqual(r.script(f.hosts["quince"])[1].ready, [])                    # it keeps nothing ready
+        # its proxy as it is once the part runs there, under the name it has on papaya, and a certificate for it
+        later = b.files["kn-nginx/nginx-ready.conf"][0]
+        self.assertIn("server_name vault.papaya.kiwi;", later)
+        self.assertNotIn("vault.papaya.kiwi", b.files["kn-nginx/nginx.conf"][0])
+        self.assertEqual(r.ready_names(f.hosts["lychee"]), ["vault.papaya.kiwi"])
+        # the machines that answer for names serve it from the file a switch rewrites
+        self.assertEqual(r.moving_names(), ["vault.papaya.kiwi"])
+        master = r.script(f.hosts["sorbet"])[1]
+        moving = master.files[cli.MOVING_FILE % master.prefix][0]
+        self.assertRegex(moving, r"\n10\.8\.0\.9 vault\.papaya\.kiwi\n")
+        env = next(e for e in master.compose["services"]["km-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts="))
+        self.assertNotIn("vault.papaya.kiwi", env)
+        self.assertIn(" vault.quince.kiwi", env)                                     # one that does not move: as before
 
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod

@@ -15,7 +15,7 @@ class Profile:
     def __init__(self, path, roles_root):
         self.dir = path
         self.name = os.path.basename(path)
-        meta = yaml.safe_load(util.read_text(os.path.join(path, "role.yaml"))) or {}
+        meta = util.yaml_load(util.read_text(os.path.join(path, "role.yaml"))) or {}
         if meta.get("name") and meta["name"] != self.name:
             raise KiwiError("%s/role.yaml: name %r does not match the directory" % (self.name, meta["name"]))
         self.title = str(meta.get("title") or self.name)
@@ -40,7 +40,7 @@ class Profile:
             p = os.path.join(roles_root, str(inc) + ".yaml")
             if not os.path.isfile(p):
                 raise KiwiError("%s/role.yaml: settings_include %s not found" % (self.name, inc))
-            raw_settings += (yaml.safe_load(util.read_text(p)) or {}).get("settings") or []
+            raw_settings += (util.yaml_load(util.read_text(p)) or {}).get("settings") or []
         raw_settings += meta.get("settings") or []
         self.settings = load_settings("%s/role.yaml" % self.name, raw_settings)
 

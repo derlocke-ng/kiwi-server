@@ -83,16 +83,47 @@ def load_jails(owner, raw):
     return jails
 
 
+_ENV = None
+# Compiled templates and expressions by their text: one machine's render compiles the same few
+# hundred again and again (a module's server blocks for every name, its settings for every host),
+# and compiling was most of the time a render took (21 Nov 2026: 5600 compiles, 70% of `list`).
+_COMPILED, _EXPRESSIONS = {}, {}
+
+
 def _jinja():
+    """The one environment every render uses: its settings never change, so its compiled
+    templates can be kept (_COMPILED)."""
+    global _ENV
     if jinja2 is None:
         raise KiwiError("python3 jinja2 is required to render modules — "
                         "pip install --user jinja2  (or rpm-ostree install python3-jinja2)")
+    if _ENV is not None:
+        return _ENV
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
     env.filters["wg_key"] = wg_key
     env.filters["shquote"] = lambda value: shlex.quote(str(value))
     # `x is match(pattern)`: for a module's validate: rules on names
     env.tests["match"] = lambda value, pattern: re.match(pattern, str(value)) is not None
+    _ENV = env
     return env
+
+
+def _compiled(env, text):
+    t = _COMPILED.get(text)
+    if t is None:
+        if len(_COMPILED) > 8192:          # a long-running process with ever new texts: start over
+            _COMPILED.clear()
+        t = _COMPILED[text] = env.from_string(text)
+    return t
+
+
+def _expression(env, text):
+    e = _EXPRESSIONS.get(text)
+    if e is None:
+        if len(_EXPRESSIONS) > 2048:
+            _EXPRESSIONS.clear()
+        e = _EXPRESSIONS[text] = env.compile_expression(text)
+    return e
 
 
 def wg_key(secret):
@@ -116,7 +147,7 @@ class Module:
         self.dir = path
         self.name = os.path.basename(path)
         self.source = source            # the module source it came from (a fleet's module_sources), or None: built in
-        meta = yaml.safe_load(util.read_text(os.path.join(path, "module.yaml"))) or {}
+        meta = util.yaml_load(util.read_text(os.path.join(path, "module.yaml"))) or {}
         m = meta.get("module") or {}
         if m.get("name") and m["name"] != self.name:
             raise KiwiError("modules/%s/module.yaml: name %r does not match the directory" % (self.name, m["name"]))
@@ -597,7 +628,7 @@ class Renderer:
 
     def render_text(self, text, ctx, what):
         try:
-            return self.env.from_string(text).render(**ctx)
+            return _compiled(self.env, text).render(**ctx)
         except jinja2.TemplateError as e:
             raise KiwiError("%s: template error: %s" % (what, e))
 
@@ -690,7 +721,7 @@ class Renderer:
             ctx = _compose_safe(self.module_context(spec, ordered, base, name))
             rendered = self.render_text(text, ctx, "modules/%s/%s" % (name, mod.templates["compose"]))
             try:
-                doc = yaml.safe_load(rendered) or {}
+                doc = util.yaml_load(rendered) or {}
             except yaml.YAMLError as e:
                 raise KiwiError("modules/%s: rendered compose is not valid YAML: %s" % (name, e))
             listen = str(ctx.get("listen") or "").strip()
@@ -715,7 +746,7 @@ class Renderer:
             for net, body in (doc.get("networks") or {}).items():
                 networks.setdefault(net, body)
         if self.ms.networks_template:
-            nets = yaml.safe_load(self.render_text(self.ms.networks_template, base, "modules/networks.yml.j2")) or {}
+            nets = util.yaml_load(self.render_text(self.ms.networks_template, base, "modules/networks.yml.j2")) or {}
             for net, body in (nets.get("networks") or {}).items():
                 networks.setdefault(net, body)
         bundle.module_services = module_services
@@ -1096,7 +1127,7 @@ class Renderer:
                 ctx["backup_sources"] = self.backup_sources(spec, own, base, bundle)
             for c in mod.checks:
                 try:
-                    hit = self.env.compile_expression(c["when"])(**ctx)
+                    hit = _expression(self.env, c["when"])(**ctx)
                 except jinja2.TemplateError as e:
                     raise KiwiError("modules/%s/module.yaml validate: %s: %s" % (name, c["when"], e))
                 if hit:

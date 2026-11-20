@@ -28,6 +28,7 @@ import os
 
 import yaml
 
+from . import util
 from .util import KiwiError, deep_merge, read_bytes, read_text
 
 DEFAULTS = {"domain": "home", "target": "ucore", "timezone": "UTC", "admin": {"user": "core"}}
@@ -117,7 +118,7 @@ class Machine:
 
 def load(path):
     try:
-        data = yaml.safe_load(read_text(path))
+        data = util.yaml_load(read_text(path))
     except yaml.YAMLError as e:
         raise KiwiError("%s: not valid YAML: %s" % (path, e))
     return Machine(data, os.path.dirname(os.path.abspath(path)))

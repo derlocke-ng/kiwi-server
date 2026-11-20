@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.284.0 — a sync that asks less, and four times faster
+
+- **A sync asks only about what really needs a person.** The store's JSON maps (the machines'
+  MACs, the pins) are merged key by key, and of a key both sides changed the later `seen`/`at`
+  counts: the owner was asked to choose over two copies of macs.json that differed only in when
+  each side last saw two machines. "Compare with the other copy" marks what merges by itself,
+  shows the MAC file's entries with the newer side, and its buttons keep one side only for the
+  files both changed (`control push --keep here|there`); every other change of both sides stays.
+  Before, a choice took one whole copy and lost the other's changes.
+- **`power off` holds the switch**: a machine switched off on purpose is left alone (no switch
+  of its parts, no restart at its provider) until it answers again or is woken.
+- **Faster** (kiwi-modules 0.115.0): compiled templates kept, YAML through libyaml, onion keys
+  worked out once: `list`, which the app asks on every refresh, 4.0 s → 0.9 to 1.4 s on the test
+  network; every render, `plan` and apply gains the same.
+
 ## 2.283.0 — the hold, as it was meant
 
 - **Fixed (2.282.0): the machine a part was switched away from ran it again for minutes** when it

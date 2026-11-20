@@ -115,6 +115,7 @@ settings:
   - key: offsite_user
     group: Copy at another place
     label: User name there
+    help: "The account's user name at the other place (at 1&1: the e-mail address or customer number)."
     default: ""
   - key: offsite_password
     type: secret

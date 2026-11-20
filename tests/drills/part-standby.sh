@@ -125,6 +125,9 @@ else
     gone; check $? "$part no longer runs on $on"
 fi
 ! at "$sb" "grep -q '^$part ' /etc/kiwi-server/standby/pull.conf 2>/dev/null"; check $? "$sb no longer fetches over the part it now runs"
+if [ "$down" != --down ]; then      # the two stay a pair: the machine it left keeps it ready now
+    at "$on" "kiwi-stack ready list" 2>/dev/null | grep -q -- "-$part "; check $? "$on keeps $part ready now (the two stay a pair)"
+fi
 if [ -n "$name" ]; then
     ip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); code=000
     case $name in

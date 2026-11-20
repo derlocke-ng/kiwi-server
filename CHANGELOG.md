@@ -7,6 +7,9 @@
   how big the file is on each side and, where the file is a list of names with values, which
   names were added, removed or have another value. No value is shown. Known host keys (they
   are public) show which hosts each side has more. `kiwi-server control diff` prints the same.
+- CI runs once per pull request, not twice (a branch's push started it a second time).
+- Design: staying up (what operators do, what fits here) and the new order to build in
+  (docs/design/scale.md).
 
 ## 2.261.0 — the tests run several at once; one try per waiting machine
 

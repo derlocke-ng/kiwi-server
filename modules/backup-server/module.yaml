@@ -20,16 +20,33 @@ firewall:
   scope: vpn-client
   rules: []
 
+validate:
+  - when: "offsite_url and not (offsite_user and offsite_password)"
+    error: "backup-server.offsite_url needs offsite_user and offsite_password (the account at the other place)"
+
 templates:
   compose: docker-compose.yml.j2
   htpasswd: htpasswd.j2
+  offsite_script: offsite.sh.j2
+  offsite_env: offsite.env.j2
+  offsite_ca: offsite-ca.pem.j2
+  offsite_service: offsite.service.j2
+  offsite_timer: offsite.timer.j2
 
+# a third copy of the store at another place (offsite_url): rclone puts it there, encrypted once
+# more with a key from the fleet's seed, names included; the place sees nothing it could read
 outputs:
   htpasswd: { path: "{{ container_prefix }}-backup-server/htpasswd", mode: 0600 }
+  offsite_script: { path: "kiwi/backup-offsite.sh", mode: 0755, when: offsite }
+  offsite_env: { path: "{{ container_prefix }}-backup-server/offsite.env", mode: 0600, when: offsite }
+  offsite_ca: { path: "{{ container_prefix }}-backup-server/offsite-ca.pem", mode: 0644, when: offsite_ca }
+  offsite_service: { kind: host_unit, name: "{{ container_prefix }}-backup-offsite.service", when: offsite }
+  offsite_timer: { kind: host_unit, name: "{{ container_prefix }}-backup-offsite.timer", when: offsite }
 
 derived:
   backup_host: "{{ backup_domain or 'backup.' ~ hostname }}"
   data_path: "{{ data_dir or docker_dir ~ '/' ~ container_prefix ~ '-backup-server/data' }}"
+  offsite: "{{ 'yes' if offsite_url else '' }}"
 
 storage:
   bind_mounts:
@@ -37,6 +54,7 @@ storage:
 
 urls:
   - "Backup server: https://{{ backup_host }} — for the backup module of: {{ clients | join(', ') or 'nobody yet (backup-server.clients)' }}"
+  - "{% if offsite %}Copy at another place: {{ offsite_url }}, every night at {{ offsite_time }}, encrypted before it leaves{% endif %}"
 
 # how this part is named on the network: the setting that holds its name, and its own word.
 # By default it is backup.<machine>.<domain>; kiwi-server can name it backup.<domain> and keeps
@@ -88,6 +106,49 @@ settings:
     label: Months to keep
     help: "And of this many months."
     default: 6
+  - key: offsite_url
+    group: Copy at another place
+    label: WebDAV folder
+    help: "A third copy of every machine's backups, at another place: a WebDAV folder (1&1 SmartDrive, a Nextcloud, …), e.g. https://sd2dav.1und1.de/kiwi. Every night it gets what is new here, encrypted once more before it leaves, names included: the place holds nothing it could read. Empty: no such copy."
+    default: ""
+    pattern: '(https://[^ ]+)?'
+  - key: offsite_user
+    group: Copy at another place
+    label: User name there
+    default: ""
+  - key: offsite_password
+    type: secret
+    group: Copy at another place
+    label: Password there
+    help: "Kept in the network's secret store, not in the fleet file."
+    default: ""
+  - key: offsite_ca
+    type: text
+    group: Copy at another place
+    label: Its certificate authority
+    help: "For a WebDAV server whose certificate a CA of its own signed (a friend's Nextcloud): that CA's certificate, PEM. Empty: the usual public ones."
+    default: ""
+  - key: offsite_time
+    group: Copy at another place
+    label: Time of day
+    help: "When the copy is brought up to date: after the machines' nightly backups (03:00)."
+    default: "05:30"
+    pattern: '([01][0-9]|2[0-3]):[0-5][0-9]'
+  - key: offsite_bwlimit
+    group: Copy at another place
+    label: Speed limit
+    help: "At most this much a second for the copy, e.g. 5M; the home line stays usable meanwhile. Empty: no limit."
+    default: ""
+    pattern: '([0-9]+[KMG]?)?'
+  - key: offsite_key
+    type: secret
+    generate: true
+    group: Generated
+    help: "Encrypts the copy at the other place once more, names included (each machine's backups are encrypted with its own key already). From the fleet's seed: the seed brings the copy back."
+  - key: offsite_image
+    group: Advanced
+    help: "rclone, which makes the copy."
+    default: docker.io/rclone/rclone:1.75.2
   - key: client_hashes
     type: map
     group: Generated

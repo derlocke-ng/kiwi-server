@@ -1,0 +1,11 @@
+[Unit]
+Description=Kiwi Network: bring the copy of the backup store at another place up to date, every night
+
+[Timer]
+OnCalendar=*-*-* {{ offsite_time }}:00
+RandomizedDelaySec=10min
+Persistent=true
+Unit={{ container_prefix }}-backup-offsite.service
+
+[Install]
+WantedBy=timers.target

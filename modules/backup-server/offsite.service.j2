@@ -1,0 +1,11 @@
+[Unit]
+Description=Kiwi Network: the copy of {{ hostname }}'s backup store at another place
+Documentation=https://github.com/derlocke-ng/kiwi-server
+After=network-online.target kiwi-stack.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/bin/bash {{ docker_dir }}/kiwi/backup-offsite.sh

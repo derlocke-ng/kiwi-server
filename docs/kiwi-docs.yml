@@ -35,6 +35,7 @@ pages:
   - design/encryption.md: "Design: encrypted disks by default"
   - design/unlock.md: "Design: who opens whom"
   - design/ui.md: "Design: the page and the apps as server management"
+  - design/scale.md: "Design: many machines, and services that move"
   - design/no-master.md: "Design: a network without a master"
   - design/public-services.md: "Design: services for the public"
   - design/website.md: "Design: a public website"

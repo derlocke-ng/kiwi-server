@@ -312,10 +312,18 @@ kiwi-server switch ~/kiwi/fleet.yaml vault --yes    # medlar takes the part over
 
 A switch works whether quince answers or not. If it answers, the part stops there and medlar
 fetches once more, so nothing is lost. If it does not, the part goes on with the copy medlar
-has: at most the last minute is missing. Then the containers kept ready start on medlar at
-once (`kiwi-stack ready start`), and the apply that follows makes the part medlar's own and
-gives it its site. The part keeps its name and its secrets, as in a move. quince gets the
-change the moment it answers again and then no longer runs the part.
+has: at most the last minute is missing. Then, within seconds:
+
+1. the containers kept ready start on medlar (`kiwi-stack ready start`), and medlar's proxy
+   answers for the part's name (its certificate carries that name already);
+2. every machine that answers for names points the name at medlar: they serve the names of
+   parts kept ready from a file of their own, which the switch rewrites and Pi-hole reads at
+   once.
+
+The applies that follow make the part medlar's own. The part keeps its name and its secrets,
+as in a move. quince gets the change the moment it answers again and then no longer runs the
+part. A machine that answers for names and was not applied since the standby was set up
+learns the new address with its apply.
 
 What to know:
 

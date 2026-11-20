@@ -2415,13 +2415,19 @@ class ActivityDialog(Adw.Dialog):
              "rotate-seed": "Replaced the secrets inside the services", "tell-test": "Sent a test message",
              "start-new": "Started a new backup history of", "prune": "Removed old snapshots on",
              "doctor": "Checked the tools of the control node", "adopt": "Took in",
-             "service": "Looked after a container on"}
+             "service": "Looked after a container on", "reboot": "Restarted", "poweroff": "Switched off", "wake": "Woke",
+             "move": "Moved a part between", "switch": "Gave a part to its standby, from", "mtu": "Measured the MTU of",
+             "rotate-ring": "Replaced the keys of an unlock ring"}
     STATE = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 
-    def __init__(self, win):
-        super().__init__(title="Activity", content_width=640, content_height=700)
-        self.win = win
+    def __init__(self, win, host=None):
+        """`host`: only what was done to this machine (its History, as on its page on the control node)."""
+        super().__init__(title="History of %s" % host if host else "Activity", content_width=640, content_height=700)
+        self.win, self.host = win, host
         self.load()
+
+    def mine(self, x):
+        return not self.host or self.host in (x.get("hosts") or [])
 
     def load(self):
         self.set_child(Adw.StatusPage(title="Asking the control node…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
@@ -2451,23 +2457,31 @@ class ActivityDialog(Adw.Dialog):
             return False
         page = Adw.PreferencesPage()
         g = Adw.PreferencesGroup(title="Tasks", description="What the control node did or does, newest first.")
-        for j in got.get("jobs") or []:
+        jobs = [j for j in got.get("jobs") or [] if self.mine(j)]
+        entries = [e for e in got.get("entries") or [] if self.mine(e)]
+        for j in jobs:
             when = (j.get("started") or j.get("id") or "")[:16].replace("T", " ")
             title = ("%s %s" % (self.VERBS.get(j.get("action"), j.get("action") or ""), " ".join(j.get("hosts") or []))).strip()
             row = plain_row(title, "%s · %s" % (when, j.get("user") or ""))
             row.add_suffix(Gtk.Label(label=self.STATE.get(j.get("state"), j.get("state") or ""),
                                      css_classes=["error" if j.get("state") == "failed" else "dim-label"]))
             g.add(row)
-        if not got.get("jobs"):
+        if not jobs:
             g.add(plain_row("None since its page was last unlocked."))
         page.add(g)
-        g = Adw.PreferencesGroup(title="Log", description="Who did what there: on its page, or from a computer.")
-        for e in got.get("entries") or []:
+        g = Adw.PreferencesGroup(title="Log", description="What was done to %s, and by whom." % self.host if self.host
+                                 else "Who did what there: on its page, or from a computer.")
+        for e in entries:
             sub = "%s · %s" % ((e.get("time") or "")[:16].replace("T", " "), e.get("user") or "")
             if e.get("address"):
                 sub += " · %s" % e["address"]
-            g.add(plain_row(("%s %s" % (e.get("what") or "", " ".join(e.get("hosts") or []))).strip(), sub))
-        if not got.get("entries"):
+            what = self.VERBS.get(e.get("what"), e.get("what") or "")
+            row = plain_row(("%s %s" % (what, " ".join(e.get("hosts") or []))).strip(), sub)
+            if e.get("result"):                 # how a task ended: as the machine's History on the page says it
+                row.add_suffix(Gtk.Label(label=self.STATE.get(e["result"], e["result"]),
+                                         css_classes=["error" if e["result"] == "failed" else "dim-label"]))
+            g.add(row)
+        if not entries:
             g.add(plain_row("Empty."))
         page.add(g)
         tb.set_content(page)
@@ -6058,8 +6072,20 @@ class Window(Adw.ApplicationWindow):
         parts.append(self.deploy_group(name, st, f))
         if live and live.get("ok"):
             parts.append(self.move_group(name))
+            if self.control_host():         # its History is the control node's
+                parts.append(self.history_group(name))
             parts.append(self.power_group(name))
         self.host_column.show(parts)
+
+    def history_group(self, name):
+        """What was done to this machine (its History on the control page): the control node's activity, for it alone."""
+        g = Adw.PreferencesGroup(title="History")
+        row = plain_row("What was done to it", "Applies, restarts, moves and who did them, newest first")
+        b = Gtk.Button(label="Open…", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        b.connect("clicked", lambda *_: ActivityDialog(self, name).present(self))
+        row.add_suffix(b)
+        g.add(row)
+        return g
 
     def move_group(self, name):
         """A part of this machine to another machine (`kiwi-server move`), and the parts another machine

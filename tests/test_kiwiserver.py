@@ -10936,6 +10936,13 @@ class TestMadeUpNetwork(unittest.TestCase):
             self.assertEqual({"host", "target", "ok", "output", "state", "problems", "notes", "facts"} - set(h), set())
         self.assertEqual(sorted(yaml.safe_load(madeup.fleet_yaml())["hosts"]),
                          sorted(h["name"] for h in listed["hosts"] if not h.get("standby_of")))     # a standby is its master's block
+        # its plan of a move has what the real plan has (the Move page reads it)
+        from kiwiserver import partmove
+        real = partmove.plan(type("F", (), {"hosts": {}})(), {}, type("M", (), {"modules": {}})(), "vault", "a", "b")
+        made = madeup.move_plan("vault", "papaya", "lychee")
+        self.assertEqual(set(real) - {"data", "name_setting", "name_value"} - set(made), set())
+        self.assertTrue(made["steps"] and not made["stops"])
+        self.assertTrue(madeup.move_plan("vault", "lychee", "papaya")["stops"])           # lychee has no vault
         r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "drills", "madeup.py"), "status", "x", "--porcelain"],
                            capture_output=True, text=True)
         self.assertEqual(json.loads(r.stdout), status)

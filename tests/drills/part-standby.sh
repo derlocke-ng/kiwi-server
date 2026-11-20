@@ -127,6 +127,8 @@ fi
 ! at "$sb" "grep -q '^$part ' /etc/kiwi-server/standby/pull.conf 2>/dev/null"; check $? "$sb no longer fetches over the part it now runs"
 if [ "$down" != --down ]; then      # the two stay a pair: the machine it left keeps it ready now
     at "$on" "kiwi-stack ready list" 2>/dev/null | grep -q -- "-$part "; check $? "$on keeps $part ready now (the two stay a pair)"
+    # its first fetch over its own data keeps that data beside it (when it has not kept the part ready before)
+    say "  what $on held is kept in: $(at "$on" "ls -d '$data'.kept-* 2>/dev/null" | tr '\n' ' ')"
 fi
 if [ -n "$name" ]; then
     ip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); code=000

@@ -6,6 +6,9 @@
 #   tests/drills/apply-waits.sh FLEET MACHINE [WAIT_SECONDS]
 #
 # MACHINE: a leaf (not a master, not the control node); its disk must open by itself at boot.
+# A machine that is back within a minute or two is not missed at all: the apply waits for its SSH
+# and goes through (20 Nov 2026, lychee and quince as VMs). Then the first two checks fail and say
+# nothing; the waiting apply is proven by tests/drills/part-failover.sh (a power cut of minutes).
 # One PASS or FAIL line per check. The control node looks every ten minutes: the default wait
 # is 25 minutes.
 set -u

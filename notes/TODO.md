@@ -29,7 +29,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 16. netcup: rescue system, snapshots, user images.
 17. VLANs: the gateway's DHCP, DNS and routing per VLAN.
 18. Install media reinstall at every boot: no guard, no `--reinstall`. (Looked at on 20 Nov: bigger than it reads. It needs a mark on the target's boot partition written by both installers, a check in both, and the stick's boot loader starting the disk when the mark is there; with VM tests for uCore and Debian, UEFI and BIOS.)
-19. `kiwi-stack health`: clock step, fragmentation.
+19. ~~`kiwi-stack health`: clock step, fragmentation.~~ Done in every machine's report instead (the agent sends it each minute): a clock set back is a warning until the time has caught up, packets cut into pieces a note for an hour. Tried on quince; a real set-back clock is still to try.
 20. kiwi-app uses status, machines, activity and the registry only.
 
 ## C. The page and the app lack what the command line has

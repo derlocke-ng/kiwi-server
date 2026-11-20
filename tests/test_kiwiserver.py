@@ -8397,6 +8397,34 @@ class TestVps(Base):
         self.assertEqual(rc, 1)
         self.assertIn("vps login", err)
 
+    def test_a_clock_set_back_and_packets_in_pieces_are_reported(self):
+        """A clock set back keeps WireGuard's other ends from taking this machine's handshakes until
+        the time has caught up: a warning for that long. Packets cut into pieces: a note for an hour."""
+        base = "now=10000\nos=Debian\nclock=yes\n"
+        f = facts.parse(base + "clock_back=9000 3600\nfragmented=9900 42\n", local_now=10000)
+        self.assertEqual((f["clock_back"], f["fragmented"]), ({"at": 9000, "by": 3600}, {"at": 9900, "count": 42}))
+        _state, problems, notes = facts.assess(f, now=10000)
+        back = [x for x in problems if x["key"] == "clock-back"]
+        self.assertEqual(len(back), 1)
+        self.assertIn("set back 60 minutes", back[0]["text"])
+        self.assertTrue(back[0]["hint"])
+        self.assertTrue(any("cut into pieces here (42" in n for n in notes))
+        _state, problems, notes = facts.assess(f, now=9000 + 3600 + facts.CLOCK_MARGIN + 1)      # the time has caught up
+        self.assertFalse([x for x in problems if x["key"] == "clock-back"])
+        _state, _problems, notes = facts.assess(f, now=9900 + facts.FRAGMENT_SHOWN + 1)
+        self.assertFalse(any("pieces" in n for n in notes))
+        f = facts.parse(base + "clock_back=nonsense\n", local_now=10000)                       # a line it cannot read: nothing
+        self.assertIsNone(f["clock_back"])
+        self.assertIsNone(f["fragmented"])
+        # the probe's own counting, on what the kernel prints
+        fn = re.search(r"(?m)^frag_of\(\) \{.*$", facts.PROBE).group(0)
+        snmp = ("Ip: Forwarding DefaultTTL InReceives ReasmReqds ReasmOKs ReasmFails FragOKs FragFails FragCreates\n"
+                "Ip: 1 64 5000 8 4 0 3 0 6\nIcmp: InMsgs InErrors\nIcmp: 7 0\n")
+        r = subprocess.run(["bash", "-c", fn + "\nfrag_of"], input=snmp, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "10", r.stderr)                                     # ReasmOKs 4 + FragCreates 6
+        r = subprocess.run(["bash", "-n"], input=facts.PROBE, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_probe_says_the_real_disk(self):
         f = self.vps_fleet()
         self.logged_in()

@@ -112,8 +112,6 @@ The designs and the order to build in are in
    - VLANs: the gateway's DHCP, DNS and routing per VLAN.
    - Install media install again at every boot while they stay in the machine.
      There is no guard and no `--reinstall`.
-   - No report of a backwards clock step or of fragmentation (`kiwi-stack
-     health`).
    - The Android app uses status, machines, activity and the registry only. The
      control node's other routes (2.213.0) wait for it.
 3. **The page and the app lack what the command line has.** The app's settings

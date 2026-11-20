@@ -194,6 +194,13 @@ On the *Services* page, the link *login* beside a service leads to that card. Wh
 
 ### A warning on purpose
 
+Two reports are about the network under the VPN. *Its clock was set back*: WireGuard
+takes no connection dated before the last one it took, so after a clock is set back the
+VPN's other ends may refuse the machine until the time has caught up; the warning names
+that time and goes by itself ten minutes after it. *Packets were cut into pieces here*
+(a note, for an hour): a tunnel's MTU is larger than its path carries;
+`kiwi-server mtu` measures it ([measuring the MTU](network.md#measuring-the-mtu)).
+
 Every problem a machine reports says what to do about it. A warning that is so on
 purpose (an unencrypted disk on a machine that must start by itself, say) has
 *Leave it out*: from then on it is a note on the machine's page, not a warning,

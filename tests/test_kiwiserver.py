@@ -1950,7 +1950,7 @@ class TestModules(Base):
         host, role, spec = self.spec("m1", role="node", **{"node": self.node_gw(preset="gateway")})
         b = modmod.Renderer(self.ms).render(spec)
         svcs = b.compose["services"]
-        self.assertEqual(svcs["kn-portainer"]["dns"], [b.container_ips["dns"], "9.9.9.9"])
+        self.assertEqual(svcs["kn-portainer"]["dns"], [b.container_ips["dns"], "1.1.1.1"])
         self.assertNotIn("dns", svcs["kn-pihole"])
         self.assertNotIn("dns", svcs["kn-vpn-client"])
         self.assertIn("DNS=%s" % b.container_ips["dns"], b.quadlets["kn-portainer.container"])
@@ -1962,7 +1962,7 @@ class TestModules(Base):
         host, role, spec = self.spec("gate", role="master", **{"master": self.master()})
         b = modmod.Renderer(self.ms).render(spec)
         self.assertEqual(b.compose["services"]["km-vpn-client"]["dns"] if "dns" in b.compose["services"]["km-vpn-client"] else None, None)
-        self.assertEqual(b.compose["services"]["km-vpn-server"]["dns"], ["172.64.0.3", "9.9.9.9"])
+        self.assertEqual(b.compose["services"]["km-vpn-server"]["dns"], ["172.64.0.3", "1.1.1.1"])
         # no masquerade on DNAT'd flows: the host routes the mesh back through the VPN client
         host, role, spec = self.spec("sh3", role="node", **{"node": self.node_cloud(preset="cloud")})
         rules = modmod.Renderer(self.ms).render(spec).files["kn-vpn-client/post-rules.txt"][0]
@@ -1993,8 +1993,8 @@ class TestModules(Base):
         self.assertIn("127.0.0.1:8080:80/tcp", svcs["kn-pihole"]["ports"])  # the preset exposes the web UI, locally
         self.assertEqual(svcs["kn-pihole"]["hostname"], "pihole")
         self.assertIn("FTLCONF_webserver_api_password=p", svcs["kn-pihole"]["environment"])
-        # the master's Pi-hole first, Quad9 only while the master is unreachable; fleet names go to the master
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", svcs["kn-pihole"]["environment"])
+        # the master's Pi-hole first, a public resolver only while the master is unreachable; fleet names go to the master
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", svcs["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
@@ -2075,11 +2075,12 @@ class TestModules(Base):
             modmod.Renderer(self.ms).render(clash)
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
-        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;9.9.9.9;149.112.112.112", svcs["km-pihole"]["environment"])
+        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1", svcs["km-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
-        self.assertIn("DOT_PROVIDERS=quad9", svcs["km-vpn-client"]["environment"])
+        self.assertIn("DOT_PROVIDERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
+        self.assertIn("BLOCK_MALICIOUS=off", svcs["km-vpn-client"]["environment"])         # what is blocked is the blocklist's
         env = svcs["km-vpn-client"]["environment"]
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)
         self.assertIn("WIREGUARD_PRIVATE_KEY=k", env)
@@ -2270,7 +2271,7 @@ class TestModules(Base):
         spec.master_ip = ""   # no master known: the VPN client's resolver first, nothing forwarded
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
-        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
@@ -9731,7 +9732,7 @@ class TestCli(Base):
         m1, b = r.script(f.hosts["m1"])
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
         # the master's address comes from the fleet's master host: DNS upstream, forward, hosts block
-        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;9.9.9.9;149.112.112.112", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_dns_upstreams=10.8.0.1;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)

@@ -4,7 +4,7 @@
 worker_processes 1;
 events { worker_connections 256; }
 http {
-    resolver 9.9.9.9 149.112.112.112 valid=300s ipv6=off;
+    resolver 1.1.1.1 1.0.0.1 valid=300s ipv6=off;
     proxy_cache_path /var/cache/nginx/apt levels=1:2 keys_zone=apt:20m max_size={{ apt_size }} inactive=180d use_temp_path=off;
     map $host $apt_known {
         default 0;

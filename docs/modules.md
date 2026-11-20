@@ -372,7 +372,7 @@ copies pinned in `VENDORED`: `tools/vendor.sh` brings a release in,
   (a hairpin the VPN client rejects); Nextcloud reaches Collabora and Talk
   through its own URL this way.
 - **The containers' resolver** (`dns`, `DNS=`) is this stack's Pi-hole when
-  the dns module is on the host, Quad9 behind it, for every container on the
+  the dns module is on the host, a public resolver behind it, for every container on the
   stack network except Pi-hole and the VPN client. Without it podman would
   hand the containers a public resolver whenever the host's own is a loopback
   address.

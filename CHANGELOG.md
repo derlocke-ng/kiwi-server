@@ -22,6 +22,10 @@ uCore with UEFI and with BIOS, Debian).
 - `kiwi-server ssh-config FLEET [--write]`: ssh's own configuration for the machines, with the
   fleet's key and host keys: `ssh papaya`, and `papaya-lan`, `papaya-vpn`, `sorbet-public` for
   when names do not resolve (docs/machines.md, A shell on a machine).
+- **The resolvers answer every name** (kiwi-modules 0.107.0, kiwi-stack 0.9.24). The default was
+  Quad9, which leaves out names it holds to be malicious: a site was blocked that no blocklist
+  of the network named. The VPN client's DNS over TLS now goes to Cloudflare, and so do the
+  fallbacks reached directly. A fleet that set `dot_providers` or `fallback_dns` keeps its own.
 - **Fixed: `kiwi-server control activity` crashed** as soon as the control node had run a
   task. Its log's times are in this computer's time now, as the tasks' are.
 - A copy of the network without a signature (made before 2.170.0) can be opened on purpose

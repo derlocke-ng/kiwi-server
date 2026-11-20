@@ -98,7 +98,7 @@ DNS is one chain for the whole network:
 
 - VPN clients ask the master's Pi-hole.
 - A gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
-  (Quad9 only while the master is unreachable).
+  (a public resolver, Cloudflare's, only while the master is unreachable).
 - Names under the fleet's domain go to the master and never leave it.
 - Every host carries the fleet's names in its hosts file plus a route into
   the mesh through its VPN client.
@@ -118,9 +118,14 @@ public is reached the way strangers reach it, through the master; what the
 network keeps for itself has a name under the fleet's domain. A service you
 want both ways is better two: a public one and an internal one.
 
-Signed names (DNSSEC) are checked where the chain ends: on a master that leaves
-through a VPN exit, by the exit's resolver, which the VPN client asks over TLS.
-A badly signed name gets no address there, and so nowhere in the network.
+The chain ends at a public resolver that answers every name: Cloudflare's, asked
+over TLS by the master's VPN client through the exit (`vpn-client.dot_providers`;
+`google` is another). What is blocked is what the Pi-hole's blocklist says. Until
+2.269.0 the default was Quad9, which leaves out names it holds to be malicious: a
+site was blocked that no blocklist of the network named.
+
+Signed names (DNSSEC) are checked where the chain ends, by that resolver. A badly
+signed name gets no address there, and so nowhere in the network.
 Pi-hole's own check stays off: that resolver hands out answers, not the keys a
 second check needs, and with the check on every public name failed (tried on a
 node and on a master, 20 November 2026). A master with `upstream_dns` of its

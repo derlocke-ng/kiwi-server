@@ -553,7 +553,7 @@ ks_stack_host_prep() {
     # install has no systemd-resolved, so nothing happens there.
     if systemctl is-active -q systemd-resolved 2>/dev/null && { (( KS_STACK_NO_RESOLVED_STUB )) || [[ -n ${KS_STACK_DNS_IP:-} ]]; }; then
         # the stub listener on 127.0.0.53:53 would block the dns module's port 53; and the
-        # host itself asks this stack's Pi-hole (Quad9 behind it while the stack is down),
+        # host itself asks this stack's Pi-hole (a public resolver behind it while the stack is down),
         # so the fleet's names and the blocklist hold for the host, not only its containers
         if [[ -n ${KS_STACK_DNS_IP:-} ]]; then
             ks_say "systemd-resolved: the host resolves through this stack's Pi-hole at $KS_STACK_DNS_IP while the stack runs (its own resolvers before and after); stub listener off"

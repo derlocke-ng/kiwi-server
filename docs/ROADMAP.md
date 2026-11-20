@@ -151,7 +151,7 @@ two); the standby takes over instead.
   file settings with a conventional fallback, module `validate:` rules, port
   collision check, static container addresses, DNAT through the VPN client,
   nginx per service name with fleet-CA certificates, one resolver chain
-  (node Pi-hole → master Pi-hole → Quad9), Mullvad SOCKS5 records refreshed
+  (node Pi-hole → master Pi-hole → a public resolver), Mullvad SOCKS5 records refreshed
   by a host timer, client groups on the master.
 - Management: apply, status, enroll (hosts, phones, routers; groups, split
   tunnel, QR), fleet backup to the nodes and restore from one, CA, OpenWrt

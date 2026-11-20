@@ -764,7 +764,7 @@ class Renderer:
         reverse proxy on the stack network, not the host's loopback (podman
         copies /etc/hosts) and not the mesh address (hairpin through the VPN
         client); and lookups go to this stack's Pi-hole, when there is one,
-        with Quad9 behind it — never to the host's resolver, which podman
+        with a public resolver behind it — never to the host's resolver, which podman
         replaces with a public one when it is a loopback address."""
         # the proxy's namespace: on a master it lives in the WireGuard server's, and its own
         # address there leads nowhere (sorbet's own names went to 172.64.0.5, found by check)
@@ -781,7 +781,7 @@ class Renderer:
                 body["extra_hosts"] = ["%s:%s" % (n, ip) for n, ip in own]
             if dns_ip and "dns" not in body and svc not in ("%s-pihole" % base["container_prefix"],
                                                              "%s-vpn-client" % base["container_prefix"]):
-                body["dns"] = [dns_ip, "9.9.9.9"]
+                body["dns"] = [dns_ip, "1.1.1.1"]      # one that answers every name (Quad9 left some out)
 
     @staticmethod
     def check_ports(services):

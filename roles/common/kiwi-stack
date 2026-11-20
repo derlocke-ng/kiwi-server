@@ -44,7 +44,7 @@ if [[ ${1:-} == address ]]; then
     want=$1 gw=${2:-}
     shift; [[ $# -gt 0 ]] && shift
     if [[ ! $want =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ || ! $gw =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "usage: kiwi-stack address ADDRESS/PREFIX GATEWAY [DNS...]   e.g. kiwi-stack address 192.168.1.30/24 192.168.1.1 9.9.9.9" >&2
+        echo "usage: kiwi-stack address ADDRESS/PREFIX GATEWAY [DNS...]   e.g. kiwi-stack address 192.168.1.30/24 192.168.1.1 1.1.1.1" >&2
         exit 1
     fi
     ip=${want%%/*}
@@ -144,7 +144,7 @@ own_dns() { # on|off
     # (a name of its own: a file in /etc of the same name would hide this one)
     local f=/run/systemd/resolved.conf.d/91-kiwi-stack-dns.conf want
     if [[ $1 == on ]]; then
-        want=$(printf '%s\n' '[Resolve]' "DNS=$STACK_DNS_IP 9.9.9.9 149.112.112.112" 'Domains=~.')
+        want=$(printf '%s\n' '[Resolve]' "DNS=$STACK_DNS_IP 1.1.1.1 1.0.0.1" 'Domains=~.')
         [[ -f $f && $(cat "$f") == "$want" ]] && return 0
         mkdir -p /run/systemd/resolved.conf.d
         printf '%s\n' "$want" > "$f"

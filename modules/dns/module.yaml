@@ -113,7 +113,7 @@ settings:
   - key: fallback_dns
     label: Fallback resolvers
     help: "Semicolon separated, tried in strict order after the first upstream. Reached directly, not through the tunnel (which is down whenever the master is), so only ever used while the master is unreachable. Empty: none."
-    default: 9.9.9.9;149.112.112.112
+    default: 1.1.1.1;1.0.0.1
   - key: network_mode
     group: Advanced
     label: Share a container's network

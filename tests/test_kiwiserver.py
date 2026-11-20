@@ -10553,8 +10553,15 @@ class TestWeb(WebBase):
         self.assertIn("has not answered yet", self.ask("/hosts/sorbet")[1])
         self.assertIn("saved 2 hours ago", self.ask("/backups")[1])
         body = self.ask("/machines")[1]
-        self.assertIn("<summary>Several at once</summary>", body)                 # one action, several machines
-        self.assertIn('<input type="checkbox" name="host" value="sorbet">', body)
+        self.assertIn('<table class="tbl mt">', body)                             # a table, a row per machine
+        self.assertIn('name="host" value="sorbet"', body)                         # ticks: one action, several machines
+        self.assertIn("<b>1</b> wants a look", body)                              # the counts above it
+        self.assertIn('href="/machines?q=state%3Awarn"', body)                    # a click on a count filters
+        there = self.ask("/machines?q=state:warn")[1]                             # the filter lives in the address
+        self.assertIn('href="/hosts/papaya"', there)
+        self.assertNotIn('href="/hosts/sorbet"', there)
+        self.assertIn("1 of 3 shown", there)
+        self.assertIn("No machine matches", self.ask("/machines?q=site:nowhere")[1])
         csrf = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
         status, where = self.ask("/run-many", [("csrf", csrf), ("action", "status"), ("host", "papaya"), ("host", "sorbet")])[:2]
         self.assertEqual(status, 303)
@@ -10651,8 +10658,9 @@ class TestWeb(WebBase):
                       "How they are linked", 'stub up" data-h=', 'stub off" data-h='):                                # the picture
             self.assertIn(words, body)
         there = self.ask("/machines")[1]
-        for words in ('title="7.0 GB of 8.0 GB in use"', 'class="fill bad" style="width:95%"',                           # a machine's bars
-                      "Home server (node) · control node · gateway · keeps backups"):
+        for words in ('title="Memory 88 %: 7.0 GB of 8.0 GB in use"', 'class="fill bad" style="width:95%"',             # a machine's meters
+                      '<span class="sm">control node</span> <span class="sm">gateway</span> <span class="sm">keeps backups</span>',
+                      "Home server (node)"):
             self.assertIn(words, there)
         for words in ('<span class="grp">Access</span>', '<span class="grp">Safety</span>'):                             # the menu's groups
             self.assertIn(words, body)

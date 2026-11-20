@@ -10,7 +10,7 @@ that booted. The page:
 | | |
 |---|---|
 | **Home** | how the network is, in one line and four numbers (machines on, services running, the oldest last backup, devices); what wants a look and what that means; a picture of the network: who is linked to the master, its standby, the networks linked to this one, and a zone per site |
-| **Machines** | every machine with its load, memory and disk; add a machine; update everything |
+| **Machines** | every machine in a table by site, with a filter; add a machine; update everything |
 | **Services** | every service in one table: whether it works and its last 90 days, how fast it answers, where it is open (VPN, Internet, Tor: the badge copies the address), and under its name **Settings** (what kiwi-server sets for it) and **Admin page** (the app's own, for what is inside it) |
 | **A machine** | what it is, how busy and how full it is, what runs on it; Check now, Preview, Apply, each with what it does |
 | **Devices** | add a phone or laptop to the VPN: a QR code for the WireGuard app and the config to download; *Only the network through the VPN* makes a split config (see [Joining the mesh](network.md#joining-the-mesh)) |
@@ -112,8 +112,34 @@ step as a button:
 | Set it up | when the machine is installed and on: gives it its role |
 
 A machine's page has tabs: Overview, Services (with the logins), History (what was done to it
-and how it ended), Backups and Settings. "Several at once" under the list checks, previews or
-applies to the machines you tick, one after the other.
+and how it ended), Backups and Settings.
+
+### The Machines table
+
+Machines is a table with a row per machine, grouped by site (where the machines stand:
+`network.site` in the fleet file). Each row has the machine's state, its role, its parts,
+three small meters (CPU, memory, the fullest disk; point at one for the numbers), its last
+backup and when it was last seen. A site's line says how its
+machines are ("11 fine · 1 waits for unlock").
+
+A machine has one state: fine, wants a look, has a problem, not reachable, waits for unlock
+(its disk waits for its key), being installed, not set up yet, asleep, or not checked yet.
+
+The counts above the table filter on a click. The filter is text, and it is part of the
+page's address, so a view can be bookmarked:
+
+| Filter | Shows |
+|---|---|
+| `state:down` | machines in that state: `bad`, `down`, `unlock`, `warn`, `installing`, `new`, `asleep`, `ok`, or a word of the state ("fine") |
+| `site:main` | machines at a site whose name contains it (spaces as `-`) |
+| `part:dns` | machines with that part, by its name or its title |
+| `role:master` | machines with that role |
+| `lime` | machines whose name contains it |
+
+Several filters narrow the list; the same kind twice is either-or (`state:down state:bad`).
+
+Tick machines (the box in a site's heading ticks the whole site) and a bar appears: Check,
+Preview or Apply the ticked ones, one after the other.
 
 "Add a machine at home" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.

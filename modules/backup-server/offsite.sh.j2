@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# kiwi-server: the copy of {{ hostname }}'s backup store at another place ({{ offsite_url }}).
+# kiwi-server: the copy of {{ hostname }}'s backup store at another place ({{ offsite_url }}):
+# a WebDAV folder (https://) or an SFTP account (sftp://).
 # rclone brings it up to date: what is new here goes there, what was pruned here goes there too.
 # Encrypted once more before it leaves, names included (rclone crypt, a key from the fleet's
 # seed): every machine's backups are encrypted with its own restic key already, and the place
@@ -18,14 +19,33 @@ set -a; . "$dir/offsite.env" || exit 1; set +a
 run=$(mktemp -d /run/kiwi-offsite.XXXXXX) || exit 1
 trap 'rm -rf "$run"' EXIT
 obscure() { printf '%s' "$1" | "$rt" run --rm -i --network none "$image" obscure - 2>/dev/null | tail -n 1; }
+known=$dir/offsite-known_hosts
 {
-    echo "RCLONE_CONFIG_DAV_TYPE=webdav"
-    echo "RCLONE_CONFIG_DAV_URL=$OFFSITE_URL"
-    echo "RCLONE_CONFIG_DAV_VENDOR=other"
+    case $OFFSITE_URL in
+    sftp://*)   # an SFTP account (a Hetzner Storage Box, a friend's server): sftp://[USER@]HOST[:PORT]/FOLDER
+        rest=${OFFSITE_URL#sftp://}; at=${rest%%/*}; folder=${rest#"$at"}; folder=${folder#/}
+        [[ $at == *@* ]] && { OFFSITE_USER=${at%@*}; at=${at##*@}; }
+        host=${at%:*}; port=22; [[ $at == *:* ]] && port=${at##*:}
+        echo "RCLONE_CONFIG_DAV_TYPE=sftp"
+        echo "RCLONE_CONFIG_DAV_HOST=$host"
+        echo "RCLONE_CONFIG_DAV_PORT=$port"
+        echo "RCLONE_CONFIG_DAV_KNOWN_HOSTS_FILE=/kiwi/known_hosts"
+        echo "RCLONE_CONFIG_DAV_SHELL_TYPE=none"      # no commands there: a storage box runs few
+        echo "RCLONE_CONFIG_KIWI_REMOTE=dav:$folder"
+        ;;
+    *)          # a WebDAV folder; a Nextcloud's own kind when the address is one
+        echo "RCLONE_CONFIG_DAV_TYPE=webdav"
+        echo "RCLONE_CONFIG_DAV_URL=$OFFSITE_URL"
+        case $OFFSITE_URL in
+            */remote.php/dav/*|*/remote.php/webdav*) echo "RCLONE_CONFIG_DAV_VENDOR=nextcloud" ;;
+            *) echo "RCLONE_CONFIG_DAV_VENDOR=other" ;;
+        esac
+        echo "RCLONE_CONFIG_KIWI_REMOTE=dav:"
+        ;;
+    esac
     echo "RCLONE_CONFIG_DAV_USER=$OFFSITE_USER"
     echo "RCLONE_CONFIG_DAV_PASS=$(obscure "$OFFSITE_PASS")"
     echo "RCLONE_CONFIG_KIWI_TYPE=crypt"
-    echo "RCLONE_CONFIG_KIWI_REMOTE=dav:"
     echo "RCLONE_CONFIG_KIWI_PASSWORD=$(obscure "$OFFSITE_KEY")"
     echo "RCLONE_CONFIG_KIWI_PASSWORD2=$(obscure "$(printf '%s salt' "$OFFSITE_KEY" | sha256sum | cut -c1-32)")"
     echo "RCLONE_CONFIG_KIWI_FILENAME_ENCRYPTION=standard"
@@ -33,6 +53,18 @@ obscure() { printf '%s' "$1" | "$rt" run --rm -i --network none "$image" obscure
 } > "$run/env"
 chmod 0600 "$run/env"
 grep -q '^RCLONE_CONFIG_DAV_PASS=.' "$run/env" || { echo "the account's password could not be prepared (is $image there?)"; exit 1; }
+if [[ $OFFSITE_URL == sftp://* ]]; then
+    # its host key: taken at the first copy and kept, as ssh does; another key later stops the copy.
+    # Delete offsite-known_hosts only after the place really changed its key.
+    entry=$host; [[ $port != 22 ]] && entry="[$host]:$port"
+    kept() { awk -v e="$entry" '$1 == e { f = 1 } END { exit !f }' "$known" 2>/dev/null; }    # ("[h]:p" is no pattern)
+    if ! kept; then
+        ssh-keyscan -p "$port" -t ed25519,ecdsa,rsa "$host" 2>/dev/null >> "$known"
+        kept || { echo "no host key from $host:$port (is it an SFTP server?)"; exit 1; }
+        echo "the host key of $host:$port is kept now ($known)"
+    fi
+    cp "$known" "$run/known_hosts"
+fi
 ca=()
 if [[ -s $dir/offsite-ca.pem ]]; then     # a WebDAV server whose own CA signed its certificate
     cp "$dir/offsite-ca.pem" "$run/ca.pem" && ca=(--ca-cert /kiwi/ca.pem)

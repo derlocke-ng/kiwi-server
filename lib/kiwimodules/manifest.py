@@ -57,6 +57,9 @@ def stack_vars(host, bundle):
             _bash_var("KS_STACK_AUTO_UPDATE", getattr(bundle, "auto_update", "registry") or "registry"),
             _bash_var("KS_SEED_ID", host.secrets.seed_id() if host.secrets.has_seed() else ""),
         ]
+    if getattr(bundle, "ready_services", None):
+        # the containers of parts kept ready for another machine: made, never started by an apply
+        lines.append(_bash_var("KS_STACK_READY", list(bundle.ready_services)))
     # a fleet that replaced its seed says which one this follows: the machine refuses a
     # stack from any other seed than the one it runs
     seed_from = getattr(host.secrets, "seed_from", lambda: "")() if host.secrets.has_seed() else ""

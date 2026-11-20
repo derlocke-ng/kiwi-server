@@ -108,14 +108,14 @@ settings:
     default: 6
   - key: offsite_url
     group: Copy at another place
-    label: WebDAV folder
-    help: "A third copy of every machine's backups, at another place: a WebDAV folder (1&1 SmartDrive, a Nextcloud, …), e.g. https://sd2dav.1und1.de/kiwi. Every night it gets what is new here, encrypted once more before it leaves, names included: the place holds nothing it could read. Empty: no such copy."
+    label: The place
+    help: "A third copy of every machine's backups, at another place. A WebDAV folder (https://): 1&1 SmartDrive https://sd2dav.1und1.de/kiwi, a Nextcloud https://HOST/remote.php/dav/files/USER/kiwi, any other. Or an SFTP account (sftp://HOST:PORT/FOLDER, the folder in the account's home): a Hetzner Storage Box sftp://uNNNNN.your-storagebox.de:23/kiwi, a friend's server. Every night it gets what is new here, encrypted once more before it leaves, names included: the place holds nothing it could read. Empty: no such copy."
     default: ""
-    pattern: '(https://[^ ]+)?'
+    pattern: '((https|sftp)://[^ ]+)?'
   - key: offsite_user
     group: Copy at another place
     label: User name there
-    help: "The account's user name at the other place (at 1&1: the e-mail address or customer number)."
+    help: "The account's user name at the other place (at 1&1: the e-mail address or customer number; a storage box: uNNNNN)."
     default: ""
   - key: offsite_password
     type: secret

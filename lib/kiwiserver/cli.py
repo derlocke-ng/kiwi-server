@@ -5014,7 +5014,9 @@ def move_part(args, part, src_name, dst_name):
     --yes: the plan."""
     from . import partmove
     fleet, roles, ms = load(args)
-    p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {})
+    out_dir = out_dir_for(args, fleet)
+    p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {},
+                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h))
     if args.porcelain:
         print(json.dumps({k: v for k, v in p.items() if k != "data"}, indent=1))
         if p["stops"]:
@@ -5050,23 +5052,45 @@ def move_part(args, part, src_name, dst_name):
     n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
     if n:
         util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
+    def again(argv):            # a command of this kiwi-server, its exit status (a refused fleet ends with SystemExit)
+        try:
+            return main(argv) or 0
+        except SystemExit as e:
+            return e.code if isinstance(e.code, int) else 1
+
     # 3. the fleet file
+    before = util.read_text(fleet.path)
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
-    how = "kiwi-server apply %s %s" % (typed_path(fleet.path), dst_name)
-    # 4. the new machine, and the data
-    if main(["apply", fleet.path, dst_name]):
-        raise KiwiError("%s could not be applied. The fleet file has %s there already, and %s holds its data and its last "
-                        "backup. When %s is in order: %s, then kiwi-server backups %s %s %s --restore --from %s, then "
-                        "kiwi-server apply %s %s" % (dst_name, part, src_name, dst_name, how, typed_path(fleet.path), dst_name,
-                                                      part, src_name, typed_path(fleet.path), src_name))
-    if p["carry"]:
-        fleet2, roles2, ms2 = load(args)
-        util.say("%s: %s's data from %s's backups" % (dst_name, part, src_name))
-        sys.stdout.write(restore_from(fleet2, roles2, ms2, fleet2.hosts[dst_name], fleet2.hosts[src_name], [part], tgt=d_tgt))
+    # 4. the new machine, and the data. If either fails, everything goes back to how it was: the
+    # part must never be left running empty in its new place (20 Nov 2026: it was, and a move
+    # back then carried the empty copy home).
+    why = None
+    try:
+        if again(["apply", fleet.path, dst_name]):
+            why = "%s could not be applied" % dst_name
+        elif p["carry"]:
+            fleet2, roles2, ms2 = load(args)
+            util.say("%s: %s's data from %s's backups" % (dst_name, part, src_name))
+            sys.stdout.write(restore_from(fleet2, roles2, ms2, fleet2.hosts[dst_name], fleet2.hosts[src_name], [part],
+                                          tgt=d_tgt, out_dir=out_dir))
+    except KiwiError as e:
+        why = "%s's data did not come over: %s" % (part, e)
+    if why:
+        util.warn("%s. Putting everything back as it was" % why)
+        util.write_text(fleet.path, before, 0o600)
+        back = again(["apply", fleet.path, dst_name])       # the part leaves the new machine again
+        for c in services:
+            try:
+                remote.run(s_tgt, service_script(c, "start"))
+            except KiwiError as e:
+                util.warn("%s: %s was not started again: %s" % (src_name, c, e))
+        raise KiwiError("%s. %s runs on %s again, with its data as it was; the fleet file is as before%s"
+                        % (why, part, src_name, "" if not back else
+                           ". %s still has the part's leftovers: kiwi-server apply %s %s" % (dst_name, typed_path(fleet.path), dst_name)))
     # 5. the old machine, and everyone the change reaches
-    failed = main(["apply", fleet.path, src_name])
-    failed = main(["apply", fleet.path, "--changed"]) or failed
+    failed = again(["apply", fleet.path, src_name])
+    failed = again(["apply", fleet.path, "--changed"]) or failed
     # 6. from now on it is in the new machine's own store
     if p["carry"]:
         try:

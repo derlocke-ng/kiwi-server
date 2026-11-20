@@ -60,9 +60,13 @@ def changed_data(raw, part, src, dst, name_setting=None, name_value=None):
     return data
 
 
-def plan(fleet, roles, ms, part, src_name, dst_name, applied=None):
+def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None):
     """{part, from, to, name, carry, pins, steps, stops, notes, data}: what a move would do.
-    `stops` non-empty: it cannot be done as things are. `data`: the fleet file's data after it."""
+    `stops` non-empty: it cannot be done as things are. `data`: the fleet file's data after it.
+    `render(fleet, host)`: renders a machine as an apply would and raises KiwiError on what an
+    apply would refuse; with it the plan tries both machines as they would be after the move
+    (20 Nov 2026: a hidden service on the old machine still named the part that left, and the
+    move found out half way)."""
     stops, notes = [], []
     out = {"part": part, "from": src_name, "to": dst_name, "name": "", "carry": False, "pins": [], "steps": [],
            "stops": stops, "notes": notes, "data": None, "name_setting": None, "name_value": None}
@@ -125,6 +129,14 @@ def plan(fleet, roles, ms, part, src_name, dst_name, applied=None):
         for e in after.hosts[dst_name].validate(roles) + after.hosts[src_name].validate(roles):
             stops.append(e)
         namesmod.assign(after, ms)
+        if render is not None and not stops:
+            for n in (dst_name, src_name):
+                try:
+                    render(after, after.hosts[n])
+                except KiwiError as e:
+                    more = (" (something else on %s still refers to %s: take it out there first)" % (src_name, part)
+                            if n == src_name else "")
+                    stops.append("after the move %s%s" % (e, more))
     except KiwiError as e:
         stops.append(str(e))
     if not backup:

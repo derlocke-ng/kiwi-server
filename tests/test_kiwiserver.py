@@ -15359,14 +15359,24 @@ class TestFirstRunPage(StoreBase):
         cli.record_applied(fleet, b)
         self.c._reported_at.clear()
         self.assertEqual((post(b, good), heard[-1]), (200, None))
-        # held for a part, which the fleet file gives that machine again (switched back from a computer): not held
+        # held for a part, which the fleet file gives that machine again (switched back from a computer): not held.
+        # The fleet file itself counts, not the listing the pages keep (stale while the switch job runs)
+        import yaml
+        data = yaml.safe_load(util.read_text(self.c.fleet_path))
+        block = data["hosts"][b].setdefault(data["hosts"][b]["role"], {})
+
+        def mods(names):
+            block["modules"] = names
+            util.write_text(self.c.fleet_path, yaml.safe_dump(data))
         cli.hold_back(fleet, b, ["kn-vault"], "vault")
+        mods(["reverse-proxy"])                                                     # switched away: not its own
         self.c._reported_at.clear()
-        with mock.patch.object(self.c, "fleet_info", lambda fresh=False: {"hosts": [{"name": b, "modules": []}]}):
+        stale = lambda fresh=False: {"hosts": [{"name": b, "modules": ["vault"]}]}       # noqa: E731
+        with mock.patch.object(self.c, "fleet_info", stale):
             self.assertEqual((post(b, good), heard[-1]), (200, "kn-vault"))
+        mods(["reverse-proxy", "vault"])                                            # given back to it
         self.c._reported_at.clear()
-        with mock.patch.object(self.c, "fleet_info", lambda fresh=False: {"hosts": [{"name": b, "modules": ["vault"]}]}):
-            self.assertEqual((post(b, good), heard[-1]), (200, None))
+        self.assertEqual((post(b, good), heard[-1]), (200, None))
 
     def test_jobs_on_different_machines_run_side_by_side(self):
         cookie, _csrf = self.made()

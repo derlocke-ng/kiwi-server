@@ -55,7 +55,7 @@ fi
 '''
 SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node how this machine is\nAfter=network-online.target\n\n"
            "[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH)
-TIMER = ("[Unit]\nDescription=kiwi-server: report to the control node every minute\n\n[Timer]\nOnBootSec=10s\n"
+TIMER = ("[Unit]\nDescription=kiwi-server: report to the control node every minute\n\n[Timer]\nOnBootSec=10s\nOnBootSec=45s\n"
          "OnUnitActiveSec=1min\nAccuracySec=5s\n\n[Install]\nWantedBy=timers.target\n")
 INSTALL = r'''set -eu
 install -d -m 0700 %(dir)s

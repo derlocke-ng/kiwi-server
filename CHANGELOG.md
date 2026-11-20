@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.283.0 — the hold, as it was meant
+
+- **Fixed (2.282.0): the machine a part was switched away from ran it again for minutes** when it
+  came back, until its apply. The hold read the control node's listing kept for its pages, which
+  is made anew only after a job; while the switch job still ran it said the machine still ran the
+  part, and nothing was held back. It reads the fleet file itself now.
+- The agent reports 45 s after a start too (and 10 s, and then every minute): a stack that starts
+  the part a little later is caught then, not a minute later.
+- The failover drill measures that time from the units by name: its pattern matched nothing and
+  said 0 s.
+
 ## 2.282.0 — the switch, reviewed
 
 A review of the switch by itself and the pair found ways to a part running on two machines,

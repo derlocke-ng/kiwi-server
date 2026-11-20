@@ -95,7 +95,8 @@ done
 at "$on" true 2>/dev/null && ! kept && ! runs "$on"; check $? "$on is back and gave $part up ($(( ($(date +%s) - t1) / 60 )) min)"
 # how long it ran the part beside its standby after the power came back: its agent's first report
 # holds it back (X-Kiwi-Hold), before the apply that takes the part away
-both=$(at "$on" "journalctl -b -u 'k?-$part.service' -o short-unix --no-pager 2>/dev/null" | awk '
+# (the units by name: journalctl's -u takes no pattern like k?-…, it matched nothing and said 0)
+both=$(at "$on" "journalctl -b -u 'kn-$part.service' -u 'km-$part.service' -o short-unix --no-pager 2>/dev/null" | awk '
     / Started / && !s { s = $1 } / Stopped / && s && !e { e = $1 } END { if (!s) print 0; else if (!e) print -1; else printf "%d", e - s }')
 [ "${both:--1}" -ge 0 ] && [ "${both:--1}" -le 60 ]; check $? "$on ran $part beside $sb for ${both:-?} s after it came back (60 at most)"
 runs "$sb"; check $? "$part still runs on $sb"

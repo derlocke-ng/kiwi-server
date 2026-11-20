@@ -2302,14 +2302,20 @@ class Control:
             parts = (state.get("hold_parts") or {}).get(name) or {}
         except (OSError, ValueError, AttributeError):
             return []
-        # a part the fleet file gives this machine again (switched back, from wherever) is not held back
+        # a part the fleet file gives this machine again (switched back, from wherever) is not held back. The
+        # file itself, not the listing kept for the pages: that one is made anew only after a job, and the
+        # switch is one (20 Nov 2026: the listing from before it said the machine still ran the part, and
+        # nothing was held back for five minutes)
         mine = set()
         if parts:
+            import yaml
             try:
-                mine = set(next((h.get("modules") or [] for h in (self.fleet_info() or {}).get("hosts") or []
-                                 if h.get("name") == name), []))
-            except (KiwiError, OSError, ValueError):
-                return []           # not known now: nothing is stopped on a guess
+                with open(self.fleet_path) as fh:
+                    h = ((yaml.safe_load(fh) or {}).get("hosts") or {}).get(name) or {}
+                block = h.get(str(h.get("role") or "")) or {}
+                mine = {str(m) for m in (block.get("modules") or [])} if isinstance(block, dict) else set()
+            except (OSError, ValueError, AttributeError, yaml.YAMLError):
+                mine = set()        # not known: held back, as the switch asked (until the machine's apply)
         return [c for c in held if isinstance(c, str) and HOST.match(c) and parts.get(c) not in mine]
 
     def report(self, name, when, boot, sign, body):

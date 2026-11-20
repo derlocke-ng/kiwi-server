@@ -42,11 +42,15 @@ SEND = r'''#!/bin/bash
 set -f
 conf=/etc/kiwi-server/standby/send.conf
 cmd=${SSH_ORIGINAL_COMMAND:-}
-if ! [[ $cmd =~ ^rsync\ --server\ --sender\ -[A-Za-z0-9.]+(\ --numeric-ids)?\ \.\ (/[A-Za-z0-9._/-]+/)$ ]]; then
+# what rsync asks its other side for when it only reads: its flags, and of the long options none but
+# these two (--remove-source-files, --files-from and the like are refused with the rest)
+if ! [[ $cmd =~ ^rsync\ --server\ --sender\ -[A-Za-z0-9.]+((\ --numeric-ids|\ --timeout=[0-9]+)*)\ \.\ (/[A-Za-z0-9._/-]+/)$ ]] \
+        || [[ $cmd == *..* ]]; then
+    logger -t kiwi-standby "refused: $cmd" 2>/dev/null
     echo "kiwi-standby: only rsync, reading one of the folders kept ready" >&2
     exit 1
 fi
-path=${BASH_REMATCH[2]}
+path=${BASH_REMATCH[3]}
 rt='' kind='' containers=''
 while read -r a b c; do
     if [[ $a == runtime ]]; then rt=$b; continue; fi
@@ -92,9 +96,14 @@ SERVICE = ("[Unit]\nDescription=kiwi-server: fetch the data of the parts this ma
 TIMER = ("[Unit]\nDescription=kiwi-server: every minute, the data of the parts this machine keeps ready\n\n[Timer]\n"
          "OnBootSec=1min\nOnUnitActiveSec=1min\nAccuracySec=5s\n\n[Install]\nWantedBy=timers.target\n")
 
+# rsync on both machines: Debian does not bring it
+NEED_RSYNC = ('command -v rsync >/dev/null 2>&1 || { command -v apt-get >/dev/null 2>&1 && '
+              'DEBIAN_FRONTEND=noninteractive apt-get install -y -q rsync >/dev/null 2>&1; }\n'
+              'command -v rsync >/dev/null 2>&1 || { echo "rsync is not installed here, and could not be" >&2; exit 1; }\n')
+
 # the machine that runs the part: the sender, its folders, the standby's key (stdin: the public key lines)
 INSTALL_SEND = r'''set -eu
-install -d -m 0700 %(dir)s /root/.ssh
+''' + NEED_RSYNC + r'''install -d -m 0700 %(dir)s /root/.ssh
 cat > %(dir)s/send.conf <<'KIWI_EOF'
 %(conf)sKIWI_EOF
 cat > %(send)s.new <<'KIWI_EOF'
@@ -118,7 +127,7 @@ REMOVE_SEND = ("[ -e %s ] || exit 0; rm -f %s %s/send.conf %s; "
 
 # the standby machine: its key (stdin), whose host keys to trust, what to fetch, the timer
 INSTALL_PULL = r'''set -eu
-install -d -m 0700 %(dir)s %(dir)s/state
+''' + NEED_RSYNC + r'''install -d -m 0700 %(dir)s %(dir)s/state
 key=$(cat)
 umask 077
 printf '%%s\n' "$key" > %(dir)s/key.new && mv %(dir)s/key.new %(dir)s/key

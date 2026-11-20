@@ -55,6 +55,9 @@ class TestStandby(unittest.TestCase):
             with open(os.path.join(bindir, name), "w") as fh:
                 fh.write("#!/bin/bash\necho \"%s $*\" >> %s\n" % (name, log))
             os.chmod(os.path.join(bindir, name), 0o755)
+        with open(os.path.join(bindir, "logger"), "w") as fh:        # (what it refuses goes to the journal)
+            fh.write("#!/bin/bash\nexit 0\n")
+        os.chmod(os.path.join(bindir, "logger"), 0o755)
         script = ps.SEND.replace("/etc/kiwi-server/standby/send.conf", conf)
 
         def run(cmd):
@@ -68,12 +71,16 @@ class TestStandby(unittest.TestCase):
         rc, said, _err = run(ok)
         self.assertEqual(rc, 0)
         self.assertEqual(said, ["podman pause kn-db", "podman pause kn-db2", ok, "podman unpause kn-db", "podman unpause kn-db2"])
+        timed = "rsync --server --sender -logDtpre.iLsfxCIvu --timeout=120 --numeric-ids . /srv/db/"     # as rsync 3.5 asks
+        self.assertEqual(run(timed)[:2], (0, ["podman pause kn-db", "podman pause kn-db2", timed, "podman unpause kn-db", "podman unpause kn-db2"]))
         rc, said, _err = run("rsync --server --sender -vlogDtpre.iLsfxCIvu . /srv/files/")
         self.assertEqual((rc, said), (0, ["rsync --server --sender -vlogDtpre.iLsfxCIvu . /srv/files/"]))      # no database: nothing paused
         for bad in ("rsync --server -vlogDtpre.iLsfxCIvu . /srv/db/",                         # writing here
                     "rsync --server --sender -vlogDtpre.iLsfxCIvu --remove-source-files . /srv/db/",
                     "rsync --server --sender -vlogDtpre.iLsfxCIvu . /etc/",                    # another folder
                     "rsync --server --sender -vlogDtpre.iLsfxCIvu . /srv/db/../../etc/",
+                    "rsync --server --sender -vlogDtpre.iLsfxCIvu --timeout=1 --files-from=/etc/shadow . /srv/db/",
+                    "rsync --server --sender -vlogDtpre.iLsfxCIvu --timeout=x . /srv/db/",
                     "rsync --server --sender -vlogDtpre.iLsfxCIvu . /srv/db/ /etc/",
                     "cat /etc/shadow", "", "rsync --server --sender -e.x . /srv/db/; id"):
             rc, said, err = run(bad)

@@ -52,7 +52,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
     availability at one site.
 30. The join token; the phoenix image with the container images inside.
 31. More hosters (cloud-init, Hetzner first), IPv6, NFSv4 with kernel TLS.
-32. ~~`ssh-config`~~ (built: `kiwi-server ssh-config FLEET [--write]`, tried on the test fleet), `probe`, `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
+32. ~~`ssh-config`~~ (built: `kiwi-server ssh-config FLEET [--write]`, tried on the test fleet), `probe`, `build --boot`, `images.lock`, `migrate`, ~~Pi-hole DNSSEC~~, `master.exit`. DNSSEC: tried 20 Nov as one setting on lime and on sorbet, taken out again: the exit's resolver already checks (a badly signed name gets no address) and gives out no keys, so Pi-hole's own check failed every public name (docs/network.md, DNS).
 33. Data kept across a reinstall on one disk (four questions wait for the owner,
     docs/design/data-partition.md).
 34. Backups of desktop and phone, the kiwi-desktop client, Windows.

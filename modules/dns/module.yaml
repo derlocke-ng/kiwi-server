@@ -114,11 +114,6 @@ settings:
     label: Fallback resolvers
     help: "Semicolon separated, tried in strict order after the first upstream. Reached directly, not through the tunnel (which is down whenever the master is), so only ever used while the master is unreachable. Empty: none."
     default: 9.9.9.9;149.112.112.112
-  - key: dnssec
-    type: bool
-    label: Check DNSSEC
-    help: "Pi-hole checks the signatures of names that are signed (DNSSEC) and refuses an answer that was changed on the way; a name that is not signed is answered as before. The network's own names and a linked network's are not checked: they are answered here, or by that network. Needs the machine's clock to be right, and resolvers that pass the signatures on (the master's exit and the usual public ones do)."
-    default: false
   - key: network_mode
     group: Advanced
     label: Share a container's network

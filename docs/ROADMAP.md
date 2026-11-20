@@ -120,7 +120,7 @@ The designs and the order to build in are in
    (the order is in design/scale.md). The join token, and the phoenix image
    with the container images inside. More hosters (cloud-init, Hetzner first),
    IPv6 end to end, NFSv4 with kernel TLS. `probe`,
-   `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
+   `build --boot`, `images.lock`, `migrate`, `master.exit`.
    Data kept across a reinstall on one disk (design/data-partition.md; four
    questions wait for the owner). Backups of the desktop and the phone, the
    desktop client, Windows. Mastodon, Matrix and email modules (the owner: not
@@ -790,14 +790,16 @@ non-expert":
 - An audit of what leaves the network: the host's own traffic (updates,
   image pulls, the Mullvad list, backups) uses the raw ISP link; make that
   visible and optionally route it too.
-- Pi-hole DNSSEC as a one-line setting.
+- *Pi-hole DNSSEC as a one-line setting: tried and dropped on 20 November 2026. The exit's
+  resolver checks already and hands out no keys; with Pi-hole's check on, every public name
+  failed (network.md, DNS).*
 - Image digests recorded per render (`images.lock`) so a restore reproduces
   what it backs up.
 
 *Status: built are the status page and the messages (2.108.0), a new seed for
 the secrets inside the services (`rotate FLEET seed`, 2.74.0), and SSH off
 port 22 with fail2ban (2.56.0). Not built: `kiwi-stack health`, `migrate`,
-Pi-hole DNSSEC, `images.lock`.*
+`images.lock`.*
 
 Asked for by the owner in October 2026, for the test round and after:
 

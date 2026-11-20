@@ -81,9 +81,6 @@ services:
       - TZ={{ timezone }}
       - FTLCONF_webserver_api_password={{ pihole_password }}
       - FTLCONF_dns_upstreams={{ upstreams }}
-{% if dnssec %}
-      - FTLCONF_dns_dnssec=true
-{% endif %}
       - FTLCONF_misc_dnsmasq_lines={{ lines | join(';') }}
       - FTLCONF_dns_listeningMode=all
       - FTLCONF_webserver_domain={{ pihole_hostname or 'pihole.' ~ hostname }}

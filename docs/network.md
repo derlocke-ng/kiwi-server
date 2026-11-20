@@ -118,6 +118,14 @@ public is reached the way strangers reach it, through the master; what the
 network keeps for itself has a name under the fleet's domain. A service you
 want both ways is better two: a public one and an internal one.
 
+Signed names (DNSSEC) are checked where the chain ends: on a master that leaves
+through a VPN exit, by the exit's resolver, which the VPN client asks over TLS.
+A badly signed name gets no address there, and so nowhere in the network.
+Pi-hole's own check stays off: that resolver hands out answers, not the keys a
+second check needs, and with the check on every public name failed (tried on a
+node and on a master, 20 November 2026). A master with `upstream_dns` of its
+own gets whatever those resolvers do.
+
 ### Names by service
 
 By default a part is named after its machine: the pastebin on quince is `paste.quince.home`.

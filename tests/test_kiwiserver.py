@@ -8413,6 +8413,12 @@ class TestVps(Base):
         self.assertFalse([x for x in problems if x["key"] == "clock-back"])
         _state, _problems, notes = facts.assess(f, now=9900 + facts.FRAGMENT_SHOWN + 1)
         self.assertFalse(any("pieces" in n for n in notes))
+        # the machine's clock is the one in doubt: the times are said in this computer's
+        late = facts.parse("now=9760\nos=Debian\nclock=yes\nclock_back=9700 240\n", local_now=10000)     # its clock: 240 s behind
+        self.assertEqual(late["skew"], -240)
+        _state, problems, _notes = facts.assess(late, now=10000)
+        text = next(x["text"] for x in problems if x["key"] == "clock-back")
+        self.assertIn("at %s: until %s" % (time.strftime("%H:%M", time.localtime(9940)), time.strftime("%H:%M", time.localtime(10180))), text)
         f = facts.parse(base + "clock_back=nonsense\n", local_now=10000)                       # a line it cannot read: nothing
         self.assertIsNone(f["clock_back"])
         self.assertIsNone(f["fragmented"])

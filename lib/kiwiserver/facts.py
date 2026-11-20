@@ -424,16 +424,19 @@ def assess(f, quiet=(), now=None):
     if abs(f.get("skew", 0)) > 30:
         problems.append(warn("the clock is %+d s off from this computer's" % f["skew"], "clock"))
     now = int(now if now is not None else time.time())
+    # both times are the machine's own, and its clock is the one in doubt: said in this computer's time
+    skew = f.get("skew", 0)
     back = f.get("clock_back")
-    if back and now < back["at"] + back["by"] + CLOCK_MARGIN:
+    if back and now < back["at"] - skew + back["by"] + CLOCK_MARGIN:
         # WireGuard refuses handshakes dated before the last one it took: until the time has caught up
+        at = back["at"] - skew
         problems.append(warn("its clock was set back %s at %s: until %s the VPN's other ends may refuse it"
-                             % (lasts_s(back["by"]), time.strftime("%H:%M", time.localtime(back["at"])),
-                                time.strftime("%H:%M", time.localtime(back["at"] + back["by"]))), "clock-back"))
+                             % (lasts_s(back["by"]), time.strftime("%H:%M", time.localtime(at)),
+                                time.strftime("%H:%M", time.localtime(at + back["by"]))), "clock-back"))
     frag = f.get("fragmented")
-    if frag and now - frag["at"] < FRAGMENT_SHOWN:
+    if frag and now - (frag["at"] - skew) < FRAGMENT_SHOWN:
         notes.append("packets were cut into pieces here (%d, last at %s): a tunnel's MTU is larger than its path carries; "
-                     "kiwi-server mtu measures it" % (frag["count"], time.strftime("%H:%M", time.localtime(frag["at"]))))
+                     "kiwi-server mtu measures it" % (frag["count"], time.strftime("%H:%M", time.localtime(frag["at"] - skew))))
     if f.get("reboot"):
         notes.append("an update is waiting for a reboot")
     if f.get("banned"):

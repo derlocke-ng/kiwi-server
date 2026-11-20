@@ -40,20 +40,28 @@ script reads; that is its own step.
 | Must a service survive a dead machine with nobody there? | Wanted. |
 | May a failover lose data? | Live replication where possible. |
 | Service names without the machine in them (`cloud.home`)? | Yes, as a feature: the network can be run by service as well as by machine. |
-| May machines fetch their own settings? | Yes. |
+| May machines fetch their own settings? | Yes. (Plan, 1: they report in, and the control node applies; why is said there.) |
 | One control node, or one per site? | Both. |
 | Load balancing? | Not now; later, for size. |
 | One admin or a team? | Both, by the network's size. |
 
 ## The plan
 
-**1. Machines fetch their settings.** Today the control node pushes over SSH. New: each
-machine asks the control node on a timer whether its role script is still the one it has
-(by fingerprint), fetches the new one and applies it. The control node renders, as now:
-it holds the seed. The machine proves who it is with its certificate from the fleet's CA,
-over the VPN only. A push stays for "now". What this gives: a machine that was off for a
-week catches up by itself, and 70 machines cost the control node 70 small answers instead
-of 70 SSH sessions.
+**1. Machines report in.** Today the control node asks: it logs in to every machine every
+ten minutes to see how it is, and to a machine whose apply waits every minute. New: each
+machine tells the control node on a timer that it is up, signed with a key of its own that
+derives from the seed, over the VPN only. The control node answers by applying it at once
+when an apply waits for it. Later the same message carries the machine's state (what the
+look asks over SSH today), so 70 machines cost the control node 70 small messages instead
+of 70 logins.
+
+The machine does not apply itself. An apply is more than the role script: the control node
+also binds the disk to its rings, signs the SSH host certificate and tells the backup
+servers, and those need keys only the control node holds. So the machine says "I am up",
+and the control node applies.
+
+Built so far (2.259, 2.260): an apply that did not reach a machine waits for it; the
+control node asks that machine alone every minute and applies it when it answers.
 
 **2. Names by service.** A part can have a name of its own beside its machine's:
 `cloud.home` beside `cloud.papaya.home`. DNS, the reverse proxies and the certificates
@@ -103,7 +111,7 @@ the reverse proxy. Only for parts that keep no data of their own.
 
 ## Order
 
-1. Machines fetch their settings.
+1. Machines report in.
 2. Names by service.
 3. Move a service (plan, then the move), with a drill on the test machines.
 4. Warm standby, then failover by itself with three voters.

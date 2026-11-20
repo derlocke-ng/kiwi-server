@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.260.0 — a waiting apply is picked up within a minute; the design for many machines
+
+- **A machine whose apply waits is asked every minute**, alone, instead of at the next look at
+  every machine (ten minutes). What is known of the other machines stays as it is.
+- Design: [many machines, and services that move](docs/design/scale.md): why not Ansible or
+  one cluster over everything, what 2.259 built, and the order for what comes: machines that
+  report in, names by service, moving a service, a standby and failover, a control node per
+  site, live replication, teams.
+- Drill: `tests/drills/apply-waits.sh` restarts a machine, applies it meanwhile and watches
+  the control node finish the apply by itself.
+
 ## 2.259.0 — many machines: side by side, all at once, an apply that waits, shorter labels
 
 - **Jobs on different machines run side by side on the control node.** Before, one lock held

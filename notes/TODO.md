@@ -8,7 +8,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 
 1. ~~`names: service` on a live machine.~~ Done 20 Nov on quince: `ffsync.home` and `pay.home` resolve, answer with a valid certificate, the old name sends on.
 2. ~~Wake-on-LAN waking real hardware.~~ Tried 20 Nov on lime (ODROID-N2+, Armbian, the only real board at home): the card is armed at the apply and after a restart, the packet from papaya arrives (3 of 3), and the board stays off (the owner switched it off and had to use its button). The kernel has no wake-up line for its card (`eth_wake_irq not found`); docs/machines.md says so. Open: a PC or another board that does wake.
-3. The starter stick and "No master yet" on a real machine.
+3. The starter stick and "No master yet" on a real machine. In a VM on sh3 20 Nov (`VMHOST=sh3 tests/drills/starter-vm.sh`): install 17/17, "No master yet" 15/15 on 2.270.0 (it found two bugs, fixed in 2.270.0). A real machine still to do: with the owner.
 4. The guided session from the docs (notes/guided-session.md: its remarks are empty).
 5. Phones following the standby master by DDNS.
 6. A real mail from the notifications.
@@ -72,8 +72,8 @@ say what 2.267.0 does.
 44. `from=` on the Debian target's keys.
 45. The RAM master's room (what it may hold in RAM, and how much).
 46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).
-47. gluetun says its `DOT_PROVIDERS` is the old name of `DNS_UPSTREAM_RESOLVERS`: the vpn-client module should set the new one
-    (a warning in its log only; seen 20 Nov).
+47. ~~gluetun's `DOT_PROVIDERS` is now `DNS_UPSTREAM_RESOLVERS`~~: the vpn-client module sets the new name (kiwi-modules, next release).
+
 48. After a restart of the master's VPN client its resolver answers only when the tunnel is up: 75 seconds on 20 Nov, because
     the first exit servers it tried did not pass its start check (several tries of six seconds). Pi-hole asks its fallback
     meanwhile, directly. Nothing to fix in the resolver; gluetun's start check also asks for NET_RAW (ICMP), which the

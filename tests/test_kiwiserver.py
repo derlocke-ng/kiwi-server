@@ -2107,7 +2107,7 @@ class TestModules(Base):
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
-        self.assertIn("DOT_PROVIDERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
+        self.assertIn("DNS_UPSTREAM_RESOLVERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
         self.assertIn("BLOCK_MALICIOUS=off", svcs["km-vpn-client"]["environment"])         # what is blocked is the blocklist's
         env = svcs["km-vpn-client"]["environment"]
         self.assertIn("VPN_SERVICE_PROVIDER=mullvad", env)

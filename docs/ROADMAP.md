@@ -1,7 +1,7 @@
 # Roadmap and known issues
 
 This page says where kiwi-server stands and what comes next. Its first two
-sections are the current picture (20 November 2026, kiwi-server 2.267.0). The
+sections are the current picture (20 November 2026, kiwi-server 2.279.0). The
 sections after them are the roadmap as it grew from 2.4.0 on: the problems that
 were found and how each one was fixed, and the items as they were raised. They
 stay for their history. Where one of them has been built since, a note in
@@ -48,9 +48,12 @@ italics says so. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-server/blob/
   Modules can also come from git repositories of one's own or of the community
   (module sources). A part moves to another machine with its data, its secrets
   and its name (`move`). A part can have a standby: a second machine fetches
-  its data every minute and takes the part over when told (`keep_ready`,
-  `standby`, `switch`). Both were tried on real machines; a switch takes six to
-  eight minutes.
+  its data every minute and has the part's containers made, not started
+  (`keep_ready`, `standby`). A switch (`switch`) runs the part there within a
+  minute, its name included; the control node switches by itself when the
+  part's machine is gone and the standby does not reach it either, and the two
+  stay a pair. Tried on real machines, with power cuts: the part ran on its
+  standby six and a half minutes after the cut.
 - **Looking after itself.** Updates in a window, a backup every night with
   restic to other machines and copies of the network itself, restore, what
   changes before an update (`plan`) and whether everything answers after it
@@ -67,16 +70,15 @@ italics says so. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-server/blob/
   its machines at once and waits for one that is off. The app shows a running
   job in a strip under its window. More computers join as controllers; their
   copies are kept in step and their differences shown. The Android app
-  (kiwi-app) reads the network through the control node's API.
+  (kiwi-app) reads the network through the control node's API. The page
+  follows changes as they happen (`/api/v1/events`), and so does the app.
 - **A face for strangers**: a website from a pinned repository of pages (the
   template dlhost-eu), the status page and the sign-up, all in the control
   page's look, with the website's files through a CDN if wanted.
 
-Built and not released yet, in the next release: a standby follows named
-volumes as well as folders; move, keep ready and switch on the control page and
-in the app; the setting *Names of its parts*; the app opens the game page and
-shows a machine's History; the page links a new network by card; the control
-node's own machine reports (its agent was refused before).
+- **Copies at another place**: a backup store keeps an encrypted copy of
+  everything it holds in a WebDAV folder (1&1 SmartDrive, a Nextcloud) or an
+  SFTP account (a storage box), names encrypted too.
 
 ## Open, in order
 
@@ -92,21 +94,19 @@ The designs and the order to build in are in
 1. **Built, never tried on real machines.** Wake-on-LAN waking real hardware.
    The starter stick and a network without a master on a real machine. The
    guided session from the docs. Phones following the standby master by dynamic
-   DNS. A real mail from the messages. The public relay: a listed key posting
-   from outside, and a certificate renewal that is due. The authenticator,
-   Firefox Sync from a browser, Jabber clients.
+   DNS. A real mail from the messages. The authenticator, Firefox Sync from a
+   browser, Jabber clients.
 2. **Half-built.**
-   - The agent reports only. It takes no orders yet, and the vote of the
-     neighbours that a switch by itself needs is missing.
-   - A switch to a standby takes six to eight minutes. A switch in seconds and
-     a switch by itself are designed, not built (design/scale.md).
+   - The agent reports, and takes one order (stop a part that went to its
+     standby). Other orders, and a vote between the agents for when the control
+     node itself is gone, are missing.
    - Moving a part to another machine is built (2.266.0, 2.267.0). Moving a
      whole network to another mesh or domain is a plan only: `kiwi-server move
      FLEET --mesh … --domain …` says what would change and changes nothing
      (2.237.0).
-   - The page and the apps (design/ui.md): one store, `/api/v1`, pushed changes
-     and the app on kiwi-template's kit (the parts the Kiwi desktop apps share)
-     are not built. The kit's job strip is.
+   - The page and the apps (design/ui.md): `/api/v1/events` and pushed changes
+     are built; one store for all of it and the app on kiwi-template's kit (the
+     parts the Kiwi desktop apps share) are not. The kit's job strip is.
    - Boards: kiwi-server does not build the encrypted Armbian image.
    - netcup: the rescue system, snapshots and user images are not used.
    - VLANs: the gateway's DHCP, DNS and routing per VLAN.

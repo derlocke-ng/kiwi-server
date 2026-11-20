@@ -4119,6 +4119,11 @@ def cmd_status(args):
             key = "locked" if at else "unreachable"
             problems = [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e, "key": key,
                          "hint": facts.HINTS[key], "actions": facts.actions(key)}]
+            if key == "unreachable":
+                # a part kept ready elsewhere: switched there from here, with a person's OK (the way when the
+                # control node is the machine that is gone, and the one that would switch by itself)
+                problems[0]["actions"] = [{"label": "Switch %s to %s" % (part, m), "run": "switch", "part": part}
+                                          for part, m in sorted(partstandby.kept(h).items())] + problems[0]["actions"]
             # its story: install media newer than its last apply mean it is being installed anew, or
             # waits at its first start for its disk's key (which no host key on record can tell yet)
             st = lifecyclemod.story(h.name, applied.get(h.name), lifecyclemod.media_time(media, h.name), False,

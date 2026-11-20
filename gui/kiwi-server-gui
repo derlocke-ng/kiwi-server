@@ -5903,7 +5903,14 @@ class Window(Adw.ApplicationWindow):
                                 subtitle="\n".join(x for x in ((text if with_host else ""), ("→ " + hint) if hint else "") if x))
             row.add_prefix(dot(level))
             for a in p.get("actions") or []:        # what to do about it, as buttons (facts.ACTIONS; one table with the page)
-                if a.get("run") and self.doc.path:
+                if a.get("run") == "switch" and a.get("part") and self.doc.path:
+                    # a part kept ready elsewhere, the machine gone: switched with this OK (also when that machine
+                    # is the control node's, which would otherwise be the one to switch)
+                    ask = ("%s now?" % a["label"], "It goes on with the copy there; when %s is back it gives the part up."
+                           % host, "Switch")
+                    row.add_suffix(self.action_button(a["label"], ["switch", self.doc.path, a["part"], host, "--yes"],
+                                                      "%s: %s…" % (host, a["label"]), ask))
+                elif a.get("run") and self.doc.path:
                     msg = "%s: %s…" % (host, a["label"])
                     ask = (("Apply to %s now?" % host, "Services that changed restart for a moment.", "Apply")
                            if a["run"] == "apply" else None)
@@ -7060,6 +7067,9 @@ class Window(Adw.ApplicationWindow):
         if args[0] == "move":       # ["move", fleet, part, from, to, "--yes"]: the node moves it, and keeps what it changes
             return ["control", "run", self.doc.path, "move", args[3], args[4], "--part", args[2]] if len(args) == 6 else None
         if args[0] == "switch":     # ["switch", fleet, part, from, "--yes"]
+            controls = {n for n, h in (self.status or {}).items() if "control" in (h.get("modules") or [])}
+            if len(args) == 5 and args[3] in controls:
+                return None         # the control node's own machine is the one gone: switched from here
             return ["control", "run", self.doc.path, "switch", args[3], "--part", args[2]] if len(args) == 5 else None
         hosts = [a for a in args[2:] if not a.startswith("-")]
         flags = {a for a in args[2:] if a.startswith("-")}
@@ -7068,7 +7078,7 @@ class Window(Adw.ApplicationWindow):
         if "--changed" in flags:
             hosts += [h for h in (self.fleet_info or {}).get("changed") or [] if h not in hosts]
         if "--update" in flags:             # the node's update is every machine, its own last
-            every = {h["name"] for h in (self.fleet_info or {}).get("hosts") or []}
+            every = set(self.status or {})        # every machine of the fleet (self.status: the listing by name)
             return ["control", "run", self.doc.path, "update"] if every and set(hosts) >= every else None
         return ["control", "run", self.doc.path, "apply"] + hosts if hosts else None
 

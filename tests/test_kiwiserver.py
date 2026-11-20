@@ -8829,7 +8829,9 @@ class TestVps(Base):
         self.assertIn("https://login.example/x", out)
         path = os.path.join(self.tmp, "secrets", "netcup.token")
         with open(path) as fh:
-            self.assertEqual(json.load(fh), {"refresh_token": "refresh-1"})
+            kept = json.load(fh)
+        self.assertEqual(kept["refresh_token"], "refresh-1")
+        self.assertEqual(set(kept), {"refresh_token", "at"})                   # and when: the newer wins a sync
         self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
 
     def test_a_used_refresh_token_is_replaced(self):

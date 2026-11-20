@@ -185,6 +185,36 @@ A rebuilt machine finds itself in the backups at its first apply and restores
 every module by itself before it backs up again. `backup.restore: hold` makes
 it wait for `kiwi-stack restore` instead.
 
+### A copy at another place
+
+For 3-2-1 (three copies, two kinds of place, one elsewhere), a backup store can
+keep a copy of everything it holds in a WebDAV folder at another place: a
+storage account such as 1&1's SmartDrive (`https://sd2dav.1und1.de/…`), a
+Nextcloud, a storage box.
+
+```yaml
+hosts:
+  lychee:
+    node:
+      backup-server:
+        offsite_url: https://sd2dav.1und1.de/kiwi
+        offsite_user: me@example.org
+        offsite_password: ...          # kiwi-server secrets keep moves it into the store
+```
+
+Every night (`offsite_time`, 05:30) rclone brings the copy up to date: what is
+new goes there, what was pruned goes there too. Before anything leaves, it is
+encrypted once more with a key from the fleet's seed, names included, on top of
+each machine's own encryption: the place sees files with names it cannot read,
+not which machines they are of. `offsite_bwlimit` (say `5M`) keeps the home
+line usable meanwhile; `offsite_ca` takes the CA of a server with a certificate
+of its own.
+
+On the store's machine, `kiwi/backup-offsite.sh list` shows what the copy holds
+and `kiwi/backup-offsite.sh restore lime.home DIR` brings one machine's
+repository back into a folder, as restic left it. The key comes from the seed,
+so a network brought back from its copy can read the copy at the other place.
+
 ## Restoring
 
 - `sudo kiwi-stack snapshots [vault]` lists what is stored.

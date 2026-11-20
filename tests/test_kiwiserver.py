@@ -2976,6 +2976,9 @@ class TestSetup(Base):
         script = r.script(f.hosts["quince"])[0]
         script = script.decode() if isinstance(script, bytes) else script
         self.assertIn("paste.home", script)                                           # its own site answers to it
+        crt = f.resolve_path("secrets/ca/hosts/quince.home/cert.pem")                 # and its certificate covers it
+        self.assertIn("paste.home", certs.cert_names(crt))
+        self.assertIn("*.quince.home", certs.cert_names(crt))
         dns = next(h for h in f.hosts.values() if "dns" in (h.modules or []) and h.name != "quince")
         other = r.script(dns)[0]
         self.assertIn("paste.home", other.decode() if isinstance(other, bytes) else other)    # and the names are answered
@@ -3156,6 +3159,8 @@ class TestSetup(Base):
         r = cli.Renderer(moved, roles, os.path.join(self.tmp, "out"), None, ms2)
         script = r.script(moved.hosts["fig"])[0]
         self.assertIn("paste.quince.home", script.decode() if isinstance(script, bytes) else script)
+        # the new machine's certificate covers the name the part kept
+        self.assertIn("paste.quince.home", certs.cert_names(moved.resolve_path("secrets/ca/hosts/fig.home/cert.pem")))
         # the old machine's way into its backups, for the one run on the new machine
         rolesmod.resolve_settings(roles[moved.hosts["quince"].role], moved.hosts["quince"], ms2)
         way = partmove.way_in(moved.hosts["quince"].module_settings["backup"], moved.hosts["quince"])
@@ -3164,14 +3169,20 @@ class TestSetup(Base):
         self.assertIn("RESTIC_PASSWORD=%s\n" % moved.derive_secret("quince.home", "backup", "repo_password"), way)
         ran = []
         keep = remote.run
-        remote.run = lambda tgt, script, data=None, **kw: (ran.append((tgt, script, data)), b"backup: paste: put on fig\n")[1]
+        remote.run = lambda tgt, script, data=None, **kw: (ran.append((tgt, script, data)), b"backup: paste: put on fig\nkiwi-rc=0\n")[1]
         try:
             said = cli.restore_from(moved, roles, ms2, moved.hosts["fig"], moved.hosts["quince"], ["paste"], tgt="core@fig")
         finally:
             remote.run = keep
-        self.assertEqual(ran[0][:2], ("core@fig", "kiwi-stack restore --from quince.home paste"))
+        self.assertEqual(ran[0][:2], ("core@fig", 'kiwi-stack restore --from quince.home paste 2>&1; echo "kiwi-rc=$?"'))
         self.assertEqual(ran[0][2].decode(), way)                                   # on standard input, not in the command
         self.assertIn("put on fig", said)
+        remote.run = lambda tgt, script, data=None, **kw: b"restic: lsetxattr: operation not supported\nbackup: paste: its files did not come back\nkiwi-rc=1\n"
+        try:
+            with self.assertRaisesRegex(KiwiError, "lsetxattr: operation not supported"):       # restic's own reason, not only the last line
+                cli.restore_from(moved, roles, ms2, moved.hosts["fig"], moved.hosts["quince"], ["paste"], tgt="core@fig")
+        finally:
+            remote.run = keep
 
     def test_a_new_release_alone_is_no_change(self):
         import hashlib

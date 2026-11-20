@@ -18,7 +18,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import machineagent as agentmod, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
+from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -517,11 +517,19 @@ class Renderer:
             return
         tls = host.cfg.get("tls") or {}
         mf = host.module_files
+        # the names of its parts that its own name does not cover: a part named by service (vault.home),
+        # or one that moved here and kept its name (vault.quince.home). Without them in the certificate
+        # the part answers and every browser refuses it (found by the move drill, 20 Nov 2026).
+        self.scan()
+        under = "." + host.hostname
+        own = "." + host.domain if getattr(host, "domain", "") else None
+        more = [n for n in self._names.get(host.hostname, [])
+                if own and n.endswith(own) and n != host.hostname and not (n.endswith(under) and "." not in n[:-len(under)])]
         key, full = certs.ensure_host_cert(self.ca_dir(host), host.hostname,
                                            days=int(tls.get("cert_days") or certs.CERT_DAYS),
                                            ca_days=int(tls.get("days") or certs.DAYS),
                                            name_constraints=tls.get("name_constraints") or [],
-                                           aliases=host_aliases(host))
+                                           aliases=host_aliases(host), names=more)
         mf["reverse-proxy/tls_fullchain"] = util.read_bytes(full)
         mf["reverse-proxy/tls_privkey"] = util.read_bytes(key)
         host.module_settings["reverse-proxy"]["tls_fullchain"] = "fullchain.pem"
@@ -892,6 +900,7 @@ def warn_data_on_master(h, roles, ms):
 
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
+    errs += partstandby.errors(fleet, roles)
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
@@ -2970,6 +2979,20 @@ def cmd_apply(args):
                 from . import opener as openermod
                 openermod.after_apply(h, tgt, servers)      # opens the way for a machine away from home (openers)
             agentmod.after_apply(fleet, h, tgt, ms)     # reports to the control node every minute (the agent)
+            # a standby for a part: this machine gives or fetches its data. Also when it no longer does:
+            # a fetcher left behind would fetch the old machine's stale copy over a part that now runs
+            # here (found by the standby drill, 20 Nov 2026). The fleet remembers who has a link.
+            had = h.name in (fleet_state(fleet).get("standby_links") or [])
+            if had or any(h.name in (a, m) for a, _p, m in partstandby.links(fleet)):
+                partstandby.after_apply(fleet, h, tgt, roles, ms, r.script)
+                has = any(h.name in (a, m) for a, _p, m in partstandby.links(fleet))
+                if has != had:
+                    with book, state_lock(fleet):
+                        state = fleet_state(fleet)
+                        names = set(state.get("standby_links") or [])
+                        (names.add if has else names.discard)(h.name)
+                        state["standby_links"] = sorted(names)
+                        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)
@@ -4126,18 +4149,25 @@ def parse_snapshots(text):
     return servers
 
 
-def restore_from(fleet, roles, ms, dst, src, parts, at=None, tgt=None):
+def restore_from(fleet, roles, ms, dst, src, parts, at=None, tgt=None, out_dir=None):
     """`parts` on `dst` from the copies `src` made of them (a part that moved, partmove.py): `src`'s
     way into its backups goes to `dst` on standard input for this one run and is not kept there.
     Returns what the machine said."""
     from . import partmove
-    rolesmod.resolve_settings(roles[src.role], src, ms)
+    Renderer(fleet, roles, out_dir or fleet.resolve_path("output"), None, ms).script(src)     # (as an apply renders it)
     if "backup" not in (src.modules or []):
         raise KiwiError("%s has no backup module: there are no copies of it to take from" % src.name)
     env = partmove.way_in(src.module_settings.get("backup"), src)
     when = " --at %s" % shlex.quote(at) if at else ""
     script = "kiwi-stack restore --from %s%s %s" % (shlex.quote(src.hostname), when, " ".join(shlex.quote(m) for m in parts))
-    return remote.run(tgt or remote.reach(dst, None), script, env.encode()).decode(errors="replace")
+    # everything it says, and its exit status in the last line: when it fails, the reason is in the
+    # lines before the last one (restic's own), which a plain run would drop
+    out = remote.run(tgt or remote.reach(dst, None), script + ' 2>&1; echo "kiwi-rc=$?"', env.encode()).decode(errors="replace")
+    body, _sep, rc = out.rstrip("\n").rpartition("kiwi-rc=")
+    if rc.strip() != "0":
+        raise KiwiError("%s: the restore ended with %s:\n%s" % (dst.name, rc.strip() or "?",
+                                                              "\n".join("  " + x for x in body.strip().splitlines()[-14:])))
+    return body
 
 
 def cmd_backups(args):
@@ -5014,7 +5044,9 @@ def move_part(args, part, src_name, dst_name):
     --yes: the plan."""
     from . import partmove
     fleet, roles, ms = load(args)
-    p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {})
+    out_dir = out_dir_for(args, fleet)
+    p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {},
+                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h))
     if args.porcelain:
         print(json.dumps({k: v for k, v in p.items() if k != "data"}, indent=1))
         if p["stops"]:
@@ -5030,9 +5062,10 @@ def move_part(args, part, src_name, dst_name):
                   % (typed_path(fleet.path), part, src_name, dst_name))
             return
     src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
-    rolesmod.resolve_settings(roles[src.role], src, ms)
-    spec = modmod.Renderer(ms).render(rolesmod.stack_spec(src, roles[src.role]))
-    services = sorted(c for c, mod in (getattr(spec, "service_modules", {}) or {}).items() if mod == part)
+    # rendered as an apply renders it: only then its settings hold what the network adds (20 Nov 2026:
+    # resolved alone, a machine with a public name was refused for want of its master)
+    _script, bundle = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).script(src)
+    services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
     s_tgt, d_tgt = remote.reach(src, None), remote.reach(dst, None)
     # 1. it stops where it is, and that machine makes its last copy of it
     for c in services:
@@ -5049,23 +5082,45 @@ def move_part(args, part, src_name, dst_name):
     n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
     if n:
         util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
+    def again(argv):            # a command of this kiwi-server, its exit status (a refused fleet ends with SystemExit)
+        try:
+            return main(argv) or 0
+        except SystemExit as e:
+            return e.code if isinstance(e.code, int) else 1
+
     # 3. the fleet file
+    before = util.read_text(fleet.path)
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
-    how = "kiwi-server apply %s %s" % (typed_path(fleet.path), dst_name)
-    # 4. the new machine, and the data
-    if main(["apply", fleet.path, dst_name]):
-        raise KiwiError("%s could not be applied. The fleet file has %s there already, and %s holds its data and its last "
-                        "backup. When %s is in order: %s, then kiwi-server backups %s %s %s --restore --from %s, then "
-                        "kiwi-server apply %s %s" % (dst_name, part, src_name, dst_name, how, typed_path(fleet.path), dst_name,
-                                                      part, src_name, typed_path(fleet.path), src_name))
-    if p["carry"]:
-        fleet2, roles2, ms2 = load(args)
-        util.say("%s: %s's data from %s's backups" % (dst_name, part, src_name))
-        sys.stdout.write(restore_from(fleet2, roles2, ms2, fleet2.hosts[dst_name], fleet2.hosts[src_name], [part], tgt=d_tgt))
+    # 4. the new machine, and the data. If either fails, everything goes back to how it was: the
+    # part must never be left running empty in its new place (20 Nov 2026: it was, and a move
+    # back then carried the empty copy home).
+    why = None
+    try:
+        if again(["apply", fleet.path, dst_name]):
+            why = "%s could not be applied" % dst_name
+        elif p["carry"]:
+            fleet2, roles2, ms2 = load(args)
+            util.say("%s: %s's data from %s's backups" % (dst_name, part, src_name))
+            sys.stdout.write(restore_from(fleet2, roles2, ms2, fleet2.hosts[dst_name], fleet2.hosts[src_name], [part],
+                                          tgt=d_tgt, out_dir=out_dir))
+    except KiwiError as e:
+        why = "%s's data did not come over: %s" % (part, e)
+    if why:
+        util.warn("%s. Putting everything back as it was" % why)
+        util.write_text(fleet.path, before, 0o600)
+        back = again(["apply", fleet.path, dst_name])       # the part leaves the new machine again
+        for c in services:
+            try:
+                remote.run(s_tgt, service_script(c, "start"))
+            except KiwiError as e:
+                util.warn("%s: %s was not started again: %s" % (src_name, c, e))
+        raise KiwiError("%s. %s runs on %s again, with its data as it was; the fleet file is as before%s"
+                        % (why, part, src_name, "" if not back else
+                           ". %s still has the part's leftovers: kiwi-server apply %s %s" % (dst_name, typed_path(fleet.path), dst_name)))
     # 5. the old machine, and everyone the change reaches
-    failed = main(["apply", fleet.path, src_name])
-    failed = main(["apply", fleet.path, "--changed"]) or failed
+    failed = again(["apply", fleet.path, src_name])
+    failed = again(["apply", fleet.path, "--changed"]) or failed
     # 6. from now on it is in the new machine's own store
     if p["carry"]:
         try:
@@ -5077,6 +5132,120 @@ def move_part(args, part, src_name, dst_name):
         raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed" % (part, dst_name, typed_path(fleet.path)))
     util.say("%s runs on %s now%s. Its data is still on %s's disk, unused: delete it there when all is well"
              % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
+
+
+def cmd_standby(args):
+    """The parts another machine keeps ready (keep_ready, partstandby.py), and how old each copy is."""
+    from . import lifecycle as lifecyclemod
+    fleet, roles, ms = load(args)
+    rows = []
+    for a, part, m in partstandby.links(fleet):
+        age = None
+        try:
+            age = partstandby.ages(remote.run(remote.reach(fleet.hosts[m], None), partstandby.AGE).decode(errors="replace")).get(part)
+        except KiwiError:
+            pass
+        rows.append({"part": part, "on": a, "ready_on": m, "age": age})
+    if args.porcelain:
+        print(json.dumps({"standby": rows}, indent=1))
+        return
+    if not rows:
+        print("No part has a standby. In the fleet file, on the machine that runs it:  keep_ready: { vault: medlar }")
+        return
+    for r in rows:
+        how = "no copy yet (or %s does not answer)" % r["ready_on"] if r["age"] is None else "its copy is %s old" % lifecyclemod._ago(r["age"]) \
+            if r["age"] >= 90 else "its copy is current"
+        print("%-14s on %-10s kept ready on %-10s %s" % (r["part"], r["on"], r["ready_on"], how))
+
+
+def cmd_switch(args):
+    """A part to the machine that keeps it ready (partstandby.py): with the data that machine has.
+    The machine it leaves need not answer. Without --yes: the plan."""
+    from . import lifecycle as lifecyclemod, partmove
+    fleet, roles, ms = load(args)
+    part = args.part
+    found = [(a, m) for a, p, m in partstandby.links(fleet) if p == part and (not args.host or a == args.host)]
+    if len(found) != 1:
+        raise KiwiError("%s has no standby" % part if not found else
+                        "%s is kept ready for several machines: name the one it runs on (kiwi-server switch <fleet> %s <machine>)" % (part, part))
+    src_name, dst_name = found[0]
+    out_dir = out_dir_for(args, fleet)
+    p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {},
+                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h), standby=True)
+    age = None
+    d_tgt = remote.reach(fleet.hosts[dst_name], None)
+    try:
+        age = partstandby.ages(remote.run(d_tgt, partstandby.AGE).decode(errors="replace")).get(part)
+    except KiwiError as e:
+        p["stops"].append("%s does not answer: %s" % (dst_name, e))
+    if p["carry"] and age is None and not p["stops"]:
+        p["stops"].append("%s has no copy of %s's data yet" % (dst_name, part))
+    print("Switch %s from %s to its standby %s%s" % (part, src_name, dst_name, ": it stays %s" % p["name"] if p["name"] else ""))
+    if p["stops"]:
+        print("\nIt cannot be done as things are:")
+        for x in p["stops"]:
+            print("  - %s" % x)
+        raise SystemExit(1)
+    print("  %s's copy of its data is %s" % (dst_name, "current" if (age or 0) < 90 else lifecyclemod._ago(age) + " old"))
+    if not args.yes:
+        print("\nNothing was changed. With --yes it is done: kiwi-server switch %s %s --yes" % (typed_path(fleet.path), part))
+        return
+    src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
+
+    def again(argv):
+        try:
+            return main(argv) or 0
+        except SystemExit as e:
+            return e.code if isinstance(e.code, int) else 1
+    # the machine it leaves, if it answers: the part stops there, and the standby fetches once more
+    src_up = True
+    try:
+        _script, bundle = Renderer(fleet, roles, out_dir, None, ms).script(src)
+        services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
+        s_tgt = remote.reach(src, None)
+        for c in services:
+            remote.run(s_tgt, service_script(c, "stop"))
+        util.say("%s: %s stopped" % (src_name, part))
+        remote.run(d_tgt, partstandby.PULL_PATH)
+        util.say("%s: fetched its data once more" % dst_name)
+    except KiwiError as e:
+        src_up = False
+        util.say("%s does not answer (%s): %s goes on with the copy %s has" % (src_name, str(e).splitlines()[-1][:80], part, dst_name))
+    # nothing is fetched over the part once it runs here
+    remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true" % (partstandby.UNIT, partstandby.UNIT))
+    n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
+    if n:
+        util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
+    partmove.write_fleet(fleet, p["data"])
+    util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
+    failed = again(["apply", fleet.path, dst_name])
+    if failed:
+        raise KiwiError("%s is on %s in the fleet file, but %s could not be applied: kiwi-server apply %s %s"
+                        % (part, dst_name, dst_name, typed_path(fleet.path), dst_name))
+    # everyone the change reaches. The machine it left, when it does not answer, is not asked now:
+    # its apply goes to the control node, which keeps it and applies it the moment the machine
+    # answers again (an apply that waits)
+    fleet2, roles2, ms2 = load(args)
+    reached = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
+    now = [n for n in reached if src_up or n != src_name]
+    failed = again(["apply", fleet.path] + now) if now else 0
+    later = ""
+    if not src_up:
+        from . import controlsync
+        later = "Apply %s when it is back: kiwi-server apply %s %s" % (src_name, typed_path(fleet.path), src_name)
+        if controlsync.remote_of(fleet.dir):
+            try:                        # the job fails there while the machine is away, and waits for it there
+                if controlsync.run_api(fleet.dir, os.path.basename(fleet.path), "apply", [src_name], write=lambda text: None):
+                    later = "%s answered after all and no longer runs it" % src_name
+                else:
+                    later = "The control node keeps %s's apply and runs it the moment %s answers again" % (src_name, src_name)
+            except KiwiError as e:
+                util.warn("the control node did not take %s's apply: %s" % (src_name, e))
+    if failed:
+        raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed"
+                        % (part, dst_name, typed_path(fleet.path)))
+    util.say("%s runs on %s now%s. %s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else "",
+                                         later or "%s no longer runs it" % src_name))
 
 
 def cmd_move(args):
@@ -5479,6 +5648,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
   kiwi-server power <fleet> <host> off|restart  switch it off or restart it (says first what that means)
   kiwi-server move <fleet> <part> <from> <to>   a part to another machine, with its data, secrets and name (--yes: do it)
+  kiwi-server standby <fleet>                   the parts another machine keeps ready (keep_ready), and how old each copy is
+  kiwi-server switch <fleet> <part>             a part to the machine that keeps it ready (--yes: do it)
   kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
@@ -5742,6 +5913,9 @@ def build_parser():
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
+    s = sub("standby", cmd_standby); s.add_argument("fleet")
+    s = sub("switch", cmd_switch); s.add_argument("fleet"); s.add_argument("part"); s.add_argument("host", nargs="?")
+    s.add_argument("--yes", action="store_true", help="do it (without: the plan)")
     s = sub("move", cmd_move); s.add_argument("fleet")
     s.add_argument("what", nargs="*", metavar="PART FROM TO", help="a part to another machine, with its data, secrets and name")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")

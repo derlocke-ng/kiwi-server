@@ -138,27 +138,30 @@ def cert_valid(pem_path, min_days=30):
     return r.returncode == 0
 
 
-def _ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), aliases=()):
+def _ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), aliases=(), names=()):
     """(privkey.pem, fullchain.pem) for hostname and *.hostname, reused while
     they exist, cover the names and have more than 30 days left. `aliases`: other names of the
-    machine (and *. of each), the name a linked network with the same domain gives it."""
+    machine (and *. of each), the name a linked network with the same domain gives it. `names`:
+    names of its parts that are not under its own name (a part named by service, vault.home, or one
+    that moved here and kept its name, vault.quince.home): each as it is."""
     ca_key, ca_pem = _ensure_ca(ca_dir, ca_days, name_constraints)
     d = os.path.join(ca_dir, "hosts", hostname)
     key = os.path.join(d, "privkey.pem")
     full = os.path.join(d, "fullchain.pem")
     crt = os.path.join(d, "cert.pem")
-    want = {hostname, "*." + hostname} | {n for a in aliases for n in (a, "*." + a)}
+    names = sorted(set(names) - {hostname})
+    want = {hostname, "*." + hostname} | {n for a in aliases for n in (a, "*." + a)} | set(names)
     if os.path.isfile(key) and os.path.isfile(full) and os.path.isfile(crt) \
             and cert_valid(crt) and set(cert_names(crt)) >= want:
         return key, full
     os.makedirs(d, mode=0o700, exist_ok=True)
-    util.say("issuing a certificate for %s and *.%s%s" % (hostname, hostname, "".join(" and %s" % a for a in aliases)))
+    util.say("issuing a certificate for %s and *.%s%s" % (hostname, hostname, "".join(" and %s" % a for a in list(aliases) + names)))
     csr = os.path.join(d, "request.csr")
     ext = os.path.join(d, "ext.cnf")
     util.write_text(ext, "authorityKeyIdentifier=keyid,issuer\nbasicConstraints=CA:FALSE\n"
                          "keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
                          "subjectAltName=%s\n" % ",".join("DNS:%s" % n for n in [hostname, "*." + hostname] +
-                                                            [n for a in aliases for n in (a, "*." + a)]))
+                                                            [n for a in aliases for n in (a, "*." + a)] + names))
     # issued again (new names, close to its end): the key stays, so what a partner's CA signed for
     # it (alias-*.pem, federation) still fits; a new key only when there is none
     if not os.path.isfile(key):
@@ -228,11 +231,11 @@ def ensure_ca(ca_dir, days=DAYS, name_constraints=()):
         return _ensure_ca(ca_dir, days, name_constraints)
 
 
-def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), aliases=()):
+def ensure_host_cert(ca_dir, hostname, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), aliases=(), names=()):
     """A machine's certificate (_ensure_host_cert), one command at a time per CA folder: two at once
     could keep the key of one with the certificate of the other."""
     with util.dir_lock(ca_dir):
-        return _ensure_host_cert(ca_dir, hostname, days, ca_days, name_constraints, tuple(aliases))
+        return _ensure_host_cert(ca_dir, hostname, days, ca_days, name_constraints, tuple(aliases), tuple(names))
 
 
 def ensure_names_cert(ca_dir, label, names, days=CERT_DAYS, ca_days=DAYS, name_constraints=(), own=False):

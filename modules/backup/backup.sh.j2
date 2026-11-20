@@ -199,8 +199,14 @@ put_back() { # MODULE KIND MOUNTS TARGET SNAPSHOT
     done
     excludes "$module"
     TARGET=$4
+    # SELinux labels are the machine's own business, not the copy's: restic neither sets nor
+    # removes them. A copy from a machine with SELinux could not be put on one without (it cannot
+    # set them), and one from a machine without could not be put on one with (it may not remove
+    # them); either way restic called the whole restore failed (a part moved between uCore and
+    # Debian, 20 Nov 2026). What is restored takes the label of the folder it lands in.
+    local labels=(--exclude-xattr security.selinux)
     # --delete empties the target of what the snapshot does not hold: it must hold nothing but these
-    restic "${mounts[@]}" -- restore "$5" --target /restore --delete "${EXCLUDES[@]}"
+    restic "${mounts[@]}" -- restore "$5" --target /restore --delete "${labels[@]}" "${EXCLUDES[@]}"
 }
 
 service() { # stop|start SERVICE...
@@ -371,7 +377,7 @@ exec 9>"$DIR/lock"
 case "${1:-}" in
     due)        due ;;
     thaw)       flock -w 120 9 || exit 0; thaw_left ;;
-    backup)     flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }
+    backup)     flock -n 9 || { echo "backup: a backup or a restore is running on this machine: try again when it is done" >&2; exit 1; }
                 if [[ ${2:-} == --new ]]; then rm -f "$DIR/held"; touch "$DIR/new-history"; fi
                 if held; then
                     [[ $AUTO_RESTORE == yes ]] || exit 1
@@ -380,7 +386,7 @@ case "${1:-}" in
                 fi
                 backup ;;
     snapshots)  shift; snapshots "$@" ;;
-    restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }
+    restore)    shift; flock -n 9 || { echo "backup: a backup or a restore is running on this machine: try again when it is done" >&2; exit 1; }
                 if [[ ${1:-} == --from ]]; then shift; restore_from "$@"; else restore "$@"; fi ;;
     *)          echo "usage: kiwi-stack backup [--new] | snapshots [--json] [MODULE...] | restore [--from MACHINE] [--at TIME] MODULE..." >&2; exit 1 ;;
 esac

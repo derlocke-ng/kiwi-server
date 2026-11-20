@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.266.0 — a part moves to another machine
+
+- **`kiwi-server move FLEET PART FROM TO`** moves a part with its data, its secrets and its
+  name: it stops where it is and that machine makes one last backup; its generated secrets are
+  pinned to the new machine; the fleet file moves the part and its settings and keeps its
+  name; the new machine is applied and gets the data from the old machine's backups; the old
+  machine and everyone the change reaches are applied; the new machine starts a backup into
+  its own store. Without `--yes` it prints the plan and what stands in the way
+  (docs/backups.md, Moving a part to another machine).
+- `kiwi-server backups FLEET MACHINE PART --restore --from OTHER`: the copies another machine
+  made of a part, put here; its way into its backups goes over for the one run.
+- kiwi-modules 0.104.0 (`kiwi-stack restore --from`).
+
 ## 2.265.0 — the control node can update itself
 
 - **"Update everything" on the control page brings the control page itself to the newest

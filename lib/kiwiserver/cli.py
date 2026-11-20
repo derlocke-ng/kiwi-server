@@ -4126,6 +4126,20 @@ def parse_snapshots(text):
     return servers
 
 
+def restore_from(fleet, roles, ms, dst, src, parts, at=None, tgt=None):
+    """`parts` on `dst` from the copies `src` made of them (a part that moved, partmove.py): `src`'s
+    way into its backups goes to `dst` on standard input for this one run and is not kept there.
+    Returns what the machine said."""
+    from . import partmove
+    rolesmod.resolve_settings(roles[src.role], src, ms)
+    if "backup" not in (src.modules or []):
+        raise KiwiError("%s has no backup module: there are no copies of it to take from" % src.name)
+    env = partmove.way_in(src.module_settings.get("backup"), src)
+    when = " --at %s" % shlex.quote(at) if at else ""
+    script = "kiwi-stack restore --from %s%s %s" % (shlex.quote(src.hostname), when, " ".join(shlex.quote(m) for m in parts))
+    return remote.run(tgt or remote.reach(dst, None), script, env.encode()).decode(errors="replace")
+
+
 def cmd_backups(args):
     """A machine's own backups: what each backup server keeps of it, a backup now, or modules
     brought back. The fleet folder's backup is `backup`."""
@@ -4145,6 +4159,12 @@ def cmd_backups(args):
             if not mods:
                 raise KiwiError("%s: the backup servers keep nothing of it" % h.name)
         at = " --at %s" % shlex.quote(args.at) if args.at else ""
+        if getattr(args, "from_host", None):        # a part that moved here: the other machine's copies of it
+            if not args.modules:
+                raise KiwiError("which part? kiwi-server backups <fleet> %s <part> --restore --from %s" % (h.name, args.from_host))
+            out = restore_from(fleet, roles, ms, h, fleet.select([args.from_host])[0], args.modules, at=args.at, tgt=tgt)
+            sys.stdout.write(out)
+            return
         rc = remote.run_stream(tgt, "kiwi-stack restore%s %s" % (at, mods))
     else:
         servers = parse_snapshots(remote.run(tgt, "kiwi-stack snapshots --json %s" % mods).decode(errors="replace"))
@@ -4989,9 +5009,85 @@ def cmd_federate(args):
                  % (na, nb))
 
 
+def move_part(args, part, src_name, dst_name):
+    """A part to another machine, with its data, its secrets and its name (partmove.py). Without
+    --yes: the plan."""
+    from . import partmove
+    fleet, roles, ms = load(args)
+    p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {})
+    if args.porcelain:
+        print(json.dumps({k: v for k, v in p.items() if k != "data"}, indent=1))
+        if p["stops"]:
+            raise SystemExit(1)
+        if not getattr(args, "yes", False):
+            return
+    else:
+        partmove.say(p)
+        if p["stops"]:
+            raise SystemExit(1)
+        if not getattr(args, "yes", False):
+            print("\nNothing was changed. With --yes it is done: kiwi-server move %s %s %s %s --yes"
+                  % (typed_path(fleet.path), part, src_name, dst_name))
+            return
+    src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
+    rolesmod.resolve_settings(roles[src.role], src, ms)
+    spec = modmod.Renderer(ms).render(rolesmod.stack_spec(src, roles[src.role]))
+    services = sorted(c for c, mod in (getattr(spec, "service_modules", {}) or {}).items() if mod == part)
+    s_tgt, d_tgt = remote.reach(src, None), remote.reach(dst, None)
+    # 1. it stops where it is, and that machine makes its last copy of it
+    for c in services:
+        remote.run(s_tgt, service_script(c, "stop"))
+    util.say("%s: %s stopped%s" % (src_name, part, " (%s)" % ", ".join(services) if services else ""))
+    if p["carry"]:
+        util.say("%s: one last backup" % src_name)
+        rc = remote.run_stream(s_tgt, "kiwi-stack backup")
+        if rc != 0:
+            for c in services:
+                remote.run(s_tgt, service_script(c, "start"))
+            raise KiwiError("%s's last backup failed (exit %d). %s runs there again; nothing was changed" % (src_name, rc, part))
+    # 2. its secrets stay what its data was made with
+    n = partmove.pin_secrets(fleet, part, src, dst, p["pins"])
+    if n:
+        util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
+    # 3. the fleet file
+    partmove.write_fleet(fleet, p["data"])
+    util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
+    how = "kiwi-server apply %s %s" % (typed_path(fleet.path), dst_name)
+    # 4. the new machine, and the data
+    if main(["apply", fleet.path, dst_name]):
+        raise KiwiError("%s could not be applied. The fleet file has %s there already, and %s holds its data and its last "
+                        "backup. When %s is in order: %s, then kiwi-server backups %s %s %s --restore --from %s, then "
+                        "kiwi-server apply %s %s" % (dst_name, part, src_name, dst_name, how, typed_path(fleet.path), dst_name,
+                                                      part, src_name, typed_path(fleet.path), src_name))
+    if p["carry"]:
+        fleet2, roles2, ms2 = load(args)
+        util.say("%s: %s's data from %s's backups" % (dst_name, part, src_name))
+        sys.stdout.write(restore_from(fleet2, roles2, ms2, fleet2.hosts[dst_name], fleet2.hosts[src_name], [part], tgt=d_tgt))
+    # 5. the old machine, and everyone the change reaches
+    failed = main(["apply", fleet.path, src_name])
+    failed = main(["apply", fleet.path, "--changed"]) or failed
+    # 6. from now on it is in the new machine's own store
+    if p["carry"]:
+        try:
+            remote.run(d_tgt, "systemctl start --no-block kn-backup.service 2>/dev/null || systemctl start --no-block km-backup.service")
+            util.say("%s: a backup started: %s is in its own store from now on" % (dst_name, part))
+        except KiwiError as e:
+            util.warn("%s: its backup was not started (the nightly one does it): %s" % (dst_name, e))
+    if failed:
+        raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed" % (part, dst_name, typed_path(fleet.path)))
+    util.say("%s runs on %s now%s. Its data is still on %s's disk, unused: delete it there when all is well"
+             % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
+
+
 def cmd_move(args):
-    """For just in case: what moving the whole network to another mesh and/or domain would change
-    (move.py). A plan only, nothing is changed."""
+    """A part to another machine (`move FLEET PART FROM TO`, partmove.py). Or, for just in case:
+    what moving the whole network to another mesh and/or domain would change (move.py); that
+    one is a plan only."""
+    what = list(getattr(args, "what", None) or [])
+    if what:
+        if len(what) != 3:
+            raise KiwiError("kiwi-server move <fleet> <part> <from> <to>   (the whole network: --mesh or --domain)")
+        return move_part(args, *what)
     from . import move as movemod
     fleet, roles, ms = load(args)
     p = movemod.plan(fleet, roles, ms, mesh=args.mesh, domain=args.domain)
@@ -5382,6 +5478,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 new keys: what is due, or one kind
   kiwi-server wake <fleet> <host>               Wake-on-LAN: another machine of its LAN starts it
   kiwi-server power <fleet> <host> off|restart  switch it off or restart it (says first what that means)
+  kiwi-server move <fleet> <part> <from> <to>   a part to another machine, with its data, secrets and name (--yes: do it)
   kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
   kiwi-server modules [-v]                      the kiwi-v2 modules and their settings
@@ -5620,6 +5717,8 @@ def build_parser():
     s.add_argument("--new", action="store_true", help="a rebuilt machine that waits: start a new history instead of restoring")
     s.add_argument("--restore", action="store_true", help="bring these modules back from the backups (none named: all of them)")
     s.add_argument("--at", metavar="TIME", help="with --restore: the newest snapshot from then or before, e.g. '2026-11-10 19:00'")
+    s.add_argument("--from", dest="from_host", metavar="MACHINE",
+                   help="with --restore: the copies MACHINE made of these parts (a part that moved here from it)")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("recovery", recoverymod.cmd); s.add_argument("fleet")
     s.add_argument("--status", metavar="FILE", help="what status --porcelain said last: then it also says how old each machine's backup is")
@@ -5644,6 +5743,8 @@ def build_parser():
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
     s = sub("move", cmd_move); s.add_argument("fleet")
+    s.add_argument("what", nargs="*", metavar="PART FROM TO", help="a part to another machine, with its data, secrets and name")
+    s.add_argument("--yes", action="store_true", help="do it (without: the plan)")
     s.add_argument("--mesh", help="the new mesh, like 10.42.0.0/16")
     s.add_argument("--domain", help="the new domain, like internal")
     s = sub("wake", cmd_wake); s.add_argument("fleet"); s.add_argument("host")

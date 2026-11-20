@@ -11,10 +11,19 @@
 #                                   09:00", "yesterday 18:00", "3 days ago"), this machine's time
 #                                   unless it says ("09:00 UTC"; the snapshots list shows UTC);
 #                                   those modules stop around it
+#   kiwi-stack restore --from MACHINE [--at TIME] MODULE...
+#                                   a module that moved here from MACHINE: that machine's copy of it,
+#                                   put here. Its way into that machine's backups comes on standard
+#                                   input (kiwi-server sends it for this one run) and is not kept:
+#                                   RESTIC_PASSWORD=, RESTIC_REST_USERNAME=, RESTIC_REST_PASSWORD=, and
+#                                   KIWI_TARGETS= with that machine's servers. From then on the module
+#                                   is backed up here, among this machine's own.
 set -uo pipefail
 
 DIR={{ docker_dir }}/kiwi/backup
 HOST={{ hostname }}
+REPO_HOST=$HOST                 # whose copies are read: this machine's, or (restore --from) another's
+ENV_FILE=$DIR/restic.env        # the way into them
 IMAGE={{ image }}
 TARGETS=({{ targets | join(' ') }})
 TARGET=${TARGETS[0]}
@@ -42,9 +51,9 @@ restic() { # MOUNT... -- ARGUMENT...      against $TARGET
     local mounts=()
     while [[ $1 != -- ]]; do mounts+=(-v "$1"); shift; done
     shift
-    ${LIMIT:+timeout -k 60 "$LIMIT"} {{ runtime }} run --rm --network host --security-opt label=disable --env-file "$DIR/restic.env" \
+    ${LIMIT:+timeout -k 60 "$LIMIT"} {{ runtime }} run --rm --network host --security-opt label=disable --env-file "$ENV_FILE" \
         -v {{ docker_dir }}/kiwi/ca:/kiwi-ca:ro -v kiwi_restic_cache:/cache "${mounts[@]}" \
-        "$IMAGE" --cacert /kiwi-ca/kiwiCA.crt --cache-dir /cache -r "rest:$TARGET/$HOST/" "$@"
+        "$IMAGE" --cacert /kiwi-ca/kiwiCA.crt --cache-dir /cache -r "rest:$TARGET/$REPO_HOST/" "$@"
 }
 
 name() { # TARGET: its host name, for files and messages
@@ -162,7 +171,7 @@ backup() { # to each server in turn: one that fails costs only its own copy
 # list is read here, the snapshots' time and short id and nothing else.
 snapshot_at() { # MODULE KIND EPOCH
     local json t id e best='' best_e=0
-    json=$(LIMIT=$ASK_LIMIT restic -- --no-lock snapshots --host "$HOST" --tag "$1,$2" --json) || return 1
+    json=$(LIMIT=$ASK_LIMIT restic -- --no-lock snapshots --host "$REPO_HOST" --tag "$1,$2" --json) || return 1
     while read -r t id; do
         e=$(date -d "$t" +%s%N 2>/dev/null) || continue
         if (( e <= $3 && e > best_e )); then best=$id; best_e=$e; fi
@@ -271,6 +280,35 @@ restore() { # [--at TIME] MODULE...
     return "$rc"
 }
 
+# A module that moved here: the copy the machine it came from made of it. That machine's way
+# into its backups is read from standard input into a file in RAM for this run alone.
+restore_from() { # MACHINE [--at TIME] MODULE...
+    local from=${1:-} env servers rc
+    [[ -n $from && $# -ge 2 ]] || { echo "usage: kiwi-stack restore --from MACHINE [--at TIME] MODULE..." >&2; return 1; }
+    shift
+    env=$(mktemp /run/kiwi-backup-from.XXXXXX) || return 1
+    chmod 600 "$env"
+    cat > "$env"
+    if ! grep -q '^RESTIC_PASSWORD=.' "$env" || ! grep -q '^RESTIC_REST_PASSWORD=.' "$env"; then
+        rm -f "$env"
+        echo "backup: restore --from wants $from's way into its backups on standard input" >&2
+        return 1
+    fi
+    servers=$(sed -n 's/^KIWI_TARGETS=//p' "$env")
+    sed -i '/^KIWI_TARGETS=/d' "$env"
+    (
+        REPO_HOST=$from
+        ENV_FILE=$env
+        [[ -z $servers ]] || read -ra TARGETS <<<"$servers"
+        TARGET=${TARGETS[0]}
+        echo "backup: $*: from $from's copies, put on $HOST"
+        restore "$@"
+    )
+    rc=$?
+    rm -f "$env"
+    return "$rc"
+}
+
 restore_all() { # every module this machine may restore
     local m list=()
     for m in "${MODULES[@]}"; do [[ -n ${NO_RESTORE[$m]} ]] || list+=("$m"); done
@@ -342,6 +380,7 @@ case "${1:-}" in
                 fi
                 backup ;;
     snapshots)  shift; snapshots "$@" ;;
-    restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }; restore "$@" ;;
-    *)          echo "usage: kiwi-stack backup [--new] | snapshots [--json] [MODULE...] | restore [--at TIME] MODULE..." >&2; exit 1 ;;
+    restore)    shift; flock -n 9 || { echo "backup: one is running already" >&2; exit 1; }
+                if [[ ${1:-} == --from ]]; then shift; restore_from "$@"; else restore "$@"; fi ;;
+    *)          echo "usage: kiwi-stack backup [--new] | snapshots [--json] [MODULE...] | restore [--from MACHINE] [--at TIME] MODULE..." >&2; exit 1 ;;
 esac

@@ -3086,6 +3086,93 @@ class TestSetup(Base):
         self.assertEqual(image(True, "quince"), pinned)             # another machine's update
         self.assertEqual(image(True, "mango"), ["kiwi-server-control:2"])     # its own update: the newest of the major tag
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_part_moves_to_another_machine_with_its_secrets_and_its_name(self):
+        """partmove: the plan, what stops it, the fleet file after it, the secrets pinned to the new
+        machine, and the old machine's way into its backups for the one restore."""
+        from kiwiserver import partmove
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(dict(self.ANSWERS, nodes=self.ANSWERS["nodes"] + [{"name": "fig", "preset": "cloud"}])))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        wg = ("[Interface]\nPrivateKey = dGVzdC1wcml2YXRlLWtleS1ub3QtcmVhbC0wMDAwMDAwMDAwMDA=\nAddress = 10.8.0.%d/24\n"
+              "DNS = 10.8.0.1\n\n[Peer]\nPublicKey = dGVzdC1zZXJ2ZXItcHVibGljLWtleS1ub3QtcmVhbC0wMDAwMDA=\n"
+              "AllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n")
+        for i, h in enumerate(config.Fleet.load(dest).hosts.values()):
+            write(os.path.join(self.tmp, "secrets", "%s.conf" % h.hostname), wg % (20 + i))
+        roles = rolesmod.discover()
+        first = config.Fleet.load(dest)
+        r0 = cli.Renderer(first, roles, os.path.join(self.tmp, "out0"), None, cli.modset(first))
+        resolved = {}
+        for h in first.hosts.values():
+            if h.role in roles and not h.validate(roles):
+                r0.script(h)
+                resolved[h.name] = list(h.modules)
+        data = yaml.safe_load(util.read_text(dest))
+        srv = "https://backup.trifle.home"
+        for name, extra in (("quince", ["paste", "backup"]), ("fig", ["backup"])):
+            block = data["hosts"][name].setdefault("node", {})
+            block["modules"] = list(dict.fromkeys(resolved[name] + extra))
+            block["backup"] = {"server": srv}
+        data["hosts"]["quince"]["node"]["paste"] = {"paste_title": "Notes"} if "paste_title" in {
+            x.key for x in cli.modset(first).modules["paste"].settings} else {}
+        if not data["hosts"]["quince"]["node"]["paste"]:
+            del data["hosts"]["quince"]["node"]["paste"]
+        write(dest, "# the test's fleet\n" + yaml.safe_dump(data, sort_keys=False))
+        fleet = config.Fleet.load(dest)
+        ms = cli.modset(fleet)
+        both = {"quince": 1, "fig": 1}
+        p = partmove.plan(fleet, roles, ms, "paste", "quince", "fig", applied=both)
+        self.assertEqual(p["stops"], [])
+        self.assertEqual((p["name"], p["name_setting"], p["name_value"], p["carry"]),
+                         ("paste.quince.home", "paste_domain", "paste.quince.home", True))     # its name stays
+        self.assertIn("fig is applied, and gets paste's data from quince's backups", p["steps"])
+        after = p["data"]["hosts"]
+        self.assertNotIn("paste", after["quince"]["node"]["modules"])
+        self.assertIn("paste", after["fig"]["node"]["modules"])
+        self.assertEqual(after["fig"]["node"]["paste"]["paste_domain"], "paste.quince.home")
+        self.assertNotIn("paste", after["quince"]["node"])                          # its settings went with it
+        # what stops it
+        stop = lambda *a, **k: " ".join(partmove.plan(fleet, roles, ms, *a, **k)["stops"])
+        self.assertIn("is not among mango's parts", stop("paste", "mango", "fig"))
+        self.assertIn("there is no machine nowhere", stop("paste", "quince", "nowhere"))
+        self.assertIn("there is no part nonsense", stop("nonsense", "quince", "fig"))
+        self.assertIn("trifle a master", stop("paste", "quince", "trifle"))
+        self.assertIn("mango has no backup part", stop("paste", "quince", "mango"))
+        self.assertIn("fig is not set up yet", stop("paste", "quince", "fig", applied={"quince": 1}))
+        # the secrets its data was made with stay, under the new machine's name
+        keys = p["pins"] or ["some_key"]             # (the pastebin has none of its own: any key shows the pin)
+        was = {k: fleet.derive_secret("quince.home", "paste", k) for k in keys}
+        self.assertEqual(partmove.pin_secrets(fleet, "paste", fleet.hosts["quince"], fleet.hosts["fig"], keys), len(keys))
+        again = config.Fleet.load(dest)
+        self.assertEqual({k: again.derive_secret("fig.home", "paste", k) for k in keys}, was)
+        self.assertEqual(os.stat(again.resolve_path("secrets/pins.json")).st_mode & 0o777, 0o600)
+        # the fleet file is written whole, with its first comment kept; the new fleet is in order
+        partmove.write_fleet(fleet, p["data"])
+        self.assertTrue(util.read_text(dest).startswith("# the test's fleet\n"))
+        moved = config.Fleet.load(dest)
+        ms2 = cli.modset(moved)
+        self.assertEqual(moved.hosts["fig"].validate(roles), [])
+        r = cli.Renderer(moved, roles, os.path.join(self.tmp, "out"), None, ms2)
+        script = r.script(moved.hosts["fig"])[0]
+        self.assertIn("paste.quince.home", script.decode() if isinstance(script, bytes) else script)
+        # the old machine's way into its backups, for the one run on the new machine
+        rolesmod.resolve_settings(roles[moved.hosts["quince"].role], moved.hosts["quince"], ms2)
+        way = partmove.way_in(moved.hosts["quince"].module_settings["backup"], moved.hosts["quince"])
+        self.assertIn("RESTIC_REST_USERNAME=quince.home\n", way)
+        self.assertIn("KIWI_TARGETS=%s\n" % srv, way)
+        self.assertIn("RESTIC_PASSWORD=%s\n" % moved.derive_secret("quince.home", "backup", "repo_password"), way)
+        ran = []
+        keep = remote.run
+        remote.run = lambda tgt, script, data=None, **kw: (ran.append((tgt, script, data)), b"backup: paste: put on fig\n")[1]
+        try:
+            said = cli.restore_from(moved, roles, ms2, moved.hosts["fig"], moved.hosts["quince"], ["paste"], tgt="core@fig")
+        finally:
+            remote.run = keep
+        self.assertEqual(ran[0][:2], ("core@fig", "kiwi-stack restore --from quince.home paste"))
+        self.assertEqual(ran[0][2].decode(), way)                                   # on standard input, not in the command
+        self.assertIn("put on fig", said)
+
     def test_a_new_release_alone_is_no_change(self):
         import hashlib
         a = "#!/bin/bash\n# kiwi-server 2.197.0 — role script for host lychee\nKS_VERSION='2.197.0'\necho hi\n"

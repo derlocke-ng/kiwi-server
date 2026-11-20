@@ -202,6 +202,40 @@ TIME]` brings modules back, and `--new` starts the new history of a rebuilt
 machine. The app has the same on each host's page; the control page has it
 under Backups ("Bring something back", "Start new").
 
+## Moving a part to another machine
+
+```bash
+kiwi-server move ~/kiwi/fleet.yaml git medlar lychee          # the plan, and what stands in the way
+kiwi-server move ~/kiwi/fleet.yaml git medlar lychee --yes    # do it
+```
+
+A part (a module on a machine) moves with its data, its secrets and its name:
+
+1. It stops on the machine it leaves, and that machine makes one last backup.
+2. Its generated secrets are kept for the new machine (`secrets/pins.json`): a database
+   password stays what the data was made with.
+3. The fleet file: the part and its settings move to the new machine. It keeps its name
+   (`git.medlar.home` stays, and now leads to the new machine; with
+   [names by service](network.md#names-by-service) it is `git.home` before and after).
+4. The new machine is applied and gets the part's data from the old machine's backups. The old
+   machine's way into its backups goes over for that one run and is not kept there.
+5. The old machine is applied, then every machine the change reaches (the ones that answer for
+   names).
+6. The new machine starts a backup: from then on the part is in the new machine's own store.
+   Its history before the move stays in the old machine's.
+
+The plan says what stands in the way: a machine without the backup part (the data travels
+through the backups), a master and a node (they keep their parts' data under different
+names), two machines with different stack folders, a part the target cannot run.
+
+The part's data stays on the old machine's disk, unused. Delete it there when the part runs
+well in its new place. If the move stops half way, it says how to go on by hand; the piece that
+brings the data is
+
+```bash
+kiwi-server backups ~/kiwi/fleet.yaml lychee git --restore --from medlar
+```
+
 ## Pruning
 
 A machine can add to its backups but not delete them, so one that is taken

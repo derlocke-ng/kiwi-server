@@ -560,10 +560,18 @@ def activity_api(fleet_dir, key=None):
     return out
 
 
-def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=1.0):
+AWAY = (0, 502, 503, 504)       # no answer, or its proxy answers for it: the control page is not up
+PATIENCE = 300                  # seconds to wait for a control page that went away during a job
+
+
+def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=1.0, again=True):
     """An action as a job on the control node, as the page's buttons start one: this copy goes there
     first (the node applies what it has), then the job's log comes here as it is written, and what
-    the job changed comes back. True when the job ended well."""
+    the job changed comes back. True when the job ended well.
+
+    The control page may go away while the job runs: an apply to its own machine restarts it, and
+    its jobs live in memory. Then this waits for the page (PATIENCE) and, for an apply, runs the
+    job once more (`again`): an apply that has nothing left to do ends at once."""
     def say(text):
         sys.stdout.write(text)
         sys.stdout.flush()
@@ -576,15 +584,40 @@ def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=
                         "(kiwi-server apply <fleet> <its machine> --update)")
     if status != 200 or not out.get("job"):
         raise KiwiError("the control node refused: %s" % (out.get("error") or status))
-    jid, offset, state = out["job"], 0, "waiting"
+    jid, offset, state, away = out["job"], 0, "waiting", None
     util.say("on the control node, as job %s" % jid)
     while True:
-        status, out = api.call("GET", "/api/jobs/%s/log?offset=%d" % (jid, offset))
-        if status == 401:                       # a long job outlives the token: log in again
-            api, _key = api_for(fleet_dir, key)
+        try:
+            status, out = api.call("GET", "/api/jobs/%s/log?offset=%d" % (jid, offset))
+        except KiwiError:
+            status, out = 0, {}
+        if status in AWAY:                      # the page restarts (an apply to its own machine does that)
+            if away is None:
+                away = time.monotonic()
+                util.say("the control page is away (an apply to its own machine restarts it): waiting for it")
+            if time.monotonic() - away > PATIENCE:
+                raise KiwiError("the control node did not come back within %d minutes, and job %s with it. "
+                                "Look at the machine it runs on (kiwi-server status), then run this again."
+                                % (PATIENCE // 60, jid))
+            time.sleep(max(wait, 2.0) if wait else 0)
             continue
+        if status == 401:                       # a long job outlives the token, and a restart ends it: log in again
+            try:
+                api, _key = api_for(fleet_dir, key)
+            except KiwiError:
+                if away is None:
+                    raise
+                time.sleep(max(wait, 2.0) if wait else 0)
+            continue
+        if status == 404 and away is not None:  # the page is back without the job: it ended with the page
+            if action == "apply" and again:
+                util.say("the control page is back; job %s ended with it. Running it once more: an apply that "
+                         "has nothing left to do ends at once" % jid)
+                return run_api(fleet_dir, fleet_name, action, hosts, key=key, write=write, wait=wait, again=False)
+            raise KiwiError("the control page restarted while job %s ran, and the job ended with it. Run it again." % jid)
         if status != 200:
             raise KiwiError("the control node lost job %s (%d)" % (jid, status))
+        away = None
         if out.get("text"):
             write(out["text"])
         offset, state = out.get("offset", offset), out.get("state") or state

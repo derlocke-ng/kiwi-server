@@ -27,6 +27,13 @@ LEVEL = {k: level for k, _one, _many, level in STATES}
 KEYS = ("state", "site", "part", "role")
 
 
+MASTERS = "Masters"
+
+
+def is_master(m):
+    return m.get("role") == "master" or bool(m.get("standby_of"))
+
+
 def state(m):
     """One state for a machine, from what was done to it and what the last look saw."""
     if m.get("locked") or m.get("stage") == "waits":
@@ -103,16 +110,41 @@ def table(machines, q="", titles=None):
         m["st"] = state(m)
     f = parse(q)
     shown = [m for m in machines if match(m, f, titles)]
+    # the masters are a group of their own, above the sites (the owner, 20 Nov 2026): a master is
+    # the network's middle, mostly a rented server, not one of the machines "at home"
     by = {}
     for m in shown:
-        by.setdefault(m.get("site") or "home", []).append(m)
+        by.setdefault((0, MASTERS) if is_master(m) else (1, m.get("site") or "home"), []).append(m)
     order = {k: i for i, (k, _one, _many, _level) in enumerate(STATES)}
     groups = []
-    for site in sorted(by, key=lambda s: s.lower()):
-        ms = sorted(by[site], key=lambda m: (order[m["st"]], m["name"]))
+    for first, site in sorted(by, key=lambda k: (k[0], k[1].lower())):
+        ms = sorted(by[(first, site)], key=lambda m: (order[m["st"]], bool(m.get("standby_of")), m["name"]))
         c = counts(ms)
-        groups.append({"site": site, "slug": slug(site), "machines": ms, "counts": c,
+        groups.append({"site": site, "slug": slug(site), "machines": ms, "counts": c, "masters": first == 0,
                        "level": c[0]["level"] if c else "plain", "fine": all(x["key"] == "ok" for x in c)})
     return {"all": len(machines), "shown": len(shown), "counts": counts(machines), "groups": groups,
             "q": " ".join(str(q or "").split()), "filtered": len(shown) != len(machines),
             "sites": sorted({m.get("site") or "home" for m in machines}, key=lambda s: s.lower())}
+
+
+def device_table(rows, q=""):
+    """The Devices table: {all, shown, q, filtered, devices, groups}. The filter's text:
+    `group:NAME` (twice is either-or) and bare words, each a part of a name or the start of an
+    address. `groups`: [{group, n}] of all devices, for the counts above the table."""
+    wanted, words = [], []
+    for word in str(q or "").split()[:20]:
+        key, sep, value = word.partition(":")
+        if sep and key.lower() == "group":
+            if value:
+                wanted.append(value.lower())
+        else:
+            words.append(word.lower())
+
+    def ok(d):
+        if wanted and (d.get("group") or "").lower() not in wanted:
+            return False
+        return all(w in d["name"].lower() or (d.get("address") or "").startswith(w) for w in words)
+    shown = sorted((d for d in rows if ok(d)), key=lambda d: ((d.get("group") or "~"), d["name"]))
+    names = sorted({d.get("group") or "" for d in rows})
+    return {"all": len(rows), "shown": len(shown), "q": " ".join(str(q or "").split()), "filtered": len(shown) != len(rows),
+            "devices": shown, "groups": [{"group": g, "n": sum(1 for d in rows if (d.get("group") or "") == g)} for g in names if g]}

@@ -43,9 +43,9 @@ def main():
     with open(case.c.health_file, "w") as fh:                # for /status, and for Home's services that do not answer
         json.dump(madeup.health(time.time()), fh)
     os.makedirs(os.path.join(case.f.dir, "secrets", "devices"), exist_ok=True)
-    for d in ("annas-phone", "laptop", "tablet"):
+    for d, text in madeup.devices():
         with open(os.path.join(case.f.dir, "secrets", "devices", d + ".conf"), "w") as fh:
-            fh.write("# made up\n")
+            fh.write(text)
     print("http://127.0.0.1:%d   password: %s   (Ctrl+C ends it)" % (port, case.PW), flush=True)
     try:
         while True:

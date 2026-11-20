@@ -23,7 +23,7 @@ that booted. The page:
 | **The status page for strangers** | under a public name (`control: { public_status_hostname: … }`): the services open to the Internet, whether they work, how to get an account |
 
 The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
-what, Linked networks); *Safety* (Backups, If something breaks, Computers); *More*.
+what, Linked networks); *Safety* (Backups, Recovery, Computers); *More*.
 On a computer the menu is at the side, with how the machines are below it; on a phone
 it is a bar at the bottom, with the rest under "More". The page follows the device's
 light or dark setting, and the moon button switches it (kept in a cookie of that
@@ -114,10 +114,16 @@ step as a button:
 A machine's page has tabs: Overview, Services (with the logins), History (what was done to it
 and how it ended), Backups and Settings.
 
+A job that restarts the control page itself (an apply to the machine the page runs on) does
+not get lost: the page's view of the job and `kiwi-server control run` wait for the page to
+come back. If the job ended with the page, an apply is run once more by `control run`; on the
+page, start it again. An apply that has nothing left to do ends at once.
+
 ### The Machines table
 
-Machines is a table with a row per machine, grouped by site (where the machines stand:
-`network.site` in the fleet file). Each row has the machine's state, its role, its parts,
+Machines is a table with a row per machine. The masters and their standbys come first, as a
+group of their own; the other machines are grouped by site (where they stand: `network.site`
+in the fleet file). Each row has the machine's state, its role, its parts,
 three small meters (CPU, memory, the fullest disk; point at one for the numbers), its last
 backup and when it was last seen. A site's line says how its
 machines are ("11 fine · 1 waits for unlock").
@@ -140,6 +146,14 @@ Several filters narrow the list; the same kind twice is either-or (`state:down s
 
 Tick machines (the box in a site's heading ticks the whole site) and a bar appears: Check,
 Preview or Apply the ticked ones, one after the other.
+
+### The Devices table
+
+Devices lists every phone and laptop on the VPN in a table: its name, its group, its address
+on the VPN, and whether everything or only the network goes through the VPN. With more than
+one group, the counts above the table filter by group on a click. The filter is text in the
+page's address, as on Machines: `group:staff`, a part of a name, or the start of an address
+(`10.9.8`). Each row has *QR code* (shows the device's code and file again) and *Remove*.
 
 "Add a machine at home" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.

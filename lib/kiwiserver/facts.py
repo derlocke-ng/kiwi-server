@@ -290,7 +290,7 @@ HINTS = {
 # What a person can do about a problem, beside the hint: [{label, page, app, run}]. `page`: a
 # page of the control page; `app`: the app's own action for it; `run`: a job for this machine
 # (the page's /run, the app's command). One table for the page, the app and the phone.
-_BREAKS = {"label": "If something breaks", "page": "/recovery", "app": "recovery"}
+_BREAKS = {"label": "Recovery", "page": "/recovery", "app": "recovery"}
 _UNLOCK = {"label": "Unlock it", "run": "unlock"}
 _RINGS = {"label": "Disk unlock", "page": "/unlock", "app": "unlock-picture"}
 _BACKUPS = {"label": "Backups", "page": "/backups"}

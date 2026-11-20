@@ -5261,8 +5261,8 @@ class TestStory(Base):
             row = json.loads(out)["hosts"][0]
             self.assertEqual(row["stage"], "installing")
             self.assertEqual([p["key"] for p in row["problems"]], ["rebuilt", "unreachable"])
-            self.assertEqual([a["label"] for a in row["problems"][0]["actions"]], ["Unlock it", "Disk unlock", "If something breaks"])
-            self.assertEqual(row["problems"][1]["actions"], [{"label": "If something breaks", "page": "/recovery", "app": "recovery"}])
+            self.assertEqual([a["label"] for a in row["problems"][0]["actions"]], ["Unlock it", "Disk unlock", "Recovery"])
+            self.assertEqual(row["problems"][1]["actions"], [{"label": "Recovery", "page": "/recovery", "app": "recovery"}])
             self.assertNotIn("If it stays away", row["problems"][1]["hint"])           # the link says it now
             rc, out, err = TestManage.run_cli(self, "status", f.path)
             self.assertIn("! Its install media were made", out)
@@ -10913,6 +10913,13 @@ class TestWeb(WebBase):
         self.assertIn('action="/devices/download"', body)
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone", "csrf": tok}), (200, conf))
         self.assertEqual(self.ask("/devices/download", {"name": "annas-phone"})[0], 303)   # no token: nothing
+        there = self.ask("/devices")[1]                                           # the list is a table
+        self.assertIn('<table class="tbl dt">', there)
+        self.assertIn("<b>annas-phone</b>", there)
+        self.assertIn("Everything", there)                                        # all of its traffic goes through the VPN
+        self.assertNotIn("PrivateKey", there)
+        self.assertIn("No device matches", self.ask("/devices?q=nobody")[1])      # the filter, in the address
+        self.assertIn("<b>annas-phone</b>", self.ask("/devices?q=anna")[1])
         # a laptop at home: only the network through the tunnel, and what to do so that its own names still work
         self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
                        "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write("
@@ -13993,7 +14000,7 @@ class TestFirstRunPage(StoreBase):
         for page in ("/hosts/%s" % node, "/"):
             body = self.ask(page, cookie=cookie)[1]
             self.assertIn("Its install media were made 40 minutes ago", body)
-            self.assertIn('<a class="btn" href="/recovery">If something breaks</a>', body)
+            self.assertIn('<a class="btn" href="/recovery">Recovery</a>', body)
             self.assertIn('<a class="btn" href="/unlock">Disk unlock</a>', body)
             self.assertRegex(body, r'name="action" value="unlock"><input type="hidden" name="host" value="%s">\s*<button class="primary">Unlock it' % node)
 
@@ -14039,7 +14046,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.ask("/recovery")[:2], (303, "/login"))
         status, body, _ = self.ask("/recovery", cookie=cookie)
         self.assertEqual(status, 200)
-        self.assertIn("If something breaks", body)
+        self.assertIn("<h1>Recovery</h1>", body)
         self.assertIn('<span class="dot warn"></span>No copy of the network has been made yet', body)
         self.assertRegex(body, r"keeps data \([a-z, -]+\) and has no backup")     # the node of a new network
         self.assertIn("Only the control node opens the network&#39;s keys, besides the recovery key", body)

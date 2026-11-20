@@ -36,7 +36,7 @@ class TestMachineTable(unittest.TestCase):
               m("fig", "ok", "CEO", role="master", kind="Master")]
         t = lambda q: [x["name"] for g in mt.table(ms, q, {"dns": "Ad blocker (Pi-hole)", "cloud": "Files (Nextcloud)"})["groups"]
                        for x in g["machines"]]
-        self.assertEqual(t(""), ["fig", "lychee", "lime"])                          # by site, the worst first in each
+        self.assertEqual(t(""), ["fig", "lychee", "lime"])                          # the master, then by site, the worst first
         self.assertEqual(t("state:down"), ["lychee"])                               # lime waits for its key
         self.assertEqual(t("state:unlock"), ["lime"])
         self.assertEqual(t("state:fine"), ["fig"])                                  # by its word too
@@ -57,10 +57,34 @@ class TestMachineTable(unittest.TestCase):
         self.assertEqual((t["all"], t["shown"], t["filtered"]), (5, 5, False))
         self.assertTrue(mt.table([m("a")])["groups"][0]["fine"])
 
+    def test_masters_are_a_group_of_their_own(self):
+        ms = [m("lychee"), m("sorbet", role="master", kind="Master"), m("sorbet-b", role="master", standby_of="sorbet"),
+              m("far", "down", "Abroad", role="master")]
+        t = mt.table(ms)
+        self.assertEqual([(g["site"], g["masters"], [x["name"] for x in g["machines"]]) for g in t["groups"]],
+                         [("Masters", True, ["far", "sorbet", "sorbet-b"]), ("home", False, ["lychee"])])
+        self.assertEqual([x["name"] for g in mt.table(ms, "site:abroad")["groups"] for x in g["machines"]], ["far"])   # its site still filters
+
     def test_a_count_toggles_its_filter(self):
         self.assertEqual(mt.toggled("", "state", "down"), "state:down")
         self.assertEqual(mt.toggled("site:ceo state:warn", "state", "down"), "site:ceo state:down")
         self.assertEqual(mt.toggled("site:ceo state:down", "state", "down"), "site:ceo")
+
+    def test_the_devices_table(self):
+        rows = [{"name": "annas-phone", "address": "10.9.3.2", "group": "family", "split": False},
+                {"name": "laptop", "address": "10.9.3.3", "group": "family", "split": True},
+                {"name": "desk-07", "address": "10.9.8.9", "group": "staff", "split": True},
+                {"name": "old", "address": "", "group": "", "split": False}]
+        t = lambda q: [d["name"] for d in mt.device_table(rows, q)["devices"]]
+        self.assertEqual(t(""), ["annas-phone", "laptop", "desk-07", "old"])        # by group, then name; no group last
+        self.assertEqual(t("group:staff"), ["desk-07"])
+        self.assertEqual(t("group:staff group:family"), ["annas-phone", "laptop", "desk-07"])
+        self.assertEqual(t("lap"), ["laptop"])
+        self.assertEqual(t("10.9.8"), ["desk-07"])                                  # the start of an address
+        self.assertEqual(t("group:family phone"), ["annas-phone"])
+        full = mt.device_table(rows, "group:family")
+        self.assertEqual(full["groups"], [{"group": "family", "n": 2}, {"group": "staff", "n": 1}])
+        self.assertEqual((full["all"], full["shown"], full["filtered"]), (4, 2, True))
 
     def test_many_machines_stay_fast(self):
         import time

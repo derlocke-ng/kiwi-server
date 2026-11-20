@@ -70,6 +70,23 @@ def many(hosts, said):
             n += 1
 
 
+GROUPS = (("family", "10.9.3.0/24"), ("guests", "10.9.4.0/24"), ("staff", "10.9.8.0/22"))
+
+
+def devices():
+    """[(name, its file's text)]: three at home; with KIWI_PREVIEW_MANY 350 more, most of them staff.
+    The keys are words, not keys."""
+    def conf(addr, split=False):
+        return ("[Interface]\nPrivateKey = made-up\nAddress = %s/32\nDNS = 10.9.0.1\n\n[Peer]\nPublicKey = made-up\n"
+                "AllowedIPs = %s\nEndpoint = sorbet.example:51820\n" % (addr, "10.9.0.0/16" if split else "0.0.0.0/0, ::/0"))
+    out = [("annas-phone", conf("10.9.3.2")), ("laptop", conf("10.9.3.3", True)), ("tablet", conf("10.9.4.2"))]
+    if os.environ.get("KIWI_PREVIEW_MANY"):
+        for i in range(350):
+            kind = ("laptop", "phone", "desk", "tablet")[i % 4]
+            out.append(("%s-%03d" % (kind, i + 1), conf("10.9.%d.%d" % (8 + i // 250, 2 + i % 250), kind == "desk")))
+    return out
+
+
 def answers():
     hosts, said = [], []
     for name, role, modules, sites, state, problems, f in MACHINES:
@@ -106,7 +123,8 @@ def answers():
                 "commit": "d8464b8b8ffbe0ba9848fe1e2009c0e6f252204f", "tag": "v0.1.0", "modules": ["smartfritz"]}]
     if os.environ.get("KIWI_PREVIEW_MANY"):
         many(hosts, said)
-    return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": {}, "hosts": hosts, "module_sources": sources,
+    return ({"domain": "home", "mesh": "10.9.0.0/24", "master_ip": "10.9.0.1", "groups": dict(GROUPS), "default_group": "family",
+             "hosts": hosts, "module_sources": sources,
              "linked": linked},
             {"hosts": said})
 

@@ -89,6 +89,6 @@ address" then listens on the home network. Nothing else in the modules changes.
 |---|---|
 | `vpn: false`: the home address as the VPN address, no VPN client | built: kiwi-modules 0.61.0 |
 | "No master yet" in the questions; what it means on the page and in the app | built: 2.149.0 |
-| The warning when one machine keeps everything and nothing is backed up elsewhere | the page's "If something breaks" says it already |
+| The warning when one machine keeps everything and nothing is backed up elsewhere | the page's Recovery says it already |
 | "Add a master" for a network that has none | built: `kiwi-server add`, the page's Machines, the app (2.150.0) |
 | A drill: one node, no master | built: `starter-vm.sh alone` |

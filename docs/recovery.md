@@ -5,11 +5,11 @@ master, a phone, the computer that manages the network, or a whole home. For
 each case it says what happens by itself and what you do: in the app, on the
 control page and in a terminal.
 
-Look before anything breaks. The report **If something breaks** says whether
+Look before anything breaks. The report **Recovery** says whether
 you could bring your network back today, and what is missing:
 
-- On the control page: the tile **If something breaks** on Home.
-- In the app: the menu, **If something breaks…**
+- On the control page: **Recovery** in the menu, under Safety.
+- In the app: the menu, **Recovery…**
 - In a terminal:
 
 ```bash

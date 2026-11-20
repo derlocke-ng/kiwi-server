@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.257.0 — masters as their own group, the Devices table, a job that outlives a page restart
+
+- **A job no longer ends with "the control node lost job … (502)" when the control page
+  restarts under it.** An apply to the control node's own machine restarts the page, and its
+  jobs live in memory. `kiwi-server control run` (what the app's buttons use) now waits for
+  the page (up to 5 minutes), goes on if the job is still there, and runs an apply once more
+  if the job ended with the page: an apply that has nothing left to do ends at once. The
+  page's own view of a job says the same instead of standing still.
+- **"If something breaks" is called Recovery**: in the menu, on its page, in the app and in
+  the hints' buttons. The command was `kiwi-server recovery` already.
+- **The masters and their standbys are a group of their own** at the top of the Machines table,
+  not machines of the site "home". A master's own site, if the fleet file names one, shows
+  beside its name and still filters (`site:`).
+- **Devices is a table**, made for hundreds of devices: name, group, address on the VPN, and
+  whether everything or only the network goes through the VPN. Counts by group filter on a
+  click; the filter is text in the address (`group:staff`, a part of a name, the start of an
+  address). A page with 350 devices is a quarter of the size the old list would have been.
+- The page preview's made-up network has devices with addresses and groups
+  (`KIWI_PREVIEW_MANY=1`: 350 more).
+
 ## 2.256.0 — the Machines page is a table, by site
 
 - **Machines on the control page is a table with a row per machine, grouped by site**

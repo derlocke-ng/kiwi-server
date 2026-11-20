@@ -62,6 +62,13 @@ nginx:
     - "{% if allow_from %}allow {{ allow_from }};{% endif %}"
     - "allow 127.0.0.1;"
     - "deny all;"
+  extra_locations:
+    # a machine's agent says how the machine is. Its report is signed with the machine's own key,
+    # so it needs no login and no address rule: the control node's own machine reports from the
+    # stack's network, which the rule above does not know (its agent got 403).
+    - path: "= /api/report"
+      proxy: true
+      config: "allow all;"
   servers:
     # the status page: how the network is, for everyone on it, without a login. Whatever is asked
     # for at this name, the control part is asked for /status and nothing else. It is no admin

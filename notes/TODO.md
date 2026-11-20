@@ -74,20 +74,16 @@ say what 2.267.0 does.
 46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).
 47. ~~gluetun's `DOT_PROVIDERS` is now `DNS_UPSTREAM_RESOLVERS`~~: the vpn-client module sets the new name (kiwi-modules, next release).
 
-48. After a restart of the master's VPN client its resolver answers only when the tunnel is up: 75 seconds on 20 Nov, because
-    the first exit servers it tried did not pass its start check (several tries of six seconds). Pi-hole asks its fallback
-    meanwhile, directly. Nothing to fix in the resolver; gluetun's start check also asks for NET_RAW (ICMP), which the
-    container does not have: see whether giving it makes the check quicker.
+48. ~~The master's resolver after a restart of its VPN client~~: nothing to fix in kiwi; the first exit servers failed gluetun's start check (it tries others).
+
 49. ~~A node's Pi-hole while the master is away~~: found 20 Nov, fixed the same day. It answered public names only when a client
     asked a second time (Pi-hole's strict order moves on only then): one question got nothing in 12 s. The master-down drill
     did not see it, as it reached the node by a name the master answers. Now a CoreDNS in front of a node's Pi-hole asks the
     master while it answers and Cloudflare over TLS while it does not; the drill reaches the node by its home address and asks
     once: "answered throughout" (papaya, 3 minutes without the master). The master itself is as before (its VPN client sits
     next to it).
-50. The master's lookups while its exit is down or restarting: about five seconds each, none during gluetun's restart. Its
-    fallbacks cannot help: the VPN server's namespace (where its Pi-hole runs) routes everything through gluetun. A way out
-    would be the fallback resolver's packets marked for the host's own table (as the WireGuard server's are, fwmark 0x41),
-    which CoreDNS cannot do itself. Tried and taken out again on 20 Nov.
+50. ~~The master's lookups while its exit is down~~: left as it is. The devices on the VPN reach nothing then anyway (their traffic leaves through the same exit); only the master's own lookups wait, and its own traffic goes direct.
+
 51. ~~Local time (NTP)~~, the owner 20 Nov: "maybe include local ntp?!". Done 20 Nov (kiwi-modules, kiwi-stack, kiwi-server):
     Pi-hole serves the time (123/udp, DHCP option 42) and never sets the clock (it had set the host's clock hourly beside
     timesyncd/chrony, with SYS_TIME); each machine asks its site's Pi-hole on its LAN first, else the master's on the mesh,

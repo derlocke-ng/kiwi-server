@@ -1,4 +1,4 @@
 # the kiwi-modules and kiwi-stack releases this tree carries — tools/vendor.sh
-kiwi-modules=v0.109.1
-kiwi-stack=v0.9.24
+kiwi-modules=v0.110.0
+kiwi-stack=v0.9.25
 kiwi-template=v0.1.3

@@ -1397,6 +1397,11 @@ def cmd_next(args):
         if not args.yes and not sys.stdin.isatty():     # erasing a server is never taken for granted
             raise KiwiError("installing %s erases the server at %s: run this in a terminal, or with --yes" % (h.name, who.name))
         if go("Install %s at %s now? EVERYTHING ON THAT SERVER IS ERASED." % (h.name, who.name)):
+            iso_path = os.path.join(media_dir_for(args, fleet), h.name, h.name + ".iso")
+            if media_used(fleet, h.name, media_of(iso_path)):
+                # media install a machine once (their guard): for a second install they are made anew
+                util.say("%s: its install media installed it once already: making them again" % h.name)
+                run("build", path, h.name)
             run("vps", "install", path, h.name, "--yes")    # uploads, installs, takes the media out, switches it on
             util.say("%s is installed and starting. Run this again in a minute to set it up" % h.name)
         return
@@ -1962,6 +1967,19 @@ def vps_boot_ram(args, fleet, client, server, h):
     util.say("%s: next: kiwi-server watch %s sends it its role once it answers" % (h.name, typed_path(fleet.path)))
 
 
+def media_of(iso_path):
+    """The id of built install media (iso.media_id, written beside the ISO), or "" for media of an older build."""
+    try:
+        return util.read_text(iso_path + ".id").strip()
+    except OSError:
+        return ""
+
+
+def media_used(fleet, name, mid):
+    """These media installed this machine already (vps install keeps that): their guard would not install it again."""
+    return bool(mid) and (fleet_state(fleet).get("installed_media") or {}).get(name) == mid
+
+
 def vps_install(args, fleet, client, server):
     h = fleet.hosts.get(args.target)
     if h is None:
@@ -1990,7 +2008,19 @@ def vps_install(args, fleet, client, server):
             raise KiwiError("this wipes %s: add --yes to go ahead" % label)
         if input("This wipes the disk of %s. Type its name to go ahead: " % label).strip() != label:
             raise KiwiError("not confirmed, nothing touched")
+    # install media do not install a machine twice (their guard, iso.py): the ISO that installed this
+    # server would start, find its own mark and switch the server off, and the old system would come
+    # up as if it were new. So the same ISO is not sent a second time: it is built again first.
+    mid = media_of(base + ".iso")
+    if media_used(fleet, h.name, mid):
+        raise KiwiError("%s.iso installed %s already, and install media do not install a machine a second time. "
+                        "Build it again, then install: kiwi-server build %s %s" % (h.name, h.name, typed_path(fleet.path), h.name))
     netcup.install(client, server, base + ".iso", _iso_key(h), lambda m: util.say("%s: %s" % (h.name, m)))
+    if mid:
+        with state_lock(fleet):
+            state = fleet_state(fleet)
+            state.setdefault("installed_media", {})[h.name] = mid
+            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
     addresses = [a["ip"] for a in server.get("ipv4Addresses") or []]
     known = fleet.resolve_path("secrets/known_hosts")
     if os.path.isfile(known):                          # the reinstall made new host keys, and this is why

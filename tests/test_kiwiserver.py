@@ -8678,6 +8678,27 @@ class TestVps(Base):
         self.assertEqual(self.api.calls[3][2], {"userIsoName": "kiwi-x.iso", "changeBootDeviceToCdrom": True})
         self.assertIn("next: kiwi-server apply", out)
 
+    def test_the_same_iso_is_not_sent_to_a_server_twice(self):
+        """Install media do not install a machine a second time (their guard): the ISO that installed
+        the server would find its own mark and switch it off, and the old system would start as if
+        it were new. The second `vps install` with the same ISO says to build it again."""
+        f = self.vps_fleet()
+        self.logged_in()
+        self.built()
+        iso_id = os.path.join(self.tmp, "output", "x", "x.iso.id")
+        write(iso_id, "0123456789abcdef\n")
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
+        before = len(self.api.calls)
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 1)
+        self.assertIn("installed x already", err)
+        self.assertIn("kiwi-server build", err)
+        self.assertEqual([m for m, _p, _b in self.api.calls[before:] if m in ("PUT", "PATCH", "POST", "DELETE")], [])   # nothing touched
+        write(iso_id, "fedcba9876543210\n")                                         # built again: other media
+        rc, out, err = self.run_cli("vps", "install", f.path, "x", "--yes")
+        self.assertEqual(rc, 0, err)
+
     def test_a_ram_master_boots_its_image_and_keeps_it_attached(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
             "x": {"role": "bare", "target": "coreos-ram", "vps": {"server": 7}}}})

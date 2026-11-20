@@ -12,6 +12,11 @@ uCore with UEFI and with BIOS, Debian).
   uCore machine with UEFI puts its disk first and restarts into it; any other switches
   itself off after a minute. An ISO built again has a new id and installs: that is how a
   machine is installed again on purpose (docs/getting-started.md).
+  `kiwi-server vps install` does not send the ISO that installed a server a second time (it
+  would switch the server off untouched): it says to build it again, and `kiwi-server next`
+  builds it again by itself.
+- An encrypted board's volume is grown to its disk by the first apply (Armbian's first
+  start grows the partition only).
 - **Fixed: `kiwi-server control activity` crashed** as soon as the control node had run a
   task. Its log's times are in this computer's time now, as the tasks' are.
 - A copy of the network without a signature (made before 2.170.0) can be opened on purpose

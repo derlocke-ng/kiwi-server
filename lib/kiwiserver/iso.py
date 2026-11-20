@@ -286,6 +286,7 @@ def coreos_iso(tc, host, ign_path, out_iso, cache_dir):
     tc.run(argv, mounts=[util.parent(ign_path), util.parent(out_iso), cache_dir])
     if os.path.isfile(out_iso):
         os.chmod(out_iso, 0o600)   # it carries the Ignition config and every secret in it
+    util.write_text(out_iso + ".id", mid + "\n", 0o644)     # which media these are (vps install: not the same twice)
     return out_iso
 
 
@@ -397,7 +398,8 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
     os.makedirs(workdir, mode=0o700)
     # this media's own id (a new one each time it is made): the installer leaves it on the installed
     # system, and its guard looks for it before anything is erased
-    util.write_text(os.path.join(files_dir, "media-id"), media_id() + "\n", 0o644)
+    mid = media_id()
+    util.write_text(os.path.join(files_dir, "media-id"), mid + "\n", 0o644)
     try:
         _debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir)
     finally:
@@ -405,6 +407,7 @@ def debian_iso(tc, host, preseed_path, files_dir, out_iso, base_iso, workdir):
         shutil.rmtree(workdir, ignore_errors=True)
     if os.path.isfile(out_iso):
         os.chmod(out_iso, 0o600)
+    util.write_text(out_iso + ".id", mid + "\n", 0o644)     # which media these are (vps install: not the same twice)
     return out_iso
 
 

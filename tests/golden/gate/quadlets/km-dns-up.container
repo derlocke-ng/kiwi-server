@@ -1,0 +1,24 @@
+# kiwi-server stack — generated; the fleet file is the place to change it
+[Unit]
+Description=kiwi stack: km-dns-up
+BindsTo=km-vpn-server.service
+After=km-vpn-server.service
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/coredns/coredns:1.12.4
+ContainerName=km-dns-up
+Network=container:km-vpn-server
+AutoUpdate=registry
+Volume=/home/user/docker/km-pihole/Corefile:/Corefile:ro,z
+Exec=-conf /Corefile
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=15
+TimeoutStartSec=900
+
+[Install]
+WantedBy=kiwi-stack.target
+WantedBy=km-vpn-server.service

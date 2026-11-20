@@ -1,7 +1,8 @@
-# kiwi-server: in front of Pi-hole on m1.home. The names of the Internet go to the master's
-# Pi-hole while it answers; while it does not (its tunnel or the master down), to the fallbacks,
-# over TLS (cloudflare-dns.com). A master that stops answering is seen at the first question
-# that gets no answer within two seconds; then it is asked again every second until it answers.
+# kiwi-server: in front of Pi-hole on m1.home. The names of the Internet go to the master's Pi-hole
+# while it answers; while it does not (its tunnel or the master down), to the fallbacks,
+# over TLS (cloudflare-dns.com). One that stops answering is seen at the first question
+# that gets no answer within two seconds (a SERVFAIL that comes later counts as none); then it is
+# asked again every second until it answers.
 .:5335 {
     bind 127.0.0.1
     forward . 10.8.0.1 tls://1.1.1.1 tls://1.0.0.1 {

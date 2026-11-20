@@ -476,8 +476,8 @@ computer applies itself as before.
   node or a thin uplink, `kiwi-server apply … --at-once 8` (or `KIWI_AT_ONCE=8` in its
   environment) works on at most eight at a time.
 - **An apply that did not reach a machine waits for it.** A machine that was off, asleep or
-  cut off keeps its apply: the next look that sees it answer applies it, as a job by
-  `control`, with nobody asking. Machines shows "apply waits" beside its name until then. A
+  cut off keeps its apply: the control node asks it every minute and applies it as soon
+  as it answers, as a job by `control`, with nobody asking. Machines shows "apply waits" beside its name until then. A
   machine that answers and still fails is tried three times, then left to you: its History
   has each try.
 - **A role script is rendered once per change.** After an apply, kiwi-server says which other

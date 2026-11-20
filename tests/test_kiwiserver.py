@@ -14119,6 +14119,23 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((len(jobs), len(own), own[0]["hosts"], own[0]["state"]), (2, 1, [b], "ok"))
         self.assertEqual(self.c.waiting(), {})
         self.assertNotIn("apply waits", self.ask("/machines", cookie=cookie)[1])
+        # a look at the waiting machines alone (every minute): the others keep what was known, and the last full look its time
+        write(mode, "off")
+        self.c.start("apply", [b], user="admin", wait=True)
+        full = self.c.status()["time"]
+        asked = os.path.join(self.tmp, "asked")
+        self.c.kiwi = [sys.executable, "-c", "import sys\nopen(%r, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n" % asked + script]
+        self.c.refresh_status(only=sorted(self.c.waiting()))
+        line = [x.split() for x in util.read_text(asked).strip().split("\n") if x.startswith("status")][-1]
+        self.assertEqual((line[0], line[-1], a in line), ("status", b, False))    # only b was asked
+        st = self.c.status()
+        self.assertEqual(({h["host"]: h["state"] for h in st["hosts"]}, st["time"]), ({a: "ok", b: "down"}, full))
+        self.assertFalse(self.c.looking)
+        write(mode, "up")
+        self.c.refresh_status(only=sorted(self.c.waiting()))                # it answers: applied at once
+        wait_jobs()
+        self.assertEqual(self.c.waiting(), {})
+        self.c.kiwi = [sys.executable, "-c", script]
         # a machine that answers and still fails: tried a few times, then left to a person
         write(mode, "half")                                                 # status says ok, apply fails
         self.c.start("apply", [b], user="admin", wait=True)

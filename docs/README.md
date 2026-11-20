@@ -48,6 +48,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Encrypted disks by default](design/encryption.md) | every target encrypted, and how each opens at boot |
 | [Who opens whom](design/unlock.md) | the ways a disk opens at boot, openers, one picture for page and apps |
 | [The page and the apps as server management](design/ui.md) | the machines table by site, a machine's story and states, one name per thing, speed, the app on the shared kit |
+| [Many machines, and services that move](design/scale.md) | why not Ansible or one cluster, what 2.259 built, machines that report in, names by service, moving a service, standby and failover, site controllers |
 | [Services for the public](design/public-services.md) | accounts, sign-up, landing page, status |
 | [A public website](design/website.md) | the front page from a pinned repository of pages |
 

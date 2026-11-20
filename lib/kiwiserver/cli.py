@@ -5186,6 +5186,7 @@ def cmd_switch(args):
         except SystemExit as e:
             return e.code if isinstance(e.code, int) else 1
     # the machine it leaves, if it answers: the part stops there, and the standby fetches once more
+    src_up = True
     try:
         _script, bundle = Renderer(fleet, roles, out_dir, None, ms).script(src)
         services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
@@ -5196,6 +5197,7 @@ def cmd_switch(args):
         remote.run(d_tgt, partstandby.PULL_PATH)
         util.say("%s: fetched its data once more" % dst_name)
     except KiwiError as e:
+        src_up = False
         util.say("%s does not answer (%s): %s goes on with the copy %s has" % (src_name, str(e).splitlines()[-1][:80], part, dst_name))
     # nothing is fetched over the part once it runs here
     remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true" % (partstandby.UNIT, partstandby.UNIT))
@@ -5205,12 +5207,33 @@ def cmd_switch(args):
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
     failed = again(["apply", fleet.path, dst_name])
-    failed = again(["apply", fleet.path, "--changed"]) or failed
     if failed:
-        raise KiwiError("%s is on %s in the fleet file, but an apply failed: kiwi-server apply %s --changed"
+        raise KiwiError("%s is on %s in the fleet file, but %s could not be applied: kiwi-server apply %s %s"
+                        % (part, dst_name, dst_name, typed_path(fleet.path), dst_name))
+    # everyone the change reaches. The machine it left, when it does not answer, is not asked now:
+    # its apply goes to the control node, which keeps it and applies it the moment the machine
+    # answers again (an apply that waits)
+    fleet2, roles2, ms2 = load(args)
+    reached = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
+    now = [n for n in reached if src_up or n != src_name]
+    failed = again(["apply", fleet.path] + now) if now else 0
+    later = ""
+    if not src_up:
+        from . import controlsync
+        later = "Apply %s when it is back: kiwi-server apply %s %s" % (src_name, typed_path(fleet.path), src_name)
+        if controlsync.remote_of(fleet.dir):
+            try:                        # the job fails there while the machine is away, and waits for it there
+                if controlsync.run_api(fleet.dir, os.path.basename(fleet.path), "apply", [src_name], write=lambda text: None):
+                    later = "%s answered after all and no longer runs it" % src_name
+                else:
+                    later = "The control node keeps %s's apply and runs it the moment %s answers again" % (src_name, src_name)
+            except KiwiError as e:
+                util.warn("the control node did not take %s's apply: %s" % (src_name, e))
+    if failed:
+        raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed"
                         % (part, dst_name, typed_path(fleet.path)))
-    util.say("%s runs on %s now%s. %s gets the change when it answers again"
-             % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
+    util.say("%s runs on %s now%s. %s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else "",
+                                         later or "%s no longer runs it" % src_name))
 
 
 def cmd_move(args):

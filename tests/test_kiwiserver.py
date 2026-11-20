@@ -9374,6 +9374,18 @@ peers=4 3
         f = facts.parse(base + "certificate=hub.example.org \n", local_now=1000)
         self.assertEqual(facts.assess(f), ("ok", [], []))
 
+    def test_a_copy_kept_ready_that_is_not_fresh_is_a_problem(self):
+        """What a switch by itself would start with: a standby that stopped fetching says so."""
+        base = "now=1000\napplied=x\nos=Debian\nclock=yes\nuptime=9999\n"
+        state, problems, _n = facts.assess(facts.parse(base + "standby=vault 54 \n", local_now=1000))
+        self.assertEqual((state, problems), ("ok", []))
+        state, problems, _n = facts.assess(facts.parse(base + "standby=vault 1800 ssh: connect to host quince.home port 22: No route\n",
+                                                       local_now=1000))
+        self.assertEqual((state, problems[0]["key"] if "key" in problems[0] else "standby-old"), ("warn", "standby-old"))
+        self.assertIn("its copy of vault, which it keeps ready, is 30 minutes old: ssh: connect to host quince.home", problems[0]["text"])
+        self.assertIn("no copy yet of paste", facts.assess(facts.parse(base + "standby=paste -1 \n", local_now=1000))[1][0]["text"])
+        self.assertEqual(facts.assess(facts.parse(base + "standby=vault \n", local_now=1000))[0], "ok")     # not read: nothing said
+
     def test_a_healthy_machine_has_nothing_to_say_but_its_disks(self):
         f = facts.parse("applied=x\nos=Debian\nclock=yes\nuptime=5\nservice=a active\ncontainer=a|running|Up 1 hour|i\n"
                         "disk=/ 18874368 2621440\ndisk=/mnt/data 1000000000 4000000\nmem=1000 900\n")

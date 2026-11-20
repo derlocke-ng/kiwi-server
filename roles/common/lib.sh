@@ -336,7 +336,7 @@ ks_lan_nft() { # the nftables ruleset on stdout: replaces the table kiwi_lan in 
         '    fib daddr type != local accept' \
         '    ct state established,related accept' \
         '    meta l4proto { icmp, ipv6-icmp } accept' \
-        '    udp dport { 53, 67, 68 } accept' \
+        '    udp dport { 53, 67, 68, 123 } accept' \
         '    tcp dport 53 accept'
     for r in "${KS_STACK_LAN_RULES[@]}"; do
         net=${r%% *}; ports=${r#* }
@@ -1073,6 +1073,52 @@ ks_time_sync_at_boot() {
     systemctl reset-failed "$wait" 2>/dev/null || true
 }
 
+ks_time_servers() { # KS_STACK_NTP: the time servers this machine asks first (its site's, else the master's)
+    # The network's own Pi-hole answers time questions (the dns module); the public pool stays behind
+    # it. timesyncd takes its fallbacks only when no server is named, so the pool is named after ours.
+    local conf=/etc/systemd/timesyncd.conf.d/50-kiwi.conf begin="# kiwi-server: begin" end="# kiwi-server: end"
+    local servers=("${KS_STACK_NTP[@]+"${KS_STACK_NTP[@]}"}") changed=""     # a bundle from before has none
+    if systemctl is-active -q chronyd.service 2>/dev/null || systemctl is-enabled -q chronyd.service 2>/dev/null; then
+        local f=/etc/chrony.conf lines="" old=""
+        [[ -f $f ]] || return 0
+        if [[ ${#servers[@]} -gt 0 ]]; then
+            lines=$(printf '%s\n' "$begin (the network's time servers first, the pool below stays)"; printf 'server %s iburst prefer\n' "${servers[@]}"; printf '%s\n' "$end")
+        fi
+        old=$(sed -n "/^$begin/,/^$end/p" "$f")
+        if [[ $old != "$lines" ]]; then
+            sed -i "/^$begin/,/^$end/d" "$f"
+            if [[ -n $lines ]]; then
+                printf '%s\n' "$lines" | cat - "$f" > "$f.kiwi" && cat "$f.kiwi" > "$f" && rm -f "$f.kiwi"
+            fi
+            systemctl restart chronyd.service 2>/dev/null || true
+            changed=chrony
+        fi
+    elif systemctl cat systemd-timesyncd.service >/dev/null 2>&1; then
+        if [[ ${#servers[@]} -gt 0 ]]; then
+            local pool=pool.ntp.org
+            [[ -r /etc/os-release ]] && grep -qi '^ID=debian\|^ID_LIKE=.*debian' /etc/os-release && pool="0.debian.pool.ntp.org 1.debian.pool.ntp.org"
+            local drop
+            drop=$(printf '%s\n' "# kiwi-server: the network's time servers first, then the public pool" '[Time]' "NTP=${servers[*]} $pool")
+            if [[ $(cat "$conf" 2>/dev/null) != "$drop" ]]; then
+                mkdir -p "${conf%/*}"
+                printf '%s\n' "$drop" > "$conf"
+                changed=timesyncd
+            fi
+        elif [[ -f $conf ]]; then
+            rm -f "$conf"
+            changed=timesyncd
+        fi
+        [[ -n $changed ]] && systemctl restart systemd-timesyncd.service 2>/dev/null || true
+    fi
+    if [[ -n $changed ]]; then
+        if [[ ${#servers[@]} -gt 0 ]]; then
+            ks_say "time: asks ${servers[*]} first ($changed), the public pool behind it"
+        else
+            ks_say "time: the public pool only ($changed)"
+        fi
+    fi
+}
+
 ks_stack_units() { # the service that brings the stack up, and the two maintenance timers
     local vpn_restart=${KS_ROLE_DAILY_VPN_RESTART:-} weekly=${KS_ROLE_WEEKLY_UPDATE:-} rt_unit="" rt_requires=""
     if [[ $KS_STACK_RUNTIME == docker ]]; then rt_unit="docker.service"; rt_requires="Requires=docker.service"; fi
@@ -1165,6 +1211,7 @@ ks_stack_apply() {
     ks_firewall_lan
     ks_vlans
     ks_time_sync_at_boot
+    ks_time_servers
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
         ks_firewall_open "${KS_STACK_PORTS[@]}"
     fi

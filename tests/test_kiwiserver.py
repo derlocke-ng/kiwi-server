@@ -3972,6 +3972,42 @@ class TestSeedGuard(Base):
         self.assertFalse(os.path.exists(seed))
 
 
+class TestLocalTime(Base):
+    def test_machines_ask_their_sites_time_server_first(self):
+        """A Pi-hole serves the time (dns.ntp): the machines on its LAN at its site ask it first, the
+        others on the VPN ask the master's; the two that serve it, and the master, ask the pool."""
+        node = {"vpn-client": {"wireguard_config": "secrets/wg.conf"}}
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "lime": {"role": "node", "network": {"dhcp": False, "address": "192.168.7.64/24", "gateway": "192.168.7.1"},
+                     "node": dict(node, vpn_ip="10.8.0.9", modules=["vpn-client", "dns", "reverse-proxy"])},
+            "near": {"role": "node", "target": "debian",
+                     "network": {"dhcp": False, "address": "192.168.7.31/24", "gateway": "192.168.7.1"},
+                     "node": dict(node, vpn_ip="10.8.0.10", preset="minimal")},
+            "friend": {"role": "node", "target": "debian",
+                       "network": {"dhcp": False, "address": "192.168.7.32/24", "gateway": "192.168.7.1", "site": "friend"},
+                       "node": dict(node, vpn_ip="10.8.0.12", preset="minimal")},
+            "roamer": {"role": "node", "target": "debian", "network": {"dhcp": True},
+                       "node": dict(node, vpn_ip="10.8.0.13", preset="minimal")}}})
+        r = cli.Renderer(f, rolesmod.discover(), self.tmp, None, modmod.discover())
+        got = {}
+        for name in f.hosts:
+            h = f.hosts[name]
+            got[name] = r.time_servers(h, r.prepare(h))
+        self.assertEqual(got, {"gate": [], "lime": [], "near": ["192.168.7.64"], "friend": ["10.8.0.1"], "roamer": ["10.8.0.1"]})
+        # in the stack: kiwi-stack reads it from the manifest
+        _script, bundle = r.script(f.hosts["near"])
+        self.assertIn("KS_STACK_NTP=('192.168.7.64')", util.read_text(os.path.join(bundle, "stack.sh"))
+                      if isinstance(bundle, str) else "\n".join(__import__("kiwimodules.manifest", fromlist=["x"]).stack_vars(f.hosts["near"], bundle)))
+        # a Pi-hole that does not serve the time is asked by nobody; then the master's is
+        lime = dict(f.raw["hosts"]["lime"])
+        lime["node"] = dict(lime["node"], dns={"ntp": False})
+        f2 = self.fleet({"defaults": f.raw["defaults"], "hosts": dict(f.raw["hosts"], lime=lime)})
+        r2 = cli.Renderer(f2, rolesmod.discover(), self.tmp, None, modmod.discover())
+        h = f2.hosts["near"]
+        self.assertEqual(r2.time_servers(h, r2.prepare(h)), ["10.8.0.1"])
+
+
 class TestLocalCache(Base):
     def test_nodes_on_the_caches_lan_use_it_and_nobody_else(self):
         node = {"vpn-client": {"wireguard_config": "secrets/wg.conf"}}
@@ -13185,6 +13221,43 @@ class TestMerge(unittest.TestCase):
         merged, theirs, both = self.merge(base, {"secrets/known_hosts": "a k1\nb k2\n"}, {"secrets/known_hosts": "a k1\nc k3\n"})
         self.assertEqual(merged["secrets/known_hosts"], "a k1\nb k2\nc k3\n")
         self.assertEqual(both, [])
+
+    def test_the_fleet_file_is_merged_key_by_key(self):
+        """The page changes one machine's setting, a computer another's: both are kept. Only a key
+        both changed, to different values, is named for a person to decide."""
+        import yaml
+        base = "# my network\ndefaults:\n  domain: home\nhosts:\n  a:\n    node:\n      dns: {dnssec: false}\n  b:\n    node: {}\n  c: {}\n"
+        here = base.replace("dns: {dnssec: false}", "dns: {dnssec: true}")          # this computer: a's setting
+        there = base.replace("  b:\n    node: {}\n", "  b:\n    node: {paste: {paste_domain: p.example.org}}\n")      # the page: b's
+        there = there.replace("  c: {}\n", "")                                    # and c removed there
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": here}, {"fleet.yaml": there})
+        self.assertEqual((both, theirs), ([], ["fleet.yaml"]))
+        got = yaml.safe_load(merged["fleet.yaml"])
+        self.assertEqual(got["hosts"]["a"]["node"]["dns"], {"dnssec": True})
+        self.assertEqual(got["hosts"]["b"]["node"], {"paste": {"paste_domain": "p.example.org"}})
+        self.assertNotIn("c", got["hosts"])
+        self.assertEqual(list(got["hosts"]), ["a", "b"])                           # the order is kept
+        self.assertTrue(merged["fleet.yaml"].startswith("# my network\n"))        # and its first comment
+        # the same key changed on both sides, to different values: named, and here's copy stays
+        there2 = base.replace("dns: {dnssec: false}", "dns: {dnssec: null}")
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": here}, {"fleet.yaml": there2})
+        self.assertEqual((both, merged["fleet.yaml"]), (["fleet.yaml"], here))
+        # a list both changed is one value: named
+        lb = "hosts:\n  a:\n    node:\n      modules: [dns]\n"
+        merged, theirs, both = self.merge({"fleet.yaml": lb}, {"fleet.yaml": lb.replace("[dns]", "[dns, git]")},
+                                          {"fleet.yaml": lb.replace("[dns]", "[dns, paste]")})
+        self.assertEqual(both, ["fleet.yaml"])
+        # what only one side changed keeps its own text, comments and all
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": base}, {"fleet.yaml": there})
+        self.assertEqual(merged["fleet.yaml"], there)
+        # a file with comments further down is not merged (writing it anew would lose them): named, as before
+        noted = base.replace("  b:\n", "  # b is the old laptop\n  b:\n")
+        merged, theirs, both = self.merge({"fleet.yaml": noted}, {"fleet.yaml": noted.replace("false", "true")},
+                                          {"fleet.yaml": noted.replace("node: {}", "node: {x: 1}")})
+        self.assertEqual(both, ["fleet.yaml"])
+        # no YAML on one side: named, as before
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": here}, {"fleet.yaml": "a: [unclosed"})
+        self.assertEqual(both, ["fleet.yaml"])
 
     def test_a_file_both_changed_is_named_and_stays_as_it_is_here(self):
         merged, theirs, both = self.merge({"fleet.yaml": "v1"}, {"fleet.yaml": "mine"}, {"fleet.yaml": "theirs"})

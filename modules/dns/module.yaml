@@ -24,11 +24,11 @@ derived:
   dns_up: "{{ 'yes' if node_type != 'master' and master_ip and fallback_dns and not upstream_dns and not legacy_env else '' }}"
 
 network:
-  listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp"]
+  listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp", "{% if ntp %}123/udp{% endif %}"]
   needs_vpn_dnat: false
   # on the host only when Pi-hole has its own address; inside another
   # container's network (the master) clients reach it through the tunnel
-  open_ports: ["{% if not network_mode %}53/tcp{% endif %}", "{% if not network_mode %}53/udp{% endif %}"]
+  open_ports: ["{% if not network_mode %}53/tcp{% endif %}", "{% if not network_mode %}53/udp{% endif %}", "{% if ntp and not network_mode %}123/udp{% endif %}"]
 
 firewall:
   scope: self
@@ -156,6 +156,11 @@ settings:
     label: Web server port inside the container
     help: "Empty: 80, or 8081 when Pi-hole shares the WireGuard server's network namespace with the reverse proxy (the master), which owns 80 and 443 there."
     default: 0
+  - key: ntp
+    type: bool
+    label: Serve the time (NTP)
+    help: "Pi-hole answers time questions (NTP, port 123) from this machine's clock: the network's machines at this site ask it first, and so do the devices on its LAN (handed out with DHCP when Pi-hole is the DHCP server). Pi-hole never sets the clock itself: the machine's own time service does that."
+    default: true
   - key: dhcp_enabled
     type: bool
     group: DHCP

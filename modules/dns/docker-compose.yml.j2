@@ -62,6 +62,10 @@
 {% if node_type == 'master' and domain and (module_config.get('vpn-server') or {}).get('federation') %}
 {% set _ = lines.append('txt-record=_kiwi-master.' ~ domain ~ ',' ~ hostname) %}
 {% endif %}
+{% if dhcp_enabled and ntp %}
+{# the devices that get their address here get the time here too (option 42; 0.0.0.0 is this server) #}
+{% set _ = lines.append('dhcp-option=option:ntp-server,0.0.0.0') %}
+{% endif %}
 {% if mullvad_socks %}
 {# the Mullvad SOCKS5 records, refreshed by the host timer; reloaded on every change #}
 {% set _ = lines.append('hostsdir=/etc/mullvad-socks') %}
@@ -87,6 +91,13 @@ services:
       - FTLCONF_dns_upstreams={{ upstreams }}
       - FTLCONF_misc_dnsmasq_lines={{ lines | join(';') }}
       - FTLCONF_dns_listeningMode=all
+      # the clock is the machine's own time service's to set: Pi-hole setting it too (every hour, from
+      # pool.ntp.org) made two setters of one clock (20 Nov 2026). It only serves the time, when asked to
+      - FTLCONF_ntp_sync_active=false
+{% if not ntp %}
+      - FTLCONF_ntp_ipv4_active=false
+      - FTLCONF_ntp_ipv6_active=false
+{% endif %}
       - FTLCONF_webserver_domain={{ pihole_hostname or 'pihole.' ~ hostname }}
 {% if web_port_effective != '80' %}
       # no 'o' (optional) suffix: a port that cannot be bound is an error, not silence
@@ -121,13 +132,15 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
+{% if ntp %}
+      - "123:123/udp"
+{% endif %}
 {% if expose_web_ui %}
       - "{{ web_ui_bind ~ ':' if web_ui_bind else '' }}{{ web_ui_port }}:{{ web_port_effective }}/tcp"
 {% endif %}
 {% endif %}
     cap_add:
       - NET_ADMIN
-      - SYS_TIME
       - SYS_NICE
     restart: unless-stopped
     logging:

@@ -4,7 +4,9 @@ Every sync leaves a base behind: what both sides held then (`control/base.age`, 
 for the store's keys like everything else at rest). With it each file is told apart:
 changed here, changed there, or on both sides. A file one side changed is taken from that
 side. A file both changed is merged when it is a list that only grows (the machines' host
-keys), and named otherwise: then a person says which copy counts.
+keys), or the fleet file, key by key, when the two sides changed different keys (one machine's
+setting on the page, another's in the app); it is named otherwise: then a person says which
+copy counts.
 """
 import json
 import hashlib
@@ -19,6 +21,67 @@ from .util import KiwiError
 
 BASE = os.path.join("control", "base.age")
 LISTS = ("secrets/known_hosts", "secrets/known_hosts.initramfs")    # lines; both sides' are kept
+# YAML files merged key by key: the page changes one machine's setting, the app another's, and
+# both are kept. Only a key both sides changed, to different values, needs a person.
+YAMLS = ("fleet.yaml", "federation.yaml")
+_MISSING, _CONFLICT = object(), object()
+
+
+def _merge_value(b, h, t):
+    if h == t or t == b:
+        return h
+    if h == b:
+        return t
+    if isinstance(h, dict) and isinstance(t, dict) and isinstance(b, (dict, type(_MISSING))):
+        base = b if isinstance(b, dict) else {}
+        out = {}
+        for k in list(h) + [k for k in t if k not in h] + [k for k in base if k not in h and k not in t]:
+            v = _merge_value(base.get(k, _MISSING), h.get(k, _MISSING), t.get(k, _MISSING))
+            if v is _CONFLICT:
+                return _CONFLICT
+            if v is not _MISSING:
+                out[k] = v
+        return out
+    return _CONFLICT
+
+
+def _inner_comments(text):
+    """The comment lines after the leading ones: a merge writes the file anew and would lose them."""
+    lines = (text or b"").decode(errors="replace").splitlines()
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    return [ln for ln in lines[i:] if ln.lstrip().startswith("#") or " #" in ln]
+
+
+def merge_yaml(b, h, t):
+    """Three YAML files (bytes; base may be None) merged key by key, as bytes, or None when a key
+    changed on both sides to different values (or a side is no YAML). The text of the side whose
+    data the result equals is kept as it is; a new text keeps here's leading comment lines. A file
+    with comments of its own further down is not merged (they would be lost): a person decides,
+    as before. The page writes the fleet file without them."""
+    import yaml
+    if any(_inner_comments(x) for x in (b, h, t)):
+        return None
+    try:
+        bd = yaml.safe_load(b) if b is not None else _MISSING
+        hd, td = yaml.safe_load(h), yaml.safe_load(t)
+    except yaml.YAMLError:
+        return None
+    out = _merge_value(bd if bd is not None else _MISSING, hd, td)
+    if out is _CONFLICT or out is _MISSING:
+        return None
+    if out == hd:
+        return h
+    if out == td:
+        return t
+    head = []
+    for line in h.decode(errors="replace").splitlines():
+        if not line.startswith("#"):
+            break
+        head.append(line)
+    text = yaml.safe_dump(out, sort_keys=False, allow_unicode=True, width=1000)
+    return (("\n".join(head) + "\n") if head else "").encode() + text.encode()
 
 
 def merge(base, here, there):
@@ -36,6 +99,9 @@ def merge(base, here, there):
             lines = h.decode(errors="replace").splitlines()
             lines += [x for x in t.decode(errors="replace").splitlines() if x not in lines]
             pick = ("\n".join(lines) + "\n").encode()
+            theirs.append(path)
+        elif path in YAMLS and h is not None and t is not None and merge_yaml(b, h, t) is not None:
+            pick = merge_yaml(b, h, t)
             theirs.append(path)
         else:
             both.append(path)

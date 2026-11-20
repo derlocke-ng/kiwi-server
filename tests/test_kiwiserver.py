@@ -1290,6 +1290,35 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_a_joined_computer_reads_the_control_nodes_look(self):
+        """`status --porcelain` (what the app asks) on a computer joined to a control node: the control
+        node's last look, not a login to every machine from here; asked from here when it is old,
+        when a machine is missing from it, with --direct, or when the control node does not answer."""
+        from kiwiserver import controlsync
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}, "b": {}}})
+        args = argparse.Namespace(hosts=[], ssh=None, reports=None, stream=False, direct=False, porcelain=True)
+        now = time.time()
+        look = {"time": now - 300, "hosts": [{"host": "a", "state": "ok", "seen": now - 30}, {"host": "b", "state": "down"},
+                                              {"host": "gone", "state": "ok"}]}
+        with mock.patch.object(controlsync, "remote_of", lambda d: {"url": "https://control.x"}), \
+                mock.patch.object(controlsync, "status_api", lambda d: look), mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):
+            got = cli.status_from_control(f, args)
+            self.assertEqual((got["from"], [h["host"] for h in got["hosts"]]), ("control", ["a", "b"]))   # not the one it no longer has
+            for change in ({"direct": True}, {"hosts": ["a"]}, {"porcelain": False}, {"stream": True}, {"reports": "/x"}):
+                self.assertIsNone(cli.status_from_control(f, argparse.Namespace(**dict(vars(args), **change))), change)
+            look["time"] = now - 2000                                            # b's word is old now (a's is fresh)
+            self.assertIsNone(cli.status_from_control(f, args))
+            look["time"], look["hosts"] = now - 60, look["hosts"][:1]            # b is not in it
+            self.assertIsNone(cli.status_from_control(f, args))
+        with mock.patch.object(controlsync, "remote_of", lambda d: None):          # not joined: asked from here
+            self.assertIsNone(cli.status_from_control(f, args))
+
+        def refuses(d):
+            raise KiwiError("the control node refused (401)")
+        with mock.patch.object(controlsync, "remote_of", lambda d: {"url": "https://control.x"}), \
+                mock.patch.object(controlsync, "status_api", refuses), mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):
+            self.assertIsNone(cli.status_from_control(f, args))
+
     def test_a_second_set_it_up_does_not_start_the_self_apply_twice(self):
         """The control node's own machine applies itself as a unit that outlives the connection. Asked
         again while that unit runs (a second "Set it up" on the starter's page), nothing is started and
@@ -3286,6 +3315,19 @@ class TestSetup(Base):
         self.assertTrue(rows["quince"]["ok"])                                   # from its report: nobody logged in to it
         self.assertEqual(rows["mango"]["state"], "down")                        # no report: asked, and it does not answer
         self.assertEqual(len(asked), 1)
+        # a report's clock is measured against the time it came, not the time it is read: one that came a
+        # minute ago from a machine whose clock is right is not "a minute off"
+        came = int(time.time()) - 60
+        write(os.path.join(reports, "quince.txt"), "all is well\n%s\nnow=%d\nos=Debian\nclock=yes\n" % (facts.MARK, came))
+        os.utime(os.path.join(reports, "quince.txt"), (came, came))
+        remote.run = no_login
+        try:
+            rc, out, _err = self.run_cli("status", dest, "quince", "--porcelain", "--stream", "--reports", reports)
+        finally:
+            remote.run = keep
+        row = next(json.loads(x) for x in out.splitlines() if x.startswith("{"))
+        self.assertEqual(row["facts"]["skew"], 0)
+        self.assertFalse([p for p in row["problems"] if p["key"] == "clock"], row["problems"])
         os.utime(os.path.join(reports, "quince.txt"), (time.time() - 600, time.time() - 600))
         self.assertIsNone(agentmod.fresh_report(reports, "quince"))            # an old report is not how it is now
         # what an apply puts on the machine: its key over stdin, where to report, the facts script

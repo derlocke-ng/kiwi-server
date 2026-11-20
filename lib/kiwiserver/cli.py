@@ -3869,11 +3869,42 @@ def _first_boot_waits(h):
     return None
 
 
+CONTROL_LOOK_AGE = 900      # seconds: the control node's word on a machine is taken while it is younger (it
+                            # looks at all every 10 minutes, at a machine whose agent reported every minute)
+
+
+def status_from_control(fleet, args):
+    """For a program that reads all machines (the app, --porcelain): the control node's last look,
+    when this computer is joined to one, instead of a login to every machine from here. The
+    control node looks all the time, and the machines report to it by themselves. None when it
+    cannot say, or its look is old: then the machines are asked from here, as before."""
+    from . import controlsync
+    if (args.hosts or args.ssh or getattr(args, "reports", None) or getattr(args, "stream", False) or getattr(args, "direct", False)
+            or not args.porcelain or os.environ.get("KIWI_CONTROL_HOST") or not controlsync.remote_of(fleet.dir)):
+        return None
+    try:
+        seen = controlsync.status_api(fleet.dir)
+    except (KiwiError, OSError, ValueError) as e:
+        util.warn("the control node did not say how the machines are (%s): asking them from here" % str(e)[:120])
+        return None
+    when = seen.get("time") if isinstance(seen.get("time"), (int, float)) else 0
+    names = set(fleet.hosts)
+    rows = [h for h in seen.get("hosts") or [] if h.get("host") in names]
+    fresh = lambda h: time.time() - max(when, h.get("seen") if isinstance(h.get("seen"), (int, float)) else 0) <= CONTROL_LOOK_AGE  # noqa: E731
+    if not rows or {h["host"] for h in rows} != names or not all(fresh(h) for h in rows):
+        return None             # a machine it does not know yet, or an old word on one: asked from here
+    return {"hosts": rows, "from": "control", "time": when}
+
+
 def cmd_status(args):
     """What a running machine says: when its role was applied, what its stack
     is doing, and what is wrong with it. Every host at once, so one that is
     off costs the others nothing."""
     fleet, roles, ms = load(args)
+    seen = status_from_control(fleet, args)
+    if seen is not None:
+        print(json.dumps(seen, indent=2))
+        return
     hosts = fleet.select(args.hosts)
     if args.ssh and len(hosts) != 1:
         raise KiwiError("--ssh goes with exactly one host")
@@ -3883,7 +3914,8 @@ def cmd_status(args):
     def ask(h):
         tgt = remote.reach(h, args.ssh)
         try:
-            said = agentmod.fresh_report(getattr(args, "reports", None), h.name) if not args.ssh else None
+            got = agentmod.fresh_report_at(getattr(args, "reports", None), h.name) if not args.ssh else None
+            said, came = got if got else (None, None)
             if said is None:            # no report of its agent from the last minutes: log in and ask
                 said = remote.run(tgt, facts.SCRIPT).decode(errors="replace")
             human, data = facts.split(said)
@@ -3908,7 +3940,9 @@ def cmd_status(args):
             return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "down", "locked": bool(at),
                     "story": st["text"] if st else "", "stage": st["stage"] if st else "",
                     "problems": problems, "notes": [], "facts": {}}
-        measured = facts.parse(data)
+        # a report's time is the one it came at, up to a minute ago: measured against now, every clock
+        # looked a minute late ("the clock is -38 s off", the control page, 20 Nov 2026)
+        measured = facts.parse(data, local_now=came)
         state, problems, notes = facts.assess(measured, quiet=h.cfg.get("quiet") or [])
         if "backup-server" in (h.modules or []):
             level, text = backupmod.prune_note(fleet, h.name)
@@ -6128,6 +6162,8 @@ def build_parser():
     s.add_argument("--stream", action="store_true", help="each machine as one line of JSON, as it answers")
     s.add_argument("--reports", metavar="DIR", help="the folder with the machines' own reports (the agent): a machine "
                    "that reported in the last minutes is not logged in to")
+    s.add_argument("--direct", action="store_true", help="--porcelain: ask the machines from here even when this computer "
+                   "is joined to a control node (whose last look is read otherwise)")
     s = sub("connect", cmd_connect); s.add_argument("fleet")
     s.add_argument("--name", help="what this computer is called on the VPN (default: its own name)")
     s.add_argument("--group", help="a client group of the master")

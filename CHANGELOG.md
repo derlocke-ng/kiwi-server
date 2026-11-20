@@ -18,6 +18,13 @@
 - Every change at netcup refuses a server that `KIWI_NEVER` names, by id or address (the guard
   the drills use next to a live network).
 - The VPN client uses gluetun's current name for its resolver setting (`DNS_UPSTREAM_RESOLVERS`).
+- **The app reads the control node's look** instead of logging in to every machine from this
+  computer: `status --porcelain` on a computer joined to a control node gives the control node's
+  word on each machine (a second, not a minute), as long as it saw each one in the last 15
+  minutes; otherwise, or with `--direct`, the machines are asked from here as before.
+- **Fixed: the control page warned that clocks were half a minute off** that were right. A
+  machine's report, up to a minute old, was measured against the time it was read, not the time
+  it came.
 
 ## 2.270.0 — "No master yet" opens its control page at home again
 

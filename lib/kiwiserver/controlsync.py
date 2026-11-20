@@ -548,6 +548,15 @@ def older_node(fleet_dir, version, key=None, api=None):
     return theirs if theirs and _numbers(theirs) < _numbers(version) else None
 
 
+def status_api(fleet_dir, key=None):
+    """The control node's last look at the machines ({hosts, time}), as its page shows it."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("GET", "/api/status")
+    if status != 200 or not isinstance(out, dict):
+        raise KiwiError("the control node did not say how the machines are (%s)" % status)
+    return out
+
+
 def activity_api(fleet_dir, key=None):
     """The control node's Activity: {jobs, entries}."""
     api, _key = api_for(fleet_dir, key)

@@ -121,11 +121,19 @@ def check(key_text, name, when, boot, sign, body, now=None):
 
 def fresh_report(folder, name, now=None):
     """The text of a machine's report if one came within FRESH seconds, else None."""
+    got = fresh_report_at(folder, name, now)
+    return got[0] if got else None
+
+
+def fresh_report_at(folder, name, now=None):
+    """(text, when it came) of a machine's report if one came within FRESH seconds, else None. When
+    it came is what its time is measured against: its clock is not off by the minute it waited."""
     path = os.path.join(folder or "", name + ".txt")
     try:
-        if (now if now is not None else time.time()) - os.path.getmtime(path) > FRESH:
+        came = os.path.getmtime(path)
+        if (now if now is not None else time.time()) - came > FRESH:
             return None
-        return util.read_text(path)
+        return util.read_text(path), came
     except OSError:
         return None
 

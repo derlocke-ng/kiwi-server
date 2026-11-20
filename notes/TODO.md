@@ -7,7 +7,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 ## A. Shipped, never tried on real machines
 
 1. ~~`names: service` on a live machine.~~ Done 20 Nov on quince: `ffsync.home` and `pay.home` resolve, answer with a valid certificate, the old name sends on.
-2. Wake-on-LAN waking real hardware.
+2. Wake-on-LAN waking real hardware. Half done 20 Nov on lime (ODROID-N2+, the only real board at home; quince, lychee and medlar are virtual machines): `wol: true` arms the card at the apply and after a restart, and `kiwi-server wake` from papaya puts the magic packet on its card (3 of 3). Not done: switching it off and seeing it start (`kiwi-server power FLEET lime off`, then `kiwi-server wake FLEET lime`): a wake that fails needs its button, so with the owner near it.
 3. The starter stick and "No master yet" on a real machine.
 4. The guided session from the docs (notes/guided-session.md: its remarks are empty).
 5. Phones following the standby master by DDNS.

@@ -49,6 +49,7 @@ DEFAULTS = {
     # TPM open it at boot. false: installed plain, by choice, and said so on every page
     "encryption": True,
     "standby": {},        # a master's standby machines (docs/design/standby.md)
+    "keep_ready": {},     # parts of this machine another machine keeps ready: {part: machine} (partstandby.py)
     "admin": {
         "user": "core",
         "password": None,

@@ -39,9 +39,15 @@ def _docker_dir(host):
 
 
 def changed_data(raw, part, src, dst, name_setting=None, name_value=None):
-    """The fleet file's data with the part moved: off `src`'s list and settings, onto `dst`'s."""
+    """The fleet file's data with the part moved: off `src`'s list and settings, onto `dst`'s. A
+    standby the part had (keep_ready) ends with the move: the part is elsewhere now."""
     data = copy.deepcopy(raw)
     hosts = data["hosts"]
+    ready = hosts[src.name].get("keep_ready")
+    if isinstance(ready, dict) and part in ready:
+        ready.pop(part)
+        if not ready:
+            hosts[src.name].pop("keep_ready")
     s_role, d_role = src.role, dst.role
     s_block = hosts[src.name].setdefault(s_role, {})
     d_block = hosts[dst.name].setdefault(d_role, {})
@@ -60,7 +66,7 @@ def changed_data(raw, part, src, dst, name_setting=None, name_value=None):
     return data
 
 
-def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None):
+def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, standby=False):
     """{part, from, to, name, carry, pins, steps, stops, notes, data}: what a move would do.
     `stops` non-empty: it cannot be done as things are. `data`: the fleet file's data after it.
     `render(fleet, host)`: renders a machine as an apply would and raises KiwiError on what an
@@ -102,9 +108,9 @@ def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None):
     out["carry"] = bool(backup)
     if backup and backup.get("no_restore"):
         stops.append("%s is not restored from a backup: %s" % (part, backup.get("no_restore")))
-    if backup and "backup" not in _listed(src):
+    if backup and "backup" not in _listed(src) and not standby:
         stops.append("%s keeps no backups (the backup part): there is nothing to carry %s's data with" % (src_name, part))
-    if backup and "backup" not in _listed(dst):
+    if backup and "backup" not in _listed(dst) and not standby:
         stops.append("%s has no backup part: %s's data comes over through it, and is backed up there afterwards"
                      % (dst_name, part))
     if applied is not None:

@@ -3164,14 +3164,20 @@ class TestSetup(Base):
         self.assertIn("RESTIC_PASSWORD=%s\n" % moved.derive_secret("quince.home", "backup", "repo_password"), way)
         ran = []
         keep = remote.run
-        remote.run = lambda tgt, script, data=None, **kw: (ran.append((tgt, script, data)), b"backup: paste: put on fig\n")[1]
+        remote.run = lambda tgt, script, data=None, **kw: (ran.append((tgt, script, data)), b"backup: paste: put on fig\nkiwi-rc=0\n")[1]
         try:
             said = cli.restore_from(moved, roles, ms2, moved.hosts["fig"], moved.hosts["quince"], ["paste"], tgt="core@fig")
         finally:
             remote.run = keep
-        self.assertEqual(ran[0][:2], ("core@fig", "kiwi-stack restore --from quince.home paste"))
+        self.assertEqual(ran[0][:2], ("core@fig", 'kiwi-stack restore --from quince.home paste 2>&1; echo "kiwi-rc=$?"'))
         self.assertEqual(ran[0][2].decode(), way)                                   # on standard input, not in the command
         self.assertIn("put on fig", said)
+        remote.run = lambda tgt, script, data=None, **kw: b"restic: lsetxattr: operation not supported\nbackup: paste: its files did not come back\nkiwi-rc=1\n"
+        try:
+            with self.assertRaisesRegex(KiwiError, "lsetxattr: operation not supported"):       # restic's own reason, not only the last line
+                cli.restore_from(moved, roles, ms2, moved.hosts["fig"], moved.hosts["quince"], ["paste"], tgt="core@fig")
+        finally:
+            remote.run = keep
 
     def test_a_new_release_alone_is_no_change(self):
         import hashlib

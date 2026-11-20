@@ -11093,6 +11093,14 @@ class TestHealth(Base):
         did = [{"host": "sorbet", "kind": "restarted", "text": "sorbet did not answer: restarted at its provider"}]
         self.assertEqual([e["kind"] for e in health.update(st, ms, sv, did, 5000)], ["did"])
         self.assertEqual(health.update(st, ms, sv, did, 5100), [])
+        # a part switched to its standby by itself: told as done, once
+        moved = [{"host": "quince", "kind": "switch", "part": "vault", "to": "medlar",
+                  "text": "quince has not answered for 5 minutes; vault is kept ready on medlar, and medlar does not reach it "
+                          "either: vault goes to medlar"}]
+        told = health.update(st, ms, sv, moved, 5200)
+        self.assertEqual([(e["kind"], e["level"]) for e in told], [("did", "warn")])
+        self.assertIn("vault goes to medlar", health.message(told, "home")[1])
+        self.assertEqual(health.update(st, ms, sv, moved, 5300), [])
         # a page that wants a login answers; a proxy without its service does not
         seen, asked = {"a.home": (True, 200), "b.home": (False, 502)}, []
 

@@ -5,8 +5,13 @@ software does (Foreman was named), stay fast with many machines, and say what is
 a machine instead of "unreachable". This design comes from a look at ten such tools and at our
 own code. Nothing of it is built yet; the order at the end is the plan.
 
-The size to design for: 2 masters, 10 nodes in a main building, 3 in a second, 3 at one home,
-4 at a remote department, and 3 linked networks of that size.
+The size to design for (the owner, 20 November): one company with three masters (one network:
+a main one, a fallback, load shared between them, for reaching one headquarters from another),
+and per site its machines and its people's devices: a main building with 30 nodes and 200
+devices, an IT department with 10 and 20, a second building with 10 and 30, a third with 2
+and 4, a headquarters abroad with 20 and 100. About 70 machines and 350 devices at five sites,
+and linked networks of other companies beside it. The Devices page needs the same table,
+search, groups and sites as Machines.
 
 ## What was found in our code
 
@@ -121,6 +126,31 @@ shares, and the UI rules. kiwi-server's app moves onto it (the owner, 19 Novembe
   list with search, sort, groups and ticks, a page for one item (pill, status line, actions,
   tabs), a timeline. kiwi-server keeps what is its own: the columns, the states, the settings
   form, the picture of the network.
+
+## Desktops and laptops as clients
+
+A person's computer (a Debian desktop, Fedora Silverblue or Bluefin) is a device of the network
+that the fleet also knows as a machine: its place on the VPN, the network's CA, its disk's
+unlock policy (docs/design/unlock.md), its updates. It is managed where everything is: the
+control node, through the same API. `kiwi-desktop`, the app on that computer (control-plane.md
+names it), is a client of that API as the phone app is: it joins the computer, shows its state
+and its services. Not a second management tool with a fleet of its own.
+
+## Modules of one's own, on one's own git
+
+A network can keep its own modules on its own Forgejo (the `git` module): fork
+kiwi-modules-community or start a repository, and add it as a module source by its link
+(`kiwi-server sources`, pinned to a commit). That is the way for software a company needs and
+nobody else packages, Windows server software included:
+
+- Windows containers do not run on Linux: a container shares its host's kernel.
+- A Windows program in a Linux container with Wine or Proton: works for many, not for what
+  needs Windows services, drivers or a domain.
+- A real Windows in a container as a virtual machine (QEMU with `/dev/kvm`, as the project
+  dockur/windows does): runs everything, costs a Windows licence, 4 GB of memory and a large
+  disk per instance.
+
+A module for either is a module like any other. Not built or tried yet.
 
 ## Windows
 

@@ -3566,6 +3566,16 @@ def cmd_status(args):
                 notes.append(text)
         return {"host": h.name, "target": tgt, "ok": True, "output": human, "state": state,
                 "problems": problems, "notes": notes, "facts": measured}
+    if getattr(args, "stream", False):  # each machine's row as one line of JSON, as it answers (the control node's look)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            for fut in concurrent.futures.as_completed([pool.submit(ask, h) for h in hosts]):
+                o = fut.result()
+                if o["ok"] and o["facts"].get("applied"):
+                    record_applied(fleet, o["host"], only_new=True)
+                if any(p.get("key") in ("service", "unhealthy") for p in o["problems"]):
+                    name_under_parts(fleet.hosts[o["host"]], roles, ms, o["problems"])
+                print(json.dumps(o), flush=True)
+        return
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         out = list(pool.map(ask, hosts))
     record_applied(fleet, *[o["host"] for o in out if o["ok"] and o["facts"].get("applied")], only_new=True)
@@ -5479,6 +5489,7 @@ def build_parser():
     s.add_argument("--timer", choices=("on", "off"), help="a user timer on this computer that looks every minute")
     s = sub("status", cmd_status); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s.add_argument("--ssh", metavar="USER@ADDR")
+    s.add_argument("--stream", action="store_true", help="each machine as one line of JSON, as it answers")
     s = sub("connect", cmd_connect); s.add_argument("fleet")
     s.add_argument("--name", help="what this computer is called on the VPN (default: its own name)")
     s.add_argument("--group", help="a client group of the master")

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.253.0 — faster pages, and a look that shows each machine as it answers
+
+- **The look at the machines writes each machine as it answers** (`status --stream`): one that is
+  off costs its own timeout, and the others are on the page meanwhile. Before, nothing was
+  written until the slowest had answered or timed out.
+- **Pages that started kiwi-server at every view start it once**: Who may reach what, Disk
+  unlock, If something breaks and the hidden services keep what was worked out until the fleet's
+  files change or a job ends (0.3 to 0.6 s saved per view, each).
+- Design: the size to design for (about 70 machines and 350 devices at five sites), desktops
+  and laptops as clients of the same control node, modules of one's own on one's own git.
+- Third step of docs/design/ui.md, first part.
+
 ## 2.252.0 — one name per thing
 
 - **A machine's parts are named by their title first**, the technical name small after it:

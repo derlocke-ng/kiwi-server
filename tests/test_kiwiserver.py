@@ -13896,6 +13896,66 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual((fleet_name, sorted(plain)), ("fleet.yaml", ["fleet.yaml"]))
         self.assertEqual(sorted(yaml.safe_load(plain["fleet.yaml"])["hosts"]), sorted(names))
 
+    def test_a_look_writes_each_machine_as_it_answers(self):
+        cookie, _csrf = self.made()
+        names = sorted(self.data()["hosts"])
+        util.write_text(os.path.join(self.c.run, "status.json"), json.dumps({"time": 1, "hosts": [
+            {"host": names[0], "ok": True, "state": "ok", "problems": [], "notes": [], "facts": {}},
+            {"host": "left", "ok": True, "state": "ok", "problems": [], "notes": [], "facts": {}}]}))
+        mark = os.path.join(self.tmp, "go")
+        script = ("import json, os, sys, time\n"
+                  "print(json.dumps({'host': %r, 'ok': False, 'state': 'down', 'problems': [], 'notes': [], 'facts': {}}), flush=True)\n"
+                  "while not os.path.exists(%r): time.sleep(0.05)\n"
+                  "print(json.dumps({'host': %r, 'ok': True, 'state': 'ok', 'problems': [], 'notes': [], 'facts': {}}), flush=True)\n"
+                  % (names[1], mark, names[0]))
+        self.c.kiwi = [sys.executable, "-c", script]
+        t = threading.Thread(target=self.c.refresh_status)
+        t.start()
+        for _ in range(100):                        # the first answer is on the page while the second is awaited
+            st = self.c.status()
+            if any(h["host"] == names[1] and h["state"] == "down" for h in st["hosts"]):
+                break
+            time.sleep(0.05)
+        self.assertEqual({h["host"]: h["state"] for h in st["hosts"]}, {names[0]: "ok", "left": "ok", names[1]: "down"})
+        self.assertTrue(self.c.looking)
+        write(mark, "")
+        t.join(10)
+        st = self.c.status()
+        self.assertEqual({h["host"]: h["state"] for h in st["hosts"]}, {names[0]: "ok", names[1]: "down"})   # "left" left
+        self.assertFalse(self.c.looking)
+        self.assertGreater(st["time"], 1)
+        # a kiwi-server that answers all at once (before --stream) is still read
+        self.c.kiwi = [sys.executable, "-c", "import json; print(json.dumps({'hosts': [{'host': 'a', 'ok': True}]}))"]
+        self.assertEqual(self.c.refresh_status()["hosts"], [{"host": "a", "ok": True}])
+        self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
+        self.assertEqual(self.c.refresh_status()["error"], "error: boom")
+
+    def test_reads_are_kept_until_the_fleet_changes(self):
+        cookie, _csrf = self.made()
+        calls = []
+        first = self.c._read_once("x", lambda: calls.append(1) or {"n": len(calls)})
+        again = self.c._read_once("x", lambda: calls.append(1) or {"n": len(calls)})
+        self.assertEqual((first, again, len(calls)), ({"n": 1}, {"n": 1}, 1))      # asked once
+        again["n"] = 99                                                            # a caller's change stays its own
+        self.assertEqual(self.c._read_once("x", lambda: {"n": 0}), {"n": 1})
+        self.c._gen += 1                                                           # a job ended
+        self.assertEqual(self.c._read_once("x", lambda: calls.append(1) or {"n": len(calls)}), {"n": 2})
+        path = os.path.realpath(os.path.join(self.dir, "fleet.yaml"))              # the fleet file changed
+        os.utime(path, ns=(os.stat(path).st_atime_ns, os.stat(path).st_mtime_ns + 10 ** 9))
+        self.assertEqual(self.c._read_once("x", lambda: calls.append(1) or {"n": len(calls)}), {"n": 3})
+        with self.assertRaises(KiwiError):                                         # a failure is not kept
+            self.c._read_once("y", lambda: (_ for _ in ()).throw(KiwiError("no")))
+        self.assertEqual(self.c._read_once("y", lambda: "fine"), "fine")
+        # the pages that used to start kiwi-server at every view start it once
+        n = []
+        real = subprocess.run
+        with mock.patch.object(subprocess, "run", lambda *a, **kw: n.append(a[0]) or real(*a, **kw)):
+            for _ in range(3):
+                self.assertEqual(self.ask("/unlock", cookie=cookie)[0], 200)
+                self.assertEqual(self.ask("/recovery", cookie=cookie)[0], 200)
+        self.assertEqual(sum(1 for a in n if "unlock" in a), 1)
+        self.assertEqual(sum(1 for a in n if "recovery" in a), 1)
+
     def test_a_machines_parts_are_named_by_their_title_first(self):
         cookie, _csrf = self.made()
         node = self.node()

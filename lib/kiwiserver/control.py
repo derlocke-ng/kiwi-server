@@ -162,6 +162,8 @@ class Control:
         self._riseup_at = 0         # when Riseup certificates were last looked at (loop)
         self.clock = clock
         self.lock = threading.Lock()          # one job at a time: two applies never cross
+        self._reads = {}                      # what a `--porcelain` read worked out, until the fleet changes (_read_once)
+        self._gen = 0                         # counted up with every job that ends: nothing kept outlives one
         self.failures = {}                    # address -> [times] of failed logins
         self._session_key = pysecrets.token_bytes(32)   # sessions end with the process, as the open store does
         self._identity = None                 # the key the password made, while the store is open
@@ -1144,6 +1146,7 @@ class Control:
                     self._forget_in_status(meta["hosts"])
                 except (OSError, ValueError) as e:
                     util.warn("control: the last look still names %s: %s" % (", ".join(meta["hosts"]), e))
+            self._gen += 1          # whatever a job did: nothing that was read before it is kept
             meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
             self._write(meta)
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
@@ -1249,18 +1252,51 @@ class Control:
         self.audit(user, "federation changed", partners=sorted(changes))
         self.fleet_info(fresh=True)
 
+    # ---- reads that are kept until the fleet changes (docs/design/ui.md: fast) ---------------
+    def _rev(self):
+        """What the reads below depend on, as it is now: the fleet's files by time and size. A page
+        view costs a few stats instead of a start of kiwi-server (0.3 to 0.6 s each)."""
+        out = []
+        for rel in ("fleet.yaml", "federation.yaml", ".kiwi-server.json", "secrets", "secrets/devices", "secrets/onion"):
+            try:
+                st = os.stat(os.path.join(self.fleet_dir, rel))
+                out.append((rel, st.st_mtime_ns, st.st_size))
+            except OSError:
+                out.append((rel, 0, 0))
+        try:
+            st = os.stat(self.fleet_path)
+            out.append(("fleet", st.st_mtime_ns, st.st_size))
+        except OSError:
+            pass
+        return tuple(out)
+
+    def _read_once(self, name, make, also=()):
+        """`make()`'s answer, kept while the fleet's files and `also` stay as they are and no job
+        ended (five minutes at most). A failure is never kept."""
+        import copy
+        key = (self._gen, self._rev(), tuple(also), tuple(self.kiwi))
+        hit = self._reads.get(name)
+        if hit and hit[0] == key and time.monotonic() - hit[1] < 300:
+            return copy.deepcopy(hit[2])
+        value = make()
+        self._reads[name] = (key, time.monotonic(), value)
+        return copy.deepcopy(value)
+
     # ---- who may reach what ------------------------------------------------------------
     def access(self):
         """The VPN's groups and the linked networks with what each may reach, and the
         machines a rule can name (`access --porcelain`): {master, who, machines}."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
-        r = subprocess.run(list(self.kiwi) + ["access", self.fleet_path, "--porcelain"], capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
-        try:
-            return json.loads(r.stdout)
-        except ValueError:
-            raise KiwiError((r.stderr.strip().splitlines() or ["the rules could not be read"])[-1].replace("error: ", ""))
+
+        def read():
+            r = subprocess.run(list(self.kiwi) + ["access", self.fleet_path, "--porcelain"], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+            try:
+                return json.loads(r.stdout)
+            except ValueError:
+                raise KiwiError((r.stderr.strip().splitlines() or ["the rules could not be read"])[-1].replace("error: ", ""))
+        return self._read_once("access", read)
 
     def save_access(self, changes, new="", new_as="nothing", user="admin", new_lan=""):
         """{who: {reach: [...], peers, internet, admin}} into the fleet file (a group) or
@@ -1417,11 +1453,13 @@ class Control:
         """The hidden services (`onion --porcelain`): {"<service>.<machine>": {address, clients, site}}."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
-        try:
-            rows = json.loads(self._onion("--porcelain"))["services"]
-        except (ValueError, KeyError):
-            raise KiwiError("the hidden services could not be read")
-        return {"%s.%s" % (x["service"], x["host"]): x for x in rows}
+        def read():
+            try:
+                rows = json.loads(self._onion("--porcelain"))["services"]
+            except (ValueError, KeyError):
+                raise KiwiError("the hidden services could not be read")
+            return {"%s.%s" % (x["service"], x["host"]): x for x in rows}
+        return self._read_once("onion", read)
 
     def save_onion(self, wanted, user="admin"):
         """{"<service>.<machine>": [names] or None (no hidden service)} against what is there:
@@ -1511,6 +1549,17 @@ class Control:
 
     # ---- if something breaks: the report of `kiwi-server recovery` --------------------
     def recovery(self):
+        """{checks, cases} (recovery.py), kept until the fleet or the last look changes."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        try:
+            st = os.stat(os.path.join(self.run, "status.json"))
+            looked = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            looked = ()
+        return self._read_once("recovery", self._recovery, also=looked)
+
+    def _recovery(self):
         """{checks, cases} (recovery.py), with how old each machine's backup was at the last
         look when there was one. Reads only what is here; asks no machine."""
         if self.locked():
@@ -1537,6 +1586,9 @@ class Control:
         """Who opens whom (unlock.picture), as `kiwi-server unlock FLEET --porcelain` gives it."""
         if self.locked():
             raise KiwiError("the fleet is locked: log in")
+        return self._read_once("unlock", self._unlock_picture)
+
+    def _unlock_picture(self):
         try:
             r = subprocess.run(list(self.kiwi) + ["unlock", self.fleet_path, "--porcelain"], capture_output=True, text=True,
                                stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
@@ -1896,19 +1948,49 @@ class Control:
             threading.Thread(target=self.refresh_status, daemon=True).start()
 
     def refresh_status(self):
+        """A look at every machine. Each machine's answer is written as it comes (`status --stream`):
+        one that is off costs its own timeout, and the others are on the page meanwhile."""
         if self.locked():
             return None
         self.looking = True
+        path = os.path.join(self.run, "status.json")
         try:
+            before = self.status() or {}
+            rows = {h.get("host"): h for h in before.get("hosts") or [] if h.get("host")}
+            order, seen, tail = list(rows), [], []
             with self.lock:                 # after the running job: every command saves the store when it ends
-                r = subprocess.run(list(self.kiwi) + ["status", self.fleet_path, "--porcelain"], capture_output=True,
-                                   text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
-            try:
-                data = json.loads(r.stdout)
-            except ValueError:
-                data = {"hosts": [], "error": (r.stderr or r.stdout or "no output").strip()[-500:]}
+                p = subprocess.Popen(list(self.kiwi) + ["status", self.fleet_path, "--porcelain", "--stream"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
+                                     cwd=self.fleet_dir)
+                for line in p.stdout:
+                    tail.append(line)
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict) or not row.get("host"):
+                        continue
+                    row["seen"] = self.clock()
+                    rows[row["host"]] = row
+                    seen.append(row["host"])
+                    if row["host"] not in order:
+                        order.append(row["host"])
+                    self._put(path, json.dumps(dict(before, hosts=[rows[n] for n in order], time=before.get("time") or self.clock())))
+                err = p.stderr.read()
+                p.wait()
+                p.stdout.close()
+                p.stderr.close()
+            if seen:                        # the machines of this look, in the fleet's order; one that left is gone
+                data = {"hosts": [rows[n] for n in order if n in seen]}
+            else:
+                try:                        # all at once (a kiwi-server before --stream), or nothing that can be read
+                    data = json.loads("".join(tail))
+                    if not isinstance(data, dict) or not isinstance(data.get("hosts"), list):
+                        raise ValueError
+                except ValueError:
+                    data = {"hosts": [], "error": (err or "".join(tail) or "no output").strip()[-500:]}
             data["time"] = self.clock()
-            self._put(os.path.join(self.run, "status.json"), json.dumps(data))
+            self._put(path, json.dumps(data))
             try:
                 self.fleet_info(fresh=True)
             except (OSError, ValueError):

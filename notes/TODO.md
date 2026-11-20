@@ -107,5 +107,5 @@ say what 2.267.0 does.
     (counted from the last report), the returning machine stops its copy within 13 s (2.277.0, the agent's hold), the two stay a
     pair (2.278.0), a standby that is behind is a warning and not switched to by itself (2.280.0). Open: the control node's own
     machine (its parts switch by hand: nothing decides when the control node is the one gone; a vote between agents, or a second
-    control node, both need the owner's word), and data the returning machine had newer than a stale copy (kept only by its backups).
+    control node, both need the owner's word), and what the returning machine had written after the copy: since 2.281.0 kept beside the folder at its first fetch (tried 20 Nov: quince kept kn-vault.kept-20261120-2239, 32 KB with hard links).
 

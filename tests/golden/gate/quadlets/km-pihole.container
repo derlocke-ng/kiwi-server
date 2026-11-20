@@ -14,7 +14,7 @@ AddCapability=NET_ADMIN
 AddCapability=SYS_TIME
 AddCapability=SYS_NICE
 Environment=TZ=Europe/Berlin
-Environment=FTLCONF_dns_upstreams=127.0.0.1#5335
+Environment=FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1
 Environment=FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/home/;hostsdir=/etc/mullvad-socks
 Environment=FTLCONF_dns_listeningMode=all
 Environment=FTLCONF_webserver_domain=pihole.gate.home

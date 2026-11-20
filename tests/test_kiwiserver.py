@@ -2085,9 +2085,8 @@ class TestModules(Base):
         self.assertEqual(spec.vpn_ip, "10.8.0.1")
         b = modmod.Renderer(self.ms).render(spec)
         svcs = b.compose["services"]
-        self.assertEqual(set(svcs), {"km-vpn-client", "km-vpn-server", "km-pihole", "km-dns-up", "km-tor", "km-nginx", "km-fail2ban"})
+        self.assertEqual(set(svcs), {"km-vpn-client", "km-vpn-server", "km-pihole", "km-tor", "km-nginx", "km-fail2ban"})
         self.assertEqual(svcs["km-pihole"]["network_mode"], "service:km-vpn-server")
-        self.assertEqual(svcs["km-dns-up"]["network_mode"], "service:km-vpn-server")        # beside Pi-hole, in front of it
         # nginx inside the server's namespace: the admin pages by name, on the mesh address only
         self.assertEqual(svcs["km-nginx"]["network_mode"], "service:km-vpn-server")
         self.assertNotIn("ports", svcs["km-nginx"])
@@ -2108,9 +2107,7 @@ class TestModules(Base):
             modmod.Renderer(self.ms).render(clash)
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
-        self.assertIn("FTLCONF_dns_upstreams=127.0.0.1#5335", svcs["km-pihole"]["environment"])
-        core = b.files["km-pihole/Corefile"][0]
-        self.assertIn("forward . 172.64.0.2 tls://1.1.1.1 tls://1.0.0.1 {", core if isinstance(core, str) else core.decode())
+        self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1", svcs["km-pihole"]["environment"])
         self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
@@ -2414,7 +2411,7 @@ class TestModules(Base):
         rendered.append(rolesmod.stack_manifest(host, role, VERSION, b))
         self.assertFalse([t for t in rendered if "--no-deps" in t])
         sharers = [n for n, svc in b.compose["services"].items() if svc.get("network_mode") == "service:km-vpn-server"]
-        self.assertEqual(sorted(sharers), ["km-dns-up", "km-nginx", "km-pihole", "km-tor"])
+        self.assertEqual(sorted(sharers), ["km-nginx", "km-pihole", "km-tor"])
         for n in sharers:
             unit = b.quadlets["%s.container" % n]
             self.assertIn("Network=container:km-vpn-server", unit)

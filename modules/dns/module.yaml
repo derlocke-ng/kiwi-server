@@ -17,14 +17,11 @@ derived:
   shares_proxy_namespace: "{{ 'yes' if network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode else '' }}"
   web_port_effective: "{{ web_port or (8081 if (network_mode and module_config.get('reverse-proxy', {}).get('network_mode') == network_mode) else 80) }}"
   federation_ask: "{{ 'yes' if node_type == 'master' and (module_config.get('vpn-server') or {}).get('federation') else '' }}"
-  # the way to the names of the Internet: the first upstream while it answers, the fallbacks (over
-  # TLS) while it does not, switched by a small resolver in front of Pi-hole (Corefile.j2). Pi-hole's
-  # own order switched only when a client asked a second time: while the master was down a node's
-  # lookup took five seconds or got no answer, and while the master's exit was cut each of the
-  # master's took five (20 Nov 2026)
-  # the first of them: on a node the master's Pi-hole, on the master its VPN client's resolver (the exit)
-  dns_first: "{{ (master_ip if node_type != 'master' else vpn_client_ip) or '' }}"
-  dns_up: "{{ 'yes' if dns_first and fallback_dns and not upstream_dns and not legacy_env else '' }}"
+  # a node's way to the names of the Internet: the master's Pi-hole while it answers, the fallbacks
+  # (over TLS) while it does not, switched by a small resolver in front of Pi-hole (Corefile.j2).
+  # Pi-hole's own order switched only when a client asked a second time: while the master was down
+  # a lookup took five seconds, or got no answer (the master-down drill, 20 Nov 2026)
+  dns_up: "{{ 'yes' if node_type != 'master' and master_ip and fallback_dns and not upstream_dns and not legacy_env else '' }}"
 
 network:
   listen_ports: ["53/tcp", "53/udp", "{{ web_port_effective }}/tcp"]
@@ -127,12 +124,12 @@ settings:
     default: 1.1.1.1;1.0.0.1
   - key: fallback_tls_name
     label: Fallback resolvers over TLS
-    help: "The fallback resolvers are asked over TLS (port 853) and must show a certificate for this name, so the provider of the line they go out on (the home line, the hoster's) does not read the names while the master or its exit is away. Empty: asked in plain text on port 53."
+    help: "On a node, the fallback resolvers are asked over TLS (port 853) and must show a certificate for this name, so the home line's provider does not read the names while the master is away. Empty: asked in plain text on port 53."
     default: cloudflare-dns.com
   - key: up_image
     group: Advanced
     label: Image of the resolver in front of Pi-hole
-    help: "CoreDNS, which asks the first upstream (a node: the master; the master: its exit) while it answers and the fallbacks while it does not."
+    help: "On a node: CoreDNS, which asks the master while it answers and the fallbacks while it does not."
     default: docker.io/coredns/coredns:1.12.4
   - key: network_mode
     group: Advanced

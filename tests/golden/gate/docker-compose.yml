@@ -96,7 +96,7 @@ services:
     environment:
     - TZ=Europe/Berlin
     - FTLCONF_webserver_api_password=golden-pihole-master
-    - FTLCONF_dns_upstreams=127.0.0.1#5335
+    - FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1
     - FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/home/;hostsdir=/etc/mullvad-socks
     - FTLCONF_dns_listeningMode=all
     - FTLCONF_webserver_domain=pihole.gate.home
@@ -116,22 +116,6 @@ services:
     - /home/user/docker/km-pihole/etc-pihole:/etc/pihole:z
     - /home/user/docker/km-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
     - /home/user/docker/km-pihole/mullvad-socks:/etc/mullvad-socks:ro,z
-  km-dns-up:
-    image: docker.io/coredns/coredns:1.12.4
-    container_name: km-dns-up
-    network_mode: service:km-vpn-server
-    depends_on:
-    - km-vpn-server
-    command:
-    - -conf
-    - /Corefile
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: 1m
-    volumes:
-    - /home/user/docker/km-pihole/Corefile:/Corefile:ro,z
   km-tor:
     image: docker.io/dockurr/tor
     container_name: km-tor

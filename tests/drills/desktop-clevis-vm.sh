@@ -11,6 +11,7 @@
 # here); tests/drills/lib-desktop-vm.sh has the parts. One PASS or FAIL line per check.
 #
 #   VMHOST=sh3 tests/drills/desktop-clevis-vm.sh [WORKDIR]     (default ~/kiwi-vm/desktop/debian)
+#   FRESH=1 installs anew; without it an installed and bound VM is used again.
 set -u
 {
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,7 +31,9 @@ vh_prepare; check $? "the VM's folder on ${VMHOST:-this computer}: $VD"
 tunnel_up 7611 7612 7613 7614; check $? "the test rings reach ${VMHOST:-the VM}"
 
 # ---- the desktop's install media: kiwi-server's Debian, encrypted, with GNOME and clevis ------
-if ! vh '[ -s disk.qcow2.installed ]'; then
+[ -z "${FRESH-}" ] || vh 'rm -f disk.qcow2.installed bound'    # FRESH=1: install anew
+if ! vh '[ -e disk.qcow2.installed ]'; then
+    vh 'rm -f bound'    # a new disk is not bound yet
     rm -rf fleet; mkdir -p fleet
     cat > answers.json <<'EOF'
 {"domain": "home", "timezone": "UTC", "keyboard": "us", "locale": "en_US.UTF-8", "master_where": "none",
@@ -47,8 +50,8 @@ h.pop("node", None)
 h["network"] = {"dhcp": True}
 h["install"] = {"on_done": "poweroff"}
 h["debian"] = {"encrypt": True, "passphrase": sys.argv[2],
-               "packages": ["task-gnome-desktop", "clevis", "clevis-luks", "clevis-initramfs"],
-               "kernel_arguments": ["ip=dhcp", "console=tty0", "console=ttyS0,115200n8"]}
+               "packages": ["clevis", "clevis-luks", "clevis-initramfs"],
+               "kernel_arguments": ["ip=::::::dhcp", "console=tty0", "console=ttyS0,115200n8"]}
 open(sys.argv[1], "w").write(yaml.safe_dump(d, sort_keys=False))
 EOF
     "${ks[@]}" build fleet/fleet.yaml desk >build.log 2>&1; check $? "its install media built"
@@ -56,21 +59,28 @@ EOF
     [ -n "$iso" ] || { say "FAIL no ISO: see build.log"; exit 1; }
     vh_put "$iso" install.iso; check $? "the ISO on ${VMHOST:-this computer}"
     vh "rm -f disk.qcow2; qemu-img create -f qcow2 disk.qcow2 40G >/dev/null && cp ${OVMF_PAIR##*:} vars.fd"
-    say "installing (Debian with GNOME over the net: up to an hour)"
+    say "installing Debian (encrypted, over the net: about 15 minutes)"
     vm_start install.log -drive if=none,id=cd,format=raw,readonly=on,file=install.iso -device ide-cd,drive=cd,bootindex=0
-    n=5400; while vm_running && [ "$n" -gt 0 ]; do sleep 30; n=$((n - 30)); done
+    n=2400; while vm_running && [ "$n" -gt 0 ]; do sleep 30; n=$((n - 30)); done
     [ "$n" -gt 0 ]; check $? "installed and powered off by itself"
     vh 'rm -f qemu.pid; touch disk.qcow2.installed'
 fi
 admin=$(python3 -c "import yaml; print(yaml.safe_load(open('fleet/fleet.yaml'))['defaults']['admin']['user'])")
 
+# ip=::::::dhcp, not ip=dhcp: clevis-initramfs (20) takes field 6 of ip= as the device to wait
+# for, and `cut -d: -f6` of "dhcp" is "dhcp" (it waited for a device of that name, 20 Nov 2026)
 # ---- first boot: the passphrase at its console, then clevis bound to the policy -----------------
 if ! vh '[ -s bound ]'; then
     rings health1 health2 auto emergency          # binding asks every ring for its key once
     vm_start boot1.log
     vm_wait_log boot1.log "$PROMPT" 300; check $? "it asks for its passphrase at boot (not bound yet)"
     vm_type "$PASS_PHRASE"
-    up_within 300; check $? "the passphrase opens it"
+    up_within 300; rc=$?; check $rc "the passphrase opens it"
+    [ $rc = 0 ] || { say "$fails wrong (stopped: no way in)"; exit 1; }
+    # the desktop itself, after the first start: in the installer one of GNOME's packages asks a
+    # question no preseed answers, and the install waits for ever at "Preconfiguring packages"
+    say "installing GNOME (about 20 minutes)"
+    vssh "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q task-gnome-desktop" >gnome.log 2>&1; check $? "GNOME installed"
     dev=$(vssh "sudo blkid -t TYPE=crypto_LUKS -o device" | head -1)
     printf '%s' "$PASS_PHRASE" | vssh "sudo clevis luks bind -y -k - -d $dev sss '$POLICY'" >bind.log 2>&1
     check $? "bound: (health1 and health2 and auto) or emergency"

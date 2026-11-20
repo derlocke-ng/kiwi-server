@@ -590,7 +590,9 @@ def tree(host, servers):
 def _ip_setting(host):
     me = _lan(host)
     if me is None:
-        return "dhcp"
+        # the device by name, not "dhcp" alone: clevis-initramfs (20) takes field 6 of IP= as the
+        # device to wait for, and `cut -d: -f6` of a value without colons is the whole value
+        return ":::::IFACE:dhcp"
     return "%s::%s:%s::IFACE:off" % (me.ip, host.cfg["network"].get("gateway") or "", me.netmask)
 
 

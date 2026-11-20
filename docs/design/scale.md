@@ -168,14 +168,38 @@ and a full restore fast, which is what counts there.
 
 ## Order
 
-1. A backup store per service; names by service.
-2. Move a service (plan, then the move), with a drill on the test machines.
-3. Standby: the part set up on a second machine, its data copied every minute, a switch by
-   hand. Then the switch by itself, with three voters.
-4. The network's basics twice: DNS, DHCP, the gateway, with a moving address.
-5. Machines report in; site controllers (controllers.md, step 4).
-6. High availability at one site, part by part, each with its own drill.
-7. Teams; load balancing.
+1. Names by service (built, 2.263).
+2. An agent on every machine (the owner, 20 November: "shouldn't all nodes run small
+   services that are our healthcheck, up/down, update and so on system"). See below.
+3. A backup store per service.
+4. Move a service (plan, then the move), with a drill on the test machines.
+5. Standby: the part set up on a second machine, its data copied every minute, a switch by
+   hand. Then the switch by itself, with three voters (the agents vote).
+6. The network's basics twice: DNS, DHCP, the gateway, with a moving address.
+7. Site controllers (controllers.md, step 4).
+8. High availability at one site, part by part, each with its own drill.
+9. Teams; load balancing.
+
+## The agent
+
+A small service on every machine, part of what every role installs. It replaces the control
+node's logins for looking, and it is what failover needs on the machines themselves.
+
+- **Reports.** Every minute it sends the control node how the machine is: what `status` reads
+  over SSH today (services, disks, load, updates waiting, backups), signed with a key of the
+  machine's own that derives from the seed. The control node stops logging in to look.
+- **Says "I am up"** when the machine starts, so an apply that waited runs at once.
+- **Takes orders** the control node signs: restart a service, start or stop a part (a
+  standby), run the update now. An apply stays the control node's (it needs keys the
+  machine does not have).
+- **Watches its neighbours.** Each agent asks two or three others whether they answer. Three
+  that agree a machine is gone is the vote a failover needs; one machine that lost its own
+  network sees that it is the one cut off, and stops its standby parts' writers.
+- **Speaks only on the VPN**, to the control node and to its neighbours; it holds no secret
+  of another machine.
+
+Built in steps: reports and "I am up" first (the look without logins), then orders, then the
+neighbours' vote with the standby.
 
 ## Not decided
 

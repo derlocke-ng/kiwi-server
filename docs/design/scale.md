@@ -172,9 +172,10 @@ and a full restore fast, which is what counts there.
 2. An agent on every machine (the owner, 20 November: "shouldn't all nodes run small
    services that are our healthcheck, up/down, update and so on system"). See below.
 3. A backup store per service.
-4. Move a service (plan, then the move), with a drill on the test machines.
-5. Standby: the part set up on a second machine, its data copied every minute, a switch by
-   hand. Then the switch by itself, with three voters (the agents vote).
+4. Move a service (built, 2.266 and 2.267: tried on the test machines).
+5. Standby: the part's data copied every minute to a second machine, a switch by hand
+   (built, 2.267). Then the part prepared on the standby and its name on both machines, so
+   that a switch takes seconds; then the switch by itself, with three voters (the agents vote).
 6. The network's basics twice: DNS, DHCP, the gateway, with a moving address.
 7. Site controllers (controllers.md, step 4).
 8. High availability at one site, part by part, each with its own drill.
@@ -207,6 +208,40 @@ node's logins for looking, and it is what failover needs on the machines themsel
 
 Built in steps: reports and "I am up" first (the look without logins), then orders, then the
 neighbours' vote with the standby.
+
+## Built and tried on real machines (2.267, 20 November 2026)
+
+- **Move a part** (`kiwi-server move`): between a uCore and a Debian machine, both ways, with
+  its data, secrets, name and a valid certificate (`tests/drills/part-move.sh`).
+- **Standby** (`keep_ready`, `kiwi-server standby`, `kiwi-server switch`): the copy on the
+  standby was seconds old, a change arrived within a minute, the standby's key could only
+  read. A switch lost nothing with the old machine up, and worked with it down; the control
+  node then took the part off the old machine when it came back (`tests/drills/part-standby.sh`).
+- A switch takes six to eight minutes today, nearly all of it applying machines. That is a
+  standby, not yet a failover in seconds.
+
+## Next: a switch in seconds, then by itself
+
+What makes a switch slow is that the standby machine learns about the part only at the
+switch: its containers are made, its proxy gets the name, the machines that answer for names
+are told. All of that can be there before:
+
+1. **The part is prepared on the standby machine**: its containers made and stopped, its
+   image there, its settings and secrets in place (rendered as "kept ready", a module mode
+   kiwi-modules gets).
+2. **Its name answers on both machines.** The standby's proxy has the name and its
+   certificate already, and passes requests on to the machine that runs the part while that
+   one is up. The machines that answer for names give out both addresses, so a device that
+   cannot reach the first tries the second by itself, with no change to DNS at the moment of
+   the switch.
+3. **A switch is then two steps on the standby machine**: start the part's containers, and
+   tell its proxy to answer itself. Seconds, and nothing else in the network changes at that
+   moment. The fleet file follows afterwards.
+4. **By itself**: the standby's agent watches the machine that runs the part. When that one
+   does not answer and two others agree (the agents' vote; a machine that lost only its own
+   network sees it is the one cut off and does nothing), the standby does step 3 and tells
+   the control node. When the first machine comes back, the control node tells it to stand
+   by: it stops the part before it could write.
 
 ## Not decided
 

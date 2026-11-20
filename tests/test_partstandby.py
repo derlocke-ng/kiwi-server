@@ -33,10 +33,13 @@ class TestStandby(unittest.TestCase):
 
     def test_a_parts_folders_come_from_the_backup_script(self):
         self.assertEqual(ps.folders(bundle(), "vault"), {"frozen": ["/home/user/docker/kn-vault"], "bulk": [], "volumes": [],
+                                                         "frozen_volumes": [], "bulk_volumes": [],
                                                          "containers": ["kn-vault"], "runtime": "podman"})
         cloud = ps.folders(bundle(), "cloud")
         self.assertEqual((cloud["frozen"], cloud["bulk"], cloud["containers"]), (["/srv/db"], ["/srv/files"], ["kn-db"]))
-        self.assertEqual(ps.folders(bundle(), "paste")["volumes"], ["privatebin_data"])     # a volume: not followed yet
+        paste = ps.folders(bundle(), "paste")
+        self.assertEqual((paste["volumes"], paste["bulk_volumes"], paste["bulk"]), (["privatebin_data"], ["privatebin_data"], []))
+        self.assertEqual(ps.send_conf({"paste": paste}), "runtime podman\nvol:privatebin_data bulk\n")      # a volume: looked up on the machine
         self.assertIsNone(ps.folders(bundle(), "nothing"))
         self.assertIsNone(ps.folders(types.SimpleNamespace(files={}), "vault"))              # no backup part
         conf = ps.send_conf({"vault": ps.folders(bundle(), "vault"), "cloud": cloud})
@@ -113,6 +116,42 @@ class TestStandby(unittest.TestCase):
         said = open(os.path.join(self.tmp, "logger.log")).read().splitlines()
         self.assertEqual(len(said), 1)                                                         # the same reason is said once
         self.assertIn("cloud from papaya.home: rsync: connection refused", said[0])
+
+    def test_an_apply_sets_up_both_sides_with_a_volume(self):
+        """The machine that runs the part says where its volume lies; the standby asks for that folder
+        and puts it into its own volume of the same name."""
+        import json
+        fleet = types.SimpleNamespace(resolve_path=lambda p: os.path.join(self.tmp, p))
+        os.makedirs(os.path.join(self.tmp, "secrets", "standby"))
+        for n in ("lychee",):                           # the standby's key, made before (ssh-keygen need not be here)
+            with open(os.path.join(self.tmp, "secrets", "standby", n + "_ed25519"), "w") as fh:
+                fh.write("PRIVATE\n")
+            with open(os.path.join(self.tmp, "secrets", "standby", n + "_ed25519.pub"), "w") as fh:
+                fh.write("ssh-ed25519 AAAApub kiwi-standby-%s\n" % n)
+        medlar = types.SimpleNamespace(name="medlar", hostname="medlar.home", cfg={"keep_ready": {"paste": "lychee"}})
+        lychee = types.SimpleNamespace(name="lychee", hostname="lychee.home", cfg={})
+        fleet.hosts = {"medlar": medlar, "lychee": lychee}
+        ran = []
+
+        def runner(tgt, script, data=None):
+            ran.append((tgt, script, data))
+            if "send.conf" in script and "authorized_keys" in script:
+                return b"kiwi-volume privatebin_data /var/lib/containers/storage/volumes/privatebin_data/_data\nssh-ed25519 AAAAhost root@medlar\n"
+            return b""
+        render = lambda h: ("", bundle())
+        ps.after_apply(fleet, medlar, "core@medlar", {}, None, render, runner=runner)
+        send = next(x for x in ran if "send.conf" in x[1] and "authorized_keys" in x[1])
+        self.assertIn("vol:privatebin_data bulk", send[1])                       # looked up on the machine itself
+        self.assertIn('command="/usr/local/sbin/kiwi-standby-send",restrict ssh-ed25519 AAAApub kiwi-standby', send[2].decode())
+        self.assertEqual(json.load(open(os.path.join(self.tmp, "secrets", "standby", "medlar.volumes"))),
+                         {"privatebin_data": "/var/lib/containers/storage/volumes/privatebin_data/_data"})
+        del ran[:]
+        ps.after_apply(fleet, lychee, "core@lychee", {}, None, render, runner=runner)
+        pull = next(x for x in ran if "pull.conf" in x[1] and "kiwi-standby.timer" in x[1])
+        self.assertIn("paste medlar.home /var/lib/containers/storage/volumes/privatebin_data/_data vol:privatebin_data", pull[1])
+        self.assertIn("medlar.home ssh-ed25519 AAAAhost", pull[1])               # whom it trusts
+        self.assertEqual(pull[2].decode(), "PRIVATE\n")                          # its key on standard input, not in the script
+        self.assertNotIn("PRIVATE", pull[1])
 
     def test_ages(self):
         self.assertEqual(ps.ages("vault 12\ncloud 4000\nnoise\n"), {"vault": 12, "cloud": 4000})

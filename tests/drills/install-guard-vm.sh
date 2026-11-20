@@ -87,6 +87,7 @@ h = d["hosts"]["kumquat"]
 h["install"] = {"on_done": "poweroff"}
 h["encryption"] = False                     # the guard is what is tried here: no key, no TPM
 h["disk"] = "auto"
+h.setdefault("network", {})["dns"] = ["10.0.2.3"]      # QEMU's own network answers names there, not at its gateway
 if sys.argv[2] == "coreos":
     h.setdefault("coreos", {})["console"] = "ttyS0,115200n8"
 open(sys.argv[1], "w").write(yaml.safe_dump(d, sort_keys=False))

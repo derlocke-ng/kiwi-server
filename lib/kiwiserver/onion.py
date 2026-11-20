@@ -47,10 +47,20 @@ def _derive(seed, what):
     return hmac.new(seed, what.encode(), hashlib.sha256).digest()
 
 
+_KEYS = {}      # (seed, host, service, round): the key, worked out once per process (70 ms each in Python)
+
+
 def service_key(seed, host, service, round=1):
     """(expanded secret key, public key) of a hidden service: 64 and 32 bytes, as Tor keeps them.
     Each round (`kiwi-server onion … --new-address`) is another key, so another address; the
     first is the one every service had before rounds."""
+    k = (bytes(seed), host, service, int(round))
+    if k not in _KEYS:
+        _KEYS[k] = _service_key(seed, host, service, round)
+    return _KEYS[k]
+
+
+def _service_key(seed, host, service, round=1):
     what = "onion/%s/%s" % (host, service) if int(round) <= 1 else "onion/%s/%s/round%d" % (host, service, int(round))
     h = bytearray(hashlib.sha512(_derive(seed, what)).digest())
     h[0] &= 248

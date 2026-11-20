@@ -9,6 +9,10 @@ rt={{ runtime }}
 changed=0
 missing=0
 
+# certbot as its tag names it now (latest follows each release): a run would take the copy this
+# machine pulled the first time, for ever. A registry that does not answer keeps the copy here.
+"$rt" pull -q {{ acme_image }} >/dev/null 2>&1 || true
+
 # nginx has to be answering before Let's Encrypt comes to look
 for _ in $(seq 1 30); do
     "$rt" exec {{ container_prefix }}-nginx test -f /etc/nginx/nginx.conf 2>/dev/null && break

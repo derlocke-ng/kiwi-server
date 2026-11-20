@@ -5678,8 +5678,10 @@ def cmd_switch(args):
             # when it comes back, its stack starts the part before its apply takes it away: its agent's
             # first report gets told to hold those containers back (machineagent.py), until that apply
             hold_back(fleet, src_name, services)
-    # nothing is fetched over the part once it runs here
-    remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true" % (partstandby.UNIT, partstandby.UNIT))
+    # nothing is fetched over the part once it runs here; and the day it is kept ready here again (the pair
+    # turned round), its first fetch finds data of its own in the folder and keeps it (partstandby.PULL)
+    remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true; rm -f %s/state/%s.ok"
+               % (partstandby.UNIT, partstandby.UNIT, partstandby.DIR, shlex.quote(part)))
     # kept ready there (its containers made, its images there): it starts now, and the apply below
     # makes it that machine's own
     try:

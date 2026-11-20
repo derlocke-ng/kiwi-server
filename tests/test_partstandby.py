@@ -131,6 +131,22 @@ class TestStandby(unittest.TestCase):
         self.assertEqual(len(kept), 1)                                                         # once, not at every fetch
         self.assertEqual(open(os.path.join(self.tmp, kept[0], "db.sqlite3")).read(), "written after the copy\n")
         self.assertIn("paste: what %s held is kept in" % e, open(os.path.join(self.tmp, "logger.log")).read())
+        self.assertFalse(os.path.exists(os.path.join(d, "state", "paste.keeping")))           # gone with the whole fetch
+        # a later first fetch (a switch cleared the mark): kept again beside the first, which stays
+        os.remove(os.path.join(d, "state", "paste.ok"))
+        time.sleep(1.1)
+        subprocess.run(["bash", "-c", script], env={"PATH": bindir + ":/usr/bin:/bin"}, check=True)
+        self.assertEqual(len([x for x in os.listdir(self.tmp) if x.startswith("e.kept-")]), 2)
+        # a folder that cannot be kept beside itself is not fetched over
+        os.remove(os.path.join(d, "state", "paste.ok"))
+        with open(os.path.join(bindir, "cp"), "w") as fh:
+            fh.write("#!/bin/bash\nexit 1\n")
+        os.chmod(os.path.join(bindir, "cp"), 0o755)
+        before = open(os.path.join(self.tmp, "rsync.log")).read().count(" %s/" % e)
+        subprocess.run(["bash", "-c", script], env={"PATH": bindir + ":/usr/bin:/bin"}, check=True)
+        self.assertEqual(open(os.path.join(self.tmp, "rsync.log")).read().count(" %s/" % e), before)
+        self.assertFalse(os.path.exists(os.path.join(d, "state", "paste.ok")))
+        self.assertIn("could not be kept beside it", open(os.path.join(self.tmp, "logger.log")).read())
 
     def test_an_apply_sets_up_both_sides_with_a_volume(self):
         """The machine that runs the part says where its volume lies; the standby asks for that folder

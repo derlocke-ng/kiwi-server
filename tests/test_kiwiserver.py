@@ -9204,6 +9204,37 @@ class TestWatchdog(unittest.TestCase):
                                   lambda standby, part: None)
         self.assertIn("lab has no copy of it", ev[0]["text"])
 
+    def test_a_switch_by_itself_needs_two_that_fail_independently(self):
+        links, f = [("pi", "vault", "lab")], self.fleet()
+        sees = lambda standby, machine: False                                             # noqa: E731
+        fresh = lambda standby, part: 6 * 60 + 30                                         # noqa: E731
+        state = lambda: {"gone": {"pi": self.NOW}}                                        # noqa: E731
+        # at another site, while the master does not answer: the standby lost its way the same way
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh,
+                                  lambda standby, machine: False)
+        self.assertEqual([e["kind"] for e in ev], ["held"])
+        self.assertIn("at another site and the master does not answer", ev[0]["text"])
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh,
+                                  lambda standby, machine: True)
+        self.assertEqual([e["kind"] for e in ev], ["switch"])
+        # a policy word it does not know: by hand
+        for odd in ("tell", {"do": "tell"}, {"do": "swich"}, False):
+            self.assertFalse(watchdogmod.switch_policy(self.fleet(switch=odd))[0], odd)
+        self.assertEqual(watchdogmod.switch_policy(self.fleet()), (True, 5))
+        # the control node's own machine is not switched away from by itself
+        own = self.fleet()
+        own.hosts["pi"].role_settings_raw = {"modules": ["control", "vault"]}
+        self.assertEqual(watchdogmod.switches(own, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh), [])
+
+    def test_gone_counts_from_the_last_look_that_saw_it_when_that_is_later(self):
+        f = self.fleet(master={"after": 5, "do": "restart"})
+        done, state = [], {}
+        watchdogmod.step(f, {"gate": "master"}, {"gate": True}, state, self.NOW - 60, done.append)
+        # its agent fell silent long ago (rejected reports), but the look saw it a minute ago: not gone for long
+        ev = watchdogmod.step(f, {"gate": "master"}, {"gate": False}, state, self.NOW, done.append,
+                              last={"gate": self.NOW - 50 * 60})
+        self.assertEqual((done, [e["kind"] for e in ev]), ([], ["waiting"]))
+
     def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
         f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}
         ev, done = self.step(f, {"gate": False}, state, fail=True)
@@ -15761,6 +15792,16 @@ class TestRecovery(Base):
         self.assertEqual((own.ready, "kn-vault" in own.services), ([], True))
         self.assertEqual(b.compose["services"]["kn-vault"]["image"], own.compose["services"]["kn-vault"]["image"])
         self.assertEqual(r.script(f.hosts["quince"])[1].ready, [])                    # it keeps nothing ready
+        # a standby without what the part needs keeps nothing ready, and renders as before (a warning, no error)
+        lychee, quince = f.raw["hosts"]["lychee"], f.raw["hosts"]["quince"]
+        bare = self.network(quince=dict(quince, keep_ready={"firefox-sync": "lychee"},
+                                        node=dict(quince["node"], modules=["vpn-client", "reverse-proxy", "firefox-sync"])),
+                            lychee=dict(lychee, node={k: v for k, v in dict(lychee["node"], modules=["vpn-client", "tang"]).items()
+                                                      if k != "backup-server"}))
+        rb = cli.Renderer(bare, self.roles, os.path.join(self.tmp, "out2"), None, self.ms)
+        with mock.patch.object(util, "warn") as warned:
+            self.assertEqual(rb.script(bare.hosts["lychee"])[1].ready, [])
+        self.assertIn("it needs reverse-proxy", " ".join(str(c) for c in warned.call_args_list))
         # its proxy as it is once the part runs there, under the name it has on papaya, and a certificate for it
         later = b.files["kn-nginx/nginx-ready.conf"][0]
         self.assertIn("server_name vault.papaya.kiwi;", later)

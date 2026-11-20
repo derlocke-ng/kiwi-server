@@ -161,7 +161,8 @@ node to do everything, and can start a new network with the install media.
 
 1. `status` knows a first start that waits for its key; the story line; hints with actions.
 2. One name per thing.
-3. The store, a timer per machine, the kept answers.
+3. The store, a timer per machine, the kept answers. Built so far: the kept answers and the
+   look that writes each machine as it answers (2.253); the look beside a running job (2.258).
 4. The Machines table on the page, with sites; no cap at 50. Built in 2.256 (the column
    last apply comes with step 3's store).
 5. `/api/v1` and pushed changes; the app reads the store.

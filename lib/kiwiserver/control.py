@@ -13,6 +13,7 @@ The fleet file rests encrypted the same way (fleet.yaml.age, for the store's rec
 it names every machine and may hold passwords. While the store is open, fleet.yaml is a link
 into RAM, as secrets/ is. What a job prints and what the machines said last stay in RAM too.
 """
+import contextlib
 import hashlib
 import hmac
 import json
@@ -145,6 +146,9 @@ def _ask_starter(address, body, timeout=30):
     return out
 
 
+EVERY = "every machine"         # Control._busy while a job works on all of them
+
+
 class Control:
     def __init__(self, fleet_path, kiwi_cmd=None, status_minutes=10, watch_seconds=60, clock=time.time, run_dir=None):
         self.fleet_path = os.path.abspath(fleet_path)
@@ -162,6 +166,8 @@ class Control:
         self._riseup_at = 0         # when Riseup certificates were last looked at (loop)
         self.clock = clock
         self.lock = threading.Lock()          # one job at a time: two applies never cross
+        self.look_lock = threading.Lock()     # one look at a time; it does not wait for a job (refresh_status)
+        self._busy = None                     # the machines the running job works on; EVERY: all of them
         self._reads = {}                      # what a `--porcelain` read worked out, until the fleet changes (_read_once)
         self._gen = 0                         # counted up with every job that ends: nothing kept outlives one
         self.failures = {}                    # address -> [times] of failed logins
@@ -1123,8 +1129,18 @@ class Control:
             t.join()
         return jid
 
+    @contextlib.contextmanager
+    def _working_on(self, meta):
+        """While a job runs: the machines the look leaves alone. One in the middle of an apply
+        would look broken."""
+        self._busy = set(meta["hosts"]) if meta.get("hosts") and meta["action"] != "update" else EVERY
+        try:
+            yield
+        finally:
+            self._busy = None
+
     def _run(self, meta, argv):
-        with self.lock:
+        with self.lock, self._working_on(meta):
             meta.update(state="running", started=self.clock())
             self._write(meta)
             log = os.path.join(self.jobs_dir, meta["id"] + ".log")
@@ -1958,8 +1974,27 @@ class Control:
             before = self.status() or {}
             rows = {h.get("host"): h for h in before.get("hosts") or [] if h.get("host")}
             order, seen, tail = list(rows), [], []
-            with self.lock:                 # after the running job: every command saves the store when it ends
-                p = subprocess.Popen(list(self.kiwi) + ["status", self.fleet_path, "--porcelain", "--stream"],
+            # A look does not wait for a job (docs/design/ui.md, step 3): it asks the machines the
+            # job leaves alone, and keeps what it knew of the others. Only a job on every machine
+            # makes it wait, as before. The store is safe with two commands at once (Store.sync).
+            wait = self.look_lock
+            wait.acquire()
+            asked, kept = [], set()
+            if self._busy is EVERY:
+                wait.release()
+                wait = self.lock
+                wait.acquire()
+            elif self._busy:
+                kept = set(self._busy)
+                names = [h["name"] for h in (self.fleet_info() or {}).get("hosts") or []]
+                asked = [n for n in names if n not in kept]
+                if not asked:               # the job has every machine there is
+                    wait.release()
+                    wait = self.lock
+                    wait.acquire()
+                    kept = set()
+            try:
+                p = subprocess.Popen(list(self.kiwi) + ["status", self.fleet_path, "--porcelain", "--stream"] + asked,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
                                      cwd=self.fleet_dir)
                 for line in p.stdout:
@@ -1969,6 +2004,10 @@ class Control:
                     except ValueError:
                         continue
                     if not isinstance(row, dict) or not row.get("host"):
+                        continue
+                    busy = self._busy       # a job that began meanwhile: its machines keep what was known
+                    if busy is not None and wait is not self.lock and (busy is EVERY or row["host"] in busy):
+                        kept.add(row["host"])
                         continue
                     row["seen"] = self.clock()
                     rows[row["host"]] = row
@@ -1980,8 +2019,12 @@ class Control:
                 p.wait()
                 p.stdout.close()
                 p.stderr.close()
+            finally:
+                wait.release()
             if seen:                        # the machines of this look, in the fleet's order; one that left is gone
-                data = {"hosts": [rows[n] for n in order if n in seen]}
+                data = {"hosts": [rows[n] for n in order if n in seen or n in kept]}
+            elif kept and before.get("hosts"):
+                return before               # nothing could be asked beside the job: what was known stays
             else:
                 try:                        # all at once (a kiwi-server before --stream), or nothing that can be read
                     data = json.loads("".join(tail))

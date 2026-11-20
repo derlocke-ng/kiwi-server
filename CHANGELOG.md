@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.258.0 — the look at the machines does not wait for a job
+
+- **The control node looks at the machines while a job runs.** Before, the look waited for the
+  one job lock: during a long apply the page showed what was known before it, and "Check now"
+  did nothing until the job ended. Now the look asks every machine the job leaves alone and
+  keeps what it knew of the job's own machines (one in the middle of an apply would look
+  broken). Only a job on every machine ("Update everything") still makes it wait.
+
 ## 2.257.0 — masters as their own group, the Devices table, a job that outlives a page restart
 
 - **A job no longer ends with "the control node lost job … (502)" when the control page

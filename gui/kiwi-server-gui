@@ -2364,7 +2364,8 @@ class DiffDialog(Adw.Dialog):
             g.add(row)
         page.add(g)
         legend = Adw.PreferencesGroup(description="Red: as the other copy has it. Green: as this computer has it. "
-                                                  "Secret values show as •••.")
+                                                  "Secret values show as •••; of a secret file only its size and "
+                                                  "the names that differ are shown, never a value.")
         page.add(legend)
         if both:
             g = Adw.PreferencesGroup(title="Which copy counts?")

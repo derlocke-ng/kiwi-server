@@ -35,6 +35,13 @@
 #              the right one and once more; the answer's proof and host keys checked
 #   stop       kill the VM this script started (by its pid)
 #
+# VMHOST=NAME (an ssh name): the VM runs on that machine, not on this computer. The image is
+# built here (the toolchain is here); this checkout's code, the image and this script go to
+# VD there (default /mnt/nvme_2tb/share/virt/kiwi-starter) and the step runs there. That
+# machine needs QEMU, swtpm, python3 and curl, nothing of kiwi-server's. `windows` and `typed`
+# are left out there when it cannot make a Windows disk (sgdisk, mkfs.ntfs); `first-node` runs
+# on this computer only (it needs the hoster's token).
+#
 # WORKDIR (default ~/kiwi-vm/starter) keeps the ISO, the disks, serial-*.log and qemu.pid.
 # Base ISO: $KIWI_STARTER_BASE, else the newest Fedora CoreOS live ISO in ~/.cache/kiwi-server.
 set -u
@@ -43,9 +50,33 @@ self=$here/tests/drills/$(basename "$0")
 w=$HOME/kiwi-vm/starter
 if [ $# -ge 2 ]; then w=$1; shift; fi
 cmd=${1:-all}
+if [ -n "${VMHOST:-}" ] && [ "${KIWI_ON_VMHOST:-}" != 1 ]; then
+    VD=${VD:-/mnt/nvme_2tb/share/virt/kiwi-starter}
+    [ "$cmd" = first-node ] && { echo "first-node runs on this computer only: it needs the hoster's token" >&2; exit 2; }
+    if [ "$cmd" = build ] || [ "$cmd" = all ]; then
+        VMHOST='' bash "$self" "$w" build || exit 1
+    fi
+    ssh -o BatchMode=yes "$VMHOST" "rm -rf '$VD/src' && mkdir -p '$VD/src' '$VD/work'" || exit 2
+    tar -C "$here" -czf - --exclude=__pycache__ bin data kiwi.manifest lib modules roles tests/drills/starter-vm.sh \
+        | ssh -o BatchMode=yes "$VMHOST" "tar -xzf - -C '$VD/src'" || exit 2
+    if [ -s "$w/starter-debug.iso" ]; then
+        l=$(sha256sum < "$w/starter-debug.iso" | cut -c1-64)
+        r=$(ssh -o BatchMode=yes "$VMHOST" "sha256sum < '$VD/work/starter-debug.iso' 2>/dev/null | cut -c1-64")
+        [ "$l" = "$r" ] || scp -q "$w/starter-debug.iso" "$VMHOST:$VD/work/starter-debug.iso" || exit 2
+    fi
+    [ "$cmd" = build ] && exit 0
+    ssh -o BatchMode=yes "$VMHOST" "cd '$VD' && KIWI_ON_VMHOST=1 TPM='${TPM:-1}' LOG='${LOG:-}' P8740='${P8740:-18740}' P80='${P80:-18080}' P8743='${P8743:-18743}' \
+        bash src/tests/drills/starter-vm.sh '$VD/work' '$cmd'"
+    exit $?
+fi
 mkdir -p "$w"; cd "$w" || exit 2
 w=$PWD
-OVMF=/usr/share/edk2/ovmf
+OVMF_CODE=; OVMF_VARS=          # the UEFI firmware this machine has
+for p in /usr/share/edk2/ovmf/OVMF_CODE.fd:/usr/share/edk2/ovmf/OVMF_VARS.fd \
+         /usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd; do
+    if [ -f "${p%%:*}" ] && [ -f "${p##*:}" ]; then OVMF_CODE=${p%%:*}; OVMF_VARS=${p##*:}; break; fi
+done
+[ -n "$OVMF_CODE" ] || { echo "no UEFI firmware (OVMF) on this machine" >&2; exit 2; }
 P8740=${P8740:-18740}; P80=${P80:-18080}; P8743=${P8743:-18743}
 iso=$w/starter-debug.iso
 image=ghcr.io/derlocke-ng/kiwi-server-control:2
@@ -92,7 +123,7 @@ vm() {
         i=$((i + 1))
     done
     stop
-    [ -f vars.fd ] || cp "$OVMF/OVMF_VARS.fd" vars.fd
+    [ -f vars.fd ] || cp "$OVMF_VARS" vars.fd
     rm -f "$log" debug.sock serial0.sock
     # a TPM 2.0 (swtpm), as most PCs have one: the stick encrypts with it. TPM=0: a machine without
     local tpm=()
@@ -106,7 +137,7 @@ vm() {
         tpm=(-chardev socket,id=chrtpm,path="$w/tpm/sock" -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0)
     fi
     qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 2 -m 4096 \
-        -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.fd" -drive if=pflash,format=raw,file=vars.fd \
+        -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" -drive if=pflash,format=raw,file=vars.fd \
         "${tpm[@]}" \
         -device qemu-xhci,id=xhci \
         -drive if=none,id=stick,format=raw,readonly=on,file="$iso" -device usb-storage,bus=xhci.0,drive=stick,bootindex=$stick_idx \
@@ -628,7 +659,13 @@ EOF2
     ;;
 stop) stop ;;
 all)
-    for c in build install again two-disks small windows typed; do bash "$self" "$w" "$c" || fails=$((fails + 1)); done
+    steps="build install again two-disks small windows typed"
+    if [ "${KIWI_ON_VMHOST:-}" = 1 ]; then      # on the VM's host: the image came built; a Windows disk only where it can be made
+        steps="install again two-disks small"
+        if command -v sgdisk >/dev/null && command -v mkfs.ntfs >/dev/null; then steps="$steps windows typed"
+        else say "left out here: windows, typed (no sgdisk or mkfs.ntfs on this machine)"; fi
+    fi
+    for c in $steps; do bash "$self" "$w" "$c" || fails=$((fails + 1)); done
     ;;
 *) echo "unknown: $cmd" >&2; exit 2 ;;
 esac

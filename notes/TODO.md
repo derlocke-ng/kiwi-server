@@ -78,3 +78,10 @@ say what 2.267.0 does.
     the first exit servers it tried did not pass its start check (several tries of six seconds). Pi-hole asks its fallback
     meanwhile, directly. Nothing to fix in the resolver; gluetun's start check also asks for NET_RAW (ICMP), which the
     container does not have: see whether giving it makes the check quicker.
+49. ~~A node's Pi-hole while the master is away~~: found 20 Nov, fixed the same day. It answered public names only when a client
+    asked a second time (Pi-hole's strict order moves on only then): one question got nothing in 12 s. The master-down drill
+    did not see it, as it reached the node by a name the master answers. Now a CoreDNS in front of a node's Pi-hole asks the
+    master while it answers and Cloudflare over TLS while it does not; the drill reaches the node by its home address and asks
+    once: "answered throughout" (papaya, 3 minutes without the master). The master itself is as before (its VPN client sits
+    next to it).
+

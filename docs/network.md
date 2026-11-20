@@ -97,8 +97,14 @@ own exit. A second network can be the exit too
 DNS is one chain for the whole network:
 
 - VPN clients ask the master's Pi-hole.
-- A gateway node's Pi-hole serves its LAN and asks the master's Pi-hole first
-  (a public resolver, Cloudflare's, only while the master is unreachable).
+- A gateway node's Pi-hole serves its LAN and asks the master's Pi-hole. While
+  the master does not answer (its tunnel or the master down), a small resolver in
+  front of the node's Pi-hole (CoreDNS) asks Cloudflare instead, over TLS, so the
+  home line's provider does not read the names: the first question takes about
+  two seconds, the ones after it are as fast as before. When the master answers
+  again, it is asked again. `dns.fallback_dns` and `dns.fallback_tls_name` say
+  which resolvers and which certificate name; an empty name asks them in plain
+  text.
 - Names under the fleet's domain go to the master and never leave it.
 - Every host carries the fleet's names in its hosts file plus a route into
   the mesh through its VPN client.

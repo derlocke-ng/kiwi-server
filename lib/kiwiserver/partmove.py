@@ -50,9 +50,11 @@ def is_public(name, host):
     return bool(name) and not (name == host.hostname or (domain and name.endswith("." + domain)))
 
 
-def changed_data(raw, part, src, dst, name_setting=None, name_value=None, open_too=False):
+def changed_data(raw, part, src, dst, name_setting=None, name_value=None, open_too=False, swap_ready=False):
     """The fleet file's data with the part moved: off `src`'s list and settings, onto `dst`'s. A
-    standby the part had (keep_ready) ends with the move: the part is elsewhere now."""
+    standby the part had (keep_ready) ends with the move: the part is elsewhere now. `swap_ready`
+    (a switch to the standby): the machine it leaves keeps it ready from now on, so the two stay
+    a pair; it fetches the part's data once it is back."""
     data = copy.deepcopy(raw)
     hosts = data["hosts"]
     ready = hosts[src.name].get("keep_ready")
@@ -60,6 +62,11 @@ def changed_data(raw, part, src, dst, name_setting=None, name_value=None, open_t
         ready.pop(part)
         if not ready:
             hosts[src.name].pop("keep_ready")
+    if swap_ready:
+        back = hosts[dst.name].get("keep_ready")
+        back = dict(back) if isinstance(back, dict) else {}
+        back[part] = src.name
+        hosts[dst.name]["keep_ready"] = back
     s_role, d_role = src.role, dst.role
     s_block = hosts[src.name].setdefault(s_role, {})
     d_block = hosts[dst.name].setdefault(d_role, {})
@@ -154,7 +161,7 @@ def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, 
     opened = lambda h: bool(((h.role_settings_raw or {}).get(PROXY) or {}).get("public"))
     open_too = bool(nb) and is_public(out["name"], src) and opened(src) and not opened(dst)
     out["open"] = open_too
-    data = changed_data(fleet.raw, part, src, dst, out["name_setting"], out["name_value"], open_too)
+    data = changed_data(fleet.raw, part, src, dst, out["name_setting"], out["name_value"], open_too, swap_ready=standby)
     out["data"] = data
     def tried(data):
         """What is in the way with the fleet as `data` has it: does the new machine take the part,

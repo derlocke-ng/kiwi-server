@@ -322,7 +322,8 @@ has: at most the last minute is missing. Then, within seconds:
 
 The applies that follow make the part medlar's own. The part keeps its name and its secrets,
 as in a move. quince gets the change the moment it answers again and then no longer runs the
-part. A machine that answers for names and was not applied since the standby was set up
+part; from then on quince keeps it ready (the switch writes `keep_ready: { vault: quince }` on
+medlar), so the two stay a pair and the part can go back the same way. A machine that answers for names and was not applied since the standby was set up
 learns the new address with its apply.
 
 Nobody has to be there: when quince is gone for five minutes and medlar cannot reach it

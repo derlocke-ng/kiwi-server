@@ -2396,8 +2396,13 @@ def cmd_recover(args):
             return ""
         return ddns.point(fleet, wg_host, address)
     can_point = bool(master and fleet.standbys(master.name) and ddns.is_name(wg_host) and ddns.template(fleet))
+    last = {}
+    if args.reports and os.path.isdir(args.reports):       # when each machine's agent last reported (the control node's)
+        for f in os.listdir(args.reports):
+            if f.endswith(".txt"):
+                last[f[:-4]] = os.path.getmtime(os.path.join(args.reports, f))
     events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
-                           point if can_point else None)
+                           point if can_point else None, last=last)
 
     def sees(standby, machine):
         """Whether `standby` reaches `machine` itself: at its address at home or on the VPN, by ping
@@ -6240,6 +6245,7 @@ def build_parser():
     s = sub("gone", cmd_recover, aliases=["recover"]); s.add_argument("fleet")      # recover: its name in 2.93.0
     s.add_argument("--status", metavar="FILE", help="what `status --porcelain` said, instead of asking the machines again")
     s.add_argument("--dry-run", action="store_true", help="say what would be done, do nothing, remember nothing")
+    s.add_argument("--reports", metavar="DIR", help="the agents' reports (the control node's): a machine is gone since its last one")
     s.add_argument("--api", metavar="URL", help=argparse.SUPPRESS)   # a fake provider (tests)
     s = sub("notify", cmd_notify); s.add_argument("fleet")
     s.add_argument("--test", action="store_true", help="send one test message on every channel that is set")

@@ -46,7 +46,10 @@ def policy(fleet, kind):
     return after, cfg["do"]
 
 
-def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None, point=None):
+REPORT_EVERY = 60          # seconds between two reports of a machine's agent
+
+
+def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None, point=None, last=None):
     """One look. `kinds`: {machine: "master"|"node"} for the machines that have their role;
     `said`: {machine: bool} whether it answered just now; `state`: the fleet's state, changed
     in place (`gone`: since when, `acted`: when); `restart(name)` does a power cycle and may
@@ -100,7 +103,10 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
             continue
         if said.get(name, True):
             continue
-        since = gone.setdefault(name, now)
+        # gone since the report that did not come after its last one (the agent reports every minute), not
+        # since this look: a look comes minutes after a machine fell silent
+        heard = (last or {}).get(name)
+        since = gone.setdefault(name, min(now, heard + REPORT_EVERY) if heard and now - heard < 3600 else now)
         minutes = int((now - since) / 60)
         after, do = policy(fleet, kind)
         what = "%s%s has not answered for %d minute%s" % (name, " (the master)" if kind == "master" else "", minutes,

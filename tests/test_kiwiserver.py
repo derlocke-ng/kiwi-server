@@ -9149,6 +9149,19 @@ class TestWatchdog(unittest.TestCase):
         ev, done = self.step(f, {"gate": False}, state, t + 1800 + 10 * 60)            # this one did not help (yet)
         self.assertEqual(([e["kind"] for e in ev], done), (["held"], []))
 
+    def test_a_machine_is_gone_since_its_agents_last_report(self):
+        f = self.fleet(master={"after": 5, "do": "restart"})
+        done = []
+        # the first look that misses it comes minutes after its last report: it is gone since then (and a minute)
+        ev = watchdogmod.step(f, {"gate": "master", "pi": "node"}, {"gate": False}, {}, self.NOW, done.append,
+                              last={"gate": self.NOW - 7 * 60})
+        self.assertEqual((done, [e["kind"] for e in ev]), (["gate"], ["restarted"]))
+        state = {}
+        ev = watchdogmod.step(f, {"gate": "master", "pi": "node"}, {"gate": False}, state, self.NOW, done.append,
+                              last={"gate": self.NOW - 2 * 3600})          # an old report says nothing about now
+        self.assertEqual([e["kind"] for e in ev], ["waiting"])
+        self.assertEqual(state["gone"]["gate"], self.NOW)
+
     def test_a_part_kept_ready_goes_to_its_standby_when_two_agree(self):
         links = [("pi", "vault", "lab")]
         f = self.fleet()

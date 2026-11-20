@@ -18,13 +18,11 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 
 ## B. Half-built
 
-10. The agent reports only: orders and the neighbours' vote are missing.
+10. The agent reports, and takes one order (2.277.0: hold back the containers of a part that went to its standby). Other orders
+    (restart a service, update now) and the neighbours' vote between agents are missing; the switch by itself asks the standby
+    instead (two that agree: the control node's look and the standby).
 11. ~~A standby follows folders, not named volumes.~~ Done 20 Nov: named volumes are followed (the pastebin, medlar to lychee: fetched within 60 s, switch with nothing lost). The drill found that a public name stayed dead after a move or switch: the proxy's `public` now goes along, the old one closes when nothing public is left, and the certificate is asked for again after the master's apply.
-12. A switch takes six to eight minutes: parts kept ready, the name on both machines, the
-    switch by itself (docs/design/scale.md). Measured 20 Nov (vault, quince to medlar): the part
-    itself is away 55 seconds, and `switch` says so; its name follows as the machines that
-    answer for names are applied (the master next, the home's after it), which is the rest of
-    the minutes. The name on both machines is what would take those away.
+12. ~~A switch takes six to eight minutes~~: under a minute since 2.275.0, by itself since 2.276.0 (item 57).
 13. Moving a whole network: a plan only.
 14. UI steps 3 and 5 to 7 (docs/design/ui.md): one store, `/api/v1`, pushed changes, the app on
     the kit (the job strip is there).
@@ -103,9 +101,8 @@ say what 2.267.0 does.
     places move there together, when a second hoster comes (its first commit would have to go to main).
 55. ~~Pushed changes~~ (ui.md step 5): /api/v1/events, the pages that follow it, `control watch` for the app.
 56. ~~The watchdog held a restart for an hour after one that had worked~~ (master-gone drill, 20 Nov): fixed.
-57. A switch in seconds (item 12). First half in 2.274.0: the part made on its standby (profile kiwi-ready, quadlets
-    without [Install]), started by the switch before the apply: Vaultwarden ran on quince 6 s after the switch began
-    (part-standby.sh, 0 wrong). Second half (branch ready-site): the standby's proxy config with the ready parts' sites
-    (nginx-ready.conf), put in place by `kiwi-stack ready start`, and their names in its certificate. Then: by itself
-    (the agents' vote, scale.md step 4); names by service where DNS has to change (both addresses).
+57. ~~A switch in seconds~~ (item 12): 2.275.0. Vaultwarden ran on its standby 6 s after the switch began, the Pi-holes pointed
+    its name there after 12–16 s, it answered after 29–37 s (was 6–8 min). By itself: 2.276.0 (recovery.switch, five minutes,
+    the standby must not reach the machine either). Tried with a power cut (part-failover.sh): switched after 10 min, name and
+    data there; the machine that came back ran the part 2 min 20 s beside it, fixed in 2.277.0 (the agent holds it back).
 

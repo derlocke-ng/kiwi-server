@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.278.0 — a pair stays a pair; a failover two minutes sooner
+
+- **After a switch the machine the part left keeps it ready** (`keep_ready` turned round by the
+  switch): once it is back it fetches the part's data and has its containers made, so the part
+  can fail over back to it. Tried with Vaultwarden from quince to medlar (part-standby.sh, 0 wrong:
+  quince keeps it ready afterwards; the name answered on medlar after 36 s).
+- **A machine counts as gone from its agent's last report**, not from the look that missed it:
+  a failover by itself comes about two minutes sooner. Tried before this release: medlar's power
+  cut, Vaultwarden on quince after 10 min 42 s, medlar's own copy stopped 13 s after it started
+  again (the agent's hold), and medlar gave the part up with the apply that waited for it.
+
 ## 2.277.0 — the machine that was gone holds the part back; fetches during jobs
 
 - **Tried live**: quince (a VM) lost its power with Vaultwarden on it; with nobody doing

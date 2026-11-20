@@ -2483,7 +2483,8 @@ class Control:
         if self.locked() or not os.path.isfile(seen):
             return self.gone()
         with self.lock:
-            r = subprocess.run(list(self.kiwi) + ["gone", self.fleet_path, "--porcelain", "--status", seen],
+            r = subprocess.run(list(self.kiwi) + ["gone", self.fleet_path, "--porcelain", "--status", seen,
+                                                   "--reports", self.reports_dir],
                                capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
         try:
             events = json.loads((r.stdout.strip().splitlines() or [""])[-1])["events"]

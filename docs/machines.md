@@ -236,6 +236,11 @@ for that moment: no broadcast is needed. `tests/drills/wake-netns.py` shows that
 packet reaches the card; that a card then starts its machine is up to the hardware,
 and virtual machines cannot be woken this way.
 
+Tried on 20 November 2026: an ODROID-N2+ with Armbian (kernel 6.18) takes the setting
+(`Wake-on: g`, also after a restart) and gets the packet on its card, and stays off. Its
+kernel says why at boot (`eth_wake_irq not found`): on this board the boot loader has to
+arm the wake-up, and Armbian's does not. Such a machine needs its power button.
+
 ## Asleep by day, awake for the backups
 
 A machine that is only needed at night, a backup machine for instance, can sleep the rest

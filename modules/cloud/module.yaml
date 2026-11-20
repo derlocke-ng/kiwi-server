@@ -71,6 +71,11 @@ logins:
     password: admin_password
     note: "This password was set when Nextcloud first started. If someone changed it inside Nextcloud, the new one is not known here."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is cloud.<machine>.<domain>; kiwi-server can name it cloud.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: nc_hostname, word: cloud }
+
 nginx:
   servers:
     - server_name: "{{ nc_hostname or 'cloud.' ~ hostname }}"

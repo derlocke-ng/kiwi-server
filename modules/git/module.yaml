@@ -53,6 +53,11 @@ logins:
     password: admin_password
     note: "The admin of Forgejo. Every start of the container sets this password again, so a password changed inside Forgejo goes back to this one."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is git.<machine>.<domain>; kiwi-server can name it git.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: git_hostname, word: git }
+
 nginx:
   upstream:
     name: forgejo

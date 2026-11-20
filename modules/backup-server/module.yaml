@@ -38,6 +38,11 @@ storage:
 urls:
   - "Backup server: https://{{ backup_host }} — for the backup module of: {{ clients | join(', ') or 'nobody yet (backup-server.clients)' }}"
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is backup.<machine>.<domain>; kiwi-server can name it backup.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: backup_domain, word: backup }
+
 nginx:
   upstream:
     name: backup-server

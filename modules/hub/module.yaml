@@ -44,6 +44,11 @@ validate:
 urls:
   - "Hub: https://{{ hub_host }}"
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is hub.<machine>.<domain>; kiwi-server can name it hub.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: hub_domain, word: hub }
+
 nginx:
   upstream:
     name: kiwihub

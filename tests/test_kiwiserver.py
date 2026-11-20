@@ -2928,6 +2928,73 @@ class TestSetup(Base):
         finally:
             del os.environ["KIWI_AT_ONCE"]
 
+    @unittest.skipUnless(have("ssh-keygen"), "ssh-keygen not installed")
+    def test_a_part_is_named_by_service(self):
+        """`names: service`: a part on one machine is paste.home, not paste.quince.home (the owner,
+        20 Nov 2026), in its own site, for the machines that answer for names, and never twice."""
+        from kiwiserver import names as namesmod
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        wg = ("[Interface]\nPrivateKey = dGVzdC1wcml2YXRlLWtleS1ub3QtcmVhbC0wMDAwMDAwMDAwMDA=\nAddress = 10.8.0.%d/24\n"
+              "DNS = 10.8.0.1\n\n[Peer]\nPublicKey = dGVzdC1zZXJ2ZXItcHVibGljLWtleS1ub3QtcmVhbC0wMDAwMDA=\n"
+              "AllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n")
+        for i, h in enumerate(config.Fleet.load(dest).hosts.values()):
+            write(os.path.join(self.tmp, "secrets", "%s.conf" % h.hostname), wg % (20 + i))
+        roles = rolesmod.discover()
+
+        def fleet_with(change):
+            data = yaml.safe_load(util.read_text(dest))
+            change(data)
+            write(dest, yaml.safe_dump(data, sort_keys=False))
+            f = config.Fleet.load(dest)
+            return f, cli.modset(f)
+
+        first = config.Fleet.load(dest)                 # each machine's modules as its preset resolves them
+        r0 = cli.Renderer(first, roles, os.path.join(self.tmp, "out0"), None, cli.modset(first))
+        resolved = {}
+        for h in first.hosts.values():
+            if h.role in roles and not h.validate(roles):
+                r0.script(h)
+                resolved[h.name] = list(h.modules)
+
+        def add(data, host, module, **settings):
+            block = data["hosts"][host].setdefault("node", {})
+            block["modules"] = list(dict.fromkeys(list(block.get("modules") or resolved[host]) + [module]))
+            if settings:
+                block.setdefault(module, {}).update(settings)
+        f, ms = fleet_with(lambda d: add(d, "quince", "paste"))
+        self.assertEqual(namesmod.plan(f, ms), {})                                  # by machine, as before
+        self.assertEqual(namesmod.name_of(f, f.hosts["quince"], "paste", ms), "paste.quince.home")
+        f, ms = fleet_with(lambda d: d["defaults"].__setitem__("names", "service"))
+        given = namesmod.assign(f, ms)
+        self.assertEqual(given[("quince", "paste")], "paste.home")
+        self.assertEqual(f.hosts["quince"].role_settings_raw["paste"]["paste_domain"], "paste.home")
+        self.assertNotIn("names", util.read_text(dest).split("hosts:")[1])           # nothing is written into the machines' blocks
+        r = cli.Renderer(f, roles, os.path.join(self.tmp, "out"), None, ms)
+        script = r.script(f.hosts["quince"])[0]
+        script = script.decode() if isinstance(script, bytes) else script
+        self.assertIn("paste.home", script)                                           # its own site answers to it
+        dns = next(h for h in f.hosts.values() if "dns" in (h.modules or []) and h.name != "quince")
+        other = r.script(dns)[0]
+        self.assertIn("paste.home", other.decode() if isinstance(other, bytes) else other)    # and the names are answered
+        # a name set by hand counts; a part on two machines keeps its machines' names
+        f, ms = fleet_with(lambda d: add(d, "quince", "paste", paste_domain="notes.home"))
+        self.assertNotIn(("quince", "paste"), namesmod.plan(f, ms))
+        self.assertEqual(namesmod.name_of(f, f.hosts["quince"], "paste", ms), "notes.home")
+        f, ms = fleet_with(lambda d: (d["hosts"]["quince"]["node"]["paste"].pop("paste_domain"), add(d, "mango", "paste")))
+        self.assertEqual([k for k in namesmod.plan(f, ms) if k[1] == "paste"], [])
+        # one name for two parts is refused, with both named
+        f, ms = fleet_with(lambda d: add(d, "mango", "paste", paste_domain="cloud.home"))
+        errs = namesmod.errors(f, ms)
+        self.assertTrue(errs and "cloud.home is wanted twice" in errs[0], errs)
+        with self.assertRaisesRegex(KiwiError, "wanted twice"):
+            namesmod.assign(f, ms)
+        f, ms = fleet_with(lambda d: (d["hosts"]["mango"]["node"]["paste"].pop("paste_domain"),
+                                      d["defaults"].__setitem__("names", "sideways")))
+        self.assertIn("is not one of machine, service", namesmod.errors(f, ms)[0])
+
     def test_a_new_release_alone_is_no_change(self):
         import hashlib
         a = "#!/bin/bash\n# kiwi-server 2.197.0 — role script for host lychee\nKS_VERSION='2.197.0'\necho hi\n"

@@ -55,6 +55,11 @@ logins:
     password: admin_password
     note: "This password was set when Paperless first started. If someone changed it inside Paperless, the new one is not known here."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is paperless.<machine>.<domain>; kiwi-server can name it paperless.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: paperless_domain, word: paperless }
+
 nginx:
   upstream:
     name: paperless

@@ -43,6 +43,11 @@ logins:
 pages:
   status: {label: Status page, about: Whether everything works, public: public_status_hostname}
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is control.<machine>.<domain>; kiwi-server can name it control.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: control_hostname, word: control }
+
 nginx:
   upstream:
     name: control

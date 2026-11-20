@@ -37,6 +37,9 @@ DEFAULTS = {
     "role": "bare",
     "hostname": None,
     "domain": "home",      # names are <service>.<host>.<domain>; see domain_advice() for the choice
+    # machine: a part is named after its machine (paste.quince.home). service: a part that runs on
+    # one machine only is named for itself (paste.home), and keeps that name when it moves (names.py)
+    "names": "machine",
     "timezone": "UTC",
     "locale": "en_US.UTF-8",
     "keyboard": "us",

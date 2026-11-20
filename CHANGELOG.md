@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.263.0 — names by service: paste.home
+
+- **`names: service`** (under `defaults:`, or on one machine): a part that runs on one machine
+  only is named for itself, `paste.home` instead of `paste.quince.home`. Its own site answers
+  to the name, the machines that answer for names learn it, and it stays when the part moves.
+  A name set by hand counts; a part on two machines keeps its machines' names; one name for
+  two parts is refused; the control page and the backup server keep their machine's name
+  (docs/network.md, Names by service).
+- kiwi-modules 0.103.0: every module with a name of its own says which setting holds it
+  (`named_by`).
+
 ## 2.262.0 — "What differs" opens for secret files too
 
 - **In the app's "This copy and the other", a secret file's row opens.** Before, only the

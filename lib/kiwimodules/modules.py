@@ -187,6 +187,16 @@ class Module:
         self.bind_mounts = list(st.get("bind_mounts") or [])
         self.volumes = [str(v) for v in (st.get("volumes") or [])]
         self.backup = meta.get("backup") or None     # what restic keeps of this module
+        # how the part is named on the network: {setting, word, url}. `setting` holds its name (a host
+        # name, or a URL with `url: true`); `word` is its own word, as in <word>.<machine>.<domain>
+        nb = meta.get("named_by") or None
+        if nb is not None:
+            if not isinstance(nb, dict) or set(nb) - {"setting", "word", "url"} or not nb.get("setting") or not nb.get("word"):
+                raise KiwiError("modules/%s: named_by: wants {setting, word} and may have url: true" % self.name)
+            if str(nb["setting"]) not in {x.key for x in self.settings}:
+                raise KiwiError("modules/%s: named_by: there is no setting %s" % (self.name, nb["setting"]))
+            nb = {"setting": str(nb["setting"]), "word": str(nb["word"]), "url": bool(nb.get("url"))}
+        self.named_by = nb
         # what a wrong login looks like in this module's log: fail2ban bans who keeps doing it
         # (templated: name, container, file — else the container's output —, match, failregex, maxretry, when)
         self.fail2ban = load_jails("modules/%s" % self.name, meta.get("fail2ban"))

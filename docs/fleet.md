@@ -10,6 +10,7 @@ defaults:                          # every host, unless it says otherwise
   target: ucore                    # coreos | ucore | debian | armbian | coreos-ram (a master in RAM)
   role: bare                       # bare | master | node
   domain: home                     # sh3 becomes sh3.home
+  names: machine                   # machine: paste.sh3.home | service: paste.home (network.md, Names by service)
   timezone: Europe/Berlin
   disk: /dev/sda                   # WIPED by the ISO. Required for build, not for render
   admin:

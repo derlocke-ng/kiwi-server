@@ -49,6 +49,11 @@ logins:
   - label: Photos (Immich)
     note: "The first person to open it makes the admin account. The network keeps no password for it."
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is immich.<machine>.<domain>; kiwi-server can name it immich.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: immich_domain, word: immich }
+
 nginx:
   upstream:
     name: immich

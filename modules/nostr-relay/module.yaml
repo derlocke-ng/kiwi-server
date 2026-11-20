@@ -46,6 +46,11 @@ derived:
 urls:
   - "Nostr relay: wss://{{ relay_host }}"
 
+# how this part is named on the network: the setting that holds its name, and its own word.
+# By default it is relay.<machine>.<domain>; kiwi-server can name it relay.<domain> and keeps
+# its name when the part moves to another machine.
+named_by: { setting: relay_domain, word: relay }
+
 nginx:
   upstream:
     name: strfry

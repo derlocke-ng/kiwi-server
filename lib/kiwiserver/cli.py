@@ -5567,6 +5567,10 @@ def cmd_standby(args):
         how = "no copy yet (or %s does not answer)" % r["ready_on"] if r["age"] is None else "its copy is %s old" % lifecyclemod._ago(r["age"]) \
             if r["age"] >= 90 else "its copy is current"
         print("%-14s on %-10s kept ready on %-10s %s" % (r["part"], r["on"], r["ready_on"], how))
+    after = switch_after(fleet)
+    print("\n" + ("A part goes to its standby by itself when its machine has been gone for %d minutes and the standby does "
+                  "not reach it either (recovery.switch)." % after if after else
+                  "Nothing switches by itself (recovery.switch): kiwi-server switch %s PART --yes" % typed_path(fleet.path)))
 
 
 MOVING_FILE = "%s-pihole/moving/kiwi.hosts"          # in a machine's stack folder (kiwi-modules' dns part)

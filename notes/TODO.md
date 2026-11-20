@@ -14,7 +14,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 6. A real mail from the notifications.
 7. The public relay: a listed key posting from outside; a renewal that is due.
 8. Authenticator account and code, Firefox sync from a browser, Jabber clients.
-9. The agent on the control node's own machine (its self-apply may skip it).
+9. ~~The agent on the control node's own machine.~~ Done 20 Nov: it was installed, but its reports got 403 (the control page's proxy did not admit the machine itself); `/api/report` needs no address rule now (kiwi-modules). papaya reports 200.
 
 ## B. Half-built
 

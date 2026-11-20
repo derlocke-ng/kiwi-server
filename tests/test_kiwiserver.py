@@ -14269,6 +14269,58 @@ class TestFirstRunPage(StoreBase):
         self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
         self.assertEqual(self.c.refresh_status()["error"], "error: boom")
 
+    def test_a_part_moves_and_switches_from_the_page(self):
+        """Move, keep ready and switch on a machine's page (the Services tab): the plan first, then a
+        job that runs the same command as a terminal would."""
+        cookie, csrf = self.made()
+        a, b = sorted(self.data()["hosts"])[:2]
+        part = self.data()["hosts"][a].get("node", {}).get("modules", ["vault"])[0] if False else "vault"
+        argv_log = os.path.join(self.tmp, "argv")
+        plan = {"part": part, "from": a, "to": b, "name": "vault.%s.home" % a, "carry": True, "pins": [],
+                "steps": ["%s stops on %s, and %s makes one last backup" % (part, a, a), "%s is applied" % b],
+                "stops": [], "notes": ["its data stays on %s's disk" % a]}
+        script = ("import json, sys\n"
+                  "open(%r, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                  "if sys.argv[1] == 'move' and '--porcelain' in sys.argv: print(json.dumps(%r))\n"
+                  "if sys.argv[1] == 'move' and 'nowhere' in sys.argv: sys.exit(1)\n" % (argv_log, plan))
+        self.c.kiwi = [sys.executable, "-c", script]
+        self.assertEqual(self.c.move_plan(part, a, b)["steps"], plan["steps"])
+        with self.assertRaisesRegex(KiwiError, "which part"):
+            self.c.move_plan("no part!", a, b)
+        status, body, _ = self.ask("/hosts/%s/move?part=%s&to=%s" % (a, part, b), cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("makes one last backup", body)                         # the plan, before anything is done
+        self.assertIn("It stays <b>vault.%s.home</b>" % a, body)
+        self.assertIn('action="/hosts/%s/move"' % a, body)
+        self.assertIn("Keep it ready on %s instead" % b, body)
+        # the move is a job that runs `move PART FROM TO --yes`
+        status, where, _ = self.ask("/hosts/%s/move" % a, {"part": part, "to": b, "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 303)
+        jid = where.rsplit("/", 1)[1]
+        for _ in range(200):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        said = util.read_text(argv_log)
+        self.assertIn("move %s %s %s %s --yes" % (self.c.fleet_path, part, a, b), said)
+        self.assertEqual((self.c.job(jid)["action"], self.c.job(jid)["hosts"]), ("move", [a, b]))
+        self.assertEqual(self.ask("/hosts/%s/move" % a, {"part": part, "to": b}, cookie=cookie)[0], 303)   # no token: nothing
+        # the switch: `switch PART FROM --yes`, then the machine it left is applied from here (it waits if it is away)
+        status, where, _ = self.ask("/hosts/%s/switch" % a, {"part": part, "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 303)
+        for _ in range(400):
+            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()) and len(self.c.jobs()) >= 3:
+                break
+            time.sleep(0.05)
+        said = util.read_text(argv_log)
+        self.assertIn("switch %s %s %s --yes" % (self.c.fleet_path, part, a), said)
+        after = [j for j in self.c.jobs() if j["user"] == "control" and j["action"] == "apply"]
+        self.assertEqual([j["hosts"] for j in after], [[a]])
+        with self.assertRaisesRegex(KiwiError, "which part"):
+            self.c.argv("move", [a], module=part)
+        with self.assertRaisesRegex(KiwiError, "which part"):
+            self.c.argv("switch", [a, b], module=part)
+
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and
         a machine that was away is looked at, and given what waited for it, the moment it reports."""

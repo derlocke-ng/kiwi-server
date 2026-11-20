@@ -1178,6 +1178,7 @@ def cmd_list(args):
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
                      "site": site_of(h),
+                     "keep_ready": partstandby.kept(h),     # {part: the machine that keeps it ready}
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
@@ -5233,7 +5234,9 @@ def cmd_switch(args):
     if not src_up:
         from . import controlsync
         later = "Apply %s when it is back: kiwi-server apply %s %s" % (src_name, typed_path(fleet.path), src_name)
-        if controlsync.remote_of(fleet.dir):
+        if os.environ.get("KIWI_CONTROL_HOST"):     # this is the control node: it applies that machine itself after this job
+            later = "The control node applies %s the moment it answers again" % src_name
+        elif controlsync.remote_of(fleet.dir):
             try:                        # the job fails there while the machine is away, and waits for it there
                 if controlsync.run_api(fleet.dir, os.path.basename(fleet.path), "apply", [src_name], write=lambda text: None):
                     later = "%s answered after all and no longer runs it" % src_name

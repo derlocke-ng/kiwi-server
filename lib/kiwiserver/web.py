@@ -707,6 +707,18 @@ stopped until you start it or the machine restarts.</p>
 <input type="hidden" name="action" value="service"><input type="hidden" name="host" value="{{ m.name }}">
 <input type="hidden" name="module" value="{{ s.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
 {% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+{% if m.phase not in fresh and (targets or standby) %}<h2 id="move">Move a part, or keep it ready</h2>
+<p class="muted small">A part moves to another machine with its data, its secrets and its name. A part that is kept ready has its
+data copied to a second machine every minute, and that machine can take it over.</p>
+{% for l in standby %}<div class="card row"><div><b>{{ ptitle(l.part) }}</b> is kept ready on <a href="/hosts/{{ l.ready_on }}">{{ l.ready_on }}</a>:
+{% if l.age is none %}no copy there yet{% elif l.age < 90 %}its copy is current{% else %}its copy is {{ age(l.age) }} old{% endif %}.</div>
+<form class="inline" method="post" action="/hosts/{{ m.name }}/switch"
+onsubmit="return confirm('Give {{ l.part }} to {{ l.ready_on }} now? It stops on {{ m.name }} and starts there with the data {{ l.ready_on }} has.')">{{ tok }}
+<input type="hidden" name="part" value="{{ l.part }}"><button class="primary">Switch to {{ l.ready_on }}</button></form></div>{% endfor %}
+{% if targets %}<form method="get" action="/hosts/{{ m.name }}/move" class="card">
+<label for="mv_part">Part</label><select id="mv_part" name="part">{% for p in m.modules %}<option value="{{ p }}">{{ ptitle(p) }}</option>{% endfor %}</select>
+<label for="mv_to">To the machine</label><select id="mv_to" name="to">{% for t in targets %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
+<div class="actions"><button>See what would happen</button></div></form>{% endif %}{% endif %}
 {% endif %}{% if tab == "history" %}
 <p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
 {% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
@@ -830,6 +842,24 @@ if(u&&d.state=="running"){const a=document.getElementById("openlink");a.href=a.t
 if(d.state=="waiting"||d.state=="running")setTimeout(poll,1500)}
 poll();
 </script>{% endblock %}""",
+
+    "move.html": """{% extends "base.html" %}{% block main %}
+<p><a href="/hosts/{{ src }}?tab=services#move">← {{ src }}</a></p>
+<h1>Move {{ ptitle(plan.part) }}</h1>
+<p class="muted">From {{ src }} to {{ dst }}{% if plan.name %}. It stays <b>{{ plan.name }}</b>{% endif %}.</p>
+{% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
+{% if plan.stops %}<div class="banner warn">It cannot be done as things are.</div>
+<ul>{% for x in plan.stops %}<li>{{ x }}</li>{% endfor %}</ul>
+{% else %}<h2>What happens</h2><ol>{% for x in plan.steps %}<li>{{ x }}</li>{% endfor %}</ol>
+{% for n in plan.notes %}<p class="muted small">{{ n | capitalize }}.</p>{% endfor %}
+<div class="actions"><form class="inline" method="post" action="/hosts/{{ src }}/move"
+onsubmit="return confirm('Move {{ plan.part }} from {{ src }} to {{ dst }} now? It is away for the minutes the move takes.')">{{ tok }}
+<input type="hidden" name="part" value="{{ plan.part }}"><input type="hidden" name="to" value="{{ dst }}">
+<button class="primary">Move it</button></form>
+<form class="inline" method="post" action="/hosts/{{ src }}/keep-ready">{{ tok }}
+<input type="hidden" name="part" value="{{ plan.part }}"><input type="hidden" name="to" value="{{ dst }}">
+<button title="It stays on {{ src }}; {{ dst }} fetches its data every minute and can take it over">Keep it ready on {{ dst }} instead</button></form></div>
+{% endif %}{% endblock %}""",
 
     "devices.html": """{% extends "base.html" %}{% block main %}
 <h1>Devices</h1><p class="muted">Phones, tablets and laptops that use your VPN. On the VPN a device reaches your
@@ -1540,6 +1570,7 @@ VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "che
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "wake": "Waking", "remove": "Removing", "reboot": "Restarting", "poweroff": "Switching off",
         "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
         "rotate-ring": "Replacing the keys of an unlock ring",
+        "move": "Moving a part between", "switch": "Giving a part to its standby, from",
         "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
         "doctor": "Checking the tools of this machine", "service": "Looking after a container on"}
 SERVICES = healthmod.SERVICES        # a service by the first part of its name, in plain words
@@ -1835,6 +1866,14 @@ def make_app(control: Control):
             '%s <code class="sm">%s</code>' % (esc(titles[n]), esc(n)) if titles.get(n) and titles[n] != n else str(esc(n))
             for n in names or []))
     env.filters["parts"] = parts
+
+    def ptitle(name):
+        """A part by its title, as plain words: "Passwords (Vaultwarden)" for vault."""
+        try:
+            return next((m.get("title") or name for m in (control.schema() or {}).get("modules") or [] if m["name"] == name), name)
+        except (KiwiError, OSError, ValueError, KeyError):
+            return name
+    env.globals.update(ptitle=ptitle)
     env.filters["slug"] = machtable.slug
     env.globals.update(toggled=machtable.toggled, stword=lambda k: machtable.WORDS.get(k, k), level=lambda k: machtable.LEVEL.get(k, "plain"))
     env.globals.update(brand_name=os.environ.get("KIWI_BRAND", ""), brand_accent=re.sub(r"[^#0-9a-fA-F]", "", os.environ.get("KIWI_ACCENT", ""))[:7],
@@ -1925,6 +1964,7 @@ def make_app(control: Control):
                         "here": bool(h.get("here")), "wol": bool(h.get("wol")),
                         "locked": bool((s or {}).get("locked")), "stage": (s or {}).get("stage") or "",
                         "waiting": h["name"] in waits,
+                        "keep_ready": h.get("keep_ready") or {},
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",
@@ -2688,8 +2728,67 @@ def make_app(control: Control):
         tab = tab if tab in ("overview", "services", "history", "backups") else "overview"
         mine = [e for e in control.audit_tail(600) if name in (e.get("hosts") or [])]
         jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
+        standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
         return page("host.html", request, "/", m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
-                    chips=chips_of(m, mine), history=mine[:60], jobs=jobs)
+                    chips=chips_of(m, mine), history=mine[:60], jobs=jobs, standby=standby,
+                    targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
+
+    def same_kind(m, ms):
+        """The machines a part of this one can go to: set up, of its kind, not a standby master."""
+        return [x["name"] for x in ms if x["name"] != m["name"] and x["role"] == m["role"] and not x["standby_of"]
+                and x["phase"] not in machtable.FRESH]
+
+    @app.get("/hosts/{name}/move")
+    def move_plan_page(request: Request, name: str, part: str = "", to: str = ""):
+        """What moving a part of this machine to another would do, before anything is done."""
+        if not user(request):
+            return login_page()
+        try:
+            plan = control.move_plan(part, name, to)
+        except KiwiError as e:
+            plan = {"part": part, "name": "", "steps": [], "notes": [], "stops": [str(e)]}
+        return page("move.html", request, "/machines", plan=plan, src=name, dst=to, error=request.query_params.get("error"))
+
+    @app.post("/hosts/{name}/move")
+    def move_do(request: Request, name: str, part: str = Form(""), to: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            jid = control.start("move", [name, to], user=u, module=part)
+        except KiwiError as e:
+            return RedirectResponse("/hosts/%s/move?part=%s&to=%s&error=%s" % (name, urllib.parse.quote(part), urllib.parse.quote(to),
+                                                                                urllib.parse.quote(str(e))), status_code=303)
+        return RedirectResponse("/jobs/" + jid, status_code=303)
+
+    @app.post("/hosts/{name}/keep-ready")
+    def keep_ready_do(request: Request, name: str, part: str = Form(""), to: str = Form(""), csrf: str = Form("")):
+        """Another machine keeps a part of this one ready: into the fleet file, then both are applied."""
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        ms, _st, _info = machines()
+        m = next((x for x in ms if x["name"] == name), None)
+        try:
+            if not m or to not in same_kind(m, ms) or part not in m["modules"]:
+                raise KiwiError("which part of %s, kept ready on which machine?" % name)
+            control.save_settings(name, {"keep_ready": dict(m["keep_ready"], **{part: to})}, user=u)
+            jid = control.start("apply", [name, to], user=u)
+        except KiwiError as e:
+            return RedirectResponse("/hosts/%s/move?part=%s&to=%s&error=%s" % (name, urllib.parse.quote(part), urllib.parse.quote(to),
+                                                                                urllib.parse.quote(str(e))), status_code=303)
+        return RedirectResponse("/jobs/" + jid, status_code=303)
+
+    @app.post("/hosts/{name}/switch")
+    def switch_do(request: Request, name: str, part: str = Form(""), csrf: str = Form("")):
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            jid = control.start("switch", [name], user=u, module=part)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return RedirectResponse("/jobs/" + jid, status_code=303)
 
     def chips_of(m, mine):
         """One look at a machine, part by part (after Foreman's sub-statuses): set up or not, how its

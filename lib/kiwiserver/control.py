@@ -54,9 +54,11 @@ ACTIONS = {
     "service": ("service", True),       # one container of a machine's stack: restart, stop, start, logs
     "reboot": ("power", True),          # a machine restarted, or switched off (power.py)
     "poweroff": ("power", True),
+    "move": ("move", True),             # a part to another machine (partmove.py): hosts [from, to], module: the part
+    "switch": ("switch", True),         # a part to the machine that keeps it ready: hosts [where it runs], module: the part
 }
 CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "rotate-ring", "setup", "build", "restore", "unlock", "remove",
-           "start-new", "prune", "service", "reboot", "poweroff"}
+           "start-new", "prune", "service", "reboot", "poweroff", "move", "switch"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
 
@@ -1086,6 +1088,14 @@ class Control:
                 return list(self.kiwi) + ["prune", self.fleet_path, hosts[0]]
             return list(self.kiwi) + ["backups", self.fleet_path, hosts[0], "--new"]
         # new SSH keys, or a new seed, on every machine that still has the old ones
+        if action == "move":                # module: the part; hosts: the machine it is on, the machine it goes to
+            if len(hosts) != 2 or not MODULE.match(module or ""):
+                raise KiwiError("which part, from which machine, to which?")
+            return list(self.kiwi) + ["move", self.fleet_path, module, hosts[0], hosts[1], "--yes"]
+        if action == "switch":              # module: the part; hosts: the machine it runs on
+            if len(hosts) != 1 or not MODULE.match(module or ""):
+                raise KiwiError("which part, on which machine?")
+            return list(self.kiwi) + ["switch", self.fleet_path, module, hosts[0], "--yes"]
         if action == "rotate-ring":         # module: the ring; hosts: left out (gone for good)
             if not MODULE.match(module or ""):
                 raise KiwiError("which ring?")
@@ -1185,6 +1195,8 @@ class Control:
             more = {k: v for k, v in (("part", module.strip()), ("from", at.strip())) if v and action == "restore"}
             if action == "service":
                 more = {"part": "%s: %s" % (module.strip(), at.strip())}
+            if action in ("move", "switch"):
+                more = {"part": module.strip()}
             self.audit(user, action, hosts=list(hosts), job=jid, **more)
         t = threading.Thread(target=self._run, args=(meta, argv), daemon=True)
         t.start()
@@ -1252,6 +1264,13 @@ class Control:
                 self._gen += 1          # whatever a job did: nothing that was read before it is kept
                 meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
                 self._write(meta)
+        if meta["action"] == "switch" and meta["state"] == "ok" and meta["hosts"]:
+            # the machine the part left: applied from here. If it is away, that apply waits for it
+            # (the book of waiting applies), and it stops the part the moment it answers again
+            try:
+                self.start("apply", [meta["hosts"][0]], user="control")
+            except KiwiError as e:
+                util.warn("control: %s was not applied after the switch: %s" % (meta["hosts"][0], e))
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
             failed = self._failed_hosts(meta) if len(meta["hosts"]) > 1 and meta["state"] == "failed" else None
             if failed:                          # several at once: each machine's own result
@@ -1451,6 +1470,38 @@ class Control:
         return [n for n, _a in todo]
 
     # ---- hidden services ---------------------------------------------------------------
+    # ---- a part to another machine, and its standby (partmove.py, partstandby.py) ------
+    def move_plan(self, part, src, dst):
+        """What a move would do, and what stands in its way: {part, from, to, name, steps, stops,
+        notes} (`move --porcelain` without --yes: nothing changes)."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not (MODULE.match(part or "") and HOST.match(src or "") and HOST.match(dst or "")):
+            raise KiwiError("which part, from which machine, to which?")
+        r = subprocess.run(list(self.kiwi) + ["move", self.fleet_path, part, src, dst, "--porcelain"], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        try:
+            plan = json.loads(r.stdout)
+        except ValueError:
+            raise KiwiError((r.stderr.strip().splitlines() or ["the plan could not be made"])[-1].replace("error: ", ""))
+        if not isinstance(plan, dict) or "stops" not in plan:
+            raise KiwiError("the plan could not be made")
+        return plan
+
+    def standby(self):
+        """The parts another machine keeps ready, with how old each copy is: [{part, on, ready_on,
+        age}] (`standby --porcelain`). Empty when no part has a standby."""
+        if self.locked():
+            return []
+        if not any(h.get("keep_ready") for h in (self.fleet_info() or {}).get("hosts") or []):
+            return []
+        r = subprocess.run(list(self.kiwi) + ["standby", self.fleet_path, "--porcelain"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())
+        try:
+            return list(json.loads(r.stdout).get("standby") or [])
+        except (ValueError, AttributeError):
+            return []
+
     def _onion(self, *argv):
         r = subprocess.run(list(self.kiwi) + ["onion", self.fleet_path] + list(argv), capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env())

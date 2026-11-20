@@ -22,11 +22,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
     (restart a service, update now) and the neighbours' vote between agents are missing; the switch by itself asks the standby
     instead (two that agree: the control node's look and the standby).
 11. ~~A standby follows folders, not named volumes.~~ Done 20 Nov: named volumes are followed (the pastebin, medlar to lychee: fetched within 60 s, switch with nothing lost). The drill found that a public name stayed dead after a move or switch: the proxy's `public` now goes along, the old one closes when nothing public is left, and the certificate is asked for again after the master's apply.
-12. A switch takes six to eight minutes: parts kept ready, the name on both machines, the
-    switch by itself (docs/design/scale.md). Measured 20 Nov (vault, quince to medlar): the part
-    itself is away 55 seconds, and `switch` says so; its name follows as the machines that
-    answer for names are applied (the master next, the home's after it), which is the rest of
-    the minutes. The name on both machines is what would take those away.
+12. ~~A switch takes six to eight minutes~~: under a minute since 2.275.0, by itself since 2.276.0 (item 57).
 13. Moving a whole network: a plan only.
 14. UI steps 3 and 5 to 7 (docs/design/ui.md): one store, `/api/v1`, pushed changes, the app on
     the kit (the job strip is there).

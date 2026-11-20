@@ -129,6 +129,12 @@ BASE_GROUPS = [
         dict(path=("recovery", "unlock"), type="bool", label="Open a disk that waits at boot", scope="defaults", default=True,
              help="A machine that restarted and waits with its disk locked gets its unlock ring forwarded by the control "
                   "node. Off: someone presses Unlock it"),
+        dict(path=("recovery", "switch", "do"), type="enum", label="A part kept ready on another machine", options=["switch", "tell"],
+             scope="defaults", default="switch",
+             help="switch: when its machine is gone and the machine that keeps it ready does not reach it either, the "
+                  "control node switches the part there (the data is a minute old at most). tell: it only says so"),
+        dict(path=("recovery", "switch", "after"), type="int", label="…after this many minutes", scope="defaults", default=5,
+             help="How long its machine must be gone before the part is switched"),
     ]),
     ("Disk unlock", [
         dict(path=("unlock", "rings"), type="list", label="Rings that open its disk", default=[],

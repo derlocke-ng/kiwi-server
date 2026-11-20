@@ -562,7 +562,8 @@ home can only be told about.
 
 The control node holds back in three cases, whatever the fleet file says:
 
-- It restarted the same machine less than an hour ago.
+- It restarted the same machine less than an hour ago, and the machine has
+  not answered since.
 - It restarted it three times in the last 24 hours. Then a person has to look.
 - The provider does not answer. Then the control node itself may be the one
   without a connection, and it does nothing.
@@ -576,6 +577,22 @@ home; the control node only carries it to the machine's own address.
 `recovery: { unlock: false }` switches that off, and "Unlock it" on the
 machine's page does it by hand. A machine whose rings are all at home opens
 when one of the machines that serve them is back.
+
+A part kept ready on a second machine (`keep_ready`, see
+[backups.md](backups.md#a-standby-for-a-part)) goes there by itself when two
+agree that its machine is gone: the control node has not heard from it for
+five minutes, and the machine that keeps the part ready cannot reach it
+either (by ping or at its SSH port, at its address at home and by its name).
+If that machine still reaches it, only the way to the control node is cut,
+and nothing is switched. The switch runs as a job, as the page's Switch
+button does, and Activity says why. Each part is switched by itself at most
+once in 30 minutes.
+
+```yaml
+defaults:
+  recovery:
+    switch: { after: 5 }        # minutes; { do: tell } or false: a person switches
+```
 
 One look by hand, without doing anything:
 

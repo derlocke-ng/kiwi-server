@@ -325,6 +325,10 @@ as in a move. quince gets the change the moment it answers again and then no lon
 part. A machine that answers for names and was not applied since the standby was set up
 learns the new address with its apply.
 
+Nobody has to be there: when quince is gone for five minutes and medlar cannot reach it
+either, the control node switches the part by itself (see
+[control.md](control.md#when-a-machine-does-not-answer)).
+
 What to know:
 
 - A folder a database lives in is read with the part's containers paused, for as long as

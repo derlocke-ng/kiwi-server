@@ -2466,6 +2466,15 @@ class Control:
                 self.audit("control", "restarted %s at its provider: it did not answer" % e["host"], host=e["host"])
             elif e.get("kind") == "unlocked" and e["text"].endswith("it starts now"):
                 self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
+            elif e.get("kind") == "switch" and e.get("part"):
+                # gone, and its standby does not reach it either: the part goes there, as a job like the page's
+                try:
+                    self.start("switch", [e["host"]], user="control", module=e["part"])
+                    self.audit("control", "switched %s from %s to %s: %s did not answer, and %s did not reach it either"
+                               % (e["part"], e["host"], e.get("to", "its standby"), e["host"], e.get("to", "its standby")),
+                               hosts=[e["host"], e.get("to", "")])
+                except KiwiError as err:
+                    self.audit("control", "could not switch %s from %s: %s" % (e["part"], e["host"], str(err)[:200]), host=e["host"])
         return events
 
     def tell(self):

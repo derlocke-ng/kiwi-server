@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.255.0 — a Debian machine on DHCP opens its disk with its rings
+
+- **Fixed: a Debian machine without a fixed address never asked its rings at boot.** Its boot
+  system got `IP=dhcp`, and clevis-initramfs (20) takes the sixth field of that value as the
+  network device to wait for: with no colons it waited for a device called "dhcp", gave up,
+  and the disk waited for its passphrase. It now gets `:::::DEVICE:dhcp`, with the device of
+  its default route, as machines with a fixed address already did. Found by the Debian
+  desktop drill (`tests/drills/desktop-clevis-vm.sh`), which now installs GNOME after the
+  first start and passes `ip=::::::dhcp` itself.
+
 ## 2.254.0 — the app shows its jobs in the kit's strip
 
 - **A running job shows as a strip with the filling kiwi** under the app's window, as in

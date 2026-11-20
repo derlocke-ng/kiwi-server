@@ -6368,6 +6368,14 @@ class TestUnlock(Base):
         self.assertEqual(files["kiwi-unlock-ip"][0], "IP=192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n")
         self.assertIn('-p 2222 -s -j -T 3', files["dropbear.conf"][0])
 
+    def test_debian_boot_system_on_dhcp_names_its_device(self):
+        # clevis-initramfs reads field 6 of IP= as the device to wait for; "dhcp" alone made it
+        # wait for a device called "dhcp" (the Debian desktop drill, 20 Nov 2026)
+        f, h = self.media_host()
+        h.cfg["network"]["dhcp"] = True
+        self.assertEqual(unlock.initramfs_ip(h), ":::::IFACE:dhcp")
+        self.assertEqual(unlock.initramfs_ip(h).split(":")[5], "IFACE")
+
     def test_media_without_ssh_stay_as_they_were(self):
         f = self.unlock_fleet()
         h = f.hosts["lychee"]

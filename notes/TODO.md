@@ -4,6 +4,14 @@ Compiled on 20 November 2026 at 2.267 from the roadmap, the review notes and the
 each item checked against the code. Worked from the top; an item that is done is struck here
 and gets its line in the changelog. New ideas go to the end, not to the front.
 
+## First: the rebuild (the owner, 21 Nov 2026: "this is going out of hands")
+
+No new feature that acts by itself until steps 1 and 2 of docs/design/authority.md are built:
+1. One truth: the control node writes, computers send changes; observed and remembered data leave the synced files.
+2. Permissions that run out, for parts with a standby (voters: the machine, its standby, another node of the site; the master only as a fallback).
+3. One policy table per part, and its sentence on the page.
+4. A second control node on the computer that manages the network.
+
 ## A. Shipped, never tried on real machines
 
 1. ~~`names: service` on a live machine.~~ Done 20 Nov on quince: `ffsync.home` and `pay.home` resolve, answer with a valid certificate, the old name sends on.

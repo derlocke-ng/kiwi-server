@@ -13186,6 +13186,43 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(merged["secrets/known_hosts"], "a k1\nb k2\nc k3\n")
         self.assertEqual(both, [])
 
+    def test_the_fleet_file_is_merged_key_by_key(self):
+        """The page changes one machine's setting, a computer another's: both are kept. Only a key
+        both changed, to different values, is named for a person to decide."""
+        import yaml
+        base = "# my network\ndefaults:\n  domain: home\nhosts:\n  a:\n    node:\n      dns: {dnssec: false}\n  b:\n    node: {}\n  c: {}\n"
+        here = base.replace("dns: {dnssec: false}", "dns: {dnssec: true}")          # this computer: a's setting
+        there = base.replace("  b:\n    node: {}\n", "  b:\n    node: {paste: {paste_domain: p.example.org}}\n")      # the page: b's
+        there = there.replace("  c: {}\n", "")                                    # and c removed there
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": here}, {"fleet.yaml": there})
+        self.assertEqual((both, theirs), ([], ["fleet.yaml"]))
+        got = yaml.safe_load(merged["fleet.yaml"])
+        self.assertEqual(got["hosts"]["a"]["node"]["dns"], {"dnssec": True})
+        self.assertEqual(got["hosts"]["b"]["node"], {"paste": {"paste_domain": "p.example.org"}})
+        self.assertNotIn("c", got["hosts"])
+        self.assertEqual(list(got["hosts"]), ["a", "b"])                           # the order is kept
+        self.assertTrue(merged["fleet.yaml"].startswith("# my network\n"))        # and its first comment
+        # the same key changed on both sides, to different values: named, and here's copy stays
+        there2 = base.replace("dns: {dnssec: false}", "dns: {dnssec: null}")
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": here}, {"fleet.yaml": there2})
+        self.assertEqual((both, merged["fleet.yaml"]), (["fleet.yaml"], here))
+        # a list both changed is one value: named
+        lb = "hosts:\n  a:\n    node:\n      modules: [dns]\n"
+        merged, theirs, both = self.merge({"fleet.yaml": lb}, {"fleet.yaml": lb.replace("[dns]", "[dns, git]")},
+                                          {"fleet.yaml": lb.replace("[dns]", "[dns, paste]")})
+        self.assertEqual(both, ["fleet.yaml"])
+        # what only one side changed keeps its own text, comments and all
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": base}, {"fleet.yaml": there})
+        self.assertEqual(merged["fleet.yaml"], there)
+        # a file with comments further down is not merged (writing it anew would lose them): named, as before
+        noted = base.replace("  b:\n", "  # b is the old laptop\n  b:\n")
+        merged, theirs, both = self.merge({"fleet.yaml": noted}, {"fleet.yaml": noted.replace("false", "true")},
+                                          {"fleet.yaml": noted.replace("node: {}", "node: {x: 1}")})
+        self.assertEqual(both, ["fleet.yaml"])
+        # no YAML on one side: named, as before
+        merged, theirs, both = self.merge({"fleet.yaml": base}, {"fleet.yaml": here}, {"fleet.yaml": "a: [unclosed"})
+        self.assertEqual(both, ["fleet.yaml"])
+
     def test_a_file_both_changed_is_named_and_stays_as_it_is_here(self):
         merged, theirs, both = self.merge({"fleet.yaml": "v1"}, {"fleet.yaml": "mine"}, {"fleet.yaml": "theirs"})
         self.assertEqual((merged, both), ({"fleet.yaml": "mine"}, ["fleet.yaml"]))

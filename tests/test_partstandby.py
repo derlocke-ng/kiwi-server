@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 
@@ -116,6 +117,20 @@ class TestStandby(unittest.TestCase):
         said = open(os.path.join(self.tmp, "logger.log")).read().splitlines()
         self.assertEqual(len(said), 1)                                                         # the same reason is said once
         self.assertIn("cloud from papaya.home: rsync: connection refused", said[0])
+        # a folder that holds data at the first fetch (the machine ran the part before a switch): kept beside it first
+        e = os.path.join(self.tmp, "e")
+        os.makedirs(e)
+        with open(os.path.join(e, "db.sqlite3"), "w") as fh:
+            fh.write("written after the copy\n")
+        os.utime(e, (time.time() - 40 * 86400,) * 2)                                         # a folder made long ago
+        with open(os.path.join(d, "pull.conf"), "w") as fh:
+            fh.write("paste lychee.home %s\n" % e)
+        for _ in range(2):
+            subprocess.run(["bash", "-c", script], env={"PATH": bindir + ":/usr/bin:/bin"}, check=True)
+        kept = [x for x in os.listdir(self.tmp) if x.startswith("e.kept-")]
+        self.assertEqual(len(kept), 1)                                                         # once, not at every fetch
+        self.assertEqual(open(os.path.join(self.tmp, kept[0], "db.sqlite3")).read(), "written after the copy\n")
+        self.assertIn("paste: what %s held is kept in" % e, open(os.path.join(self.tmp, "logger.log")).read())
 
     def test_an_apply_sets_up_both_sides_with_a_volume(self):
         """The machine that runs the part says where its volume lies; the standby asks for that folder

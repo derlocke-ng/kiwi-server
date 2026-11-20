@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.279.0 — the switch by itself, told and shown
+
+- **Tried with a power cut on 2.278.0** (tests/drills/part-failover.sh, medlar off with
+  Vaultwarden on it): on quince 6 min 38 s after the cut by itself (was 10 min 42 s), its name
+  answered there after 7 min 8 s with its data, medlar's own copy stopped 12 s after it started
+  again, and medlar keeps it ready since: the two stay a pair.
+- **A switch done by itself is in the messages** (mail, ntfy, webhook), as a restart is.
+- The page and the app say on a machine's Services that a part kept ready goes over by itself,
+  and after how long (`list --porcelain`: `switch_after`); so does the recovery report.
+- certbot's image is pulled before each run (kiwi-modules 0.114.0): `latest` stayed the copy
+  pulled the first time. A certificate renewal was tried on the test network (paste.dlhost.eu).
+- Docs: README, examples, the scale design; the drills.
+
 ## 2.278.0 — a pair stays a pair; a failover two minutes sooner
 
 - **After a switch the machine the part left keeps it ready** (`keep_ready` turned round by the

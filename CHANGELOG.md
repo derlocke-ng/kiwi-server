@@ -17,6 +17,8 @@ uCore with UEFI and with BIOS, Debian).
   builds it again by itself.
 - An encrypted board's volume is grown to its disk by the first apply (Armbian's first
   start grows the partition only).
+- `kiwi-server recovery` (and the Recovery page) names the parts of a dead machine that are kept
+  ready on another one, and the switch that brings them up there.
 - `kiwi-server ssh-config FLEET [--write]`: ssh's own configuration for the machines, with the
   fleet's key and host keys: `ssh papaya`, and `papaya-lan`, `papaya-vpn`, `sorbet-public` for
   when names do not resolve (docs/machines.md, A shell on a machine).

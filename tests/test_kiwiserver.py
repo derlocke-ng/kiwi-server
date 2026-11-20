@@ -11285,8 +11285,14 @@ class TestWeb(WebBase):
 
 
     def test_home_and_a_machine_in_plain_words(self):
+        # the look the login starts is held until the page was asked for: on a fast machine it was over
+        # before, and the page rightly no longer said so (CI, 20 Nov 2026)
+        hold, real = threading.Event(), self.c.refresh_status
+        self.c.refresh_status = lambda *a, **k: (hold.wait(30), real(*a, **k))[1]
         self.ask("/login", {"password": self.PW})
         self.assertIn("Checking your machines", self.ask("/")[1])                 # the look the login started
+        hold.set()
+        self.c.refresh_status = real
         self.wait_look()
         util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"groups": {"devices": "10.9.3.0/24"}, "hosts": [
             {"name": "papaya", "hostname": "papaya.home", "role": "node", "modules": ["cloud", "backup"],

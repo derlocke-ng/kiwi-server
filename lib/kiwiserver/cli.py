@@ -2968,7 +2968,7 @@ def cmd_adopt(args):
 
 def cmd_take_in(args):
     """A machine started from the starter stick, waiting on the home network, taken into this
-    network from here, as the control page's "A machine with the starter stick is waiting" does:
+    network from here, as the control page's "Take in a machine" does:
     the code from its screen, the network's key told to it, the machine added to the fleet file with
     its address, then adopted and set up (`adopt`)."""
     from . import control as controlmod, setup as setupmod

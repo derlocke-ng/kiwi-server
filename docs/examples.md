@@ -112,7 +112,7 @@ kiwi-server access ~/kiwi/fleet.yaml guests cloud.papaya
 kiwi-server access ~/kiwi/fleet.yaml contractor --new lychee:22
 ```
 
-On the control page this is "Who may reach what", with a tick per machine and
+On the control page this is "Access rules", with a tick per machine and
 service.
 
 ## Two networks linked

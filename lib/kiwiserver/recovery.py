@@ -579,7 +579,7 @@ def cases(fleet, roles, ms, hosts, state, fleet_arg):
                        "the keys that open your machines, and the secrets inside your services. If it knew the password "
                        "of the control page, change that too."
                 + (" The computers that can open the keys now: %s." % names(computers) if computers else ""),
-                "how": [_how("Computers", "kiwi-server secrets remove %s %s" % (f, computers[0] if len(computers) == 1
+                "how": [_how("Controllers", "kiwi-server secrets remove %s %s" % (f, computers[0] if len(computers) == 1
                                                                                  else "<computer>"), "/controllers"),
                         _how("Replace the keys", "kiwi-server rotate %s ssh\nkiwi-server rotate %s seed" % (f, f),
                              None, "rotate")]})

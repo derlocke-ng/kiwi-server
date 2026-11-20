@@ -13608,7 +13608,7 @@ class TestFirstRunPage(StoreBase):
         master = next(n for n, h in self.data()["hosts"].items() if h["role"] == "master")
         write(config.Fleet.load(path).resolve_path("secrets/%s.home.conf" % node), "[Interface]\nPrivateKey = x\nAddress = 10.8.0.9/32\n")
         body = self.ask("/access", cookie=cookie)[1]
-        self.assertIn("Who may reach what", body)
+        self.assertIn("<h1>Access rules</h1>", body)
         for g in ("guests", "pentest", "devices", "routers", "family"):
             self.assertIn("<strong>%s</strong>" % g, body)
         self.assertIn('name="apps.family" style="width:auto" checked', body)       # the people of the house: every app

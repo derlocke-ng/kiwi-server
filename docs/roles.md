@@ -153,7 +153,7 @@ document it and are not tried.
 
 - **Where players connect.** At home: the machine's address and the game's port
   (`medlar.home:25565`). From the VPN: the same name; give the group the port in
-  "Who may reach what" (`medlar:25565`,
+  "Access rules" (`medlar:25565`,
   [network.md](network.md#who-may-reach-what)). Unless you say so, nothing is
   opened to the Internet: a friend plays as a device on your VPN, in a group
   that reaches that one port and nothing else.

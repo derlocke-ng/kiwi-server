@@ -481,7 +481,7 @@ def questions(found=None):
                    "The machines at your place. Add the one that will keep your files; more can come later."),
          "questions": [
             {"id": "nodes", "label": "Machines at home", "type": "machines", "default": [],
-             "add": "Add a machine at home",
+             "add": "Add a machine",
              "none": "Without a machine at home you get the VPN and the ad blocker, and no place for your files yet.",
              "fields": [{"id": "preset", "label": "What it does", "type": "choice", "default": "cloud",
                          "options": [{"value": k, "label": v} for k, v in PRESETS.items()]},

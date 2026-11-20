@@ -534,7 +534,7 @@ onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type
 <span class="muted small">One after the other; one that fails does not stop the others.</span></div></form>
 <script>function mtn(){const n=document.querySelectorAll('#mt tbody input:checked').length,b=document.getElementById('mbar');b.hidden=!n;document.getElementById('mn').textContent=n+' ticked:'}mtn()</script>
 {% endif %}
-<details{% if take_error %} open{% endif %}><summary>A machine with the starter stick is waiting</summary>
+<details{% if take_error %} open{% endif %}><summary>Take in a machine</summary>
 <form method="post" action="/machines/take-in" class="card">{{ tok }}
 <p class="muted" style="margin:0 0 8px">A machine you started from the starter stick, on this home network, shows an address and a
 setup code on its screen. Type both here: the code shows that you are at that machine.</p>
@@ -545,7 +545,7 @@ setup code on its screen. Type both here: the code shows that you are at that ma
 <label for="t_name">Name</label><p class="muted" style="margin:0 0 4px">Empty: it is named after a fruit.</p><input id="t_name" name="name">
 {% if take_error %}<p class="bad">{{ take_error }}</p>{% endif %}
 <div class="actions"><button class="primary">Take it in</button></div></form></details>
-<details><summary>Add a machine at home</summary><form method="post" action="/machines/add" class="card">{{ tok }}
+<details><summary>Add a machine</summary><form method="post" action="/machines/add" class="card">{{ tok }}
 <label for="preset">What it does</label><select id="preset" name="preset">{% for value, label in presets.items() %}
 <option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
 <label for="address">Its address at home</label><p class="muted" style="margin:0 0 4px">A fixed address in your home
@@ -601,7 +601,7 @@ document.querySelectorAll(".lookup-m").forEach(function (box) {
 });
 </script>{% endif %}
 
-{% if running %}<h2>Keep it up to date</h2><div class="card"><p>Brings every machine to your network's current settings and the
+{% if running %}<h2>Updates</h2><div class="card"><p>Brings every machine to your network's current settings and the
 newest versions of its services, one machine after the other. <span class="muted">Services that changed restart for a
 moment. Do it now and then, and after changing the settings for every machine.</span></p>
 <form method="post" action="/run" onsubmit="return confirm('Update every machine now? This takes a while; services that changed restart for a moment.')">{{ tok }}
@@ -874,7 +874,7 @@ aria-label="Filter the devices" placeholder="Filter: a part of a name, an addres
 <button name="name" value="{{ d.name }}" formaction="/devices/remove" onclick="return confirm('Take '+this.value+' off the VPN? Its connection stops working at once.')">Remove</button></td></tr>
 {% endfor %}</tbody></table></div></form>{% endif %}{% endif %}
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
-<details><summary>A phone was lost or stolen</summary><p class="muted">Remove it here. From that moment it cannot reach
+<details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach
 your network, even with the WireGuard app still on it.</p></details>
 {% endblock %}""",
 
@@ -965,7 +965,7 @@ out at your master. To the Internet only, never to your machines.</p>
 {% else %}<p class="muted">This network is linked to no other.</p>{% endif %}
 {% endblock %}""",
     "access.html": """{% extends "base.html" %}{% block main %}
-<p><a href="/">← Home</a></p><h1>Who may reach what</h1>
+<p><a href="/">← Home</a></p><h1>Access rules</h1>
 <p class="muted">A device on your VPN belongs to a group: you choose it when you add the device. A linked network is
 another Kiwi network. Tick what each may open. A machine: all of it. A service: only that page.
 The master is always reachable: it answers the names.</p>
@@ -1073,7 +1073,7 @@ Then a machine takes its modules in its settings, like the built-in ones.</p>
 
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
-<h1>Computers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
+<h1>Controllers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
 {% for name, key in ways %}<div class="card row"><span><strong>{{ name }}</strong>
 {% if name == "control" %}<span class="muted"> · this machine (your password)</span>
 {% elif name == "recovery" %}<span class="muted"> · your recovery key, on paper</span>
@@ -1372,7 +1372,7 @@ share is under <a href="/settings">Settings for every machine</a>. Then <em>Appl
 <dt>…bring something back that broke?</dt><dd><a href="/recovery">Recovery</a> says what happens by
 itself and what to press: for a service's data, a lost machine, the master, a lost phone or computer. It also says
 now whether you could.</dd>
-<dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine at home</em>.</dd>
+<dt>…add a machine?</dt><dd>On <a href="/">Home</a>, under <em>Your machines</em>: <em>Add a machine</em>.</dd>
 <dt id="gone" style="scroll-margin-top:64px">…get a machine back that stopped answering?</dt><dd>Check that it is on and has a
 connection. A rented server: restart it in its provider's panel. This machine can do that by itself: under
 <a href="/settings">Settings for every machine</a>, <em>When a machine is gone</em>, choose <em>restart</em>. It then
@@ -1574,11 +1574,11 @@ def ago(t):
 # rest come under the word of their group
 NAV = (("/", "Home", "home", ""), ("/machines", "Machines", "server", ""), ("/services", "Services", "grid", ""),
        ("/devices", "Devices", "phone", "Access"), ("/accounts", "Accounts", "people", "Access"),
-       ("/access", "Who may reach what", "shield", "Access"),
+       ("/access", "Access rules", "shield", "Access"),
        ("/federation", "Linked networks", "link", "Access"),
        ("/backups", "Backups", "box", "Safety"), ("/recovery", "Recovery", "buoy", "Safety"),
        ("/unlock", "Disk unlock", "lock", "Safety"),
-       ("/controllers", "Computers", "screen", "Safety"),
+       ("/controllers", "Controllers", "screen", "Safety"),
        ("/activity", "Activity", "pulse", "More"), ("/settings", "Settings", "sliders", "More"),
        ("/modules", "Module sources", "stack", "More"), ("/help", "Help", "help", "More"))
 # line drawings, 24 by 24, drawn here: nothing is fetched from anywhere

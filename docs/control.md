@@ -17,13 +17,13 @@ that booted. The page:
 | **Accounts** | with the accounts module: requests to accept or deny, invite codes, the accounts and their password links, which services sign people in with them; Jabber's sign-up page too |
 | **Linked networks** | from Home: what other networks may reach here, and whether this network leaves to the Internet through one of them |
 | **Backups** | when each machine was last saved and where; bring a part of a machine back from a snapshot; fetch a copy of the network itself, or save one on the machines |
-| **Computers** | who may manage the network; add one with a link |
+| **Controllers** | the computers that may manage the network; add one with a link |
 | **Activity**, **Help** | what was done by whom; how do I…, and what the words mean |
 | **The status page** | for everyone on the network, without a login, at `https://status.<host>`: every service with what it is for and whether it works, the game servers, how to get an account |
 | **The status page for strangers** | under a public name (`control: { public_status_hostname: … }`): the services open to the Internet, whether they work, how to get an account |
 
-The menu is in groups: Home, Machines and Services; *Access* (Devices, Who may reach
-what, Linked networks); *Safety* (Backups, Recovery, Computers); *More*.
+The menu is in groups: Home, Machines and Services; *Access* (Devices, Accounts,
+Access rules, Linked networks); *Safety* (Backups, Recovery, Disk unlock, Controllers); *More*.
 On a computer the menu is at the side, with how the machines are below it; on a phone
 it is a bar at the bottom, with the rest under "More". The page follows the device's
 light or dark setting, and the moon button switches it (kept in a cookie of that
@@ -155,7 +155,7 @@ one group, the counts above the table filter by group on a click. The filter is 
 page's address, as on Machines: `group:staff`, a part of a name, or the start of an address
 (`10.9.8`). Each row has *QR code* (shows the device's code and file again) and *Remove*.
 
-"Add a machine at home" under the list adds another one. A machine without a fixed
+"Add a machine" under the list adds another one. A machine without a fixed
 address is set up at the address your router gave it; the page asks for it.
 
 **A network without a master** ("No master yet" in the first questions): its machines
@@ -166,8 +166,7 @@ then go onto its VPN, and Home lists the steps:
 the master first, then each machine's place on the VPN and its setup.
 
 **A machine started from the starter stick** needs no install media: start it on the
-home network, and its screen shows its address and a setup code. On Machines, "A machine
-with the starter stick is waiting": type both, say what it does, and "Take it in". The
+home network, and its screen shows its address and a setup code. On Machines, "Take in a machine": type both, say what it does, and "Take it in". The
 code shows that you are at that machine; the control page hands it the network's key
 and sets it up, and the starter's own page goes away. It keeps the address it has, as a
 fixed one, and its disk is not encrypted (the starter installed it already). The app
@@ -373,7 +372,7 @@ Internet. kiwi-app's user side reads it.
 ## A computer was lost or stolen
 
 Remove it (above), then replace what it knew. On the page, under
-**Computers**; in the app, the menu's **A computer was lost or stolen…**
+**Controllers**; in the app, the menu's **A computer was lost or stolen…**
 
 1. **The keys that open your machines.** Every machine gets a new admin SSH
    key and a new SSH CA. The old key keeps working until the last machine has

@@ -322,7 +322,7 @@ drops the rest. All services of a node share one address and port, so the node's
 own web server does the rest: it refuses a group the services it was not given,
 and the admin pages when it has not the switch.
 
-On the control page this is "Who may reach what", in the app the same entry in
+On the control page this is "Access rules", in the app the same entry in
 the menu: a tick per machine and service.
 
 To see that the rules hold, with a real VPN client per group:

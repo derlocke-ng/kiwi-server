@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# A standby for a part, on real machines (keep_ready, kiwi-server standby / switch, docs/backups.md):
+# the standby machine fetches the part's data every minute with a key that can do nothing else,
+# and takes the part over with a switch.
+#
+#   tests/drills/part-standby.sh FLEET PART ON STANDBY DATA_DIR
+#
+# ON runs the part; STANDBY will keep it ready and then take it over. DATA_DIR: a folder of the
+# part's data (Vaultwarden: /home/user/docker/kn-vault). One PASS or FAIL line per check.
+set -u
+fleet=${1:?the fleet file}; part=${2:?a part}; on=${3:?the machine it runs on}; sb=${4:?the machine that keeps it ready}
+data=${5:?a folder of its data}
+say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
+fails=0
+check() { if [ "$1" = 0 ]; then say "PASS $2"; else say "FAIL $2"; fails=$((fails + 1)); fi; }
+dir=$(cd "$(dirname "$fleet")" && pwd); S=$(readlink -f "$dir/secrets")
+read -r user domain < <(python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))["defaults"]
+print(d["admin"]["user"], d.get("domain") or "home")' "$fleet")
+at() { # MACHINE COMMAND: as root there
+    ssh -i "$S/admin_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="$S/known_hosts" -o ConnectTimeout=10 "$user@$1.$domain" "sudo sh -c $(printf '%q' "$2")"
+}
+age() { kiwi-server standby "$fleet" --porcelain 2>/dev/null | python3 -c '
+import json, sys
+r = [x for x in json.load(sys.stdin)["standby"] if x["part"] == sys.argv[1]]
+print(r[0]["age"] if r and r[0]["age"] is not None else -1)' "$part"; }
+kiwi-server control pull "$fleet" > control-pull.log 2>&1 || say "note: nothing pulled from a control node"
+# the fleet file: STANDBY keeps the part ready
+python3 - "$fleet" "$part" "$on" "$sb" <<'PY'
+import sys, yaml
+path, part, on, sb = sys.argv[1:5]
+text = open(path).read()
+head = "".join(l for l in text.splitlines(True)[:5] if l.startswith("#"))
+d = yaml.safe_load(text)
+d["hosts"][on].setdefault("keep_ready", {})[part] = sb
+open(path, "w").write(head + yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=1000))
+PY
+check $? "the fleet file: $sb keeps $part of $on ready"
+kiwi-server apply "$fleet" "$on" "$sb" > apply-link.log 2>&1; check $? "$on and $sb applied"
+grep -q "kept ready on $sb" apply-link.log; check $? "$on gives its folders to $sb"
+if ! grep -q "$sb: keeps ready: $part of $on" apply-link.log; then      # the host key came with ON's apply: once more for the standby
+    kiwi-server apply "$fleet" "$sb" >> apply-link.log 2>&1
+fi
+grep -q "$sb: keeps ready: $part of $on" apply-link.log; check $? "$sb fetches them"
+n=240; while [ "$n" -gt 0 ]; do a=$(age); [ "$a" -ge 0 ] && [ "$a" -lt 90 ] && break; sleep 10; n=$((n - 10)); done
+a=$(age); [ "$a" -ge 0 ] && [ "$a" -lt 90 ]; check $? "kiwi-server standby: its copy is current (${a} s)"
+mark="kiwi-standby $(date +%s) $RANDOM"
+at "$on" "echo '$mark' > '$data/.kiwi-standby-marker'"; check $? "a marker is in $part's data on $on"
+n=180; while [ "$n" -gt 0 ]; do [ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark" ] && break; sleep 10; n=$((n - 10)); done
+[ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark" ]; check $? "the marker reached $sb within $((180 - n)) s: its data is fetched"
+at "$on" "docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null; podman ps --format '{{.Names}} {{.Status}}' 2>/dev/null" | grep -- "-$part" | grep -qv -i paused
+check $? "$part runs on $on meanwhile (not left paused)"
+# the standby's key: reading the folders, and nothing else
+k="ssh -i /etc/kiwi-server/standby/key -o UserKnownHostsFile=/etc/kiwi-server/standby/known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes root@$on.$domain"
+! at "$sb" "$k id" >/dev/null 2>&1; check $? "the standby's key gets no shell on $on"
+! at "$sb" "$k cat /etc/shadow" >/dev/null 2>&1; check $? "nor a file outside the folders"
+! at "$sb" "rsync -a -e '${k% root@*}' /etc/hostname root@$on.$domain:$data/planted" >/dev/null 2>&1; check $? "nor can it write into the part's data there"
+! at "$on" "test -e '$data/planted'"; check $? "nothing was planted on $on"
+# the switch
+name=$(kiwi-server move "$fleet" "$part" "$on" "$sb" --porcelain 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name") or "")' 2>/dev/null)
+kiwi-server switch "$fleet" "$part" > switch-plan.log 2>&1; check $? "the plan of the switch has nothing in its way"
+mark2="kiwi-switch $(date +%s) $RANDOM"
+at "$on" "echo '$mark2' > '$data/.kiwi-standby-marker'"
+t0=$(date +%s)
+kiwi-server switch "$fleet" "$part" --yes > switch.log 2>&1; check $? "kiwi-server switch $part --yes ended well ($(( $(date +%s) - t0 )) s)"
+[ "$(at "$sb" "cat '$data/.kiwi-standby-marker'" 2>/dev/null)" = "$mark2" ]; check $? "what was written a moment before the switch is on $sb: nothing was lost"
+at "$sb" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" | grep -q -- "-$part"; check $? "$part runs on $sb"
+! at "$on" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" | grep -q -- "-$part\$"; check $? "$part no longer runs on $on"
+! at "$sb" "grep -q '^$part ' /etc/kiwi-server/standby/pull.conf 2>/dev/null"; check $? "$sb no longer fetches over the part it now runs"
+if [ -n "$name" ]; then
+    ip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); code=000
+    for _ in 1 2 3 4 5 6; do
+        code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' --cacert "$S/ca/kiwiCA.pem" --resolve "$name:443:$ip" "https://$name/")
+        case $code in 2*|3*) break ;; esac
+        sleep 10
+    done
+    case $code in 2*|3*) true ;; *) false ;; esac; check $? "$name answers from $sb ($code)"
+fi
+kiwi-server control push "$fleet" > control-push.log 2>&1 || say "note: nothing pushed to a control node"
+say "$fails wrong"
+exit $((fails > 0))

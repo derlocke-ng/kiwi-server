@@ -224,6 +224,13 @@ A part (a module on a machine) moves with its data, its secrets and its name:
 6. The new machine starts a backup: from then on the part is in the new machine's own store.
    Its history before the move stays in the old machine's.
 
+A part with a public name (`paste.example.org`: a name outside the network's domain, reached
+from the Internet through the master) keeps answering after the move. The new machine's proxy
+is opened to the Internet as the old one's is (`reverse-proxy: public: true`); the old one's
+is closed when the part was its last public name. Once the master hands the name on, the new
+machine asks Let's Encrypt for the certificate: allow a minute or two. A machine that gets no
+certificate for a public name asks again three times, ten minutes apart, then once a day.
+
 The plan says what stands in the way: a machine without the backup part (the data travels
 through the backups), a master and a node (they keep their parts' data under different
 names), two machines with different stack folders, a part the target cannot run.

@@ -15,7 +15,6 @@ Checked by searching the page's code (`lib/kiwiserver/web.py`) and the app's
 | The page | Restoring a copy saved with a passphrase (`.tar.enc`) | the app's *Restore a network from a copy*, `kiwi-server restore` |
 | The page | A synced folder | the app, *Keep it in a synced folder* (a network without a control node) |
 | The app | Settings saved through the control node's API | the page (`/api/settings`); the app changes its own copy and sends it with `control push` |
-| The app | A machine's status chips | the page, on a machine's page |
 | The app | Machines as a table by site with filters and ticks; Devices as a table with filters | the page (2.256.0, 2.257.0); the app keeps its own overview and lists |
 | The app | Link a new network by card | the page, *Link a new network* (next release); the app links two networks only when this computer holds both fleet files |
 | Both | Open an unsigned copy on purpose | `kiwi-server restore FILE --unsigned` |
@@ -187,7 +186,7 @@ says the app uses status, machines, activity and the registry only.
 | A standby for a part | `keep_ready`, `standby`, `switch` | settings, *Parts kept ready on another machine*; *Switch* | Services, *Keep it ready*, the copy's age, *Switch* (next release) |
 | The game page | `list --porcelain` names it | *Open the game page* (next release) | a button on the status page (2.188.0) |
 | A machine's History | `control activity` | *History* on a machine's page (next release) | the History tab |
-| A machine's status chips | none | not built | built |
+| A machine's status chips | none | under the machine's name (next release) | built |
 | Link a new network by card | `federate --invite`, `--accept` | not built | *Link a new network* (next release) |
 | Update the control node itself | none | *Update everything…* runs on the control node | *Update everything* (2.265.0) |
 | The agent's reports | `status --reports DIR` | nothing to click | nothing to click (2.264.0) |

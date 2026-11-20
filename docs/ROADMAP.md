@@ -117,8 +117,8 @@ The designs and the order to build in are in
    - The Android app uses status, machines, activity and the registry only. The
      control node's other routes (2.213.0) wait for it.
 3. **The page and the app lack what the command line has.** The app's settings
-   do not go through the control node's API. A machine's status chips are on
-   the page only. Neither opens an unsigned copy of the network. The page does
+   do not go through the control node's API. Neither opens an unsigned copy of
+   the network. The page does
    not take a `.tar.enc` copy or a synced folder.
 4. **Asked for, not started.** Netboot (PXE). A backup store per service; DNS,
    DHCP and the gateway twice; site controllers; high availability at one site

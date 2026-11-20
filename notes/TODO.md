@@ -19,7 +19,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 ## B. Half-built
 
 10. The agent reports only: orders and the neighbours' vote are missing.
-11. A standby follows folders, not named volumes.
+11. ~~A standby follows folders, not named volumes.~~ Done 20 Nov: named volumes are followed (the pastebin, medlar to lychee: fetched within 60 s, switch with nothing lost). The drill found that a public name stayed dead after a move or switch: the proxy's `public` now goes along, the old one closes when nothing public is left, and the certificate is asked for again after the master's apply.
 12. A switch takes six to eight minutes: parts kept ready, the name on both machines, the
     switch by itself (docs/design/scale.md).
 13. Moving a whole network: a plan only.
@@ -37,7 +37,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 21. ~~`move PART`, `standby`, `switch`, `keep_ready`.~~ Done: the machine's page (Services: plan, Move it, Keep it ready, Switch), the app (Move…, Switch; through the control node), the setting "Parts kept ready on another machine". Not yet clicked on the live control page.
 22. ~~`names: service`: no settings field.~~ Done: "Names of its parts" in the shared settings (page and app).
 23. App: settings edits through the control node's API.
-24. App: a machine's History ~~and status chips~~. History done: "History" on a machine's page opens the control node's activity for that machine, with how each task ended. The chips are still the page's alone.
+24. ~~App: a machine's History and status chips.~~ Done: "History" on a machine's page opens the control node's activity for that machine; the chips (set up, last apply, backup, fullest disk) are under its name, by the page's rules (a test holds the two equal).
 25. ~~App: open the game page.~~ Done: "Open the game page" beside "Open the status page" (the network's settings).
 26. ~~Page: link a new network by card.~~ Done: Linked networks, "Link a new network": download this network's card, paste the other's.
 27. Page and app: open an unsigned copy; page: a `.tar.enc` copy, a synced folder.

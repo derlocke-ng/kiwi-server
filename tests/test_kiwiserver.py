@@ -3147,6 +3147,12 @@ class TestSetup(Base):
         self.assertEqual((opened["public"], opened["acme_email"]), (True, "me@example.org"))
         self.assertTrue(any("proxy opens to the Internet" in x for x in pp["steps"]))
         self.assertFalse(pp["closes"])
+        ran = []                        # and it asks for its certificate again once the master hands the name on
+        with mock.patch.object(cli.remote, "run", lambda tgt, cmd, **k: ran.append(cmd) or b""):
+            cli.certificate_again(fpub, pp, "there")
+            cli.certificate_again(fleet, p, "there")                               # a name of the network: nothing to ask for
+        self.assertEqual(len(ran), 1)
+        self.assertIn("kn-acme.service", ran[0])
         # the part was the old machine's last public name: its proxy closes, or the proxy's own check would stop the apply
         def last_one(fl, h):
             node = fl.raw["hosts"][h.name]["node"]
@@ -5735,6 +5741,33 @@ class TestForm(Base):
             return eval(compile(ast.Expression(node), "kiwi-server-gui", "eval"), {"__builtins__": {}, "dict": dict})
         self.assertEqual(of_the_app("BASE_GROUPS"), formmod.BASE_GROUPS)
         self.assertEqual(of_the_app("SECTION_TARGETS"), formmod.SECTION_TARGETS)
+
+    def test_the_apps_chips_follow_the_pages_rules(self):
+        """A machine's chips (set up, last apply, backup, fullest disk) are worked out twice: on the
+        page (web.machine_chips) and in the app, which imports nothing of kiwi-server. Same input,
+        same chips at the same level."""
+        import ast
+        from kiwiserver import web
+        with open(os.path.join(ROOT, "gui", "kiwi-server-gui")) as fh:
+            tree = ast.parse(fh.read())
+        ns = {"time": time}
+        for fn in ("duration", "machine_chips"):
+            node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fn)
+            exec(compile(ast.Module([node], []), "kiwi-server-gui", "exec"), ns)
+        now = time.time()
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now - 7200))
+        disk = lambda used: [{"mount": "/", "size": 100, "used": used}, {"mount": "/var", "size": 100, "used": 5}]
+        for phase, modules, facts in (
+                ("applied", ["backup", "dns"], {"backup": {"last": "x", "age": 3600}, "disks": disk(40)}),
+                ("applied", ["backup"], {"backup": {"last": "x", "age": 200000}, "disks": disk(85)}),
+                ("applied", ["backup"], {"disks": disk(95)}),
+                ("install", ["dns"], {}),
+                ("applied", ["dns"], {"backup": {"last": "x", "age": 5}})):
+            m = {"phase": phase, "modules": modules, "facts": facts, "bars": web.bars(facts)}
+            page = web.machine_chips(m, [{"what": "apply", "result": "ok", "time": stamp}])
+            app = ns["machine_chips"](phase, modules, facts, applied=now - 7200, now=now)
+            self.assertEqual([(c["text"].split()[0], c["level"]) for c in page], [(t.split()[0], k) for t, k in app], (phase, facts))
+        self.assertEqual(ns["machine_chips"]("applied", [], {}), [])                 # nothing known: no chips
 
     def test_text_and_values(self):
         for ftype, value, text in (("list", ["Sat", "Sun"], "Sat Sun"), ("lines", ["a b", "c"], "a b\nc"),

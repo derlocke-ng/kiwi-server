@@ -1684,6 +1684,35 @@ def bars(facts):
     return out
 
 
+def machine_chips(m, mine):
+    """One look at a machine, part by part (after Foreman's sub-statuses): set up or not, how its
+    last apply ended, its backup, its fullest disk. The app shows the same (its machine_chips)."""
+    out = []
+    if m.get("phase") and m["phase"] != "applied":
+        out.append({"text": "not set up yet", "level": "warn"})
+    last = next((e for e in mine if e.get("result") and e.get("what") in ("apply", "update", "setup", "restore")), None)
+    if last:
+        when = ""
+        try:
+            when = " %s ago" % age(time.time() - time.mktime(time.strptime(last["time"][:19], "%Y-%m-%dT%H:%M:%S")))
+        except (ValueError, KeyError):
+            pass
+        out.append({"text": "last %s: %s%s" % ({"update": "apply"}.get(last["what"], last["what"]),
+                                                JOBWORD.get(last["result"], last["result"]), when),
+                    "level": "ok" if last["result"] == "ok" else "bad"})
+    b = (m.get("facts") or {}).get("backup")
+    if "backup" in (m.get("modules") or []):
+        if b and b.get("last") and b.get("age") is not None:
+            out.append({"text": "backup %s ago" % age(b["age"]), "level": "ok" if b["age"] < 129600 else "bad"})
+        else:
+            out.append({"text": "no backup seen yet", "level": "warn"})
+    disks = [x for x in m.get("bars") or [] if "disk" in str(x.get("label", "")).lower()]
+    if disks:
+        d = max(disks, key=lambda x: x.get("pct") or 0)
+        out.append({"text": "disk %s %%" % d.get("pct"), "level": d.get("level") or "ok"})
+    return out
+
+
 def tags(modules):
     """What a machine is for the others, from its parts."""
     return [word for part, word in (("control", "control node"), ("gateway", "gateway"), ("backup-server", "keeps backups"))
@@ -2741,7 +2770,7 @@ def make_app(control: Control):
         jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
         standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
         return page("host.html", request, "/", m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
-                    chips=chips_of(m, mine), history=mine[:60], jobs=jobs, standby=standby,
+                    chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby,
                     targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
 
     def same_kind(m, ms):
@@ -2800,34 +2829,6 @@ def make_app(control: Control):
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return RedirectResponse("/jobs/" + jid, status_code=303)
-
-    def chips_of(m, mine):
-        """One look at a machine, part by part (after Foreman's sub-statuses): set up or not, how its
-        last apply ended, its backup, its fullest disk."""
-        out = []
-        if m.get("phase") and m["phase"] != "applied":
-            out.append({"text": "not set up yet", "level": "warn"})
-        last = next((e for e in mine if e.get("result") and e.get("what") in ("apply", "update", "setup", "restore")), None)
-        if last:
-            when = ""
-            try:
-                when = " %s ago" % age(time.time() - time.mktime(time.strptime(last["time"][:19], "%Y-%m-%dT%H:%M:%S")))
-            except (ValueError, KeyError):
-                pass
-            out.append({"text": "last %s: %s%s" % ({"update": "apply"}.get(last["what"], last["what"]),
-                                                    JOBWORD.get(last["result"], last["result"]), when),
-                        "level": "ok" if last["result"] == "ok" else "bad"})
-        b = (m.get("facts") or {}).get("backup")
-        if "backup" in (m.get("modules") or []):
-            if b and b.get("last") and b.get("age") is not None:
-                out.append({"text": "backup %s ago" % age(b["age"]), "level": "ok" if b["age"] < 129600 else "bad"})
-            else:
-                out.append({"text": "no backup seen yet", "level": "warn"})
-        disks = [x for x in m.get("bars") or [] if "disk" in str(x.get("label", "")).lower()]
-        if disks:
-            d = max(disks, key=lambda x: x.get("pct") or 0)
-            out.append({"text": "disk %s %%" % d.get("pct"), "level": d.get("level") or "ok"})
-        return out
 
     @app.get("/api/hosts/{name}/logins")
     def api_logins(request: Request, name: str):

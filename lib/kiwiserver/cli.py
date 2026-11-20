@@ -5041,6 +5041,22 @@ def cmd_federate(args):
                  % (na, nb))
 
 
+def certificate_again(fleet, p, tgt):
+    """A part with a public name went to machine `p["to"]`: it asked Let's Encrypt at its own apply,
+    before the master handed the name on, and got none. Asked again now, not at the daily run
+    (20 Nov 2026: the pastebin's public name was dead after a switch)."""
+    from . import partmove
+    host = fleet.hosts.get(p["to"])
+    if host is None or not partmove.is_public(p.get("name"), host):
+        return
+    try:
+        remote.run(tgt, "systemctl start --no-block kn-acme.service 2>/dev/null || systemctl start --no-block km-acme.service")
+        util.say("%s: asks for the certificate of %s again, now that the master hands the name on" % (p["to"], p["name"]))
+    except KiwiError as e:
+        util.warn("%s: the certificate of %s was not asked for again (it asks by itself within ten minutes): %s"
+                  % (p["to"], p["name"], e))
+
+
 def move_part(args, part, src_name, dst_name):
     """A part to another machine, with its data, its secrets and its name (partmove.py). Without
     --yes: the plan."""
@@ -5123,6 +5139,7 @@ def move_part(args, part, src_name, dst_name):
     # 5. the old machine, and everyone the change reaches
     failed = again(["apply", fleet.path, src_name])
     failed = again(["apply", fleet.path, "--changed"]) or failed
+    certificate_again(fleet, p, d_tgt)
     # 6. from now on it is in the new machine's own store
     if p["carry"]:
         try:
@@ -5231,6 +5248,7 @@ def cmd_switch(args):
     reached = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
     now = [n for n in reached if src_up or n != src_name]
     failed = again(["apply", fleet.path] + now) if now else 0
+    certificate_again(fleet, p, d_tgt)
     later = ""
     if not src_up:
         from . import controlsync

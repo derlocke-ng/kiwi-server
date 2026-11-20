@@ -352,6 +352,29 @@ def run_cli(cli, args, timeout=120, input=None):
         return 1, "", str(e)
 
 
+def machine_chips(phase, modules, facts, applied=None, now=None):
+    """One look at a machine, part by part, as the chips on its page on the control node (web.py,
+    machine_chips; a test holds the two to the same rules): set up or not, its last apply that
+    worked, its backup, its fullest disk. [(text, kind)]."""
+    now = now or time.time()
+    out = []
+    if phase and phase != "applied":
+        out.append(("not set up yet", "warn"))
+    if applied:
+        out.append(("last apply: done %s ago" % duration(max(0, now - applied)), "ok"))
+    b = (facts or {}).get("backup")
+    if "backup" in (modules or []):
+        if b and b.get("last") and b.get("age") is not None:
+            out.append(("backup %s ago" % duration(b["age"]), "ok" if b["age"] < 129600 else "bad"))
+        else:
+            out.append(("no backup seen yet", "warn"))
+    disks = [d for d in (facts or {}).get("disks") or [] if d.get("size")]
+    if disks:
+        pct = max(0, min(100, int(round(100 * max(d["used"] / d["size"] for d in disks)))))
+        out.append(("disk %d %%" % pct, "bad" if pct >= 92 else "warn" if pct >= 80 else "ok"))
+    return out
+
+
 def pill(text, kind, tip=None):
     lbl = Gtk.Label(label=text, valign=Gtk.Align.CENTER)
     lbl.add_css_class("ks-pill")
@@ -6028,6 +6051,12 @@ class Window(Adw.ApplicationWindow):
         col.append(Gtk.Label(label=name, xalign=0, css_classes=["title-1"]))
         word = "Secret store locked" if self.locked() else WORDS[state]
         col.append(caption(" · ".join(x for x in (word, st.get("hostname"), self.checked_line()) if x)))
+        chips = [] if self.locked() else machine_chips(self.phase_of(name), st.get("modules"), f, st.get("applied"))
+        if chips:                       # the page's chips: one look at the machine, part by part
+            line = Gtk.Box(spacing=6, margin_top=6)
+            for text, kind in chips:
+                line.append(pill(text, kind))
+            col.append(line)
         hero.append(col)
         parts = [hero]
         if state == "new":

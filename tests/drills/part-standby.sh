@@ -9,6 +9,9 @@
 # part's data (Vaultwarden: /home/user/docker/kn-vault). One PASS or FAIL line per check.
 # --down: ON is restarted right before the switch, so the switch happens while it does not answer
 # (its disk must open by itself at boot); afterwards the control node must take the part off it.
+# DNS_MACHINES="lime papaya": machines that answer for names at home, applied after the link (the
+# part's name goes into their file of names that move), and asked during the switch when the name
+# points at STANDBY.
 set -u
 fleet=${1:?the fleet file}; part=${2:?a part}; on=${3:?the machine it runs on}; sb=${4:?the machine that keeps it ready}
 data=${5:?a folder of its data}; down=${6:-}
@@ -46,6 +49,15 @@ if ! grep -q "$sb: keeps ready: $part of $on" apply-link.log; then      # the ho
     kiwi-server apply "$fleet" "$sb" >> apply-link.log 2>&1
 fi
 grep -q "$sb: keeps ready: $part of $on" apply-link.log; check $? "$sb fetches them"
+lanof() { python3 -c '
+import sys, yaml
+h = yaml.safe_load(open(sys.argv[1]))["hosts"][sys.argv[2]]
+print(str((h.get("network") or {}).get("address") or "").split("/")[0])' "$fleet" "$1"; }
+dnsm=${DNS_MACHINES:-}
+if [ -n "$dnsm" ]; then
+    # shellcheck disable=SC2086
+    kiwi-server apply "$fleet" $dnsm > apply-dns.log 2>&1; check $? "the machines that answer for names applied ($dnsm)"
+fi
 # the part itself is made there and not started (kiwi-stack ready): a switch starts it at once
 ready=$(at "$sb" "kiwi-stack ready list" 2>/dev/null | grep -- "-$part")
 [ -n "$ready" ] && ! grep -qE ' (active|running)$' <<<"$ready"; check $? "$sb has $part made and not started (${ready:-nothing kept ready})"
@@ -78,7 +90,13 @@ kiwi-server switch "$fleet" "$part" --yes > switch.log 2>&1 &
 sw=$!
 # meanwhile: when does its name answer from the standby (its proxy, at its address)?
 sbip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); answered=""
+sblan=$(lanof "$sb"); declare -A pointed=()
 while kill -0 "$sw" 2>/dev/null; do
+    for m in $dnsm; do
+        [ -z "${pointed[$m]:-}" ] && [ -n "$name" ] || continue
+        got=$(dig +short +time=2 +tries=1 @"$(lanof "$m")" "${name#https://}" 2>/dev/null | tail -1)
+        if [ -n "$got" ] && { [ "$got" = "$sblan" ] || [ "$got" = "$sbip" ]; }; then pointed[$m]=$(( $(date +%s) - t0 )); fi
+    done
     if [ -n "$name" ] && [ -z "$answered" ] && [ -n "$sbip" ]; then
         c=$(curl -s -m 3 -o /dev/null -w '%{http_code}' --cacert "$S/ca/kiwiCA.pem" --resolve "${name#https://}:443:$sbip" "https://${name#https://}/")
         case $c in 2*|3*) answered=$(( $(date +%s) - t0 )) ;; esac
@@ -87,6 +105,9 @@ while kill -0 "$sw" 2>/dev/null; do
 done
 wait "$sw"; check $? "kiwi-server switch $part --yes ended well ($(( $(date +%s) - t0 )) s)"
 [ -n "$answered" ]; check $? "its name answered from $sb ${answered:-?} s after the switch began, before the switch ended"
+for m in $dnsm; do
+    [ -n "${pointed[$m]:-}" ]; check $? "$m pointed $name at $sb ${pointed[$m]:-?} s after the switch began"
+done
 grep -q "it was kept ready" switch.log; check $? "$part started from what was kept ready ($(grep -o '[0-9]* seconds\? after the switch began' switch.log | head -1))"
 grep -E "it was away for|after the switch began" switch.log | sed 's/^/    /'
 if [ "$down" = --down ]; then

@@ -15666,6 +15666,14 @@ class TestRecovery(Base):
         self.assertIn("server_name vault.papaya.kiwi;", later)
         self.assertNotIn("vault.papaya.kiwi", b.files["kn-nginx/nginx.conf"][0])
         self.assertEqual(r.ready_names(f.hosts["lychee"]), ["vault.papaya.kiwi"])
+        # the machines that answer for names serve it from the file a switch rewrites
+        self.assertEqual(r.moving_names(), ["vault.papaya.kiwi"])
+        master = r.script(f.hosts["sorbet"])[1]
+        moving = master.files[cli.MOVING_FILE % master.prefix][0]
+        self.assertRegex(moving, r"\n10\.8\.0\.9 vault\.papaya\.kiwi\n")
+        env = next(e for e in master.compose["services"]["km-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts="))
+        self.assertNotIn("vault.papaya.kiwi", env)
+        self.assertIn(" vault.quince.kiwi", env)                                     # one that does not move: as before
 
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod

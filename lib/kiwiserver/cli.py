@@ -709,7 +709,7 @@ class Renderer:
                     vc.update(standby_endpoints=ends, standby_ping=self._master_ip)
         spec = rolesmod.stack_spec(host, role, records, master_ip=self._master_ip, ca_cert=self.ca_cert(host),
                                    lan_addresses=self.lan_addresses(host, role), mesh_only=self._mesh_only,
-                                   ready=self.ready_parts(host))
+                                   ready=self.ready_parts(host), moving=self.moving_names())
         b = modmod.Renderer(self.ms).render(spec)
         b.no_resolved_stub = any(bool(self.ms.get(m).host.get("disable_resolved_stub")) for m in b.modules)
         return b
@@ -738,6 +738,19 @@ class Renderer:
                         settings[nb["setting"]] = ("https://" + name) if nb.get("url") else name
                 out[part] = (settings, {k: v for k, v in (src.module_files or {}).items() if k.startswith(part + "/")})
         return out
+
+    def moving_names(self):
+        """The names of the parts kept ready on another machine (and any a switch is moving now,
+        `also_moving`): the machines that answer for names serve them from a file of their own,
+        which a switch rewrites in a moment."""
+        out = set(getattr(self, "also_moving", ()) or ())
+        for src_name, part, _dst in partstandby.links(self.fleet):
+            src = self.fleet.hosts.get(src_name)
+            if src is not None:
+                name = namesmod.name_of(self.fleet, src, part, self.ms, namesmod.plan(self.fleet, self.ms))
+                if name:
+                    out.add(name)
+        return sorted(out)
 
     def ready_names(self, host):
         """The names of the parts this machine keeps ready: its certificate carries them, so that they
@@ -5514,6 +5527,45 @@ def cmd_standby(args):
         print("%-14s on %-10s kept ready on %-10s %s" % (r["part"], r["on"], r["ready_on"], how))
 
 
+MOVING_FILE = "%s-pihole/moving/kiwi.hosts"          # in a machine's stack folder (kiwi-modules' dns part)
+# The machine's Pi-hole re-reads its hosts files at once: a name that moved must not wait in a cache
+RELOAD_NAMES = (". /etc/kiwi-server/stack.env 2>/dev/null; d=%(dir)s; [ -d \"$d\" ] || exit 0; "
+                "cat > \"$d/.kiwi.hosts.new\" && mv \"$d/.kiwi.hosts.new\" \"$d/kiwi.hosts\" && "
+                "${STACK_RUNTIME:-podman} exec %(pihole)s pihole reloaddns >/dev/null 2>&1; echo kiwi-told")
+
+
+def point_moving_name(args, name):
+    """Right after a switch wrote the fleet file: every machine that answers for names gets its file
+    of the names that can move as it has it now (the name at its new machine), and reloads it. In
+    seconds, where an apply of each of them takes minutes; their applies follow. A machine that does
+    not answer, or has no such file yet (not applied since its first standby), gets it by its apply.
+    Returns the machines told."""
+    fleet, roles, ms = load(args)
+    r = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms)
+    r.also_moving = {name}
+    told = []
+    for h in fleet.hosts.values():
+        if h.standby_of or h.role not in roles:
+            continue
+        try:
+            role = r.prepare(h)
+            if not role.stack or "dns" not in (h.modules or []):
+                continue
+            _script, b = r.script(h)
+            rel = MOVING_FILE % b.prefix
+            if rel not in b.files:
+                continue
+            data = b.files[rel][0]
+            folder = os.path.dirname(rolesmod.stack_spec(h, role).docker_dir.rstrip("/") + "/" + rel)
+            said = remote.run(remote.reach(h, None), RELOAD_NAMES % {"dir": shlex.quote(folder), "pihole": "%s-pihole" % b.prefix},
+                              data.encode() if isinstance(data, str) else data).decode(errors="replace")
+            if "kiwi-told" in said:
+                told.append(h.name)
+        except (KiwiError, OSError) as e:
+            util.warn("%s: %s points at its new machine there with its apply (%s)" % (h.name, name, str(e).splitlines()[-1][:100]))
+    return told
+
+
 def cmd_switch(args):
     """A part to the machine that keeps it ready (partstandby.py): with the data that machine has.
     The machine it leaves need not answer. Without --yes: the plan."""
@@ -5590,6 +5642,11 @@ def cmd_switch(args):
         util.say("%s: %s kept for %s" % (part, util.count(n, "generated secret"), dst_name))
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
+    if p["name"]:
+        told = point_moving_name(args, p["name"])
+        if told:
+            util.say("%s points at %s now on %s (%s after the switch began)" % (
+                p["name"], dst_name, ", ".join(told), util.count(int(time.time() - began), "second")))
     failed = again(["apply", fleet.path, dst_name])
     if failed:
         raise KiwiError("%s is on %s in the fleet file, but %s could not be applied: kiwi-server apply %s %s"

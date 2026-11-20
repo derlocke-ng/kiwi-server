@@ -91,6 +91,23 @@ case "${1:-}" in
 esac
 compose() { docker compose --file "$STACK_DIR/docker-compose.yml" "$@"; }
 units() { local s; for s in $STACK_SERVICES; do printf '%s.service\n' "$s"; done; }
+# The proxy as it is once the parts kept ready run here (kiwi-modules writes it as nginx-ready.conf):
+# put in place and reloaded, so their names answer here at once. The apply that follows writes the
+# proxy's own config again; a config nginx refuses is put back as it was.
+proxy_now() {
+    local d=$STACK_DIR/${STACK_PREFIX}-nginx keep rt=docker
+    [[ -f $d/nginx-ready.conf && -f $d/nginx.conf ]] || return 0
+    [[ $STACK_RUNTIME == podman ]] && rt=podman
+    keep=$(mktemp) && cp "$d/nginx.conf" "$keep" || return 0
+    cat "$d/nginx-ready.conf" > "$d/nginx.conf"       # in place: the container mounts this very file
+    if "$rt" exec "${STACK_PREFIX}-nginx" nginx -t >/dev/null 2>&1 && "$rt" exec "${STACK_PREFIX}-nginx" nginx -s reload >/dev/null 2>&1; then
+        echo "the proxy answers for them now"
+    else
+        cat "$keep" > "$d/nginx.conf"
+        echo "the proxy did not take their sites: they answer after the apply" >&2
+    fi
+    rm -f "$keep"
+}
 # The parts kept ready for another machine (a standby): made, not started. A switch starts them
 # here in seconds (kiwi-server switch); the apply that follows makes them the machine's own.
 ready() {     # VERB [CONTAINER...]: those of the ready ones, or all of them
@@ -115,7 +132,8 @@ ready() {     # VERB [CONTAINER...]: those of the ready ones, or all of them
                else
                    compose --profile kiwi-ready up --detach "$@" || return 1
                fi
-               echo "started: $*" ;;
+               echo "started: $*"
+               proxy_now ;;
         stop)  if [[ $STACK_RUNTIME == podman ]]; then
                    for s in "$@"; do systemctl stop "$s.service" || true; done
                else

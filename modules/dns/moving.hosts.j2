@@ -1,0 +1,5 @@
+# kiwi-server: the names of parts that can move to another machine (kept ready there), as
+# {{ hostname }} answers for them. A switch rewrites this file; dnsmasq reloads it by itself.
+{% for ip, name in dns_records if name in moving_names %}
+{{ ip if name in mesh_only else lan_addresses.get(ip, ip) }} {{ name }}
+{% endfor %}

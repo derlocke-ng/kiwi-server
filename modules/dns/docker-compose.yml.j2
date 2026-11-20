@@ -70,13 +70,17 @@
 {# the Mullvad SOCKS5 records, refreshed by the host timer; reloaded on every change #}
 {% set _ = lines.append('hostsdir=/etc/mullvad-socks') %}
 {% endif %}
+{% if moving %}
+{# the names of parts that can move to another machine: a switch rewrites that file, dnsmasq reloads it #}
+{% set _ = lines.append('hostsdir=/etc/kiwi-moving') %}
+{% endif %}
 {# an operator's own FTLCONF_misc_dnsmasq_lines: one variable can only be set once #}
 {% for k, v in extra_env.items() if k | upper == 'FTLCONF_MISC_DNSMASQ_LINES' %}
 {% for l in (v | string).split(';') if l.strip() %}{% set _ = lines.append(l.strip()) %}{% endfor %}
 {% endfor %}
 {% set hosts = [] %}
 {# on a LAN, a node on that same LAN answers with its LAN address: its traffic stays on the switch #}
-{% if fleet_records %}{% for ip, name in dns_records %}{% set _ = hosts.append((ip if name in mesh_only else lan_addresses.get(ip, ip)) ~ ' ' ~ name) %}{% endfor %}{% endif %}
+{% if fleet_records %}{% for ip, name in dns_records if name not in moving_names %}{% set _ = hosts.append((ip if name in mesh_only else lan_addresses.get(ip, ip)) ~ ' ' ~ name) %}{% endfor %}{% endif %}
 {% for name, ip in extra_records.items() %}{% set _ = hosts.append(ip ~ ' ' ~ name) %}{% endfor %}
 services:
   {{ container_prefix }}-pihole:
@@ -153,6 +157,10 @@ services:
 {% if mullvad_socks %}
       # root's, written by the host timer: read-only in here
       - {{ docker_dir }}/{{ container_prefix }}-pihole/mullvad-socks:/etc/mullvad-socks:ro,z
+{% endif %}
+{% if moving %}
+      # root's, written by an apply or a switch: read-only in here
+      - {{ docker_dir }}/{{ container_prefix }}-pihole/moving:/etc/kiwi-moving:ro,z
 {% endif %}
 {% if dns_up %}
   # in front of Pi-hole, in its network: the master's Pi-hole while it answers, the fallbacks while it does not

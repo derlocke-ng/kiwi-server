@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.275.0 — a switch in seconds
+
+- **A part switched to its standby answers within a minute** instead of six to eight
+  (kiwi-modules 0.113.0, kiwi-stack 0.9.27). The standby's proxy holds the part's site in a
+  second config and its certificate carries the part's name; the machines that answer for names
+  keep the names of parts kept ready in a hosts file of their own. A switch starts the part's
+  containers kept ready, puts that proxy config in place, and rewrites the names file on every
+  machine that answers for names; the applies follow. Tried three times with Vaultwarden between
+  medlar and quince (tests/drills/part-standby.sh, 0 wrong each): running on the standby 6 s
+  after the switch began, lime's Pi-hole pointed its name there after 12–16 s, the name
+  answered there after 29–37 s (docs/backups.md, A standby for a part).
+
 ## 2.274.0 — pages that follow changes; a standby with its part made; SFTP for the offsite copy
 
 - **The control page follows changes** (`/api/v1/events`, server-sent events): Home, Machines,

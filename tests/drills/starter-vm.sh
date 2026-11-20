@@ -61,7 +61,7 @@ if [ -n "${VMHOST:-}" ] && [ "${KIWI_ON_VMHOST:-}" != 1 ]; then
         | ssh -o BatchMode=yes "$VMHOST" "tar -xzf - -C '$VD/src'" || exit 2
     if [ -s "$w/starter-debug.iso" ]; then
         l=$(sha256sum < "$w/starter-debug.iso" | cut -c1-64)
-        r=$(ssh -o BatchMode=yes "$VMHOST" "sha256sum < '$VD/work/starter-debug.iso' 2>/dev/null | cut -c1-64")
+        r=$(ssh -o BatchMode=yes "$VMHOST" "cat '$VD/work/starter-debug.iso' 2>/dev/null | sha256sum | cut -c1-64")
         [ "$l" = "$r" ] || scp -q "$w/starter-debug.iso" "$VMHOST:$VD/work/starter-debug.iso" || exit 2
     fi
     [ "$cmd" = build ] && exit 0

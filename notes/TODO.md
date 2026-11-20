@@ -88,4 +88,15 @@ say what 2.267.0 does.
     fallbacks cannot help: the VPN server's namespace (where its Pi-hole runs) routes everything through gluetun. A way out
     would be the fallback resolver's packets marked for the host's own table (as the WireGuard server's are, fwmark 0x41),
     which CoreDNS cannot do itself. Tried and taken out again on 20 Nov.
+51. Local time (NTP), the owner 20 Nov: "maybe include local ntp?!". Found: Pi-hole 6 already runs a time server inside its
+    container (port 123 not published) and sets the host's clock itself every hour from pool.ntp.org (ntp.sync, with the
+    SYS_TIME capability the dns module gives it), beside the host's own timesyncd/chrony: two setters of one clock. On lime
+    `ntp.sync.active` was switched off by hand (pihole.toml); its server then answers stratum 2 from the host's clock.
+    Plan: kiwi-modules dns: `FTLCONF_ntp_sync_active=false` always, SYS_TIME dropped, a setting `ntp` (default on) that
+    publishes 123/udp (and `dhcp-option=option:ntp-server,0.0.0.0` when Pi-hole is the DHCP server); manifest KS_STACK_NTP
+    from role setting `ntp_servers`. kiwi-server: `ntp_servers` = the DNS machine at the same site (its LAN address), else
+    the master's mesh address for a machine on the VPN; none for those two themselves. kiwi-stack lib.sh: timesyncd
+    `/etc/systemd/timesyncd.conf.d/50-kiwi.conf` NTP=<local> <the distro's pool> (timesyncd uses FallbackNTP only when
+    NTP= is empty), chrony (uCore has no /etc/chrony.d: an include line or a server line in /etc/chrony.conf) with
+    `server <local> iburst prefer`. The master's wg0 INPUT rules drop only 80/443/51821/5353 from the mesh: 123 passes.
 

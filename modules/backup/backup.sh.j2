@@ -199,8 +199,13 @@ put_back() { # MODULE KIND MOUNTS TARGET SNAPSHOT
     done
     excludes "$module"
     TARGET=$4
+    # A copy made on a machine with SELinux carries its labels. A machine without SELinux cannot
+    # set them, and restic then calls the whole restore failed (a part moved from uCore to
+    # Debian): there they are left out.
+    local labels=()
+    [[ -e /sys/fs/selinux/enforce ]] || labels=(--exclude-xattr security.selinux)
     # --delete empties the target of what the snapshot does not hold: it must hold nothing but these
-    restic "${mounts[@]}" -- restore "$5" --target /restore --delete "${EXCLUDES[@]}"
+    restic "${mounts[@]}" -- restore "$5" --target /restore --delete "${labels[@]}" "${EXCLUDES[@]}"
 }
 
 service() { # stop|start SERVICE...

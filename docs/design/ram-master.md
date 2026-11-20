@@ -1,6 +1,7 @@
 # A master that lives in RAM
 
-Designed and prototyped 11 November 2026 (`target: coreos-ram`). The master boots from its
+Status: built in 2.53.0 (`target: coreos-ram`; designed and prototyped 11 November 2026),
+tried in a local VM and on a rented server at netcup. The master boots from its
 image every time, keeps everything in RAM and touches no disk. Home sends it what makes it
 *this* master after every boot.
 
@@ -29,7 +30,7 @@ someone at boot. The master keeps nothing, and "someone" is a machine at home:
 
 1. The master boots blank: SSH only, no WireGuard, nodes waiting.
 2. `kiwi-server watch <fleet>` at home looks at it every minute (`watch --timer on`: a user
-   timer; later the control node). It reaches the master at its public address, checks the
+   timer; since 2.60.0 the control node does the same by itself). It reaches the master at its public address, checks the
    host key, finds no role and runs `apply`. That goes out from home, so NAT is no matter.
 3. `apply` puts back what the fleet keeps of the master: the WireGuard identity (as since
    2.38) and the Let's Encrypt certificates and ACME account, so a boot never asks for new
@@ -66,14 +67,19 @@ is `ram.copy_to_ram`, off by default.
 Backups are the `backup` module's settings. `coreos.stream`, `kernel_arguments` and
 `console` apply. `disk:` and `unlock:` do not.
 
+## Built since the prototype
+
+- **The control node** runs `watch` every minute for its RAM masters (2.60.0), so the push
+  does not depend on a desktop being on.
+- **netcup**: `kiwi-server vps install` uploads a RAM master's image, attaches it and starts
+  the server from it (2.53.0). The image attached before leaves netcup's store.
+
 ## Later
 
 - **The phoenix spin**: the same image with the master's container images inside, so nothing
   is pulled into RAM at boot, and `bootc`'s updates with a rollback for machines that boot it
   from a disk (`[root] transient = true`, `[etc] transient = true` in ostree's
   `prepare-root.conf`; untried).
-- **The control node** runs `watch`, so the push does not depend on a desktop being on.
-- **netcup** swapping the ISO: `vps` uploads a new image and reboots into it.
 
 Considered: a partition with the state on the master's disk (no one needed at an unplanned
 reboot, but state at rest; the owner chose RAM only); a blob sealed to a Tang ring (the hoster
@@ -84,4 +90,13 @@ has the blob and reaches the ring from the master's address); NixOS (a third OS)
 
 A local QEMU VM with no disk, 11 November 2026, `tests/drills/ram-master-vm.sh`: build,
 boot, `watch` sends the role, reboot, `watch` sends it again; the same host key, certificate
-and WireGuard key, `/etc` fresh. Not tried: a VPS, clients, a public site's certificates.
+and WireGuard key, `/etc` fresh.
+
+A rented server at netcup (crumble), `tests/drills/ram-master-power.py`: the server is
+switched off and on through netcup's API, and `watch` runs until the master has its role
+again. 11 November 2026: the role was back 134 seconds after power on, with the same
+WireGuard key. 17 November 2026: 219 seconds, the same keys. crumble is the master of the
+second test network, with a node and a standby (`tests/drills/standby.py`, 17 November
+2026).
+
+Not tried: a public site's certificates put back after a boot.

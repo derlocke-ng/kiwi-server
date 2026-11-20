@@ -564,7 +564,7 @@ AWAY = (0, 502, 503, 504)       # no answer, or its proxy answers for it: the co
 PATIENCE = 300                  # seconds to wait for a control page that went away during a job
 
 
-def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=1.0, again=True):
+def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=1.0, again=True, module="", at=""):
     """An action as a job on the control node, as the page's buttons start one: this copy goes there
     first (the node applies what it has), then the job's log comes here as it is written, and what
     the job changed comes back. True when the job ended well.
@@ -578,7 +578,12 @@ def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=
     write = write or say
     push_api(fleet_dir, fleet_name, key=key)
     api, _key = api_for(fleet_dir, key)
-    status, out = api.call("POST", "/api/jobs", {"action": action, "hosts": list(hosts)})
+    job = {"action": action, "hosts": list(hosts)}
+    if module:
+        job["module"] = module          # the part (move, switch), the container (service), the ring
+    if at:
+        job["at"] = at
+    status, out = api.call("POST", "/api/jobs", job)
     if status in (404, 405):
         raise KiwiError("the control node is too old to run a job for a computer: update it first "
                         "(kiwi-server apply <fleet> <its machine> --update)")
@@ -613,7 +618,8 @@ def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=
             if action == "apply" and again:
                 util.say("the control page is back; job %s ended with it. Running it once more: an apply that "
                          "has nothing left to do ends at once" % jid)
-                return run_api(fleet_dir, fleet_name, action, hosts, key=key, write=write, wait=wait, again=False)
+                return run_api(fleet_dir, fleet_name, action, hosts, key=key, write=write, wait=wait, again=False,
+                               module=module, at=at)
             raise KiwiError("the control page restarted while job %s ran, and the job ended with it. Run it again." % jid)
         if status != 200:
             raise KiwiError("the control node lost job %s (%d)" % (jid, status))

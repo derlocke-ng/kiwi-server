@@ -3135,6 +3135,37 @@ class TestSetup(Base):
         self.assertIn("paste", after["fig"]["node"]["modules"])
         self.assertEqual(after["fig"]["node"]["paste"]["paste_domain"], "paste.quince.home")
         self.assertNotIn("paste", after["quince"]["node"])                          # its settings went with it
+        # a part with a public name: the new machine's proxy opens to the Internet as the old one's is
+        pub = yaml.safe_load(util.read_text(dest))
+        pub["hosts"]["quince"]["node"]["paste"] = {"paste_domain": "paste.example.org"}
+        pub["hosts"]["quince"]["node"].setdefault("reverse-proxy", {}).update(public=True, acme_email="me@example.org")
+        fpub = config.Fleet(dest, pub)
+        pp = partmove.plan(fpub, roles, ms, "paste", "quince", "fig", applied=both)
+        self.assertTrue(pp["open"])
+        self.assertEqual(pp["name"], "paste.example.org")
+        opened = pp["data"]["hosts"]["fig"]["node"]["reverse-proxy"]
+        self.assertEqual((opened["public"], opened["acme_email"]), (True, "me@example.org"))
+        self.assertTrue(any("proxy opens to the Internet" in x for x in pp["steps"]))
+        self.assertFalse(pp["closes"])
+        ran = []                        # and it asks for its certificate again once the master hands the name on
+        with mock.patch.object(cli.remote, "run", lambda tgt, cmd, **k: ran.append(cmd) or b""):
+            cli.certificate_again(fpub, pp, "there")
+            cli.certificate_again(fleet, p, "there")                               # a name of the network: nothing to ask for
+        self.assertEqual(len(ran), 1)
+        self.assertIn("kn-acme.service", ran[0])
+        # the part was the old machine's last public name: its proxy closes, or the proxy's own check would stop the apply
+        def last_one(fl, h):
+            node = fl.raw["hosts"][h.name]["node"]
+            if (node.get("reverse-proxy") or {}).get("public") and "paste" not in (node.get("modules") or []):
+                raise util.KiwiError("%s: reverse-proxy.public: no site has a name outside the fleet's domain (hub_domain)" % h.name)
+        pc = partmove.plan(fpub, roles, ms, "paste", "quince", "fig", applied=both, render=last_one)
+        self.assertEqual(pc["stops"], [])
+        self.assertTrue(pc["closes"])
+        self.assertIs(pc["data"]["hosts"]["quince"]["node"]["reverse-proxy"]["public"], False)
+        self.assertTrue(pc["data"]["hosts"]["fig"]["node"]["reverse-proxy"]["public"])
+        self.assertTrue(any("closes to the Internet" in x for x in pc["steps"]))
+        self.assertFalse(p["open"])                                                # a name inside the network: nothing opens
+        self.assertNotIn("reverse-proxy", {k for k in after["fig"]["node"] if k == "reverse-proxy" and after["fig"]["node"][k].get("public")})
         # what stops it
         stop = lambda *a, **k: " ".join(partmove.plan(fleet, roles, ms, *a, **k)["stops"])
         self.assertIn("is not among mango's parts", stop("paste", "mango", "fig"))
@@ -5710,6 +5741,33 @@ class TestForm(Base):
             return eval(compile(ast.Expression(node), "kiwi-server-gui", "eval"), {"__builtins__": {}, "dict": dict})
         self.assertEqual(of_the_app("BASE_GROUPS"), formmod.BASE_GROUPS)
         self.assertEqual(of_the_app("SECTION_TARGETS"), formmod.SECTION_TARGETS)
+
+    def test_the_apps_chips_follow_the_pages_rules(self):
+        """A machine's chips (set up, last apply, backup, fullest disk) are worked out twice: on the
+        page (web.machine_chips) and in the app, which imports nothing of kiwi-server. Same input,
+        same chips at the same level."""
+        import ast
+        from kiwiserver import web
+        with open(os.path.join(ROOT, "gui", "kiwi-server-gui")) as fh:
+            tree = ast.parse(fh.read())
+        ns = {"time": time}
+        for fn in ("duration", "machine_chips"):
+            node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fn)
+            exec(compile(ast.Module([node], []), "kiwi-server-gui", "exec"), ns)
+        now = time.time()
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now - 7200))
+        disk = lambda used: [{"mount": "/", "size": 100, "used": used}, {"mount": "/var", "size": 100, "used": 5}]
+        for phase, modules, facts in (
+                ("applied", ["backup", "dns"], {"backup": {"last": "x", "age": 3600}, "disks": disk(40)}),
+                ("applied", ["backup"], {"backup": {"last": "x", "age": 200000}, "disks": disk(85)}),
+                ("applied", ["backup"], {"disks": disk(95)}),
+                ("install", ["dns"], {}),
+                ("applied", ["dns"], {"backup": {"last": "x", "age": 5}})):
+            m = {"phase": phase, "modules": modules, "facts": facts, "bars": web.bars(facts)}
+            page = web.machine_chips(m, [{"what": "apply", "result": "ok", "time": stamp}])
+            app = ns["machine_chips"](phase, modules, facts, applied=now - 7200, now=now)
+            self.assertEqual([(c["text"].split()[0], c["level"]) for c in page], [(t.split()[0], k) for t, k in app], (phase, facts))
+        self.assertEqual(ns["machine_chips"]("applied", [], {}), [])                 # nothing known: no chips
 
     def test_text_and_values(self):
         for ftype, value, text in (("list", ["Sat", "Sun"], "Sat Sun"), ("lines", ["a b", "c"], "a b\nc"),
@@ -8338,6 +8396,39 @@ class TestVps(Base):
         rc, out, err = self.run_cli("vps", "list", self.vps_fleet().path)
         self.assertEqual(rc, 1)
         self.assertIn("vps login", err)
+
+    def test_a_clock_set_back_and_packets_in_pieces_are_reported(self):
+        """A clock set back keeps WireGuard's other ends from taking this machine's handshakes until
+        the time has caught up: a warning for that long. Packets cut into pieces: a note for an hour."""
+        base = "now=10000\nos=Debian\nclock=yes\n"
+        f = facts.parse(base + "clock_back=1000 3600\nfragmented=100 42\n", local_now=10000)     # 1000 s and 100 s ago
+        self.assertEqual((f["clock_back"], f["fragmented"]), ({"at": 9000, "by": 3600}, {"at": 9900, "count": 42}))
+        _state, problems, notes = facts.assess(f, now=10000)
+        back = [x for x in problems if x["key"] == "clock-back"]
+        self.assertEqual(len(back), 1)
+        self.assertIn("set back 60 minutes", back[0]["text"])
+        self.assertTrue(back[0]["hint"])
+        self.assertTrue(any("cut into pieces here (42" in n for n in notes))
+        _state, problems, notes = facts.assess(f, now=9000 + 3600 + facts.CLOCK_MARGIN + 1)      # the time has caught up
+        self.assertFalse([x for x in problems if x["key"] == "clock-back"])
+        _state, _problems, notes = facts.assess(f, now=9900 + facts.FRAGMENT_SHOWN + 1)
+        self.assertFalse(any("pieces" in n for n in notes))
+        # the machine's clock is the one in doubt: it says how long ago, and the times are this computer's
+        late = facts.parse("now=9760\nos=Debian\nclock=yes\nclock_back=60 240\n", local_now=10000)     # its clock: 240 s behind
+        _state, problems, _notes = facts.assess(late, now=10000)
+        text = next(x["text"] for x in problems if x["key"] == "clock-back")
+        self.assertIn("at %s: until %s" % (time.strftime("%H:%M", time.localtime(9940)), time.strftime("%H:%M", time.localtime(10180))), text)
+        f = facts.parse(base + "clock_back=nonsense\n", local_now=10000)                       # a line it cannot read: nothing
+        self.assertIsNone(f["clock_back"])
+        self.assertIsNone(f["fragmented"])
+        # the probe's own counting, on what the kernel prints
+        fn = re.search(r"(?m)^frag_of\(\) \{.*$", facts.PROBE).group(0)
+        snmp = ("Ip: Forwarding DefaultTTL InReceives ReasmReqds ReasmOKs ReasmFails FragOKs FragFails FragCreates\n"
+                "Ip: 1 64 5000 8 4 0 3 0 6\nIcmp: InMsgs InErrors\nIcmp: 7 0\n")
+        r = subprocess.run(["bash", "-c", fn + "\nfrag_of"], input=snmp, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "10", r.stderr)                                     # ReasmOKs 4 + FragCreates 6
+        r = subprocess.run(["bash", "-n"], input=facts.PROBE, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_probe_says_the_real_disk(self):
         f = self.vps_fleet()
@@ -14268,6 +14359,99 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.c.refresh_status()["hosts"], [{"host": "a", "ok": True}])
         self.c.kiwi = [sys.executable, "-c", "import sys; sys.stderr.write('error: boom'); sys.exit(1)"]
         self.assertEqual(self.c.refresh_status()["error"], "error: boom")
+
+    def test_a_new_network_is_linked_from_the_page_by_card(self):
+        """The page gives this network's card and takes another's (`federate --invite / --accept`):
+        before, linking a new network needed a computer with the fleet."""
+        cookie, csrf = self.made()
+        script = ("import sys\n"
+                  "a = sys.argv\n"
+                  "if a[1] == 'federate' and '--invite' in a:\n"
+                  "    open(a[a.index('--invite') + 1], 'w').write('federation-card: 1\\nname: mine\\nmesh: 10.9.0.0/16\\n')\n"
+                  "if a[1] == 'federate' and '--accept' in a:\n"
+                  "    card = open(a[a.index('--accept') + 1]).read()\n"
+                  "    if 'federation-card' not in card:\n"
+                  "        sys.stderr.write('error: this is not a card\\n'); sys.exit(1)\n"
+                  "    print(':: other is a partner of mine now; nothing is shared yet')\n")
+        self.c.kiwi = [sys.executable, "-c", script]
+        page = self.ask("/federation", cookie=cookie)[1]
+        self.assertIn("<summary>Link a new network</summary>", page)
+        self.assertIn('href="/federation/card.yaml"', page)
+        self.assertNotIn("it is done on the computer that has them", page)
+        status, card, _ = self.ask("/federation/card.yaml", cookie=cookie)
+        self.assertEqual((status, card), (200, "federation-card: 1\nname: mine\nmesh: 10.9.0.0/16\n"))
+        self.assertEqual(self.ask("/federation/card.yaml")[0], 303)                  # not without a login
+        status, body, _ = self.ask("/federation/card", {"card": "federation-card: 1\nname: other\n", "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("other is a partner of mine now", body)
+        self.assertEqual(self.c.audit_tail(5)[0]["what"], "linked with another network (its card taken)")
+        status, body, _ = self.ask("/federation/card", {"card": "something else", "csrf": csrf}, cookie=cookie)
+        self.assertIn("this is not a card", body)                                    # said on the page, nothing taken
+        self.assertEqual(self.ask("/federation/card", {"card": "federation-card: 1"}, cookie=cookie)[0], 303)   # no token: nothing
+        self.assertFalse([f for f in os.listdir(self.c.run) if f.startswith("tmp")])  # the pasted card is not kept
+
+    def test_a_part_moves_and_switches_from_the_page(self):
+        """Move, keep ready and switch on a machine's page (the Services tab): the plan first, then a
+        job that runs the same command as a terminal would."""
+        cookie, csrf = self.made()
+        a, b = sorted(self.data()["hosts"])[:2]
+        part = self.data()["hosts"][a].get("node", {}).get("modules", ["vault"])[0] if False else "vault"
+        argv_log = os.path.join(self.tmp, "argv")
+        plan = {"part": part, "from": a, "to": b, "name": "vault.%s.home" % a, "carry": True, "pins": [],
+                "steps": ["%s stops on %s, and %s makes one last backup" % (part, a, a), "%s is applied" % b],
+                "stops": [], "notes": ["its data stays on %s's disk" % a]}
+        script = ("import json, sys\n"
+                  "open(%r, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                  "if sys.argv[1] == 'move' and '--porcelain' in sys.argv: print(json.dumps(%r))\n"
+                  "if sys.argv[1] == 'move' and 'nowhere' in sys.argv: sys.exit(1)\n" % (argv_log, plan))
+        self.c.kiwi = [sys.executable, "-c", script]
+        self.assertEqual(self.c.move_plan(part, a, b)["steps"], plan["steps"])
+        with self.assertRaisesRegex(KiwiError, "which part"):
+            self.c.move_plan("no part!", a, b)
+        # the machine's Services tab offers it, to the machines of its kind
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps({"hosts": [
+            {"name": a, "hostname": a + ".home", "role": "node", "modules": [part, "backup"], "sites": [], "next": "", "phase": "applied",
+             "keep_ready": {}},
+            {"name": b, "hostname": b + ".home", "role": "node", "modules": ["backup"], "sites": [], "next": "", "phase": "applied"},
+            {"name": "top", "hostname": "top.home", "role": "master", "modules": [], "sites": [], "next": "", "phase": "applied"}]}))
+        tab = self.ask("/hosts/%s?tab=services" % a, cookie=cookie)[1]
+        self.assertIn('<h2 id="move">Move a part, or keep it ready</h2>', tab)
+        self.assertIn('<option value="%s">%s</option>' % (b, b), tab)
+        self.assertNotIn('<option value="top">', tab)                        # a master is another kind of machine
+        self.assertIn('<option value="%s">' % part, tab)
+        status, body, _ = self.ask("/hosts/%s/move?part=%s&to=%s" % (a, part, b), cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("makes one last backup", body)                         # the plan, before anything is done
+        self.assertIn("It stays <b>vault.%s.home</b>" % a, body)
+        self.assertIn('action="/hosts/%s/move"' % a, body)
+        self.assertIn("Keep it ready on %s instead" % b, body)
+        # the move is a job that runs `move PART FROM TO --yes`
+        status, where, _ = self.ask("/hosts/%s/move" % a, {"part": part, "to": b, "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 303)
+        jid = where.rsplit("/", 1)[1]
+        for _ in range(200):
+            if self.c.job(jid)["state"] in ("ok", "failed"):
+                break
+            time.sleep(0.05)
+        said = util.read_text(argv_log)
+        self.assertIn("move %s %s %s %s --yes" % (self.c.fleet_path, part, a, b), said)
+        self.assertEqual((self.c.job(jid)["action"], self.c.job(jid)["hosts"]), ("move", [a, b]))
+        self.assertEqual(self.ask("/hosts/%s/move" % a, {"part": part, "to": b}, cookie=cookie)[0], 303)   # no token: nothing
+        # the switch: `switch PART FROM --yes`, then the machine it left is applied from here (it waits if it is away)
+        status, where, _ = self.ask("/hosts/%s/switch" % a, {"part": part, "csrf": csrf}, cookie=cookie)
+        self.assertEqual(status, 303)
+        for _ in range(400):
+            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()) and len(self.c.jobs()) >= 3:
+                break
+            time.sleep(0.05)
+        said = util.read_text(argv_log)
+        self.assertIn("switch %s %s %s --yes" % (self.c.fleet_path, part, a), said)
+        after = [j for j in self.c.jobs() if j["user"] == "control" and j["action"] == "apply"]
+        self.assertEqual([j["hosts"] for j in after], [[a]])
+        with self.assertRaisesRegex(KiwiError, "which part"):
+            self.c.argv("move", [a], module=part)
+        with self.assertRaisesRegex(KiwiError, "which part"):
+            self.c.argv("switch", [a, b], module=part)
 
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and

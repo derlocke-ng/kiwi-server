@@ -20,6 +20,18 @@ reboots only in the window you chose.
   front page for strangers, accounts with invite codes or requests you accept
   (no email) that sign people in to Forgejo, Nextcloud, Paperless, Vaultwarden
   and Immich, Jabber sign-up, and Tor
+- **A part moves**: a part (a module on a machine) goes to
+  [another machine](docs/backups.md#moving-a-part-to-another-machine) with its
+  data, its secrets and its name
+- **A standby for a part**: a second machine fetches the part's data every
+  minute and [takes the part over](docs/backups.md#a-standby-for-a-part) when
+  you say so
+- **Names by service**: a part can be
+  [named for itself](docs/network.md#names-by-service), `paste.home` instead of
+  `paste.quince.home`
+- **An agent on every machine**: once a minute it
+  [reports to the control node](docs/control.md#the-agent-machines-report-by-themselves)
+  how the machine is
 
 ```
 fleet.yaml ──render──▶ <host>.role.sh            the role, as one bash script
@@ -65,11 +77,11 @@ Step by step: [docs/getting-started.md](docs/getting-started.md).
 | [Example setups](docs/examples.md) | pictures of possible networks and what each part does |
 | [The fleet file](docs/fleet.md) | the settings, the role block, names and the domain |
 | [Roles and modules](docs/roles.md) | master and node, presets, a public hub, Jabber, [accounts](docs/roles.md#accounts), the LAN cache, writing a role |
-| [The network](docs/network.md) | joining the mesh, DNS, the MTU, machines at another site, federation, [routers](docs/routers.md) |
+| [The network](docs/network.md) | joining the mesh, DNS, names by service, the MTU, machines at another site, federation, [routers](docs/routers.md) |
 | [Machines](docs/machines.md) | targets, the output, first boot, updates, a master in RAM, Wake-on-LAN, asleep by day |
-| [The control node](docs/control.md) | kiwi-server on a home node, with a page for the phone; the start page, the status page and the front page for strangers |
+| [The control node](docs/control.md) | kiwi-server on a home node, with a page for the phone; the agent on every machine; the start page, the status page and the front page for strangers |
 | [Boards](docs/boards.md) | Odroid and other arm64 boards: `kiwi-server adopt` |
-| [Backups](docs/backups.md) | the fleet directory, each machine's data, restore |
+| [Backups](docs/backups.md) | the fleet directory, each machine's data, restore, moving a part, a standby for a part |
 | [Security](docs/security.md) | the secret store, encrypted disks, unlock at boot, SSH |
 | [The desktop app](docs/gui.md) | Kiwi Server |
 | [Development](docs/development.md) | tests, kiwi-modules and kiwi-stack, [the module reference](docs/modules.md) |

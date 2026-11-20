@@ -1178,6 +1178,7 @@ def cmd_list(args):
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
                      "site": site_of(h),
+                     "keep_ready": partstandby.kept(h),     # {part: the machine that keeps it ready}
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
                      "applied": (fleet_state(fleet).get("applied") or {}).get(h.name),
@@ -3259,7 +3260,8 @@ def cmd_control(args):
             from .control import ACTIONS
             raise KiwiError("which action? kiwi-server control run <fleet> apply <machine…> (as the page's buttons: %s)"
                             % ", ".join(sorted(ACTIONS)))
-        if not controlsync.run_api(fleet_dir, fleet_name, args.link, args.more or [], key):
+        if not controlsync.run_api(fleet_dir, fleet_name, args.link, args.more or [], key,
+                                   module=getattr(args, "part", None) or "", at=getattr(args, "at", None) or ""):
             sys.exit(1)
         return
     if args.action == "activity":       # the control page's Activity: tasks, and who did what
@@ -5039,6 +5041,22 @@ def cmd_federate(args):
                  % (na, nb))
 
 
+def certificate_again(fleet, p, tgt):
+    """A part with a public name went to machine `p["to"]`: it asked Let's Encrypt at its own apply,
+    before the master handed the name on, and got none. Asked again now, not at the daily run
+    (20 Nov 2026: the pastebin's public name was dead after a switch)."""
+    from . import partmove
+    host = fleet.hosts.get(p["to"])
+    if host is None or not partmove.is_public(p.get("name"), host):
+        return
+    try:
+        remote.run(tgt, "systemctl start --no-block kn-acme.service 2>/dev/null || systemctl start --no-block km-acme.service")
+        util.say("%s: asks for the certificate of %s again, now that the master hands the name on" % (p["to"], p["name"]))
+    except KiwiError as e:
+        util.warn("%s: the certificate of %s was not asked for again (it asks by itself within ten minutes): %s"
+                  % (p["to"], p["name"], e))
+
+
 def move_part(args, part, src_name, dst_name):
     """A part to another machine, with its data, its secrets and its name (partmove.py). Without
     --yes: the plan."""
@@ -5121,6 +5139,7 @@ def move_part(args, part, src_name, dst_name):
     # 5. the old machine, and everyone the change reaches
     failed = again(["apply", fleet.path, src_name])
     failed = again(["apply", fleet.path, "--changed"]) or failed
+    certificate_again(fleet, p, d_tgt)
     # 6. from now on it is in the new machine's own store
     if p["carry"]:
         try:
@@ -5229,11 +5248,14 @@ def cmd_switch(args):
     reached = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
     now = [n for n in reached if src_up or n != src_name]
     failed = again(["apply", fleet.path] + now) if now else 0
+    certificate_again(fleet, p, d_tgt)
     later = ""
     if not src_up:
         from . import controlsync
         later = "Apply %s when it is back: kiwi-server apply %s %s" % (src_name, typed_path(fleet.path), src_name)
-        if controlsync.remote_of(fleet.dir):
+        if os.environ.get("KIWI_CONTROL_HOST"):     # this is the control node: it applies that machine itself after this job
+            later = "The control node applies %s the moment it answers again" % src_name
+        elif controlsync.remote_of(fleet.dir):
             try:                        # the job fails there while the machine is away, and waits for it there
                 if controlsync.run_api(fleet.dir, os.path.basename(fleet.path), "apply", [src_name], write=lambda text: None):
                     later = "%s answered after all and no longer runs it" % src_name
@@ -5796,6 +5818,8 @@ def build_parser():
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
                                            "run: the action (apply, update, status, plan, check, backup …)")
     s.add_argument("more", nargs="*", help="run: the machines")
+    s.add_argument("--part", metavar="NAME", help="run: the part (move, switch), the container (service) or the ring the action is for")
+    s.add_argument("--at", metavar="WHAT", help="run: what to do with it (service: restart, stop, start) or a snapshot's time (restore)")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")
     s.add_argument("--name", help="join: what this computer is called there (default: its hostname)")
     s.add_argument("--address", help="join: where to connect when the control node's name does not resolve here")

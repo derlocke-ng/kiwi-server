@@ -17,9 +17,11 @@ current, minute by minute, and can take the part over.
   data it has, the machines that answer for names learn the new place. The machine it left
   gets the change the moment it answers again (an apply that waits), and then no longer runs it.
 
-Volumes are not followed yet, only folders: a part that keeps its data in a named volume is
-refused with that reason.
+Folders and named volumes are both followed. A folder lies at the same place on both machines;
+a volume lies where each machine's container runtime keeps it, so each machine looks its own up
+(the standby makes the volume if it is not there yet).
 """
+import json
 import os
 import re
 import subprocess
@@ -69,18 +71,19 @@ $cmd
 PULL = r'''#!/bin/bash
 # kiwi-server: keeps parts of other machines ready here (partstandby.py): every minute their
 # folders are fetched from the machine that runs them, to where the part would look for them
-# here. The part does not run here. pull.conf: PART MACHINE FOLDER, one line per folder.
+# here. The part does not run here. pull.conf: PART MACHINE FOLDER [FOLDER-HERE], one line per folder.
 d=/etc/kiwi-server/standby
 exec 9>/run/kiwi-standby.lock; flock -n 9 || exit 0
 mkdir -p "$d/state"
 declare -A bad=() seen=()
-while read -r part from dir; do
+while read -r part from dir here; do
     [[ -n $dir ]] || continue
+    here=${here:-$dir}                  # a volume lies elsewhere on each machine; a folder at the same place
     seen[$part]=1
-    mkdir -p "$dir"
+    mkdir -p "$here"
     if ! rsync -a --delete --numeric-ids --timeout=120 \
         -e "ssh -i $d/key -o UserKnownHostsFile=$d/known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes" \
-        "root@$from:$dir/" "$dir/" 2>"$d/state/$part.err"; then
+        "root@$from:$dir/" "$here/" 2>"$d/state/$part.err"; then
         bad[$part]=1
         why=$(tail -1 "$d/state/$part.err")
         [[ $why == "$(cat "$d/state/$part.said" 2>/dev/null)" ]] || { logger -t kiwi-standby "$part from $from: $why"; echo "$why" > "$d/state/$part.said"; }
@@ -104,8 +107,22 @@ NEED_RSYNC = ('command -v rsync >/dev/null 2>&1 || { command -v apt-get >/dev/nu
 # the machine that runs the part: the sender, its folders, the standby's key (stdin: the public key lines)
 INSTALL_SEND = r'''set -eu
 ''' + NEED_RSYNC + r'''install -d -m 0700 %(dir)s /root/.ssh
-cat > %(dir)s/send.conf <<'KIWI_EOF'
+cat > %(dir)s/send.conf.in <<'KIWI_EOF'
 %(conf)sKIWI_EOF
+# a named volume lies where this machine's container runtime keeps it: looked up here, written
+# into send.conf as a folder, and told back (the standby must ask for that folder)
+rt=$(sed -n 's/^runtime //p' %(dir)s/send.conf.in)
+: > %(dir)s/send.conf.new
+while read -r what rest; do
+    case "$what" in
+        vol:*) at=$("$rt" volume inspect -f '{{.Mountpoint}}' "${what#vol:}" 2>/dev/null) || at=''
+               [ -n "$at" ] || { echo "kiwi-standby: no volume ${what#vol:} here" >&2; continue; }
+               echo "$at $rest" >> %(dir)s/send.conf.new
+               echo "kiwi-volume ${what#vol:} $at" ;;
+        *)     echo "$what $rest" >> %(dir)s/send.conf.new ;;
+    esac
+done < %(dir)s/send.conf.in
+mv %(dir)s/send.conf.new %(dir)s/send.conf; rm -f %(dir)s/send.conf.in
 cat > %(send)s.new <<'KIWI_EOF'
 %(script)sKIWI_EOF
 chmod 0755 %(send)s.new && mv %(send)s.new %(send)s
@@ -133,8 +150,19 @@ umask 077
 printf '%%s\n' "$key" > %(dir)s/key.new && mv %(dir)s/key.new %(dir)s/key
 cat > %(dir)s/known_hosts <<'KIWI_EOF'
 %(known)sKIWI_EOF
-cat > %(dir)s/pull.conf <<'KIWI_EOF'
+cat > %(dir)s/pull.conf.in <<'KIWI_EOF'
 %(conf)sKIWI_EOF
+# a named volume: made here if it is not there yet, and fetched into where this machine keeps it
+rt=$(command -v %(runtime)s >/dev/null 2>&1 && echo %(runtime)s || { command -v podman >/dev/null 2>&1 && echo podman || echo docker; })
+: > %(dir)s/pull.conf.new
+while read -r part from src here; do
+    case "$here" in
+        vol:*) "$rt" volume inspect "${here#vol:}" >/dev/null 2>&1 || "$rt" volume create "${here#vol:}" >/dev/null
+               here=$("$rt" volume inspect -f '{{.Mountpoint}}' "${here#vol:}") ;;
+    esac
+    echo "$part $from $src${here:+ $here}" >> %(dir)s/pull.conf.new
+done < %(dir)s/pull.conf.in
+mv %(dir)s/pull.conf.new %(dir)s/pull.conf; rm -f %(dir)s/pull.conf.in
 umask 022
 cat > %(pull)s.new <<'KIWI_EOF'
 %(script)sKIWI_EOF
@@ -215,11 +243,15 @@ def folders(bundle, part):
     frozen, bulk = value("FROZEN"), value("BULK")
     if frozen is None and bulk is None:
         return None
-    out = {"frozen": [], "bulk": [], "volumes": [], "containers": value("FREEZE") or []}
+    out = {"frozen": [], "bulk": [], "volumes": [], "frozen_volumes": [], "bulk_volumes": [], "containers": value("FREEZE") or []}
     for kind, mounts in (("frozen", frozen or []), ("bulk", bulk or [])):
         for m in mounts:
             src = m.split(":", 1)[0]
-            (out[kind] if src.startswith("/") else out["volumes"]).append(src.rstrip("/"))
+            if src.startswith("/"):
+                out[kind].append(src.rstrip("/"))
+            else:                           # a named volume: where it lies is the machine's own business
+                out["volumes"].append(src)
+                out[kind + "_volumes"].append(src)
     rt = re.search(r"\b(podman|docker) run --rm --network host", text)
     out["runtime"] = rt.group(1) if rt else ""
     return out
@@ -238,6 +270,21 @@ def _hostkey_path(fleet, name):
     return fleet.resolve_path("secrets/standby/%s.hostkey" % name)
 
 
+def _volumes_path(fleet, name):
+    return fleet.resolve_path("secrets/standby/%s.volumes" % name)
+
+
+def _runtime_of(bundle):
+    """podman or docker, as the machine's rendered backup script runs its containers; "" unknown."""
+    entry = (getattr(bundle, "files", None) or {}).get("kiwi/backup.sh")
+    if not entry:
+        return ""
+    text = entry[0] if isinstance(entry, (tuple, list)) else entry
+    text = text.decode(errors="replace") if isinstance(text, bytes) else text
+    rt = re.search(r"\b(podman|docker) run --rm --network host", text)
+    return rt.group(1) if rt else ""
+
+
 def authorized_line(public):
     """The standby's key on the machine that runs the part: the sender and nothing else."""
     kind, blob = public.split()[:2]
@@ -252,6 +299,8 @@ def send_conf(found_by_part):
         runtime = runtime or f["runtime"]
         lines += ["%s frozen %s" % (d, " ".join(f["containers"])) for d in f["frozen"]]
         lines += ["%s bulk" % d for d in f["bulk"]]
+        lines += ["vol:%s frozen %s" % (v, " ".join(f["containers"])) for v in f.get("frozen_volumes") or []]
+        lines += ["vol:%s bulk" % v for v in f.get("bulk_volumes") or []]
     return "".join(x + "\n" for x in (["runtime %s" % runtime] if runtime else []) + lines)
 
 
@@ -271,19 +320,19 @@ def after_apply(fleet, host, tgt, roles, ms, render, runner=None):
                     util.warn("%s: %s is not kept ready on %s: its data comes over through what the backup part knows of it, "
                               "and %s has no backup part or the part keeps no data" % (host.name, part, m, host.name))
                     continue
-                if f["volumes"]:
-                    util.warn("%s: %s is not kept ready on %s: it keeps data in a volume (%s), and only folders are followed yet"
-                              % (host.name, part, m, ", ".join(f["volumes"])))
-                    continue
                 found[part] = f
                 pub = util.read_text(key_path(fleet, m) + ".pub").strip()
                 if authorized_line(pub) not in publics:
                     publics.append(authorized_line(pub))
             if found:
                 script = INSTALL_SEND % {"dir": DIR, "conf": send_conf(found), "send": SEND_PATH, "script": SEND, "mark": MARK, "sshd": SSHD}
-                hostkey = run(tgt, script, ("".join(p + "\n" for p in publics)).encode()).decode(errors="replace").strip().splitlines()[-1]
+                said = run(tgt, script, ("".join(p + "\n" for p in publics)).encode()).decode(errors="replace").strip().splitlines()
+                hostkey = said[-1]
                 os.makedirs(os.path.dirname(_hostkey_path(fleet, host.name)), mode=0o700, exist_ok=True)
                 util.write_text(_hostkey_path(fleet, host.name), hostkey + "\n", 0o644)
+                # where this machine keeps its volumes: the standby asks for those folders
+                where = {x.split()[1]: x.split()[2] for x in said if x.startswith("kiwi-volume ") and len(x.split()) == 3}
+                util.write_text(_volumes_path(fleet, host.name), json.dumps(where, sort_keys=True) + "\n", 0o644)
                 util.say("%s: %s kept ready on %s" % (host.name, ", ".join(sorted(found)),
                                                      ", ".join(sorted({mine[p] for p in found}))))
             else:
@@ -299,25 +348,32 @@ def after_apply(fleet, host, tgt, roles, ms, render, runner=None):
         for a, part in theirs:
             primary = fleet.hosts[a]
             f = folders(render(primary)[1], part)
-            if f is None or f["volumes"]:
+            if f is None:
                 continue
             try:
                 hk = util.read_text(_hostkey_path(fleet, a)).split()
-            except OSError:
+                there = json.loads(util.read_text(_volumes_path(fleet, a))) if f["volumes"] else {}
+            except (OSError, ValueError):
+                waits.append(a)
+                continue
+            if any(v not in there for v in f["volumes"]):       # that machine has not said where they lie yet
                 waits.append(a)
                 continue
             line = "%s %s %s" % (primary.hostname, hk[0], hk[1])
             if line not in known:
                 known.append(line)
             conf += ["%s %s %s" % (part, primary.hostname, d) for d in f["frozen"] + f["bulk"]]
+            conf += ["%s %s %s vol:%s" % (part, primary.hostname, there[v], v) for v in f["volumes"]]
         if waits:
             util.warn("%s: it fetches from %s after that machine's next apply (its host key is not on record yet)"
                       % (host.name, ", ".join(sorted(set(waits)))))
         if not conf:
             run(tgt, REMOVE_PULL)
             return
+        mine_rt = _runtime_of(render(host)[1]) or "podman"
         script = INSTALL_PULL % {"dir": DIR, "known": "".join(x + "\n" for x in known), "conf": "".join(x + "\n" for x in conf),
-                                 "pull": PULL_PATH, "script": PULL, "unit": UNIT, "service": SERVICE, "timer": TIMER}
+                                 "pull": PULL_PATH, "script": PULL, "unit": UNIT, "service": SERVICE, "timer": TIMER,
+                                 "runtime": mine_rt}
         run(tgt, script, util.read_text(key_path(fleet, host.name)).encode())
         util.say("%s: keeps ready: %s" % (host.name, ", ".join("%s of %s" % (p, a) for a, p in sorted(theirs))))
     except (KiwiError, OSError, subprocess.CalledProcessError) as e:

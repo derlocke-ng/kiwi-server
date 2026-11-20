@@ -50,6 +50,10 @@ BASE_GROUPS = [
                   "removed. Its stick carries that key until then: keep it safe"),
         dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
              help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
+        dict(path=("names",), type="enum", label="Names of its parts", options=["machine", "service"], default="machine",
+             help="machine: a part is named after its machine (paste.quince.home). service: a part that runs on one machine only "
+                  "is named for itself (paste.home) and keeps that name when it moves to another machine. The control page and "
+                  "the backup server keep their machine's name. After a change, apply the machine and those that answer for names"),
         dict(path=("timezone",), type="string", label="Time zone", default="UTC", help="An IANA name, e.g. Europe/Berlin: the clock of logs, backups and the reboot time"),
         dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8", help="Language and formats of the system, e.g. de_DE.UTF-8"),
         dict(path=("keyboard",), type="string", label="Keyboard layout", default="us",
@@ -88,6 +92,9 @@ BASE_GROUPS = [
                   "Some machines also need it switched on in their firmware; it takes at the next start"),
         dict(path=("network", "mac"), type="string", label="…its card's MAC", scope="host", default="",
              help="Empty: learned at each apply. Only for a machine that has not been applied yet, like aa:bb:cc:dd:ee:ff"),
+        dict(path=("keep_ready",), type="object", label="Parts kept ready on another machine", scope="host", default={},
+             help="Part and machine, like vault: medlar. That machine fetches the part's data every minute and can take the part "
+                  "over (Switch, on this machine's page). Both must be the same kind of machine. Apply both after a change"),
         dict(path=("network", "vlans"), type="object", label="Tagged VLANs", scope="host", default=[],
              help="Only with a managed switch that sends this machine tagged frames. One line per VLAN, like "
                   "- {id: 20, address: 192.168.20.5/24, name: iot}. The machine gets an interface on it with no "

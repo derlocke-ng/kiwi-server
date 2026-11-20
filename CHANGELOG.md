@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.268.0 — move and switch on the page and in the app; three things found on real machines
+
+Tried on the test machines before the release: `tests/drills/part-standby.sh` (a named volume, a
+public name), `tests/drills/relay-public.py`, a clock set back on a machine.
+
+- **Move, keep ready and switch on a machine's page and in the app.** The page: Services has
+  the plan, *Move it*, *Keep it ready* and *Switch*. The app: *Move…* and *Switch* on a
+  machine, through the control node when there is one. Both settings forms have *Names of its
+  parts* (`names`) and *Parts kept ready on another machine* (`keep_ready`).
+- **A standby follows named volumes too**, not only folders (the pastebin's data).
+- **Fixed: a part with a public name was dead after a move or a switch.** The part's settings
+  moved, `reverse-proxy: public` stayed behind. The new machine's proxy now opens to the
+  Internet as the old one's is, the old one's closes when no public name is left there, and
+  the new machine asks for its certificate again once the master hands the name on.
+- **Fixed (kiwi-modules 0.106.0): the relay refused every note not dated this very second**
+  with the default `keep_days: 0`. Found by posting to the public relay from outside.
+- **Fixed (kiwi-modules 0.106.0): the control node's own machine could not report** (403), and
+  a public name without a certificate is asked for again in ten minutes, not a day later.
+- **A machine reports a clock that was set back** (a warning until the time has caught up:
+  the VPN's other ends may refuse it that long) **and packets cut into pieces** (a note for
+  an hour: a tunnel's MTU is larger than its path carries). The agent sends both each minute.
+- The page links a new network by card (*Link a new network*). The app has a machine's
+  *History*, its status chips under its name, and *Open the game page*.
+- Wake-on-LAN on an ODROID-N2+ with Armbian: the card takes the setting and gets the packet,
+  the board does not start from off (docs/machines.md says so).
+- Docs: the roadmap, the README and the page review say what is built; `notes/TODO.md` is the
+  one list of what is open.
+
 ## 2.267.0 — a part moves, and has a standby: tried on real machines
 
 Everything here was run on the test machines before it was released (a uCore and a Debian

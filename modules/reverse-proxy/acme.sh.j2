@@ -2,11 +2,12 @@
 # Let's Encrypt certificates for the public names of {{ hostname }}: asks for one
 # when it is missing or within 30 days of expiring, and has nginx reload when one
 # changed. A name that cannot be issued yet (no DNS record, say) is reported and
-# tried again at the next run.
+# tried again: three times ten minutes apart, then at the daily run.
 set -u
 dir={{ docker_dir }}/{{ container_prefix }}-nginx
 rt={{ runtime }}
 changed=0
+missing=0
 
 # nginx has to be answering before Let's Encrypt comes to look
 for _ in $(seq 1 30); do
@@ -49,6 +50,7 @@ for name in {{ public_names | join(' ') }}; do
             echo "could not renew the certificate of $name: certbot says why above"
         else
             echo "no certificate for $name yet: does its DNS record point at this machine?"
+            missing=1
         fi
         continue
     fi
@@ -64,5 +66,22 @@ for name in {{ public_names | join(' ') }}; do
 done
 if [[ $changed == 1 ]]; then
     "$rt" exec {{ container_prefix }}-nginx nginx -s reload
+fi
+# A name without a certificate is often minutes from having one: on a node the master has to
+# be applied before it hands the name on, a new DNS record takes a moment. Waiting a day for
+# the timer left a moved site dead (20 Nov 2026). So: again in ten minutes, three times (Let's
+# Encrypt allows five failures an hour for a name), then the daily run goes on asking.
+tries=$dir/acme/.tries
+find "$tries" -mmin +120 -delete 2>/dev/null
+if [[ $missing == 1 ]]; then
+    n=$(cat "$tries" 2>/dev/null)
+    [[ $n =~ ^[0-9]+$ ]] || n=0
+    if (( n < 3 )) && command -v systemd-run >/dev/null; then
+        echo $((n + 1)) > "$tries"
+        systemd-run --quiet --on-active=10min systemctl start {{ container_prefix }}-acme.service \
+            && echo "asking again in ten minutes (try $((n + 1)) of 3)"
+    fi
+else
+    rm -f "$tries"
 fi
 exit 0

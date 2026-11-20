@@ -1,10 +1,11 @@
 # Roadmap and known issues
 
 This page says where kiwi-server stands and what comes next. Its first two
-sections are the current picture (19 November 2026, kiwi-server 2.239.0). The
+sections are the current picture (20 November 2026, kiwi-server 2.267.0). The
 sections after them are the roadmap as it grew from 2.4.0 on: the problems that
 were found and how each one was fixed, and the items as they were raised. They
-stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-server/blob/main/CHANGELOG.md) has every release.
+stay for their history. Where one of them has been built since, a note in
+italics says so. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-server/blob/main/CHANGELOG.md) has every release.
 
 ## Where it stands
 
@@ -14,7 +15,8 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
   only (`target: coreos-ram`); a waiting machine from the starter stick; a
   machine at another site that comes onto the VPN by itself and is set up over
   it (`install.over_vpn`). Machines at home wake by Wake-on-LAN and can sleep by
-  day (`asleep`).
+  day (`asleep`). A machine is switched off or restarted with `power`, which
+  says first what that means.
 - **One private network.** The master is the only machine reachable from the
   Internet. It runs the WireGuard server, leaves to the Internet through a
   commercial VPN (Mullvad, Riseup) and can have a standby: the same master on a
@@ -28,84 +30,112 @@ stay for their history. [CHANGELOG.md](https://github.com/derlocke-ng/kiwi-serve
   everywhere, the network's own names stay inside. A node can stand at another
   site than home (`network.site`). Subnets at home (a guest Wi-Fi, a VLAN) are
   groups of their own, machines take tagged VLANs, and a service can answer at
-  one address only.
+  one address only. A part (a module on a machine) that runs on one machine
+  only can be named for itself (`names: service` gives `paste.home` instead of
+  `paste.quince.home`), and a machine's certificate holds every name its parts
+  answer to.
 - **Encrypted disks that open by themselves.** LUKS on every target, opened at
   boot by Tang rings on other machines, through the master for a machine away
   from home (it relays, it keeps no key), or by a key typed at the console; how
   many rings must answer is a setting, a ring's keys can be replaced in place,
-  and a machine carried off locks itself (the leash). Data disks are encrypted
-  too. The secrets of the network are an encrypted store that locks
+  and a machine carried off locks itself (the leash). A master at a hoster is
+  also opened by the machine that holds its ring (an opener). Data disks are
+  encrypted too. The secrets of the network are an encrypted store that locks
   by itself.
 - **Services as modules** (kiwi-modules, 33 built in): files, photos, documents,
   passwords, git, chat, accounts for all of them (Kanidm, with a group of admins),
   game servers that sleep until someone plays, a status page, hubs and more.
   Modules can also come from git repositories of one's own or of the community
-  (module sources).
+  (module sources). A part moves to another machine with its data, its secrets
+  and its name (`move`). A part can have a standby: a second machine fetches
+  its data every minute and takes the part over when told (`keep_ready`,
+  `standby`, `switch`). Both were tried on real machines; a switch takes six to
+  eight minutes.
 - **Looking after itself.** Updates in a window, a backup every night with
   restic to other machines and copies of the network itself, restore, what
   changes before an update (`plan`) and whether everything answers after it
-  (`check`), messages when something is wrong, with what to do.
+  (`check`), messages when something is wrong, with what to do. Every machine
+  runs a small agent that reports its state to the control node once a minute.
+  `status`, the page and the app say when a machine is being installed or waits
+  at boot for its disk's key.
 - **Three ways to run it**: the command line, the desktop app, and the control
   page on a node at home, which keeps the network when no computer is on. Once
   there is a control node it is the one admin: the app sends its applies there
-  and shows their log. More computers join as controllers; their copies are kept
-  in step and their differences shown. The Android app (kiwi-app) reads the
-  network through the control node's API.
+  and shows their log, and the control node can update itself. Its page is made
+  for many machines: Machines is a table by site with filters, Devices is a
+  table, jobs on different machines run side by side, and an apply works on all
+  its machines at once and waits for one that is off. The app shows a running
+  job in a strip under its window. More computers join as controllers; their
+  copies are kept in step and their differences shown. The Android app
+  (kiwi-app) reads the network through the control node's API.
 - **A face for strangers**: a website from a pinned repository of pages (the
   template dlhost-eu), the status page and the sign-up, all in the control
   page's look, with the website's files through a CDN if wanted.
 
+Built and not released yet, in the next release: a standby follows named
+volumes as well as folders; move, keep ready and switch on the control page and
+in the app; the setting *Names of its parts*; the app opens the game page and
+shows a machine's History; the page links a new network by card; the control
+node's own machine reports (its agent was refused before).
+
 ## Open, in order
 
-1. **The Android app.** Since 2.213.0 the control node answers as JSON for
-   actions (jobs), devices, accounts, settings, who may reach what, the linked
-   networks and module sources, each through the same function as the page. Left:
-   the app (kiwi-app) has to use the routes.
-2. **An encrypted machine at another site:** done on 18 November. The offsite
-   drill with `ENCRYPT=away` (nashi): its first boot opened with the one-time key
-   through the initramfs's SSH, its disk bound to the ring `away` on the master,
-   and after a restart it opened by itself and came back on the mesh. Since
-   2.215.0 such a machine is reached at its mesh address before the home's DNS
-   knows its name.
-3. **Unlock, what is left:** `from=` on Debian (Dropbear has no such option; still
-   none in 2025.89, Debian trixie, checked 19 November),
-   rings on more than one machine (papaya has three since 19 November). The control node's
-   own unlock takes several rings since 2.219.0 (`unlock.control: [house,
-   attic]`); the leash and ring rotation (`rotate FLEET ring NAME`) are there
-   since 2.220.0.
-4. **The image:** the phoenix spin with the container images inside, the join
-   token instead of per-host media (on the mesh only; a machine at another site
-   comes onto the VPN first, `install.over_vpn` since 2.235.0), and hosters
-   without our own install media.
-5. **At home:** netboot (PXE). Wake-on-LAN is there since 2.228.0 (`network.wol`,
-   `kiwi-server wake`, *Wake it*), proven up to the card in a drill; waking real
-   hardware is untested. A machine asleep by day and awake for the night's backups
-   since 2.238.0 (`asleep: {from, until}`).
-6. **A master in RAM, room for its updates:** its /var is half its memory (crumble:
-   913 MB). Since 2.209.0 (kiwi-stack 0.9.16) an update on a nearly full disk takes
-   one image at a time; since 2.230.0 nginx runs on Alpine (64 MB instead of 167 MB)
-   and a changed image makes room for itself: crumble went from 95 % to 83 %, about
-   160 MB free, room for a small module more. Left: a master with a disk.
-7. **LANs and VLANs, as companies have them** (the owner, 18 November;
-   docs/design/lans.md): groups of the home network (a subnet at home given what it
-   may reach, kept by each node and the gateway) since 2.217.0 and 2.218.0, tagged
-   interfaces per machine (`network.vlans`) since 2.223.0, also a setting on the
-   page and in the app since 2.224.0, a service at one VLAN's address only
-   (`listen`, every module) since 2.239.0. Left: the gateway's DHCP, DNS and
-   routing per VLAN.
-8. **Moving a whole network to another mesh or domain**, for just in case
-   (docs/design/federation.md): the plan since 2.237.0 (`kiwi-server move FLEET
-   --mesh … --domain …`, changes nothing); left: the move itself, which must pin
-   every secret derived from a host name (passwords, data disk keys) first. Two networks of one mesh or domain link
-   since 2.216.0, translated at the link. A partner with a domain of its own has
-   its CA offered to the devices since 2.222.0; a translated partner's names are
-   signed by this network's own CA since 2.226.0 (one operator; left: between two).
-9. **Further out:** more hosters than netcup, IPv6 end to end, NFSv4 with
-   kernel TLS instead of the SFTP container, backups of the desktop and the phone
-   (not designed yet), the OpenWrt package, rootless podman for the minimal
-   preset, managed masters (the orchard), the Bluefin client.
-10. **Later, when the network is stable:** the repositories move to the GitHub
-   organization kiwi-eco. The live v1 network moves only when its owner decides.
+What is open is kept in one place,
+[the list of what is open](https://github.com/derlocke-ng/kiwi-server/blob/main/notes/TODO.md)
+(`notes/TODO.md`, compiled on 20 November 2026, each item checked against the
+code). It is worked from the top, and an item that is done is struck there.
+This section only sums it up, so that no second list has to be kept in step.
+The designs and the order to build in are in
+[Many machines, and services that move](design/scale.md) and
+[The page and the apps as server management](design/ui.md).
+
+1. **Built, never tried on real machines.** Wake-on-LAN waking real hardware.
+   The starter stick and a network without a master on a real machine. The
+   guided session from the docs. Phones following the standby master by dynamic
+   DNS. A real mail from the messages. The public relay: a listed key posting
+   from outside, and a certificate renewal that is due. The authenticator,
+   Firefox Sync from a browser, Jabber clients.
+2. **Half-built.**
+   - The agent reports only. It takes no orders yet, and the vote of the
+     neighbours that a switch by itself needs is missing.
+   - A switch to a standby takes six to eight minutes. A switch in seconds and
+     a switch by itself are designed, not built (design/scale.md).
+   - Moving a part to another machine is built (2.266.0, 2.267.0). Moving a
+     whole network to another mesh or domain is a plan only: `kiwi-server move
+     FLEET --mesh … --domain …` says what would change and changes nothing
+     (2.237.0).
+   - The page and the apps (design/ui.md): one store, `/api/v1`, pushed changes
+     and the app on kiwi-template's kit (the parts the Kiwi desktop apps share)
+     are not built. The kit's job strip is.
+   - Boards: kiwi-server does not build the encrypted Armbian image.
+   - netcup: the rescue system, snapshots and user images are not used.
+   - VLANs: the gateway's DHCP, DNS and routing per VLAN.
+   - Install media install again at every boot while they stay in the machine.
+     There is no guard and no `--reinstall`.
+   - The Android app uses status, machines, activity and the registry only. The
+     control node's other routes (2.213.0) wait for it.
+3. **The page and the app lack what the command line has.** The app's settings
+   do not go through the control node's API. Neither opens an unsigned copy of
+   the network. The page does
+   not take a `.tar.enc` copy or a synced folder.
+4. **Asked for, not started.** Netboot (PXE). A backup store per service; DNS,
+   DHCP and the gateway twice; site controllers; high availability at one site
+   (the order is in design/scale.md). The join token, and the phoenix image
+   with the container images inside. More hosters (cloud-init, Hetzner first),
+   IPv6 end to end, NFSv4 with kernel TLS. `ssh-config`, `probe`,
+   `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
+   Data kept across a reinstall on one disk (design/data-partition.md; four
+   questions wait for the owner). Backups of the desktop and the phone, the
+   desktop client, Windows. Mastodon, Matrix and email modules (the owner: not
+   yet).
+
+Named in earlier roadmaps, not started and not on the list: the OpenWrt
+package, rootless podman for the minimal preset, managed masters (the orchard).
+Two known gaps: the key for Debian's boot system cannot be bound to an address
+(`from=`; Dropbear has no such option), and a master in RAM has little room for
+updates (crumble: 913 MB for its images, about 160 MB free at 2.230.0). Later,
+when the network is stable, the repositories move to the GitHub organization
+kiwi-eco. The live v1 network moves only when its owner decides.
 
 Decided against: two masters that share the load (it splits the network in
 two); the standby takes over instead.
@@ -171,6 +201,11 @@ papaya rebooted, every service back and the exits up.
 
 Ordered by what breaks first. Each item names the file so it can be fixed
 without re-reading the review.
+
+The list stands as it was written from 2.4.0 on. Problems 1 to 13, 17, 18, 22,
+25 and 26 were fixed in the bug round of 2.5.0. Later ones say in italics when
+they were fixed. The others were not checked again when this page was brought
+up to date on 20 November 2026, so a problem without a note may be fixed.
 
 Stack and first boot:
 
@@ -660,6 +695,8 @@ The six steps agreed with the owner, with the items above folded in.
 1. **Bug round one** (problems 1 to 13, 17, 18, 22, 25, 26): the stack must
    be trustworthy before anything is built on it. Then a real first boot of
    each target and a dead-node drill, recorded in the README.
+   *Status: the bug round was 2.5.0. The first boots and the dead-node drill
+   are under "Proven on hardware" above.*
 2. **The split.** Freeze the generated-secret derivation and the three
    silent contracts (stack.env keys, the quadlet marker, the
    kiwi-stack.service name). kiwi-modules takes modules/, the renderer trio
@@ -685,12 +722,19 @@ The six steps agreed with the owner, with the items above folded in.
    `kiwi-stack backup|snapshots|restore` are done (kiwi-modules 0.14.0,
    kiwi-stack 0.3.0), with a restore drill from papaya to lychee. A
    machine can add to its repository but not delete, so `kiwi-server prune`
-   removes old snapshots from the operator's machine (2.25.0). Open: restore
-   on first boot, port ranges and the `game` module.*
+   removes old snapshots from the operator's machine (2.25.0). Port ranges
+   came with 2.5.0. A rebuilt machine restores every module by itself at its
+   first run since 2.43.0. The game servers are the `games` module since
+   2.109.0, with a server open to the Internet through the master since
+   2.122.0. Nothing of this step is open.*
 4. **The control module.** `kiwi-server serve`: FastAPI over the existing
    core, Jinja pages with HTMX, packaged as a container module that runs on
    a node with the fleet directory as its data; users with two roles (fleet
    admin, node admin bound to hosts); the GTK app and the CLI as clients.
+   *Status: built in 2.60.0 (`kiwi-server serve`, the `control` module; see
+   [control.md](control.md)). Since 2.200.0 the control node is the one admin,
+   and the app sends its applies there. Not built: an admin bound to some
+   machines only (the site controller of design/controllers.md).*
 5. **The image and the join token.** One bootc image in the phoenix-server
    repository (plain uCore plus kiwi-stack, kiwimodules and dracut-sshd,
    signed with cosign), installed from the stock Fedora CoreOS live ISO with
@@ -700,12 +744,16 @@ The six steps agreed with the owner, with the items above folded in.
    first boot, `curl … | sudo bash` (from cloud-init user-data on a VPS) for
    hand-installed machines; per-host ISOs stay for offline installs.
    (design/control-plane.md, The image)
+   *Status: not built. kiwi-server uses no phoenix image and has no join
+   token. Machines are installed from per-host media, or from the starter
+   stick (2.104.0), which is one image for any machine with no fleet in it.*
 6. **Workloads.** Built in 2.176.0 to 2.178.0, without a remote API: one
    container of a machine started, stopped, restarted or its log read over SSH
    (`kiwi-server service`, the machine's page, the app); game servers that
    sleep while nobody plays and wake on the first packet (`sleep: N`); the game
    page, where people of one accounts group do the same for the game servers
-   without being admins. Open: the app does not open the game page itself.
+   without being admins. The app opens the game page in the next release
+   (*Open the game page* in the network's settings).
 
 After that, in the order the owner set: the unlock (design/control-plane.md,
 Unlock: the `tang` module with rings, `vpn-server.published_ports` and
@@ -719,6 +767,13 @@ rootless podman for the minimal preset only; the OpenWrt package once the
 endpoint is a name; federation; the orchard (design/control-plane.md,
 Managed masters); the Bluefin client (first step: an enrol bundle for the
 desktop apps, which also binds a desktop's disk to its rings).
+
+*Status of that list: the unlock is built (2.26.0 to 2.32.0; the leash and new
+keys for a ring in 2.220.0, on the page and in the app since 2.221.0). The
+standby master is built (2.164.0; phones follow it by dynamic DNS since
+2.166.0, which is untested with real phones). Federation is built (2.54.0;
+between two operators by cards since 2.164.0). Not built: rootless podman, the
+OpenWrt package, the orchard, the Bluefin client.*
 
 ## New items worth adding
 
@@ -740,6 +795,11 @@ non-expert":
 - Pi-hole DNSSEC as a one-line setting.
 - Image digests recorded per render (`images.lock`) so a restore reproduces
   what it backs up.
+
+*Status: built are the status page and the messages (2.108.0), a new seed for
+the secrets inside the services (`rotate FLEET seed`, 2.74.0), and SSH off
+port 22 with fail2ban (2.56.0). Not built: `kiwi-stack health`, `migrate`,
+Pi-hole DNSSEC, `images.lock`.*
 
 Asked for by the owner in October 2026, for the test round and after:
 
@@ -794,6 +854,7 @@ Asked for by the owner in October 2026, for the test round and after:
 - **Random names** (design/control-plane.md, Names): fruit dishes for
   masters, fruits for nodes, from two lists of DNS-safe words, in `init`,
   the control plane and `enroll`; a name stays settable (part of problem 33).
+  *Built in 2.47.0 (`kiwi-server add`, `kiwi-server names`).*
 - **Exit modes for a master** (design/control-plane.md, Exits):
   `master.exit: provider | direct | master`. `direct` works today with
   `modules: [vpn-server, dns, tor, reverse-proxy]` (the double hop is
@@ -803,9 +864,14 @@ Asked for by the owner in October 2026, for the test round and after:
   multi-hop through another network's master and waits for federation's
   cross-network enrolment. Together with federation and the orchard: a VPN
   service of one's own.
+  *Status: the setting `master.exit` is not built. A network leaving through
+  another network's master is built another way, over the federation link
+  (`federate A B --exit`, 2.91.0; multi-hop tried in 2.53.2).*
 - **netcup as the first provider API** (`kiwi-server vps …`, later the
-  orchard's driver; `login`, `list`, `probe` and `install` done in 2.13.0,
-  the rescue system, user images and snapshots still to do). Read from the SCP REST API's OpenAPI spec
+  orchard's driver; `login`, `list`, `probe` and `install` done in 2.13.0;
+  since 2.53.0 `vps install` uploads a RAM master's image, attaches it and
+  boots the server from it; the sign-in is on the control page since 2.146.0;
+  the rescue system, user images and snapshots are not built). Read from the SCP REST API's OpenAPI spec
   (`https://www.servercontrolpanel.de/scp-core/api/v1/openapi`, OAS 3.1,
   Bearer tokens from Keycloak's device flow: `client_id=scp`,
   `scope=offline_access openid`, a refresh token that lives while it is used
@@ -838,7 +904,8 @@ Asked for by the owner in October 2026, for the test round and after:
   Auth (self-hostable server, Android, iOS and web, imports Aegis) or
   2FAuth (web only, imports Aegis); either way Aegis's own encrypted
   auto-backup goes into a folder the cloud module syncs, which is the
-  backup. More server-and-app pairs worth a module when someone asks:
+  backup. *The `authenticator` module is built (2.120.0); an account and a
+  code in it are untested.* More server-and-app pairs worth a module when someone asks:
   Immich and Paperless-ngx (above), ntfy (alerting, already planned),
   Jellyfin, Navidrome, Audiobookshelf (media), Linkwarden (bookmarks),
   Memos or Joplin Server (notes), Miniflux (feeds), Vikunja (tasks),
@@ -856,8 +923,10 @@ Asked for by the owner in November 2026:
   `validate` refusing what is left unless the file is encrypted. Then the
   `age` secret store and `kiwi-server secrets unlock|lock|status|show`, with
   an identity in the GNOME Keyring (done in 2.17.0, with a recovery key;
-  still to do: `output/` in tmpfs, an encrypted fleet file so `validate` can
-  refuse literals, adding a recipient, a hardware key), one sealed to the control node's rings
+  rendered files in the store's tmpfs since 2.44.0; more computers as keys of
+  the store since 2.45.0, `secrets join|add|remove`; passwords out of the
+  fleet file and into the store since 2.214.0, `secrets keep`; not built: a
+  hardware key), one sealed to the control node's rings
   and a recovery one; the fleet backup moves to it (problem 21). A join
   medium that carries only the token, the CA certificate, the one-time key
   and hashes comes with step 5.
@@ -870,8 +939,8 @@ Asked for by the owner in November 2026:
   (the owner's choice) renewed by a host timer, and a relay that takes posts
   only from the mesh and listed keys. From outside only 22, 80 and 443 are
   open, and the admin pages answer 403. Not tried live: a listed key posting
-  from outside, and a renewal that is really due. The unlock relay still needs
-  its own way to publish ports (`vpn-server.published_ports`).
+  from outside, and a renewal that is really due. The unlock relay has its
+  own public port on the master since 2.29.0 (`vpn-server.unlock_relay`).
 - **An MTU probe people run themselves** (problem 40): measure a node's or a
   device's real path, then set the fleet's values from the result instead of
   guessing them. Done in 2.14.0: `kiwi-server mtu`.
@@ -889,6 +958,8 @@ Asked for by the owner in November 2026:
   The module is on the `relay-members` branch of kiwi-modules. It needs a strfry
   that passes the key on for every event (a small patch, untried, in an image of
   our own or upstream), or a gate in front of it.
+  *No longer blocked: built in 2.19.0 with an image of our own, strfry 1.1.3
+  with that patch. A listed key posting from outside is untested.*
 - **Production test use needs the unlock**, raised 9 November 2026: Tang, and
   every running OS encrypted with LUKS with a proper way to unlock it (Unlock,
   in design/control-plane.md, comes forward; sorbet and crumble are not
@@ -901,11 +972,22 @@ Asked for by the owner in November 2026:
   master for NATed nodes, tried from behind NAT on the home connection. sorbet was
   reinstalled encrypted that way on 9 November (no console, its WireGuard identity kept).
   Since 2.32.0 the `operator` ring on the operator's machine. CoreOS needs about 4 GiB to
-  encrypt its root, so a 2 GiB VPS stays on Debian. Open: a NATed node on another network,
-  `from=` on Debian (Dropbear has none), rings on more than one host, rotation, the leash,
-  and papaya, which needs a stick by hand and a third share.
+  encrypt its root, so a 2 GiB VPS stays on Debian.
+  *Built since: an encrypted machine at another site, opened through the master
+  (tried with the offsite drill, 2.215.0; the relay to a ring at home is filled
+  in by itself since 2.236.0); several rings for one machine (papaya has three
+  since 19 November); the leash and new keys for a ring (2.220.0). Still a
+  gap: `from=` on Debian (Dropbear has no such option).*
 - **A node that sleeps, keeps the backups and can stand in**, raised
-  9 November 2026; not built. As a backup node it wakes for the night: by its own
+  9 November 2026. *Built since, in another shape than planned here. A machine
+  sleeps by day and its own clock wakes it for the night's backups (`asleep`,
+  2.238.0, tried on a VM). Wake-on-LAN wakes it sooner (2.228.0; waking real
+  hardware is untested). Standing in is the standby for a part (`keep_ready`,
+  `kiwi-server switch`, 2.267.0, tried on real machines): a person decides,
+  and the standby has the data it fetched in the last minute, not the last
+  backup. A part's copies from another machine's backups are put back with
+  `backups … --restore --from OTHER` (2.266.0). Not built: a switch by itself.*
+  The plan as it was written: as a backup node it wakes for the night: by its own
   RTC alarm (nobody has to be awake to send anything) and by Wake-on-LAN when
   something wants it sooner, such as `prune`; WOL does not cross the mesh or NAT, so
   the sender is a machine on its LAN. It powers off when no backup has written for a
@@ -924,6 +1006,9 @@ Asked for by the owner in November 2026:
   fleet through the control node and are accepted, denied or removed on its page; sync through
   its API or a synced folder; rotation of what a removed one knew; later site controllers with
   their own scope. The control node itself is built (2.60: docs/control.md).
+  *Built: joining through the control node (2.61.0), the synced folder
+  (2.72.0), new keys after a computer was lost (2.73.0, 2.74.0). Not built:
+  site controllers.*
 - **Backups of the desktop and the phone**, asked for 13 November 2026 ("for later"); not
   built, not designed. The desktop's system and settings, more than what Nextcloud syncs
   (the owner names ensconce for some settings), and above all a GrapheneOS phone, so that
@@ -939,8 +1024,13 @@ Asked for by the owner in November 2026:
   file, `/root/.not_logged_in_yet` with `PRESET_*` lines, which also works on a stock image; `CRYPTROOT_ENABLE` with dropbear in the initramfs for the same LUKS + rings + SSH
   unlock the Debian target has), built in a container like the other images. Then a real
   board: N2+ first.
-- **Netboot at home: PXE and Wake-on-LAN**, raised 10 November 2026; not built. A
-  rebuilt VPS needs nobody since 2.38 (`vps install`, the one-time key, apply, and the
+  *Built: `target: armbian` (2.59.0), from Armbian's own image and not from
+  its build framework. An encrypted Odroid N2+ opens by its rings (2.251.0,
+  tried on the board). Not built: kiwi-server building the encrypted image.*
+- **Netboot at home: PXE and Wake-on-LAN**, raised 10 November 2026. *Netboot is
+  not built. Wake-on-LAN is built (2.228.0: `network.wol`, `kiwi-server wake`,
+  each apply learns the machine's MAC address); waking real hardware is
+  untested.* A rebuilt VPS needs nobody since 2.38 (`vps install`, the one-time key, apply, and the
   backup restoring itself since kiwi-modules 0.24); a home machine still needs a USB stick.
   One node serves netboot: proxy DHCP, which answers PXE requests only and hands out no
   addresses (no test node serves DHCP on the LAN), and iPXE over HTTP with each machine's
@@ -972,11 +1062,12 @@ Asked for by the owner in November 2026:
   *Designed and prototyped 11 November 2026* ([design/ram-master.md](design/ram-master.md)):
   the master keeps nothing, and the "someone" at boot is a machine at home: the image carries
   only its SSH host key, and `kiwi-server watch` sends a blank master its role and the
-  identity the fleet keeps of it. `target: coreos-ram` (2.52.0), tried in a local VM only.
-  Since then: the control node runs `watch` for its RAM masters (control.py, its loop), the ring
+  identity the fleet keeps of it. `target: coreos-ram` (2.53.0), tried first in a local VM.
+  Since then: `vps install` uploads the image to netcup, attaches it and boots the server
+  from it (2.53.0), the control node runs `watch` for its RAM masters (2.60.0), the ring
   `away` keeps its keys with the fleet's copy, and `tests/drills/ram-master-power.py` passes on
-  crumble (17 November 2026: role back 219 s after power on, same keys). Open: the phoenix spin
-  with the images inside, netcup swapping the ISO (`vps`), a hoster without ISOs.
+  crumble, a server at netcup (17 November 2026: role back 219 s after power on, same keys).
+  Not built: the phoenix spin with the images inside, a hoster without ISOs.
 - **Testing updates before they reach live machines**, raised 10 November 2026:
   `kiwi-server plan` (render every host with the installed release and the new one, and
   say per host which files, units and containers change and which containers restart);
@@ -986,6 +1077,8 @@ Asked for by the owner in November 2026:
   upgrade rehearsal on a throwaway VM (install the previous release, give it data, apply
   the new one, check). Moving the live v1 network is a separate job: an inventory of each
   v1 machine first, then a rehearsal on a copy.
+  *Built: `plan` (2.52.0), `check` (2.55.0), the drills (since 2.43.0). Not built: the
+  upgrade rehearsal.*
 - **Nextcloud with end-to-end encryption on by default**, and **OpenCloud,
   Immich and Paperless-ngx as modules to try out** (the October list below), so
   the owner can judge them and work out how they should fit together.
@@ -999,7 +1092,7 @@ Asked for by the owner in November 2026:
 The order the owner agreed in November 2026, ahead of the numbered steps
 above: problems 59 and 60; the first part of the secrets work; the dead-node
 drill on a VM; the netcup client; the MTU probe; a hub on a master; the secret store; then
-steps 3 to 6 and what follows them. Federation keeps its place after the
-unlock: it is not built, and a hand-made multi-hop between two masters can
-be tried any time. The live v1 network stays as it is until the owner decides
+steps 3 to 6 and what follows them. Federation kept its place after the
+unlock. It is built since 2.54.0, and multi-hop between two masters was tried
+in 2.53.2. The live v1 network stays as it is until the owner decides
 to move it.

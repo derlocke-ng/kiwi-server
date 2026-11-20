@@ -1,6 +1,9 @@
 # Design: a public website
 
-Status: designed, not built.
+Status: built. The control node serves the website since 2.201.0, and dlhost.eu's
+website has run on it since 2.203.0. It has the control page's frame since 2.205.0,
+images and the CDN since 2.207.0, and a container of its own since 2.211.0. How to
+set it up is in [The control node](../control.md#a-website-for-strangers).
 
 A network that offers services to the public needs a front page: what it is, which services
 there are and how to join, its terms. The model is a small community host's site: a few plain
@@ -62,6 +65,10 @@ Cloudflare-proxied name), with long cache headers. Never the pages, the sign-up 
 Tor. The site says that the CDN sees the address of whoever loads those files.
 
 ## Order
+
+All of it is built. Steps 1 and 2 came with 2.201.0, step 4 with 2.207.0. The
+template of step 3 is the repository dlhost-eu; a site is pinned to a commit of
+its repository (`website_commit`), not to a tag.
 
 1. Settings of the `control` module: the site's name, the repository and its pinned commit;
    the master hands the name and `www.` on to the control node.

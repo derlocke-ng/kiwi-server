@@ -112,6 +112,10 @@ BASE_GROUPS = [
                   "removed. Its stick carries that key until then: keep it safe"),
         dict(path=("domain",), type="string", label="Domain", scope="defaults", default="home",
              help="Hosts are <name>.<domain>, services <service>.<name>.<domain>. .home, .internal, .corp, .mail stay private; not .local, not a public TLD"),
+        dict(path=("names",), type="enum", label="Names of its parts", options=["machine", "service"], default="machine",
+             help="machine: a part is named after its machine (paste.quince.home). service: a part that runs on one machine only "
+                  "is named for itself (paste.home) and keeps that name when it moves to another machine. The control page and "
+                  "the backup server keep their machine's name. After a change, apply the machine and those that answer for names"),
         dict(path=("timezone",), type="string", label="Time zone", default="UTC", help="An IANA name, e.g. Europe/Berlin: the clock of logs, backups and the reboot time"),
         dict(path=("locale",), type="string", label="Locale", default="en_US.UTF-8", help="Language and formats of the system, e.g. de_DE.UTF-8"),
         dict(path=("keyboard",), type="string", label="Keyboard layout", default="us",
@@ -150,6 +154,9 @@ BASE_GROUPS = [
                   "Some machines also need it switched on in their firmware; it takes at the next start"),
         dict(path=("network", "mac"), type="string", label="…its card's MAC", scope="host", default="",
              help="Empty: learned at each apply. Only for a machine that has not been applied yet, like aa:bb:cc:dd:ee:ff"),
+        dict(path=("keep_ready",), type="object", label="Parts kept ready on another machine", scope="host", default={},
+             help="Part and machine, like vault: medlar. That machine fetches the part's data every minute and can take the part "
+                  "over (Switch, on this machine's page). Both must be the same kind of machine. Apply both after a change"),
         dict(path=("network", "vlans"), type="object", label="Tagged VLANs", scope="host", default=[],
              help="Only with a managed switch that sends this machine tagged frames. One line per VLAN, like "
                   "- {id: 20, address: 192.168.20.5/24, name: iot}. The machine gets an interface on it with no "
@@ -343,6 +350,29 @@ def run_cli(cli, args, timeout=120, input=None):
         return r.returncode, r.stdout, r.stderr
     except (OSError, subprocess.TimeoutExpired) as e:
         return 1, "", str(e)
+
+
+def machine_chips(phase, modules, facts, applied=None, now=None):
+    """One look at a machine, part by part, as the chips on its page on the control node (web.py,
+    machine_chips; a test holds the two to the same rules): set up or not, its last apply that
+    worked, its backup, its fullest disk. [(text, kind)]."""
+    now = now or time.time()
+    out = []
+    if phase and phase != "applied":
+        out.append(("not set up yet", "warn"))
+    if applied:
+        out.append(("last apply: done %s ago" % duration(max(0, now - applied)), "ok"))
+    b = (facts or {}).get("backup")
+    if "backup" in (modules or []):
+        if b and b.get("last") and b.get("age") is not None:
+            out.append(("backup %s ago" % duration(b["age"]), "ok" if b["age"] < 129600 else "bad"))
+        else:
+            out.append(("no backup seen yet", "warn"))
+    disks = [d for d in (facts or {}).get("disks") or [] if d.get("size")]
+    if disks:
+        pct = max(0, min(100, int(round(100 * max(d["used"] / d["size"] for d in disks)))))
+        out.append(("disk %d %%" % pct, "bad" if pct >= 92 else "warn" if pct >= 80 else "ok"))
+    return out
 
 
 def pill(text, kind, tip=None):
@@ -966,6 +996,12 @@ class Form:
                     status.connect("activated", lambda *_, h=host: Gtk.UriLauncher.new(
                         "https://control.%s/status" % h).launch(self.win, None, None))
                     g.add(status)
+                    play = (getattr(self.win, "fleet_info", None) or {}).get("play") or {}
+                    if play.get("site"):    # where the people of its group start and stop the game servers
+                        games = Adw.ButtonRow(title="Open the game page", end_icon_name="adw-external-link-symbolic")
+                        games.connect("activated", lambda *_, site=play["site"]: Gtk.UriLauncher.new(
+                            "https://%s/play/" % site).launch(self.win, None, None))
+                        g.add(games)
             if title in ADVANCED_SECTIONS:
                 advanced.append(g)
                 continue
@@ -2402,13 +2438,19 @@ class ActivityDialog(Adw.Dialog):
              "rotate-seed": "Replaced the secrets inside the services", "tell-test": "Sent a test message",
              "start-new": "Started a new backup history of", "prune": "Removed old snapshots on",
              "doctor": "Checked the tools of the control node", "adopt": "Took in",
-             "service": "Looked after a container on"}
+             "service": "Looked after a container on", "reboot": "Restarted", "poweroff": "Switched off", "wake": "Woke",
+             "move": "Moved a part between", "switch": "Gave a part to its standby, from", "mtu": "Measured the MTU of",
+             "rotate-ring": "Replaced the keys of an unlock ring"}
     STATE = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 
-    def __init__(self, win):
-        super().__init__(title="Activity", content_width=640, content_height=700)
-        self.win = win
+    def __init__(self, win, host=None):
+        """`host`: only what was done to this machine (its History, as on its page on the control node)."""
+        super().__init__(title="History of %s" % host if host else "Activity", content_width=640, content_height=700)
+        self.win, self.host = win, host
         self.load()
+
+    def mine(self, x):
+        return not self.host or self.host in (x.get("hosts") or [])
 
     def load(self):
         self.set_child(Adw.StatusPage(title="Asking the control node…", child=Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER)))
@@ -2438,23 +2480,31 @@ class ActivityDialog(Adw.Dialog):
             return False
         page = Adw.PreferencesPage()
         g = Adw.PreferencesGroup(title="Tasks", description="What the control node did or does, newest first.")
-        for j in got.get("jobs") or []:
+        jobs = [j for j in got.get("jobs") or [] if self.mine(j)]
+        entries = [e for e in got.get("entries") or [] if self.mine(e)]
+        for j in jobs:
             when = (j.get("started") or j.get("id") or "")[:16].replace("T", " ")
             title = ("%s %s" % (self.VERBS.get(j.get("action"), j.get("action") or ""), " ".join(j.get("hosts") or []))).strip()
             row = plain_row(title, "%s · %s" % (when, j.get("user") or ""))
             row.add_suffix(Gtk.Label(label=self.STATE.get(j.get("state"), j.get("state") or ""),
                                      css_classes=["error" if j.get("state") == "failed" else "dim-label"]))
             g.add(row)
-        if not got.get("jobs"):
+        if not jobs:
             g.add(plain_row("None since its page was last unlocked."))
         page.add(g)
-        g = Adw.PreferencesGroup(title="Log", description="Who did what there: on its page, or from a computer.")
-        for e in got.get("entries") or []:
+        g = Adw.PreferencesGroup(title="Log", description="What was done to %s, and by whom." % self.host if self.host
+                                 else "Who did what there: on its page, or from a computer.")
+        for e in entries:
             sub = "%s · %s" % ((e.get("time") or "")[:16].replace("T", " "), e.get("user") or "")
             if e.get("address"):
                 sub += " · %s" % e["address"]
-            g.add(plain_row(("%s %s" % (e.get("what") or "", " ".join(e.get("hosts") or []))).strip(), sub))
-        if not got.get("entries"):
+            what = self.VERBS.get(e.get("what"), e.get("what") or "")
+            row = plain_row(("%s %s" % (what, " ".join(e.get("hosts") or []))).strip(), sub)
+            if e.get("result"):                 # how a task ended: as the machine's History on the page says it
+                row.add_suffix(Gtk.Label(label=self.STATE.get(e["result"], e["result"]),
+                                         css_classes=["error" if e["result"] == "failed" else "dim-label"]))
+            g.add(row)
+        if not entries:
             g.add(plain_row("Empty."))
         page.add(g)
         tb.set_content(page)
@@ -2851,6 +2901,69 @@ class SshCaDialog(Adw.Dialog):
                 return
             self.run(["sign", key, "--days", str(int(self.days.get_value()))], "Signing the key…")
         dlg.open(self.win, None, done)
+
+
+class MoveDialog(Adw.Dialog):
+    """A part of a machine to another machine (`kiwi-server move`): which part, where to, what
+    would happen (the plan, and what stands in its way), then the move."""
+
+    def __init__(self, win, host):
+        super().__init__(title="Move a part of %s" % host, content_width=620, content_height=560)
+        self.win, self.host = win, host
+        mine = win.status.get(host) or {}
+        self.parts = [p for p in mine.get("modules") or []]
+        self.targets = [n for n, h in sorted(win.status.items())
+                        if n != host and h.get("role") == mine.get("role") and not h.get("standby_of")]
+        tb = Adw.ToolbarView()
+        tb.add_top_bar(Adw.HeaderBar())
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup()
+        self.part = Adw.ComboRow(title="Part", model=Gtk.StringList.new(self.parts))
+        self.to = Adw.ComboRow(title="To the machine", model=Gtk.StringList.new(self.targets))
+        g.add(self.part)
+        g.add(self.to)
+        see = Adw.ButtonRow(title="See what would happen")
+        see.connect("activated", lambda *_: self.plan())
+        g.add(see)
+        page.add(g)
+        self.out = Gtk.Label(xalign=0, wrap=True, selectable=True, margin_top=6, margin_bottom=6, margin_start=12, margin_end=12)
+        g2 = Adw.PreferencesGroup()
+        g2.add(self.out)
+        self.go = Adw.ButtonRow(title="Move it", sensitive=False, css_classes=["suggested-action"])
+        self.go.connect("activated", lambda *_: self.move())
+        g2.add(self.go)
+        page.add(g2)
+        tb.set_content(page)
+        self.set_child(tb)
+        if not self.targets:
+            self.out.set_label("There is no other machine of this kind to move a part to.")
+
+    def chosen(self):
+        if not self.parts or not self.targets:
+            return None, None
+        return self.parts[self.part.get_selected()], self.targets[self.to.get_selected()]
+
+    def plan(self):
+        part, to = self.chosen()
+        if not part:
+            return
+        self.go.set_sensitive(False)
+        self.out.set_label("Looking at both machines…")
+
+        def work():
+            rc, out, err = run_cli(self.win.cli, ["move", self.win.doc.path, part, self.host, to], timeout=180)
+            text = (out or err or "no answer").strip()
+            GLib.idle_add(lambda: (self.out.set_label(text.replace("Nothing was changed. With --yes it is done: ", "Nothing was changed yet.\n")
+                                                      .split("kiwi-server move ")[0].strip()),
+                                   self.go.set_sensitive(rc == 0)) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def move(self):
+        part, to = self.chosen()
+        if not part:
+            return
+        self.close()
+        self.win.spawn(["move", self.win.doc.path, part, self.host, to, "--yes"], "Moving %s from %s to %s…" % (part, self.host, to))
 
 
 class ServiceLogDialog(Adw.Dialog):
@@ -5938,6 +6051,12 @@ class Window(Adw.ApplicationWindow):
         col.append(Gtk.Label(label=name, xalign=0, css_classes=["title-1"]))
         word = "Secret store locked" if self.locked() else WORDS[state]
         col.append(caption(" · ".join(x for x in (word, st.get("hostname"), self.checked_line()) if x)))
+        chips = [] if self.locked() else machine_chips(self.phase_of(name), st.get("modules"), f, st.get("applied"))
+        if chips:                       # the page's chips: one look at the machine, part by part
+            line = Gtk.Box(spacing=6, margin_top=6)
+            for text, kind in chips:
+                line.append(pill(text, kind))
+            col.append(line)
         hero.append(col)
         parts = [hero]
         if state == "new":
@@ -5981,8 +6100,42 @@ class Window(Adw.ApplicationWindow):
         parts.append(self.network_group(name, st, live, f))
         parts.append(self.deploy_group(name, st, f))
         if live and live.get("ok"):
+            parts.append(self.move_group(name))
+            if self.control_host():         # its History is the control node's
+                parts.append(self.history_group(name))
             parts.append(self.power_group(name))
         self.host_column.show(parts)
+
+    def history_group(self, name):
+        """What was done to this machine (its History on the control page): the control node's activity, for it alone."""
+        g = Adw.PreferencesGroup(title="History")
+        row = plain_row("What was done to it", "Applies, restarts, moves and who did them, newest first")
+        b = Gtk.Button(label="Open…", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        b.connect("clicked", lambda *_: ActivityDialog(self, name).present(self))
+        row.add_suffix(b)
+        g.add(row)
+        return g
+
+    def move_group(self, name):
+        """A part of this machine to another machine (`kiwi-server move`), and the parts another machine
+        keeps ready (`keep_ready`): each with Switch (`kiwi-server switch`)."""
+        g = Adw.PreferencesGroup(title="Its parts on other machines",
+                                 description="A part moves with its data, its secrets and its name. A part that is kept ready "
+                                             "has its data copied to a second machine every minute (Settings: Parts kept ready "
+                                             "on another machine), and that machine can take it over.")
+        row = plain_row("Move a part to another machine", "First what would happen, then the move")
+        b = Gtk.Button(label="Move…", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        b.connect("clicked", lambda *_: MoveDialog(self, name).present(self))
+        row.add_suffix(b)
+        g.add(row)
+        for part, m in sorted(((self.status.get(name) or {}).get("keep_ready") or {}).items()):
+            row = plain_row("%s is kept ready on %s" % (part, m), "Switch: %s takes it over with the data it has" % m)
+            b = self.action_button("Switch", ["switch", self.doc.path, part, name, "--yes"], "Giving %s to %s…" % (part, m),
+                                   ("Give %s to %s?" % (part, m), "It stops on %s and starts on %s with the data %s has. "
+                                    "If %s does not answer, at most the last minute is missing." % (name, m, m, name), "Switch"))
+            row.add_suffix(b)
+            g.add(row)
+        return g
 
     def power_group(self, name):
         """Restart it or switch it off (`kiwi-server power`): asks first, with what that means for it."""
@@ -6418,6 +6571,7 @@ class Window(Adw.ApplicationWindow):
         if listing:
             self.status = {h["name"]: h for h in listing["hosts"]}
             self.fleet_info = {k: listing.get(k) or "" for k in ("domain", "mesh", "master_ip")}
+            self.fleet_info["play"] = listing.get("play") or {}      # the game page, if the network has one
             self.fleet_info["groups"] = listing.get("groups") or {}      # where a new device may go
             self.fleet_info["changed"] = listing.get("changed") or []    # changes not applied yet
             self.fleet_info["linked"] = listing.get("linked") or []      # networks linked to this one: in the picture
@@ -6817,10 +6971,14 @@ class Window(Adw.ApplicationWindow):
         """An apply this computer would run itself, as a job on the control node instead, when this copy
         belongs to one and the preference says so: one admin, the node; its log comes here the same.
         None: run it here (a first apply over SSH, no control node, or the preference off)."""
-        if not args or args[0] != "apply" or "--ssh" in args or not gui_conf().get("apply_on_node", True):
+        if not args or args[0] not in ("apply", "move", "switch") or "--ssh" in args or not gui_conf().get("apply_on_node", True):
             return None
         if not os.path.isfile(os.path.join(os.path.dirname(self.doc.path or ""), "control", "remote")):
             return None
+        if args[0] == "move":       # ["move", fleet, part, from, to, "--yes"]: the node moves it, and keeps what it changes
+            return ["control", "run", self.doc.path, "move", args[3], args[4], "--part", args[2]] if len(args) == 6 else None
+        if args[0] == "switch":     # ["switch", fleet, part, from, "--yes"]
+            return ["control", "run", self.doc.path, "switch", args[3], "--part", args[2]] if len(args) == 5 else None
         hosts = [a for a in args[2:] if not a.startswith("-")]
         flags = {a for a in args[2:] if a.startswith("-")}
         if flags - {"--changed", "--update"}:

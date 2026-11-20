@@ -89,11 +89,22 @@ fi
 ! at "$sb" "grep -q '^$part ' /etc/kiwi-server/standby/pull.conf 2>/dev/null"; check $? "$sb no longer fetches over the part it now runs"
 if [ -n "$name" ]; then
     ip=$(getent hosts "$sb.$domain" | awk '{print $1; exit}'); code=000
-    for _ in 1 2 3 4 5 6; do
-        code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' --cacert "$S/ca/kiwiCA.pem" --resolve "$name:443:$ip" "https://$name/")
-        case $code in 2*|3*) break ;; esac
-        sleep 10
-    done
+    case $name in
+        *."$domain")
+            for _ in 1 2 3 4 5 6; do
+                code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' --cacert "$S/ca/kiwiCA.pem" --resolve "$name:443:$ip" "https://$name/")
+                case $code in 2*|3*) break ;; esac
+                sleep 10
+            done ;;
+        *)  # a public name: as a stranger reaches it, through the master, with a certificate the world knows.
+            # The new machine asks Let's Encrypt for it once the master hands the name on: a minute or two
+            for _ in $(seq 1 18); do
+                code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' "https://$name/")
+                case $code in 2*|3*) break ;; esac
+                sleep 10
+            done
+            at "$sb" "ls /home/*/docker/k?-nginx/acme/$name/fullchain.pem >/dev/null 2>&1"; check $? "$sb holds the certificate of $name" ;;
+    esac
     case $code in 2*|3*) true ;; *) false ;; esac; check $? "$name answers from $sb ($code)"
 fi
 kiwi-server control push "$fleet" > control-push.log 2>&1 || say "note: nothing pushed to a control node"

@@ -36,6 +36,17 @@ kv mem "$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{print t, a}' /proc/
 # /var, not /: a CoreOS root is a read-only image that is always 100% full
 df -kP /var /var/mnt/data /mnt/data 2>/dev/null | awk 'NR>1{print "disk=" $6, $2, $3}'
 kv clock "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
+# A clock set back: WireGuard takes no handshake dated before the last one it took, so a tunnel
+# stays down until the time has caught up. The moment the kernel says it started moves when the
+# clock is set: compared with the last look's, kept in /run (gone at a restart).
+bt=$(awk '/^btime /{print $2}' /proc/stat 2>/dev/null)
+if [ -n "$bt" ] && mkdir -p /run/kiwi-server 2>/dev/null && [ -w /run/kiwi-server ]; then
+    was=$(cat /run/kiwi-server/btime 2>/dev/null)
+    # when: by the time the machine has been up, not by the clock that is in doubt
+    if [ -n "$was" ] && [ $((was - bt)) -ge 5 ]; then echo "$(cut -d. -f1 /proc/uptime) $((was - bt))" > /run/kiwi-server/clock-back; fi
+    echo "$bt" > /run/kiwi-server/btime
+    if read -r at by < /run/kiwi-server/clock-back 2>/dev/null; then kv clock_back "$(( $(cut -d. -f1 /proc/uptime) - at )) $by"; fi
+fi
 if [ -e /run/reboot-required ] || [ -e /run/ostree/staged-deployment ]; then kv reboot yes; fi
 kv failed "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
 luks=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device 2>/dev/null | head -n 1)
@@ -111,6 +122,23 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             awk -v now="$(date +%s)" 'NF==2{t++; if ($2>0 && now-$2<=180) r++} END{print "peers=" t+0, r+0}'
     fi
 fi
+# Packets cut into pieces: a tunnel's MTU is larger than its path carries. The kernel counts
+# the pieces it made and the packets it put together again (IPv4), here and inside the VPN's
+# containers; what the count grew by since the last look is kept in /run with its time.
+frag_of() { awk '/^Ip:/{ if (!h) { for (i = 1; i <= NF; i++) n[i] = $i; h = 1 } else for (i = 1; i <= NF; i++) if (n[i] == "FragCreates" || n[i] == "ReasmOKs") s += $i } END { print s + 0 }'; }
+if [ -w /run/kiwi-server ]; then
+    fr=$(frag_of < /proc/net/snmp)
+    seen=""
+    for c in "${STACK_VPN_CONTAINER:-}" "${STACK_PREFIX:-km}-vpn-server"; do
+        case " $seen " in *" $c "*) continue ;; esac
+        seen="$seen $c"
+        if [ -n "$c" ] && [ -n "${rt:-}" ]; then fr=$((fr + $("$rt" exec "$c" cat /proc/net/snmp 2>/dev/null | frag_of))); fi
+    done
+    was=$(cat /run/kiwi-server/frag 2>/dev/null)
+    if [ -n "$was" ] && [ "$fr" -gt "$was" ]; then echo "$(cut -d. -f1 /proc/uptime) $((fr - was))" > /run/kiwi-server/frag-seen; fi
+    echo "$fr" > /run/kiwi-server/frag
+    if read -r at by < /run/kiwi-server/frag-seen 2>/dev/null; then kv fragmented "$(( $(cut -d. -f1 /proc/uptime) - at )) $by"; fi
+fi
 """
 
 SCRIPT = HUMAN + "\necho '" + MARK + "'\n" + PROBE
@@ -123,6 +151,8 @@ RUNNING = ("active", "running")
 BOOTING = 300     # seconds after boot in which a stack that is not up yet is only late
 BACKUP_LATE = 36 * 3600      # a nightly backup that missed a night
 BACKUP_BAD = 7 * 86400
+CLOCK_MARGIN = 600                 # seconds a set-back clock is still named after the time has caught up
+FRAGMENT_SHOWN = 3600              # seconds for which packets cut into pieces are named
 BACKUP_FULL_SOON = 30              # days of free space left on a backup node before it is a problem
 CERTIFICATE_LATE = 21 * 86400    # renewal starts at 30 days: this many left and it has been failing
 CERTIFICATE_BAD = 7 * 86400
@@ -151,6 +181,21 @@ def _int(value, default=0):
         return int(str(value).strip())
     except ValueError:
         return default
+
+
+def _pair(value, word, now):
+    """"AGO N" (seconds ago, a number) as {"at": when by this computer's clock, word: N}, or None."""
+    parts = str(value or "").split()
+    if len(parts) != 2 or not all(x.isdigit() for x in parts):
+        return None
+    return {"at": int(now) - int(parts[0]), word: int(parts[1])}
+
+
+def lasts_s(seconds):
+    """90 s, 12 minutes, 3 hours: a length of time in the unit one would say it in."""
+    s = int(seconds)
+    return (util.count(s, "second") if s < 120 else util.count(s // 60, "minute") if s < 7200
+            else util.count(s // 3600, "hour") if s < 172800 else util.count(s // 86400, "day"))
 
 
 def parse(data, local_now=None):
@@ -222,6 +267,9 @@ def parse(data, local_now=None):
         "memory": {"total": mem[0], "available": mem[1]} if len(mem) == 2 else {},
         "disks": list(disks.values()),
         "clock_synced": raw.get("clock") == "yes",
+        # the clock was set back (when, by how many seconds); packets were cut into pieces (when, how many)
+        "clock_back": _pair(raw.get("clock_back"), "by", local_now if local_now is not None else time.time()),
+        "fragmented": _pair(raw.get("fragmented"), "count", local_now if local_now is not None else time.time()),
         "skew": remote_now - int(local_now if local_now is not None else time.time()) if remote_now else 0,
         "reboot": raw.get("reboot") == "yes",
         # a game server asleep whose stop ended with an error code of its own is no failure (Zandronum)
@@ -279,6 +327,7 @@ HINTS = {
     "backup-store-full": "Remove old snapshots (Backups, Prune), or give the backup machine more space.",
     "memory": "Fewer services on it, or more memory.",
     "clock": "Apply the machine: its time service is set up again.",
+    "clock-back": "It passes by itself at the time named. Sooner: restart the VPN service at the other end (the master's wg, or this machine's VPN client).",
     "backups-held": "Backups: what holds them is said there.",
     "backup-none": "Backups: Save it now, and look whether the backup machine answers.",
     "backup-old": "Backups: Save it now, and look whether the backup machine answers.",
@@ -317,7 +366,7 @@ QUIETABLE = {"disk-plain": "The disk is not encrypted", "data-disk-plain": "A da
              "unhealthy": "A service reports unhealthy", "not-applied": "No role applied yet"}
 
 
-def assess(f, quiet=()):
+def assess(f, quiet=(), now=None):
     """(state, problems, notes). state: ok, warn or bad; a problem is {level, text, key, hint}.
     `quiet`: the keys of warnings this machine leaves out (QUIETABLE): they become notes."""
     bad = lambda text, key: {"level": "bad", "text": text, "key": key, "hint": HINTS.get(key, ""),     # noqa: E731
@@ -375,6 +424,17 @@ def assess(f, quiet=()):
         problems.append(warn("the clock is not synchronised", "clock"))
     if abs(f.get("skew", 0)) > 30:
         problems.append(warn("the clock is %+d s off from this computer's" % f["skew"], "clock"))
+    now = int(now if now is not None else time.time())
+    back = f.get("clock_back")         # its times: this computer's (the machine says how long ago, by its uptime)
+    if back and now < back["at"] + back["by"] + CLOCK_MARGIN:
+        # WireGuard refuses handshakes dated before the last one it took: until the time has caught up
+        problems.append(warn("its clock was set back %s at %s: until %s the VPN's other ends may refuse it"
+                             % (lasts_s(back["by"]), time.strftime("%H:%M", time.localtime(back["at"])),
+                                time.strftime("%H:%M", time.localtime(back["at"] + back["by"]))), "clock-back"))
+    frag = f.get("fragmented")
+    if frag and now - frag["at"] < FRAGMENT_SHOWN:
+        notes.append("packets were cut into pieces here (%d, last at %s): a tunnel's MTU is larger than its path carries; "
+                     "kiwi-server mtu measures it" % (frag["count"], time.strftime("%H:%M", time.localtime(frag["at"]))))
     if f.get("reboot"):
         notes.append("an update is waiting for a reboot")
     if f.get("banned"):

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.280.0 — a standby that is behind says so, and is not switched to by itself
+
+- **A copy kept ready that is more than ten minutes old is a warning** on the standby (page,
+  `status`, messages), with what its last fetch said.
+- **No switch by itself to a copy that was behind already** (more than ten minutes when its
+  machine fell silent): that would lose what came since, and with the pair the machine, once
+  back, would take the old copy over its own. It is told, and left to a person.
+- The control node's own machine: its parts kept ready switch when you say so (the control node
+  is the one that switches by itself); the page and the app say it.
+- A switch does not wait on the machine that is gone to point the part's name.
+- `kiwi-server standby` says whether a part goes over by itself. The roadmap's current picture.
+- Tried on 2.279.0: the master-down drill (papaya's Pi-hole answered throughout).
+
 ## 2.279.0 — the switch by itself, told and shown
 
 - **Tried with a power cut on 2.278.0** (tests/drills/part-failover.sh, medlar off with

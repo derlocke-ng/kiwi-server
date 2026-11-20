@@ -89,3 +89,12 @@ say what 2.267.0 does.
     timesyncd/chrony, with SYS_TIME); each machine asks its site's Pi-hole on its LAN first, else the master's on the mesh,
     the pool behind. Tried on the test network: quince (chrony) and medlar (timesyncd) take their time from lime; lime's
     and papaya's servers answer stratum 2 on the LAN; check 43/43.
+52. ~~A true offsite copy~~ (the owner 20 Nov: his spare WebDAV at 1&1, encrypted, "don't trust this cloud"): built in 2.273.0
+    (backup-server.offsite_url, rclone crypt with a key from the seed, names encrypted too); drill backup-offsite.sh 0 wrong.
+    For his network: offsite_url and offsite_user on his backup store, the password through the page or the app (it goes into
+    the store). Open: the providers registry for backup places (the owner's idea: 1&1, Nextcloud, storage boxes, later S3/SFTP
+    as kinds next to WebDAV), when the second kind comes; `kiwi-server backups --offsite` to restore without logging in to the
+    store's machine.
+53. After this computer's reboot (20 Nov) `ssh sh3` is refused (its key is not in the agent): VM drills on sh3 wait for the owner.
+    The power-cut drill then put the VMs down by sysrq instead of virsh (it says "0 virtual").
+

@@ -1290,6 +1290,55 @@ class TestAdopt(Base):
             self.assertTrue(unlock._rebind(h, "t", "key", tree, force=True))         # rotated: bound again
             self.assertIn(unlock.BIND_SCRIPT, ran)
 
+    def test_ssh_config_names_every_machine_with_the_fleets_key(self):
+        """`ssh-config`: ssh's own configuration for the machines, as kiwi-server reaches them. Printed
+        without --write; nothing of the computer's own ~/.ssh is read or touched then."""
+        f = self.fleet({"defaults": self.base_defaults(admin={"user": "core", "ssh_port": 41022,
+                                                              "ssh_keys": ["secrets/admin_ed25519.pub"]}),
+                        "hosts": {"papaya": {"network": {"dhcp": False, "address": "192.168.2.30/24", "gateway": "192.168.2.1"}},
+                                  "lychee": {}}})
+        write(os.path.join(self.tmp, "secrets", "admin_ed25519"), "private")
+        write(os.path.join(self.tmp, "secrets", "admin_ed25519.pub"), "ssh-ed25519 AAAA test")
+        text = cli.ssh_config_text(f)
+        self.assertIn("Host papaya papaya.kiwi\n    HostName papaya.kiwi\n", text)
+        self.assertIn("Host papaya-lan\n    HostName 192.168.2.30\n", text)
+        self.assertNotIn("lychee-lan", text)                                    # its address comes by DHCP: no fixed one to name
+        block = text[text.index("Host papaya papaya.kiwi papaya-lan"):]
+        self.assertIn("    User core\n    Port 41022\n", block)
+        self.assertIn("    IdentityFile %s\n    IdentitiesOnly yes\n" % os.path.join(self.tmp, "secrets", "admin_ed25519"), block)
+        self.assertIn("    UserKnownHostsFile %s\n    StrictHostKeyChecking yes\n" % os.path.join(self.tmp, "secrets", "known_hosts"), block)
+        self.assertNotIn("private", text)                                       # the key's path, never the key
+        # ssh itself takes it
+        path = os.path.join(self.tmp, "ssh.conf")
+        write(path, text)
+        if shutil.which("ssh"):
+            r = subprocess.run(["ssh", "-F", path, "-G", "papaya-lan"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            got = dict(ln.split(" ", 1) for ln in r.stdout.splitlines() if " " in ln)
+            self.assertEqual((got["hostname"], got["user"], got["port"], got["stricthostkeychecking"]),
+                             ("192.168.2.30", "core", "41022", "true"))
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(home)
+        def run_cli(*args):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                try:
+                    rc = cli.main(list(args))
+                except SystemExit as e:
+                    rc = e.code
+            return rc or 0, out.getvalue(), err.getvalue()
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            rc, out, err = run_cli("ssh-config", f.path)
+            self.assertEqual((rc, out), (0, text), err)
+            self.assertEqual(os.listdir(home), [])                              # printed only
+            rc, out, err = run_cli("ssh-config", f.path, "--write")
+            self.assertEqual(rc, 0, err)
+        made = os.path.join(home, ".ssh", "config.d")
+        self.assertEqual(len(os.listdir(made)), 1)
+        self.assertEqual(oct(os.stat(os.path.join(made, os.listdir(made)[0])).st_mode & 0o777), "0o600")
+        self.assertFalse(os.path.exists(os.path.join(home, ".ssh", "config")))  # the computer's own file is the owner's
+        self.assertIn("Include config.d/*", out + err)
+
     def test_an_encrypted_boards_volume_is_grown_to_its_disk(self):
         """Armbian grows the partition at the first start, not the encrypted volume in it: an apply
         does (unlock.GROW_SCRIPT), once, with the disk's key, and leaves a volume of full size alone."""

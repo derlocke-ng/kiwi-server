@@ -119,7 +119,7 @@ The designs and the order to build in are in
    DHCP and the gateway twice; site controllers; high availability at one site
    (the order is in design/scale.md). The join token, and the phoenix image
    with the container images inside. More hosters (cloud-init, Hetzner first),
-   IPv6 end to end, NFSv4 with kernel TLS. `ssh-config`, `probe`,
+   IPv6 end to end, NFSv4 with kernel TLS. `probe`,
    `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
    Data kept across a reinstall on one disk (design/data-partition.md; four
    questions wait for the owner). Backups of the desktop and the phone, the

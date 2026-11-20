@@ -210,6 +210,24 @@ restarts. The control page has the same buttons on the machine's page,
 Services tab, **Its containers**; the app has them in the menu at each row of
 **Services**. A restart from there is in the machine's History.
 
+### A shell on a machine
+
+kiwi-server reaches its machines with a key and a list of host keys of its own
+(`secrets/admin_ed25519`, `secrets/known_hosts`). For a shell of your own on one:
+
+```bash
+kiwi-server ssh-config ~/kiwi/fleet.yaml --write
+```
+
+That writes `~/.ssh/config.d/kiwi-<folder>.conf` with every machine: its admin user, its
+port, the fleet's key and host keys. ssh reads the file once the first line of your
+`~/.ssh/config` is `Include config.d/*` (kiwi-server says so and does not change that
+file). Then `ssh papaya` works by the machine's name, and by an address when names do not
+resolve: `papaya-lan` (its fixed address at home), `papaya-vpn` (on the mesh),
+`sorbet-public` (a master's address on the Internet). Without `--write` the text is
+printed. It works while the fleet's secret store is open, and is made again after
+machines or addresses change.
+
 ## Wake a machine that is off
 
 A machine at home that is switched off can be started over the network

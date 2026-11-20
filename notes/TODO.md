@@ -49,7 +49,7 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
     availability at one site.
 30. The join token; the phoenix image with the container images inside.
 31. More hosters (cloud-init, Hetzner first), IPv6, NFSv4 with kernel TLS.
-32. `ssh-config`, `probe`, `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
+32. ~~`ssh-config`~~ (built: `kiwi-server ssh-config FLEET [--write]`, tried on the test fleet), `probe`, `build --boot`, `images.lock`, `migrate`, Pi-hole DNSSEC, `master.exit`.
 33. Data kept across a reinstall on one disk (four questions wait for the owner,
     docs/design/data-partition.md).
 34. Backups of desktop and phone, the kiwi-desktop client, Windows.

@@ -517,11 +517,19 @@ class Renderer:
             return
         tls = host.cfg.get("tls") or {}
         mf = host.module_files
+        # the names of its parts that its own name does not cover: a part named by service (vault.home),
+        # or one that moved here and kept its name (vault.quince.home). Without them in the certificate
+        # the part answers and every browser refuses it (found by the move drill, 20 Nov 2026).
+        self.scan()
+        under = "." + host.hostname
+        own = "." + host.domain if getattr(host, "domain", "") else None
+        more = [n for n in self._names.get(host.hostname, [])
+                if own and n.endswith(own) and n != host.hostname and not (n.endswith(under) and "." not in n[:-len(under)])]
         key, full = certs.ensure_host_cert(self.ca_dir(host), host.hostname,
                                            days=int(tls.get("cert_days") or certs.CERT_DAYS),
                                            ca_days=int(tls.get("days") or certs.DAYS),
                                            name_constraints=tls.get("name_constraints") or [],
-                                           aliases=host_aliases(host))
+                                           aliases=host_aliases(host), names=more)
         mf["reverse-proxy/tls_fullchain"] = util.read_bytes(full)
         mf["reverse-proxy/tls_privkey"] = util.read_bytes(key)
         host.module_settings["reverse-proxy"]["tls_fullchain"] = "fullchain.pem"

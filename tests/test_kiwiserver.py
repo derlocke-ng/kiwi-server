@@ -2976,6 +2976,9 @@ class TestSetup(Base):
         script = r.script(f.hosts["quince"])[0]
         script = script.decode() if isinstance(script, bytes) else script
         self.assertIn("paste.home", script)                                           # its own site answers to it
+        crt = f.resolve_path("secrets/ca/hosts/quince.home/cert.pem")                 # and its certificate covers it
+        self.assertIn("paste.home", certs.cert_names(crt))
+        self.assertIn("*.quince.home", certs.cert_names(crt))
         dns = next(h for h in f.hosts.values() if "dns" in (h.modules or []) and h.name != "quince")
         other = r.script(dns)[0]
         self.assertIn("paste.home", other.decode() if isinstance(other, bytes) else other)    # and the names are answered
@@ -3156,6 +3159,8 @@ class TestSetup(Base):
         r = cli.Renderer(moved, roles, os.path.join(self.tmp, "out"), None, ms2)
         script = r.script(moved.hosts["fig"])[0]
         self.assertIn("paste.quince.home", script.decode() if isinstance(script, bytes) else script)
+        # the new machine's certificate covers the name the part kept
+        self.assertIn("paste.quince.home", certs.cert_names(moved.resolve_path("secrets/ca/hosts/fig.home/cert.pem")))
         # the old machine's way into its backups, for the one run on the new machine
         rolesmod.resolve_settings(roles[moved.hosts["quince"].role], moved.hosts["quince"], ms2)
         way = partmove.way_in(moved.hosts["quince"].module_settings["backup"], moved.hosts["quince"])

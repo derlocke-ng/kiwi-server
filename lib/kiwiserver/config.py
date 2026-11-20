@@ -731,7 +731,7 @@ class Fleet:
         if not os.path.isfile(path):
             raise KiwiError("fleet file not found: %s" % util.shown_path(os.path.abspath(path)))
         try:
-            data = yaml.safe_load(util.read_text(path))
+            data = yaml.load(util.read_text(path), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))     # libyaml: 10x
         except yaml.YAMLError as e:
             raise KiwiError("%s: not valid YAML: %s" % (path, e))
         from . import federation

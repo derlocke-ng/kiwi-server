@@ -459,8 +459,12 @@ kiwi-server control pull ~/kiwi/fleet.yaml    # before working here
 kiwi-server control push ~/kiwi/fleet.yaml    # after changing the fleet here
 ```
 
-Both merge the same way, also over `--ssh`; when a file changed on both sides they name it and
-stop, and `pull --force` or `push --force` says which copy counts. The node
+Both merge the same way, also over `--ssh`: the settings key by key, the known hosts line by
+line, the store's JSON maps (MACs, pins) key by key with the later entry winning, a login token
+by its time. When a file is left that both sides changed, they name it and stop; then
+`push --keep here` keeps this computer's version of that file, `--keep there` the other's, and
+every other change of both sides is kept either way (in the app: Compare with the other copy).
+`pull --force` or `push --force` still takes one whole copy. The node
 takes a push while it is open. A new password
 (`--set-password`, then push) locks it until that password logs in.
 

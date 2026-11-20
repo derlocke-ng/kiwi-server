@@ -97,3 +97,10 @@ def _home():
 
 
 READY = "kiwi-ready"    # the compose profile of a part kept ready for another machine: made, not started
+
+
+def yaml_load(text):
+    """yaml.safe_load, through libyaml where PyYAML has it: ten times faster, and a render loads
+    every module's module.yaml and every rendered compose fragment (21 Nov 2026: a second of `list`)."""
+    import yaml
+    return yaml.load(text, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))

@@ -261,6 +261,46 @@ class Api:
         except ValueError:
             return r.status, {}
 
+    def events(self, path="/api/v1/events"):
+        """The control node's changes as they come (server-sent events): each mark, as it is sent.
+        Ends with the stream (the node went away, the login ended); KiwiError when it does not open."""
+        headers = {"Host": self.u.netloc, "Accept": "text/event-stream"}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
+        conn = self._connection()
+        try:
+            conn.request("GET", (self.u.path or "") + path, headers=headers)
+            r = conn.getresponse()
+        except (OSError, ssl.SSLError) as e:
+            conn.close()
+            raise KiwiError("the control node at %s does not answer: %s" % (self.u.netloc, e))
+        if r.status != 200:
+            conn.close()
+            raise KiwiError("the control node does not send its changes (%d)%s" % (
+                r.status, ": it is older than this computer, update it" if r.status == 404 else ""))
+        try:
+            kind = ""
+            while True:
+                line = r.readline()             # a comment every 20 s: the timeout is never reached while it lives
+                if not line:
+                    return
+                line = line.decode(errors="replace").rstrip("\r\n")
+                if line.startswith("event:"):
+                    kind = line[6:].strip()
+                    if kind == "gone":
+                        return
+                elif line.startswith("data:") and kind == "change":
+                    try:
+                        yield str(json.loads(line[5:]).get("mark") or "")
+                    except (ValueError, AttributeError):
+                        pass
+                elif not line:
+                    kind = ""
+        except (OSError, ssl.SSLError):
+            return
+        finally:
+            conn.close()
+
     def login(self, name, key, scratch_dir):
         """Open the node's challenge with this controller's key; the token in it is the pass."""
         code, out = self.call("POST", "/api/controller/hello", {"name": name})
@@ -555,6 +595,12 @@ def status_api(fleet_dir, key=None):
     if status != 200 or not isinstance(out, dict):
         raise KiwiError("the control node did not say how the machines are (%s)" % status)
     return out
+
+
+def watch_api(fleet_dir, key=None):
+    """The control node's changes, mark by mark, until its stream ends (Api.events)."""
+    api, _key = api_for(fleet_dir, key)
+    return api.events()
 
 
 def activity_api(fleet_dir, key=None):

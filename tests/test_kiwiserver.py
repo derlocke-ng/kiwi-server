@@ -12229,6 +12229,21 @@ class TestWeb(WebBase):
             self.assertEqual(api("POST", "/api/federation", "tok", {"elsewhere": {}})[0], 400)
             self.assertEqual(api("POST", "/api/federation", "tok", {"kiwi2": {"share": "cloud"}})[0], 400)
 
+    def test_a_computer_follows_the_control_nodes_changes(self):
+        """`kiwi-server control watch` (the app): the marks as they come, with the computer's token."""
+        from kiwiserver import controlsync
+        api = controlsync.Api(self.url)
+        with self.assertRaisesRegex(KiwiError, r"does not send its changes \(401\)"):
+            next(api.events())
+        api.token = "tok-pc"
+        os.makedirs(self.c.run, exist_ok=True)
+        with mock.patch.object(self.c, "controller", lambda t: "pc" if t == "tok-pc" else None):
+            marks = api.events()
+            self.assertEqual(next(marks), self.c.changes())                        # at once: as it is
+            self.c._put(os.path.join(self.c.run, "status.json"), json.dumps({"time": 2, "hosts": []}))
+            self.assertEqual(next(marks), self.c.changes())                        # a new look
+            marks.close()
+
     def test_a_controller_reads_the_status_and_the_machines(self):
         """The Android app is a controller: it reads with its token what the page reads with its login."""
         import urllib.request

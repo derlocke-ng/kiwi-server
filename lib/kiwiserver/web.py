@@ -55,8 +55,15 @@ LIVE = """<script>(function () {
     b.innerHTML = 'Something changed meanwhile. <a href="">Show it</a>';
     main().insertBefore(b, main().firstChild);
   }
-  function take() {
+  var inflight = false, again = false, last = 0;
+  function take() {                                  /* at most one fetch every four seconds */
     if (touched) return say();
+    var wait = 4000 - (Date.now() - last);
+    if (inflight || wait > 0) {
+      if (!again) { again = true; setTimeout(function () { again = false; take(); }, Math.max(wait, 500)); }
+      return;
+    }
+    inflight = true; last = Date.now();
     var u = new URL(location.href); u.searchParams.set("auto", "1");
     fetch(u, {cache: "no-store", credentials: "same-origin", redirect: "manual"}).then(function (r) {
       if (r.status !== 200) throw 0; return r.text();
@@ -71,7 +78,7 @@ LIVE = """<script>(function () {
         var x = document.createElement("script"); x.textContent = old.textContent; old.replaceWith(x);
       });
       mark = nm.content;
-    }).catch(function () {});
+    }).catch(function () {}).then(function () { inflight = false; });
   }
   function stop() { if (es) { es.close(); es = null; } }
   function start() {

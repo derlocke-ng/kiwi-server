@@ -3532,6 +3532,10 @@ def cmd_control(args):
                                    module=getattr(args, "part", None) or "", at=getattr(args, "at", None) or ""):
             sys.exit(1)
         return
+    if args.action == "watch":          # the control node's changes, a line each, as they come: for the app
+        for mark in controlsync.watch_api(fleet_dir, key):
+            print("change", mark, flush=True)
+        sys.exit(1)                     # the stream ended: whoever reads it opens it again
     if args.action == "activity":       # the control page's Activity: tasks, and who did what
         out = controlsync.activity_api(fleet_dir, key)
         if args.porcelain:
@@ -6121,7 +6125,8 @@ def build_parser():
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
-    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run"])
+    s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run",
+                                      "watch"])
     s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
                                            "run: the action (apply, update, status, plan, check, backup …)")

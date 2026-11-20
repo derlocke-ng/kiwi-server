@@ -475,6 +475,10 @@ kiwi-server control activity ~/kiwi/fleet.yaml
 
 It holds names and times, no output and no secret.
 
+`kiwi-server control watch ~/kiwi/fleet.yaml` prints a line whenever something
+there changes (a look, a job, the activity), until the stream ends. The app
+follows it: it asks again at once instead of once a minute.
+
 ## One admin: applies run on the control node
 
 A computer that joined lets the control node apply the machines: the app does so by

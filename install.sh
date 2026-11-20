@@ -68,6 +68,11 @@ do_install() {
         # Preferences, App icon: kiwi-icons' kiwi_icon.py draws the colourways; the stock icon stays
         # here too, so that "Kiwi Server's own" can be put back over a chosen one
         install -Dm644 "$SRC/gui/kiwi_icon.py" "$LIB/kiwi_icon.py"
+        # kiwi-template's kit (the job strip with the filling kiwi): beside it, as the app looks for it
+        if [[ -d $SRC/gui/kit ]]; then
+            rm -rf "$LIB/kit"; cp -r "$SRC/gui/kit" "$LIB/kit"
+            find "$LIB/kit" -name '__pycache__' -type d -prune -exec rm -rf {} +
+        fi
         install -Dm644 "$SRC/data/icons/$APP_ID.svg" "$LIB/$APP_ID.svg"
         mkdir -p "$SHARE/applications"
         sed "s|^Exec=.*|Exec=$PREFIX/bin/kiwi-server-gui|" "$SRC/data/kiwi-server.desktop" \

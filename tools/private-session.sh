@@ -41,7 +41,7 @@ cat > "$rt/bus.conf" <<EOF
 EOF
 
 inside() {      # PID: does it run with this throwaway folder? (never anything of the desktop)
-    tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | grep -qE "^XDG_RUNTIME_DIR=$rt(/.*)?$"
+    { tr '\0' '\n' < "/proc/$1/environ" | grep -qE "^XDG_RUNTIME_DIR=$rt(/.*)?$"; } 2>/dev/null
 }
 cleanup() {
     local d p m

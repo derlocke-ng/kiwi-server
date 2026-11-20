@@ -15213,10 +15213,12 @@ class TestFirstRunPage(StoreBase):
                 "Content-Type": "text/plain"})
             try:
                 with urllib.request.urlopen(req) as r:
+                    heard.append(r.headers.get("X-Kiwi-Hold"))
                     return r.status
             except urllib.error.HTTPError as e:
                 with e:
                     return e.code
+        heard = []
         good = lambda when: agentmod.signature(key, b, when, "boot1", body)
         # the stand-in for kiwi-server: `status` says ok for a machine with a report in --reports, else down;
         # `apply` applies what it is given
@@ -15271,6 +15273,15 @@ class TestFirstRunPage(StoreBase):
         gone = time.time() - 7200                                              # silent for hours: the full look's to find
         os.utime(os.path.join(self.c.reports_dir, b + ".txt"), (gone, gone))
         self.assertEqual(self.c.went_silent(), [])
+        # a part went to its standby while it was gone: its agent is told to hold its containers back,
+        # with every report until its next apply
+        self.assertIsNone(heard[-1])
+        cli.hold_back(fleet, b, ["kn-vault"])
+        self.c._reported_at.clear()
+        self.assertEqual((post(b, good), heard[-1]), (200, "kn-vault"))
+        cli.record_applied(fleet, b)
+        self.c._reported_at.clear()
+        self.assertEqual((post(b, good), heard[-1]), (200, None))
 
     def test_jobs_on_different_machines_run_side_by_side(self):
         cookie, _csrf = self.made()
@@ -15349,6 +15360,20 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(alone, ["alone"])
         self.assertLess(seen.index(("out", ("b",))), seen.index(("in", ("c",))))
         self.assertFalse(g.locked())
+        # a wait with an end: a job that runs on is not waited for to the end, and is not held up after
+        hold = threading.Event()
+        t4 = threading.Thread(target=job, args=(["d"], hold)); t4.start()
+        time.sleep(0.05)
+        t0 = time.monotonic()
+        self.assertFalse(g.acquire(timeout=0.2))
+        self.assertLess(time.monotonic() - t0, 2)
+        done = threading.Event(); done.set()
+        other = threading.Thread(target=job, args=(["e"], done)); other.start()
+        other.join(5)
+        self.assertIn(("out", ("e",)), seen)                                  # the next job did not wait for it
+        hold.set(); t4.join(5)
+        self.assertTrue(g.acquire(timeout=1))
+        g.release()
 
     def test_an_apply_that_did_not_reach_a_machine_waits_for_it(self):
         cookie, _csrf = self.made()

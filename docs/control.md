@@ -536,8 +536,9 @@ backups). So:
 A report is signed with a key of the machine's own (it derives from the seed, by the
 machine's name) and sent over the network's own HTTPS to `/api/report` on the control page.
 The control node takes a report only with that machine's signature and a time within five
-minutes of its own. The agent changes nothing on its machine; it holds no secret of another
-machine. On the machine: `systemctl status kiwi-agent.timer`, `journalctl -t kiwi-agent`.
+minutes of its own. The agent changes one thing on its machine, when the answer to its report
+asks for it: it stops the containers of a part that went to its standby while the machine was
+gone (see below). It holds no secret of another machine. On the machine: `systemctl status kiwi-agent.timer`, `journalctl -t kiwi-agent`.
 
 ## When a machine does not answer
 
@@ -586,7 +587,10 @@ either (by ping or at its SSH port, at its address at home and by its name).
 If that machine still reaches it, only the way to the control node is cut,
 and nothing is switched. The switch runs as a job, as the page's Switch
 button does, and Activity says why. Each part is switched by itself at most
-once in 30 minutes.
+once in 30 minutes. When the machine that was gone starts again, its stack
+starts the part too; its agent's first report, about ten seconds after
+the start, tells it to stop those containers, and the apply that waited for
+it takes the part away.
 
 ```yaml
 defaults:

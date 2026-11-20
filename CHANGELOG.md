@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.277.0 — the machine that was gone holds the part back; fetches during jobs
+
+- **Tried live**: quince (a VM) lost its power with Vaultwarden on it; with nobody doing
+  anything the control node switched it to medlar after 10 minutes, its name answered there with
+  its data, and quince gave the part up when it was back (tests/drills/part-failover.sh).
+- **Fixed: the machine that was gone ran the part again for minutes** beside its standby when it
+  started (2 min 20 s in that drill, until the apply that waited for it). A switch made while the
+  machine did not answer now keeps its containers to hold back; the agent's report gets them in
+  its answer (`X-Kiwi-Hold`) and stops them at once. The agent reports 10 s after a start (was
+  20 s).
+- **Fixed: a computer's fetch of the fleet timed out while the control node ran a job** (a switch,
+  an apply of several machines: minutes). It now waits at most 5 seconds and then gets the copy as
+  it rests; what the job changes comes with the next fetch.
+
 ## 2.276.0 — a part goes to its standby by itself
 
 - **Failover by itself**: when the machine that runs a part kept ready elsewhere has not

@@ -3237,7 +3237,9 @@ def make_app(control: Control):
                              h.get("x-kiwi-sign") or "", body)
         if why:
             return JSONResponse({"error": why}, status_code=503 if "locked" in why else 403)
-        return {"ok": True}
+        held = control.hold(h.get("x-kiwi-host") or "")
+        # a part that went to its standby while this machine was gone: its containers stop at once
+        return JSONResponse({"ok": True, "hold": held}, headers={"X-Kiwi-Hold": " ".join(held)} if held else None)
 
     @app.get("/api/jobs/{jid}/log")
     def job_log(request: Request, jid: str, offset: int = 0, text: int = 0, download: int = 0):

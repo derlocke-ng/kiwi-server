@@ -9149,6 +9149,35 @@ class TestWatchdog(unittest.TestCase):
         ev, done = self.step(f, {"gate": False}, state, t + 1800 + 10 * 60)            # this one did not help (yet)
         self.assertEqual(([e["kind"] for e in ev], done), (["held"], []))
 
+    def test_a_part_kept_ready_goes_to_its_standby_when_two_agree(self):
+        links = [("pi", "vault", "lab")]
+        f = self.fleet()
+        state, seen = {"gone": {"pi": self.NOW}}, {"lab": False}
+        sees = lambda standby, machine: seen[standby]                                     # noqa: E731
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 3 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["waiting"])
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 6 * 60, sees)
+        self.assertEqual([(e["kind"], e["part"], e["to"]) for e in ev], [("switch", "vault", "lab")])
+        self.assertIn("lab does not reach it either", ev[0]["text"])
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 7 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["held"])                              # once: its switch is on its way
+        # only the way from the control node is cut: the standby still sees it, nothing is switched
+        state, seen["lab"] = {"gone": {"pi": self.NOW}}, True
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 6 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["held"])
+        self.assertIn("only the way from here is cut", ev[0]["text"])
+        # the standby gone too: nothing; a machine that answers: nothing at all
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": False}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["held"])
+        self.assertEqual(watchdogmod.switches(f, links, {"pi": True, "lab": True}, {"gone": {}}, self.NOW + 6 * 60, sees), [])
+        # left to a person, or later
+        ev = watchdogmod.switches(self.fleet(switch=False), links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}},
+                                  self.NOW + 60 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["tell"])
+        ev = watchdogmod.switches(self.fleet(switch={"after": 20}), links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}},
+                                  self.NOW + 6 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["waiting"])
+
     def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
         f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}
         ev, done = self.step(f, {"gate": False}, state, fail=True)

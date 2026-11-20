@@ -2386,6 +2386,22 @@ def cmd_recover(args):
     can_point = bool(master and fleet.standbys(master.name) and ddns.is_name(wg_host) and ddns.template(fleet))
     events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
                            point if can_point else None)
+
+    def sees(standby, machine):
+        """Whether `standby` reaches `machine` itself: at its address at home or on the VPN, by ping
+        or at its SSH port."""
+        h = fleet.hosts[machine]
+        # its address at home, and its name (the standby's hosts file has the network's names)
+        addrs = [a for a in (str((h.cfg.get("network") or {}).get("address") or "").split("/")[0], h.hostname) if a]
+        if not addrs:
+            raise KiwiError("%s has no address to try" % machine)
+        script = ("for a in %s; do ping -c 2 -W 2 \"$a\" >/dev/null 2>&1 && { echo kiwi-sees; exit 0; }; "
+                  "timeout 3 bash -c \"exec 3<>/dev/tcp/$a/%d\" 2>/dev/null && { echo kiwi-sees; exit 0; }; done; echo kiwi-not"
+                  % (" ".join(shlex.quote(a) for a in addrs), int((h.cfg.get("admin") or {}).get("ssh_port")
+                                                                     or (fleet.defaults.get("admin") or {}).get("ssh_port") or 22)))
+        out = remote.run(remote.reach(fleet.hosts[standby], None), script).decode(errors="replace")
+        return "kiwi-sees" in out
+    events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)

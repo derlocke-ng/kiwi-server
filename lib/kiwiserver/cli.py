@@ -2427,7 +2427,12 @@ def cmd_recover(args):
                                                                      or (fleet.defaults.get("admin") or {}).get("ssh_port") or 22)))
         out = remote.run(remote.reach(fleet.hosts[standby], None), script).decode(errors="replace")
         return "kiwi-sees" in out
-    events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees)
+    def copy_age(standby, part):
+        """How old the standby's copy of the part is (seconds), or None."""
+        out = remote.run(remote.reach(fleet.hosts[standby], None), partstandby.AGE).decode(errors="replace")
+        return partstandby.ages(out).get(part)
+    events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees,
+                                copy_age)
     if not args.dry_run:
         try:
             util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
@@ -5567,6 +5572,10 @@ def cmd_standby(args):
         how = "no copy yet (or %s does not answer)" % r["ready_on"] if r["age"] is None else "its copy is %s old" % lifecyclemod._ago(r["age"]) \
             if r["age"] >= 90 else "its copy is current"
         print("%-14s on %-10s kept ready on %-10s %s" % (r["part"], r["on"], r["ready_on"], how))
+    after = switch_after(fleet)
+    print("\n" + ("A part goes to its standby by itself when its machine has been gone for %d minutes and the standby does "
+                  "not reach it either (recovery.switch)." % after if after else
+                  "Nothing switches by itself (recovery.switch): kiwi-server switch %s PART --yes" % typed_path(fleet.path)))
 
 
 MOVING_FILE = "%s-pihole/moving/kiwi.hosts"          # in a machine's stack folder (kiwi-modules' dns part)
@@ -5576,7 +5585,7 @@ RELOAD_NAMES = (". /etc/kiwi-server/stack.env 2>/dev/null; d=%(dir)s; [ -d \"$d\
                 "${STACK_RUNTIME:-podman} exec %(pihole)s pihole reloaddns >/dev/null 2>&1; echo kiwi-told")
 
 
-def point_moving_name(args, name):
+def point_moving_name(args, name, skip=()):
     """Right after a switch wrote the fleet file: every machine that answers for names gets its file
     of the names that can move as it has it now (the name at its new machine), and reloads it. In
     seconds, where an apply of each of them takes minutes; their applies follow. A machine that does
@@ -5587,7 +5596,7 @@ def point_moving_name(args, name):
     r.also_moving = {name}
     told = []
     for h in fleet.hosts.values():
-        if h.standby_of or h.role not in roles:
+        if h.standby_of or h.role not in roles or h.name in skip:      # (one that does not answer: its apply waits)
             continue
         try:
             role = r.prepare(h)
@@ -5692,7 +5701,7 @@ def cmd_switch(args):
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
     if p["name"]:
-        told = point_moving_name(args, p["name"])
+        told = point_moving_name(args, p["name"], skip=() if src_up else (src_name,))
         if told:
             util.say("%s points at %s now on %s (%s after the switch began)" % (
                 p["name"], dst_name, ", ".join(told), util.count(int(time.time() - began), "second")))

@@ -585,7 +585,10 @@ agree that its machine is gone: the control node has not heard from it for
 five minutes, and the machine that keeps the part ready cannot reach it
 either (by ping or at its SSH port, at its address at home and by its name).
 If that machine still reaches it, only the way to the control node is cut,
-and nothing is switched. The switch runs as a job, as the page's Switch
+and nothing is switched. Nor is it switched by itself when the copy there was
+more than ten minutes behind already when the machine fell silent: that
+would lose what came since. The page and the messages say so, and a person
+decides (Switch on the machine's page). The switch runs as a job, as the page's Switch
 button does, and Activity says why. Each part is switched by itself at most
 once in 30 minutes. When the machine that was gone starts again, its stack
 starts the part too; its agent's first report, about ten seconds after

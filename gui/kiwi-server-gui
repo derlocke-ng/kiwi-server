@@ -6132,8 +6132,11 @@ class Window(Adw.ApplicationWindow):
         """A part of this machine to another machine (`kiwi-server move`), and the parts another machine
         keeps ready (`keep_ready`): each with Switch (`kiwi-server switch`)."""
         after = int(self.fleet_info.get("switch_after") or 0)
-        by_itself = (": by itself when this machine has been gone for %d minutes and the second one does not reach it "
-                     "either (Settings for every machine: When a machine is gone)" % after) if after else ""
+        controls = "control" in ((self.status.get(name) or {}).get("modules") or [])
+        by_itself = ("" if not after else
+                     ": when you say so, as this machine runs the control node, which is the one that switches by itself" if controls else
+                     ": by itself when this machine has been gone for %d minutes and the second one does not reach it either "
+                     "(Settings for every machine: When a machine is gone)" % after)
         g = Adw.PreferencesGroup(title="Its parts on other machines",
                                  description="A part moves with its data, its secrets and its name. A part that is kept ready "
                                              "has its data copied to a second machine every minute (Settings: Parts kept ready "

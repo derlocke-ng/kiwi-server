@@ -9191,6 +9191,18 @@ class TestWatchdog(unittest.TestCase):
         ev = watchdogmod.switches(self.fleet(switch={"after": 20}), links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}},
                                   self.NOW + 6 * 60, sees)
         self.assertEqual([e["kind"] for e in ev], ["waiting"])
+        # the copy there: fresh when the machine fell silent (it has not been fetched since), or behind already
+        seen["lab"] = False
+        fresh = lambda standby, part: 6 * 60 + 40                                         # noqa: E731
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees, fresh)
+        self.assertEqual([e["kind"] for e in ev], ["switch"])
+        stale = lambda standby, part: 3 * 3600                                            # noqa: E731
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees, stale)
+        self.assertEqual([e["kind"] for e in ev], ["tell"])
+        self.assertIn("behind already when pi fell silent", ev[0]["text"])
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees,
+                                  lambda standby, part: None)
+        self.assertIn("lab has no copy of it", ev[0]["text"])
 
     def test_a_provider_that_does_not_answer_means_nothing_was_done(self):
         f, state = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 600}}
@@ -9373,6 +9385,18 @@ peers=4 3
         # a file the probe could not read says nothing rather than something wrong
         f = facts.parse(base + "certificate=hub.example.org \n", local_now=1000)
         self.assertEqual(facts.assess(f), ("ok", [], []))
+
+    def test_a_copy_kept_ready_that_is_not_fresh_is_a_problem(self):
+        """What a switch by itself would start with: a standby that stopped fetching says so."""
+        base = "now=1000\napplied=x\nos=Debian\nclock=yes\nuptime=9999\n"
+        state, problems, _n = facts.assess(facts.parse(base + "standby=vault 54 \n", local_now=1000))
+        self.assertEqual((state, problems), ("ok", []))
+        state, problems, _n = facts.assess(facts.parse(base + "standby=vault 1800 ssh: connect to host quince.home port 22: No route\n",
+                                                       local_now=1000))
+        self.assertEqual((state, problems[0]["key"] if "key" in problems[0] else "standby-old"), ("warn", "standby-old"))
+        self.assertIn("its copy of vault, which it keeps ready, is 30 minutes old: ssh: connect to host quince.home", problems[0]["text"])
+        self.assertIn("no copy yet of paste", facts.assess(facts.parse(base + "standby=paste -1 \n", local_now=1000))[1][0]["text"])
+        self.assertEqual(facts.assess(facts.parse(base + "standby=vault \n", local_now=1000))[0], "ok")     # not read: nothing said
 
     def test_a_healthy_machine_has_nothing_to_say_but_its_disks(self):
         f = facts.parse("applied=x\nos=Debian\nclock=yes\nuptime=5\nservice=a active\ncontainer=a|running|Up 1 hour|i\n"

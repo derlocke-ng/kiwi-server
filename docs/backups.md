@@ -341,6 +341,9 @@ What to know:
   kept ready (see [security](security.md#a-standbys-key)).
 - A standby is not a backup: what is deleted on the first machine is deleted on the second
   a minute later.
+- A copy kept ready that is more than ten minutes old is a warning on the standby (the page,
+  `status`, the messages), with what its last fetch said: a switch by itself would start
+  with that copy.
 
 ## Pruning
 

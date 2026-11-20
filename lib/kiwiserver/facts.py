@@ -79,6 +79,15 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             kv backup_repo "$(basename "$repo") $(du -sk "$repo" | cut -f1) $(ls "$repo/snapshots" | wc -l) $(find "$repo/data" -type f -mtime -7 -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print int(s/1024)}')"
         done
     fi
+    # the parts this machine keeps ready for another one: how old each one's copy is (-1: none yet),
+    # and what the last fetch that failed said
+    if [ -f /etc/kiwi-server/standby/pull.conf ]; then
+        for p in $(awk '{print $1}' /etc/kiwi-server/standby/pull.conf | sort -u); do
+            ok=$(cat "/etc/kiwi-server/standby/state/$p.ok" 2>/dev/null); age=-1
+            [ -n "$ok" ] && age=$(( $(date +%s) - ok ))
+            kv standby "$p $age $(head -c 160 "/etc/kiwi-server/standby/state/$p.said" 2>/dev/null | tr '\n' ' ')"
+        done
+    fi
     for c in "${STACK_DIR:-}/${STACK_PREFIX:-km}-nginx/acme"/*/fullchain.pem; do
         [ -f "$c" ] || continue
         kv certificate "$(basename "$(dirname "$c")") $(date -d "$(openssl x509 -enddate -noout -in "$c" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null)"
@@ -156,6 +165,7 @@ FRAGMENT_SHOWN = 3600              # seconds for which packets cut into pieces a
 BACKUP_FULL_SOON = 30              # days of free space left on a backup node before it is a problem
 CERTIFICATE_LATE = 21 * 86400    # renewal starts at 30 days: this many left and it has been failing
 CERTIFICATE_BAD = 7 * 86400
+STANDBY_LATE = 600               # seconds: a copy kept ready is fetched every minute
 
 
 def human(kib):
@@ -201,6 +211,7 @@ def lasts_s(seconds):
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
     raw, disks, containers, units, certificates, repos, copies, onion, opened, partner_masters = {}, {}, {}, [], [], [], [], [], {}, {}
+    kept = []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -239,6 +250,10 @@ def parse(data, local_now=None):
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
+        elif key == "standby":
+            p = value.split(" ", 2)
+            if len(p) >= 2 and p[1].lstrip("-").isdigit():
+                kept.append({"part": p[0], "age": int(p[1]) if int(p[1]) >= 0 else None, "said": (p[2] if len(p) > 2 else "").strip()})
         else:
             raw[key] = value.strip()
     services = []
@@ -296,6 +311,8 @@ def parse(data, local_now=None):
         out["onion"] = onion
     if certificates:
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
+    if kept:
+        out["standby"] = kept
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
     if _int(raw.get("plaindata")):
@@ -333,6 +350,8 @@ HINTS = {
     "backup-old": "Backups: Save it now, and look whether the backup machine answers.",
     "copy-old": "Look whether that backup machine answers; the next backup copies again.",
     "certificate": "Apply the machine to renew it. A public name: its DNS record must point at the master.",
+    "standby-old": "Look whether the machine that runs the part answers; its next apply sets the fetch up again. "
+                   "On this machine: journalctl -t kiwi-standby.",
     "disk-plain": "Install it again with encryption when it suits you, or leave this warning out in its settings.",
     "data-disk-plain": "Its data disk is encrypted when it is set up again empty, or leave this warning out in its settings.",
 }
@@ -465,6 +484,13 @@ def assess(f, quiet=(), now=None):
             problems.append(bad("the certificate of %s %s" % (c["name"], "has expired" if c["left"] < 0 else "expires in %s" % util.count(days, "day")), "certificate"))
         elif c["left"] < CERTIFICATE_LATE:
             problems.append(warn("the certificate of %s expires in %s: it should have been renewed" % (c["name"], util.count(days, "day")), "certificate"))
+    for k in f.get("standby") or []:
+        # a copy that is not fresh is what a switch by itself would start with
+        if k["age"] is None:
+            problems.append(warn("no copy yet of %s, which it keeps ready%s" % (k["part"], ": " + k["said"] if k["said"] else ""), "standby-old"))
+        elif k["age"] > STANDBY_LATE:
+            problems.append(warn("its copy of %s, which it keeps ready, is %s old%s" % (
+                k["part"], lasts_s(k["age"]), ": " + k["said"] if k["said"] else ""), "standby-old"))
     for o in f.get("onion") or []:
         if not o["ok"]:
             notes.append("the hidden service %s did not answer through Tor when last asked" % o["service"])

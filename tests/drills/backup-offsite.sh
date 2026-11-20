@@ -60,15 +60,16 @@ EOF
 "${ks[@]}" apply "$fleet" "$store" > apply-on.log 2>&1; check $? "$store applied with the copy at another place"
 t0=$(date +%s)
 at "$store" "systemctl start kn-backup-offsite.service"; check $? "the first copy ($(( $(date +%s) - t0 )) s)"
-at "$store" "test -s /home/$user/docker/kn-backup-server/offsite-last"; check $? "it marks when the copy was last whole"
+sd=$(at "$store" "ls -d /home/*/docker | head -1")      # its stack folder (its admin user may be another)
+at "$store" "test -s $sd/kn-backup-server/offsite-last"; check $? "it marks when the copy was last whole"
 names=$(at "$dav" "find /var/kiwi-drill-dav/kiwi -printf '%f\n'")
 n=$(printf '%s\n' "$names" | wc -l)
 ! printf '%s\n' "$names" | grep -qiE "\.home|$domain|snapshots|index|keys|config|data"
 check $? "the place holds $n names and none it could read"
-listed=$(at "$store" "bash /home/$user/docker/kiwi/backup-offsite.sh list")
+listed=$(at "$store" "bash $sd/kiwi/backup-offsite.sh list")
 printf '%s\n' "$listed" | grep -qx "$repo/"; check $? "on $store the copy's names come back ($(printf '%s' "$listed" | tr '\n' ' '))"
-at "$store" "rm -rf /var/kiwi-drill-back; bash /home/$user/docker/kiwi/backup-offsite.sh restore $repo /var/kiwi-drill-back >/dev/null 2>&1
-  cd /home/$user/docker/kn-backup-server/data/$repo && find . -path ./locks -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > /var/kiwi-drill-a
+at "$store" "rm -rf /var/kiwi-drill-back; bash $sd/kiwi/backup-offsite.sh restore $repo /var/kiwi-drill-back >/dev/null 2>&1
+  cd $sd/kn-backup-server/data/$repo && find . -path ./locks -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > /var/kiwi-drill-a
   cd /var/kiwi-drill-back && find . -path ./locks -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > /var/kiwi-drill-b
   cmp -s /var/kiwi-drill-a /var/kiwi-drill-b"
 check $? "$repo comes back from the copy byte for byte"

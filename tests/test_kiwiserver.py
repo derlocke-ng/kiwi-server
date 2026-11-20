@@ -8535,6 +8535,8 @@ class FakeNetcup:
                     fake.attached = body["userIsoName"]
                     return self._send(202, task)
                 if path == API + "/servers/7/rescuesystem":
+                    if fake.state != "SHUTOFF":         # as netcup: only for a server that is off
+                        return self._send(400, {"message": "Server must be in state 'SHUTOFF'. (current state: '%s')" % fake.state})
                     fake.rescue = True
                     return self._send(202, task)
                 if path == API + "/servers/7/snapshots:dryrun":
@@ -8568,6 +8570,8 @@ class FakeNetcup:
                 if self.path.endswith("/servers/7/iso"):
                     fake.attached = None
                 if self.path.endswith("/servers/7/rescuesystem"):
+                    if fake.state != "SHUTOFF":
+                        return self._send(400, {"message": "Server must be in state 'SHUTOFF'. (current state: '%s')" % fake.state})
                     fake.rescue = False
                     return self._send(202, task)
                 if "/servers/7/snapshots/" in self.path:

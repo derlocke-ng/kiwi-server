@@ -2206,10 +2206,11 @@ def vps_rescue(args, fleet, client, server, label):
     if what == "on":
         if not args.yes:
             raise KiwiError("this restarts %s into netcup's rescue system: its services are away until it is off again. Add --yes" % label)
-        client.rescue_on(sid)
-        util.say("%s: restarting into the rescue system" % label)
+        # netcup starts the rescue system only for a server that is off (it says so with a 400)
+        util.say("%s: switching it off, then on into the rescue system" % label)
         if client.state(sid) != "SHUTOFF":
             client.power(sid, False)
+        client.rescue_on(sid)
         client.power(sid, True)
         password = (client.rescue(sid) or {}).get("password") or ""
         if password:
@@ -2220,10 +2221,10 @@ def vps_rescue(args, fleet, client, server, label):
                  "cryptsetup open and the key in secrets/luks/. Afterwards: kiwi-server vps rescue %s %s --name off"
                  % (label, address, typed_path(path) if password else "netcup's panel", typed_path(fleet.path), args.target))
         return
-    client.rescue_off(sid)
-    util.say("%s: restarting into its own system" % label)
+    util.say("%s: switching it off, then on into its own system" % label)
     if client.state(sid) != "SHUTOFF":
         client.power(sid, False)
+    client.rescue_off(sid)
     client.power(sid, True)
     if os.path.isfile(path):
         os.remove(path)

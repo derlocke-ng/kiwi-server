@@ -262,7 +262,7 @@ class TestPlan(unittest.TestCase):
         self.fleet = types.SimpleNamespace(
             hosts={x.name: x for x in (h("lime", keep_ready={"vault": "quince"}), h("quince"), h("medlar"),
                                        h("sorbet", role="master", site="netcup"))},
-            resolve_path=lambda rel: os.path.join(self.tmp, rel))
+            resolve_path=lambda rel: os.path.join(self.tmp, rel), defaults={})
         self.roles = {"node": types.SimpleNamespace(node_type="node"), "master": types.SimpleNamespace(node_type="master")}
         for name in ("lime", "quince", "medlar"):
             os.makedirs(os.path.join(self.tmp, "secrets", "standby"), exist_ok=True)

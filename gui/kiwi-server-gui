@@ -6170,6 +6170,8 @@ class Window(Adw.ApplicationWindow):
         parts.append(self.network_group(name, st, live, f))
         parts.append(self.deploy_group(name, st, f))
         if live and live.get("ok"):
+            if (self.status.get(name) or {}).get("stops"):
+                parts.append(self.stops_group(name))
             parts.append(self.move_group(name))
             if self.control_host():         # its History is the control node's
                 parts.append(self.history_group(name))
@@ -6184,6 +6186,18 @@ class Window(Adw.ApplicationWindow):
         b.connect("clicked", lambda *_: ActivityDialog(self, name).present(self))
         row.add_suffix(b)
         g.add(row)
+        return g
+
+    def stops_group(self, name):
+        """What this machine's stop does to its parts (`kiwi-server parts`): one sentence, and one per part."""
+        row_of = self.status.get(name) or {}
+        g = Adw.PreferencesGroup(title="When it stops", description=row_of.get("stops") or "")
+        each = Adw.ExpanderRow(title="Each part", subtitle="Changed in the fleet file: defaults.parts (lost, need)")
+        for r in row_of.get("parts_table") or []:
+            line = Adw.ActionRow(title=r.get("part") or "", subtitle=(r.get("sentence") or "").split(": ", 1)[-1])
+            line.set_subtitle_lines(3)
+            each.add_row(line)
+        g.add(each)
         return g
 
     def move_group(self, name):

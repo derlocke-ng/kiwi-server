@@ -1007,6 +1007,11 @@ def warn_data_on_master(h, roles, ms):
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     errs += partstandby.errors(fleet, roles)
+    from . import policy as policymod
+    try:
+        policymod.table(fleet)
+    except KiwiError as e:
+        errs.append(str(e))
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
@@ -1303,6 +1308,18 @@ def cmd_list(args):
                      "status": o.status(), "dir": o.dir, "iso": o.iso,
                      "updates": h.cfg.get("updates") or {},
                      "errors": errs, "warnings": h.warnings})
+    # what each machine's stop does to its parts (policy.py): the page and the app show the sentence
+    from . import policy as policymod
+    try:
+        table = {}
+        for pr in policymod.rows(fleet, roles):
+            table.setdefault(pr["machine"], []).append(pr)
+        for row in rows:
+            mine = table.get(row["name"]) or []
+            row["stops"] = policymod.summary(row["name"], mine) if mine else ""
+            row["parts_table"] = [dict(pr, sentence=policymod.sentence(pr)) for pr in mine]
+    except KiwiError as e:
+        util.warn("the table per part: %s" % e)
     if args.porcelain:
         groups, default_group = {}, None     # the master's client groups: where a new device may go
         for h in fleet.hosts.values():
@@ -5680,6 +5697,34 @@ def move_part(args, part, src_name, dst_name):
              % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
 
 
+def cmd_parts(args):
+    """The table per part (policy.py): for every part of every machine, what happens to it when its
+    machine stops, in one sentence; --porcelain: the rows."""
+    from . import policy as policymod
+    fleet, roles, ms = load(args)
+    want = set(args.hosts or [])
+    for h in want - set(fleet.hosts):
+        raise KiwiError("no machine %s in %s" % (h, typed_path(fleet.path)))
+    for h in fleet.hosts.values():
+        settings_errors(roles, ms, h)        # its parts, resolved as the role gives them
+    rows = [dict(r, sentence=policymod.sentence(r)) for r in policymod.rows(fleet, roles) if not want or r["machine"] in want]
+    if args.porcelain:
+        print(json.dumps({"parts": rows}, indent=2))
+        return
+    by = {}
+    for r in rows:
+        by.setdefault(r["machine"], []).append(r)
+    for machine, mine in by.items():
+        print(policymod.summary(machine, mine))
+        if want:                                    # a machine named: each of its parts
+            for r in mine:
+                print("   %s" % r["sentence"])
+    if not rows:
+        util.say("no machine has a part yet")
+    elif not want:
+        util.say("each part: kiwi-server parts %s <machine>; change one: defaults.parts in the fleet file" % typed_path(fleet.path))
+
+
 def cmd_standby(args):
     """The parts another machine keeps ready (keep_ready, partstandby.py), and how old each copy is."""
     from . import lifecycle as lifecyclemod
@@ -6331,6 +6376,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server power <fleet> <host> off|restart  switch it off or restart it (says first what that means)
   kiwi-server move <fleet> <part> <from> <to>   a part to another machine, with its data, secrets and name (--yes: do it)
   kiwi-server standby <fleet>                   the parts another machine keeps ready (keep_ready), and how old each copy is
+  kiwi-server parts <fleet> [host...]           for every part, what happens to it when its machine stops (defaults.parts)
   kiwi-server switch <fleet> <part>             a part to the machine that keeps it ready (--yes: do it)
   kiwi-server move <fleet> --mesh M --domain D  what moving the whole network would change (a plan only)
   kiwi-server roles [-v]                        what a machine can become, and which modules that is
@@ -6609,6 +6655,7 @@ def build_parser():
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
     s = sub("standby", cmd_standby); s.add_argument("fleet")
+    s = sub("parts", cmd_parts); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s = sub("switch", cmd_switch); s.add_argument("fleet"); s.add_argument("part"); s.add_argument("host", nargs="?")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")
     s.add_argument("--taken", action="store_true", help="the standby took it already, by the permissions: write it down")

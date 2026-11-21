@@ -294,3 +294,24 @@ class TestControlNodeCases(unittest.TestCase):
         bare = fleet()
         bare.defaults["recovery"] = {"node": {"after": 30, "do": "restart"}}
         self.assertEqual(watchdog.policy(bare, "node", bare.hosts["medlar"]), (30.0, "restart"))  # no line: recovery
+
+
+class TestSshReuse(unittest.TestCase):
+    def test_plain_calls_share_a_connection_probes_and_forwards_do_not(self):
+        from kiwiserver import remote
+        seen = []
+        fake = lambda argv, **k: seen.append(argv) or types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")  # noqa: E731
+        remote.run("core@lime", "true", runner=fake)
+        remote.run("core@lime", "true", runner=fake, options=["-R", "7500:localhost:7500"])
+        on = " ".join(seen[0])
+        self.assertIn("ControlMaster=auto", on)
+        self.assertIn("ControlPersist=120", on)
+        self.assertNotIn("ControlMaster=no", on)                      # ssh keeps the first value: replaced
+        self.assertIn("ControlMaster=no", " ".join(seen[1]))          # a forward: its own connection
+        os.environ["KIWI_SSH_REUSE"] = "0"
+        try:
+            remote.run("core@lime", "true", runner=fake)
+        finally:
+            del os.environ["KIWI_SSH_REUSE"]
+        self.assertIn("ControlMaster=no", " ".join(seen[2]))
+        self.assertEqual(remote.ssh_opts().count("ControlMaster=no"), 1)  # probes and the others as before

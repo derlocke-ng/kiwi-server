@@ -4815,6 +4815,24 @@ class TestOnion(Base):
             self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
         self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
 
+    def test_the_runbook_starts_an_overdue_backup_and_can_leave_certificates_to_a_person(self):
+        c = controlmod.Control.__new__(controlmod.Control)
+        c.fleet_dir = self.tmp
+        line = lambda case, do, after=0: {"case": case, "do": do, "after": after}                  # noqa: E731
+        rows = [{"name": "quince", "hostname": "quince.home", "phase": "applied", "modules": ["backup"],
+                 "runbook": [line("backup-overdue", "backup-now", 60)]},
+                {"name": "lime", "hostname": "lime.home", "phase": "applied", "modules": ["backup"],
+                 "runbook": [line("backup-overdue", "tell"), line("certificate-due", "tell")]},
+                {"name": "fig", "hostname": "fig.home", "phase": "applied", "modules": ["backup"], "runbook": []}]
+        c.fleet_info = lambda fresh=False: {"hosts": rows}
+        look = lambda age: {"facts": {"backup": {"age": age}}}                                    # noqa: E731
+        c.status = lambda: {"hosts": [dict(look(2 * 3600), host="quince"), dict(look(5 * 86400), host="lime"),
+                                      dict(look(5 * 86400), host="fig")]}
+        self.assertEqual(c.backups_due(), ["quince"])        # its line: an hour; lime only tells; fig has no line
+        c.status = lambda: {"hosts": [dict(look(1800), host="quince")]}
+        self.assertEqual(c.backups_due(), [])
+        self.assertEqual(c.runbook_line(rows[1], "certificate-due")["do"], "tell")
+
     @unittest.skipUnless(have("openssl"), "openssl not installed")
     def test_a_certificate_of_the_own_ca_running_out_is_renewed_by_an_apply(self):
         # before 2.293, only a person's apply renewed it: a machine left alone for two years lost its names

@@ -2,7 +2,8 @@
 
 The owner, 22 November: admins should decide "what happens in what case with what machine", and
 "every node can handle autonomous if necessary on patterns and permission which are set before".
-This page is the plan for that. Built: step 1 (the lines checked and shown) and `part-down` and `disk-full` of step 2.
+This page is the plan for that. Built: step 1 (the lines checked and shown), `part-down` and `disk-full` of step 2, and step 3
+(machine-gone, backup-overdue and certificate-due through the table on the control node).
 
 ## What it is
 

@@ -26,8 +26,9 @@ L: days. New ideas go to the end of their section.
    unused until then). Nothing acts beyond what is written. Builds on the diagnosis and its
    record (authority.md step 3) and the agent (scale.md). M-L
    Built: the lines checked and shown (step 1), `part-down` restarted by the machine itself
-   (`kiwi-runbook`, drilled on quince), disk-full. Open: update-failed, cut-off, a crash loop told, the
-   control node's cases through the table, permissions for lines that name voters.
+   (`kiwi-runbook`, drilled on quince), disk-full, a crash loop told, the control node's cases
+   (machine-gone, backup-overdue, certificate-due). Open: update-failed on docker machines, cut-off,
+   permissions for lines that name voters.
 6. ~~Render only the machines a change reaches (scale.md); apply only the stack when only it
    changed (`--stack-only`).~~ Done (2.295.0); stack-only drilled on quince (38 s against 189 s).
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6,
@@ -44,8 +45,6 @@ L: days. New ideas go to the end of their section.
 
 ## 2. Smaller, no decision needed
 
-- A literal secret in the fleet file: the warning still says "until there is a secret store". S
-- Removing a controller (a computer) says nothing about rotating what it could read. S
 - `backups --offsite`: restore from the offsite copy without logging in to the store's machine. M
 - A "through the VPN" switch for any module, instead of hand-written `network_mode` (onion.md). M
 - The VPN name of a public instance, `<site>-public.<machine>.home` (public-services.md). S-M

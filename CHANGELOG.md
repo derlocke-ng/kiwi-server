@@ -4,6 +4,9 @@
 
 - The moving address is said again every 30 seconds (kiwi-modules 0.117.1), and the Machines table
   names the machine that holds it.
+- **The runbook on the control node**: `machine-gone` lines take the place of `recovery:` for the
+  machines they fit, `backup-overdue: backup-now` starts a backup that is late, and
+  `certificate-due: tell` leaves a certificate to a person.
 
 ## 2.296.0 — a moving address for a site's basics
 

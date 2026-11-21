@@ -654,7 +654,14 @@ for an hour, in its notes on the page and in `status`. `disk-full` with `do: pru
 when the disk of its images is 90 % full or more, images that no container uses and that are a day
 old are removed, once an hour at most; still full after that, it is left to a person. Old backup
 snapshots are not: a machine cannot delete its backups (`kiwi-server prune` does, from where the
-keys are). Every other case: you are told, and nothing is done.
+keys are).
+
+Three cases act on the control node. `machine-gone` with `do: restart, after: 15` takes the place
+of `recovery:` for the machines it fits (the diagnosis comes first, as always); `recovery:` is what
+is left for the others. `backup-overdue` with `do: backup-now` starts a backup of a machine whose
+last one is older than its `after` minutes (36 hours if not set). `certificate-due` with `do: tell`
+leaves a certificate of the network's own CA to a person instead of the apply that renews it.
+Every other case: you are told, and nothing is done.
 
 ```yaml
 defaults:

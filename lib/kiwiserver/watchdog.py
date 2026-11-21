@@ -33,9 +33,15 @@ A_DAY = 3                   # acts on one machine in 24 hours
 OPEN_AGAIN = 300            # seconds between two tries to open one disk
 
 
-def policy(fleet, kind):
-    """(minutes, what to do) for a master or a node."""
+def policy(fleet, kind, host=None):
+    """(minutes, what to do) for a master or a node; for `host`, its runbook's line for a machine that
+    does not answer wins (runbook.py, docs/design/runbook.md), `recovery:` is what is left."""
     cfg = dict(DEFAULT[kind], **(((fleet.defaults.get("recovery") or {}).get(kind)) or {}))
+    if host is not None and getattr(host, "overrides", None) is not None:
+        from . import runbook
+        line = runbook.for_machine(host).get("machine-gone")
+        if line:
+            cfg = dict(cfg, do=line["do"], **({"after": line["after"]} if line.get("after") else {}))
     try:
         after = float(cfg.get("after"))
     except (TypeError, ValueError):
@@ -146,7 +152,7 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         # not before the last look that saw it answer (an agent that stopped reporting while the machine ran on)
         since = gone.setdefault(name, min(now, max(since, seen_ok.get(name, 0))))
         minutes = int((now - since) / 60)
-        after, do = policy(fleet, kind)
+        after, do = policy(fleet, kind, fleet.hosts.get(name))
         what = "%s%s has not answered for %d minute%s" % (name, " (the master)" if kind == "master" else "", minutes,
                                                         "" if minutes == 1 else "s")
         case = cases.setdefault(name, {"opened": since, "did": []})

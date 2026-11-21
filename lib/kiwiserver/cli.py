@@ -1433,7 +1433,8 @@ def cmd_list(args):
     for row in rows:
         try:
             got = runbookmod.for_machine(fleet.hosts[row["name"]])
-            row["runbook"] = [{"case": c, "do": l["do"], "sentence": runbookmod.sentence(c, l)} for c, l in got.items() if l]
+            row["runbook"] = [{"case": c, "do": l["do"], "after": l.get("after") or 0, "sentence": runbookmod.sentence(c, l)}
+                              for c, l in got.items() if l]
         except (KiwiError, KeyError):
             row["runbook"] = []
     if args.porcelain:

@@ -52,6 +52,10 @@ case "${1:-}" in
 grant)
     set -f
     read -r verb part voter extra <<< "${SSH_ORIGINAL_COMMAND:-}"
+    # the voter is the one whose key this is (its forced command names it), not the one it says it is
+    if [[ -n ${2:-} && $voter != "$2" ]]; then
+        echo "kiwi-lease: this key is $2's" >&2; exit 1
+    fi
     if [[ $verb != grant || ! $part =~ ^[a-z0-9-]+$ || ! $voter =~ ^[a-z0-9-]+$ || -n $extra ]]; then
         logger -t kiwi-lease "refused: ${SSH_ORIGINAL_COMMAND:-}" 2>/dev/null
         echo "kiwi-lease: only: grant PART VOTER" >&2; exit 1
@@ -76,6 +80,14 @@ show)
 tick)
     mkdir -p "$run"
     exec 9>"$run/lock"; flock -n 9 || exit 0
+    # after a boot, what was given before it counts no more: a clock that is behind at boot (no clock
+    # of its own) would keep an old permission good. The voters give it anew within a minute
+    boot=$(cat "${KIWI_LEASE_BOOT:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
+    if [[ -n $boot && -e $d/boot && $(cat "$d/boot") != "$boot" ]]; then
+        rm -f "$d"/*.until
+        logger -t kiwi-lease "a new boot: the permissions from before it count no more"
+    fi
+    [[ -n $boot ]] && echo "$boot" > "$d/boot"
     while read -r part names; do
         [[ -n $names ]] || continue
         was=$(cat "$run/state-$part" 2>/dev/null)
@@ -102,7 +114,7 @@ VOTER = r'''#!/bin/bash
 #   PART MACHINE ADDRESS standby SWITCH WITNESS-ADDRESS CONTAINERS...    (SWITCH: on|off)
 #   PART MACHINE ADDRESS witness
 d=${KIWI_LEASE_DIR:-/etc/kiwi-server/lease}
-ssh_to() { ssh -i "$d/key" -o UserKnownHostsFile="$d/known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes \
+ssh_to() { timeout 25 ssh -i "$d/key" -o UserKnownHostsFile="$d/known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes \
                -o ConnectTimeout=10 -o IdentitiesOnly=yes "root@$1" "${@:2}"; }
 now=$(date +%s)
 me=$(cat "$d/me")
@@ -141,8 +153,16 @@ while read -r part machine address role switch witness containers; do
     st=$d/state/$part@$machine
     [[ -e $st.refused ]] && continue
     if ssh_to "$address" "grant $part $me" > /dev/null 2> "$st.err"; then
-        echo "$now" > "$st.given"
-        rm -f "$st.said" "$st.hold"         # it answers: switched off on purpose no longer
+        # when it arrived, not when this round began: a voter counts from the later time, so it never
+        # thinks a permission ran out before the machine does
+        date +%s > "$st.given"
+        rm -f "$st.said"
+        # it answers: switched off on purpose no longer. Not in the moment after the hold was set, when it
+        # still runs while it shuts down (a grant then would end the hold the power off asked for)
+        if [[ -e $st.hold ]]; then
+            read -r _h set < "$st.hold"
+            (( $(date +%s) - ${set:-0} > 120 )) && rm -f "$st.hold"
+        fi
         continue
     fi
     why=$(tail -1 "$st.err")
@@ -150,7 +170,7 @@ while read -r part machine address role switch witness containers; do
     [[ $role == standby && $switch == on && -n $containers ]] || continue
     # switched off on purpose (kiwi-server power off: 0) or restarted (until a time): left alone
     if [[ -e $st.hold ]]; then
-        h=$(cat "$st.hold" 2>/dev/null)
+        read -r h _set < "$st.hold"
         [[ $h == 0 || ( $h =~ ^[0-9]+$ && $now -lt $h ) ]] && continue
     fi
     gone_since "$part" "$machine" || continue
@@ -165,12 +185,19 @@ while read -r part machine address role switch witness containers; do
         continue
     fi
     date +%s > "$st.refused"
+    # nothing is fetched over it from here on: the copy is the part now (partstandby's PULL skips it)
+    sb_dir=${KIWI_STANDBY_DIR:-/etc/kiwi-server/standby}
+    mkdir -p "$sb_dir/state" && date +%s > "$sb_dir/state/$part.taken"
     # shellcheck disable=SC2086
     if kiwi-stack ready start $containers; then
         echo "$now $machine" > "$d/state/$part.took"
         logger -t kiwi-vote "$part of $machine: taken here (its permission ran out, the witness agrees)"
     else
-        logger -t kiwi-vote "$part of $machine: taken, but its containers did not start here"
+        # it did not start: this machine gives the permission again (the machine may be back), tries again
+        # next minute, and says so in its report (the control node tells a person)
+        rm -f "$st.refused" "$sb_dir/state/$part.taken"
+        echo "$now $machine failed" > "$d/state/$part.took"
+        logger -t kiwi-vote "$part of $machine: its containers did not start here: tried again in a minute"
     fi
 done < "$d/vote.conf"
 '''
@@ -279,6 +306,15 @@ for f in "$d"/state/*.took; do
     [ -e "$f" ] || continue; b=${f##*/}; b=${b%%.took}
     grep -q "^$b [^ ]* [^ ]* standby" "$d/vote.conf" || rm -f "$f"
 done
+for f in "$d"/state/*@*.given "$d"/state/*@*.err "$d"/state/*@*.said "$d"/state/*@*.hold; do
+    [ -e "$f" ] || continue; b=${f##*/}; b=${b%%.*}
+    grep -q "^${b%%@*} ${b#*@} " "$d/vote.conf" || rm -f "$f"
+done
+# a part that left this machine: its permission goes with it (a switch back must not find an old one)
+for f in "$d"/*.until "$d"/*.fresh "$d"/*.by-*; do
+    [ -e "$f" ] || continue; b=${f##*/}; b=${b%%.*}
+    grep -q "^$b " "$d/parts" || rm -f "$f"
+done
 cat > "$d/known_hosts" <<'KIWI_EOF'
 %(known)sKIWI_EOF
 key=$(cat)
@@ -373,7 +409,7 @@ def plan(fleet, roles, host, leased_parts, switch_on):
     authorized, vote, known, waits = [], [], [], []
     for p in sorted(mine):                      # the voters' keys on this machine: they give permissions
         for v in voters[p]:
-            line = authorized_line(util.read_text(key_path(fleet, v) + ".pub"), "%s grant" % LEASE_PATH)
+            line = authorized_line(util.read_text(key_path(fleet, v) + ".pub"), "%s grant %s" % (LEASE_PATH, v))
             if line not in authorized:
                 authorized.append(line)
 
@@ -483,8 +519,26 @@ def hold(tgt, part, machine, minutes=None, runner=None):
     for. Ends when the machine answers again."""
     run = runner or remote.run
     until = "0" if minutes is None else "$(( $(date +%%s) + %d ))" % (int(minutes) * 60)
-    run(tgt, "[ -d %s ] && mkdir -p %s/state && echo %s > %s/state/%s@%s.hold || true"
+    run(tgt, "[ -d %s ] && mkdir -p %s/state && echo %s $(date +%%s) > %s/state/%s@%s.hold || true"
         % (DIR, DIR, until, DIR, shlex.quote(part), shlex.quote(machine)))
+
+
+def start_permission(tgt, part, runner=None):
+    """On the machine a part is switched to: the permission for its first LENGTH seconds, given by
+    the switch itself (a person or the control node), until its voters give theirs. Without it, the
+    apply that makes the part its own would stop it while its voters still give the old machine's."""
+    run = runner or remote.run
+    run(tgt, "mkdir -p %s && echo $(( $(date +%%s) + %d )) > %s/%s.until" % (DIR, LENGTH, DIR, shlex.quote(part)))
+
+
+def unrecorded_takes(fleet, roles, host, runner=None):
+    """[(part, machine)] this machine took by itself that the fleet file does not say yet. An apply of
+    it then would make the part a copy kept ready again and stop it: the switch is written down first."""
+    if not any(host.name == sb for (_m, _p), (sb, _w) in links(fleet, roles).items()):
+        return []
+    run = runner or remote.run
+    out = took(run(remote.reach(host, None), TOOK).decode(errors="replace"))
+    return [(p, m) for p, (_t, m) in out.items() if (m, p) in links(fleet, roles) and links(fleet, roles)[(m, p)][0] == host.name]
 
 
 def drop(tgt, part, runner=None):
@@ -494,7 +548,8 @@ def drop(tgt, part, runner=None):
         % (DIR, part, DIR, DIR, part, DIR, part))
 
 
-TOOK = "for f in %s/state/*.took; do [ -e \"$f\" ] || continue; b=${f##*/}; echo \"${b%%.took} $(cat \"$f\")\"; done" % DIR
+TOOK = ("for f in %s/state/*.took; do [ -e \"$f\" ] || continue; b=${f##*/}; grep -q failed \"$f\" && continue; "
+        "echo \"${b%%.took} $(cat \"$f\")\"; done" % DIR)
 
 
 def took(text):

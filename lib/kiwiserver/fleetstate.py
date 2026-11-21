@@ -69,6 +69,11 @@ def diff(before, after, at=()):
             if isinstance(a, dict) and k not in before:
                 steps += diff({}, a, where)
                 continue
+        if isinstance(b, list) and isinstance(a, list) and all(isinstance(x, (str, int)) for x in a + b):
+            # a list of names (standby_links, lease_hosts): item by item, so two sides that change one list at
+            # once keep both their changes (the review of 22 Nov 2026)
+            steps += [["remove", where, x] for x in b if x not in a] + [["add", where, x] for x in a if x not in b]
+            continue
         if k not in after:
             steps.append(["del", where])
         elif k not in before or b != a:
@@ -84,7 +89,7 @@ def apply(state, steps):
             op, where = step[0], [str(k) for k in step[1]]
         except (TypeError, IndexError, KeyError):
             continue
-        if not where or op not in ("set", "del"):
+        if not where or op not in ("set", "del", "add", "remove"):
             continue
         node, chain = state, []
         for k in where[:-1]:
@@ -97,7 +102,15 @@ def apply(state, steps):
             node = node.setdefault(k, {})
         if not isinstance(node, dict):
             continue
-        if op == "set" and len(step) > 2:
+        if op in ("add", "remove") and len(step) > 2:
+            items = node.get(where[-1])
+            items = list(items) if isinstance(items, list) else []
+            if op == "add" and step[2] not in items:
+                items.append(step[2])
+            elif op == "remove" and step[2] in items:
+                items.remove(step[2])
+            node[where[-1]] = sorted(items, key=str)
+        elif op == "set" and len(step) > 2:
             node[where[-1]] = step[2]
         elif op == "del":
             node.pop(where[-1], None)

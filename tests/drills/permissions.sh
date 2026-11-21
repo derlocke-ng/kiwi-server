@@ -77,6 +77,21 @@ sys.exit(0 if (h[sys.argv[3]].get("keep_ready") or {}).get(sys.argv[2]) == sys.a
 done
 [ "${WRITTEN:-}" = skip ] || check "$(is [ -n "$written" ])" "the control node wrote it down: $part on $sb, kept ready on $on (${written:-never} s after the cut)"
 
+# where it runs now, it keeps running: the switch gives it a start permission, and the witness its own
+# (the review of 22 Nov 2026: the apply that wrote the take down stopped it there)
+if [ "${WRITTEN:-}" != skip ]; then
+    gaps=0
+    for _ in $(seq 1 12); do
+        runs "$sb" || gaps=$((gaps + 1))
+        sleep 15
+    done
+    check "$(is [ "$gaps" = 0 ])" "$part ran on $sb throughout the 3 minutes after it was written down (missed ${gaps} of 12)"
+    left=$(at "$sb" "/usr/local/sbin/kiwi-lease show" | awk -v p="$part" '$1 == p {print $2}')
+    check "$(is [ "${left:-0}" -gt 0 ])" "$sb holds a permission for $part (${left:-none} s left)"
+    by=$(at "$sb" "cat /etc/kiwi-server/lease/$part.by-* 2>/dev/null | cut -d' ' -f1 | sort -u | tr '\n' ' '")
+    case " $by " in *" $wit "*) check 0 "$wit gives it ($by)" ;; *) check 1 "$wit gives it (${by:-nobody})" ;; esac
+fi
+
 # back
 ssh -o BatchMode=yes "$VMHOST" "$V start $on" >/dev/null; check $? "$on's power back"
 back=""

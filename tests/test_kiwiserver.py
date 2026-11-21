@@ -9159,8 +9159,14 @@ class TestWatchdog(unittest.TestCase):
     def test_switched_off_as_it_said_is_left_alone(self):
         f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
         ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 60 * 60,
-                                  words={"gate": {"at": self.NOW, "reason": "poweroff", "why": ""}})
+                                  words={"gate": {"at": self.NOW, "reason": "poweroff", "why": "switched off by kiwi-server power"}})
         self.assertEqual((done, ev[0]["kind"], ev[0]["planned"]), ([], "off", True))
+        # switched off without a reason (the provider's maintenance, the button): looked at like any silence
+        state = {}
+        self.diagnosed(f, {"gate": False}, state, self.NOW, words={"gate": {"at": self.NOW, "reason": "poweroff", "why": ""}})
+        ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 10 * 60,
+                                  words={"gate": {"at": self.NOW, "reason": "poweroff", "why": ""}})
+        self.assertEqual(done, ["gate"])
 
     def test_a_whole_site_away_is_said_once_and_nothing_is_restarted(self):
         f, state = self.fleet(master={"after": 3, "do": "restart"}, node={"after": 3, "do": "restart"}), {}
@@ -9244,6 +9250,33 @@ class TestWatchdog(unittest.TestCase):
                               last={"gate": self.NOW - 2 * 3600})          # an old report says nothing about now
         self.assertEqual([e["kind"] for e in ev], ["waiting"])
         self.assertEqual(state["gone"]["gate"], self.NOW)
+
+    def test_what_the_look_found_or_the_table_holds_a_switch(self):
+        # the review of 22 Nov 2026: the old switch moved a part a person switches, or one whose machine said it restarts
+        links = [("pi", "vault", "lab")]
+        sees = lambda standby, machine: False                                              # noqa: E731
+        f = self.fleet()
+        for conclusion in watchdogmod.QUIET_CONCLUSIONS:
+            state = {"gone": {"pi": self.NOW}, "cases": {"pi": {"conclusion": conclusion}}}
+            self.assertEqual(watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 9 * 60, sees), [], conclusion)
+        state = {"gone": {"pi": self.NOW}}
+        f.defaults["parts"] = {"vault": {"lost": "wait"}}
+        self.assertEqual(watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 9 * 60, sees), [])
+        f.defaults["parts"] = {"vault": {"lost": "ask"}}
+        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 9 * 60, sees)
+        self.assertEqual([e["kind"] for e in ev], ["tell"])
+        self.assertIn("by hand", ev[0]["text"])
+
+    def test_a_masters_devices_go_to_its_standby_also_when_its_site_is_away(self):
+        f = self.fleet(master={"after": 3, "do": "restart"})
+        f.standbys = lambda name: [types.SimpleNamespace(name="kiwi", standby_endpoint="5.6.7.8")] if name == "gate" else []
+        pointed, state = [], {}
+        point = lambda address: pointed.append(address) or "1.2.3.4"                       # noqa: E731
+        site = {"gate": "netcup", "pi": "netcup"}
+        self.diagnosed(f, {"gate": False, "pi": False}, state, self.NOW, site=site, point=point)
+        ev, done = self.diagnosed(f, {"gate": False, "pi": False}, state, self.NOW + 10 * 60, site=site, point=point)
+        self.assertEqual((pointed, done), (["5.6.7.8"], []))
+        self.assertIn("moved", [e["kind"] for e in ev])
 
     def test_a_part_kept_ready_goes_to_its_standby_when_two_agree(self):
         links = [("pi", "vault", "lab")]

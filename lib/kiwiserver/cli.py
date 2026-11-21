@@ -2544,6 +2544,12 @@ def cmd_recover(args):
     held = state.get("leases") or {}
     for row in seen.get("hosts") or []:
         for t in (row.get("facts") or {}).get("took") or []:
+            if t.get("failed") and (t["from"], t["part"], row["host"]) in partstandby.links(fleet):
+                # it tried, and the containers did not start there: it tries again every minute, and a person looks
+                events.append({"host": t["from"], "kind": "tell", "part": t["part"],
+                               "text": "%s does not answer, and %s could not start %s, which it keeps ready: look at %s "
+                                       "(journalctl -t kiwi-vote)" % (t["from"], row["host"], t["part"], row["host"])})
+                continue
             if (t["from"], t["part"], row["host"]) in partstandby.links(fleet):
                 # how long ago, not a clock time: the control node's container keeps UTC (it said
                 # "01:32" for 02:32, 21 Nov 2026)
@@ -3383,6 +3389,19 @@ def cmd_apply(args):
                             "first time: kiwi-server next %s %s finds it%s; or give its address: --ssh %s@%s"
                             % (h.name, h.hostname, shown_path(args.fleet), h.name, " at " + addr if addr else "",
                                h.admin["user"], addr or "<address>"))
+        if not args.no_run:
+            # it took a part by itself that the fleet file does not say yet: an apply now would make that part
+            # a copy kept ready here again and stop it (the review of 22 Nov 2026). The switch is written first
+            from . import lease as leasemod
+            try:
+                takes = leasemod.unrecorded_takes(fleet, roles, h)
+            except KiwiError:
+                takes = []
+            if takes:
+                raise KiwiError("%s took %s by itself, and the fleet file does not say so yet: kiwi-server switch %s %s %s "
+                                "--taken --yes writes it down (the control node does that by itself), then apply"
+                                % (h.name, " and ".join("%s from %s" % t for t in takes), shown_path(args.fleet),
+                                   takes[0][0], takes[0][1]))
         try:
             if not args.no_run and h.target == "ucore":
                 coreos_t.wait_for_ucore(h.name, tgt)    # a fresh one restarts twice by itself first
@@ -5920,6 +5939,14 @@ def cmd_switch(args):
         ready = (Renderer(fleet, roles, out_dir, None, ms).script(dst)[1].module_services or {}).get(part) or []
     except KiwiError:
         ready = []
+    if voters:
+        # the switch's own permission for the part there, until its voters give theirs: the apply below
+        # would stop it otherwise (the review of 22 Nov 2026)
+        try:
+            leasemod.start_permission(d_tgt, part)
+        except KiwiError as e:
+            util.warn("%s: no start permission for %s (%s): it may stop until its voters give one"
+                      % (dst_name, part, str(e).splitlines()[-1][:80]))
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
     unhold(fleet, dst_name, set(ready) | set(services))      # it runs there now: an old hold must not stop it
@@ -5956,6 +5983,21 @@ def cmd_switch(args):
     reached = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
     now = [n for n in reached if src_up or n != src_name]
     failed = again(["apply", fleet.path] + now) if now else 0
+    # the voters of the part where it runs now get their new lines at once, also when nothing of their role
+    # changed (a witness's role seldom does): they give the new machine its permission, not the old one
+    for (m, pt), vs in leasemod.links(fleet2, roles2).items():
+        if m != dst_name or pt != part:
+            continue
+        r2 = Renderer(fleet2, roles2, out_dir, None, ms2)
+        for h2 in fleet2.hosts.values():
+            settings_errors(roles2, ms2, h2)
+        for v in vs:
+            if v in now or (v == src_name and not src_up):
+                continue
+            try:
+                leasemod.after_apply(fleet2, fleet2.hosts[v], remote.reach(fleet2.hosts[v], None), roles2, r2.script, True)
+            except KiwiError as e:
+                util.warn("%s: its permissions were not set up anew (%s): apply it" % (v, str(e).splitlines()[-1][:80]))
     certificate_again(fleet, p, d_tgt)
     later = ""
     if not src_up:

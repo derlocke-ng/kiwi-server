@@ -67,6 +67,13 @@ class TestSteps(Base):
         self.assertEqual(steps, [["del", ["off", "sorbet"]]])
         self.assertEqual(fs.apply({"off": {"sorbet": 1, "lime": 2}}, steps), {"off": {"lime": 2}})
 
+    def test_a_list_of_names_changes_item_by_item(self):
+        keeper = {"standby_links": ["lime", "quince"]}
+        here = fs.diff({"standby_links": ["lime", "quince"]}, {"standby_links": ["lime", "quince", "medlar"]})
+        there = fs.diff({"standby_links": ["lime", "quince"]}, {"standby_links": ["quince"]})
+        self.assertEqual(here, [["add", ["standby_links"], "medlar"]])
+        self.assertEqual(fs.apply(fs.apply(keeper, there), here), {"standby_links": ["medlar", "quince"]})
+
     def test_a_step_that_does_not_fit_is_left_out(self):
         state = {"applied": 5}
         fs.apply(state, [["set", ["applied", "lime"], 1], ["del", ["nothing", "here"]], ["boom"], "x"])

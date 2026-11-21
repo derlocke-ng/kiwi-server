@@ -78,6 +78,8 @@ mkdir -p "$d/state"
 declare -A bad=() seen=()
 while read -r part from dir here; do
     [[ -n $dir ]] || continue
+    # taken over here by its permission (lease.py): the folder is the part now, nothing is fetched over it
+    [[ -e $d/state/$part.taken ]] && continue
     here=${here:-$dir}                  # a volume lies elsewhere on each machine; a folder at the same place
     seen[$part]=1
     # The first fetch of a part over a folder that holds data already (this machine ran the part
@@ -163,6 +165,8 @@ REMOVE_SEND = ("[ -e %s ] || exit 0; rm -f %s %s/send.conf %s; "
 # the standby machine: its key (stdin), whose host keys to trust, what to fetch, the timer
 INSTALL_PULL = r'''set -eu
 ''' + NEED_RSYNC + r'''install -d -m 0700 %(dir)s %(dir)s/state
+# a part this machine took by itself is written down by now (an apply waits for that: lease.unrecorded_takes)
+rm -f %(dir)s/state/*.taken
 key=$(cat)
 umask 077
 printf '%%s\n' "$key" > %(dir)s/key.new && mv %(dir)s/key.new %(dir)s/key

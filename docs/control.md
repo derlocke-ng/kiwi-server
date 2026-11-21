@@ -590,7 +590,8 @@ not answer in a fixed order, and keeps what it found as one record for the whole
    restart or switched off, and why when kiwi-server asked for it (an update in its update
    window, `kiwi-server power`, the leash). A machine that said it restarts is waited for
    10 minutes (or the policy's `after`, if longer), without a message and without a restart.
-   One that said it switches off is left alone. Activity has the last report ("sorbet goes
+   One that `kiwi-server power off` switched off is left alone; one that switched off without
+   a reason (its provider's maintenance, the button) is looked at like any other silence. Activity has the last report ("sorbet goes
    down: it restarts (an update (its update window))").
 2. **Is its disk waiting for its key?** Then its ring is forwarded, as below.
 3. **Does any other machine of its site answer?** When none does, the whole site is away

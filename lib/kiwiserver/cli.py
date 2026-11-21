@@ -5809,7 +5809,8 @@ def cmd_standby(args):
         if args.hold not in fleet.hosts:
             raise KiwiError("no machine %s in %s" % (args.hold, typed_path(fleet.path)))
         held = hold_standbys(fleet, roles, args.hold, int(args.minutes or 15))
-        util.say("%s: %s" % (args.hold, ("its standbys wait %d minutes before they take %s" % (int(args.minutes or 15), ", ".join(held)))
+        util.say("%s: %s" % (args.hold, ("its standbys wait %s before they take %s" % (util.count(int(args.minutes or 15), "minute"),
+                                                                                      ", ".join(held)))
                              if held else "no part of it runs by a permission"))
         return
     rows = []

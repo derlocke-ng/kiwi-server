@@ -52,7 +52,7 @@ made with the owner; do not reopen them without a reason.
   nodes, .1 guests, .2 pentest, .3 devices, .4 routers.
 - Names are `service.hostname.tld`, the TLD chosen by the owner (`.home`
   when unset). Nodes' Pi-hole forwards to the master's, which forwards to
-  Quad9. The master's Pi-hole listens on 8081 inside the WireGuard server's
+  Cloudflare and Google behind the VPN (Quad9 until November 2026: no filtering resolvers). The master's Pi-hole listens on 8081 inside the WireGuard server's
   namespace, nginx owns 80/443.
 - Rootful podman with quadlets now, rootless maybe later. Full disk
   encryption everywhere with Tang/Clevis (nested Shamir), no TPM; the
@@ -69,7 +69,7 @@ made with the owner; do not reopen them without a reason.
   dishes, nodes after fruits (Names).
 - Control plane: one full admin for all nodes plus admins for their own
   nodes; both ISO paths (generic ISO with a join token as the default,
-  per-host ISO with embedded secrets for offline); FastAPI, Jinja, HTMX;
+  per-host ISO with embedded secrets for offline); FastAPI and Jinja (no HTMX in the end: plain forms and the pages' own script);
   the GTK app stays and becomes an API client.
 - kiwi-game becomes a stand-alone module that manages game servers in
   podman (or docker) and stops idle ones, by itself or by hand in the UI.

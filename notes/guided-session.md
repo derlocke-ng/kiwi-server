@@ -12,7 +12,7 @@ and the page's buttons and the drill named below are in the code.
 
 | Machine | For | State | Before |
 |---|---|---|---|
-| crumble (netcup VPS, 188.68.38.110) | the master | runs ~/kiwi-2's RAM master (Riseup exit, standby crumble-b) | wiping it is allowed (`KIWI_NEVER` keeps the live master and sorbet safe in the drills only: kiwi-server itself does not read it) |
+| crumble (netcup VPS, 188.68.38.110) | the master | runs ~/kiwi-2's RAM master (Riseup exit, standby crumble-b) | wiping it is allowed (`KIWI_NEVER` keeps the live master and sorbet safe: the drills and kiwi-server's netcup calls both read it) |
 | crumble-b, damson (VMs on sh3, 192.168.2.70 / .71) | a node, a standby | ~/kiwi-2's standby and node since 17 Nov | reinstall from new media; they are mine to wipe |
 | a new VM on sh3 | the first node | made from the starter stick | `virsh` on sh3, own VMs only; the `id-*` VMs stay untouched |
 | starter-test (VM on sh3, 192.168.2.177) | a second node | the starter stick, waiting | its stick is from 2.123.0: make a new one first |

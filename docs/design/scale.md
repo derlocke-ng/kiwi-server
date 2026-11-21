@@ -54,6 +54,12 @@ Anything read in a way that is not written down (the fleet file's raw text, say)
 machine count as reading everything. Each step is checked against the full render: both must
 give the same scripts for every change in the suite's fleets.
 
+Built (2.295.0): reach.py writes the reads down, the fleet-wide look is fingerprinted by what it
+found, and a render that made something new (a certificate) has every machine judged once more.
+On the way to the machine the same idea holds (the owner, 22 November: "we don't need to update
+the whole machine"): a role script that differs from the last applied one only in the stack's
+lines runs with `--stack-only`, the stack's steps alone.
+
 ## Decided (the owner, 20 November 2026)
 
 | Question | Answer |

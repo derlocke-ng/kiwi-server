@@ -28,7 +28,8 @@ L: days. New ideas go to the end of their section.
    Built: the lines checked and shown (step 1), `part-down` restarted by the machine itself
    (`kiwi-runbook`). Open: its drill on a real machine, disk-full, update-failed, cut-off, the
    control node's cases through the table, permissions for lines that name voters.
-6. Render only the machines a change reaches (scale.md). M-L
+6. ~~Render only the machines a change reaches (scale.md); apply only the stack when only it
+   changed (`--stack-only`).~~ Built (next release); stack-only drilled on quince.
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6). L
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
 9. The Devices table by site on the page, as Machines (ui.md). S-M

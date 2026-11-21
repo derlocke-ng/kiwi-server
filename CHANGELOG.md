@@ -18,6 +18,15 @@
   stays as it is, and a bind removes that guard again.
 - **Fixed: every apply of a Debian or Armbian machine with rings rebuilt its initramfs** (a
   comparison that never matched); now only when something changed.
+- **Only the machines a change reaches are rendered** (docs/design/scale.md): a fingerprint per
+  machine of its own settings, what every machine shares and what its last render read of the
+  others. A part's setting on one machine renders that machine alone, a comment nothing; each
+  answer is the same as a full render's (test). Fixed on the way: a resolved setting could be a
+  module's default itself, and a render wrote into it (access rules) for every later machine.
+- **Only the stack changed: only the stack's steps** (kiwi-stack 0.9.32, `--stack-only`): when a
+  machine's role script differs from its last apply's in the stack's files, containers or names
+  only, the apply writes those, restarts what changed and checks the stack; the machine's own
+  steps are left out. `KIWI_FULL_APPLY=1` runs the whole role.
 - **Devices by site**: the Devices page groups devices by the site of the master they connect to,
   with `site:NAME` in its filter.
 

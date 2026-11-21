@@ -1008,11 +1008,12 @@ def warn_data_on_master(h, roles, ms):
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     errs += partstandby.errors(fleet, roles)
-    from . import policy as policymod
+    from . import policy as policymod, runbook as runbookmod
     try:
         policymod.table(fleet)
     except KiwiError as e:
         errs.append(str(e))
+    errs += runbookmod.errors(fleet)
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
@@ -1321,6 +1322,14 @@ def cmd_list(args):
             row["parts_table"] = [dict(pr, sentence=policymod.sentence(pr)) for pr in mine]
     except KiwiError as e:
         util.warn("the table per part: %s" % e)
+    # what happens in which case, as the runbook says (runbook.py): only the cases a line covers
+    from . import runbook as runbookmod
+    for row in rows:
+        try:
+            got = runbookmod.for_machine(fleet.hosts[row["name"]])
+            row["runbook"] = [{"case": c, "do": l["do"], "sentence": runbookmod.sentence(c, l)} for c, l in got.items() if l]
+        except (KiwiError, KeyError):
+            row["runbook"] = []
     if args.porcelain:
         groups, default_group = {}, None     # the master's client groups: where a new device may go
         for h in fleet.hosts.values():
@@ -5721,17 +5730,22 @@ def cmd_parts(args):
     for h in fleet.hosts.values():
         settings_errors(roles, ms, h)        # its parts, resolved as the role gives them
     rows = [dict(r, sentence=policymod.sentence(r)) for r in policymod.rows(fleet, roles) if not want or r["machine"] in want]
+    from . import runbook as runbookmod
+    book = {n: runbookmod.for_machine(fleet.hosts[n]) for n in sorted(want)}
     if args.porcelain:
-        print(json.dumps({"parts": rows}, indent=2))
+        print(json.dumps({"parts": rows, "runbook": {n: {c: runbookmod.sentence(c, l) for c, l in got.items()}
+                                                     for n, got in book.items()}}, indent=2))
         return
     by = {}
     for r in rows:
         by.setdefault(r["machine"], []).append(r)
     for machine, mine in by.items():
         print(policymod.summary(machine, mine))
-        if want:                                    # a machine named: each of its parts
+        if want:                                    # a machine named: each of its parts, and its runbook
             for r in mine:
                 print("   %s" % r["sentence"])
+            for case, line in (book.get(machine) or {}).items():
+                print("   %s" % runbookmod.sentence(case, line))
     if not rows:
         util.say("no machine has a part yet")
     elif not want:

@@ -2,7 +2,7 @@
 
 The owner, 22 November: admins should decide "what happens in what case with what machine", and
 "every node can handle autonomous if necessary on patterns and permission which are set before".
-This page is the plan for that. Nothing of it is built yet.
+This page is the plan for that. Step 1 is built (the lines checked and shown); nothing acts by them yet.
 
 ## What it is
 
@@ -20,7 +20,7 @@ defaults:
     - { case: machine-gone, for: "part:git",  do: tell }
 ```
 
-`for`: `all`, a machine's name, `role:…`, `site:…`, `part:…`, `tag:…`, as the page's filters.
+`for`: `all`, a machine's name, `role:…`, `site:…`, `part:…`, as the page's filters.
 The first line that fits wins. `after` in minutes, `tries` before a person is told instead.
 
 ## Who acts

@@ -6237,6 +6237,8 @@ class Window(Adw.ApplicationWindow):
         """What this machine's stop does to its parts (`kiwi-server parts`): one sentence, and one per part."""
         row_of = self.status.get(name) or {}
         g = Adw.PreferencesGroup(title="When it stops", description=row_of.get("stops") or "")
+        for r in row_of.get("runbook") or []:       # what happens in which case, as the runbook says
+            g.add(plain_row(r.get("sentence") or "", "The runbook: defaults.runbook in the fleet file"))
         each = Adw.ExpanderRow(title="Each part", subtitle="Changed in the fleet file: defaults.parts (need)")
         for r in row_of.get("parts_table") or []:
             line = Adw.ActionRow(title=r.get("part") or "", subtitle=(r.get("sentence") or "").split(": ", 1)[-1])

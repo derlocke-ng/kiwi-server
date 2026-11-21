@@ -774,7 +774,10 @@ stopped until you start it or the machine restarts.</p>
 {% if m.stops %}<h2 id="when">When it stops</h2><p>{{ m.stops }}</p>
 <details><summary class="muted small">Each part</summary><ul class="small">{% for r in m.parts_table %}<li>{{ r.sentence }}</li>{% endfor %}</ul>
 <p class="muted small">How much the network needs a part: <code>defaults.parts</code> in the fleet file
-(<code>need: must|normal|wait</code>).</p></details>{% endif %}
+(<code>need: must|normal|wait</code>).</p></details>
+<p class="small">{% for r in m.runbook %}{{ r.sentence }} {% endfor %}{% if m.runbook %}Every other case: you are told,
+nothing is done.{% else %}In every case you are told, and nothing is done.{% endif %}
+<span class="muted">What happens in which case: <code>defaults.runbook</code> in the fleet file.</span></p>{% endif %}
 {% if m.phase not in fresh and (targets or standby) %}<h2 id="move">Move a part, or keep it ready</h2>
 <p class="muted small">A part moves to another machine with its data, its secrets and its name. A part that is kept ready has its
 data copied to a second machine every minute: a switch moves it there while this machine runs, with nothing lost.
@@ -2093,6 +2096,7 @@ def make_app(control: Control):
                         "keep_ready": h.get("keep_ready") or {}, "applied": h.get("applied") or 0,
                         # what its stop does to its parts (policy.py): one sentence, and one per part
                         "stops": h.get("stops") or "", "parts_table": h.get("parts_table") or [],
+                        "runbook": h.get("runbook") or [],
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",

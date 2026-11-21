@@ -637,6 +637,24 @@ network needs is told after two minutes (or `notify: after`, if shorter), one wh
 all wait is not told at all and only its page says it, and the others after `notify: after`
 (10 minutes). A `lost:` left from an older release does nothing.
 
+### The runbook
+
+What happens in which case is written beforehand, as lines in the fleet file
+([design](design/runbook.md)). A machine's own lines (`hosts.NAME.runbook`) come before the
+defaults'; the first line that fits wins. `kiwi-server parts FLEET MACHINE`, the machine's page
+and the app say what each case does there. So far the lines are checked and shown, and nothing
+acts by them yet: in every case you are told.
+
+```yaml
+defaults:
+  runbook:
+    - { case: part-down, for: "role:node", do: restart, after: 2, tries: 3 }
+    - { case: disk-full, for: all, do: prune-images, at: 90 }
+```
+
+Cases: `part-down`, `disk-full`, `update-failed`, `cut-off`, `machine-gone`, `backup-overdue`,
+`certificate-due`. `for`: `all`, a machine's name, `role:NAME`, `site:NAME` or `part:NAME`.
+
 A machine whose disk waits to be unlocked at boot counts as there, not as gone.
 The control node forwards its unlock ring by itself, so a rented master with an
 encrypted disk comes back after a restart with nobody there. The ring stays at

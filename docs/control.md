@@ -642,8 +642,16 @@ all wait is not told at all and only its page says it, and the others after `not
 What happens in which case is written beforehand, as lines in the fleet file
 ([design](design/runbook.md)). A machine's own lines (`hosts.NAME.runbook`) come before the
 defaults'; the first line that fits wins. `kiwi-server parts FLEET MACHINE`, the machine's page
-and the app say what each case does there. So far the lines are checked and shown, and nothing
-acts by them yet: in every case you are told.
+and the app say what each case does there.
+
+So far one case acts: `part-down`. A machine with such a line gets a small timer from its apply
+(`kiwi-runbook`, every minute) and restarts a container of the part itself, without the control
+node, when it has failed, exited with an error or is unhealthy for `after` minutes, at most
+`tries` times a day (3 if not set); then it leaves it to a person. A container that a person
+stopped (`kiwi-server service … stop`, the page's Stop) or that stopped cleanly (a game server
+asleep) is not down. What it did is in the machine's journal (`journalctl -t kiwi-runbook`) and,
+for an hour, in its notes on the page and in `status`. Every other case: you are told, and
+nothing is done.
 
 ```yaml
 defaults:

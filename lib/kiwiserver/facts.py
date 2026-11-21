@@ -117,6 +117,14 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             kv service "$s $(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)"
         fi
     done
+    # what this machine's runbook did in the last hour (runbook.py): when, and what
+    if [ -f /var/lib/kiwi-server/runbook/log ]; then
+        t0=$(( $(date +%s) - 3600 ))
+        tail -n 8 /var/lib/kiwi-server/runbook/log | while read -r t rest; do
+            case $t in *[!0-9]*|"") continue ;; esac
+            [ "$t" -ge "$t0" ] && kv runbook "$t $(printf '%s' "$rest" | head -c 160)"
+        done
+    fi
     if "$rt" inspect "${STACK_PREFIX:-km}-fail2ban" >/dev/null 2>&1; then
         # how many addresses are shut out right now, over all its jails
         kv banned "$("$rt" exec "${STACK_PREFIX:-km}-fail2ban" fail2ban-client banned 2>/dev/null | grep -oE "'[0-9a-fA-F.:]+'" | sort -u | wc -l)"
@@ -211,7 +219,7 @@ def lasts_s(seconds):
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
     raw, disks, containers, units, certificates, repos, copies, onion, opened, partner_masters = {}, {}, {}, [], [], [], [], [], {}, {}
-    kept = []
+    kept, acted = [], []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -250,6 +258,10 @@ def parse(data, local_now=None):
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
+        elif key == "runbook":
+            t, _sp, what = value.partition(" ")
+            if t.isdigit() and what.strip():
+                acted.append({"at": int(t), "what": what.strip()})
         elif key == "standby":
             p = value.split(" ", 2)
             if len(p) >= 2 and p[1].lstrip("-").isdigit():
@@ -313,6 +325,8 @@ def parse(data, local_now=None):
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if kept:
         out["standby"] = kept
+    if acted:
+        out["runbook"] = acted
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
     if _int(raw.get("plaindata")):
@@ -458,6 +472,8 @@ def assess(f, quiet=(), now=None):
         notes.append("an update is waiting for a reboot")
     if f.get("banned"):
         notes.append("fail2ban keeps %d %s out right now" % (f["banned"], "address" if f["banned"] == 1 else "addresses"))
+    for a in f.get("runbook") or []:     # what its runbook did by itself, as the admins wrote it (the last hour)
+        notes.append("the runbook, %s: %s" % (time.strftime("%H:%M", time.localtime(a["at"])), a["what"]))
     b = f.get("backup")
     if b:
         if b.get("held"):

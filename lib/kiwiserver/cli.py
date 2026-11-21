@@ -3437,6 +3437,17 @@ def cmd_apply(args):
                 from . import opener as openermod
                 openermod.after_apply(h, tgt, servers)      # opens the way for a machine away from home (openers)
             agentmod.after_apply(fleet, h, tgt, ms)     # reports to the control node every minute (the agent)
+            # what it does itself, as the admins wrote it (runbook.py); the fleet remembers who has lines
+            from . import runbook as runbookmod
+            had_book = h.name in (fleet_state(fleet).get("runbook_hosts") or [])
+            booked = runbookmod.after_apply(fleet, h, tgt, r.script, had_book)
+            if booked is not None and bool(booked) != had_book:
+                def book_note(state, name=h.name, on=bool(booked)):
+                    hosts = set(state.get("runbook_hosts") or [])
+                    (hosts.add if on else hosts.discard)(name)
+                    state["runbook_hosts"] = sorted(hosts)
+                with book:
+                    change_state(fleet, book_note)
             # a standby for a part: this machine gives or fetches its data. Also when it no longer does:
             # a fetcher left behind would fetch the old machine's stale copy over a part that now runs
             # here (found by the standby drill, 20 Nov 2026). The fleet remembers who has a link.
@@ -5236,11 +5247,15 @@ def service_script(name, action, lines=200):
     unit = ('journalctl -u "$n.service" -n %d --no-pager -o short-iso' % lines if action == "logs"
             else 'systemctl %s "$n.service"' % action)
     dock = 'docker logs --tail %d "$n" 2>&1' % lines if action == "logs" else 'docker %s "$n" >/dev/null' % action
+    # a person's stop: the machine's runbook leaves it stopped (runbook.py), until it runs again
+    held = ({"stop": 'mkdir -p /run/kiwi-server/stopped && touch "/run/kiwi-server/stopped/$n"\n',
+             "start": 'rm -f "/run/kiwi-server/stopped/$n"\n', "restart": 'rm -f "/run/kiwi-server/stopped/$n"\n'}
+            .get(action, ""))
     return ("n=%s\n"
             'if systemctl cat "$n.service" >/dev/null 2>&1; then %s\n'
             'elif command -v docker >/dev/null && docker inspect "$n" >/dev/null 2>&1; then %s\n'
             'else echo "this machine has no service $n" >&2; exit 3; fi\n' % (shlex.quote(name), unit, dock)
-            + ('echo "$n: %s"\n' % done if done else ""))
+            + held + ('echo "$n: %s"\n' % done if done else ""))
 
 
 def game_servers(h):

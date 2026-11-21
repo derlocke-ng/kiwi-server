@@ -2,7 +2,7 @@
 
 The owner, 22 November: admins should decide "what happens in what case with what machine", and
 "every node can handle autonomous if necessary on patterns and permission which are set before".
-This page is the plan for that. Step 1 is built (the lines checked and shown); nothing acts by them yet.
+This page is the plan for that. Built: step 1 (the lines checked and shown) and `part-down` of step 2.
 
 ## What it is
 

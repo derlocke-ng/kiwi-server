@@ -115,3 +115,143 @@ def errors(fleet):
         except KiwiError as e:
             errs.append(str(e))
     return errs
+
+
+# ---- step 2: the machine acts on its own lines (part-down) -----------------------------------
+
+DIR = "/etc/kiwi-server/runbook"
+SCRIPT_PATH = "/usr/local/sbin/kiwi-runbook"
+UNIT = "kiwi-runbook"
+ON_MACHINE = ("part-down",)     # the cases the machine acts on itself, so far
+
+SCRIPT = r'''#!/bin/bash
+# kiwi-server: this machine's runbook (docs/design/runbook.md). Every minute it does what the admins
+# wrote beforehand for the cases this machine sees on itself, and nothing else. A container that a
+# person stopped (kiwi-server service … stop) or that stopped cleanly is not down: only one that
+# failed, exited with an error or is unhealthy. Each line of the conf: CONTAINER CASE DO AFTER TRIES.
+d=${KIWI_RUNBOOK_DIR:-/etc/kiwi-server/runbook}; run=${KIWI_RUNBOOK_RUN:-/run/kiwi-server/runbook}
+keep=${KIWI_RUNBOOK_KEEP:-/var/lib/kiwi-server/runbook}; held=${KIWI_STOPPED_DIR:-/run/kiwi-server/stopped}
+[ -s "$d/conf" ] || exit 0
+mkdir -p "$run" "$keep" || exit 0
+exec 9>"$run/.lock"; flock -n 9 || exit 0
+now=$(date +%s)
+running() {
+    if systemctl cat "$1.service" >/dev/null 2>&1; then systemctl is-active -q "$1.service"
+    else [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; fi
+}
+down() {    # CONTAINER: is it down? (0: yes)
+    local c=$1 s code h
+    if [ -e "$held/$c" ]; then                          # a person stopped it: it stays stopped,
+        running "$c" || return 1                        # until it runs again (started, or an apply)
+        rm -f "$held/$c"
+    fi
+    if systemctl cat "$c.service" >/dev/null 2>&1; then
+        systemctl is-failed -q "$c.service" && return 0
+        systemctl is-active -q "$c.service" || return 1  # stopped, asleep: not down
+        h=$(podman inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null)
+    elif command -v docker >/dev/null 2>&1 && docker inspect "$c" >/dev/null 2>&1; then
+        read -r s code h < <(docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null)
+        case $s in
+            restarting) return 0 ;;
+            exited|dead) case ${code:-0} in 0|137|143) return 1 ;; *) return 0 ;; esac ;;
+        esac
+    else
+        return 1                                        # not on this machine (any more)
+    fi
+    [ "$h" = unhealthy ]
+}
+say() { logger -t kiwi-runbook "$*" 2>/dev/null; echo "$now $*" >> "$keep/log"; }
+while read -r c case act after tries; do
+    [ "$case" = part-down ] || continue
+    case $c in *[!a-z0-9_.-]*|"") continue ;; esac
+    if ! down "$c"; then
+        [ -e "$run/$c.since" ] && [ -e "$run/$c.acted" ] && say "$c runs again"
+        rm -f "$run/$c.since" "$run/$c.acted" "$run/$c.told"
+        continue
+    fi
+    [ -e "$run/$c.since" ] || echo "$now" > "$run/$c.since"
+    since=$(cat "$run/$c.since")
+    (( now - since >= ${after:-0} * 60 )) || continue
+    n=$(awk -v t=$((now - 86400)) '$1 >= t' "$keep/$c.tries" 2>/dev/null | wc -l)
+    if [ "$act" != restart ] || (( n >= ${tries:-3} )); then
+        if [ ! -e "$run/$c.told" ]; then
+            if [ "$act" = restart ]; then say "$c is down: restarted $n times today, left to a person"
+            else say "$c is down: left to a person"; fi
+            touch "$run/$c.told"
+        fi
+        continue
+    fi
+    if systemctl cat "$c.service" >/dev/null 2>&1; then systemctl restart "$c.service"; else docker restart "$c" >/dev/null; fi
+    rc=$?
+    echo "$now" >> "$keep/$c.tries"
+    say "$c was down for $((now - since)) s: restarted (try $((n + 1)) of ${tries:-3} today$([ $rc = 0 ] || echo ", it failed: $rc"))"
+    echo "$now" > "$run/$c.since"; touch "$run/$c.acted"
+done < "$d/conf"
+if [ "$(wc -l < "$keep/log")" -gt 400 ]; then tail -n 200 "$keep/log" > "$keep/log.new" && mv "$keep/log.new" "$keep/log"; fi
+exit 0
+'''
+
+SERVICE = "[Unit]\nDescription=kiwi-server: this machine's runbook\n\n[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH
+TIMER = ("[Unit]\nDescription=kiwi-server: this machine's runbook, every minute\n\n[Timer]\nOnBootSec=3min\n"
+         "OnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n")
+INSTALL = r'''set -e
+install -d -m 0755 %(dir)s
+cat > %(dir)s/conf.new <<'KIWI_EOF'
+%(conf)sKIWI_EOF
+mv %(dir)s/conf.new %(dir)s/conf
+cat > %(path)s.new <<'KIWI_EOF'
+%(script)sKIWI_EOF
+chmod 0755 %(path)s.new && mv %(path)s.new %(path)s
+cat > /etc/systemd/system/%(unit)s.service <<'KIWI_EOF'
+%(service)sKIWI_EOF
+cat > /etc/systemd/system/%(unit)s.timer <<'KIWI_EOF'
+%(timer)sKIWI_EOF
+systemctl daemon-reload
+systemctl enable -q --now %(unit)s.timer
+'''
+REMOVE = ("[ -e %s ] || exit 0; systemctl disable -q --now %s.timer 2>/dev/null || true; "
+          "rm -rf %s %s /etc/systemd/system/%s.service /etc/systemd/system/%s.timer; systemctl daemon-reload"
+          % (SCRIPT_PATH, UNIT, DIR, SCRIPT_PATH, UNIT, UNIT))
+
+
+def machine_lines(host, service_modules):
+    """[(container, case, do, after, tries)] this machine acts on itself: for each container of its
+    stack, the first line that fits its part, per case the machine sees on itself."""
+    mine = (lines(host.overrides or {}, "hosts.%s.runbook" % host.name)
+            + lines(host.fleet.defaults or {}, "defaults.runbook"))
+    out = []
+    for c, part in sorted((service_modules or {}).items()):
+        for case in ON_MACHINE:
+            line = next((l for l in mine if l["case"] == case and fits(l, host, part)), None)
+            if line and line["do"] != "tell":
+                out.append((c, case, line["do"], int(line.get("after") or 0), int(line.get("tries", 3))))
+    return out
+
+
+def conf(rows):
+    return "".join("%s %s %s %d %d\n" % r for r in rows)
+
+
+def after_apply(fleet, host, tgt, render, had=False, runner=None):
+    """The machine's runbook: installed with its lines when it has any it acts on, taken away when it
+    `had` some and has none now. `render(host)` gives (script, bundle). Returns its lines ([] for
+    none), or None when it could not be set up."""
+    from . import remote
+    from . import util
+    run = runner or remote.run
+    try:
+        if not had and not any(l["case"] in ON_MACHINE and l["do"] != "tell" for l in
+                               lines(host.overrides or {}) + lines(host.fleet.defaults or {})):
+            return []                   # nothing to act on, nothing set up before: not even a render
+        rows = machine_lines(host, getattr(render(host)[1], "service_modules", None) or {})
+        if not rows:
+            if had:
+                run(tgt, REMOVE)
+            return []
+        run(tgt, INSTALL % {"dir": DIR, "conf": conf(rows), "path": SCRIPT_PATH, "script": SCRIPT, "unit": UNIT,
+                            "service": SERVICE, "timer": TIMER})
+        util.say("%s: its runbook acts on %s" % (host.name, ", ".join(sorted({"%s (%s)" % (r[0], r[2]) for r in rows}))))
+        return rows
+    except (KiwiError, OSError) as e:
+        util.warn("%s: its runbook was not set up: %s" % (host.name, e))
+        return None

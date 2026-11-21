@@ -3131,6 +3131,24 @@ def cmd_secrets(args):
 
 # on the machine, after an apply: the containers whose image is newer than the one they run
 UPDATE_IMAGES = "if [ -x /usr/local/bin/kiwi-stack ]; then /usr/local/bin/kiwi-stack update; fi"
+# the control node updating its own machine: the page it runs on is in this update. When the new control
+# image does not answer /healthz within five minutes, the one before is tagged back and started (podman's
+# units name the image by its tag). Nothing else is put back: the rest of the update stays
+UPDATE_OWN_GUARDED = r"""c=$(podman ps -a --format '{{.Names}}' 2>/dev/null | grep -- '-control$' | head -n 1)
+old=''; name=''
+if [ -n "$c" ]; then old=$(podman inspect -f '{{.Image}}' "$c" 2>/dev/null); name=$(podman inspect -f '{{.ImageName}}' "$c" 2>/dev/null); fi
+%(update)s
+if [ -n "$c" ] && [ -n "$old" ] && [ -n "$name" ]; then
+    ok=0
+    for _ in $(seq 1 "${KIWI_GUARD_TRIES:-30}"); do
+        sleep "${KIWI_GUARD_WAIT:-10}"
+        if podman exec "$c" python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8740/healthz', timeout=5)" >/dev/null 2>&1; then ok=1; break; fi
+    done
+    if [ "$ok" = 0 ] && [ "$(podman inspect -f '{{.Image}}' "$c" 2>/dev/null)" != "$old" ]; then
+        podman tag "$old" "$name" && systemctl restart "$c.service" \
+            && logger -t kiwi-self-apply "the new control image did not answer in five minutes: the one before runs again"
+    fi
+fi""" % {"update": UPDATE_IMAGES}
 
 
 def fleet_identities(fleet):
@@ -3451,7 +3469,7 @@ def cmd_apply(args):
                 # asked a second time while it still applies itself (a second "Set it up"): that is no error,
                 # the first one goes on (20 Nov 2026: "Unit kiwi-self-apply.service was already loaded")
                 out = remote.run(tgt, SELF_APPLY % shlex.quote(
-                    "bash /var/lib/kiwi-server/role.sh --force" + (" && " + UPDATE_IMAGES if update else "")
+                    "bash /var/lib/kiwi-server/role.sh --force" + (" && { " + UPDATE_OWN_GUARDED + "\n}" if update else "")
                     + " && { [ ! -x %s ] || %s; }" % (startermod.DONE, startermod.DONE))).decode(errors="replace")
                 if "kiwi-self-apply: running" in out:
                     util.say("%s: it is applying itself already: nothing started a second time; on the machine: "

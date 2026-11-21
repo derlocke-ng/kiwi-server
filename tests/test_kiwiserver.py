@@ -1349,6 +1349,38 @@ class TestAdopt(Base):
         self.assertEqual((rc, out), (0, "kiwi-self-apply: running"))
         self.assertNotIn("systemd-run", did)
 
+    def test_the_control_nodes_own_update_goes_back_when_the_new_page_does_not_answer(self):
+        work = os.path.join(self.tmp, "guard")
+        os.makedirs(os.path.join(work, "bin"))
+        podman = ('#!/bin/bash\necho "podman $*" >> %(w)s/did\n'
+                  'case "$1" in\n ps) echo kn-control ;;\n'
+                  ' inspect) case "$3" in *Image}}) cat %(w)s/image ;; *ImageName}}) echo ghcr.io/x/kiwi-server-control:2 ;; esac ;;\n'
+                  ' exec) [ -e %(w)s/answers ] ;;\nesac\n' % {"w": work})
+        for name, text in (("podman", podman), ("systemctl", 'echo "systemctl $*" >> %s/did\n' % work),
+                           ("logger", 'echo "logger $*" >> %s/did\n' % work),
+                           ("kiwi-stack-update", 'echo new > %s/image\n' % work)):
+            path = os.path.join(work, "bin", name)
+            write(path, "#!/bin/bash\n" + text if name != "podman" else text)
+            os.chmod(path, 0o755)
+        script = cli.UPDATE_OWN_GUARDED.replace(cli.UPDATE_IMAGES, "kiwi-stack-update")
+        env = dict(os.environ, PATH=os.path.join(work, "bin") + os.pathsep + os.environ["PATH"], KIWI_GUARD_TRIES="2", KIWI_GUARD_WAIT="0")
+
+        def run(answers):
+            write(os.path.join(work, "image"), "old\n")
+            for f in ("did", "answers"):
+                if os.path.exists(os.path.join(work, f)):
+                    os.unlink(os.path.join(work, f))
+            if answers:
+                write(os.path.join(work, "answers"), "")
+            subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True)
+            return util.read_text(os.path.join(work, "did"))
+        did = run(answers=True)
+        self.assertNotIn("podman tag", did)                                       # the new page answers: it stays
+        did = run(answers=False)
+        self.assertIn("podman tag old ghcr.io/x/kiwi-server-control:2", did)     # it does not: the one before
+        self.assertIn("systemctl restart kn-control.service", did)
+        self.assertIn("the one before runs again", did)
+
     def test_ssh_config_names_every_machine_with_the_fleets_key(self):
         """`ssh-config`: ssh's own configuration for the machines, as kiwi-server reaches them. Printed
         without --write; nothing of the computer's own ~/.ssh is read or touched then."""

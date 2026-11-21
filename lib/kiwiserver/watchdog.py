@@ -58,7 +58,7 @@ def _ago(seconds):
 
 
 def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None, point=None, last=None,
-         words=None, site=None, reached=None):
+         words=None, site=None, reached=None, provider=None):
     """One look. `kinds`: {machine: "master"|"node"} for the machines that have their role;
     `said`: {machine: bool} whether it answered just now; `state`: the fleet's state, changed
     in place (`gone`: since when, `acted`: when); `restart(name)` does a power cycle and may
@@ -74,7 +74,8 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
     did it say it goes down (`words`: {machine: its last report, {at, reason, why}})? Does no
     machine of its site answer either (`site`: {machine: its site})? Do the machines that give it
     its permissions, or its standby, still reach it (`reached(name)`: (True|False|None, what was
-    found))? Only what none of these explains is acted on by the policy. An event of a machine
+    found))? What does its provider say (`provider(name)`: RUNNING, SHUTOFF or None)? Only what none
+    of these explains is acted on by the policy. An event of a machine
     that went down as it said carries `planned`; one that answers again closes its case (closed)."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
     pointed, back = state.setdefault("pointed", {}), state.setdefault("back", {})
@@ -213,7 +214,17 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
                 found("only the way from the control node is cut")
                 events.append({"host": name, "kind": "held", "text": "%s. %s Nothing is done." % (what, case["found"])})
                 continue
-        found("not known")
+        # 4. what does its provider say? Switched off there: the restart below starts it. Running and silent: it hangs
+        ps = None
+        if provider and (where(name) if where else (fleet.hosts[name].cfg.get("vps") or {}).get("server")):
+            try:
+                ps = provider(name)
+            except KiwiError:
+                ps = None
+            if ps:
+                checks.append({"SHUTOFF": "its provider says it is switched off",
+                               "RUNNING": "its provider says it runs: it hangs"}.get(ps, "its provider says %s" % ps.lower()))
+        found({"SHUTOFF": "switched off at its provider", "RUNNING": "it hangs"}.get(ps, "not known"))
         if checks:
             what = "%s (%s)" % (what, "; ".join(checks))
         send_devices(what)

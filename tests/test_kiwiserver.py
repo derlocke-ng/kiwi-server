@@ -9271,6 +9271,17 @@ class TestWatchdog(unittest.TestCase):
         self.assertEqual([e["kind"] for e in ev], ["waiting"])
         self.assertEqual(state["gone"]["gate"], self.NOW)
 
+    def test_the_provider_is_asked_before_the_restart(self):
+        # authority.md §4: switched off there, the restart starts it; running there and silent, it hangs
+        for said, words, why in (("SHUTOFF", "its provider says it is switched off", "switched off at its provider"),
+                                 ("RUNNING", "its provider says it runs: it hangs", "it hangs")):
+            f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
+            self.diagnosed(f, {"gate": False}, state, self.NOW, provider=lambda n: said)
+            ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 10 * 60, provider=lambda n, s=said: s)
+            self.assertEqual(done, ["gate"])
+            self.assertIn(words, ev[0]["text"])
+            self.assertEqual(state["cases"]["gate"]["conclusion"], why)
+
     def test_what_the_look_found_or_the_table_holds_a_switch(self):
         # the review of 22 Nov 2026: the old switch moved a part a person switches, or one whose machine said it restarts
         links = [("pi", "vault", "lab")]

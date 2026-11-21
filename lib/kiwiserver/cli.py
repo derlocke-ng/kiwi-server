@@ -2537,9 +2537,20 @@ def cmd_recover(args):
                     return True, "%s, its standby, reaches it" % sb
                 notes.append("%s, its standby, does not reach it" % sb)
         return (False, "; ".join(notes)) if notes else None
+    def provider(name):
+        """What the machine's provider says of it (RUNNING, SHUTOFF), or None."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            if main(["vps", "probe", args.fleet, name, "--porcelain"] + (["--api", args.api] if args.api else [])):
+                return None
+        try:
+            return json.loads(buf.getvalue() or "{}").get("state")
+        except ValueError:
+            return None
     events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
                            point if can_point else None, last=last, words=words,
-                           site={n: site_of(fleet.hosts[n]) for n in kinds}, reached=reached)
+                           site={n: site_of(fleet.hosts[n]) for n in kinds}, reached=reached,
+                           provider=provider if not args.dry_run else None)
     # a part that runs by a permission (lease.py) is its voters' to switch: the standby took it by
     # itself when its machine was gone, and says so in its report. That is written down here.
     held = state.get("leases") or {}

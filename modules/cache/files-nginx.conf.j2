@@ -6,13 +6,20 @@ worker_processes 1;
 events { worker_connections 256; }
 http {
     resolver 1.1.1.1 1.0.0.1 valid=300s ipv6=off;
-    proxy_cache_path /var/cache/nginx/files levels=1:2 keys_zone=files:10m max_size={{ files_size }} inactive=90d use_temp_path=off;
+    proxy_cache_path /var/cache/nginx/files/direct levels=1:2 keys_zone=files:10m max_size={{ files_size }} inactive=90d use_temp_path=off;
+    # what a server sends on to a mirror: kept apart (one request cannot look into one cache twice)
+    proxy_cache_path /var/cache/nginx/files/mirrored levels=1:2 keys_zone=mirrored:10m max_size={{ files_size }} inactive=90d use_temp_path=off;
     map $files_host $files_known {
         default 0;
         builds.coreos.fedoraproject.org 1;
         cdimage.debian.org 1;
         deb.debian.org 1;
         dl.fedoraproject.org 1;
+    }
+    # what says which image is the newest (a stream's metadata, SHA256SUMS): asked again every time
+    map $files_path $files_short {
+        default 0;
+        "~*(\.json|SHA256SUMS|SHA512SUMS|\.sign|/)$" 1;
     }
     access_log /dev/stdout;
     server {
@@ -24,6 +31,9 @@ http {
         proxy_ssl_verify_depth 3;
         proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
         proxy_cache files;
+        # only these lifetimes count, never the server's own headers: a redirect it marks as cacheable
+        # was kept, and the next client got it without the address it sends on to (22 Nov 2026)
+        proxy_ignore_headers Cache-Control Expires X-Accel-Expires Set-Cookie;
         proxy_cache_lock on;
         proxy_cache_lock_timeout 30m;
         proxy_cache_use_stale error timeout updating;
@@ -31,16 +41,30 @@ http {
         add_header X-Cache $upstream_cache_status;
         location ~ ^/files/(?<files_host>[a-z0-9.-]+)/(?<files_path>.*)$ {
             if ($files_known = 0) { return 403; }
+            # kept as variables: a regex's captures are gone in the named location below
+            set $files_key $files_host/$files_path;
+            set $files_skip $files_short;
             proxy_set_header Host $files_host;
-            proxy_cache_key $files_host/$files_path;
-            # what says which image is the newest (a stream's metadata, SHA256SUMS): asked again soon
-            set $files_short 0;
-            if ($files_path ~* "(\.json|SHA256SUMS|SHA512SUMS|\.sign|/)$") { set $files_short 1; }
+            proxy_cache_key $files_key;
             proxy_cache_valid 200 206 30d;
             proxy_cache_valid 404 1m;
             proxy_no_cache $files_short;
             proxy_cache_bypass $files_short;
+            # a server that sends the image on to a mirror (Debian's cdimage does): followed here and kept
+            # under the address that was asked, so the next one comes from here too (22 Nov 2026: the
+            # redirect went to the client, which fetched the mirror itself, and nothing was kept)
+            proxy_intercept_errors on;
+            error_page 301 302 303 307 308 = @mirror;
             proxy_pass https://$files_host/$files_path$is_args$args;
+        }
+        location @mirror {
+            set $files_mirror $upstream_http_location;
+            proxy_cache mirrored;
+            proxy_cache_key $files_key;
+            proxy_cache_valid 200 206 30d;
+            proxy_no_cache $files_skip;
+            proxy_cache_bypass $files_skip;
+            proxy_pass $files_mirror;
         }
     }
 }

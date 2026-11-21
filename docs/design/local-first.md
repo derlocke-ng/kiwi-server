@@ -15,7 +15,8 @@ One node per home keeps what every machine there would fetch again:
   other nodes finds it with a small detect script and goes direct when it is away; the Debian
   installer takes it as its proxy.
 - **Install images** (Fedora CoreOS, Debian netinst): what `kiwi-server build` downloads, and
-  what netboot serves. Built (kiwi-modules 0.119.0, kiwi-server 2.299.0): the cache's `files`.
+  what netboot serves. Built (kiwi-modules 0.119.1, kiwi-server 2.299.0): the cache's `files`; a server that sends an ISO on
+  to a mirror (Debian's cdimage) is followed by the cache, and the image kept.
 - **Updates** (the owner, 22 November 2026: "our local repos and registries are for updates
   too … less traffic usage, faster updates/installs since 1-10gbit/s possible here"): a uCore
   machine's system image comes through the registry mirror (seen: rpm-ostree's pulls of

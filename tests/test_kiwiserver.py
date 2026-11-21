@@ -7362,6 +7362,11 @@ class TestRemote(Base):
             remote.run("core@a", "true", runner=lambda argv, input=None, capture_output=True: self.R(255))
         with self.assertRaisesRegex(KiwiError, r"core@a: accounts: no account x"):
             remote.run("core@a", "x", runner=lambda argv, input=None, capture_output=True: self.R(3, err=b"accounts: no account x\n"))
+        # a sudo that wants a password: said what to do, not sudo's own words (ROADMAP problem 35)
+        for said in (b"sudo: a terminal is required to read the password; either use the -S option\n",
+                     b"sudo: a password is required\n"):
+            with self.assertRaisesRegex(KiwiError, r"core@a: sudo there wants a password for core.*NOPASSWD"):
+                remote.run("core@a", "x", runner=lambda argv, input=None, capture_output=True, e=said: self.R(1, err=e))
 
     def test_target_run_and_put(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})

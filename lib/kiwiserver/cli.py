@@ -240,7 +240,8 @@ def host_readme(host, o, bundle=None):
           "On the machine:",
           "    journalctl -u kiwi-role -f            follow the first boot",
           "    cat /var/lib/kiwi-server/role.done    when it finished",
-          "    sudo bash /var/lib/kiwi-server/role.sh --force     run the role again", ""]
+          "From this computer:",
+          "    kiwi-server apply <fleet> %s    run the role again (the machine keeps no copy of it: its secrets)" % host.name, ""]
     return "\n".join(L)
 
 
@@ -962,8 +963,8 @@ def modset_for(args):
 
 
 def warn_literal_secrets(h, ms):
-    """Passwords written in the fleet file that need not be there. A warning,
-    not an error, until there is a secret store to put the rest in (ROADMAP)."""
+    """Passwords written in the fleet file that need not be there. A warning, not an error: `secrets keep`
+    moves them into the secret store unchanged, and a network that has no store yet still works."""
     msgs = []
     if h.cfg["admin"].get("password"):
         msgs.append("admin.password is a literal in the fleet file: kiwi-server secrets admin-password <fleet> keeps "

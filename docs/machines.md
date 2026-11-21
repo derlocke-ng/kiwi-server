@@ -55,7 +55,9 @@ root after the network is up, and never again once
   is `/var/log/kiwi-server-role.log`.
 - On uCore the unit also waits for `/etc/ucore-autorebase/signed`, so the
   role always runs on the final image.
-- `sudo bash /var/lib/kiwi-server/role.sh --force` runs it again by hand.
+- The script carries every secret of the machine, so it removes itself once it has
+  run without a fault; one that failed stays for the next boot's try. To run the role
+  again, apply the machine from your computer (`kiwi-server apply`): that sends a fresh copy.
 
 ## A second disk for the data
 

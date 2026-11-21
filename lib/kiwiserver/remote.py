@@ -4,6 +4,7 @@ backup, `apply`, `status`, the tunnel `enroll` uses to reach the master's
 wg-easy — so one place knows how a host is addressed and how a failure reads.
 """
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -226,6 +227,12 @@ def _fail(where, r):
     # ssh itself fails with 255; anything else is the command there, which may stop without a word
     lines = text.strip().splitlines() or ["ssh failed" if r.returncode == 255 else
                                           "the command there stopped (exit status %d) without saying why" % r.returncode]
+    if re.search(r"sudo: (a terminal is required|a password is required|no tty present)", text):
+        # the admin user's sudo wants a password: kiwi-server runs everything there as root, without one
+        user = where.rsplit("@", 1)[0] if "@" in where else "the admin user"
+        raise KiwiError("%s: sudo there wants a password for %s. kiwi-server needs sudo without one for its admin user: "
+                        "on the machine, echo '%s ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/kiwi-server"
+                        % (where, user, user))
     if "REMOTE HOST IDENTIFICATION HAS CHANGED" in text or "Host key verification failed" in text:
         host = where.rsplit("@", 1)[-1]
         # CoreOS: the initramfs answers on the system's port, with a key of its own

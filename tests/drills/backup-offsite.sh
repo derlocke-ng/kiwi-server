@@ -40,7 +40,7 @@ if [ "$kind" = sftp ]; then
     url="sftp://$dav.$domain:18022/kiwi"
     # the stand-in on DAV_MACHINE, with a host key of its own
     at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav; mkdir -p /var/kiwi-drill-dav/kiwi
-      podman run -d --name kiwi-drill-dav -p 18022:18022 -v /var/kiwi-drill-dav:/data:z $image serve sftp /data --addr :18022 --user drill --pass '$pw' >/dev/null
+      podman run -d --name kiwi-drill-dav --network host -v /var/kiwi-drill-dav:/data:z $image serve sftp /data --addr :18022 --user drill --pass '$pw' >/dev/null
       sleep 3; podman ps --format '{{.Names}}' | grep -qx kiwi-drill-dav"
     check $? "a stand-in SFTP server runs on $dav ($url)"
 else
@@ -48,13 +48,14 @@ else
     # the stand-in on DAV_MACHINE, with its own certificate (the fleet's CA signed it)
     at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav; mkdir -p /var/kiwi-drill-dav/kiwi
       d=\$(ls -d /home/*/docker/kn-nginx | head -1)
-      podman run -d --name kiwi-drill-dav -p 18443:18443 -v \$d/fullchain.pem:/c.pem:ro,z -v \$d/privkey.pem:/k.pem:ro,z \
+      podman run -d --name kiwi-drill-dav --network host -v \$d/fullchain.pem:/c.pem:ro,z -v \$d/privkey.pem:/k.pem:ro,z \
         -v /var/kiwi-drill-dav:/data:z $image serve webdav /data --addr :18443 --cert /c.pem --key /k.pem --user drill --pass '$pw' >/dev/null
       sleep 3; podman ps --format '{{.Names}}' | grep -qx kiwi-drill-dav"
     check $? "a stand-in WebDAV server runs on $dav ($url)"
 fi
 port=${url##*:}; port=${port%%/*}
-# a DAV machine with firewalld (uCore, CoreOS): its port opened for this run only (runtime, not kept)
+# on the host's network (a published port is forwarded, and firewalld trusts only the stack's network
+# for that, 22 Nov 2026); with firewalld (uCore, CoreOS) its port opened for this run only (runtime)
 at "$dav" "! systemctl is-active -q firewalld || firewall-cmd -q --add-port=$port/tcp" >/dev/null 2>&1
 # the store must reach it, or nothing below can work: said at once, not after half an hour of timeouts
 (( $(at "$store" "if command -v curl >/dev/null; then curl -sk -m 8 -o /dev/null -w '%{http_code}' $url/ 2>/dev/null; \

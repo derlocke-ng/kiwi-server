@@ -53,6 +53,18 @@ else
       sleep 3; podman ps --format '{{.Names}}' | grep -qx kiwi-drill-dav"
     check $? "a stand-in WebDAV server runs on $dav ($url)"
 fi
+port=${url##*:}; port=${port%%/*}
+# a DAV machine with firewalld (uCore, CoreOS): its port opened for this run only (runtime, not kept)
+at "$dav" "! systemctl is-active -q firewalld || firewall-cmd -q --add-port=$port/tcp" >/dev/null 2>&1
+# the store must reach it, or nothing below can work: said at once, not after half an hour of timeouts
+(( $(at "$store" "if command -v curl >/dev/null; then curl -sk -m 8 -o /dev/null -w '%{http_code}' $url/ 2>/dev/null; \
+     else timeout 8 bash -c 'echo > /dev/tcp/$dav.$domain/$port' 2>/dev/null && echo 1; fi" 2>/dev/null | tr -dc 0-9 | sed 's/^$/0/') > 0 ))
+check $? "$store reaches the stand-in on $dav at port $port"
+if (( fails )); then
+    at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav; ! systemctl is-active -q firewalld || firewall-cmd -q --remove-port=$port/tcp" >/dev/null 2>&1
+    say "stopped before anything was changed: the stand-in is gone again"
+    exit 1
+fi
 
 # the store's copy there: the account in the fleet file, its password then into the secret store
 PYTHONPATH="$here/lib" python3 - "$fleet" "$store" "$url" "$pw" "$S/ca/kiwiCA.pem" <<'EOF'
@@ -117,7 +129,23 @@ role = next(k for k, b in h.items() if isinstance(b, dict) and "backup-server" i
 b = {k: v for k, v in (h[role].get("backup-server") or {}).items() if not k.startswith("offsite_")}
 new = fleettext.put(text, ("hosts", store, role, "backup-server"), b)
 if new is None:
-    sys.exit("the fleet file could not be changed in its text")
+    # a block another command wrote in its own way (secrets keep, a quoted text over several lines): each
+    # offsite_ key taken out with the lines below it that belong to it, the rest of the file as it was
+    lines, out, skip = text.split("\n"), [], None
+    for line in lines:
+        ind = len(line) - len(line.lstrip())
+        if skip is not None and (not line.strip() or ind > skip):
+            continue
+        skip = None
+        if line.lstrip().startswith("offsite_") and ":" in line:
+            skip = ind
+            continue
+        out.append(line)
+    new = "\n".join(out)
+    want = yaml.safe_load(text)
+    want["hosts"][store][role]["backup-server"] = b
+    if yaml.safe_load(new) != want:
+        sys.exit("the fleet file could not be changed in its text: take the offsite_ settings out by hand")
 util.write_text(p, new, 0o600)
 EOF
 "${ks[@]}" secrets keep "$fleet" >> keep.log 2>&1
@@ -125,5 +153,6 @@ EOF
 ! at "$store" "systemctl cat kn-backup-offsite.timer >/dev/null 2>&1"; check $? "no copy timer is left on $store"
 at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav"
 at "$store" "rm -rf /var/kiwi-drill-back /var/kiwi-drill-a /var/kiwi-drill-b /var/kiwi-drill-c $sd/kn-backup-server/offsite-known_hosts"
+at "$dav" "! systemctl is-active -q firewalld || firewall-cmd -q --remove-port=$port/tcp" >/dev/null 2>&1
 say "$fails wrong"
 exit "$fails"

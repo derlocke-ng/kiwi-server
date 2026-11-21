@@ -76,13 +76,14 @@ gone
 ssh -o BatchMode=yes "$VMHOST" "mkdir -p /tmp/$name" && scp -q -o BatchMode=yes "$work/user-data" "$work/meta-data" "$work/network-config" "$VMHOST:/tmp/$name/"
 check $? "the device's seed on $VMHOST"
 ssh -o BatchMode=yes "$VMHOST" "set -e; cd /tmp/$name
-  [ -s base.qcow2 ] || curl -fsSL -o base.qcow2 '$image_url'
+  [ -s /tmp/$name-base.qcow2 ] || curl -fsSL -o /tmp/$name-base.qcow2 '$image_url'      # kept between runs
+  cp /tmp/$name-base.qcow2 base.qcow2
   xorriso -as mkisofs -quiet -o seed.iso -V cidata -J -r user-data meta-data network-config
   $V vol-create-as default $name.qcow2 \$(stat -c %s base.qcow2) --format qcow2 >/dev/null
   $V vol-upload $name.qcow2 base.qcow2 --pool default
   $V vol-create-as default $name-seed.iso \$(stat -c %s seed.iso) --format raw >/dev/null
   $V vol-upload $name-seed.iso seed.iso --pool default
-  virt-install --connect qemu:///system --name $name --memory 1024 --vcpus 1 --import --osinfo debian12 \
+  virt-install --connect qemu:///system --name $name --memory 1024 --vcpus 1 --import --osinfo \${OSINFO:-debian11} \
     --disk vol=default/$name.qcow2,bus=virtio --disk vol=default/$name-seed.iso,device=cdrom \
     --network bridge=br0,model=virtio --graphics none --noautoconsole >/dev/null"
 check $? "the device runs on $VMHOST"

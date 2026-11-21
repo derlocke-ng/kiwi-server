@@ -5,7 +5,7 @@
 # starts again; the misses are counted. The VM and its volumes are removed afterwards.
 #
 #   VMHOST=sh3 tests/drills/vip-gateway.sh FLEET FIRST VIP DEVICE/PREFIX
-#   e.g. lime 192.168.2.70 192.168.2.71/16
+#   e.g. lime 192.168.2.70 192.168.2.72/16   (an address no machine of either test network has)
 # The device's SSH host key is made here and given to it, so its key is known before it is asked.
 # One PASS or FAIL line per check.
 set -u
@@ -87,10 +87,25 @@ ssh -o BatchMode=yes "$VMHOST" "set -e; cd /tmp/$name
     --disk vol=default/$name.qcow2,bus=virtio --disk vol=default/$name-seed.iso,device=cdrom \
     --network bridge=br0,model=virtio --graphics none --noautoconsole >/dev/null"
 check $? "the device runs on $VMHOST"
+# the address must be this VM's before anything logs in there (22 Nov 2026: .71 was another test
+# machine's, the second network's damson): the MAC that answers is compared with the VM's own
+mac=$(ssh -o BatchMode=yes "$VMHOST" "$V domiflist $name" | awk 'NR > 2 && $5 != "" {print $5; exit}')
+seen=""
+for _ in $(seq 1 40); do
+    sleep 5
+    ping -c 1 -W 1 "$addr" >/dev/null 2>&1 || continue
+    seen=$(ip neigh show "$addr" | awk '{print $5}')
+    [ -n "$seen" ] && break
+done
+if [ -z "$mac" ] || [ "$seen" != "$mac" ]; then
+    check 1 "$addr answers with this VM's card ($mac), not another device (${seen:-none})"
+    gone; say "stopped: nothing was asked of $addr"; say "$fails wrong"; exit 1
+fi
+check 0 "$addr is this VM ($mac)"
 up=""
-for _ in $(seq 1 40); do sleep 5; device true 2>/dev/null && { up=1; break; }; done
+for _ in $(seq 1 40); do device true 2>/dev/null && { up=1; break; }; sleep 5; done
 check "$(is [ -n "$up" ])" "the device answers at $addr (its host key as made here)"
-[ -n "$up" ] || { gone; say "$fails wrong"; exit 1; }
+[ -n "$up" ] || { [ "${KEEP:-0}" = 1 ] || gone; say "$fails wrong"; exit 1; }       # KEEP=1: left there to look at
 device "ip route show default" | grep -q "via $vip"; check $? "its gateway is $vip"
 device "getent hosts deb.debian.org >/dev/null"; check $? "it resolves a name through $vip"
 device "curl -fsS -m 8 -o /dev/null https://deb.debian.org/debian/dists/stable/Release"; check $? "it reaches the Internet through $vip"

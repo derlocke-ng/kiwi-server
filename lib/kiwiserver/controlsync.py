@@ -598,6 +598,14 @@ def status_api(fleet_dir, key=None):
     return out
 
 
+def ack_api(fleet_dir, emergency, key=None):
+    """This computer has the emergency: told no more (Control.ack)."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("POST", "/api/v1/ack", {"key": emergency})
+    if status != 200:
+        raise KiwiError("the control node did not take it (%s): %s" % (status, (out or {}).get("error") if isinstance(out, dict) else ""))
+
+
 def watch_api(fleet_dir, key=None):
     """The control node's changes, mark by mark, until its stream ends (Api.events)."""
     api, _key = api_for(fleet_dir, key)

@@ -767,6 +767,25 @@ When the control node itself is off, it cannot say so. That is what `heartbeat`
 is for: a service outside (healthchecks.io, or your own) that is asked after
 every look and tells you when the asking stops.
 
+**An emergency** is a machine that runs a part the network needs (a gateway, a site's DNS, an
+unlock ring, the control node; see [What happens to each part](#what-happens-to-each-part))
+and does not answer. It is told after two minutes on every way that is set, at ntfy's highest
+priority, with "emergency" in the title, and told again every 15 minutes until someone says
+"I have it": the button on Home, in the app, or the link in the message, or
+
+```bash
+kiwi-server control ack ~/kiwi/fleet.yaml machine:sorbet
+```
+
+Activity says who has it. A team beside you (other members of the network, or the people of
+the company that runs it) gets the emergencies too, not the other messages:
+
+```yaml
+defaults:
+  notify:
+    team: { mail: [oncall@example.org], ntfy: https://ntfy.sh/our-team-topic }
+```
+
 ## A website for strangers
 
 The control node can serve the network's website: a few pages of your own text, and what only

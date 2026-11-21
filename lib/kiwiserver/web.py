@@ -530,6 +530,10 @@ machines at home, then your phone{% endif %}.</p>{% endblock %}""",
 <a class="btn" href="/hosts/{{ s.host }}">Open {{ s.host }}</a></div><p>It does not answer at {{ s.site }}, for {{ age(now - s.since) }}.</p>
 <p class="muted">Its machine answers and may say that everything runs: the service itself was asked for a page and gave none.
 <em>Apply</em> on the machine's page sets it up again; what the machine says, word for word, is under Details there.</p></div>{% endfor %}
+{% if emergencies %}<span id="emergencies"></span>{% endif %}{% for e in emergencies or [] %}<div class="card"><div class="row"><strong><span class="dot bad"></span>Emergency</strong>
+{% if e.by %}<span class="muted small">{{ e.by }} has it</span>{% else %}<form class="inline" method="post" action="/ack">{{ tok }}
+<input type="hidden" name="key" value="{{ e.key }}"><button class="primary">I have it</button></form>{% endif %}</div>
+<p>{{ e.text }}</p><p class="muted small">{% if e.by %}Not told again.{% else %}Told on every way that is set, and again every 15 minutes until someone has it.{% endif %}</p></div>{% endfor %}
 {% if changed %}<div class="card"><div class="row"><strong><span class="dot warn"></span>Changes not applied yet</strong>
 <form class="inline" method="post" action="/run-many" onsubmit="return confirm('Apply {{ changed|join(", ") }} now? Services that changed restart for a moment.')">{{ tok }}
 <input type="hidden" name="action" value="apply">{% for h in changed %}<input type="hidden" name="host" value="{{ h }}">{% endfor %}
@@ -2696,7 +2700,36 @@ def make_app(control: Control):
                     stats=stats(ms, devs), wide=picture(ms, len(devs), 4, (_info or {}).get("linked")),
                     narrow=picture(ms, len(devs), 1, (_info or {}).get("linked")), silent=silent, now=time.time(),
                     error=st.get("error"), looking=control.looking, presets=setupmod.PRESETS, gone=control.gone(),
-                    add_error=request.query_params.get("add_error"))
+                    add_error=request.query_params.get("add_error"), emergencies=control.emergencies())
+
+    @app.get("/ack")
+    def ack_page(request: Request, key: str = ""):
+        """The link in an emergency message: Home, where the emergency has its "I have it" button."""
+        return RedirectResponse("/#emergencies", status_code=303)
+
+    @app.post("/ack")
+    def ack_do(request: Request, key: str = Form(""), csrf: str = Form("")):
+        who = posted(request, csrf)
+        if not who:
+            return RedirectResponse("/", status_code=303)
+        try:
+            control.ack(key, who)
+        except KiwiError:
+            pass
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/api/v1/ack")
+    async def api_ack(request: Request):
+        """A computer or the app has it (kiwi-server control ack)."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+            await run_in_threadpool(control.ack, str(body.get("key") or ""), who)
+        except (ValueError, AttributeError, KiwiError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"ok": True}
 
     @app.get("/machines")
     def machines_page(request: Request):
@@ -3278,7 +3311,8 @@ def make_app(control: Control):
         Only reads, and is asked at every refresh: no line in the activity."""
         if not (user(request) or bearer(request)):
             return JSONResponse({"error": "log in"}, status_code=401)
-        return control.status() or {}
+        # with the emergencies nobody has yet: the app shows them with "I have it"
+        return dict(control.status() or {}, emergencies=control.emergencies())
 
     @app.get("/api/machines")
     @app.get("/api/v1/machines")

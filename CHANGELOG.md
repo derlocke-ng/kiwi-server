@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.290.0 — emergencies, and messages by how much a part is needed
+
+- **Emergency messages** (docs/design/authority.md): a machine that runs a part the network
+  needs (a gateway, a site's DNS, an unlock ring, the control node) and does not answer is told
+  after two minutes on every way that is set, at ntfy's highest priority, and again every 15
+  minutes until someone says "I have it": on Home, in the app, by the link in the message, or
+  `kiwi-server control ack <fleet> <key>`. Activity says who has it. `notify: team` (mail, ntfy)
+  names people beside you who get the emergencies too; the settings page and the app have the
+  fields.
+- **Messages follow the table per part**: a machine whose parts can all wait is not told about
+  at all (its page says it); one the network needs is told after two minutes.
+- **The machine's page and the app show each permission live**: the seconds left, and a part
+  its standby took over by itself.
+
 ## 2.289.0 — what happens to each part
 
 The rest of step 3 of the rebuild in [docs/design/authority.md](docs/design/authority.md).

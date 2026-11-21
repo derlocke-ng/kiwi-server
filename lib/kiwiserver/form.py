@@ -186,6 +186,11 @@ BASE_GROUPS = [
                   "stops hearing from your network: the one case the network cannot report itself"),
         dict(path=("notify", "after"), type="int", label="Tell after this many minutes", scope="defaults", default=10,
              help="How long something must be wrong before a message goes out. A restart for an update is shorter"),
+        dict(path=("notify", "team", "mail"), type="list", label="Emergencies also to (mail)", scope="defaults", default=[],
+             help="Space separated: people beside you who get the emergencies (a machine the network needs is gone), "
+                  "not the other messages. Through the mail server above"),
+        dict(path=("notify", "team", "ntfy"), type="string", label="Emergencies also to (ntfy)", scope="defaults", default="",
+             help="A topic of ntfy for that team"),
     ]),
     ("uCore", [
         dict(path=("ucore", "image"), type="string", label="Image", default="ghcr.io/ublue-os/ucore:stable",

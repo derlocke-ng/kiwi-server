@@ -117,6 +117,22 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             kv service "$s $(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)"
         fi
     done
+    # a container that restarts again and again (it crashes at its start): systemd and docker go on
+    # restarting it for ever, so the count of its restarts is kept here, and how many came in the
+    # last ten minutes is said (a crash loop is told, docs/design/runbook.md)
+    rs=/run/kiwi-server/restarts
+    if mkdir -p "$rs" 2>/dev/null; then
+        now_s=$(date +%s)
+        for s in ${STACK_SERVICES:-}; do
+            case $s in *[!A-Za-z0-9_.-]*|"") continue ;; esac
+            if [ "$rt" = podman ]; then n=$(systemctl show -p NRestarts --value "$s.service" 2>/dev/null)
+            else n=$(docker inspect -f '{{.RestartCount}}' "$s" 2>/dev/null); fi
+            case $n in ''|*[!0-9]*) continue ;; esac
+            { awk -v t=$((now_s - 900)) '$1 >= t' "$rs/$s" 2>/dev/null; echo "$now_s $n"; } > "$rs/$s.new" && mv "$rs/$s.new" "$rs/$s"
+            first=$(awk -v t=$((now_s - 600)) '$1 >= t {print $2; exit}' "$rs/$s")
+            [ -n "$first" ] && [ "$n" -gt "$first" ] && kv restarts "$s $((n - first))"
+        done
+    fi
     # what this machine's runbook did in the last hour (runbook.py): when, and what
     if [ -f /var/lib/kiwi-server/runbook/log ]; then
         t0=$(( $(date +%s) - 3600 ))
@@ -219,7 +235,7 @@ def lasts_s(seconds):
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
     raw, disks, containers, units, certificates, repos, copies, onion, opened, partner_masters = {}, {}, {}, [], [], [], [], [], {}, {}
-    kept, acted = [], []
+    kept, acted, restarts = [], [], {}
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -258,6 +274,10 @@ def parse(data, local_now=None):
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
+        elif key == "restarts":
+            name, _sp, n = value.partition(" ")
+            if n.strip().isdigit() and int(n) > 0:
+                restarts[name] = int(n)
         elif key == "runbook":
             t, _sp, what = value.partition(" ")
             if t.isdigit() and what.strip():
@@ -327,6 +347,8 @@ def parse(data, local_now=None):
         out["standby"] = kept
     if acted:
         out["runbook"] = acted
+    if restarts:
+        out["restarts"] = restarts
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
     if _int(raw.get("plaindata")):
@@ -354,6 +376,7 @@ HINTS = {
     "unhealthy": "Read its log under the machine's services; a restart often helps.",
     "tunnel": "Apply the machine. If it stays, read the VPN client's log.",
     "failed-units": "Read their log on the machine (journalctl -u NAME); a restart of the machine clears them.",
+    "crash-loop": "Its log says why it stops: kiwi-server service FLEET MACHINE NAME logs. A setting, a full disk or its data.",
     "disk-full": "Remove what is not needed there, or give the machine a bigger disk.",
     "backup-store-full": "Remove old snapshots (Backups, Prune), or give the backup machine more space.",
     "memory": "Fewer services on it, or more memory.",
@@ -395,8 +418,11 @@ def actions(key):
 
 # the warnings a machine may leave out (its setting `quiet`): never one that says something is broken
 QUIETABLE = {"disk-plain": "The disk is not encrypted", "data-disk-plain": "A data disk is not encrypted",
-             "clock": "The clock", "memory": "Little free memory", "failed-units": "Failed units",
+             "clock": "The clock", "memory": "Little free memory", "failed-units": "Failed units", "crash-loop": "A service that does not stay up",
              "unhealthy": "A service reports unhealthy", "not-applied": "No role applied yet"}
+
+
+CRASH_LOOP = 3       # restarts in ten minutes that make a crash loop
 
 
 def assess(f, quiet=(), now=None):
@@ -432,6 +458,11 @@ def assess(f, quiet=(), now=None):
             problems.append(bad("the VPN client %s does not forward: the mesh behind it has no internet" % t["container"], "tunnel"))
     if f.get("failed_units"):
         problems.append(warn("failed units: %s" % ", ".join(f["failed_units"]), "failed-units"))
+    loops = sorted(((n, s) for s, n in (f.get("restarts") or {}).items() if n >= CRASH_LOOP), reverse=True)
+    if loops:
+        # restarted again and again by systemd or docker: it does not stay up (a setting, a disk, its data)
+        problems.append(warn("%s: restarted again and again in the last ten minutes, it does not stay up" % (
+            ", ".join("%s (%d times)" % (s, n) for n, s in loops)), "crash-loop"))
     for d in f.get("disks", []):
         used = d["used"] / d["size"] if d["size"] else 0
         if used >= .85:

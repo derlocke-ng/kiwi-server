@@ -220,3 +220,42 @@ class TestDiskFull(MachineBase):
     def test_the_line_for_the_machine(self):
         f = fleet([{"case": "disk-full", "for": "all", "do": "prune-images", "at": 85}])
         self.assertEqual(runbook.machine_lines(f.hosts["medlar"], {"kn-git": "git"}), [("-", "disk-full", "prune-images", 85, 0)])
+
+
+class TestCrashLoop(unittest.TestCase):
+    def test_a_container_restarted_again_and_again_is_told(self):
+        from kiwiserver import facts
+        f = facts.parse("now=1\nrestarts=kn-git 5\nrestarts=kn-vault 1\nrestarts=kn-x nope\n", local_now=1)
+        self.assertEqual(f["restarts"], {"kn-git": 5, "kn-vault": 1})
+        problems = facts.assess(f, now=1)
+        flat = " ".join(str(x) for x in (problems if isinstance(problems, (list, tuple)) else [problems]))
+        self.assertIn("kn-git (5 times): restarted again and again in the last ten minutes", flat)
+        self.assertNotIn("kn-vault (1", flat)                                   # once is no loop
+        self.assertIn("crash-loop", flat)
+        self.assertNotIn("restarts", facts.parse("now=1\n", local_now=1))
+
+    def test_the_probe_counts_restarts_over_ten_minutes(self):
+        import shutil
+        import subprocess
+        import tempfile
+        from kiwiserver import facts
+        if not shutil.which("bash"):
+            self.skipTest("bash needed")
+        part = facts.SCRIPT.split("    rs=/run/kiwi-server/restarts")[1].split("    # what this machine's runbook did")[0]
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for name, text in (("systemctl", '#!/bin/bash\ncat "$D/n"\n'), ("date", '#!/bin/bash\ncat "$D/now"\n')):
+            with open(os.path.join(d, name), "w") as fh:
+                fh.write(text)
+            os.chmod(os.path.join(d, name), 0o755)
+        script = 'kv() { echo "$1=$2"; }\nrt=podman\nSTACK_SERVICES="kn-git"\nrs=%s/rs%s' % (d, part)
+        def run(now, n):
+            for k, v in (("now", now), ("n", n)):
+                with open(os.path.join(d, k), "w") as fh:
+                    fh.write(str(v))
+            return subprocess.run(["bash", "-c", script], env=dict(os.environ, PATH=d + ":" + os.environ["PATH"], D=d),
+                                  capture_output=True, text=True).stdout
+        self.assertEqual(run(1000, 2), "")                          # the first count: nothing to say yet
+        self.assertEqual(run(1060, 4), "restarts=kn-git 2\n")
+        self.assertEqual(run(1120, 7), "restarts=kn-git 5\n")
+        self.assertEqual(run(1900, 7), "")                          # ten minutes without one: quiet again

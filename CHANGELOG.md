@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.293.0 — the backlog, first part
+
+notes/TODO.md is one list again, merged from every note, the roadmap and every design, each item
+checked against the code; this release works its first items.
+
+- **The role script does not stay on a machine** (kiwi-stack 0.9.30): it carries every secret of
+  the machine and removes itself after a run without a fault. An apply sends a fresh copy.
+- **The control node renews certificates of the network's own CA**: every six hours it applies a
+  machine whose certificate has 30 days or fewer left. Before, only a person's apply did.
+- **A sudo that wants a password** is said plainly, with the line that fixes it.
+- **The app takes and writes network cards** (a network of another operator), as the page does.
+- **The Machines table** has a column for the last apply.
+- **After removing a computer** the page says what it still knows and where its keys are replaced.
+- **`/api/v1/`** answers for every API route; new: `/api/v1/jobs`, `/api/v1/jobs/ID`,
+  `/api/v1/machines/NAME`.
+- A computer's first sync hands over the machines it switched off and the parts it held back.
+- `standby --hold` says its minutes in words; the power-cut drill stops when the hypervisor does not
+  answer; the notes, ui.md, the roadmap and five designs say what is built.
+
 ## 2.292.0 — an update's restart does not move a part
 
 - When a machine says it restarts for an update (its last report), the control node tells the

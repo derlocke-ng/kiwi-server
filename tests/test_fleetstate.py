@@ -90,7 +90,8 @@ class TestChange(Base):
         self.joined()
         fs.change(self.dir, lambda s: s.setdefault("applied", {}).__setitem__("lime", 1))
         fs.change(self.dir, lambda s: s.setdefault("off", {}).__setitem__("sorbet", 2))
-        self.assertEqual(fs.outbox(self.dir), [["set", ["applied", "lime"], 1], ["set", ["off", "sorbet"], 2]])
+        self.assertEqual([x[:3] for x in fs.outbox(self.dir)], [["set", ["applied", "lime"], 1], ["set", ["off", "sorbet"], 2]])
+        self.assertTrue(all(isinstance(x[3], int) for x in fs.outbox(self.dir)))       # each with the time it was made
 
     def test_on_the_control_node_itself_it_keeps_its_own(self):
         self.joined()
@@ -141,6 +142,16 @@ class TestTrade(Base):
         self.assertEqual(fs.read(self.dir), {"applied": {"sorbet": 1, "lime": 5}})
         self.assertEqual(fs.outbox(self.dir), [])
 
+    def test_an_old_change_gives_way_to_a_newer_one(self):
+        # the review of 22 Nov 2026: an outbox sent hours later wrote over newer values on the keeper
+        import time
+        keeper, t = tempfile.mkdtemp(), int(time.time())
+        fs.receive(keeper, [["set", ["applied", "lime"], t, t]])
+        fs.receive(keeper, [["set", ["applied", "lime"], t - 3600, t - 3600], ["set", ["applied", "quince"], t - 60, t - 60]])
+        self.assertEqual(fs.read(keeper), {"applied": {"lime": t, "quince": t - 60}})
+        fs.receive(keeper, [["set", ["off", "sorbet"], 7]])                          # one without a time: taken
+        self.assertEqual(fs.read(keeper)["off"], {"sorbet": 7})
+
     def test_an_older_control_node_leaves_this_copy_as_it_is(self):
         self.joined()
         fs._write(self.dir, {"applied": {"lime": 1}})
@@ -157,7 +168,7 @@ class TestTrade(Base):
         fs.change(self.dir, lambda s: s.setdefault("off", {}).__setitem__("quince", 6))
         fs.take(self.dir, {"applied": {"lime": 5}}, sent)
         self.assertEqual(fs.read(self.dir), {"applied": {"lime": 5}, "off": {"quince": 6}})
-        self.assertEqual(fs.outbox(self.dir), [["set", ["off", "quince"], 6]])
+        self.assertEqual([x[:3] for x in fs.outbox(self.dir)], [["set", ["off", "quince"], 6]])
 
 
 class TestOneSync(Base):

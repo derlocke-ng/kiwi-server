@@ -14,12 +14,15 @@ state before and after: two computers that change different machines' lines neve
 import copy
 import json
 import os
+import time
 
 from . import util
 
 FILE = ".kiwi-state.json"
 OUTBOX = os.path.join("control", "state-out.json")     # changes made here, not taken by the control node yet
 HANDED = os.path.join("control", "state-handed")       # this copy's own notes went to the control node once
+TIMES = ".kiwi-state-times.json"    # on the keeper: when each line was last changed, so an older change gives way
+KEEP_TIMES = 30 * 86400
 REMOTE = os.path.join("control", "remote")             # controlsync.REMOTE: this copy has a control node
 
 
@@ -137,10 +140,33 @@ def _set_outbox(fleet_dir, steps):
         os.remove(p)
 
 
+def _line(step):
+    """The line a step is about: its path, and for a list the item."""
+    return json.dumps(list(step[1]) + ([step[2]] if step[0] in ("add", "remove") else []))
+
+
+def _timed(steps, when):
+    """Steps with the time they were made, as their fourth element (an older one gives way, receive)."""
+    return [[s[0], s[1], s[2] if len(s) > 2 else None, when] for s in steps]
+
+
+def _times(fleet_dir):
+    try:
+        t = json.loads(util.read_text(os.path.join(fleet_dir, TIMES)))
+    except (OSError, ValueError):
+        return {}
+    return t if isinstance(t, dict) else {}
+
+
+def _set_times(fleet_dir, stamps, now):
+    stamps = {k: v for k, v in stamps.items() if isinstance(v, (int, float)) and now - v < KEEP_TIMES}
+    util.write_text(os.path.join(fleet_dir, TIMES), json.dumps(stamps, sort_keys=True) + "\n", 0o644)
+
+
 def change(fleet_dir, mutate):
     """Change what is remembered: `mutate(state)` changes the map it is given (and may return
     something, which is returned). Written here at once; on a computer with a control node the
-    steps also wait in the outbox for the next sync, which sends them."""
+    steps also wait in the outbox for the next sync, which sends them, each with its time."""
     with lock(fleet_dir):
         before = read(fleet_dir)
         after = copy.deepcopy(before)
@@ -148,8 +174,13 @@ def change(fleet_dir, mutate):
         steps = diff(before, after)
         if steps:
             _write(fleet_dir, after)
+            now = int(time.time())
             if kept_elsewhere(fleet_dir):
-                _set_outbox(fleet_dir, outbox(fleet_dir) + steps)
+                _set_outbox(fleet_dir, outbox(fleet_dir) + _timed(steps, now))
+            else:                           # the keeper's own change: its lines are this new
+                stamps = _times(fleet_dir)
+                stamps.update({_line(s): now for s in steps})
+                _set_times(fleet_dir, stamps, now)
     return result
 
 
@@ -163,11 +194,24 @@ def take(fleet_dir, theirs, sent=0):
 
 
 def receive(fleet_dir, steps):
-    """On the keeper: a computer's changes. Returns the state after them."""
+    """On the keeper: a computer's changes. Returns the state after them. A step older than the last
+    change of its line here gives way (the review of 22 Nov 2026: an outbox sent hours later wrote
+    over newer values); one without a time is taken, as before."""
     with lock(fleet_dir):
-        state = apply(read(fleet_dir), steps)
-        if steps:
+        stamps, now, taken = _times(fleet_dir), int(time.time()), []
+        for s in steps or []:
+            try:
+                when, line = (s[3] if len(s) > 3 else None), _line(s)
+            except (TypeError, IndexError, KeyError):
+                continue
+            if isinstance(when, (int, float)) and stamps.get(line, 0) > when:
+                continue
+            taken.append(s)
+            stamps[line] = when if isinstance(when, (int, float)) else now
+        state = apply(read(fleet_dir), taken)
+        if taken:
             _write(fleet_dir, state)
+            _set_times(fleet_dir, stamps, now)
         return state
 
 

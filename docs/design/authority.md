@@ -8,9 +8,11 @@ was another special case. The owner, 21 November: "the whole system is kinda
 flawed … we are patching small things, but the main problem lies elsewhere."
 Steps 1 to 3 are built: one truth (2.286.0), permissions (2.287.0), the
 diagnosis, the last report and the record of each case (2.288.0), and the table
-per part with its sentence (2.289.0). Not built: the reminders and "act after a
-time" of a question nobody answers, emergency messages, how much a part is
-needed deciding the messages, and step 4.
+per part with its sentence (2.289.0), emergencies and messages by how much a
+part is needed (2.290.0), reminders after 1, 6 and 24 hours (2.291.3). Not
+built: "act after a time" for a question nobody answers (off unless the owner
+turns it on per part, so nothing acts by it yet), and step 4 (its plan waits
+for the owner).
 
 ## What is wrong
 

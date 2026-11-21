@@ -11284,6 +11284,11 @@ class TestHealth(Base):
         gone = [{"host": "gate", "kind": "waiting", "text": "gate has not answered for 2 minutes", "since": 880}]
         told = health.update(st4, [{"name": "gate", "ok": False, "problems": [], "need": "must"}], [], gone, 1000)
         self.assertEqual([(e["level"], e["text"]) for e in told], [("emergency", "gate has not answered for 2 minutes")])
+        # a question nobody answers (a part a person switches): said at once, then after 1, 6 and 24 hours, then daily
+        st5, ask = {}, [{"host": "pi", "kind": "tell", "part": "vault", "text": "pi has not answered; vault: kiwi-server switch, by hand"}]
+        when = [t for t in range(0, 4 * 86400, 600) if health.update(st5, [], [], ask, t)]
+        self.assertEqual(when, [0, 3600, 6 * 3600, 24 * 3600, 48 * 3600, 72 * 3600])
+        self.assertTrue(health.update({"did": {"pi:tell:vault": 100}}, [], [], ask, 4000))     # kept from before: told again
         # an emergency: a machine the network needs is gone. Told on every way, again every 15 minutes, until
         # someone has it (docs/design/authority.md)
         st3 = {}

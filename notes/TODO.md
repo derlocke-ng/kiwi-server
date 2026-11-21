@@ -16,7 +16,7 @@ L: days. New ideas go to the end of their section.
 3. ~~The diagnosis asks the provider; the control node's own update falls back when its page does
    not answer; the master's `stream` door into a fail2ban jail.~~ Done (2.294.0).
 4. ~~A restore of a data part onto another machine when its machine is dead: `move --gone` from the
-   newest backup without the source.~~ Built (next release); the drill on real machines is open. M
+   newest backup without the source.~~ Done (2.295.0), drilled: lychee off, authenticator onto medlar and home again.
 5. A runbook (docs/design/runbook.md): admins decide beforehand, per machine or part and case, what happens (a machine
    gone, a service down, a disk filling, a backup overdue, an update failed, cut off from the
    network): tell, restart, stop, restore elsewhere, wait for a person. Written in the fleet file,
@@ -26,10 +26,10 @@ L: days. New ideas go to the end of their section.
    unused until then). Nothing acts beyond what is written. Builds on the diagnosis and its
    record (authority.md step 3) and the agent (scale.md). M-L
    Built: the lines checked and shown (step 1), `part-down` restarted by the machine itself
-   (`kiwi-runbook`). Open: its drill on a real machine, disk-full, update-failed, cut-off, the
+   (`kiwi-runbook`, drilled on quince), disk-full. Open: update-failed, cut-off, a crash loop told, the
    control node's cases through the table, permissions for lines that name voters.
 6. ~~Render only the machines a change reaches (scale.md); apply only the stack when only it
-   changed (`--stack-only`).~~ Built (next release); stack-only drilled on quince.
+   changed (`--stack-only`).~~ Done (2.295.0); stack-only drilled on quince (38 s against 189 s).
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6). L
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
 9. The Devices table by site on the page, as Machines (ui.md). S-M

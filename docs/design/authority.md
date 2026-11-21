@@ -160,6 +160,34 @@ Meanwhile a standby master takes the devices, as today.
   seven conclusions and six actions. What fits none of them is "not known".
   That is the answer to what cannot be foreseen: nothing is touched, and a
   person is told with everything that was found.
+- **The lists come from building and testing** (the owner, 21 November), not
+  from this page. Every event gets a drill that causes it for real on the test
+  machines, and the checks, the conclusion and the action are written from
+  what the drill shows. A case that ends as "not known" on a real network is
+  looked at afterwards: it becomes a new conclusion with its drill, or stays
+  what it is.
+
+### Emergency messages
+
+How long a question waits depends on how bad the case is and on what can be
+done about it (the owner, 21 November). So there is no one time after which
+kiwi-server acts, but steps:
+
+| The case | What is done by itself | The message |
+|---|---|---|
+| Something that can be undone helps (a restart, a switch to a fresh copy) | it is done | afterwards, as today |
+| Only something that cannot be undone helps, and the part can wait | nothing | a question, repeated after 1, 6 and 24 hours |
+| Only something that cannot be undone helps, and the part must be up | nothing | an emergency message |
+
+An **emergency message** goes to every admin of the network at once, on every
+way that is set (mail, ntfy at its highest priority, the webhook, the phone
+app), and is repeated until one of them says "I have it" on the page, in the
+app or by the link in the message. It names the case, what was found, and the
+actions as buttons. The admins are the people in the accounts' group of
+admins where the network has accounts, and the addresses in `notify:`
+otherwise. Whether an action that cannot be undone may ever follow an
+emergency message nobody answered is a setting per part, off unless the owner
+turns it on.
 
 ### 5. A second control node
 
@@ -210,7 +238,5 @@ Each step ends with its drills on real machines, and is released as one piece.
 
 ## Not decided
 
-- The lists of step 4 are a first draft: which events, conclusions and actions
-  exactly, and the checks for each event beside "a machine is silent".
-- The time after which a question about a part that must be up is acted on
-  without an answer, and for which actions that is allowed at all.
+- Who else gets an emergency message besides a network's own admins (a team
+  that looks after several networks), and by which way.

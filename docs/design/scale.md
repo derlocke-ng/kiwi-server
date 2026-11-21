@@ -267,6 +267,8 @@ after 29 s (the container's own start).
    pair (`keep_ready` turned round). Tried with power cuts in both directions
    (tests/drills/part-failover.sh): the part ran on the standby 10 to 11 minutes after the cut.
    Not built: the agents' own vote, for when the control node is the one that is gone.
+   The review of these releases and the owner's reaction led to [authority.md](authority.md),
+   which rebuilds this step on permissions that run out instead of adding to its rules.
 
 ## Not decided
 

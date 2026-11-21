@@ -453,7 +453,7 @@ def _blobs(fleet_dir, fleet_name, st):
 
 def _take(fleet_dir, fleet_name, st, got, key):
     """What came from the node, opened with this computer's key and put in place."""
-    tmp = os.path.join(fleet_dir, "control", ".pull.age")
+    tmp = util.tmp_name(os.path.join(fleet_dir, "control", ".pull.age"))
     os.makedirs(os.path.dirname(tmp), mode=0o700, exist_ok=True)
     plain = {}
     try:                    # everything is opened before anything here is replaced
@@ -499,7 +499,7 @@ def _there_tree(fleet_dir, got, key):
     """The other side's copy as {path: bytes}, opened in memory: as `_tree` says this one."""
     from . import merge
     there = merge.store_tree(got["secrets.age"], key)
-    tmp = os.path.join(fleet_dir, "control", ".merge.age")
+    tmp = util.tmp_name(os.path.join(fleet_dir, "control", ".merge.age"))
     try:
         for name in PLAIN:
             if name + ".age" in got:
@@ -693,9 +693,55 @@ def run_api(fleet_dir, fleet_name, action, hosts=(), key=None, write=None, wait=
     return state == "ok"
 
 
+def one_sync(fleet_dir):
+    """One sync of this copy at a time: the app's timer and its live watch started two at once, both
+    wrote the same temporary file, and one read the other's half ("that key does not open
+    .pull.age", 21 Nov 2026). Waits for the other; the same thread may take it again (a pull that
+    becomes a push)."""
+    return util.dir_lock(os.path.join(fleet_dir, "control"))
+
+
+def trade_state(fleet_dir, api):
+    """What the network remembers (fleetstate.py): the changes made here go to the control node,
+    and its whole state comes back as this copy's. A control node older than this release has no
+    such call: then this copy keeps its own, as before."""
+    from . import fleetstate
+
+    def send(steps):
+        try:
+            status, out = api.call("POST", "/api/v1/state", {"steps": steps})
+        except KiwiError:
+            return None
+        ok = status == 200 and isinstance(out, dict) and isinstance(out.get("state"), dict)
+        return out["state"] if ok else None
+    first = []
+    if not fleetstate.handed(fleet_dir):
+        theirs = send([])
+        if theirs is None:
+            return False
+        first = fleetstate.hand_over(fleet_dir, theirs)
+    steps = fleetstate.outbox(fleet_dir)
+    state = send(first + steps)
+    if state is None:
+        return False
+    fleetstate.take(fleet_dir, state, len(steps))
+    fleetstate.mark_handed(fleet_dir)
+    return True
+
+
 def push_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
+    with one_sync(fleet_dir):
+        n, api = _push_api(fleet_dir, fleet_name, force, key, keep)
+        trade_state(fleet_dir, api)
+        return n
+
+
+def _push_api(fleet_dir, fleet_name, force=False, key=None, keep=None, api=None):
     st = _store(fleet_dir)
-    api, _key = api_for(fleet_dir, key)
+    if api:
+        _key = key
+    else:
+        api, _key = api_for(fleet_dir, key)
     status, out = api.call("GET", "/api/fleet/revision")
     if status != 200:
         raise KiwiError("the control node refused (%d)" % status)
@@ -719,10 +765,17 @@ def push_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
         raise KiwiError("the control node did not take the push (%d)" % status)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
     _save_base(fleet_dir, fleet_name, st)
-    return len(blobs)
+    return len(blobs), api
 
 
 def pull_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
+    with one_sync(fleet_dir):
+        n, api = _pull_api(fleet_dir, fleet_name, force, key, keep)
+        trade_state(fleet_dir, api)
+        return n
+
+
+def _pull_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
     st = storemod.Store(fleet_dir)
     here, then = _stamp(fleet_dir)
     changed_here = False
@@ -735,15 +788,15 @@ def pull_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
         raise KiwiError("the control node holds no fleet, or refused (%d)" % status)
     if out["revision"] == then and st.exists():
         if changed_here:
-            return None         # nothing new there, only here: the push sends it (None: this copy is newer)
-        return 0
+            return None, api    # nothing new there, only here: the push sends it (None: this copy is newer)
+        return 0, api
     got = {n: base64.b64decode(b) for n, b in out["files"].items() if n in ON_NODE}
     if changed_here:                    # both changed: push_api makes one copy of the two and sends it
-        return push_api(fleet_dir, fleet_name, key=key, keep=keep)
+        return _push_api(fleet_dir, fleet_name, key=key, keep=keep, api=api)
     n = _take(fleet_dir, fleet_name, st, got, key)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
     _save_base(fleet_dir, fleet_name, st)
-    return n
+    return n, api
 
 
 # ---- a synced folder (Nextcloud, Syncthing, a stick): design/controllers.md, step 2 ---------
@@ -797,6 +850,11 @@ def _plain_store(fleet_dir):
 
 
 def push_dir(fleet_dir, fleet_name, folder, force=False, keep=None):
+    with one_sync(fleet_dir):
+        return _push_dir(fleet_dir, fleet_name, folder, force, keep)
+
+
+def _push_dir(fleet_dir, fleet_name, folder, force=False, keep=None):
     st = _plain_store(fleet_dir)
     folder = os.path.abspath(os.path.expanduser(folder))
     there = folder_state(folder)
@@ -832,6 +890,11 @@ def _folder_files(folder):
 
 
 def pull_dir(fleet_dir, fleet_name, folder, force=False, key=None, keep=None):
+    with one_sync(fleet_dir):
+        return _pull_dir(fleet_dir, fleet_name, folder, force, key, keep)
+
+
+def _pull_dir(fleet_dir, fleet_name, folder, force=False, key=None, keep=None):
     folder = os.path.abspath(os.path.expanduser(folder))
     st = storemod.Store(fleet_dir)
     here, then = _stamp(fleet_dir, FOLDER_STAMP)

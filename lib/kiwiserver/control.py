@@ -2172,13 +2172,19 @@ class Control:
         util.write_text(tmp, text, 0o600)
         os.replace(tmp, path)
 
+    def take_state(self, steps):
+        """A computer's changes to what the network remembers; the state after them."""
+        from . import fleetstate
+        return fleetstate.receive(self.fleet_dir, steps)
+
     def changes(self):
         """A mark that moves whenever something a page shows has changed: the last look, the
         fleet as the pages know it, a job, the audit log, the applies that wait for their machine.
         File times only, so it is cheap: the pages' event stream asks for it every second."""
         mark = []
         for path in (os.path.join(self.run, "status.json"), os.path.join(self.run, "fleet.json"),
-                     os.path.join(self.dir, "audit.jsonl"), self._waiting_path()):
+                     os.path.join(self.dir, "audit.jsonl"), self._waiting_path(),
+                     os.path.join(self.fleet_dir, ".kiwi-state.json")):
             try:
                 st = os.stat(path)
                 mark.append("%d.%d" % (st.st_mtime_ns, st.st_size))

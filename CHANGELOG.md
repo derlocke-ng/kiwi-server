@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.286.0 — one keeper for what the network remembers
+
+The first step of the rebuild in [docs/design/authority.md](docs/design/authority.md).
+
+- **The control node keeps what the network remembers about its machines** (when each was
+  applied and with what, what a machine holds back, which is switched off, where copies of the
+  network went). Each computer kept its own before: the app showed lime, quince, medlar and
+  sorbet as "Changes not applied yet" though the control node had applied them and `plan` found
+  nothing to change. A computer now takes the control node's with every sync and sends what it
+  did itself with the next one; the first sync hands over what it knew newer.
+- **Fixed: "Not in step … that key does not open .pull.age".** Two syncs ran at once (the app's
+  timer and its live watch) and shared one temporary file. One sync of a folder runs at a time
+  now, each with its own temporary files.
+- The design of the rebuild (one truth, permissions that run out, a table per part, a diagnosis
+  before a decision, emergency messages, a second control node) is in docs/design/authority.md.
+
 ## 2.285.0 — a switch with your OK; the app keeps working while it waits
 
 - **A machine that does not answer offers to switch its parts kept ready** (its problem row, in

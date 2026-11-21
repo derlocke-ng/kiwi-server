@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.291.1 — a switch while a ring is away
+
+- Fixed: when the control node applied its own machine and one of its disk's rings was on a machine
+  that was away, the whole apply failed. A switch after a power cut then ended as a failed job
+  (drill of 22 Nov 2026), although the part had moved. It warns now, as every other machine does.
+- A message about a machine that does not answer counts from when it fell silent (its last report),
+  not from the control node's first look after: an emergency comes about three minutes sooner.
+- What the network remembers: a change sent late (an outbox sent hours after) gives way to a newer
+  one of the same line at the control node.
+- A short case closes in words ("it was back before anything was to be done").
+
 ## 2.291.0 — what the review of the permissions found
 
 An independent review of 2.286–2.290 found these; each is fixed and tested.

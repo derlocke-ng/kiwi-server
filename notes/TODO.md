@@ -37,7 +37,7 @@ L: days. New ideas go to the end of their section.
    who holds it. Open: DHCP from both, drilled on a LAN of its own; the gateway's switch drilled
    with a device behind it. M
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
-9. The Devices table by site on the page, as Machines (ui.md). S-M
+9. ~~The Devices table by site on the page, as Machines (ui.md).~~ Done (2.295.0).
 10. The client side: devices enrolled and kept by the network (bundles, the app, phones). M-L
 11. The agent takes orders from the control node: restart a service, update now (scale.md; the
     runbook's actions, asked for by a person). M
@@ -50,13 +50,12 @@ L: days. New ideas go to the end of their section.
 - The VPN name of a public instance, `<site>-public.<machine>.home` (public-services.md). S-M
 - With an exit through a partner, DNS lookups still leave from the network's own master. M
 - `unlock.opens`: by itself, by a person, at home, as a setting (unlock.md step 2). M
-- ~~The cache keeps install images (FCOS, Debian netinst) for the network (local-first.md §1).~~ Built (next release).
+- ~~The cache keeps install images (FCOS, Debian netinst) for the network (local-first.md §1).~~ Done (2.299.0): the netinst 77 s from the Internet, 4 s from the cache.
 - The LAN's DNS pointing Debian's plain-HTTP package servers at the cache, for every device (the owner's idea, 22 Nov): a setting, off at first; drill what a cache that is down does. S-M
 - Debian: a host firewall and a sysctl baseline by default (ROADMAP problem 57). M
 - Nostr as a message channel (recovery.md). S-M
-- The page restores a copy of the older passphrase kind (`.tar.enc`). M
 - Rotate steps for the generated secrets that have none yet (cloud, immich, paperless have them). M per module
-- The app on the kit: remembered size, shared header, About, Preferences; split the big file (ui.md step 6). M
+- The app on the kit: ~~remembered size~~ (2.299.0), shared header, About, Preferences; split the big file (ui.md step 6). M
 - A backup store per service (scale.md step 3). L
 - Moving a whole network (`move --mesh/--domain`, federation.md). L
 - The emergency channel over Tor (recovery.md steps 4-5). L
@@ -102,3 +101,5 @@ His hardware, accounts or time:
   never sends a role script to an address whose host key is not on record (it could be someone else's machine).
 - `from=` on the keys of Debian's boot system: Dropbear has no such option.
 - Relay members need `ghcr.io/derlocke-ng/strfry:1.1.3-kiwi2` until upstream releases the patch.
+- A copy of the older passphrase kind (`.tar.enc`, from before the secret store) comes back with
+  `kiwi-server restore` on a computer, not on the page: the page would have to make a store from it.

@@ -310,9 +310,9 @@ kiwi-server switch ~/kiwi/fleet.yaml vault          # the plan
 kiwi-server switch ~/kiwi/fleet.yaml vault --yes    # medlar takes the part over
 ```
 
-A switch works whether quince answers or not. If it answers, the part stops there and medlar
-fetches once more, so nothing is lost. If it does not, the part goes on with the copy medlar
-has: at most the last minute is missing. Then, within seconds:
+A switch needs quince to answer: the part stops there and medlar fetches once more, so
+nothing is lost. If that last fetch does not work, the part starts on quince again and
+nothing is switched. Then, within seconds:
 
 1. the containers kept ready start on medlar (`kiwi-stack ready start`), and medlar's proxy
    answers for the part's name (its certificate carries that name already);
@@ -321,62 +321,14 @@ has: at most the last minute is missing. Then, within seconds:
    once.
 
 The applies that follow make the part medlar's own. The part keeps its name and its secrets,
-as in a move. quince gets the change the moment it answers again and then no longer runs the
-part; from then on quince keeps it ready (the switch writes `keep_ready: { vault: quince }` on
+as in a move. quince no longer runs the part; from then on quince keeps it ready (the switch writes `keep_ready: { vault: quince }` on
 medlar), so the two stay a pair and the part can go back the same way. A machine that answers for names and was not applied since the standby was set up
 learns the new address with its apply.
 
-Nobody has to be there: when quince is gone, medlar takes the part by itself, as the next
-section says. A part without a third machine to be its witness is switched by the control
-node instead (see [control.md](control.md#when-a-machine-does-not-answer)).
-
-### Permissions: a part runs only where it may
-
-A part with a standby runs on its machine only while that machine holds a permission for it.
-Two machines give it: the standby and a witness. The witness is another machine at the same
-site (the first by name), or the master when the site has no third machine. A part with no
-possible witness runs as before, without a permission.
-
-- Every minute the standby and the witness each give quince the permission for the next
-  three minutes (`kiwi-vote`, over a key that can do only that). Every 20 seconds quince
-  starts the part if it may run and stops it if it may not (`kiwi-lease`). Neither an apply
-  nor a boot starts the part without a permission.
-- quince runs the part while either of the two reaches it. A quince that is cut off stops
-  the part by itself within three minutes.
-- medlar takes the part when four things hold: the switch by itself is on
-  (`recovery: switch`, see [control.md](control.md#when-a-machine-does-not-answer)), its own
-  last permission ran out more than a minute ago, the witness says the same of its own
-  (from then on the witness gives quince nothing for that part), and medlar's copy was
-  fetched within the last 15 minutes. That is about four minutes after quince's power went
-  out: 244 seconds in the drill. The control node is not needed for it. When it sees the
-  take in medlar's next report, it writes it down as a switch.
-- From the take on, medlar fetches nothing more over the part: its copy is the part now. A take
-  whose containers do not start is tried again every minute; medlar then gives quince its
-  permission again, and the control node tells you.
-- A quince that comes back gets no permission for the part, so the part does not start
-  there. The apply that follows makes quince the standby. An apply of medlar waits until the
-  take is written down: it would make the part a copy kept ready again.
-- When the switch is written down, medlar gets a permission from the switch itself and the
-  witness its new lines at once, so the part does not stop while the voters change.
-- After a boot, a machine counts no permission from before it (a clock that is behind at boot
-  would keep an old one good); its voters give it a new one within a minute.
-- A voter that never gave a permission does not count the machine as gone. When only the
-  standby lost its way to quince, the witness still reaches it and nothing moves. When the
-  witness is away as well as quince, nothing moves either, and a person switches.
-
-```bash
-sudo kiwi-lease show                  # on quince: each part, the seconds left, running or stopped
-sudo journalctl -t kiwi-lease         # on quince: started, stopped
-sudo journalctl -t kiwi-vote          # on medlar and the witness: given, gone, taken
-```
-
-A switch by hand also ends quince's permission: the standby and the witness are told to
-give it no more, and quince drops the part from its list when it answers.
-
-A restart that was asked for does not move the part: `kiwi-server power off` tells medlar
-not to take it while quince is off, `power restart` for 15 minutes, and so does the control
-node when quince says it restarts for an update (its last report). Each ends when quince
-answers again. By hand: `kiwi-server standby ~/kiwi/fleet.yaml --hold quince --minutes 30`.
+Nothing switches by itself. When quince is gone, the copy on medlar is a minute behind, and
+quince, back, would hold a second version of the same data: so the part waits for quince. A
+quince that is lost for good is installed anew under its name and brings its data back from
+its backups ([Recovery](recovery.md), "A machine is dead").
 
 What to know:
 
@@ -394,8 +346,7 @@ What to know:
   is kept beside the folder as `<folder>.kept-<date>` first, for 14 days (hard links: little
   room), and the journal says so (`journalctl -t kiwi-standby`).
 - A copy kept ready that is more than ten minutes old is a warning on the standby (the page,
-  `status`, the messages), with what its last fetch said: a switch by itself would start
-  with that copy.
+  `status`, the messages), with what its last fetch said.
 
 ## Pruning
 

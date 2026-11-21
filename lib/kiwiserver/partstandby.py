@@ -165,7 +165,7 @@ REMOVE_SEND = ("[ -e %s ] || exit 0; rm -f %s %s/send.conf %s; "
 # the standby machine: its key (stdin), whose host keys to trust, what to fetch, the timer
 INSTALL_PULL = r'''set -eu
 ''' + NEED_RSYNC + r'''install -d -m 0700 %(dir)s %(dir)s/state
-# a part this machine took by itself is written down by now (an apply waits for that: lease.unrecorded_takes)
+# a mark of an older release's take by itself (lease.py): the copy is fetched again
 rm -f %(dir)s/state/*.taken
 key=$(cat)
 umask 077

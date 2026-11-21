@@ -25,9 +25,7 @@ LIMIT = 512 * 1024  # bytes of a report
 SCRIPT = r'''#!/bin/bash
 # kiwi-server: this machine's agent (docs/design/scale.md). Every minute it tells the control node
 # how this machine is: what the control node used to log in for. Signed with a key of this
-# machine's own, sent over the network's own HTTPS. It changes one thing here, when told: the
-# containers of a part that went to its standby while this machine was gone stop (X-Kiwi-Hold),
-# until the apply that takes the part away from here.
+# machine's own, sent over the network's own HTTPS. It changes nothing here.
 d=/etc/kiwi-server/agent
 . "$d/conf" || exit 0
 body=$(mktemp) || exit 0; head=$(mktemp) || exit 0; trap 'rm -f "$body" "$head"' EXIT
@@ -61,16 +59,6 @@ out=$(curl -sS --max-time "$wait" --cacert "$d/ca.pem" -o /dev/null -D "$head" -
 fi
 [ "${1:-}" = last ] && { logger -t kiwi-agent "last report to $URL ($(cut -d' ' -f2- "$body")): $out"; exit 0; }
 [ "$out" = "$(cat /run/kiwi-agent.last 2>/dev/null)" ] || { logger -t kiwi-agent "report to $URL: $out"; echo "$out" > /run/kiwi-agent.last; }
-if [ "$out" = 200 ]; then
-    for c in $(sed -n 's/^[Xx]-[Kk]iwi-[Hh]old: *//p' "$head" | tr -d '\r'); do
-        case $c in *[!a-z0-9-]*|"") continue ;; esac
-        if systemctl is-active -q "$c.service" 2>/dev/null; then
-            systemctl stop "$c.service" && logger -t kiwi-agent "stopped $c: its part runs on its standby now"
-        elif command -v docker >/dev/null 2>&1 && [ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" = true ]; then
-            docker stop "$c" >/dev/null && logger -t kiwi-agent "stopped $c: its part runs on its standby now"
-        fi
-    done
-fi
 '''
 SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node how this machine is\nAfter=network-online.target\n\n"
            "[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH)

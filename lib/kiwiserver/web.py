@@ -772,21 +772,17 @@ stopped until you start it or the machine restarts.</p>
 <input type="hidden" name="module" value="{{ s.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
 {% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 {% if m.stops %}<h2 id="when">When it stops</h2><p>{{ m.stops }}</p>
-{% for l in m.facts.leases or [] %}<p class="small"><b>{{ ptitle(l.part) }}</b> runs here by a permission:
-{% if l.left > 0 %}{{ l.left }} seconds left, given again every minute{% else %}none left, so it {{ "is stopped" if l.state == "stopped" else "stops" }}{% endif %}.</p>{% endfor %}
-{% for t in m.facts.took or [] %}<p class="small"><b>{{ ptitle(t.part) }}</b> was taken over from {{ t["from"] }} {{ ago(t.at) }} ago, by itself.</p>{% endfor %}
 <details><summary class="muted small">Each part</summary><ul class="small">{% for r in m.parts_table %}<li>{{ r.sentence }}</li>{% endfor %}</ul>
-<p class="muted small">What happens to a part, and how much the network needs it: <code>defaults.parts</code> in the fleet file
-(<code>lost: switch|wait|ask</code>, <code>need: must|normal|wait</code>).</p></details>{% endif %}
+<p class="muted small">How much the network needs a part: <code>defaults.parts</code> in the fleet file
+(<code>need: must|normal|wait</code>).</p></details>{% endif %}
 {% if m.phase not in fresh and (targets or standby) %}<h2 id="move">Move a part, or keep it ready</h2>
 <p class="muted small">A part moves to another machine with its data, its secrets and its name. A part that is kept ready has its
-data copied to a second machine every minute, and that machine can take it over{% if switch_after and "control" in m.modules %}:
-when you say so, as this machine runs the control node, which is the one that switches by itself{% elif switch_after %}: by itself when this machine
-has been gone for {{ switch_after }} minutes and the second one does not reach it either (<a href="/settings">When a machine is gone</a>){% endif %}.</p>
+data copied to a second machine every minute: a switch moves it there while this machine runs, with nothing lost.
+Nothing switches by itself; a machine that is gone gets its data back from its backups once it is installed anew.</p>
 {% for l in standby %}<div class="card row"><div><b>{{ ptitle(l.part) }}</b> is kept ready on <a href="/hosts/{{ l.ready_on }}">{{ l.ready_on }}</a>:
 {% if l.age is none %}no copy there yet{% elif l.age < 90 %}its copy is current{% else %}its copy is {{ age(l.age) }} old{% endif %}.</div>
 <form class="inline" method="post" action="/hosts/{{ m.name }}/switch"
-onsubmit="return confirm('Give {{ l.part }} to {{ l.ready_on }} now? It stops on {{ m.name }} and starts there with the data {{ l.ready_on }} has.')">{{ tok }}
+onsubmit="return confirm('Give {{ l.part }} to {{ l.ready_on }} now? It stops on {{ m.name }}, {{ l.ready_on }} fetches the last of its data and starts it.')">{{ tok }}
 <input type="hidden" name="part" value="{{ l.part }}"><button class="primary">Switch to {{ l.ready_on }}</button></form></div>{% endfor %}
 {% if targets %}<form method="get" action="/hosts/{{ m.name }}/move" class="card">
 <label for="mv_part">Part</label><select id="mv_part" name="part">{% for p in m.modules %}<option value="{{ p }}">{{ ptitle(p) }}</option>{% endfor %}</select>
@@ -2892,7 +2888,6 @@ def make_app(control: Control):
         standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
         return page("host.html", request, "/", live=True, m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
                     chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby,
-                    switch_after=(_info or {}).get("switch_after", 0),
                     targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
 
     def same_kind(m, ms):
@@ -3298,9 +3293,7 @@ def make_app(control: Control):
                              h.get("x-kiwi-sign") or "", body)
         if why:
             return JSONResponse({"error": why}, status_code=503 if "locked" in why else 403)
-        held = control.hold(h.get("x-kiwi-host") or "")
-        # a part that went to its standby while this machine was gone: its containers stop at once
-        return JSONResponse({"ok": True, "hold": held}, headers={"X-Kiwi-Hold": " ".join(held)} if held else None)
+        return JSONResponse({"ok": True})
 
     @app.get("/api/jobs/{jid}/log")
     def job_log(request: Request, jid: str, offset: int = 0, text: int = 0, download: int = 0):

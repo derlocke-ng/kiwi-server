@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # A machine says when it goes down (machineagent.py, docs/design/authority.md step 3): kiwi-server
-# power restarts it; the control node must have its last report in Activity with the reason, its
-# standby must not take its parts with a permission while it restarts, and after the restart the
-# machine must hold its permissions again and run its parts.
+# power restarts it; the control node must have its last report in Activity with the reason, and
+# after the restart the machine must run its part again.
 #
-#   tests/drills/last-report.sh FLEET MACHINE [PART STANDBY]
+#   tests/drills/last-report.sh FLEET MACHINE [PART]
 #
 # One PASS or FAIL line per check.
 set -u
-fleet=${1:?the fleet file}; on=${2:?the machine}; part=${3:-}; sb=${4:-}
+fleet=${1:?the fleet file}; on=${2:?the machine}; part=${3:-}
 KIWI=${KIWI_SERVER:-kiwi-server}
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 fails=0
@@ -29,7 +28,6 @@ at() {
 
 at "$on" "systemctl is-active -q kiwi-agent-last.service"; check $? "$on has the unit for its last report"
 "$KIWI" power "$fleet" "$on" restart --yes > power.log 2>&1; check $? "$on told to restart"
-[ -n "$part" ] && { grep -q "$sb does not take $part for 15 minutes" power.log; check $? "$sb told not to take $part for 15 minutes"; }
 cut=$(date +%s)
 heard=""
 for _ in $(seq 1 20); do
@@ -49,17 +47,11 @@ if [ -n "$part" ]; then
     runs=""
     for _ in $(seq 1 24); do
         sleep 10
-        left=$(at "$on" "/usr/local/sbin/kiwi-lease show" 2>/dev/null | awk -v p="$part" '$1 == p && $3 == "running" {print $2}')
-        if [ -n "$left" ] && [ "$left" -gt 0 ]; then runs=$(( $(date +%s) - cut )); break; fi
+        if at "$on" "podman ps --format '{{.Names}}' 2>/dev/null; docker ps --format '{{.Names}}' 2>/dev/null" | grep -Eq -- "-$part(-|\$)"; then
+            runs=$(( $(date +%s) - cut )); break
+        fi
     done
-    check "$(is [ -n "$runs" ])" "$on holds its permission for $part again and runs it (${runs:-never} s after)"
-    if at "$sb" "podman ps --format '{{.Names}}' 2>/dev/null; docker ps --format '{{.Names}}' 2>/dev/null" | grep -Eq -- "-$part(-|\$)"; then
-        check 1 "$part did not start on $sb"
-    else
-        check 0 "$part did not start on $sb"
-    fi
-    sleep 70
-    at "$sb" "test ! -e /etc/kiwi-server/lease/state/$part@$on.hold"; check $? "$sb's hold ended once $on was back"
+    check "$(is [ -n "$runs" ])" "$part runs on $on again (${runs:-never} s after)"
 fi
 say "$([ $fails = 0 ] && echo passed || echo "$fails failed")"
 exit $(( fails > 0 ))

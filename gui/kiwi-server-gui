@@ -191,12 +191,6 @@ BASE_GROUPS = [
         dict(path=("recovery", "unlock"), type="bool", label="Open a disk that waits at boot", scope="defaults", default=True,
              help="A machine that restarted and waits with its disk locked gets its unlock ring forwarded by the control "
                   "node. Off: someone presses Unlock it"),
-        dict(path=("recovery", "switch", "do"), type="enum", label="A part kept ready on another machine", options=["switch", "tell"],
-             scope="defaults", default="switch",
-             help="switch: when its machine is gone and the machine that keeps it ready does not reach it either, the "
-                  "control node switches the part there (the data is a minute old at most). tell: it only says so"),
-        dict(path=("recovery", "switch", "after"), type="int", label="…after this many minutes", scope="defaults", default=5,
-             help="How long its machine must be gone before the part is switched"),
     ]),
     ("Disk unlock", [
         dict(path=("unlock", "rings"), type="list", label="Rings that open its disk", default=[],
@@ -6006,14 +6000,7 @@ class Window(Adw.ApplicationWindow):
                                 subtitle="\n".join(x for x in ((text if with_host else ""), ("→ " + hint) if hint else "") if x))
             row.add_prefix(dot(level))
             for a in p.get("actions") or []:        # what to do about it, as buttons (facts.ACTIONS; one table with the page)
-                if a.get("run") == "switch" and a.get("part") and self.doc.path:
-                    # a part kept ready elsewhere, the machine gone: switched with this OK (also when that machine
-                    # is the control node's, which would otherwise be the one to switch)
-                    ask = ("%s now?" % a["label"], "It goes on with the copy there; when %s is back it gives the part up."
-                           % host, "Switch")
-                    row.add_suffix(self.action_button(a["label"], ["switch", self.doc.path, a["part"], host, "--yes"],
-                                                      "%s: %s…" % (host, a["label"]), ask))
-                elif a.get("run") and self.doc.path:
+                if a.get("run") and self.doc.path:
                     msg = "%s: %s…" % (host, a["label"])
                     ask = (("Apply to %s now?" % host, "Services that changed restart for a moment.", "Apply")
                            if a["run"] == "apply" else None)
@@ -6250,15 +6237,7 @@ class Window(Adw.ApplicationWindow):
         """What this machine's stop does to its parts (`kiwi-server parts`): one sentence, and one per part."""
         row_of = self.status.get(name) or {}
         g = Adw.PreferencesGroup(title="When it stops", description=row_of.get("stops") or "")
-        facts = ((self.live.get(name) or {}).get("facts") or {})
-        for l in facts.get("leases") or []:         # its parts that run by a permission, as its last report says
-            left = int(l.get("left") or 0)
-            g.add(plain_row("%s runs here by a permission" % l.get("part"),
-                            "%d seconds left, given again every minute" % left if left > 0 else
-                            "none left: %s" % ("it is stopped" if l.get("state") == "stopped" else "it stops")))
-        for t in facts.get("took") or []:
-            g.add(plain_row("%s was taken over from %s" % (t.get("part"), t.get("from")), "by itself, when its permission there had run out"))
-        each = Adw.ExpanderRow(title="Each part", subtitle="Changed in the fleet file: defaults.parts (lost, need)")
+        each = Adw.ExpanderRow(title="Each part", subtitle="Changed in the fleet file: defaults.parts (need)")
         for r in row_of.get("parts_table") or []:
             line = Adw.ActionRow(title=r.get("part") or "", subtitle=(r.get("sentence") or "").split(": ", 1)[-1])
             line.set_subtitle_lines(3)
@@ -6269,26 +6248,21 @@ class Window(Adw.ApplicationWindow):
     def move_group(self, name):
         """A part of this machine to another machine (`kiwi-server move`), and the parts another machine
         keeps ready (`keep_ready`): each with Switch (`kiwi-server switch`)."""
-        after = int(self.fleet_info.get("switch_after") or 0)
-        controls = "control" in ((self.status.get(name) or {}).get("modules") or [])
-        by_itself = ("" if not after else
-                     ": when you say so, as this machine runs the control node, which is the one that switches by itself" if controls else
-                     ": by itself when this machine has been gone for %d minutes and the second one does not reach it either "
-                     "(Settings for every machine: When a machine is gone)" % after)
         g = Adw.PreferencesGroup(title="Its parts on other machines",
                                  description="A part moves with its data, its secrets and its name. A part that is kept ready "
                                              "has its data copied to a second machine every minute (Settings: Parts kept ready "
-                                             "on another machine), and that machine can take it over%s." % by_itself)
+                                             "on another machine): a switch moves it there while this machine runs, with nothing "
+                                             "lost. Nothing switches by itself.")
         row = plain_row("Move a part to another machine", "First what would happen, then the move")
         b = Gtk.Button(label="Move…", valign=Gtk.Align.CENTER, css_classes=["flat"])
         b.connect("clicked", lambda *_: MoveDialog(self, name).present(self))
         row.add_suffix(b)
         g.add(row)
         for part, m in sorted(((self.status.get(name) or {}).get("keep_ready") or {}).items()):
-            row = plain_row("%s is kept ready on %s" % (part, m), "Switch: %s takes it over with the data it has" % m)
+            row = plain_row("%s is kept ready on %s" % (part, m), "Switch: it stops here and starts on %s with all its data" % m)
             b = self.action_button("Switch", ["switch", self.doc.path, part, name, "--yes"], "Giving %s to %s…" % (part, m),
-                                   ("Give %s to %s?" % (part, m), "It stops on %s and starts on %s with the data %s has. "
-                                    "If %s does not answer, at most the last minute is missing." % (name, m, m, name), "Switch"))
+                                   ("Give %s to %s?" % (part, m), "It stops on %s, %s fetches the last of its data and starts it. "
+                                    "%s has to answer for that." % (name, m, name), "Switch"))
             row.add_suffix(b)
             g.add(row)
         return g
@@ -6790,7 +6764,6 @@ class Window(Adw.ApplicationWindow):
             self.fleet_info["groups"] = listing.get("groups") or {}      # where a new device may go
             self.fleet_info["changed"] = listing.get("changed") or []    # changes not applied yet
             self.fleet_info["linked"] = listing.get("linked") or []      # networks linked to this one: in the picture
-            self.fleet_info["switch_after"] = listing.get("switch_after") or 0     # a part kept ready goes over by itself
         if err:
             self.append_log(err + "\n")
             self.toast(err.splitlines()[-1])

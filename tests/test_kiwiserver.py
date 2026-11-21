@@ -1349,6 +1349,38 @@ class TestAdopt(Base):
         self.assertEqual((rc, out), (0, "kiwi-self-apply: running"))
         self.assertNotIn("systemd-run", did)
 
+    def test_the_control_nodes_own_update_goes_back_when_the_new_page_does_not_answer(self):
+        work = os.path.join(self.tmp, "guard")
+        os.makedirs(os.path.join(work, "bin"))
+        podman = ('#!/bin/bash\necho "podman $*" >> %(w)s/did\n'
+                  'case "$1" in\n ps) echo kn-control ;;\n'
+                  ' inspect) case "$3" in *Image}}) cat %(w)s/image ;; *ImageName}}) echo ghcr.io/x/kiwi-server-control:2 ;; esac ;;\n'
+                  ' exec) [ -e %(w)s/answers ] ;;\nesac\n' % {"w": work})
+        for name, text in (("podman", podman), ("systemctl", 'echo "systemctl $*" >> %s/did\n' % work),
+                           ("logger", 'echo "logger $*" >> %s/did\n' % work),
+                           ("kiwi-stack-update", 'echo new > %s/image\n' % work)):
+            path = os.path.join(work, "bin", name)
+            write(path, "#!/bin/bash\n" + text if name != "podman" else text)
+            os.chmod(path, 0o755)
+        script = cli.UPDATE_OWN_GUARDED.replace(cli.UPDATE_IMAGES, "kiwi-stack-update")
+        env = dict(os.environ, PATH=os.path.join(work, "bin") + os.pathsep + os.environ["PATH"], KIWI_GUARD_TRIES="2", KIWI_GUARD_WAIT="0")
+
+        def run(answers):
+            write(os.path.join(work, "image"), "old\n")
+            for f in ("did", "answers"):
+                if os.path.exists(os.path.join(work, f)):
+                    os.unlink(os.path.join(work, f))
+            if answers:
+                write(os.path.join(work, "answers"), "")
+            subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True)
+            return util.read_text(os.path.join(work, "did"))
+        did = run(answers=True)
+        self.assertNotIn("podman tag", did)                                       # the new page answers: it stays
+        did = run(answers=False)
+        self.assertIn("podman tag old ghcr.io/x/kiwi-server-control:2", did)     # it does not: the one before
+        self.assertIn("systemctl restart kn-control.service", did)
+        self.assertIn("the one before runs again", did)
+
     def test_ssh_config_names_every_machine_with_the_fleets_key(self):
         """`ssh-config`: ssh's own configuration for the machines, as kiwi-server reaches them. Printed
         without --write; nothing of the computer's own ~/.ssh is read or touched then."""
@@ -2927,7 +2959,7 @@ class TestSetup(Base):
         rc, out, err = self.run_cli("list", dest, "--porcelain")
         self.assertEqual(rc, 0, err)
         hosts = {h["name"]: h for h in json.loads(out)["hosts"]}
-        self.assertEqual(json.loads(out)["switch_after"], 5)      # a part kept ready goes over by itself after five minutes
+        self.assertNotIn("switch_after", json.loads(out))       # nothing switches by itself (22 Nov 2026)
         self.assertEqual(hosts["trifle"]["errors"], [])
         self.assertEqual((hosts["trifle"]["phase"], hosts["mango"]["phase"], hosts["quince"]["phase"]),
                          ("build", "enroll", "enroll"))
@@ -4677,32 +4709,6 @@ class TestOnion(Base):
                 c.sshca_sign("ssh-ed25519 AAAAx a\nssh-ed25519 AAAAy b")
             self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
         self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
-
-    def test_a_take_by_the_standby_is_written_down_once(self):
-        # 21 Nov 2026: the next look came while the switch's applies still ran, the fleet file did not
-        # say so yet, and a second switch job started three minutes after the first
-        f = self.net()
-        fake = os.path.join(self.tmp, "fake-kiwi")
-        event = {"kind": "switch", "host": "quince", "part": "vault", "to": "medlar", "taken": True,
-                 "text": "medlar took vault from quince by itself 2 minutes ago"}
-        write(fake, "#!/bin/sh\n[ \"$1\" = gone ] && echo '%s'\nexit 0\n" % json.dumps({"events": [event]}))
-        os.chmod(fake, 0o755)
-        ram = os.path.join(self.tmp, "ram")
-        os.makedirs(ram)
-        c = controlmod.Control(f.path, kiwi_cmd=[fake], run_dir=ram)
-        write(os.path.join(c.run, "status.json"), "{}")
-        started = []
-
-        def start(action, hosts=(), user="admin", wait=False, at="", module=""):
-            started.append((action, list(hosts), at, module))
-            c._write({"id": "j%d" % len(started), "action": action, "hosts": list(hosts), "user": user, "state": "running",
-                      "started": None, "ended": None, "rc": None})
-            return "j%d" % len(started)
-        with mock.patch.object(c, "locked", lambda: False), mock.patch.object(c, "start", start):
-            c.recover()
-            c.recover()
-        self.assertEqual(started, [("switch", ["quince"], "taken", "vault")])
-        self.assertEqual(c.argv("switch", ["quince"], "taken", "vault")[-1], "--taken")
 
     @unittest.skipUnless(have("openssl"), "openssl not installed")
     def test_a_certificate_of_the_own_ca_running_out_is_renewed_by_an_apply(self):
@@ -9271,21 +9277,16 @@ class TestWatchdog(unittest.TestCase):
         self.assertEqual([e["kind"] for e in ev], ["waiting"])
         self.assertEqual(state["gone"]["gate"], self.NOW)
 
-    def test_what_the_look_found_or_the_table_holds_a_switch(self):
-        # the review of 22 Nov 2026: the old switch moved a part a person switches, or one whose machine said it restarts
-        links = [("pi", "vault", "lab")]
-        sees = lambda standby, machine: False                                              # noqa: E731
-        f = self.fleet()
-        for conclusion in watchdogmod.QUIET_CONCLUSIONS:
-            state = {"gone": {"pi": self.NOW}, "cases": {"pi": {"conclusion": conclusion}}}
-            self.assertEqual(watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 9 * 60, sees), [], conclusion)
-        state = {"gone": {"pi": self.NOW}}
-        f.defaults["parts"] = {"vault": {"lost": "wait"}}
-        self.assertEqual(watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 9 * 60, sees), [])
-        f.defaults["parts"] = {"vault": {"lost": "ask"}}
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 9 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["tell"])
-        self.assertIn("by hand", ev[0]["text"])
+    def test_the_provider_is_asked_before_the_restart(self):
+        # authority.md §4: switched off there, the restart starts it; running there and silent, it hangs
+        for said, words, why in (("SHUTOFF", "its provider says it is switched off", "switched off at its provider"),
+                                 ("RUNNING", "its provider says it runs: it hangs", "it hangs")):
+            f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
+            self.diagnosed(f, {"gate": False}, state, self.NOW, provider=lambda n: said)
+            ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 10 * 60, provider=lambda n, s=said: s)
+            self.assertEqual(done, ["gate"])
+            self.assertIn(words, ev[0]["text"])
+            self.assertEqual(state["cases"]["gate"]["conclusion"], why)
 
     def test_a_masters_devices_go_to_its_standby_also_when_its_site_is_away(self):
         f = self.fleet(master={"after": 3, "do": "restart"})
@@ -9298,77 +9299,12 @@ class TestWatchdog(unittest.TestCase):
         self.assertEqual((pointed, done), (["5.6.7.8"], []))
         self.assertIn("moved", [e["kind"] for e in ev])
 
-    def test_a_part_kept_ready_goes_to_its_standby_when_two_agree(self):
-        links = [("pi", "vault", "lab")]
-        f = self.fleet()
-        state, seen = {"gone": {"pi": self.NOW}}, {"lab": False}
-        sees = lambda standby, machine: seen[standby]                                     # noqa: E731
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 3 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["waiting"])
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 6 * 60, sees)
-        self.assertEqual([(e["kind"], e["part"], e["to"]) for e in ev], [("switch", "vault", "lab")])
-        self.assertIn("lab does not reach it either", ev[0]["text"])
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 7 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["held"])                              # once: its switch is on its way
-        # only the way from the control node is cut: the standby still sees it, nothing is switched
-        state, seen["lab"] = {"gone": {"pi": self.NOW}}, True
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state, self.NOW + 6 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["held"])
-        self.assertIn("only the way from here is cut", ev[0]["text"])
-        # the standby gone too: nothing; a machine that answers: nothing at all
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": False}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["held"])
-        self.assertEqual(watchdogmod.switches(f, links, {"pi": True, "lab": True}, {"gone": {}}, self.NOW + 6 * 60, sees), [])
-        # left to a person, or later
-        ev = watchdogmod.switches(self.fleet(switch=False), links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}},
-                                  self.NOW + 60 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["tell"])
-        ev = watchdogmod.switches(self.fleet(switch={"after": 20}), links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}},
-                                  self.NOW + 6 * 60, sees)
-        self.assertEqual([e["kind"] for e in ev], ["waiting"])
-        # the copy there: fresh when the machine fell silent (it has not been fetched since), or behind already
-        seen["lab"] = False
-        fresh = lambda standby, part: 6 * 60 + 40                                         # noqa: E731
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees, fresh)
-        self.assertEqual([e["kind"] for e in ev], ["switch"])
-        stale = lambda standby, part: 3 * 3600                                            # noqa: E731
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees, stale)
-        self.assertEqual([e["kind"] for e in ev], ["tell"])
-        self.assertIn("behind already when pi fell silent", ev[0]["text"])
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, {"gone": {"pi": self.NOW}}, self.NOW + 6 * 60, sees,
-                                  lambda standby, part: None)
-        self.assertIn("lab has no copy of it", ev[0]["text"])
-
-    def test_a_switch_by_itself_needs_two_that_fail_independently(self):
-        links, f = [("pi", "vault", "lab")], self.fleet()
-        sees = lambda standby, machine: False                                             # noqa: E731
-        fresh = lambda standby, part: 6 * 60 + 30                                         # noqa: E731
-        state = lambda: {"gone": {"pi": self.NOW}}                                        # noqa: E731
-        # at another site, while the master does not answer: the standby lost its way the same way
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh,
-                                  lambda standby, machine: False)
-        self.assertEqual([e["kind"] for e in ev], ["held"])
-        self.assertIn("at another site and the master does not answer", ev[0]["text"])
-        ev = watchdogmod.switches(f, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh,
-                                  lambda standby, machine: True)
-        self.assertEqual([e["kind"] for e in ev], ["switch"])
-        # a policy word it does not know: by hand
-        for odd in ("tell", {"do": "tell"}, {"do": "swich"}, False):
-            self.assertFalse(watchdogmod.switch_policy(self.fleet(switch=odd))[0], odd)
-        self.assertEqual(watchdogmod.switch_policy(self.fleet()), (True, 5))
-        # the control node's own machine is not switched away from by itself
-        own = self.fleet()
-        own.hosts["pi"].role_settings_raw = {"modules": ["control", "vault"]}
-        self.assertEqual(watchdogmod.switches(own, links, {"pi": False, "lab": True}, state(), self.NOW + 6 * 60, sees, fresh), [])
-
     def test_a_machine_switched_off_on_purpose_is_left_alone(self):
         """The owner, 21 Nov 2026: "power off should hold the switch"."""
         f = self.fleet(master={"after": 5, "do": "restart"})
         state, done = {"off": {"gate": self.NOW - 3600}}, []
         ev = watchdogmod.step(f, {"gate": "master"}, {"gate": False}, state, self.NOW, done.append)
         self.assertEqual((done, [e["kind"] for e in ev]), ([], ["off"]))
-        self.assertEqual(watchdogmod.switches(f, [("gate", "vault", "pi")], {"gate": False, "pi": True}, state, self.NOW + 900,
-                                              lambda s, m: False), [])
         watchdogmod.step(f, {"gate": "master"}, {"gate": True}, state, self.NOW + 1000, done.append)      # on again
         self.assertEqual(state["off"], {})
 
@@ -15536,17 +15472,16 @@ class TestFirstRunPage(StoreBase):
         self.assertIn("move %s %s %s %s --yes" % (self.c.fleet_path, part, a, b), said)
         self.assertEqual((self.c.job(jid)["action"], self.c.job(jid)["hosts"]), ("move", [a, b]))
         self.assertEqual(self.ask("/hosts/%s/move" % a, {"part": part, "to": b}, cookie=cookie)[0], 303)   # no token: nothing
-        # the switch: `switch PART FROM --yes`, then the machine it left is applied from here (it waits if it is away)
+        # the switch: `switch PART FROM --yes`, which applies the machines itself (the source answers, or nothing is switched)
         status, where, _ = self.ask("/hosts/%s/switch" % a, {"part": part, "csrf": csrf}, cookie=cookie)
         self.assertEqual(status, 303)
         for _ in range(400):
-            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()) and len(self.c.jobs()) >= 3:
+            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()) and len(self.c.jobs()) >= 2:
                 break
             time.sleep(0.05)
         said = util.read_text(argv_log)
         self.assertIn("switch %s %s %s --yes" % (self.c.fleet_path, part, a), said)
-        after = [j for j in self.c.jobs() if j["user"] == "control" and j["action"] == "apply"]
-        self.assertEqual([j["hosts"] for j in after], [[a]])
+        self.assertEqual([j for j in self.c.jobs() if j["user"] == "control"], [])
         with self.assertRaisesRegex(KiwiError, "which part"):
             self.c.argv("move", [a], module=part)
         with self.assertRaisesRegex(KiwiError, "which part"):
@@ -15640,16 +15575,7 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.fetch("/ack?key=machine:%s" % b, cookie)[0], 303)        # the link in the message: Home
         # its last report, when it goes down: kept beside its reports with why, and said in Activity once
         last = b"kiwi-last reboot an update (its update window)\n"
-        held = []
-        with mock.patch.object(self.c, "_hold_standbys", lambda name: held.append(name)):
-            self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)
-            leash = b"kiwi-last reboot the leash: its site's rings did not answer for 30 minutes\n"
-            self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", leash), raw=leash), 200)
-            for _ in range(50):
-                if held:
-                    break
-                time.sleep(0.05)
-        self.assertEqual(held, [b])         # its standbys wait for an update's restart; not after the leash
+        self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)
         self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)
         word = json.loads(util.read_text(os.path.join(self.c.reports_dir, b + ".last")))
         self.assertEqual((word["reason"], word["why"]), ("reboot", "an update (its update window)"))
@@ -15672,33 +15598,7 @@ class TestFirstRunPage(StoreBase):
         gone = time.time() - 7200                                              # silent for hours: the full look's to find
         os.utime(os.path.join(self.c.reports_dir, b + ".txt"), (gone, gone))
         self.assertEqual(self.c.went_silent(), [])
-        # a part went to its standby while it was gone: its agent is told to hold its containers back,
-        # with every report until its next apply
-        self.assertIsNone(heard[-1])
-        cli.hold_back(fleet, b, ["kn-vault"])
-        self.c._reported_at.clear()
-        self.assertEqual((post(b, good), heard[-1]), (200, "kn-vault"))
-        cli.record_applied(fleet, b)
-        self.c._reported_at.clear()
-        self.assertEqual((post(b, good), heard[-1]), (200, None))
-        # held for a part, which the fleet file gives that machine again (switched back from a computer): not held.
-        # The fleet file itself counts, not the listing the pages keep (stale while the switch job runs)
-        import yaml
-        data = yaml.safe_load(util.read_text(self.c.fleet_path))
-        block = data["hosts"][b].setdefault(data["hosts"][b]["role"], {})
-
-        def mods(names):
-            block["modules"] = names
-            util.write_text(self.c.fleet_path, yaml.safe_dump(data))
-        cli.hold_back(fleet, b, ["kn-vault"], "vault")
-        mods(["reverse-proxy"])                                                     # switched away: not its own
-        self.c._reported_at.clear()
-        stale = lambda fresh=False: {"hosts": [{"name": b, "modules": ["vault"]}]}       # noqa: E731
-        with mock.patch.object(self.c, "fleet_info", stale):
-            self.assertEqual((post(b, good), heard[-1]), (200, "kn-vault"))
-        mods(["reverse-proxy", "vault"])                                            # given back to it
-        self.c._reported_at.clear()
-        self.assertEqual((post(b, good), heard[-1]), (200, None))
+        self.assertIsNone(heard[-1])            # the answer tells the agent nothing to do (22 Nov 2026: no holds)
 
     def test_jobs_on_different_machines_run_side_by_side(self):
         cookie, _csrf = self.made()
@@ -15870,15 +15770,6 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(len(own), self.c.RETRIES)
         with open(os.path.join(self.c.dir, "audit.jsonl")) as fh:
             self.assertIn("gave up applying %s by itself" % b, fh.read())
-        # a part switched away from a machine that is away: that machine's apply waits for it (22 Nov 2026:
-        # this node's own try for a machine out of the book stayed out, and it was never applied)
-        self.c.start("switch", [b], user="control", module="vault", wait=True)
-        wait_jobs()
-        self.assertIn(b, self.c.waiting())
-        write(mode, "up")
-        self.c.refresh_status()
-        wait_jobs()
-        self.assertEqual(self.c.waiting(), {})
 
     def test_a_look_does_not_wait_for_a_job_on_another_machine(self):
         cookie, _csrf = self.made()
@@ -16127,20 +16018,6 @@ class TestRecovery(Base):
         rep = recovery.report(f, self.roles, self.ms, status, "fleet.yaml", now=now)
         return rep, {c["id"]: c for c in rep["checks"]}
 
-    def test_a_machine_that_is_gone_offers_its_parts_kept_ready(self):
-        """The owner, 21 Nov 2026: the control node's own machine switches on the OK of a person (the app,
-        kiwi-server): its problem row offers the switch, as every gone machine's does."""
-        papaya = self.network().raw["hosts"]["papaya"]
-        f = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
-        buf = io.StringIO()
-        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), \
-                mock.patch.object(remote, "run", mock.Mock(side_effect=KiwiError("ssh: connect to host: No route to host"))), \
-                mock.patch.object(cli.unlock, "waiting_at", lambda h: None), contextlib.redirect_stdout(buf):
-            cli.main(["status", f.path, "papaya", "--porcelain", "--direct"])
-        row = next(h for h in json.loads(buf.getvalue())["hosts"] if h["host"] == "papaya")
-        acts = row["problems"][0]["actions"]
-        self.assertEqual(acts[0], {"label": "Switch vault to lychee", "run": "switch", "part": "vault"})
-
     def test_a_standby_has_its_part_made_and_not_started(self):
         """keep_ready: the standby renders the part as the machine that runs it has it (its settings, its
         secrets), made and not started; a switch starts it there (kiwi-stack ready start)."""
@@ -16178,6 +16055,44 @@ class TestRecovery(Base):
         env = next(e for e in master.compose["services"]["km-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts="))
         self.assertNotIn("vault.papaya.kiwi", env)
         self.assertIn(" vault.quince.kiwi", env)                                     # one that does not move: as before
+
+    def test_a_switch_needs_the_machine_it_leaves_and_loses_nothing(self):
+        """The owner, 22 Nov 2026: a part with data is not taken over with an older copy. A switch
+        from a machine that does not answer is refused; one whose last fetch fails goes on where it was."""
+        papaya = self.network().raw["hosts"]["papaya"]
+        f = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
+        for name in ("papaya", "lychee"):
+            cli.record_applied(f, name)
+        before = util.read_text(f.path)
+        ran = []
+
+        def run(tgt, script, data=None):
+            ran.append((tgt, script))
+            if tgt == "core@papaya" and away:
+                raise KiwiError("ssh: connect to host papaya port 22: No route to host")
+            if script == partstandby.AGE:
+                return b"vault 20\n"
+            if script == partstandby.PULL_PATH:
+                raise KiwiError("rsync: connection unexpectedly closed")
+            return b""
+        from kiwiserver import partstandby
+        away = True
+        buf = io.StringIO()
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), mock.patch.object(remote, "run", run), \
+                contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit):
+                cli.main(["switch", f.path, "vault", "papaya", "--yes"])
+            self.assertIn("papaya does not answer", buf.getvalue())
+            self.assertIn("install it anew under its name", buf.getvalue())
+            self.assertFalse(any("stop" in sc for _t, sc in ran if _t == "core@papaya"))
+            away, ran[:] = False, []
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertNotEqual(cli.main(["switch", f.path, "vault", "papaya", "--yes"]) or 0, 0)
+            self.assertIn("vault runs on papaya again, nothing was switched", err.getvalue())
+        on_papaya = [sc for t, sc in ran if t == "core@papaya"]
+        self.assertTrue(any("stop" in sc for sc in on_papaya) and any("start" in sc for sc in on_papaya), on_papaya)
+        self.assertEqual(util.read_text(f.path), before)                 # the fleet file as it was
 
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod
@@ -16533,15 +16448,13 @@ class TestRecovery(Base):
         self.assertIn("--ssh core@<its address> --new-host-key", rebuild["rebuild:quince"]["command"])   # its router's address
         self.assertIn("unlock:papaya", rebuild)
         self.assertNotIn("Kept ready", by["machine"]["by_itself"])                  # no part has a standby here
-        # a part kept ready on a second machine: the case of a dead machine says so, and how to switch
+        # a part kept ready on a second machine: the case of a dead machine says what that copy is for
         papaya = f.raw["hosts"]["papaya"]
         kept = self.network(papaya=dict(papaya, keep_ready={"vault": "lychee"}))
         machine = next(k for k in self.report(kept)[0]["cases"] if k["id"] == "machine")
-        self.assertIn("Kept ready on a second machine, with its data a minute old at most: vault of papaya on lychee", machine["by_itself"])
-        self.assertIn("gone for 5 minutes and the second machine does not reach it either, the control node switches", machine["by_itself"])
-        self.assertEqual((machine["how"][0]["label"], machine["how"][0]["command"], machine["how"][0]["page"]),
-                         ("papaya is gone: vault goes on on lychee", "kiwi-server switch fleet.yaml vault papaya --yes",
-                          "/hosts/papaya?tab=services"))
+        self.assertIn("Kept ready on a second machine: vault of papaya on lychee. That copy is for moving a part while its "
+                      "machine runs", machine["by_itself"])
+        self.assertFalse(any("switch" in (h["command"] or "") for h in machine["how"]))     # not from a dead machine
         self.assertNotIn("rebuild:sorbet", rebuild)                 # the master has its own case
         self.assertEqual([h["app"] for h in by["computer"]["how"]], [None, "rotate"])
         self.assertEqual([h["app"] for h in by["network"]["how"]], ["restore-copy", "copy"])

@@ -305,6 +305,13 @@ vpn_restart() {
         docker restart "$STACK_VPN_CONTAINER" "${running[@]}"
     fi
 }
+# a backup before an update (the owner, 22 Nov 2026: "we backup before updates"): an update that
+# breaks a part leaves data as it was a moment before. A failed backup: nothing is updated
+backup_first() {
+    [[ -x $STACK_DIR/kiwi/backup.sh && ${KIWI_UPDATE_NO_BACKUP:-} != 1 ]] || return 0
+    echo "a backup first"
+    "$STACK_DIR/kiwi/backup.sh" || { echo "the backup before the update failed: nothing was updated (kiwi-stack backup says why)" >&2; return 1; }
+}
 # the images' disk, nearly full: a master in RAM keeps them in half its memory (crumble, 18 Nov 2026:
 # 95 %). podman auto-update pulls every new image before an old one goes; then there is no room.
 tight() {
@@ -329,7 +336,8 @@ if [[ $STACK_RUNTIME == podman ]]; then
         up)      systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on ;;
         stop)    own_dns off; host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
-        update)  if [[ ${STACK_AUTO_UPDATE:-registry} != registry ]]; then echo "auto_update is off: images change with an apply"
+        update)  backup_first || exit 1
+                 if [[ ${STACK_AUTO_UPDATE:-registry} != registry ]]; then echo "auto_update is off: images change with an apply"
                  elif tight; then podman image prune -f >/dev/null; update_one_by_one
                  else podman auto-update; podman image prune -f >/dev/null; fi; mesh_route; host_units restart --no-block ;;
         status)  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; unit_status | quiet_conmon; verify || true ;;
@@ -344,7 +352,8 @@ else
         up)      compose up --detach --remove-orphans; mesh_route; own_dns on ;;
         stop)    own_dns off; host_units stop; compose down ;;
         restart) "$0" stop; "$0" start ;;
-        update)  if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then compose pull; fi; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
+        update)  backup_first || exit 1
+                 if [[ ${STACK_AUTO_UPDATE:-registry} == registry ]]; then compose pull; fi; compose up --detach --remove-orphans; mesh_route; docker image prune -f >/dev/null; host_units restart --no-block ;;
         status)  compose ps; unit_status; verify || true ;;
         verify)  verify ;;
         logs)    compose logs --follow "${@:2}" ;;

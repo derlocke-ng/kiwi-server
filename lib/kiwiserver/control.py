@@ -1119,8 +1119,7 @@ class Control:
         if action == "switch":              # module: the part; hosts: the machine it runs on
             if len(hosts) != 1 or not MODULE.match(module or ""):
                 raise KiwiError("which part, on which machine?")
-            # at "taken": the standby took it by itself (lease.py); the switch writes it down
-            return list(self.kiwi) + ["switch", self.fleet_path, module, hosts[0], "--yes"] + (["--taken"] if at == "taken" else [])
+            return list(self.kiwi) + ["switch", self.fleet_path, module, hosts[0], "--yes"]
         if action == "rotate-ring":         # module: the ring; hosts: left out (gone for good)
             if not MODULE.match(module or ""):
                 raise KiwiError("which ring?")
@@ -1289,19 +1288,6 @@ class Control:
                 self._gen += 1          # whatever a job did: nothing that was read before it is kept
                 meta.update(state="ok" if rc == 0 else "failed", ended=self.clock(), rc=rc)
                 self._write(meta)
-        if meta["action"] == "switch" and meta["state"] == "ok" and meta["hosts"]:
-            # the machine the part left: applied from here. If it is away, that apply waits for it
-            # (the book of waiting applies), and it stops the part the moment it answers again
-            try:
-                # in the book first: this node's own try counts only for a machine in it (_note_applied), and the
-                # machine is usually the one that is away (22 Nov 2026: it was never applied when it came back)
-                with self._ending:
-                    data = self.waiting()
-                    data.setdefault(meta["hosts"][0], {"since": int(self.clock()), "tries": 0, "user": "control"})
-                    self._write_waiting(data)
-                self.start("apply", [meta["hosts"][0]], user="control")
-            except (KiwiError, OSError, ValueError) as e:
-                util.warn("control: %s was not applied after the switch: %s" % (meta["hosts"][0], e))
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
             failed = self._failed_hosts(meta) if len(meta["hosts"]) > 1 and meta["state"] == "failed" else None
             if failed:                          # several at once: each machine's own result
@@ -2306,32 +2292,6 @@ class Control:
             return {h.name: agent.key(fleet, h) for h in fleet.hosts.values()}
         return self._read_once("agent-keys", read)
 
-    def hold(self, name):
-        """The containers a machine is to hold back (cli.hold_back: a part switched away while it was
-        gone), until its next apply: what its agent is told with a report."""
-        try:
-            with open(os.path.join(self.fleet_dir, ".kiwi-state.json")) as fh:
-                state = json.load(fh)
-            held = (state.get("hold") or {}).get(name) or []
-            parts = (state.get("hold_parts") or {}).get(name) or {}
-        except (OSError, ValueError, AttributeError):
-            return []
-        # a part the fleet file gives this machine again (switched back, from wherever) is not held back. The
-        # file itself, not the listing kept for the pages: that one is made anew only after a job, and the
-        # switch is one (20 Nov 2026: the listing from before it said the machine still ran the part, and
-        # nothing was held back for five minutes)
-        mine = set()
-        if parts:
-            import yaml
-            try:
-                with open(self.fleet_path) as fh:
-                    h = ((yaml.safe_load(fh) or {}).get("hosts") or {}).get(name) or {}
-                block = h.get(str(h.get("role") or "")) or {}
-                mine = {str(m) for m in (block.get("modules") or [])} if isinstance(block, dict) else set()
-            except (OSError, ValueError, AttributeError, yaml.YAMLError):
-                mine = set()        # not known: held back, as the switch asked (until the machine's apply)
-        return [c for c in held if isinstance(c, str) and HOST.match(c) and parts.get(c) not in mine]
-
     def report(self, name, when, boot, sign, body):
         """A machine's agent says how the machine is. None when taken; else why not (the page
         answers 403 with it). A report that is taken is the machine's state for the next look,
@@ -2360,10 +2320,6 @@ class Control:
             self.audit("control", "%s goes down: %s%s" % (name, {"reboot": "it restarts", "poweroff": "it switches off",
                                                                  "halt": "it stops"}.get(reason, "it stops"),
                                                           " (%s)" % said[:120] if said else ""), host=name)
-            if reason == "reboot" and said.startswith("an update"):
-                # a restart for an update: its standbys wait 15 minutes before they take its parts (kiwi-server power
-                # restart asks the same itself). Not after the leash: a machine carried off is to be taken over
-                threading.Thread(target=self._hold_standbys, args=(name,), daemon=True).start()
             return None
         last = self._reported_at.get(name, 0)
         if self.clock() - last < 10:        # it reports every minute; more often is nothing to keep
@@ -2383,13 +2339,6 @@ class Control:
             # it is back (or started anew): look at it now, from its report, and give it what waited
             threading.Thread(target=self._back, args=(name,), daemon=True).start()
         return None
-
-    def _hold_standbys(self, name):
-        try:
-            subprocess.run(list(self.kiwi) + ["standby", self.fleet_path, "--hold", name, "--minutes", "15"],
-                           capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
-        except (OSError, subprocess.SubprocessError) as e:
-            util.warn("control: %s's standbys were not told to wait: %s" % (name, e))
 
     def _back(self, name):
         with self._book:
@@ -2550,28 +2499,6 @@ class Control:
                 self.audit("control", e["text"], host=e["host"])
             elif e.get("kind") == "unlocked" and e["text"].endswith("it starts now"):
                 self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
-            elif e.get("kind") == "switch" and e.get("part") and e.get("taken"):
-                # its standby took it by itself, by the permissions (lease.py): written down as a switch.
-                # Once: the next look comes while the switch's applies still run, and the fleet file does
-                # not say so yet (21 Nov 2026: a second switch job three minutes after the first)
-                if any(j.get("action") == "switch" and j.get("hosts") == [e["host"]] and j.get("state") in ("waiting", "running")
-                       for j in self.jobs(10)):
-                    continue
-                try:
-                    self.start("switch", [e["host"]], user="control", module=e["part"], at="taken")
-                    self.audit("control", e["text"], hosts=[e["host"], e.get("to", "")])
-                except KiwiError as err:
-                    self.audit("control", "could not write down that %s took %s: %s" % (e.get("to", "its standby"), e["part"], str(err)[:200]),
-                               host=e["host"])
-            elif e.get("kind") == "switch" and e.get("part"):
-                # gone, and its standby does not reach it either: the part goes there, as a job like the page's
-                try:
-                    self.start("switch", [e["host"]], user="control", module=e["part"])
-                    self.audit("control", "switched %s from %s to %s: %s did not answer, and %s did not reach it either"
-                               % (e["part"], e["host"], e.get("to", "its standby"), e["host"], e.get("to", "its standby")),
-                               hosts=[e["host"], e.get("to", "")])
-                except KiwiError as err:
-                    self.audit("control", "could not switch %s from %s: %s" % (e["part"], e["host"], str(err)[:200]), host=e["host"])
         return events
 
     def tell(self):

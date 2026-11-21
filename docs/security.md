@@ -192,12 +192,8 @@ Each machine's agent signs its report to the control node with a key of its own,
 (root only, on its encrypted disk). The key can do one thing: say how that machine is. A
 machine that was broken into can lie about itself and about nothing else. The report is the
 output of the same script the control node runs over SSH for its look; it holds no password
-and no key. It travels over HTTPS with the fleet's CA, on the VPN or the home network.
-
-The answer can carry one order: the names of containers to stop (`X-Kiwi-Hold`), those of a
-part that went to its standby while the machine was gone. The agent takes it only from the
-control page whose certificate the fleet's CA signed, takes only names of letters, digits and
-dashes, and only stops: it starts nothing and removes nothing.
+and no key. It travels over HTTPS with the fleet's CA, on the VPN or the home network. The
+agent takes no orders from the answer: it changes nothing on the machine.
 
 ## A standby's key
 
@@ -213,23 +209,6 @@ which an apply puts on record.
 
 A standby machine that was broken into can read the parts it keeps ready. It cannot change
 them on the machine that runs them.
-
-## The voters' keys
-
-The standby and the witness of a part that runs by a permission
-([backups](backups.md#permissions-a-part-runs-only-where-it-may)) each have one more key
-(`secrets/lease/<machine>_ed25519`, on the voter in `/etc/kiwi-server/lease/key`). On the
-machine that runs the part it is in root's `authorized_keys` with the forced command
-`kiwi-lease grant` and `restrict`: it can say "PART may run for three more minutes", for the
-parts that machine lists it for, and nothing else. On the witness, the standby's key can only
-ask `kiwi-vote ask PART MACHINE`. Each voter trusts the other machines by the host keys an
-apply puts on record.
-
-A voter that was broken into can keep a part running on its machine, or hold a switch up. A
-witness that was broken into can also say "gone" falsely; the standby acts on that only when it
-does not reach the machine itself either, and if that witness then keeps giving the machine its
-permission, the part runs on both until the next apply. A voter cannot start a part on its own
-machine by its key.
 
 ## SSH
 

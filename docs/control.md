@@ -597,8 +597,8 @@ not answer in a fixed order, and keeps what it found as one record for the whole
 3. **Does any other machine of its site answer?** When none does, the whole site is away
    (its line, or the house's power). Restarting one machine helps nothing: that is said, and
    nothing is restarted.
-4. **Do the machines that give it its permissions, or its standby, still reach it?** Then
-   only the way from the control node is cut. That is said, and nothing is done.
+4. **Does a machine that keeps one of its parts ready still reach it?** Then only the way
+   from the control node is cut. That is said, and nothing is done.
 
 What none of these explains is what `recovery:` is for, and the message says what was looked
 at ("… has not answered for 16 minutes (it said 25 minutes ago that it restarts; it is not
@@ -607,9 +607,11 @@ case: how long it was away, what was found, and what was done.
 
 ### What happens to each part
 
-Every part has a row in one table: whether it can move, whether a standby takes it over by
-itself, and how much the network needs it. The machine's page (*Services*, *When it stops*)
-and the app show it as one sentence, and each part's below it:
+Every part has a row in one table: whether it can move, whether a copy of it is kept ready on
+another machine, and how much the network needs it. No part goes to another machine by itself:
+what a machine held when it went silent is on no other one, and the machine, back, would hold a
+second version of the same data. The machine's page (*Services*, *When it stops*) and the app
+show the table as one sentence, and each part's below it:
 
 ```bash
 kiwi-server parts ~/kiwi/fleet.yaml           # one sentence per machine
@@ -617,31 +619,23 @@ kiwi-server parts ~/kiwi/fleet.yaml medlar    # and each of its parts
 ```
 
 ```text
-When medlar stops: vault goes to quince after about four minutes; tang (the network needs it) and 11 more are away until it is back.
+When medlar stops: tang (the network needs it) and 11 more are away until it is back.
 ```
 
 The kinds of parts bring their rows (a gateway, a site's DNS or an unlock ring runs on its
-machine only, and the network needs it; game servers can wait). The fleet file changes them
+machine only, and the network needs it; game servers can wait). The fleet file changes `need`
 per part:
 
 ```yaml
 defaults:
   parts:
-    vault: { lost: ask, need: must }    # lost: switch | wait | ask; need: must | normal | wait
+    vault: { need: must }    # must | normal | wait
 ```
 
-`lost` says what happens when the part's machine is lost: its standby takes it by itself
-(`switch`, the default while `recovery: switch` is on), it waits for its machine (`wait`), or a
-person switches it (`ask`). Only a part with `switch` runs by a permission
-([backups.md](backups.md#permissions-a-part-runs-only-where-it-may)); the others keep running
-on a machine that is cut off, since nobody takes them. `need` decides the message about a
-machine that does not answer: one that runs a part the network needs is told after two minutes
-(or `notify: after`, if shorter), one whose parts can all wait is not told at all and only its
-page says it, and the others after `notify: after` (10 minutes).
-
-`kiwi-server power off` also tells the standby of each of the machine's parts with a
-permission not to take them while the machine is off; `power restart` tells it to wait 15
-minutes. Both end when the machine answers again.
+`need` decides the message about a machine that does not answer: one that runs a part the
+network needs is told after two minutes (or `notify: after`, if shorter), one whose parts can
+all wait is not told at all and only its page says it, and the others after `notify: after`
+(10 minutes). A `lost:` left from an older release does nothing.
 
 A machine whose disk waits to be unlocked at boot counts as there, not as gone.
 The control node forwards its unlock ring by itself, so a rented master with an
@@ -652,37 +646,10 @@ machine's page does it by hand. A machine whose rings are all at home opens
 when one of the machines that serve them is back.
 
 A part kept ready on a second machine (`keep_ready`, see
-[backups.md](backups.md#a-standby-for-a-part)) whose machine has a witness runs
-by a permission, and its standby takes it by itself
-([backups.md](backups.md#permissions-a-part-runs-only-where-it-may)); the
-control node only writes the switch down when the standby's report says so,
-and leaves such parts to their voters. One without a witness goes there by
-itself when two agree that its machine is gone: the control node has not heard from it for
-five minutes, and the machine that keeps the part ready cannot reach it
-either (by ping or at its SSH port, at its address at home and by its name).
-If that machine still reaches it, only the way to the control node is cut,
-and nothing is switched. A standby at another site reaches the machine over
-the VPN only, so its word counts only while the master answers. Nor is a part
-switched by itself when the copy there was more than ten minutes behind
-already when the machine fell silent: that would lose what came since. The
-page and the messages say so, and a person decides (Switch on the machine's
-page). A machine asleep by its window (`asleep`) or switched off on purpose
-(`kiwi-server power … off`, until it answers again) is not gone. The control
-node's own machine is switched away from with a person's OK only: its problem
-row in the app and on the page (and on every gone machine's) offers "Switch
-vault to medlar", and the app runs that switch itself when the control node is
-the machine that is gone. The switch runs as a job, as the page's Switch
-button does, and Activity says why. Each part is switched by itself at most
-once in 30 minutes. When the machine that was gone starts again, its stack
-starts the part too; its agent's first report, about ten seconds after
-the start, tells it to stop those containers, and the apply that waited for
-it takes the part away.
-
-```yaml
-defaults:
-  recovery:
-    switch: { after: 5 }        # minutes; { do: tell }, false or a word it does not know: a person switches
-```
+[backups.md](backups.md#a-standby-for-a-part)) stays where it is while its machine is gone.
+The copy is for moving the part while its machine runs (`kiwi-server switch`, nothing lost); a
+machine that is lost for good is installed anew and brings its data back from its backups
+([recovery.md](recovery.md#a-machine-is-dead-or-was-replaced)).
 
 One look by hand, without doing anything:
 

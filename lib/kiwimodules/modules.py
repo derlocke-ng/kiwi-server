@@ -380,6 +380,7 @@ def _port_range(text):
 
 
 READY = util.READY      # the compose profile of the services of a part kept ready (StackSpec.ready)
+LEASED = util.LEASED    # the compose profile of the services of a part with a standby (StackSpec.leased)
 
 
 class StackSpec:
@@ -390,7 +391,7 @@ class StackSpec:
                  variables=None, module_config=None, files=None, dns_records=None, lan_addresses=None, mesh_only=None,
                  service_user="user", master_ip="", mesh_subnet="10.8.0.0/16", domain="", runtime="podman",
                  ca_cert=None, auto_update="registry", wg_mtu=None, bridge_mtu=None, without=(), at_home=False,
-                 ready=(), moving=()):
+                 ready=(), moving=(), leased=()):
         if node_type not in ("master", "node"):
             raise KiwiError("node_type must be master or node")
         self.node_type = node_type
@@ -403,6 +404,9 @@ class StackSpec:
         # names of parts that may move to another machine (a part kept ready there): the dns part
         # serves them from a file of their own, which a switch rewrites in a moment (moving.hosts)
         self.moving = sorted(set(moving or ()))
+        # this machine's own parts that have a standby: they run only while it holds a permission for
+        # them (kiwi-server's kiwi-lease), so nothing starts them but that: not an apply, not a boot
+        self.leased = tuple(m for m in (leased or ()) if m in self.modules)
         self.at_home = bool(at_home)            # a master at home: its own connection is the home line
         self.docker_dir = docker_dir.rstrip("/")
         self.docker_subnet = docker_subnet or DEFAULT_SUBNET[node_type]
@@ -466,6 +470,7 @@ class Bundle:
         self.images = []           # every image the stack pulls
         self.module_services = {}  # module -> its containers
         self.ready = []            # the parts kept ready for another machine (StackSpec.ready)
+        self.leased_parts = {}     # {part: [its services]} of the parts that run only with a permission (StackSpec.leased)
         self.ready_services = []   # their containers: made, not started
 
     def add_file(self, rel, content, mode=0o644):
@@ -736,6 +741,9 @@ class Renderer:
                     bundle.ready_services.append(svc)
                     module_services.setdefault(name, []).append(svc)
                     continue
+                if name in spec.leased:         # started by its permission, not by `up` (kiwi-stack lease)
+                    body = services[svc] = dict(body or {}, profiles=[LEASED])
+                    bundle.leased_parts.setdefault(name, []).append(svc)
                 bundle.services.append(svc)
                 module_services.setdefault(name, []).append(svc)
                 bundle.service_modules[str((body or {}).get("container_name") or svc)] = name

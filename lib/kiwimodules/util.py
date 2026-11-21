@@ -96,6 +96,7 @@ def _home():
     return os.environ.get("KIWI_SERVER_HOME") or repo_root()
 
 
+LEASED = "kiwi-leased"  # the compose profile of a part with a standby: it runs only with a permission (kiwi-lease)
 READY = "kiwi-ready"    # the compose profile of a part kept ready for another machine: made, not started
 
 

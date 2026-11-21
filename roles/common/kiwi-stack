@@ -146,6 +146,41 @@ if [[ ${1:-} == ready ]]; then
     ready "${2:-list}" "${@:3}"
     exit $?
 fi
+# The parts of this machine that have a standby: they run only while the machine holds a permission
+# for them (kiwi-server's kiwi-lease, which calls this). Not started by `up` or a boot.
+lease() {     # VERB [CONTAINER...]: those of the leased ones, or all of them
+    local verb=${1:-list} s want=" ${*:2} " all=()
+    # shellcheck disable=SC2086
+    for s in ${STACK_LEASED:-}; do
+        [[ $want == "  " || $want == *" $s "* ]] && all+=("$s")
+    done
+    set -- "${all[@]}"
+    if [[ $verb == list ]]; then
+        for s in "$@"; do
+            if [[ $STACK_RUNTIME == podman ]]; then printf '%s %s\n' "$s" "$(systemctl is-active "$s.service" 2>/dev/null)"
+            else printf '%s %s\n' "$s" "$(docker inspect -f '{{.State.Status}}' "$s" 2>/dev/null || echo missing)"; fi
+        done
+        return 0
+    fi
+    (( $# )) || { echo "kiwi-stack: no part of this machine runs by a permission" >&2; return 1; }
+    case $verb in
+        start) if [[ $STACK_RUNTIME == podman ]]; then
+                   for s in "$@"; do systemctl start "$s.service" || return 1; done
+               else
+                   compose --profile kiwi-leased up --detach "$@" || return 1
+               fi ;;
+        stop)  if [[ $STACK_RUNTIME == podman ]]; then
+                   for s in "$@"; do systemctl stop "$s.service" || true; done
+               else
+                   compose --profile kiwi-leased stop "$@" || true
+               fi ;;
+        *)     echo "usage: kiwi-stack lease [list|start|stop] [CONTAINER...]" >&2; return 1 ;;
+    esac
+}
+if [[ ${1:-} == lease ]]; then
+    lease "${2:-list}" "${@:3}"
+    exit $?
+fi
 # The host units (kn-gateway.service …) are ordered After=kiwi-stack.service,
 # and `start` is kiwi-stack.service's own ExecStart: a blocking restart from
 # here would wait for itself. --no-block queues the restart; systemd runs it
@@ -224,6 +259,8 @@ verify() {
                 asleep+=("$s")
                 continue
             fi
+            # one of a part with a standby runs only with its permission (kiwi-lease): not down
+            [[ " ${STACK_LEASED:-} " == *" $s "* ]] && continue
             if [[ $STACK_RUNTIME == podman ]]; then
                 state=$(systemctl is-active "$s.service" 2>/dev/null || true)
                 [[ $state == active ]] || down+=("$s ($state)")
@@ -253,10 +290,19 @@ vpn_restart() {
     # containers that share the VPN client's network namespace must follow it,
     # or they are left in a namespace that no longer exists
     # shellcheck disable=SC2086
+    # One of a part with a standby is restarted only when it runs: a restart would start one that has
+    # no permission (kiwi-lease).
+    local s running=()
     if [[ $STACK_RUNTIME == podman ]]; then
-        local s; for s in $STACK_VPN_CONTAINER ${STACK_VPN_DEPENDENTS:-}; do systemctl restart "$s.service"; done
+        for s in $STACK_VPN_CONTAINER ${STACK_VPN_DEPENDENTS:-}; do
+            if [[ " ${STACK_LEASED:-} " == *" $s "* ]]; then systemctl try-restart "$s.service"
+            else systemctl restart "$s.service"; fi
+        done
     else
-        docker restart "$STACK_VPN_CONTAINER" ${STACK_VPN_DEPENDENTS:-}
+        for s in ${STACK_VPN_DEPENDENTS:-}; do
+            [[ " ${STACK_LEASED:-} " == *" $s "* && $(docker inspect -f '{{.State.Running}}' "$s" 2>/dev/null) != true ]] || running+=("$s")
+        done
+        docker restart "$STACK_VPN_CONTAINER" "${running[@]}"
     fi
 }
 # the images' disk, nearly full: a master in RAM keeps them in half its memory (crumble, 18 Nov 2026:

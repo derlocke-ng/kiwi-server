@@ -212,7 +212,9 @@ while read -r c case act after tries; do
     say "$c was down for $((now - since)) s: restarted (try $((n + 1)) of ${tries:-3} today$([ $rc = 0 ] || echo ", it failed: $rc"))"
     echo "$now" > "$run/$c.since"; touch "$run/$c.acted"
 done < "$d/conf"
-if [ "$(wc -l < "$keep/log")" -gt 400 ]; then tail -n 200 "$keep/log" > "$keep/log.new" && mv "$keep/log.new" "$keep/log"; fi
+if [ -f "$keep/log" ] && [ "$(wc -l < "$keep/log")" -gt 400 ]; then
+    tail -n 200 "$keep/log" > "$keep/log.new" && mv "$keep/log.new" "$keep/log"
+fi
 exit 0
 '''
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The runbook's part-down on a real machine (runbook.py, docs/control.md "The runbook"): a line for
-# PART on MACHINE (a podman machine) is put into the fleet file and applied; a container of the part
-# is killed until systemd gives up on it (failed); the machine restarts it by itself within its
-# minutes. A person's stop is left alone. Afterwards the line is taken out and applied again: the
-# timer is gone. One PASS or FAIL line per check.
+# PART on MACHINE (a podman machine) is put into the fleet file and applied; the container is killed
+# with systemd's own restart held off for that moment (a drop-in under /run, taken out again: the
+# stack's units restart for ever, so "failed" is a unit systemd gave up on); the machine's runbook
+# restarts it within its minutes. A person's stop is left alone. Afterwards the line is taken out and
+# applied again: the timer is gone. One PASS or FAIL line per check.
 #
 #   [KIWI_SERVER=bin/kiwi-server] tests/drills/runbook-part-down.sh FLEET MACHINE PART CONTAINER
 set -u
@@ -37,12 +38,11 @@ line on; check $? "the line for $part is in the fleet file"
 "$KIWI" apply "$fleet" "$m" > apply-on.log 2>&1; check $? "$m applied"
 grep -q "its runbook acts on $c (restart)" apply-on.log; check $? "the apply set up its runbook for $c"
 on "systemctl is-active -q kiwi-runbook.timer"; check $? "its timer runs"
-# killed again and again until systemd gives up: failed, as a container that crashes at every start
-for _ in $(seq 1 12); do
-    on "systemctl kill -s KILL $c.service" >/dev/null 2>&1
-    sleep 1
-    on "systemctl is-failed -q $c.service" && break
-done
+# failed: killed while systemd's own restart is held off (a runtime drop-in, gone right after)
+drop=/run/systemd/system/$c.service.d
+on "mkdir -p $drop && printf '[Service]\nRestart=no\n' > $drop/kiwi-drill.conf && systemctl daemon-reload && systemctl kill -s KILL $c.service"
+sleep 3
+on "rm -f $drop/kiwi-drill.conf && rmdir $drop 2>/dev/null; systemctl daemon-reload"
 on "systemctl is-failed -q $c.service"; check $? "$c is failed"
 cut=$(date +%s); back=""
 for _ in $(seq 1 20); do
@@ -50,7 +50,9 @@ for _ in $(seq 1 20); do
     if on "systemctl is-active -q $c.service"; then back=$(( $(date +%s) - cut )); break; fi
 done
 check "$(is [ -n "$back" ])" "$m restarted $c by itself (${back:-never} s after it failed)"
-on "journalctl -t kiwi-runbook --since '-10 min' --no-pager -o cat | tail -2" | sed 's/^/        /'
+said=$(on "journalctl -t kiwi-runbook --since '-10 min' --no-pager -o cat | tail -2")
+printf '%s\n' "$said" | sed 's/^/        /'
+grep -q "$c was down for .* s: restarted" <<<"$said"; check $? "its runbook says it restarted $c"
 "$KIWI" service "$fleet" "$m" "$c" stop > stop.log 2>&1; check $? "a person stops $c"
 sleep 150
 ! on "systemctl is-active -q $c.service"; check $? "$c stayed stopped (2.5 minutes)"

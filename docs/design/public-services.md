@@ -1,6 +1,7 @@
 # Services for the public: accounts, sign-up, landing page, status
 
-Status: proposal, 16 November 2026. Nothing of it is built yet except the look of the pages.
+Status: 16 November 2026. Built since: the look of the pages, Kanidm accounts, sign-up by invite and approval, the
+front page and the website. Open: separate public instances beyond Jabber, and accounts for a public side.
 
 A network may open Jabber, Forgejo, Nextcloud, a pastebin and more to strangers, the way
 Disroot, systemli, Riseup, tchncs.de, envs.net and nixnet do. Then it needs what they have:

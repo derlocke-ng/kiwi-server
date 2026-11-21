@@ -123,5 +123,5 @@ Not the fleet's store. Its own, with only its hosts' secrets:
 
 - Whether a site controller may enroll devices by itself (it would need a slice of the
   master's WireGuard API).
-- Unattended unlock of a control node after a power cut (a Tang ring on another machine as
-  one more key of the store).
+- ~~Unattended unlock of a control node after a power cut~~: built as `unlock.control` and
+  `control_threshold` (unlock.md).

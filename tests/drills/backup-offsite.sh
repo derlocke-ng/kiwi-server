@@ -7,6 +7,7 @@
 #   - the copy's names come back decrypted on the store's machine (backup-offsite.sh list)
 #   - one machine's repository comes back from it byte for byte (backup-offsite.sh restore)
 #   - a second run sends only what is new
+#   - the repository taken out of the store comes back with kiwi-server backups STORE --from-offsite
 # Afterwards the fleet file is as before (the offsite settings taken out again, the store applied)
 # and the stand-in is gone.
 #
@@ -54,18 +55,21 @@ else
 fi
 
 # the store's copy there: the account in the fleet file, its password then into the secret store
-python3 - "$fleet" "$store" "$url" "$pw" "$S/ca/kiwiCA.pem" <<'EOF'
+PYTHONPATH="$here/lib" python3 - "$fleet" "$store" "$url" "$pw" "$S/ca/kiwiCA.pem" <<'EOF'
 import sys, yaml
+from kiwiserver import fleettext, util
 p, store, url, pw, ca = sys.argv[1:]
-d = yaml.safe_load(open(p))
-h = d["hosts"][store]
+text = util.read_text(p)
+h = yaml.safe_load(text)["hosts"][store]
 role = next(k for k, b in h.items() if isinstance(b, dict) and "backup-server" in (b.get("modules") or []))
-b = h[role].setdefault("backup-server", {})
+b = dict(h[role].get("backup-server") or {})
 b.update(offsite_url=url, offsite_user="drill", offsite_password=pw)
 if url.startswith("https://"):
     b["offsite_ca"] = open(ca).read()
-head = "".join(l for l in open(p) if l.startswith("#"))
-open(p, "w").write(head + yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=1000))
+new = fleettext.put(text, ("hosts", store, role, "backup-server"), b)     # the comments stay
+if new is None:
+    sys.exit("the fleet file could not be changed in its text")
+util.write_text(p, new, 0o600)
 EOF
 "${ks[@]}" secrets keep "$fleet" > keep.log 2>&1
 ! grep -q "$pw" "$fleet"; check $? "the account's password is in the secret store, not in the fleet file"
@@ -93,24 +97,33 @@ t0=$(date +%s)
 at "$store" "systemctl start kn-backup-offsite.service"
 check $? "a second copy ($(( $(date +%s) - t0 )) s): only what is new"
 at "$store" "journalctl -u kn-backup-offsite.service -n 2 --no-pager -o cat" | sed 's/^/    /'
+# a store installed anew: the repository taken out (kept beside it), back from the copy with kiwi-server
+d=$sd/kn-backup-server/data
+at "$store" "mv $d/$repo $d/.$repo.drill-kept"; check $? "$repo taken out of $store's store (kept beside it)"
+"${ks[@]}" backups "$fleet" "$store" --from-offsite "$repo" > bring-back.log 2>&1; check $? "kiwi-server backups $store --from-offsite $repo"
+at "$store" "cd $d/$repo && find . -path ./locks -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > /var/kiwi-drill-c
+  cmp -s /var/kiwi-drill-a /var/kiwi-drill-c"
+check $? "$repo is back in the store byte for byte"
+at "$store" "[ -d $d/.$repo.drill-kept ] && rm -rf $d/$repo && mv $d/.$repo.drill-kept $d/$repo"; check $? "$repo as it was"
 
 # as before
-python3 - "$fleet" "$store" <<'EOF'
+PYTHONPATH="$here/lib" python3 - "$fleet" "$store" <<'EOF'
 import sys, yaml
+from kiwiserver import fleettext, util
 p, store = sys.argv[1:]
-d = yaml.safe_load(open(p))
-h = d["hosts"][store]
+text = util.read_text(p)
+h = yaml.safe_load(text)["hosts"][store]
 role = next(k for k, b in h.items() if isinstance(b, dict) and "backup-server" in (b.get("modules") or []))
-b = h[role].get("backup-server") or {}
-for k in [k for k in b if k.startswith("offsite_")]:
-    b.pop(k)
-head = "".join(l for l in open(p) if l.startswith("#"))
-open(p, "w").write(head + yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=1000))
+b = {k: v for k, v in (h[role].get("backup-server") or {}).items() if not k.startswith("offsite_")}
+new = fleettext.put(text, ("hosts", store, role, "backup-server"), b)
+if new is None:
+    sys.exit("the fleet file could not be changed in its text")
+util.write_text(p, new, 0o600)
 EOF
 "${ks[@]}" secrets keep "$fleet" >> keep.log 2>&1
 "${ks[@]}" apply "$fleet" "$store" > apply-off.log 2>&1; check $? "$store applied without it again"
 ! at "$store" "systemctl cat kn-backup-offsite.timer >/dev/null 2>&1"; check $? "no copy timer is left on $store"
 at "$dav" "podman rm -f kiwi-drill-dav >/dev/null 2>&1; rm -rf /var/kiwi-drill-dav"
-at "$store" "rm -rf /var/kiwi-drill-back /var/kiwi-drill-a /var/kiwi-drill-b $sd/kn-backup-server/offsite-known_hosts"
+at "$store" "rm -rf /var/kiwi-drill-back /var/kiwi-drill-a /var/kiwi-drill-b /var/kiwi-drill-c $sd/kn-backup-server/offsite-known_hosts"
 say "$fails wrong"
 exit "$fails"

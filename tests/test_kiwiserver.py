@@ -4632,6 +4632,13 @@ class TestOnion(Base):
         out = fleettext.put(text, ["hosts", "papaya", "unlock"], {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True})
         self.assertEqual(yaml.safe_load(out)["hosts"]["papaya"], {
             "unlock": {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True}, "role": "node"})
+        # a text of several lines (a CA) goes in as a block of its own, and out again: the file as before
+        text = "# mine\nhosts:\n  papaya:\n    node:\n      onion:\n        x: 1\n  lime:\n    role: node\n"
+        ca = "-----BEGIN CERTIFICATE-----\nMIIBabc\n-----END CERTIFICATE-----\n"
+        with_ca = fleettext.put(text, ["hosts", "papaya", "node", "onion"], {"x": 1, "ca": ca})
+        self.assertIn("        ca: |\n          -----BEGIN CERTIFICATE-----\n", with_ca)
+        self.assertEqual(yaml.safe_load(with_ca)["hosts"]["papaya"]["node"]["onion"]["ca"], ca)
+        self.assertEqual(fleettext.put(with_ca, ["hosts", "papaya", "node", "onion"], {"x": 1}), text)
 
     def net(self):
         f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {

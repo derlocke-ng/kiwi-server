@@ -10,6 +10,8 @@
 - **A backup store back from its offsite copy**: a store installed anew after its machine was lost
   gets every repository its copy at the other place holds, and it has not, with
   `kiwi-server backups FLEET STORE --from-offsite` (kiwi-modules 0.118.0, `backup-offsite.sh bring-back`).
+- Fixed: a text of several lines (a CA) written into the fleet file by a command could not be taken
+  out again without losing the file's comments; it is written as a block of its own now.
 
 ## 2.296.0 — a moving address for a site's basics
 

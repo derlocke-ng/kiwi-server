@@ -3,7 +3,7 @@
 # docs/backups.md "From a machine that is dead"), on real machines. FROM is a VM: it is switched
 # off hard at the hypervisor, as a dead machine is.
 #
-#   VMHOST=sh3 tests/drills/part-gone.sh FLEET PART FROM TO DATA_DIR [--back]
+#   VMHOST=sh3 [KIWI_SERVER=bin/kiwi-server] tests/drills/part-gone.sh FLEET PART FROM TO DATA_DIR [--back]
 #
 # A marker goes into the part's data and FROM makes a backup; a second marker after it must be lost.
 # FROM off; the move; the first marker on TO, the second not; the part runs on TO and its name answers
@@ -13,6 +13,7 @@ set -u
 fleet=${1:?the fleet file}; part=${2:?a part}; from=${3:?the machine it is on (a VM)}; to=${4:?the machine it goes to}
 data=${5:?a folder of its data}; back=${6:-}
 VMHOST=${VMHOST:?the ssh name of the hypervisor}
+KIWI=${KIWI_SERVER:-kiwi-server}
 V="virsh -c qemu:///system"
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 fails=0
@@ -31,8 +32,8 @@ runs() { on "$1" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --forma
 
 ssh -o BatchMode=yes "$VMHOST" "$V domstate $from" 2>/dev/null | grep -q running; check $? "$from is a running VM on $VMHOST"
 [ "$fails" = 0 ] || { say "stopped: $from is not a VM there"; exit 1; }
-kiwi-server control pull "$fleet" > control-pull.log 2>&1 || say "note: nothing pulled from a control node (see control-pull.log)"
-kiwi-server move "$fleet" "$part" "$from" "$to" --gone > plan-answers.log 2>&1
+"$KIWI" control pull "$fleet" > control-pull.log 2>&1 || say "note: nothing pulled from a control node (see control-pull.log)"
+"$KIWI" move "$fleet" "$part" "$from" "$to" --gone > plan-answers.log 2>&1
 grep -q "$from answers: a move without --gone" plan-answers.log; check $? "--gone is refused while $from answers"
 kept="kiwi-gone kept $(date +%s) $RANDOM"; lost="kiwi-gone lost $(date +%s) $RANDOM"
 on "$from" "echo '$kept' > '$data/.kiwi-gone-kept'"; check $? "a marker is in $part's data on $from"
@@ -40,11 +41,11 @@ on "$from" "kiwi-stack backup" > backup.log 2>&1; check $? "$from made a backup"
 on "$from" "echo '$lost' > '$data/.kiwi-gone-lost'"; check $? "a second marker after the backup"
 ssh -o BatchMode=yes "$VMHOST" "$V destroy $from" >/dev/null; check $? "$from switched off hard"
 sleep 20
-kiwi-server move "$fleet" "$part" "$from" "$to" > plan-plain.log 2>&1
+"$KIWI" move "$fleet" "$part" "$from" "$to" > plan-plain.log 2>&1
 grep -q "if it is dead, --gone" plan-plain.log; check $? "a plain move points at --gone while $from does not answer"
-name=$(kiwi-server move "$fleet" "$part" "$from" "$to" --gone --porcelain 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name") or "")')
+name=$("$KIWI" move "$fleet" "$part" "$from" "$to" --gone --porcelain 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name") or "")')
 began=$(date +%s)
-kiwi-server move "$fleet" "$part" "$from" "$to" --gone --yes > move-gone.log 2>&1; check $? "kiwi-server move $part $from $to --gone --yes ended well ($(( $(date +%s) - began )) s)"
+"$KIWI" move "$fleet" "$part" "$from" "$to" --gone --yes > move-gone.log 2>&1; check $? "kiwi-server move $part $from $to --gone --yes ended well ($(( $(date +%s) - began )) s)"
 got=$(on "$to" "cat '$data/.kiwi-gone-kept'" 2>/dev/null); check "$(is [ "$got" = "$kept" ])" "the marker of the backup is on $to"
 ! on "$to" "test -e '$data/.kiwi-gone-lost'" 2>/dev/null; check $? "the marker after the backup is not (it was lost, as said)"
 runs "$to"; check $? "$part runs on $to"
@@ -66,13 +67,13 @@ done
 check "$(is [ -n "$up" ])" "$from answers again"
 sleep 30
 if runs "$from"; then say "        $from runs its old copy of $part until it is applied, as said"; fi
-kiwi-server apply "$fleet" "$from" > apply-back.log 2>&1; check $? "$from applied"
+"$KIWI" apply "$fleet" "$from" > apply-back.log 2>&1; check $? "$from applied"
 ! runs "$from"; check $? "$part no longer runs on $from"
 if [ "$back" = --back ]; then
-    kiwi-server move "$fleet" "$part" "$to" "$from" --yes > move-back.log 2>&1; check $? "a plain move of $part home to $from"
+    "$KIWI" move "$fleet" "$part" "$to" "$from" --yes > move-back.log 2>&1; check $? "a plain move of $part home to $from"
     got=$(on "$from" "cat '$data/.kiwi-gone-kept'" 2>/dev/null); check "$(is [ "$got" = "$kept" ])" "the marker came home too"
     runs "$from"; check $? "$part runs on $from again"
 fi
-kiwi-server control push "$fleet" > control-push.log 2>&1 || say "note: nothing pushed to a control node (see control-push.log)"
+"$KIWI" control push "$fleet" > control-push.log 2>&1 || say "note: nothing pushed to a control node (see control-push.log)"
 say "$fails wrong"
 exit $((fails > 0))

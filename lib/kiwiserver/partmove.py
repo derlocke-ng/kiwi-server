@@ -215,8 +215,9 @@ def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, 
     out["steps"] = [
         ("%s does not answer: %s comes from its newest backup" % (src_name, part)) if gone else
         "%s stops on %s%s" % (part, src_name, ", and %s makes one last backup" % src_name if backup else ""),
-        ("its %d generated secret%s stay%s what they are, pinned to %s" % (
-            len(out["pins"]), "" if len(out["pins"]) == 1 else "s", "s" if len(out["pins"]) == 1 else "", dst_name))
+        ("its %d generated secret%s %s, pinned to %s" % (
+            len(out["pins"]), "" if len(out["pins"]) == 1 else "s",
+            "stays what it is" if len(out["pins"]) == 1 else "stay what they are", dst_name))
         if out["pins"] else "it has no generated secrets",
         "the fleet file: %s and its settings move from %s to %s%s%s" % (
             part, src_name, dst_name, "; it stays %s" % out["name"] if out["name"] else "",

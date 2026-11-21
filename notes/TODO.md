@@ -6,13 +6,14 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 
 ## First: the rebuild (the owner, 21 Nov 2026: "this is going out of hands")
 
-No new feature that acts by itself until steps 1 and 2 of docs/design/authority.md are built:
-1. One truth: the control node writes, computers send changes; observed and remembered data leave the synced files.
-2. Permissions that run out, for parts with a standby (voters: the machine, its standby, another node of the site; the master only as a fallback).
-3. One policy table per part (where, copies, machine lost, alone, how much it is needed, no answer) and its sentence on the page;
-   the diagnosis before a decision, a machine's last report when it goes down, one record per case.
-4. A second control node on the computer that manages the network; a person's forced action counts (a counter, the lower gives way).
-Decided 21 Nov: a permission lasts three minutes; modules bring how much a part is needed; nothing that cannot be undone runs by itself.
+docs/design/authority.md. Steps 1 to 3 are built and drilled (2.286.0 to 2.292.0): one keeper of what
+the network remembers, permissions that run out for parts with a standby (the standby takes the part by
+itself; tests/drills/permissions.sh), the table per part and its sentence (`kiwi-server parts`), the
+diagnosis before a decision, a machine's last report, one record per case, emergencies until someone has
+it, reminders after 1, 6 and 24 hours. Step 4 (a second control node on the owner's computer, a person's
+forced action) is a plan in pull request 379: it waits for the owner. Open from the review of 22 Nov: a RAM
+master as witness forgets its refusals at a reboot; a computer's notes from before it joined do not hand
+over its holds and switch-offs; "act after a time" when nobody answers (off unless turned on per part).
 
 ## A. Shipped, never tried on real machines
 

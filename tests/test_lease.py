@@ -213,7 +213,60 @@ class TestLease(unittest.TestCase):
         self.assertEqual(lease.witness(fleet, "crumble", "lime", master), "sorbet")      # alone at its site: the master
         fleet.hosts.pop("sorbet")
         self.assertIsNone(lease.witness(fleet, "crumble", "lime", master))
-        self.assertIn('command="/usr/local/sbin/kiwi-lease grant",no-port-forwarding', lease.authorized_line("ssh-ed25519 AAAA x", "/usr/local/sbin/kiwi-lease grant"))
+        self.assertIn('command="/usr/local/sbin/kiwi-lease grant",restrict ', lease.authorized_line("ssh-ed25519 AAAA x", "/usr/local/sbin/kiwi-lease grant"))
+
+
+class TestPlan(unittest.TestCase):
+    """What each machine gets on apply (lease.plan): lime runs vault, quince keeps it ready, medlar
+    is the witness at the same site, sorbet the master elsewhere."""
+
+    def setUp(self):
+        import types
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+        def h(name, role="node", site="home", **cfg):
+            c = dict({"network": {"site": site}}, **cfg)
+            return types.SimpleNamespace(name=name, role=role, cfg=c, hostname=name + ".home", standby_of=None)
+        self.fleet = types.SimpleNamespace(
+            hosts={x.name: x for x in (h("lime", keep_ready={"vault": "quince"}), h("quince"), h("medlar"),
+                                       h("sorbet", role="master", site="netcup"))},
+            resolve_path=lambda rel: os.path.join(self.tmp, rel))
+        self.roles = {"node": types.SimpleNamespace(node_type="node"), "master": types.SimpleNamespace(node_type="master")}
+        for name in ("lime", "quince", "medlar"):
+            os.makedirs(os.path.join(self.tmp, "secrets", "standby"), exist_ok=True)
+            with open(os.path.join(self.tmp, "secrets", "standby", "%s.hostkey" % name), "w") as fh:
+                fh.write("ssh-ed25519 AAAA%s root@%s\n" % (name, name))
+
+    @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen needed")
+    def test_holder_standby_witness(self):
+        self.assertEqual(lease.links(self.fleet, self.roles), {("lime", "vault"): ("quince", "medlar")})
+        holder = lease.plan(self.fleet, self.roles, self.fleet.hosts["lime"], {"vault": ["vault"], "gitea": ["gitea"]}, True)
+        self.assertEqual(holder["parts"], {"vault": ["vault"]})          # gitea has no standby: it runs as before
+        self.assertEqual(holder["voters"], {"vault": ["quince", "medlar"]})
+        self.assertEqual(len(holder["authorized"]), 2)
+        self.assertTrue(all("kiwi-lease grant" in x for x in holder["authorized"]))
+        standby = lease.plan(self.fleet, self.roles, self.fleet.hosts["quince"], {}, True)
+        self.assertEqual([(v["role"], v["machine"], v["witness"], v["switch"]) for v in standby["vote"]],
+                         [("standby", "lime", "medlar.home", True)])
+        self.assertEqual(sorted(x.split()[0] for x in standby["known"]), ["lime.home", "medlar.home"])
+        witness = lease.plan(self.fleet, self.roles, self.fleet.hosts["medlar"], {}, True)
+        self.assertEqual([(v["role"], v["machine"]) for v in witness["vote"]], [("witness", "lime")])
+        self.assertEqual(len(witness["authorized"]), 1)                  # the standby may ask it
+        self.assertIn("kiwi-vote ask", witness["authorized"][0])
+        self.assertIn("vote.conf", lease.install_script(self.fleet.hosts["quince"], standby))
+        nothing = lease.plan(self.fleet, self.roles, self.fleet.hosts["sorbet"], {}, True)
+        self.assertEqual((nothing["parts"], nothing["vote"], nothing["authorized"]), ({}, [], []))
+
+    @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen needed")
+    def test_a_voter_without_the_host_keys_waits(self):
+        os.remove(os.path.join(self.tmp, "secrets", "standby", "medlar.hostkey"))
+        standby = lease.plan(self.fleet, self.roles, self.fleet.hosts["quince"], {}, True)
+        self.assertEqual(standby["vote"], [])
+        self.assertEqual(standby["waits"], ["medlar"])
+
+    def test_took(self):
+        self.assertEqual(lease.took("vault 1000 lime\nbad\ngitea x y\n"), {"vault": (1000, "lime")})
 
 
 if __name__ == "__main__":

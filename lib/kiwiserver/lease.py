@@ -142,12 +142,17 @@ while read -r part machine address role switch witness containers; do
     [[ -e $st.refused ]] && continue
     if ssh_to "$address" "grant $part $me" > /dev/null 2> "$st.err"; then
         echo "$now" > "$st.given"
-        rm -f "$st.said"
+        rm -f "$st.said" "$st.hold"         # it answers: switched off on purpose no longer
         continue
     fi
     why=$(tail -1 "$st.err")
     [[ $why == "$(cat "$st.said" 2>/dev/null)" ]] || { logger -t kiwi-vote "$part of $machine: no permission given: $why"; echo "$why" > "$st.said"; }
     [[ $role == standby && $switch == on && -n $containers ]] || continue
+    # switched off on purpose (kiwi-server power off: 0) or restarted (until a time): left alone
+    if [[ -e $st.hold ]]; then
+        h=$(cat "$st.hold" 2>/dev/null)
+        [[ $h == 0 || ( $h =~ ^[0-9]+$ && $now -lt $h ) ]] && continue
+    fi
     gone_since "$part" "$machine" || continue
     ok=$(cat "${KIWI_STANDBY_DIR:-/etc/kiwi-server/standby}/state/$part.ok" 2>/dev/null || echo 0)
     if (( now - ok > fresh )); then
@@ -466,6 +471,16 @@ def refuse(tgt, part, machine, runner=None):
     run = runner or remote.run
     run(tgt, "[ -d %s ] && mkdir -p %s/state && date +%%s > %s/state/%s@%s.refused || true"
         % (DIR, DIR, DIR, shlex.quote(part), shlex.quote(machine)))
+
+
+def hold(tgt, part, machine, minutes=None, runner=None):
+    """On a standby: do not take `part` while `machine` is switched off on purpose (power off; the
+    owner, 21 Nov 2026: "power off should hold the switch"), or for `minutes` after a restart asked
+    for. Ends when the machine answers again."""
+    run = runner or remote.run
+    until = "0" if minutes is None else "$(( $(date +%%s) + %d ))" % (int(minutes) * 60)
+    run(tgt, "[ -d %s ] && mkdir -p %s/state && echo %s > %s/state/%s@%s.hold || true"
+        % (DIR, DIR, until, DIR, shlex.quote(part), shlex.quote(machine)))
 
 
 def drop(tgt, part, runner=None):

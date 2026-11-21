@@ -139,9 +139,17 @@ def update(state, machines, services, happened, now, after=600):
     A thing counts as wrong when it has been wrong for `after` seconds; it is told once then,
     and once more when it is fine again."""
     items, events, seen = state.setdefault("items", {}), [], {}
+    # a machine that went down as it said it would (a restart for an update, switched off): not a case for a
+    # message while its own word explains it (watchdog.step marks those events "planned")
+    planned = {e["host"] for e in happened or [] if e.get("planned") and e.get("kind") in ("waiting", "off")}
+    # what the look at a machine that is gone found (watchdog.step: its case), said in the message about it
+    story = {e["host"]: e["text"] for e in happened or [] if e.get("kind") in ("waiting", "tell", "held", "restarted") and e.get("text")}
     for m in machines:
+        if not m["ok"] and m["name"] in planned:
+            continue
         if not m["ok"]:
-            seen["machine:" + m["name"]] = ("machine", "bad", "%s does not answer" % m["name"], "%s answers again" % m["name"])
+            seen["machine:" + m["name"]] = ("machine", "bad", story.get(m["name"]) or "%s does not answer" % m["name"],
+                                            "%s answers again" % m["name"])
             continue
         for p in m.get("problems") or []:
             if p.get("level") in ("warn", "bad"):

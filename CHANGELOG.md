@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.288.0 — a diagnosis before a decision
+
+Part of step 3 of the rebuild in [docs/design/authority.md](docs/design/authority.md).
+
+- **A machine says when it goes down.** Its agent sends a last report as the machine shuts
+  down: a restart or switched off, and why when kiwi-server's own scripts asked for it (an
+  update in its window, `kiwi-server power`, the leash). Activity shows it.
+- **One look in a fixed order before anything is done** about a machine that does not answer:
+  did it say it goes down (a restart is waited for 10 minutes without a message or a restart at
+  the provider; switched off is left alone), is its disk waiting, does any other machine of its
+  site answer (none: nothing is restarted, the whole site is away), do its voters or its standby
+  still reach it (then only the way from the control node is cut: nothing is done). The message
+  says what was found, and when the machine is back Activity has one line for the case.
+- **`power off` holds the standby's take** of the machine's parts with a permission while it is
+  off; `power restart` for 15 minutes.
+- Fixed: a part the standby took was written down twice (a second switch job while the first
+  ran), and the take's time was said in the control node's UTC.
+
 ## 2.287.0 — a part runs only where it may
 
 Step 2 of the rebuild in [docs/design/authority.md](docs/design/authority.md).

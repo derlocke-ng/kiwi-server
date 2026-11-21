@@ -583,6 +583,31 @@ The control node holds back in three cases, whatever the fleet file says:
 
 Every restart is in Activity.
 
+Before the fleet file's `recovery:` is applied, the control node looks at a machine that does
+not answer in a fixed order, and keeps what it found as one record for the whole case:
+
+1. **Did it say it goes down?** Every machine sends a last report when it shuts down: a
+   restart or switched off, and why when kiwi-server asked for it (an update in its update
+   window, `kiwi-server power`, the leash). A machine that said it restarts is waited for
+   10 minutes (or the policy's `after`, if longer), without a message and without a restart.
+   One that said it switches off is left alone. Activity has the last report ("sorbet goes
+   down: it restarts (an update (its update window))").
+2. **Is its disk waiting for its key?** Then its ring is forwarded, as below.
+3. **Does any other machine of its site answer?** When none does, the whole site is away
+   (its line, or the house's power). Restarting one machine helps nothing: that is said, and
+   nothing is restarted.
+4. **Do the machines that give it its permissions, or its standby, still reach it?** Then
+   only the way from the control node is cut. That is said, and nothing is done.
+
+What none of these explains is what `recovery:` is for, and the message says what was looked
+at ("… has not answered for 16 minutes (it said 25 minutes ago that it restarts; it is not
+back 25 minutes later)"). When the machine answers again, Activity gets one line for the
+case: how long it was away, what was found, and what was done.
+
+`kiwi-server power off` also tells the standby of each of the machine's parts with a
+permission not to take them while the machine is off; `power restart` tells it to wait 15
+minutes. Both end when the machine answers again.
+
 A machine whose disk waits to be unlocked at boot counts as there, not as gone.
 The control node forwards its unlock ring by itself, so a rented master with an
 encrypted disk comes back after a restart with nobody there. The ring stays at

@@ -2343,6 +2343,17 @@ class Control:
         why = agent.check(key, name, when, boot, sign, body, now=self.clock())
         if why:
             return why
+        if body.startswith(b"kiwi-last "):
+            # its last report: it goes down, and says why (a reboot, switched off, an update). Kept
+            # beside its reports; the look at machines that are gone reads it (watchdog.step)
+            reason, _, said = body[len(b"kiwi-last "):].decode(errors="replace").strip().partition(" ")
+            os.makedirs(self.reports_dir, mode=0o700, exist_ok=True)
+            util.write_text(os.path.join(self.reports_dir, name + ".last"),
+                            json.dumps({"at": int(self.clock()), "reason": reason[:20], "why": said[:200], "boot": boot[:64]}) + "\n", 0o600)
+            self.audit("control", "%s goes down: %s%s" % (name, {"reboot": "it restarts", "poweroff": "it switches off",
+                                                                 "halt": "it stops"}.get(reason, "it stops"),
+                                                          " (%s)" % said[:120] if said else ""), host=name)
+            return None
         last = self._reported_at.get(name, 0)
         if self.clock() - last < 10:        # it reports every minute; more often is nothing to keep
             return None
@@ -2517,10 +2528,17 @@ class Control:
         for e in events:
             if e.get("kind") == "restarted":
                 self.audit("control", "restarted %s at its provider: it did not answer" % e["host"], host=e["host"])
+            elif e.get("kind") == "closed":
+                self.audit("control", e["text"], host=e["host"])
             elif e.get("kind") == "unlocked" and e["text"].endswith("it starts now"):
                 self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
             elif e.get("kind") == "switch" and e.get("part") and e.get("taken"):
-                # its standby took it by itself, by the permissions (lease.py): written down as a switch
+                # its standby took it by itself, by the permissions (lease.py): written down as a switch.
+                # Once: the next look comes while the switch's applies still run, and the fleet file does
+                # not say so yet (21 Nov 2026: a second switch job three minutes after the first)
+                if any(j.get("action") == "switch" and j.get("hosts") == [e["host"]] and j.get("state") in ("waiting", "running")
+                       for j in self.jobs(10)):
+                    continue
                 try:
                     self.start("switch", [e["host"]], user="control", module=e["part"], at="taken")
                     self.audit("control", e["text"], hosts=[e["host"], e.get("to", "")])

@@ -4676,6 +4676,32 @@ class TestOnion(Base):
             self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
         self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
 
+    def test_a_take_by_the_standby_is_written_down_once(self):
+        # 21 Nov 2026: the next look came while the switch's applies still ran, the fleet file did not
+        # say so yet, and a second switch job started three minutes after the first
+        f = self.net()
+        fake = os.path.join(self.tmp, "fake-kiwi")
+        event = {"kind": "switch", "host": "quince", "part": "vault", "to": "medlar", "taken": True,
+                 "text": "medlar took vault from quince by itself 2 minutes ago"}
+        write(fake, "#!/bin/sh\n[ \"$1\" = gone ] && echo '%s'\nexit 0\n" % json.dumps({"events": [event]}))
+        os.chmod(fake, 0o755)
+        ram = os.path.join(self.tmp, "ram")
+        os.makedirs(ram)
+        c = controlmod.Control(f.path, kiwi_cmd=[fake], run_dir=ram)
+        write(os.path.join(c.run, "status.json"), "{}")
+        started = []
+
+        def start(action, hosts=(), user="admin", wait=False, at="", module=""):
+            started.append((action, list(hosts), at, module))
+            c._write({"id": "j%d" % len(started), "action": action, "hosts": list(hosts), "user": user, "state": "running",
+                      "started": None, "ended": None, "rc": None})
+            return "j%d" % len(started)
+        with mock.patch.object(c, "locked", lambda: False), mock.patch.object(c, "start", start):
+            c.recover()
+            c.recover()
+        self.assertEqual(started, [("switch", ["quince"], "taken", "vault")])
+        self.assertEqual(c.argv("switch", ["quince"], "taken", "vault")[-1], "--taken")
+
     def test_a_hidden_service_gets_a_new_address(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address", "--anyway")
@@ -9055,7 +9081,9 @@ class TestVps(Base):
         self.assertEqual([b["state"] for m, _p, b in self.api.calls if m == "PATCH"], ["OFF", "ON"])
         self.assertEqual([e["kind"] for e in self.recover(f, False)], ["held"])          # not twice within the hour
         self.assertEqual(len([1 for m, _p, _b in self.api.calls if m == "PATCH"]), 2)
-        self.assertEqual(self.recover(f, True), [])              # it is back
+        back = self.recover(f, True)                             # it is back: its case closes, with what was done
+        self.assertEqual([e["kind"] for e in back], ["closed"])
+        self.assertIn("Done: restarted at its provider", back[0]["text"])
         self.assertEqual(cli.fleet_state(f).get("gone") or {}, {})
 
     def test_a_locked_machine_with_no_ring_to_forward_is_told_about(self):
@@ -9101,6 +9129,58 @@ class TestWatchdog(unittest.TestCase):
             done.append(name)
         ev = watchdogmod.step(fleet, {"gate": "master", "pi": "node"}, said, state, now or self.NOW, restart)
         return ev, done
+
+    def diagnosed(self, fleet, said, state, now, **kw):
+        done = []
+        ev = watchdogmod.step(fleet, {"gate": "master", "pi": "node"}, said, state, now, lambda n: done.append(n), **kw)
+        return ev, done
+
+    def test_a_restart_it_announced_is_waited_for_without_a_word(self):
+        # the owner, 21 Nov 2026: "is it just a normal reboot (proper logging of what happens), did it maybe crash"
+        f, state = self.fleet(master={"after": 3, "do": "restart"}), {"seen_ok": {"gate": self.NOW - 30}}
+        words = {"gate": {"at": self.NOW - 20, "reason": "reboot", "why": "an update (its update window)"}}
+        ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 5 * 60, words=words)
+        self.assertEqual(done, [])                                       # not restarted at its provider after 3 minutes
+        self.assertEqual((ev[0]["kind"], ev[0].get("planned")), ("waiting", True))
+        self.assertIn("it said 5 minutes ago that it restarts (an update (its update window))", ev[0]["text"])
+        ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 11 * 60, words=words)
+        self.assertEqual(done, ["gate"])                                 # not back after 10 minutes: the policy acts
+        self.assertIn("it is not back 11 minutes later", ev[0]["text"])
+        ev, _d = self.diagnosed(f, {"gate": True}, state, self.NOW + 14 * 60, words=words)
+        self.assertEqual([e["kind"] for e in ev], ["closed"])
+        self.assertIn("Done: restarted at its provider.", ev[0]["text"])
+        self.assertEqual(state["cases"], {})
+        # a word from before the last time it answered explains nothing now
+        ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 30 * 60, words=words)
+        self.assertNotIn("planned", ev[0])
+
+    def test_switched_off_as_it_said_is_left_alone(self):
+        f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
+        ev, done = self.diagnosed(f, {"gate": False}, state, self.NOW + 60 * 60,
+                                  words={"gate": {"at": self.NOW, "reason": "poweroff", "why": ""}})
+        self.assertEqual((done, ev[0]["kind"], ev[0]["planned"]), ([], "off", True))
+
+    def test_a_whole_site_away_is_said_once_and_nothing_is_restarted(self):
+        f, state = self.fleet(master={"after": 3, "do": "restart"}, node={"after": 3, "do": "restart"}), {}
+        site = {"gate": "netcup", "pi": "netcup"}
+        self.diagnosed(f, {"gate": False, "pi": False}, state, self.NOW, site=site)
+        ev, done = self.diagnosed(f, {"gate": False, "pi": False}, state, self.NOW + 10 * 60, site=site)
+        self.assertEqual(done, [])
+        self.assertEqual({e["kind"] for e in ev}, {"tell"})
+        self.assertIn("no other machine at netcup answers either (pi)", ev[0]["text"])
+        self.assertEqual(state["cases"]["gate"]["conclusion"], "its whole site is away")
+
+    def test_a_machine_its_voters_still_reach_is_not_restarted(self):
+        f, state = self.fleet(master={"after": 3, "do": "restart"}), {}
+        self.diagnosed(f, {"gate": False, "pi": True}, state, self.NOW)
+        ev, done = self.diagnosed(f, {"gate": False, "pi": True}, state, self.NOW + 10 * 60,
+                                  reached=lambda n: (True, "pi gave it its permission 30 seconds ago: it runs"))
+        self.assertEqual((done, ev[0]["kind"]), ([], "held"))
+        self.assertIn("Only the way from the control node is cut: pi gave it its permission", ev[0]["text"])
+        ev, done = self.diagnosed(f, {"gate": False, "pi": True}, state, self.NOW + 11 * 60,
+                                  reached=lambda n: (False, "pi has not reached it for 9 minutes"))
+        self.assertEqual(done, ["gate"])                                 # nobody reaches it: the policy acts, and says why
+        self.assertIn("pi has not reached it for 9 minutes", ev[0]["text"])
 
     def test_a_machine_that_answers_or_was_not_seen_is_left_alone(self):
         state = {"gone": {"old": 1}}
@@ -15419,6 +15499,14 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(util.read_text(os.path.join(self.c.reports_dir, b + ".txt")).encode(), body)
         self.assertEqual(state(), {a: "ok", b: "ok"})
         self.assertEqual(list(self.c.reported()), [b])
+        # its last report, when it goes down: kept beside its reports with why, and said in Activity once
+        last = b"kiwi-last reboot an update (its update window)\n"
+        self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)
+        word = json.loads(util.read_text(os.path.join(self.c.reports_dir, b + ".last")))
+        self.assertEqual((word["reason"], word["why"]), ("reboot", "an update (its update window)"))
+        self.assertEqual(util.read_text(os.path.join(self.c.reports_dir, b + ".txt")).encode(), body)   # its facts stay
+        self.assertTrue(any(e.get("what") == "%s goes down: it restarts (an update (its update window))" % b
+                            for e in self.c.audit_tail(5)))
         # an apply that waited for it runs the moment it reports
         self.c._write_waiting({b: {"since": 1, "tries": 0, "user": "admin"}})
         self.c._reported_at.clear()
@@ -16006,7 +16094,9 @@ class TestRecovery(Base):
             self.assertEqual(told, [])                                   # said, not done
             rc, out, err = self.run_cli("power", f.path, "quince", "restart", "--yes")
             self.assertEqual(rc, 0, err)
-            self.assertEqual(told, ["systemctl reboot --no-block; echo ok"])
+            self.assertEqual(len(told), 1)
+            self.assertTrue(told[0].endswith("systemctl reboot --no-block; echo ok"), told)
+            self.assertIn("/run/kiwi-server/going-down", told[0])          # its last report says why (machineagent.py)
             rc, out, err = self.run_cli("power", f.path, "sorbet", "off", "--porcelain")
             self.assertIn("It is the master", " ".join(json.loads(out)["what"]))
 

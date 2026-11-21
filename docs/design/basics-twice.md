@@ -26,7 +26,8 @@ hosts:
 - DHCP: both Pi-holes hand out leases, each from its half of the range (`dhcp_start`/`dhcp_end`
   split by kiwi-server), with the moving address as router and DNS server. A device that renews
   at the other one may get another address; nothing breaks by that.
-- The moving address is one the owner gives: kiwi-server never looks for a free one on a LAN.
+- The moving address is written in the fleet file: kiwi-server never looks for a free one on a LAN.
+  On the test network: 192.168.2.70 (the test machines' range starts at .60).
 
 ## Not here
 
@@ -39,5 +40,5 @@ hosts:
    unicast peers, the password; a drill in network namespaces on one machine.
 2. kiwi-server: the pairs by site, the split DHCP range, the moving address as the router and the
    DNS server handed out; the page and the app show which machine holds it.
-3. On the test network, with an address the owner gives: lime and papaya; drill: one switched
+3. On the test network, lime and papaya at 192.168.2.70; drill: one switched
    off, a device on the LAN keeps resolving and reaching the Internet.

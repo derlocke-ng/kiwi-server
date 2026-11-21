@@ -1290,6 +1290,16 @@ class TestAdopt(Base):
         with mock.patch.object(luks, "current_key", lambda host: ""):
             self.assertEqual(unlock.rings_bound(h, "t"), [])
 
+    def test_the_ring_timeouts_hook_is_written_once(self):
+        """22 Nov 2026: the comparison never matched (a last newline), so every apply of a Debian or
+        Armbian machine rebuilt its initramfs and said so."""
+        part = unlock.PREPARE_DEBIAN.split("h=/etc/initramfs-tools/hooks/kiwi-ring-timeouts")[1].split('if [ -n "$changed" ]')[0]
+        hook = os.path.join(self.tmp, "hook")
+        script = 'changed=\nh=%s%s\necho "changed=$changed"\n' % (hook, part.replace("%%", "%"))
+        first = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        second = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual((first.stdout.strip(), second.stdout.strip()), ("changed=1", "changed="), first.stderr + second.stderr)
+
     def test_a_forced_rebind_binds_again_to_the_same_rings(self):
         """A ring's keys were rotated: the URLs are the same, the keys not, so the disk is bound again."""
         listing = "device /dev/vda3\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"

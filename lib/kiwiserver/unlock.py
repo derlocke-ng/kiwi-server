@@ -50,7 +50,8 @@ mkdir -p "$DESTDIR/root"
 printf "connect-timeout = 5\\nmax-time = 20\\n" > "$DESTDIR/.curlrc"
 cp "$DESTDIR/.curlrc" "$DESTDIR/root/.curlrc"
 '
-if [ "$(cat "$h" 2>/dev/null)" != "$hook" ]; then
+# both without their last newline ($(…) drops it from the file): equal when nothing changed
+if [ "$(cat "$h" 2>/dev/null)" != "$(printf '%%s' "$hook")" ]; then
     printf '%%s\n' "$hook" > "$h"
     chmod 0755 "$h"
     changed=1

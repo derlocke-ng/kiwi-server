@@ -15,6 +15,8 @@
 - **Fixed: a ring away during an apply** put a disk that was bound to its rings to "its key only"
   for good, with no restart for updates any more (lime, while lychee was off). The binding now
   stays as it is, and a bind removes that guard again.
+- **Fixed: every apply of a Debian or Armbian machine with rings rebuilt its initramfs** (a
+  comparison that never matched); now only when something changed.
 - **Devices by site**: the Devices page groups devices by the site of the master they connect to,
   with `site:NAME` in its filter.
 

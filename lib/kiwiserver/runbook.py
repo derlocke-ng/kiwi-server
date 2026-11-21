@@ -13,7 +13,8 @@ from .util import KiwiError
 # case: (who sees it, its actions, what it is in words)
 CASES = {
     "part-down": ("machine", ("restart", "tell"), "a part is down"),
-    "disk-full": ("machine", ("prune-images", "prune-snapshots", "tell"), "its disk fills up"),
+    # old snapshots are pruned from where the keys are (kiwi-server prune): a machine cannot delete its backups
+    "disk-full": ("machine", ("prune-images", "tell"), "its disk fills up"),
     "update-failed": ("machine", ("roll-back", "tell"), "an update fails"),
     "cut-off": ("machine", ("keep-running", "stop", "tell"), "it is cut off from the network"),
     "machine-gone": ("control", ("restart", "tell"), "it does not answer"),
@@ -21,8 +22,8 @@ CASES = {
     "certificate-due": ("control", ("apply", "tell"), "a certificate runs out"),
 }
 KEYS = ("case", "for", "do", "after", "tries", "at")
-DOING = {"restart": "restarted", "tell": "you are told", "prune-images": "old images are removed",
-         "prune-snapshots": "old snapshots are removed", "roll-back": "it goes back to the image before",
+DOING = {"restart": "restarted", "tell": "you are told", "prune-images": "images no container uses are removed",
+         "roll-back": "it goes back to the image before",
          "keep-running": "it keeps running", "stop": "its parts with a permission stop",
          "backup-now": "a backup starts", "apply": "it is applied"}
 
@@ -122,13 +123,15 @@ def errors(fleet):
 DIR = "/etc/kiwi-server/runbook"
 SCRIPT_PATH = "/usr/local/sbin/kiwi-runbook"
 UNIT = "kiwi-runbook"
-ON_MACHINE = ("part-down",)     # the cases the machine acts on itself, so far
+ON_MACHINE = ("part-down", "disk-full")     # the cases the machine acts on itself, so far
+PER_PART = ("part-down",)                    # of these, the ones about a part (a line per container)
 
 SCRIPT = r'''#!/bin/bash
 # kiwi-server: this machine's runbook (docs/design/runbook.md). Every minute it does what the admins
 # wrote beforehand for the cases this machine sees on itself, and nothing else. A container that a
 # person stopped (kiwi-server service … stop) or that stopped cleanly is not down: only one that
-# failed, exited with an error or is unhealthy. Each line of the conf: CONTAINER CASE DO AFTER TRIES.
+# failed, exited with an error or is unhealthy. Each line of the conf: CONTAINER CASE DO AFTER TRIES
+# (disk-full: - disk-full DO AT 0).
 d=${KIWI_RUNBOOK_DIR:-/etc/kiwi-server/runbook}; run=${KIWI_RUNBOOK_RUN:-/run/kiwi-server/runbook}
 keep=${KIWI_RUNBOOK_KEEP:-/var/lib/kiwi-server/runbook}; held=${KIWI_STOPPED_DIR:-/run/kiwi-server/stopped}
 [ -s "$d/conf" ] || exit 0
@@ -161,7 +164,29 @@ down() {    # CONTAINER: is it down? (0: yes)
     [ "$h" = unhealthy ]
 }
 say() { logger -t kiwi-runbook "$*" 2>/dev/null; echo "$now $*" >> "$keep/log"; }
+disk_full() {   # AT: the disk of the images at AT % or more: images no container uses, a day old, go
+    local at=$1 where pct now_pct rt
+    if command -v podman >/dev/null 2>&1; then rt=podman; where=/var/lib/containers/storage
+    else rt=docker; where=/var/lib/docker; fi
+    [ -d "$where" ] || where=/
+    pct=$(df --output=pcent "$where" 2>/dev/null | tail -1 | tr -dc 0-9)
+    [ -n "$pct" ] && (( pct >= at )) || { rm -f "$run/disk.told"; return 0; }
+    if [ "$act" != prune-images ]; then
+        [ -e "$run/disk.told" ] || { say "the disk is at $pct %: left to a person"; touch "$run/disk.told"; }
+        return 0
+    fi
+    last=$(cat "$keep/disk.pruned" 2>/dev/null || echo 0)
+    (( now - last >= 3600 )) || return 0            # once an hour at most
+    "$rt" image prune -af --filter until=24h >/dev/null 2>&1
+    echo "$now" > "$keep/disk.pruned"
+    now_pct=$(df --output=pcent "$where" 2>/dev/null | tail -1 | tr -dc 0-9)
+    say "the disk was at $pct %: images no container uses removed, now at ${now_pct:-?} %"
+    if [ -n "$now_pct" ] && (( now_pct >= at )) && [ ! -e "$run/disk.told" ]; then
+        say "the disk is still at $now_pct %: left to a person"; touch "$run/disk.told"
+    fi
+}
 while read -r c case act after tries; do
+    if [ "$case" = disk-full ]; then disk_full "${after:-90}"; continue; fi
     [ "$case" = part-down ] || continue
     case $c in *[!a-z0-9_.-]*|"") continue ;; esac
     if ! down "$c"; then
@@ -221,10 +246,16 @@ def machine_lines(host, service_modules):
             + lines(host.fleet.defaults or {}, "defaults.runbook"))
     out = []
     for c, part in sorted((service_modules or {}).items()):
-        for case in ON_MACHINE:
+        for case in PER_PART:
             line = next((l for l in mine if l["case"] == case and fits(l, host, part)), None)
             if line and line["do"] != "tell":
                 out.append((c, case, line["do"], int(line.get("after") or 0), int(line.get("tries", 3))))
+    for case in ON_MACHINE:
+        if case in PER_PART:
+            continue
+        line = next((l for l in mine if l["case"] == case and fits(l, host)), None)
+        if line and line["do"] != "tell":
+            out.append(("-", case, line["do"], int(line.get("at", 90)), 0))
     return out
 
 
@@ -250,7 +281,8 @@ def after_apply(fleet, host, tgt, render, had=False, runner=None):
             return []
         run(tgt, INSTALL % {"dir": DIR, "conf": conf(rows), "path": SCRIPT_PATH, "script": SCRIPT, "unit": UNIT,
                             "service": SERVICE, "timer": TIMER})
-        util.say("%s: its runbook acts on %s" % (host.name, ", ".join(sorted({"%s (%s)" % (r[0], r[2]) for r in rows}))))
+        util.say("%s: its runbook acts on %s" % (host.name, ", ".join(sorted({"%s (%s)" % ("its disk" if r[0] == "-" else r[0], r[2])
+                                                                          for r in rows}))))
         return rows
     except (KiwiError, OSError) as e:
         util.warn("%s: its runbook was not set up: %s" % (host.name, e))

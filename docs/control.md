@@ -644,14 +644,17 @@ What happens in which case is written beforehand, as lines in the fleet file
 defaults'; the first line that fits wins. `kiwi-server parts FLEET MACHINE`, the machine's page
 and the app say what each case does there.
 
-So far one case acts: `part-down`. A machine with such a line gets a small timer from its apply
+So far two cases act on the machine itself. `part-down`: a machine with such a line gets a small timer from its apply
 (`kiwi-runbook`, every minute) and restarts a container of the part itself, without the control
 node, when it has failed, exited with an error or is unhealthy for `after` minutes, at most
 `tries` times a day (3 if not set); then it leaves it to a person. A container that a person
 stopped (`kiwi-server service … stop`, the page's Stop) or that stopped cleanly (a game server
 asleep) is not down. What it did is in the machine's journal (`journalctl -t kiwi-runbook`) and,
-for an hour, in its notes on the page and in `status`. Every other case: you are told, and
-nothing is done.
+for an hour, in its notes on the page and in `status`. `disk-full` with `do: prune-images, at: 90`:
+when the disk of its images is 90 % full or more, images that no container uses and that are a day
+old are removed, once an hour at most; still full after that, it is left to a person. Old backup
+snapshots are not: a machine cannot delete its backups (`kiwi-server prune` does, from where the
+keys are). Every other case: you are told, and nothing is done.
 
 ```yaml
 defaults:

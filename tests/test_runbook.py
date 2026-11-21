@@ -31,7 +31,7 @@ class TestRunbook(unittest.TestCase):
                          (None, "restart"))
         self.assertEqual(runbook.sentence("part-down", medlar["part-down"]),
                          "When a part is down: restarted after 2 minutes, at most 3 times, then you are told.")
-        self.assertEqual(runbook.sentence("disk-full", medlar["disk-full"]), "When its disk fills up: old images are removed at 90 %.")
+        self.assertEqual(runbook.sentence("disk-full", medlar["disk-full"]), "When its disk fills up: images no container uses are removed at 90 %.")
         self.assertEqual(runbook.sentence("machine-gone", None), "When it does not answer: you are told; nothing is done.")
         self.assertEqual(runbook.errors(f), [])
 
@@ -65,10 +65,8 @@ PODMAN = '#!/bin/bash\n[ "$(cat "$NET/units/${@: -1}")" = unhealthy ] && echo un
 DATE = '#!/bin/bash\n[[ ${1:-} == +%s ]] && { cat "$NET/now"; exit 0; }\nexec /usr/bin/date "$@"\n'
 
 
-@unittest.skipUnless(__import__("shutil").which("bash") and __import__("shutil").which("flock"), "bash and flock needed")
-class TestOnTheMachine(unittest.TestCase):
-    """The machine's own runbook script, with a fake systemd and podman: kn-git fails, kn-vault is
-    unhealthy, kn-paste was stopped by a person, kn-games stopped cleanly (asleep)."""
+class MachineBase(unittest.TestCase):
+    """The machine's own runbook script in a folder, with a fake systemd and podman."""
 
     def setUp(self):
         import shutil
@@ -115,6 +113,13 @@ class TestOnTheMachine(unittest.TestCase):
     def log(self):
         with open(os.path.join(self.net, "keep", "log")) as fh:
             return fh.read()
+
+
+
+@unittest.skipUnless(__import__("shutil").which("bash") and __import__("shutil").which("flock"), "bash and flock needed")
+class TestOnTheMachine(MachineBase):
+    """kn-git fails, kn-vault is unhealthy, kn-paste was stopped by a person, kn-games stopped
+    cleanly (asleep)."""
 
     def test_down_restarted_after_its_minutes_a_person_stop_and_a_clean_stop_left(self):
         self.tick()
@@ -183,3 +188,35 @@ class TestApply(unittest.TestCase):
         self.assertEqual(runbook.after_apply(f, f.hosts["medlar"], "t", render, False, run), [("kn-git", "part-down", "restart", 1, 3)])
         self.assertIn("kn-git part-down restart 1 3\n", ran[0])
         self.assertIn("systemctl enable -q --now kiwi-runbook.timer", ran[0])
+
+
+@unittest.skipUnless(__import__("shutil").which("bash") and __import__("shutil").which("flock"), "bash and flock needed")
+class TestDiskFull(MachineBase):
+    """disk-full on the machine: `df` says how full, `podman image prune` is written down."""
+
+    def setUp(self):
+        super().setUp()
+        self.put("conf/conf", runbook.conf([("-", "disk-full", "prune-images", 90, 0)]))
+        for name, text in (("df", '#!/bin/bash\necho " Use%%"; echo " $(cat "$NET/pct")%%"\n'),
+                           ("podman", '#!/bin/bash\necho "podman $*" >> "$NET/did"; [ "$1" = image ] && echo 70 > "$NET/pct"; exit 0\n')):
+            with open(os.path.join(self.bin, name), "w") as fh:
+                fh.write(text.replace("%%", "%"))
+            os.chmod(os.path.join(self.bin, name), 0o755)
+
+    def test_pruned_at_its_mark_once_an_hour(self):
+        self.put("pct", "80")
+        self.tick()
+        self.assertEqual(self.did(), [])
+        self.put("pct", "93")
+        self.tick()
+        self.assertEqual(self.did(), ["podman image prune -af --filter until=24h"])
+        self.assertIn("the disk was at 93 %: images no container uses removed, now at 70 %", self.log())
+        self.put("pct", "95")
+        self.tick(10)
+        self.assertEqual(len(self.did()), 1)                    # once an hour at most
+        self.tick(60)
+        self.assertEqual(len(self.did()), 2)
+
+    def test_the_line_for_the_machine(self):
+        f = fleet([{"case": "disk-full", "for": "all", "do": "prune-images", "at": 85}])
+        self.assertEqual(runbook.machine_lines(f.hosts["medlar"], {"kn-git": "git"}), [("-", "disk-full", "prune-images", 85, 0)])

@@ -11,7 +11,8 @@
   beforehand what happens in which case; checked, and shown per machine (`kiwi-server parts`, the
   page, the app). `part-down` acts: a machine with such a line restarts a failed, crashed or
   unhealthy container of the part by itself (`kiwi-runbook`), at most `tries` times a day, and
-  leaves a person's stop alone. What it did is in its notes for an hour.
+  leaves a person's stop alone. `disk-full` acts too: images no container uses, a day old, are
+  removed when the disk passes its mark, once an hour at most. What it did is in its notes for an hour.
 - **Fixed: a ring away during an apply** put a disk that was bound to its rings to "its key only"
   for good, with no restart for updates any more (lime, while lychee was off). The binding now
   stays as it is, and a bind removes that guard again.

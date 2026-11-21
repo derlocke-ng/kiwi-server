@@ -2,7 +2,7 @@
 
 The owner, 22 November: admins should decide "what happens in what case with what machine", and
 "every node can handle autonomous if necessary on patterns and permission which are set before".
-This page is the plan for that. Built: step 1 (the lines checked and shown) and `part-down` of step 2.
+This page is the plan for that. Built: step 1 (the lines checked and shown) and `part-down` and `disk-full` of step 2.
 
 ## What it is
 
@@ -48,7 +48,7 @@ writes it per machine.
 | Case | Seen by | Actions |
 |---|---|---|
 | part-down | the machine | restart, tell |
-| disk-full | the machine | prune-images, prune-snapshots, tell |
+| disk-full | the machine | prune-images, tell |
 | update-failed | the machine | roll-back (the image before), tell |
 | cut-off | the machine | keep-running, stop (a part with a permission), tell |
 | machine-gone | the control node | restart (at its provider), tell |

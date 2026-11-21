@@ -1389,7 +1389,12 @@ ks_main() {
     sync            # a role that says it is done is on the disk
     date -u +%FT%TZ > "$KS_MARKER"
     ks_say "role $KS_ROLE applied — log: $KS_LOG"
-    # the script carries every secret of this host: it stays for `kiwi-stack` re-runs
-    # (apply puts a fresh copy), readable by root alone
-    chmod 0600 "$0" 2>/dev/null || true
+    # the script carries every secret of this host: gone once it has done its work. Nothing reads it
+    # again (an apply sends a fresh copy; the version is in stack.env), and secrets do not stay on a
+    # disk. A role that failed keeps it, for the next boot's try. Only the copy kiwi-server put there
+    if [[ $(readlink -f "$0") == "$KS_STATE_DIR/role.sh" ]]; then
+        rm -f "$0"
+    else
+        chmod 0600 "$0" 2>/dev/null || true
+    fi
 }

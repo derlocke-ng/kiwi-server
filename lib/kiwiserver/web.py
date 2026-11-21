@@ -582,7 +582,7 @@ placeholder="Filter: a name, state:down, site:{{ t.sites[0]|slug }}, part:dns, r
 <span class="sitec">{% if g.fine %}<span class="ok">all fine</span>{% else %}{% for c in g.counts %}<span class="{{ c.level }}">{{ c.n }} {{ c.words }}</span>{{ " · " if not loop.last }}{% endfor %}{% endif %}</span></summary>
 <div class="scroll"><table class="tbl mt"><thead><tr><th class="tick"><input type="checkbox" aria-label="Tick all of {{ g.site }}"
 onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type=checkbox]'))b.checked=this.checked;mtn()"></th>
-<th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb">Seen</th></tr></thead><tbody>
+<th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb" title="When it last got its role">Applied</th><th class="w4 cb">Seen</th></tr></thead><tbody>
 {% for m in g.machines %}<tr><td class="tick">{% if m.phase not in fresh %}<input type="checkbox" name="host" value="{{ m.name }}" aria-label="Tick {{ m.name }}" onclick="mtn()">{% endif %}</td>
 <td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% if g.masters and m.site and m.site != "home" %} <span class="sm">{{ m.site }}</span>{% endif %}{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}{% if m.waiting %} <span class="sm warn" title="An apply did not reach it. It gets it by itself when it answers again.">apply waits</span>{% endif %}</td>
 <td><span class="badge {{ level(m.st) }}{{ " busy" if looking }}"{% if m.story %} title="{{ m.story }}"{% endif %}>{{ stword(m.st) }}</span></td>
@@ -590,6 +590,7 @@ onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type
 <td class="w3"{% if m.part_titles %} title="{{ m.part_titles|join(", ") }}"{% endif %}>{{ m.part_titles|join(", ") or "-" }}</td>
 <td class="w2">{% for b in m.bars %}<span class="mini" title="{{ b.label }} {{ b.pct }} %: {{ b.more }}"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span>{% else %}<span class="sm">-</span>{% endfor %}</td>
 <td class="w3">{% set bk = m.facts.backup %}{% if bk and bk.age is not none %}<span class="{{ "warn" if bk.age > 172800 }}">{{ age(bk.age) }} ago</span>{% elif bk %}<span class="bad">never</span>{% else %}<span class="sm">-</span>{% endif %}</td>
+<td class="w4 sm">{% if m.applied %}{{ ago(m.applied) }} ago{% else %}-{% endif %}</td>
 <td class="w4 sm">{% if m.seen %}{{ ago(m.seen) }} ago{% else %}-{% endif %}</td></tr>
 {% endfor %}</tbody></table></div></details>{% endfor %}
 <div class="mbar" id="mbar" hidden><span id="mn"></span><button name="action" value="status">Check</button><button name="action" value="plan">Preview</button>
@@ -1187,6 +1188,8 @@ Then a machine takes its modules in its settings, like the built-in ones.</p>
 
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
+{% if removed %}<p class="banner ok">{{ removed }} is removed: it gets nothing new. If it was lost or stolen, it still knows
+the keys it saw: replace them under <a href="#lost">If a computer was lost or stolen</a>.</p>{% endif %}
 <h1>Controllers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
 {% for name, key in ways %}<div class="card row"><span><strong>{{ name }}</strong>
 {% if name == "control" %}<span class="muted"> · this machine (your password)</span>
@@ -1206,7 +1209,7 @@ onsubmit="return confirm('Remove {{ name }}? It can no longer open the network.'
 <p>Makes a link. Pasted into Kiwi Server on another computer, it gives that computer the whole network to manage.</p>
 <button class="primary">Add a computer</button></form>{% endif %}
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
-<h2>If a computer was lost or stolen</h2>
+<h2 id="lost">If a computer was lost or stolen</h2>
 <div class="card"><p>Removing it stops it from getting anything new. It still knows the keys it saw.
 Replace them here, one after the other.</p>
 <p><strong>1. The keys that open your machines</strong><br><span class="muted small">
@@ -1997,6 +2000,17 @@ def make_app(control: Control):
                        to_text=formmod.to_text, icon=icon, size=size, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
     PASSIVE = ("/setup/hoster/", "/machines/hoster/", "/static/", "/favicon", "/api/v1/events")
+    V1_OWN = ("state", "ack", "events")      # /api/v1/ routes with no older name
+
+    @app.middleware("http")
+    async def api_v1(request: Request, call_next):
+        """Every /api/NAME answers at /api/v1/NAME too (ui.md step 5): the versioned names for the
+        app and the phone, without a second copy of each route."""
+        path = request.scope.get("path") or ""
+        if path.startswith("/api/v1/") and path[8:].split("/", 1)[0] not in V1_OWN:
+            request.scope["path"] = "/api/" + path[8:]
+            request.scope["raw_path"] = request.scope["path"].encode()
+        return await call_next(request)
 
     @app.middleware("http")
     async def keep_session(request: Request, call_next):
@@ -2080,7 +2094,7 @@ def make_app(control: Control):
                         "here": bool(h.get("here")), "wol": bool(h.get("wol")),
                         "locked": bool((s or {}).get("locked")), "stage": (s or {}).get("stage") or "",
                         "waiting": h["name"] in waits,
-                        "keep_ready": h.get("keep_ready") or {},
+                        "keep_ready": h.get("keep_ready") or {}, "applied": h.get("applied") or 0,
                         # what its stop does to its parts (policy.py): one sentence, and one per part
                         "stops": h.get("stops") or "", "parts_table": h.get("parts_table") or [],
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
@@ -3979,7 +3993,8 @@ def make_app(control: Control):
     def controllers(request: Request):
         if not user(request):
             return login_page()
-        return controllers_page(request)
+        removed = request.query_params.get("removed") or ""
+        return controllers_page(request, removed=removed if re.match(r"^[A-Za-z0-9._-]{1,64}$", removed) else "")
 
     @app.post("/controllers/{what}")
     def controllers_do(request: Request, what: str, name: str = Form(""), csrf: str = Form(""),
@@ -3994,6 +4009,7 @@ def make_app(control: Control):
                 return controllers_page(request, invite=link, invite_qr=markupsafe.Markup(control.qr_svg(link)))
             if what == "remove":
                 control.remove(name, u)
+                return RedirectResponse("/controllers?removed=%s" % urllib.parse.quote(name), status_code=303)
             if what == "sshca-init":
                 control.sshca_init(u)
                 return controllers_page(request, ca_made=True)
@@ -4056,6 +4072,36 @@ def make_app(control: Control):
             return {"link": control.new_invite(base_url(request), who)}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=409)
+
+    JOB_FIELDS = ("id", "action", "hosts", "user", "state", "started", "ended", "rc")
+
+    @app.get("/api/jobs")
+    def api_jobs(request: Request):
+        """The newest tasks (/api/v1/jobs): what each did, on which machines, how it ended. No output."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        return {"jobs": [{k: j.get(k) for k in JOB_FIELDS} for j in control.jobs(50)]}
+
+    @app.get("/api/jobs/{jid}")
+    def api_job(request: Request, jid: str):
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        j = control.job(jid)
+        if not j:
+            return JSONResponse({"error": "no such job"}, status_code=404)
+        return {k: j.get(k) for k in JOB_FIELDS}
+
+    @app.get("/api/machines/{name}")
+    def api_machine(request: Request, name: str):
+        """One machine (/api/v1/machines/NAME): what the fleet file says of it and how the last look saw it."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        info = control.fleet_info() or {}
+        row = next((h for h in info.get("hosts") or [] if h.get("name") == name), None)
+        if row is None:
+            return JSONResponse({"error": "no such machine"}, status_code=404)
+        seen = next((h for h in (control.status() or {}).get("hosts") or [] if h.get("host") == name), None)
+        return {"machine": {k: v for k, v in row.items() if k not in ("dir", "iso")}, "status": seen}
 
     @app.get("/api/activity")
     @app.get("/api/v1/activity")

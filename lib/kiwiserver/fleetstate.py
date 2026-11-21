@@ -233,6 +233,11 @@ def hand_over(fleet_dir, theirs):
     for name, mid in (mine.get("installed_media") or {}).items():
         if name not in (theirs.get("installed_media") or {}):
             steps.append(["set", ["installed_media", name], mid])
+    # a machine switched off from here, a part held back from here: the keeper had no word of them
+    for key in ("off", "hold", "hold_parts"):
+        for name, v in (mine.get(key) or {}).items():
+            if name not in (theirs.get(key) or {}):
+                steps.append(["set", [key, name], v])
     copy_here, copy_there = mine.get("copy") or {}, theirs.get("copy") or {}
     for name, t in (copy_here.get("hosts") or {}).items():
         if t > ((copy_there.get("hosts") or {}).get(name) or 0):

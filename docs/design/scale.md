@@ -3,7 +3,8 @@
 The owner, 20 November: the network grows, and managing it machine by machine does not
 grow with it. He asked whether Ansible or Kubernetes should carry it, whether a service
 can move to another machine with its key and its backups, and answered seven questions.
-This design holds his answers and the order to build in. Only the first part is built.
+This design holds his answers and the order to build in. Built since: the agent, move, standby and switch of a
+part, and the switch by itself on permissions (authority.md). The steps below say what is open.
 
 The size to design for is in [ui.md](ui.md): about 70 machines and 350 devices at five
 sites, three masters, linked networks beside it.
@@ -274,5 +275,5 @@ after 29 s (the container's own start).
 
 - Which parts get live replication first. Proposed: the ones with a database of their own
   (accounts, git), then files.
-- Whether a master may be the third voter for a site's failover, or only a machine at
-  that site.
+- ~~Whether a master may be the third voter~~: decided in authority.md (21 Nov): the witness
+  is another machine at the site, the master only where there is none.

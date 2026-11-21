@@ -64,5 +64,5 @@ needs no new hardware; the Pi image once that works.
 
 - Whether the cache also mirrors Fedora/uCore OS updates (ostree/bootc content is large and
   signed upstream; a registry mirror for ghcr.io already covers bootc images).
-- Where the control node's secrets live at rest on a Pi (an encrypted partition opened by a
-  ring cannot be served by itself: design/control-plane.md, Unlock).
+- ~~Where the control node's secrets live at rest on a Pi~~: its keys open with rings on other
+  machines (`unlock.control`, unlock.md), as on any control node.

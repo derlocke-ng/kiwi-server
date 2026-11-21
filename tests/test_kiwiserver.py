@@ -4704,6 +4704,21 @@ class TestOnion(Base):
         self.assertEqual(started, [("switch", ["quince"], "taken", "vault")])
         self.assertEqual(c.argv("switch", ["quince"], "taken", "vault")[-1], "--taken")
 
+    @unittest.skipUnless(have("openssl"), "openssl not installed")
+    def test_a_certificate_of_the_own_ca_running_out_is_renewed_by_an_apply(self):
+        # before 2.293, only a person's apply renewed it: a machine left alone for two years lost its names
+        c = controlmod.Control.__new__(controlmod.Control)
+        c.fleet_dir = self.tmp
+        c.fleet_info = lambda fresh=False: {"hosts": [{"name": n, "hostname": n + ".home", "phase": "applied"}
+                                                      for n in ("quince", "lime", "fig")]}
+        for name, days in (("quince", 10), ("lime", 400)):
+            d = os.path.join(self.tmp, "secrets", "ca", "hosts", name + ".home")
+            os.makedirs(d)
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", os.path.join(d, "privkey.pem"),
+                            "-out", os.path.join(d, "cert.pem"), "-days", str(days), "-subj", "/CN=%s.home" % name],
+                           capture_output=True, check=True)
+        self.assertEqual(c.certificates_due(), ["quince"])          # fig has none yet: not one
+
     def test_a_hidden_service_gets_a_new_address(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address", "--anyway")
@@ -7362,6 +7377,11 @@ class TestRemote(Base):
             remote.run("core@a", "true", runner=lambda argv, input=None, capture_output=True: self.R(255))
         with self.assertRaisesRegex(KiwiError, r"core@a: accounts: no account x"):
             remote.run("core@a", "x", runner=lambda argv, input=None, capture_output=True: self.R(3, err=b"accounts: no account x\n"))
+        # a sudo that wants a password: said what to do, not sudo's own words (ROADMAP problem 35)
+        for said in (b"sudo: a terminal is required to read the password; either use the -S option\n",
+                     b"sudo: a password is required\n"):
+            with self.assertRaisesRegex(KiwiError, r"core@a: sudo there wants a password for core.*NOPASSWD"):
+                remote.run("core@a", "x", runner=lambda argv, input=None, capture_output=True, e=said: self.R(1, err=e))
 
     def test_target_run_and_put(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {"a": {}}})
@@ -12276,7 +12296,8 @@ class TestWeb(WebBase):
         self.assertIn("<strong>laptop</strong>", self.ask("/controllers")[1])
         self.ask("/controllers/remove", {"name": "laptop"})                       # forged: nothing
         self.assertIn("laptop", [n for n, _k in self.c.controllers()])
-        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "/controllers"))
+        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "/controllers?removed=laptop"))
+        self.assertIn("laptop is removed: it gets nothing new", self.ask("/controllers?removed=laptop")[1])
         self.assertNotIn("laptop", [n for n, _k in self.c.controllers()])
         code, body = self.ask("/controllers/remove", {"name": "control", "csrf": tok})
         self.assertIn("own key", body)                                            # said on the page, not a crash
@@ -15595,6 +15616,18 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(util.read_text(os.path.join(self.c.reports_dir, b + ".txt")).encode(), body)
         self.assertEqual(state(), {a: "ok", b: "ok"})
         self.assertEqual(list(self.c.reported()), [b])
+        # every /api/NAME answers at /api/v1/NAME too, and the tasks and one machine have their own (ui.md step 5)
+        self.c.start("plan", [b], wait=True)
+        st, _h, got = self.fetch("/api/v1/jobs", cookie)
+        self.assertEqual(st, 200)
+        jobs = json.loads(got)["jobs"]
+        self.assertTrue(jobs)
+        self.assertEqual(json.loads(self.fetch("/api/v1/jobs/%s" % jobs[0]["id"], cookie)[2])["id"], jobs[0]["id"])
+        st, _h, got = self.fetch("/api/v1/machines/%s" % b, cookie)
+        self.assertEqual((st, json.loads(got)["machine"]["name"]), (200, b))
+        self.assertEqual(self.fetch("/api/v1/machines/nobody", cookie)[0], 404)
+        self.assertEqual(self.fetch("/api/v1/devices", cookie)[0], self.fetch("/api/devices", cookie)[0])     # an older name
+        self.assertEqual(self.fetch("/api/v1/jobs")[0], 401)                              # nobody: nothing
         # an emergency on Home: its text and "I have it"; pressed, it says who has it
         util.write_text(self.c.health_file, json.dumps({"items": {"machine:%s" % b: {
             "kind": "machine", "since": 100, "told": True, "emergency": True, "text": "%s does not answer" % b}}}))

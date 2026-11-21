@@ -108,7 +108,7 @@ The designs and the order to build in are in
      are built; one store for all of it and the app on kiwi-template's kit (the
      parts the Kiwi desktop apps share) are not. The kit's job strip is.
    - Boards: kiwi-server does not build the encrypted Armbian image.
-   - netcup: the rescue system, snapshots and user images are not used.
+   - netcup: user images are not used (the rescue system and snapshots are, since 2.271.0).
    - VLANs: the gateway's DHCP, DNS and routing per VLAN.
    - The Android app uses status, machines, activity and the registry only. The
      control node's other routes (2.213.0) wait for it.
@@ -871,7 +871,7 @@ Asked for by the owner in October 2026, for the test round and after:
   orchard's driver; `login`, `list`, `probe` and `install` done in 2.13.0;
   since 2.53.0 `vps install` uploads a RAM master's image, attaches it and
   boots the server from it; the sign-in is on the control page since 2.146.0;
-  the rescue system, user images and snapshots are not built). Read from the SCP REST API's OpenAPI spec
+  the rescue system and snapshots since 2.271.0; user images are not built). Read from the SCP REST API's OpenAPI spec
   (`https://www.servercontrolpanel.de/scp-core/api/v1/openapi`, OAS 3.1,
   Bearer tokens from Keycloak's device flow: `client_id=scp`,
   `scope=offline_access openid`, a refresh token that lives while it is used

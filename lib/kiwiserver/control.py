@@ -977,7 +977,8 @@ class Control:
             self.store.remove(name)
             self._for_the_keys_now()
         self._tokens = {t: v for t, v in self._tokens.items() if v[0] != name}
-        self.audit(user, "removed controller %s" % name)
+        self.audit(user, "removed controller %s: it gets nothing new; what it saw before it knows (Controllers: "
+                         "If a computer was lost or stolen)" % name)
 
     def challenge(self, name):
         """A token only that controller can read: encrypted to its key. None when there is no
@@ -2869,6 +2870,10 @@ class Control:
                     self._riseup_at = now
                     for name in self.riseup_due():
                         self.start("apply", [name], user="riseup")
+                    # a certificate of the network's own CA too: an apply issues a new one when 30 days are left
+                    # (an apply can be undone, so it runs by itself; before, only a person's apply renewed it)
+                    for name in self.certificates_due():
+                        self.start("apply", [name], user="certificate")
                 if self.watch_seconds and self.has_ram_masters():
                     with self.lock:
                         subprocess.run(self.argv("watch"), capture_output=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
@@ -2885,6 +2890,19 @@ class Control:
             return bool(((data.get("defaults") or {}).get("backup") or {}).get("hosts"))
         except (OSError, ValueError, AttributeError, yaml.YAMLError):
             return False
+
+    def certificates_due(self):
+        """The machines whose certificate from the network's own CA has 30 days or fewer left (certs.py
+        renews it at the next apply). A machine whose certificate is not there yet is not one."""
+        from . import certs
+        due = []
+        for h in (self.fleet_info() or {}).get("hosts") or []:
+            if h.get("phase") != "applied" or not h.get("hostname"):
+                continue
+            crt = os.path.join(self.fleet_dir, "secrets", "ca", "hosts", h["hostname"], "cert.pem")
+            if os.path.isfile(crt) and not certs.cert_valid(crt, 30):
+                due.append(h["name"])
+        return due
 
     def riseup_due(self):
         """The machines whose VPN client is Riseup's and whose certificate runs out within

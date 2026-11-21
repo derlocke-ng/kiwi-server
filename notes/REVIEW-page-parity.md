@@ -5,7 +5,7 @@ run included. Compared command by command and setting by setting, first on 14 No
 at kiwi-server 2.80.2. The first section is the state today; the sections after it are the
 review as it grew.
 
-## State on 20 November 2026 (2.267.0 and the next release)
+## State on 20 November 2026 (2.267.0 and 2.268.0)
 
 Checked by searching the page's code (`lib/kiwiserver/web.py`) and the app's
 (`gui/kiwi-server-gui`). "Next release" means built on the branch, not released.
@@ -16,7 +16,7 @@ Checked by searching the page's code (`lib/kiwiserver/web.py`) and the app's
 | The page | A synced folder | the app, *Keep it in a synced folder* (a network without a control node) |
 | The app | Settings saved through the control node's API | the page (`/api/settings`); the app changes its own copy and sends it with `control push` |
 | The app | Machines as a table by site with filters and ticks; Devices as a table with filters | the page (2.256.0, 2.257.0); the app keeps its own overview and lists |
-| The app | Link a new network by card | the page, *Link a new network* (next release); the app links two networks only when this computer holds both fleet files |
+| ~~The app~~ | ~~Link a new network by card~~ | done (22 Nov): *This network's card…* and *Take another network's card…* in the app's linked networks, as the page's *Link a new network* |
 | Both, on purpose | The plan for moving the whole network | `kiwi-server move FLEET --mesh … --domain …` |
 
 Everything else compared below is in both, or is left out on one side on purpose, and its
@@ -68,7 +68,7 @@ both since then (the app's wizard; the page since 2.146.0 and 2.152.0). `vps lis
 |---|---|---|---|
 | The logins of a machine's services | `logins` | "Logins…" on the machine, under "Open a service" | "Logins" card, password on "Show password" |
 | This computer on the network | `connect` | "Connect this computer…", offered on the overview when the services do not open | not needed: the page is opened from a device that is on the network |
-| The network's own copy, opened by the recovery key | `backup`, `restore` | "Back up the network now" (its restore dialog still says "passphrase") | "Save it now", "Fetch a copy", "bring it back from a copy" on a fresh machine |
+| The network's own copy, opened by the recovery key | `backup`, `restore` | "Back up the network now" (its restore dialog: "Recovery key, or passphrase") | "Save it now", "Fetch a copy", "bring it back from a copy" on a fresh machine |
 | A machine leaves for good | `remove` | "Remove" on a saved fleet | "Remove this machine" |
 | A board's fixed address | reaches the board with an apply | the same, through Apply | the same, through Apply |
 
@@ -100,7 +100,7 @@ front page for strangers are for everyone, not for the people who run the networ
 
 Since 2.170.0 to 2.174.0 (17 November 2026):
 - **Signed copies**: the page refuses an unsigned copy and points to `kiwi-server restore FILE --unsigned`;
-  the app's Restore runs the same CLI. Since the next release both open one on purpose (the app: *Open it anyway*; the page: a tick on the form).
+  the app's Restore runs the same CLI. Since 2.268.0 both open one on purpose (the app: *Open it anyway*; the page: a tick on the form).
 - **A new recovery key** (`secrets recovery`): the terminal and the app (Locking…, *A new recovery key…*); the
   control node has its own control password and recovery-key path already.
 - **Locking** (idle, screen, password of this computer's key): the app's Locking… and the terminal. Not on the
@@ -169,7 +169,7 @@ says the app uses status, machines, activity and the registry only.
 | Tagged interfaces (VLANs) | `network.vlans` | settings, Network, *Tagged VLANs* (2.224.0) | the same (2.224.0) |
 | A linked network's CA for the devices | `federate … --ca NAME`, `connect` | Federation…, *Its certificates* | Linked networks, download (2.222.0) |
 
-## Since 2.240.0 (20 November 2026, to 2.267.0 and the next release)
+## Since 2.240.0 (20 November 2026, to 2.268.0)
 
 | What | CLI | App | Page |
 |---|---|---|---|
@@ -180,11 +180,11 @@ says the app uses status, machines, activity and the registry only.
 | A running job | the terminal's output | a strip under the window (2.254.0) | the job's page |
 | Machines by site, filters, ticks; Devices as a table | `list` | not built: its own overview | built (2.256.0, 2.257.0) |
 | What differs between two copies, secret files too | `control diff` | *Compare…* (2.262.0) | not needed: the page is the control node's copy |
-| Names by service | `names: service` | settings, *Names of its parts* | the same (next release) |
-| Move a part | `move FLEET PART FROM TO` | *Move…* on a machine's page, through the control node | Services, *Move it* (next release) |
-| A standby for a part | `keep_ready`, `standby`, `switch` | settings, *Parts kept ready on another machine*; *Switch* | Services, *Keep it ready*, the copy's age, *Switch* (next release) |
-| The game page | `list --porcelain` names it | *Open the game page* (next release) | a button on the status page (2.188.0) |
-| A machine's History | `control activity` | *History* on a machine's page (next release) | the History tab |
+| Names by service | `names: service` | settings, *Names of its parts* | the same |
+| Move a part | `move FLEET PART FROM TO` | *Move…* on a machine's page, through the control node | Services, *Move it* |
+| A standby for a part | `keep_ready`, `standby`, `switch` | settings, *Parts kept ready on another machine*; *Switch* | Services, *Keep it ready*, the copy's age, *Switch* |
+| The game page | `list --porcelain` names it | *Open the game page* | a button on the status page (2.188.0) |
+| A machine's History | `control activity` | *History* on a machine's page | the History tab |
 | A machine's status chips | none | under the machine's name (next release) | built |
 | Link a new network by card | `federate --invite`, `--accept` | not built | *Link a new network* (next release) |
 | Update the control node itself | none | *Update everything…* runs on the control node | *Update everything* (2.265.0) |

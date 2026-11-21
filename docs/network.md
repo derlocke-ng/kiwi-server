@@ -158,6 +158,13 @@ public pool stays behind them, so a machine keeps its time when one of them
 is away. Devices on the LAN can ask it too, and get it with DHCP where Pi-hole
 is the DHCP server. `dns.ntp: false` switches a Pi-hole's time server off.
 
+### Certificates of the network's own CA
+
+Every machine's sites carry a certificate from the network's CA (`secrets/ca`,
+`kiwiCA.pem` on your devices), good for 825 days. An apply issues a new one when
+30 days or fewer are left, and the control node looks every six hours and
+applies a machine whose certificate is that close, so nobody has to remember it.
+
 ### Names by service
 
 By default a part is named after its machine: the pastebin on quince is `paste.quince.home`.

@@ -1,121 +1,88 @@
 # What is open (one list)
 
-Compiled on 20 November 2026 at 2.267 from the roadmap, the review notes and the work notes,
-each item checked against the code. Worked from the top; an item that is done is struck here
-and gets its line in the changelog. New ideas go to the end, not to the front.
+Merged on 22 November 2026 at 2.292.0 from every note in notes/, docs/ROADMAP.md, every design in
+docs/design/ and the working notes, each item checked against the code. Worked from the top; a done item
+is struck here and gets its line in the changelog. S: under an hour, M: a few hours, L: days.
+New ideas go to the end of their section.
 
-## First: the rebuild (the owner, 21 Nov 2026: "this is going out of hands")
+## 1. No decision needed (worked in this order)
 
-No new feature that acts by itself until steps 1 and 2 of docs/design/authority.md are built:
-1. One truth: the control node writes, computers send changes; observed and remembered data leave the synced files.
-2. Permissions that run out, for parts with a standby (voters: the machine, its standby, another node of the site; the master only as a fallback).
-3. One policy table per part (where, copies, machine lost, alone, how much it is needed, no answer) and its sentence on the page;
-   the diagnosis before a decision, a machine's last report when it goes down, one record per case.
-4. A second control node on the computer that manages the network; a person's forced action counts (a counter, the lower gives way).
-Decided 21 Nov: a permission lasts three minutes; modules bring how much a part is needed; nothing that cannot be undone runs by itself.
+Small:
+1. ~~Machines table: a "last apply" column (ui.md).~~ Done (2.293.0).
+2. ~~The app: link a new network by card (`federate --invite/--accept`).~~ Done (2.293.0).
+3. ~~A computer's first sync hands over what it switched off or held back.~~ Done (2.293.0).
+4. ~~power-cut drill: a hypervisor that does not answer counted every machine as real.~~ Done (2.293.0).
+5. A sudo that wants a password: a `sudo -n` check before an apply, with a clear word (ROADMAP problem 35). S
+6. A literal secret in the fleet file: the warning still says "until there is a secret store". S
+7. The role script on the machine (`/var/lib/kiwi-server/role.sh`) holds every file of the bundle and stays. S
+8. Certificates of the network's own CA renew only with an apply: the control node applies a machine whose certificate runs out within 14 days (undoable). S-M
+9. Removing a controller (a computer) says nothing about rotating what it could read. S
+10. Docs that call built things "not built": public-services.md, scale.md, starter.md, local-first.md, controllers.md; REVIEW-2.1.0.md cut to its status table; the old item 10 (the vote exists now). S
+11. The Devices table by site, as Machines (ui.md). S-M
+12. `/api/v1/machines/{name}` and `/api/v1/jobs` (ui.md step 5; only `/api/jobs` exists). S-M
 
-## A. Shipped, never tried on real machines
+Medium:
+13. The permission drills that are missing: the power cut with the control node away, the machine's network cut while it runs, a witness away (authority.md §2). M
+14. The diagnosis asks the provider: switched off there means start it, not a power cycle (authority.md §4). M
+15. The control node's own update: check `/healthz` after, fall back to the image before. M
+16. The agent takes orders: restart a service, update now (scale.md). M
+17. `backups --offsite`: restore from the offsite copy without logging in to the store's machine. M
+18. A "through the VPN" switch for any module, instead of hand-written `network_mode` (onion.md). M
+19. The VPN name of a public instance, `<site>-public.<machine>.home` (public-services.md). S-M
+20. With an exit through a partner, DNS lookups still leave from the network's own master (federation.md). M
+21. `unlock.opens`: by itself, by a person, at home, as a setting (unlock.md step 2). M
+22. The cache keeps install images (FCOS, Debian netinst) for the network (local-first.md §1). M
+23. An upgrade rehearsal drill: the previous release on a throwaway VM, data, the new one, `check` (ROADMAP). M
+24. Debian: a host firewall and a sysctl baseline by default (ROADMAP problem 57). M
+25. The master's `stream` door: its refused connections into a fail2ban jail (the nodes ban by address already). S-M
+26. Nostr as a message channel (recovery.md). S-M
+27. The page restores a copy of the older passphrase kind (`.tar.enc`). M
+28. Rotate steps for the generated secrets that have none yet (controllers.md; cloud, immich, paperless have them). M per module
+29. The app on the kit: remembered size, shared header, About, Preferences; split the 7400-line file (ui.md step 6). M
+30. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
+31. Render only the machines a change reaches (scale.md). M-L
+32. What a move leaves behind: the old data and the old backup store stay until someone deletes them. S, but how long to keep them is the owner's
 
-1. ~~`names: service` on a live machine.~~ Done 20 Nov on quince: `ffsync.home` and `pay.home` resolve, answer with a valid certificate, the old name sends on.
-2. ~~Wake-on-LAN waking real hardware.~~ Tried 20 Nov on lime (ODROID-N2+, Armbian, the only real board at home): the card is armed at the apply and after a restart, the packet from papaya arrives (3 of 3), and the board stays off (the owner switched it off and had to use its button). The kernel has no wake-up line for its card (`eth_wake_irq not found`); docs/machines.md says so. Open: a PC or another board that does wake.
-3. The starter stick and "No master yet" on a real machine. In a VM on sh3 20 Nov (`VMHOST=sh3 tests/drills/starter-vm.sh`): install 17/17, "No master yet" 15/15 on 2.270.0 (it found two bugs, fixed in 2.270.0). A real machine still to do: with the owner.
-4. The guided session from the docs (notes/guided-session.md: its remarks are empty).
-5. Phones following the standby master by DDNS.
-6. A real mail from the notifications.
-7. ~~The public relay: a listed key posting from outside; a renewal~~. The relay: done 20 Nov (tests/drills/relay-public.py, 0 wrong three times): a listed key posts, strangers are refused, the members' list works. It found that the default `keep_days: 0` refused every note not dated this very second (fixed in the module). Renewal: tried 20 Nov on medlar (paste.dlhost.eu): certbot renewed it (forced once, as none is due yet), the daily kn-acme.service copied it and reloaded nginx, the public name served the new certificate.
-8. Authenticator account and code, Firefox sync from a browser, Jabber clients.
-9. ~~The agent on the control node's own machine.~~ Done 20 Nov: it was installed, but its reports got 403 (the control page's proxy did not admit the machine itself); `/api/report` needs no address rule now (kiwi-modules). papaya reports 200.
+Large:
+33. A backup store per service (scale.md step 3).
+34. DNS, DHCP and the gateway twice, with a moving address (scale.md step 6).
+35. Moving a whole network (`move --mesh/--domain`): both meshes while it runs, pins, the CA's name constraint, host certificates, partners' cards (federation.md).
+36. The emergency channel over Tor: onion SSH and control API on every machine, nodes asking where their master is (recovery.md steps 4-5).
+37. The diagnosis for the other events: a part down, a disk filling, a backup overdue, a certificate running out, a failed apply, each with its drill (authority.md §4).
 
-## B. Half-built
+## 2. Needs the owner
 
-10. The agent reports, and takes one order (2.277.0: hold back the containers of a part that went to its standby). Other orders
-    (restart a service, update now) and the neighbours' vote between agents are missing; the switch by itself asks the standby
-    instead (two that agree: the control node's look and the standby).
-11. ~~A standby follows folders, not named volumes.~~ Done 20 Nov: named volumes are followed (the pastebin, medlar to lychee: fetched within 60 s, switch with nothing lost). The drill found that a public name stayed dead after a move or switch: the proxy's `public` now goes along, the old one closes when nothing public is left, and the certificate is asked for again after the master's apply.
-12. ~~A switch takes six to eight minutes~~: under a minute since 2.275.0, by itself since 2.276.0 (item 57).
-13. Moving a whole network: a plan only.
-14. UI steps 3 and 5 to 7 (docs/design/ui.md): one store, `/api/v1`, pushed changes, the app on
-    the kit (the job strip is there).
-15. Boards: kiwi-server builds the encrypted Armbian image, first unlock~~, LUKS grown~~. The volume is grown by the first apply now (unlock.GROW_SCRIPT; on lime, already grown by hand, an apply leaves it alone: 14476 of 14492 MiB). Open: the image itself and the first unlock at the DHCP address. Ideas, not tried (need a board flashed anew): (a) the first unlock without knowing the address: the board's link-local IPv6 address follows from its MAC (fe80::, EUI-64), so a machine of the same LAN can reach its boot system there with no scan and no DHCP lease; (b) the image: one encrypted image per board built once (CI) with a known first key, and the first apply swaps the key, binds the rings and re-encrypts with a new volume key (the published one is known to all). (b) is a decision about secrets at rest: the owner's.
-16. netcup: rescue system, ~~snapshots~~, user images. Snapshots done 20 Nov: `vps snapshot|snapshots|revert`; the drill on sorbet (tests/drills/vps-snapshot.sh): taken in 13 s while it runs, revert 30 s, sorbet back by itself 4 min later with its disk as at the snapshot. The rescue system: `vps rescue --name on|off`, tried on sorbet (tests/drills/vps-rescue.sh, 0 wrong: netcup needs the server off first; the rescue system answered on 22 with its own host key after 108 s; back with its pinned key 103 s after off). Open: user images.
-17. VLANs: the gateway's DHCP, DNS and routing per VLAN.
-18. ~~Install media reinstall at every boot: no guard, no `--reinstall`.~~ Done in 2.269.0: each ISO has an id, the installer leaves it on the installed system's `/boot`, its guard looks for it before anything is erased. Tried in VMs on sh3 (`tests/drills/install-guard-vm.sh`): uCore with UEFI (starts from its disk by itself), uCore with BIOS and Debian (switch themselves off), all passed; media made again install. `vps install` does not send used media twice.
-19. ~~`kiwi-stack health`: clock step, fragmentation.~~ Done in every machine's report instead (the agent sends it each minute): a clock set back is a warning until the time has caught up, packets cut into pieces a note for an hour. Tried on quince: its clock set back four minutes was in `status` within the agent's minute; pings too large for the LAN showed as pieces.
-20. kiwi-app uses status, machines, activity and the registry only.
+Decisions:
+- Step 4 of the rebuild: a second control node on his computer, a person's forced action (pull request 379).
+- data-partition.md's four questions (only new installs? 64 GB or asked? machines without rings? CoreOS first?).
+- local-first.md: should the cache also mirror Fedora/uCore OS updates?
+- no-master.md: should a node keep answering on its home address once a master comes?
+- controllers.md: may a site controller enroll devices?
+- recovery.md: who may answer an `ask` from a phone? `recovery: reinstall` (cannot be undone: by itself only if he turns it on).
+- scale.md: which parts get live replication first (proposed: accounts and git, then files)? Teams and users: admins who log in as themselves, rights per site, WebAuthn.
+- public-services.md: authentik or a second Kanidm per public door, when a public side needs accounts.
+- A new CA and new WireGuard keys (every device imports again; controllers.md, rotate.py).
+- The stack networks sit in public address space (172.64/172.128): fixing it recreates them everywhere, v1 included (ROADMAP problem 66).
+- "Act after a time" when nobody answers, per part (off unless he turns it on).
+- The page taking a disk key by hand (a secret passing through a page); a synced folder on the page; the app's settings through the control node's API (authority.md calls it not needed).
+- Firefox policy in the device bundle (CA in, DNS over HTTPS off): needs root on the device.
+- Rootless podman; Mastodon, Matrix, email modules ("not yet"); the org move ("later, months"); the live v1 network's move.
+- The phoenix bootc image, its cosign key on a hardware token, the join token and the generic ISO (his repository and registry).
+- A store key on a hardware key (age-plugin-yubikey).
+- Separate public instances beyond Jabber; OpenCloud's shared folders and which cloud owns the files.
 
-## C. The page and the app lack what the command line has
+His hardware, accounts or time:
+- The starter stick on a real machine; Wake-on-LAN on a board that wakes; the guided session (notes/guided-session.md).
+- A real mail from the notifications; phones following the standby master by DDNS; an authenticator account; Firefox Sync from a browser; Jabber clients; BTCPay on mainnet; MTU on a phone over 5G.
+- The encrypted Armbian image and the first unlock at the DHCP address (a board flashed anew; the key decision for a CI-built image).
+- Netboot (a PC on one LAN), a Raspberry Pi starter and CoreOS aarch64, VLANs per gateway (a second router), the desktop ring policy (his desktops), Windows.
+- papaya's plain data disk, single rings on lychee and sorbet, `secrets copy-key` for ~/kiwi and ~/kiwi-2, the room on crumble's RAM master, the NAT test network's range.
 
-21. ~~`move PART`, `standby`, `switch`, `keep_ready`.~~ Done: the machine's page (Services: plan, Move it, Keep it ready, Switch), the app (Move…, Switch; through the control node), the setting "Parts kept ready on another machine". Not yet clicked on the live control page.
-22. ~~`names: service`: no settings field.~~ Done: "Names of its parts" in the shared settings (page and app).
-23. App: settings edits through the control node's API.
-24. ~~App: a machine's History and status chips.~~ Done: "History" on a machine's page opens the control node's activity for that machine; the chips (set up, last apply, backup, fullest disk) are under its name, by the page's rules (a test holds the two equal).
-25. ~~App: open the game page.~~ Done: "Open the game page" beside "Open the status page" (the network's settings).
-26. ~~Page: link a new network by card.~~ Done: Linked networks, "Link a new network": download this network's card, paste the other's.
-27. ~~Page and app: open an unsigned copy~~; page: a `.tar.enc` copy, a synced folder. Unsigned: done (the app's *Open it anyway*, a tick on the page's form). Still open, and rare: the page taking a copy of the older passphrase kind, and a network kept in a synced folder.
+## 3. Known gaps, kept on purpose
 
-## D. Asked for, not started
-
-28. Netboot (PXE).
-29. A backup store per service; DNS, DHCP and the gateway twice; site controllers; high
-    availability at one site.
-30. The join token; the phoenix image with the container images inside.
-31. More hosters (cloud-init, Hetzner first), IPv6, NFSv4 with kernel TLS.
-32. ~~`ssh-config`~~ (built: `kiwi-server ssh-config FLEET [--write]`, tried on the test fleet), `probe`, `build --boot`, `images.lock`, `migrate`, ~~Pi-hole DNSSEC~~, `master.exit`. DNSSEC: tried 20 Nov as one setting on lime and on sorbet, taken out again: the exit's resolver already checks (a badly signed name gets no address) and gives out no keys, so Pi-hole's own check failed every public name (docs/network.md, DNS).
-33. Data kept across a reinstall on one disk (four questions wait for the owner,
-    docs/design/data-partition.md).
-34. Backups of desktop and phone, the kiwi-desktop client, Windows.
-35. Mastodon, Matrix, email modules (the owner: not yet).
-
-## E. Docs that were stale
-
-36 to 40: done 20 Nov. ROADMAP's top and lower half, its "Open, in order" (now a summary of this list),
-notes/REVIEW-page-parity.md, README, design/website.md, design/ram-master.md and notes/guided-session.md
-say what 2.267.0 does.
-
-## F. Older open items, found again while the docs were brought up to date
-
-41. An OpenWrt package for the router side.
-42. Rootless podman for the parts.
-43. The orchard (several networks of one owner side by side).
-44. `from=` on the Debian target's keys.
-45. The RAM master's room (what it may hold in RAM, and how much).
-46. The move to the GitHub organisation (links that name the owner's account, the docs' link to this list among them).
-47. ~~gluetun's `DOT_PROVIDERS` is now `DNS_UPSTREAM_RESOLVERS`~~: the vpn-client module sets the new name (kiwi-modules, next release).
-
-48. ~~The master's resolver after a restart of its VPN client~~: nothing to fix in kiwi; the first exit servers failed gluetun's start check (it tries others).
-
-49. ~~A node's Pi-hole while the master is away~~: found 20 Nov, fixed the same day. It answered public names only when a client
-    asked a second time (Pi-hole's strict order moves on only then): one question got nothing in 12 s. The master-down drill
-    did not see it, as it reached the node by a name the master answers. Now a CoreDNS in front of a node's Pi-hole asks the
-    master while it answers and Cloudflare over TLS while it does not; the drill reaches the node by its home address and asks
-    once: "answered throughout" (papaya, 3 minutes without the master). The master itself is as before (its VPN client sits
-    next to it).
-50. ~~The master's lookups while its exit is down~~: left as it is. The devices on the VPN reach nothing then anyway (their traffic leaves through the same exit); only the master's own lookups wait, and its own traffic goes direct.
-
-51. ~~Local time (NTP)~~, the owner 20 Nov: "maybe include local ntp?!". Done 20 Nov (kiwi-modules, kiwi-stack, kiwi-server):
-    Pi-hole serves the time (123/udp, DHCP option 42) and never sets the clock (it had set the host's clock hourly beside
-    timesyncd/chrony, with SYS_TIME); each machine asks its site's Pi-hole on its LAN first, else the master's on the mesh,
-    the pool behind. Tried on the test network: quince (chrony) and medlar (timesyncd) take their time from lime; lime's
-    and papaya's servers answer stratum 2 on the LAN; check 43/43.
-52. ~~A true offsite copy~~ (the owner 20 Nov: his spare WebDAV at 1&1, encrypted, "don't trust this cloud"): built in 2.273.0
-    (backup-server.offsite_url, rclone crypt with a key from the seed, names encrypted too); drill backup-offsite.sh 0 wrong.
-    For his network: offsite_url and offsite_user on his backup store, the password through the page or the app (it goes into
-    the store). Open: the providers registry for backup places (the owner's idea: 1&1, Nextcloud, storage boxes, later S3/SFTP
-    as kinds next to WebDAV), when the second kind comes; `kiwi-server backups --offsite` to restore without logging in to the
-    store's machine.
-53. ~~After this computer's reboot `ssh sh3` was refused~~: the owner loaded the key again (20 Nov, 17:00); jinja2 for
-    Python 3.15 is installed too.
-54. ~~Backup places of another kind~~ (the owner: "use the providers repo for backup providers too"): SFTP built (a Hetzner
-    Storage Box, a friend's server; the host key kept at the first copy) and a Nextcloud's own WebDAV kind; the places are a
-    table in docs/backups.md. The kiwi-providers repository on GitHub is still empty: the hosters (netcup) and the backup
-    places move there together, when a second hoster comes (its first commit would have to go to main).
-55. ~~Pushed changes~~ (ui.md step 5): /api/v1/events, the pages that follow it, `control watch` for the app.
-56. ~~The watchdog held a restart for an hour after one that had worked~~ (master-gone drill, 20 Nov): fixed.
-57. ~~A switch in seconds~~ (item 12): 2.275.0. Vaultwarden ran on its standby 6 s after the switch began, the Pi-holes pointed
-    its name there after 12–16 s, it answered after 29–37 s (was 6–8 min). By itself: 2.276.0 (recovery.switch, five minutes,
-    the standby must not reach the machine either). Tried with power cuts (part-failover.sh): switched after 6.5 min since 2.278.0
-    (counted from the last report), the returning machine stops its copy within 13 s (2.277.0, the agent's hold), the two stay a
-    pair (2.278.0), a standby that is behind is a warning and not switched to by itself (2.280.0). Open: the control node's own
-    machine (its parts switch by hand: nothing decides when the control node is the one gone; a vote between agents, or a second
-    control node, both need the owner's word), and what the returning machine had written after the copy: since 2.281.0 kept beside the folder at its first fetch (tried 20 Nov: quince kept kn-vault.kept-20261120-2239, 32 KB with hard links).
-
+- `apply` on a machine met for the first time wants `--ssh` even when the fleet file has its address: `remote.reach`
+  never sends a role script to an address whose host key is not on record (it could be someone else's machine).
+- `from=` on the keys of Debian's boot system: Dropbear has no such option.
+- A RAM master as witness forgets its refusals at a reboot (it keeps its folders hourly); the window is the minute
+  between a take and its record.
+- Relay members need `ghcr.io/derlocke-ng/strfry:1.1.3-kiwi2` until upstream releases the patch.

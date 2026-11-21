@@ -1736,6 +1736,13 @@ class FederationDialog(Adw.Dialog):
         link = Adw.ButtonRow(title="Link another network…", start_icon_name="list-add-symbolic")
         link.connect("activated", lambda *_: self.link())
         intro.add(link)
+        # a network of another operator, whose fleet file is not here: cards, as on the page (federate --invite/--accept)
+        card = Adw.ButtonRow(title="This network's card…", start_icon_name="document-save-symbolic")
+        card.connect("activated", lambda *_: self.write_card())
+        intro.add(card)
+        take = Adw.ButtonRow(title="Take another network's card…", start_icon_name="document-open-symbolic")
+        take.connect("activated", lambda *_: self.take_card())
+        intro.add(take)
         page.add(intro)
         self.rows = {}
         for name, p in self.data.items():
@@ -1821,6 +1828,34 @@ class FederationDialog(Adw.Dialog):
                 return False
             GLib.idle_add(done)
         threading.Thread(target=work, daemon=True).start()
+
+    def write_card(self):
+        """This network's card for another operator (federate --invite): its name, mesh, DNS and key."""
+        name = os.path.basename(os.path.dirname(os.path.abspath(self.win.doc.path)))
+        dlg = Gtk.FileDialog(title="Save this network's card", initial_name="%s.card.yaml" % name)
+
+        def done(d, res):
+            try:
+                dest = d.save_finish(res).get_path()
+            except GLib.Error:
+                return
+            self.win.spawn(["federate", self.win.doc.path, "--invite", dest],
+                           "Writing the card… give it to the other network's operator")
+        dlg.save(self.win, None, done)
+
+    def take_card(self):
+        """Another operator's card (federate --accept): that network becomes a partner, and this network's
+        card is written beside it for them when there is none yet."""
+        dlg = Gtk.FileDialog(title="The other network's card")
+
+        def done(d, res):
+            try:
+                card = d.open_finish(res).get_path()
+            except GLib.Error:
+                return
+            self.close()
+            self.win.spawn(["federate", self.win.doc.path, "--accept", card], "Taking the card…")
+        dlg.open(self.win, None, done)
 
     def link(self):
         dlg = Gtk.FileDialog(title="The other network's fleet file")

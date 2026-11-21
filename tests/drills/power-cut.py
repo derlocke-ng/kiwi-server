@@ -56,6 +56,9 @@ def hv(command, timeout=60):
 vms = set()
 if args.vm_host:
     rc, out = hv("%s list --all --name" % V)
+    if rc != 0:
+        # the hypervisor not reached is no "0 virtual" (20 Nov 2026: an ssh key not loaded counted every machine as real)
+        sys.exit("the hypervisor %s did not answer (%s): no power cut" % (args.vm_host, (out.splitlines() or ["?"])[-1][:160]))
     vms = {x.strip() for x in out.splitlines()} & set(args.hosts)
 
 

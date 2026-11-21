@@ -3,7 +3,7 @@
 The owner, 19 November: the page, the app and the phone app should work like server management
 software does (Foreman was named), stay fast with many machines, and say what is going on with
 a machine instead of "unreachable". This design comes from a look at ten such tools and at our
-own code. Nothing of it is built yet; the order at the end is the plan.
+own code. The order at the end is the plan; each step there says what of it is built.
 
 The size to design for (the owner, 20 November): one company with three masters (one network:
 a main one, a fallback, load shared between them, for reaching one headquarters from another),

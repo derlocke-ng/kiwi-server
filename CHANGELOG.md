@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.295.0 — a dead machine's part elsewhere, and a runbook
+
+- **`move PART DEAD OTHER --gone`**: a part of a machine that is dead comes from that machine's
+  newest backup onto another machine. A person decides it: what came after that backup is lost.
+  The dead machine is neither asked nor applied; a plain move points at `--gone` when the machine
+  does not answer, and `--gone` is refused while it answers. The recovery case "A machine is dead"
+  offers it. Drill: tests/drills/part-gone.sh.
+- **The runbook** (docs/design/runbook.md): `defaults.runbook` and `hosts.NAME.runbook` say
+  beforehand what happens in which case; checked, and shown per machine (`kiwi-server parts`, the
+  page, the app). `part-down` acts: a machine with such a line restarts a failed, crashed or
+  unhealthy container of the part by itself (`kiwi-runbook`), at most `tries` times a day, and
+  leaves a person's stop alone. What it did is in its notes for an hour.
+- **Fixed: a ring away during an apply** put a disk that was bound to its rings to "its key only"
+  for good, with no restart for updates any more (lime, while lychee was off). The binding now
+  stays as it is, and a bind removes that guard again.
+- **Devices by site**: the Devices page groups devices by the site of the master they connect to,
+  with `site:NAME` in its filter.
+
 ## 2.294.0 — no part with data moves by itself
 
 The owner, 22 November 2026: fast recovery with a copy kept ready uses older data, and the

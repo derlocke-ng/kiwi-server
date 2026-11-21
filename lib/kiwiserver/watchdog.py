@@ -84,9 +84,12 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         if said.get(name) or name not in kinds:
             c = cases.pop(name)
             if said.get(name):
+                found = c.get("found") or ""
+                if c.get("conclusion") == "not known yet":     # back before its policy's time: nothing to look into
+                    found = "It was back before anything was to be done."
                 events.append({"host": name, "kind": "closed", "planned": c.get("conclusion") in ("planned", "switched off"),
                                "text": "%s answers again, after %s away. %s%s" % (
-                                   name, _ago(now - c.get("opened", now)), c.get("found") or "",
+                                   name, _ago(now - c.get("opened", now)), found,
                                    (" Done: %s." % ", ".join(c["did"])) if c.get("did") else "")})
     for name in kinds:
         if said.get(name):
@@ -243,6 +246,9 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         times.append(now)
         case["did"].append("restarted at its provider")
         events.append({"host": name, "kind": "restarted", "text": what + ": restarted at its provider"})
+    for e in events:        # since when it is silent: the messages count from then (health.update)
+        if e.get("host") in gone:
+            e.setdefault("since", gone[e["host"]])
     return events
 
 

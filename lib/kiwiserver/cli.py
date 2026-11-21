@@ -3420,7 +3420,16 @@ def cmd_apply(args):
             if os.environ.get("KIWI_CONTROL_HOST") == h.name:
                 # its disk first (over SSH, nothing restarts): the starter's TPM gives way to the rings or the console key
                 if unlock.wanted(h):
-                    unlock.bind(h, tgt, servers)
+                    try:
+                        unlock.bind(h, tgt, servers)
+                    except KiwiError as e:
+                        # a machine that serves one of its rings is away: as for any other machine, the disk keeps
+                        # what it opens with until an apply after they answer (22 Nov 2026: a switch's apply of the
+                        # control node's own machine failed while the machine it switched away from was gone)
+                        util.warn("%s: its disk is not bound to its rings yet: %s. It opens as before until an apply "
+                                  "after they answer" % (h.name, e))
+                        if h.target in ("coreos", "ucore"):
+                            unlock.drop_standin(h, tgt)
                 elif h.target in ("coreos", "ucore"):
                     unlock.drop_standin(h, tgt)
                 save_store(args)    # the disk's key sealed now: the role below restarts this container

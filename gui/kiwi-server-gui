@@ -3227,6 +3227,15 @@ try:
     from kit.progress import JobArea  # noqa: E402
 except ImportError:
     JobArea = None
+# the window remembers its size and whether it was maximized (the kit's geometry, ui-rules 7):
+# ~/.config/kiwi-server/window.json, beside the app's gui.json
+try:
+    from kit import geometry as kit_geometry  # noqa: E402
+    from kit.info import AppInfo  # noqa: E402
+    APP_INFO = AppInfo(app="kiwi-server", app_id=APP_ID, name="Kiwi Server", version="",
+                       default_size=(1180, 820), min_size=(480, 420))
+except ImportError:
+    kit_geometry = APP_INFO = None
 
 
 def icon_colors():
@@ -4812,8 +4821,11 @@ class Window(Adw.ApplicationWindow):
         self.current_scope = None
         self.form_scope = None
         self.compact = False
-        self.set_default_size(1180, 820)
-        self.set_size_request(480, 420)
+        if kit_geometry is not None:
+            kit_geometry.restore(self, APP_INFO)        # its size as it was left, or the default
+        else:
+            self.set_default_size(1180, 820)
+            self.set_size_request(480, 420)
 
         for name, cb in (("open", self.open_dialog), ("new", self.new_dialog), ("refresh", self.poll),
                          ("join", lambda: JoinDialog(self).present(self)), ("sync", lambda: self.sync(True)),

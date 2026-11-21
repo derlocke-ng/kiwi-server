@@ -8,6 +8,8 @@ import re
 import shlex
 import socket
 import subprocess
+import tempfile
+import sys
 import threading
 import time
 
@@ -43,6 +45,27 @@ def ssh_opts(identities=True):
         for i in IDENTITIES:
             opts += ["-i", i]
     return opts
+
+
+def _reused(opts):
+    """`opts` with one connection per machine kept for two minutes (ControlMaster): an apply makes
+    some twenty calls to one machine, and a login is most of each one's second. Only for the plain
+    calls to a machine (run, run_stream, put); a probe, the boot system and a test of a new key
+    each log in anew. KIWI_SSH_REUSE=0: never."""
+    if os.environ.get("KIWI_SSH_REUSE", "1") == "0" or not hasattr(os, "getuid"):
+        return opts
+    d = os.path.join(tempfile.gettempdir(), "kiwi-ssh-%d" % os.getuid())
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        st = os.stat(d)
+        if st.st_uid != os.getuid() or st.st_mode & 0o077:     # someone else's, or open to others: not used
+            return opts
+    except OSError:
+        return opts
+    out = []
+    for o in opts:          # ssh takes the first value of an option: the "no" ones are replaced, not followed
+        out.append("ControlMaster=auto" if o == "ControlMaster=no" else "ControlPath=%s/%%C" % d if o == "ControlPath=none" else o)
+    return out + ["-o", "ControlPersist=120"]
 
 
 def ssh_port(host):
@@ -243,13 +266,24 @@ def _fail(where, r):
     raise KiwiError("%s: %s" % (where, lines[-1]))
 
 
+def _timed(tgt, script, began):
+    """KIWI_APPLY_TIMES=1: each call to a machine with how long it took (where an apply's time goes)."""
+    if os.environ.get("KIWI_APPLY_TIMES") == "1":
+        first = next((l.strip() for l in script.splitlines() if l.strip() and not l.strip().startswith("#")), "")
+        with _PRINT:
+            print("[times] %5.1f s  %s  %s" % (time.time() - began, tgt, first[:90]), file=sys.stderr, flush=True)
+
+
 def run(tgt, script, data=None, runner=subprocess.run, options=()):
     """A shell script as root on the machine; stdout as bytes. `options` are more for ssh."""
-    argv = ["ssh"] + ssh_opts() + list(options) + [tgt, "sudo sh -c " + shlex.quote(script)]
+    # with options of its own (a forward of a ring): a connection of its own, the forward ends with it
+    argv = ["ssh"] + (ssh_opts() if options else _reused(ssh_opts())) + list(options) + [tgt, "sudo sh -c " + shlex.quote(script)]
+    began = time.time()
     try:
         r = runner(argv, input=data, capture_output=True)
     except FileNotFoundError:
         raise KiwiError("ssh is not installed")
+    _timed(tgt, script, began)
     if r.returncode != 0:
         _fail(tgt, r)
     return r.stdout
@@ -262,21 +296,26 @@ def run_stream(tgt, script, runner=subprocess.run, prefix=""):
     """Like run(), but the output goes straight to the terminal (a role
     script takes minutes and talks). `prefix`: each line under the machine's name, for
     several machines at once."""
-    argv = ["ssh"] + ssh_opts() + [tgt, "sudo sh -c " + shlex.quote(script)]
+    argv = ["ssh"] + _reused(ssh_opts()) + [tgt, "sudo sh -c " + shlex.quote(script)]
     if prefix:
         try:
             p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, errors="replace")
         except FileNotFoundError:
             raise KiwiError("ssh is not installed")
+        began = time.time()
         for line in p.stdout:
             with _PRINT:
                 print("%s | %s" % (prefix, line.rstrip("\n")), flush=True)
-        return p.wait()
+        rc = p.wait()
+        _timed(tgt, script, began)
+        return rc
+    began = time.time()
     try:
         r = runner(argv, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         raise KiwiError("ssh is not installed")
+    _timed(tgt, script, began)
     return r.returncode
 
 

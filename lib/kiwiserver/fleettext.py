@@ -18,11 +18,21 @@ def _flow(value):
     return yaml.safe_dump(value, default_flow_style=True, width=1000, sort_keys=False).replace("\n...", "").strip()
 
 
+def _one(key, value, pad):
+    """One key: a text of several lines as a block of its own (`|`), indented below the key, so that
+    the lines stay inside the key's block; anything else on one line."""
+    if isinstance(value, str) and "\n" in value.rstrip("\n") and all(l == l.rstrip() for l in value.splitlines()):
+        style = "|" if value.endswith("\n") and not value.endswith("\n\n") else "|-" if not value.endswith("\n") else None
+        if style:
+            return ["%s%s: %s" % (pad, key, style)] + [(pad + "  " + l) if l else "" for l in value.rstrip("\n").split("\n")]
+    return ["%s%s: %s" % (pad, key, _flow(value))]
+
+
 def _lines(key, value, pad):
     """A key and its value: a mapping one level deep as a block, the rest on one line."""
     if isinstance(value, dict) and value:
-        return [pad + "%s:" % key] + ["%s  %s: %s" % (pad, k, _flow(v)) for k, v in value.items()]
-    return ["%s%s: %s" % (pad, key, _flow(value))]
+        return [pad + "%s:" % key] + [x for k, v in value.items() for x in _one(k, v, pad + "  ")]
+    return _one(key, value, pad)
 
 
 def put(text, path, value):

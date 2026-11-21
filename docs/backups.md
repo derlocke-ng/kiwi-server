@@ -226,6 +226,17 @@ and `kiwi/backup-offsite.sh restore lime.home DIR` brings one machine's
 repository back into a folder, as restic left it. The key comes from the seed,
 so a network brought back from its copy can read the copy at the other place.
 
+When the store's machine itself was lost: install it anew under its name, set it up, then bring
+its repositories back from the copy, from your computer or the control node:
+
+```bash
+kiwi-server backups ~/kiwi/fleet.yaml lychee --from-offsite             # every repository the copy holds
+kiwi-server backups ~/kiwi/fleet.yaml lychee --from-offsite lime.home   # only lime's
+```
+
+A repository the store has already is left as it is. Then each machine restores from the store as
+before.
+
 ## Restoring
 
 - `sudo kiwi-stack snapshots [vault]` lists what is stored.

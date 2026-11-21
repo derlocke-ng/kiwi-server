@@ -2807,6 +2807,9 @@ class Control:
                     # (an apply can be undone, so it runs by itself; before, only a person's apply renewed it)
                     for name in self.certificates_due():
                         self.start("apply", [name], user="certificate")
+                    # a backup overdue on a machine whose runbook says so: one now (docs/design/runbook.md)
+                    for name in self.backups_due():
+                        self.start("save", [name], user="runbook")
                 if self.watch_seconds and self.has_ram_masters():
                     with self.lock:
                         subprocess.run(self.argv("watch"), capture_output=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
@@ -2824,13 +2827,38 @@ class Control:
         except (OSError, ValueError, AttributeError, yaml.YAMLError):
             return False
 
+    BACKUP_LATE = 36 * 60       # minutes: a backup older than this is overdue, unless the runbook's line says
+
+    def runbook_line(self, row, case):
+        """The line of a machine's runbook for `case` (from the listing), or None."""
+        return next((l for l in row.get("runbook") or [] if l.get("case") == case), None)
+
+    def backups_due(self):
+        """The machines with the backup part whose runbook says backup-now when their backup is overdue,
+        and whose last backup (their last look) is older than the line's minutes."""
+        rows = {h["name"]: h for h in (self.fleet_info() or {}).get("hosts") or []}
+        due = []
+        for s in (self.status() or {}).get("hosts") or []:
+            row = rows.get(s.get("host")) or {}
+            line = self.runbook_line(row, "backup-overdue")
+            b = ((s.get("facts") or {}).get("backup")) or {}
+            if not line or line.get("do") != "backup-now" or "backup" not in (row.get("modules") or []):
+                continue
+            age = b.get("age")
+            if age is not None and age > 60 * (line.get("after") or self.BACKUP_LATE):
+                due.append(row["name"])
+        return due
+
     def certificates_due(self):
         """The machines whose certificate from the network's own CA has 30 days or fewer left (certs.py
-        renews it at the next apply). A machine whose certificate is not there yet is not one."""
+        renews it at the next apply). A machine whose certificate is not there yet is not one, nor one
+        whose runbook says only to tell (certificate-due: tell)."""
         from . import certs
         due = []
         for h in (self.fleet_info() or {}).get("hosts") or []:
             if h.get("phase") != "applied" or not h.get("hostname"):
+                continue
+            if (self.runbook_line(h, "certificate-due") or {}).get("do") == "tell":
                 continue
             crt = os.path.join(self.fleet_dir, "secrets", "ca", "hosts", h["hostname"], "cert.pem")
             if os.path.isfile(crt) and not certs.cert_valid(crt, 30):

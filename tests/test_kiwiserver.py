@@ -4632,6 +4632,13 @@ class TestOnion(Base):
         out = fleettext.put(text, ["hosts", "papaya", "unlock"], {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True})
         self.assertEqual(yaml.safe_load(out)["hosts"]["papaya"], {
             "unlock": {"control": "house", "rings": ["house", "home"], "threshold": 1, "ssh": True}, "role": "node"})
+        # a text of several lines (a CA) goes in as a block of its own, and out again: the file as before
+        text = "# mine\nhosts:\n  papaya:\n    node:\n      onion:\n        x: 1\n  lime:\n    role: node\n"
+        ca = "-----BEGIN CERTIFICATE-----\nMIIBabc\n-----END CERTIFICATE-----\n"
+        with_ca = fleettext.put(text, ["hosts", "papaya", "node", "onion"], {"x": 1, "ca": ca})
+        self.assertIn("        ca: |\n          -----BEGIN CERTIFICATE-----\n", with_ca)
+        self.assertEqual(yaml.safe_load(with_ca)["hosts"]["papaya"]["node"]["onion"]["ca"], ca)
+        self.assertEqual(fleettext.put(with_ca, ["hosts", "papaya", "node", "onion"], {"x": 1}), text)
 
     def net(self):
         f = self.fleet({"defaults": self.base_defaults(domain="home"), "hosts": {
@@ -4814,6 +4821,24 @@ class TestOnion(Base):
                 c.sshca_sign("ssh-ed25519 AAAAx a\nssh-ed25519 AAAAy b")
             self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
         self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
+
+    def test_the_runbook_starts_an_overdue_backup_and_can_leave_certificates_to_a_person(self):
+        c = controlmod.Control.__new__(controlmod.Control)
+        c.fleet_dir = self.tmp
+        line = lambda case, do, after=0: {"case": case, "do": do, "after": after}                  # noqa: E731
+        rows = [{"name": "quince", "hostname": "quince.home", "phase": "applied", "modules": ["backup"],
+                 "runbook": [line("backup-overdue", "backup-now", 60)]},
+                {"name": "lime", "hostname": "lime.home", "phase": "applied", "modules": ["backup"],
+                 "runbook": [line("backup-overdue", "tell"), line("certificate-due", "tell")]},
+                {"name": "fig", "hostname": "fig.home", "phase": "applied", "modules": ["backup"], "runbook": []}]
+        c.fleet_info = lambda fresh=False: {"hosts": rows}
+        look = lambda age: {"facts": {"backup": {"age": age}}}                                    # noqa: E731
+        c.status = lambda: {"hosts": [dict(look(2 * 3600), host="quince"), dict(look(5 * 86400), host="lime"),
+                                      dict(look(5 * 86400), host="fig")]}
+        self.assertEqual(c.backups_due(), ["quince"])        # its line: an hour; lime only tells; fig has no line
+        c.status = lambda: {"hosts": [dict(look(1800), host="quince")]}
+        self.assertEqual(c.backups_due(), [])
+        self.assertEqual(c.runbook_line(rows[1], "certificate-due")["do"], "tell")
 
     @unittest.skipUnless(have("openssl"), "openssl not installed")
     def test_a_certificate_of_the_own_ca_running_out_is_renewed_by_an_apply(self):
@@ -16291,6 +16316,27 @@ class TestRecovery(Base):
         self.assertIn("FTLCONF_dhcp_end=192.168.2.149", env["lychee"]["dns"])
         self.assertIn("FTLCONF_dhcp_start=192.168.2.150", env["papaya"]["dns"])
         self.assertIn("FTLCONF_dhcp_end=192.168.2.199", env["papaya"]["dns"])
+
+    def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
+        lych = self.network().raw["hosts"]["lychee"]
+        bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",
+                  offsite_password="dav-pass-of-the-test")
+        f = self.network(lychee=dict(lych, node=dict(lych["node"], **{"backup-server": bs})))
+        ran = []
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), \
+                mock.patch.object(remote, "run_stream", lambda tgt, script, **k: ran.append((tgt, script)) or 0):
+            self.assertEqual(cli.main(["backups", f.path, "lychee", "--from-offsite", "papaya.kiwi"]), 0)
+            self.assertEqual(cli.main(["backups", f.path, "lychee", "--from-offsite"]), 0)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(cli.main(["backups", f.path, "papaya", "--from-offsite"]), 1)
+                self.assertEqual(cli.main(["backups", f.path, "lychee", "--from-offsite", "a b"]), 1)
+        self.assertEqual(ran[0][0], "core@lychee")
+        self.assertTrue(ran[0][1].endswith("/kiwi/backup-offsite.sh bring-back papaya.kiwi"), ran[0][1])
+        self.assertTrue(ran[1][1].endswith("bring-back "), ran[1][1])
+        self.assertIn("keeps no copy at another place", err.getvalue())
+        self.assertIn("is not a machine's name", err.getvalue())
+        self.assertEqual(len(ran), 2)
 
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod

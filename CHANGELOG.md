@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.297.0 — the runbook on the control node, a store back from its copy
+
+- The moving address is said again every 30 seconds (kiwi-modules 0.117.1), and the Machines table
+  names the machine that holds it.
+- **The runbook on the control node**: `machine-gone` lines take the place of `recovery:` for the
+  machines they fit, `backup-overdue: backup-now` starts a backup that is late, and
+  `certificate-due: tell` leaves a certificate to a person.
+- **A backup store back from its offsite copy**: a store installed anew after its machine was lost
+  gets every repository its copy at the other place holds, and it has not, with
+  `kiwi-server backups FLEET STORE --from-offsite` (kiwi-modules 0.118.0, `backup-offsite.sh bring-back`).
+- Fixed: a text of several lines (a CA) written into the fleet file by a command could not be taken
+  out again without losing the file's comments; it is written as a block of its own now.
+
 ## 2.296.0 — a moving address for a site's basics
 
 - **The `vip` module** (kiwi-modules 0.117.0, docs/design/basics-twice.md): two machines of a site

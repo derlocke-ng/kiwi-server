@@ -271,3 +271,26 @@ class TestMovingAddress(unittest.TestCase):
         f = facts.parse("now=1\nvip=192.168.2.70 waits\n", local_now=1)
         self.assertIn("waits for the moving address", " ".join(str(x) for x in facts.assess(f, now=1)))
         self.assertNotIn("vip", facts.parse("now=1\nvip=x maybe\n", local_now=1))
+
+    def test_the_machines_table_names_the_holder(self):
+        try:
+            from kiwiserver import web
+        except ImportError:
+            self.skipTest("the page's libraries are not here")
+        self.assertEqual(web.tags(["gateway", "vip"], {"vip": {"address": "192.168.2.70", "holds": True}}),
+                         ["gateway", "holds 192.168.2.70"])
+        self.assertEqual(web.tags(["gateway", "vip"], {"vip": {"address": "192.168.2.70", "holds": False}}), ["gateway"])
+
+
+class TestControlNodeCases(unittest.TestCase):
+    def test_a_machine_gone_follows_its_runbook_line_then_recovery(self):
+        from kiwiserver import watchdog
+        f = fleet([{"case": "machine-gone", "for": "site:netcup", "do": "restart", "after": 5}],
+                  medlar=[{"case": "machine-gone", "for": "medlar", "do": "tell"}])
+        f.defaults["recovery"] = {"master": {"after": 15, "do": "tell"}, "node": {"after": 60, "do": "restart"}}
+        self.assertEqual(watchdog.policy(f, "master", f.hosts["sorbet"]), (5.0, "restart"))     # its line
+        self.assertEqual(watchdog.policy(f, "node", f.hosts["medlar"]), (60.0, "tell"))        # its own line: tell
+        self.assertEqual(watchdog.policy(f, "master"), (15.0, "tell"))                         # no machine: recovery
+        bare = fleet()
+        bare.defaults["recovery"] = {"node": {"after": 30, "do": "restart"}}
+        self.assertEqual(watchdog.policy(bare, "node", bare.hosts["medlar"]), (30.0, "restart"))  # no line: recovery

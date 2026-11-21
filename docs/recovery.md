@@ -71,6 +71,10 @@ the rebuild comes from the machine's newest backup onto another machine of its k
 `kiwi-server move fleet.yaml PART DEAD OTHER --gone` ([backups.md](backups.md#from-a-machine-that-is-dead)).
 What came after that backup is lost.
 
+A dead machine that kept the backups of others (the backup-server part) with a copy at another
+place: installed anew and set up, `kiwi-server backups fleet.yaml MACHINE --from-offsite` brings its
+repositories back from that copy ([backups.md](backups.md#a-copy-at-another-place)).
+
 **What you do.** Install it anew under the same name: make its install
 media, start the machine from them (its disk is erased), then set it up. The
 new installation's SSH key is taken as the machine's.

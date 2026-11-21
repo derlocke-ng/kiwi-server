@@ -139,6 +139,17 @@ class TestLease(unittest.TestCase):
             self.tick()
             self.clock(20)
 
+    def test_voters_that_never_gave_it_take_nothing(self):
+        # 21 Nov 2026, live: the voters were set up before the machine took their keys; their grants
+        # failed, "never given" counted as long ago, and the standby took a part that still ran
+        os.rename(os.path.join(self.net, "lime/lease/voters"), os.path.join(self.net, "lime/lease/voters.later"))
+        self.minutes(10)
+        self.assertNotIn("quince ready start vault vault-db", self.stack())
+        self.assertIsNone(self.read("medlar/vote/state/vault@lime.refused"))
+        os.rename(os.path.join(self.net, "lime/lease/voters.later"), os.path.join(self.net, "lime/lease/voters"))
+        self.minutes(2)
+        self.assertTrue(self.may_run())                 # once they can, they give it
+
     def test_only_the_standby_lost_its_way_there_nothing_moves(self):
         self.minutes(2)
         self.put("cut-quince-lime", "")         # the standby does not reach the machine; the witness does

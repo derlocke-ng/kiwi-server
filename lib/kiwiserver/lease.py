@@ -110,8 +110,12 @@ length=$(cat "$d/length" 2>/dev/null || echo 180)
 margin=$(cat "$d/margin" 2>/dev/null || echo 60)
 fresh=$(cat "$d/copy-fresh" 2>/dev/null || echo 900)
 mkdir -p "$d/state"
-gone_since() {      # PART MACHINE: true when what this machine gave there has run out for sure
-    local given; given=$(cat "$d/state/$1@$2.given" 2>/dev/null || echo 0)
+gone_since() {      # PART MACHINE: true when what this machine gave there has run out for sure. Never
+    # given: not known, so not gone (21 Nov 2026: voters set up before the machine took their keys
+    # counted "never" as long ago, and the standby took a part that still ran)
+    local given
+    given=$(cat "$d/state/$1@$2.given" 2>/dev/null) || return 1
+    [[ $given =~ ^[0-9]+$ ]] || return 1
     (( now > given + length + margin ))
 }
 if [[ ${1:-} == ask ]]; then          # the forced command of the standby's key, on the witness
@@ -253,8 +257,10 @@ cat > "$d/parts" <<'KIWI_EOF'
 %(parts)sKIWI_EOF
 cat > "$d/voters" <<'KIWI_EOF'
 %(voters)sKIWI_EOF
-held="%(part_names)s"
-for p in $held; do [ -e "$d/$p.until" ] || [ -e "$d/$p.fresh" ] || date +%%s > "$d/$p.fresh"; done
+# a part set up here a moment ago runs until the voters' first permission (3 minutes at most), when
+# every voter said it may (lease.after_apply): none of them took it, or refused it to this machine
+fresh="%(fresh_parts)s"
+for p in $fresh; do [ -e "$d/$p.until" ] || [ -e "$d/$p.fresh" ] || date +%%s > "$d/$p.fresh"; done
 # the machines this one votes for
 cat > "$d/vote.conf" <<'KIWI_EOF'
 %(vote)sKIWI_EOF
@@ -306,6 +312,9 @@ if [ -s "$d/vote.conf" ]; then systemctl enable -q --now %(vote_unit)s.timer; sy
 else systemctl disable -q --now %(vote_unit)s.timer 2>/dev/null || true; fi
 cat /etc/ssh/ssh_host_ed25519_key.pub
 """
+
+ASKED = ("if [ -e %(dir)s/state/%(part)s@%(machine)s.refused ] || [ -e %(dir)s/state/%(part)s.took ]; "
+         "then echo kiwi-not-yours; else echo kiwi-yours; fi")
 
 REMOVE = ("[ -e %(lease)s ] || [ -e %(vote)s ] || exit 0; "
           "systemctl disable -q --now %(unit)s.timer %(vote_unit)s.timer 2>/dev/null || true; "
@@ -388,7 +397,7 @@ def install_script(host, p):
     return INSTALL % {
         "dir": DIR, "length": LENGTH, "margin": MARGIN, "fresh": COPY_FRESH, "me": shlex.quote(host.name),
         "parts": holder_conf(p["parts"]), "voters": voters_conf(p["voters"]),
-        "part_names": " ".join(sorted(p["parts"])),
+        "fresh_parts": " ".join(sorted(p.get("fresh") or [])),
         "vote": vote_conf(p["vote"]), "known": "".join(x + "\n" for x in p["known"]),
         "lease_path": LEASE_PATH, "vote_path": VOTE_PATH, "holder": HOLDER, "voter": VOTER,
         "mark": MARK, "authorized": "".join(x + "\n" for x in p["authorized"]), "authorized_any": "1" if p["authorized"] else "",
@@ -412,6 +421,26 @@ def after_apply(fleet, host, tgt, roles, render, switch_on, runner=None):
         if not p["parts"] and not p["vote"] and not p["authorized"]:
             run(tgt, REMOVE)
             return []
+        # the start grace, only where every voter says this machine may have it: one that took the
+        # part, or refused it to this machine, means it runs elsewhere (a take not written down yet)
+        p["fresh"] = []
+        for part in sorted(p["parts"]):
+            ok = True
+            for v in p["voters"][part]:
+                try:
+                    said = run(remote.reach(fleet.hosts[v], None), ASKED % {"dir": DIR, "part": shlex.quote(part),
+                                                                           "machine": shlex.quote(host.name)}).decode(errors="replace")
+                except KiwiError as e:
+                    util.warn("%s: %s does not answer (%s): %s waits for the voters' first permission here"
+                              % (host.name, v, str(e).splitlines()[-1][:80], part))
+                    ok = False
+                    break
+                if "kiwi-not-yours" in said:
+                    util.warn("%s: %s took %s, or gives it no permission here: it does not start here" % (host.name, v, part))
+                    ok = False
+                    break
+            if ok:
+                p["fresh"].append(part)
         key = util.read_text(key_path(fleet, host.name)) if p["vote"] else ""
         said = run(tgt, install_script(host, p), key.encode()).decode(errors="replace").strip().splitlines()
         if said and said[-1].startswith("ssh-"):

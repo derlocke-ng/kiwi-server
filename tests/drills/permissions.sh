@@ -61,9 +61,10 @@ check "$(is [ -n "$took" ])" "$sb runs $part, ${took:-never} s after the power c
 at "$wit" "ls /etc/kiwi-server/lease/state/$part@$on.refused" >/dev/null 2>&1; check $? "$wit said gone, and gives $on nothing more for $part"
 at "$sb" "journalctl -t kiwi-vote --since '-15 min' --no-pager -o cat | tail -5" | sed 's/^/        /'
 
-# written down by the control node
+# written down by the control node (WRITTEN=skip: a control node of an older release, which cannot)
 written=""
-for _ in $(seq 1 20); do
+[ "${WRITTEN:-}" = skip ] && say "        not waited for: the control node writing it down (WRITTEN=skip)"
+for _ in $( [ "${WRITTEN:-}" = skip ] || seq 1 20); do
     sleep 30
     "$KIWI" control pull "$fleet" >/dev/null 2>&1
     if python3 -c '
@@ -74,7 +75,7 @@ sys.exit(0 if (h[sys.argv[3]].get("keep_ready") or {}).get(sys.argv[2]) == sys.a
         written=$(( $(date +%s) - cut )); break
     fi
 done
-check "$(is [ -n "$written" ])" "the control node wrote it down: $part on $sb, kept ready on $on (${written:-never} s after the cut)"
+[ "${WRITTEN:-}" = skip ] || check "$(is [ -n "$written" ])" "the control node wrote it down: $part on $sb, kept ready on $on (${written:-never} s after the cut)"
 
 # back
 ssh -o BatchMode=yes "$VMHOST" "$V start $on" >/dev/null; check $? "$on's power back"

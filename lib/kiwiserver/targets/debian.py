@@ -272,7 +272,8 @@ def reboot_units(host):
     svc = ("[Unit]\nDescription=Kiwi Server: reboot if an update requires it\n\n"
            "[Service]\nType=oneshot\n"
            "ExecStart=/bin/sh -c 'if [ -e /var/run/reboot-required ]; then "
-           "echo \"reboot required by an update, rebooting\"; systemctl reboot; "
+           "echo \"reboot required by an update, rebooting\"; mkdir -p /run/kiwi-server; "
+           "echo \"an update (its update window)\" > /run/kiwi-server/going-down; systemctl reboot; "
            "else echo \"no reboot required\"; fi'\n")
     timer = ("[Unit]\nDescription=Kiwi Server: update reboot window\n\n"
              "[Timer]\nOnCalendar=%s\nPersistent=false\nRandomizedDelaySec=5min\n\n"

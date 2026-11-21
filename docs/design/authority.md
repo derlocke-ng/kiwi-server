@@ -6,8 +6,9 @@ by itself. A review found ten ways for it to go wrong, a sync asked the owner
 to choose between copies that differed in nothing he had decided, and each fix
 was another special case. The owner, 21 November: "the whole system is kinda
 flawed … we are patching small things, but the main problem lies elsewhere."
-Step 1 is built (2.286.0, below); the rest is not. New features that act by
-themselves wait until steps 1 and 2 are.
+Step 1 is built (2.286.0), step 2 too (2.287.0), and of step 3 the diagnosis,
+the last report and the record of each case (2.288.0). The table per part is
+not built yet.
 
 ## What is wrong
 

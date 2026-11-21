@@ -145,6 +145,7 @@ STAGED_REBOOT_SH = """#!/usr/bin/env bash
 set -euo pipefail
 if rpm-ostree status --json | grep -Eq '"staged" *: *true'; then
     echo "staged update found, rebooting"
+    mkdir -p /run/kiwi-server && echo "an update (its update window)" > /run/kiwi-server/going-down
     systemctl reboot
 else
     echo "no staged update"

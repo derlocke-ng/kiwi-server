@@ -150,6 +150,26 @@ class TestLease(unittest.TestCase):
         self.minutes(2)
         self.assertTrue(self.may_run())                 # once they can, they give it
 
+    def test_switched_off_on_purpose_it_is_not_taken(self):
+        # the owner, 21 Nov 2026: "power off should hold the switch"
+        self.minutes(2)
+        self.put("quince/vote/state/vault@lime.hold", "0")
+        self.put("away-lime", "")
+        self.minutes(10, away=("lime",))
+        self.assertNotIn("quince ready start vault vault-db", self.stack())
+        os.remove(os.path.join(self.net, "away-lime"))
+        self.minutes(1)
+        self.assertIsNone(self.read("quince/vote/state/vault@lime.hold"))     # it answered: the hold is over
+
+    def test_a_restart_asked_for_is_waited_for_a_while(self):
+        self.minutes(2)
+        self.put("quince/vote/state/vault@lime.hold", str(self.now + 8 * 60))
+        self.put("away-lime", "")
+        self.minutes(6, away=("lime",))
+        self.assertNotIn("quince ready start vault vault-db", self.stack())     # within the 8 minutes
+        self.minutes(4, away=("lime",))
+        self.assertIn("quince ready start vault vault-db", self.stack())        # not back after them: taken
+
     def test_only_the_standby_lost_its_way_there_nothing_moves(self):
         self.minutes(2)
         self.put("cut-quince-lime", "")         # the standby does not reach the machine; the witness does

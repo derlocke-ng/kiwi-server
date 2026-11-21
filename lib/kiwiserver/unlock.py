@@ -839,6 +839,7 @@ now=$(date +%s)
 since=$(cat "$gone")
 [ $((now - since)) -ge $((minutes * 60)) ] || exit 0
 logger -t kiwi-leash "the rings of this machine's site ($urls) have not answered for $minutes minutes: restarting into the locked state"
+mkdir -p /run/kiwi-server && echo "the leash: its site's rings did not answer for $minutes minutes" > /run/kiwi-server/going-down
 systemctl reboot
 '''
 INSTALL_LEASH = r'''

@@ -47,9 +47,16 @@ def policy(fleet, kind):
 
 
 REPORT_EVERY = 60          # seconds between two reports of a machine's agent
+PLANNED_WAIT = 600         # seconds a machine that said it restarts may be away before anything is done or told
+WORDS = {"reboot": "restarts", "poweroff": "switches off", "halt": "stops", "stop": "stops"}
 
 
-def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None, point=None, last=None):
+def _ago(seconds):
+    return util.count(max(1, int(seconds // 60)), "minute")
+
+
+def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unlock=None, point=None, last=None,
+         words=None, site=None, reached=None):
     """One look. `kinds`: {machine: "master"|"node"} for the machines that have their role;
     `said`: {machine: bool} whether it answered just now; `state`: the fleet's state, changed
     in place (`gone`: since when, `acted`: when); `restart(name)` does a power cycle and may
@@ -58,10 +65,27 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
     KiwiError. More kinds of events then: unlocked, locked. `point(address)` points the master's
     name (wg_host) at an address and returns the one it had, or raises KiwiError: with it, a master
     gone for its `after` sends the devices to its standby, and back when it answers (moved).
-    Returns the events: [{host, kind: waiting|tell|restarted|held|moved, text}]."""
+    Returns the events: [{host, kind: waiting|tell|restarted|held|moved, text}].
+
+    Before anything is done, a machine that is gone is looked at in a fixed order, and what was
+    found is kept as one record per case (`state["cases"]`, docs/design/authority.md step 3):
+    did it say it goes down (`words`: {machine: its last report, {at, reason, why}})? Does no
+    machine of its site answer either (`site`: {machine: its site})? Do the machines that give it
+    its permissions, or its standby, still reach it (`reached(name)`: (True|False|None, what was
+    found))? Only what none of these explains is acted on by the policy. An event of a machine
+    that went down as it said carries `planned`; one that answers again closes its case (closed)."""
     gone, acted, events = state.setdefault("gone", {}), state.setdefault("acted", {}), []
     pointed, back = state.setdefault("pointed", {}), state.setdefault("back", {})
     seen_ok, off = state.setdefault("seen_ok", {}), state.setdefault("off", {})
+    cases = state.setdefault("cases", {})
+    for name in list(cases):            # a case ends when the machine answers again: one line for all of it
+        if said.get(name) or name not in kinds:
+            c = cases.pop(name)
+            if said.get(name):
+                events.append({"host": name, "kind": "closed", "planned": c.get("conclusion") in ("planned", "switched off"),
+                               "text": "%s answers again, after %s away. %s%s" % (
+                                   name, _ago(now - c.get("opened", now)), c.get("found") or "",
+                                   (" Done: %s." % ", ".join(c["did"])) if c.get("did") else "")})
     for name in kinds:
         if said.get(name):
             seen_ok[name] = now                 # the last look that saw it answer
@@ -122,9 +146,55 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         after, do = policy(fleet, kind)
         what = "%s%s has not answered for %d minute%s" % (name, " (the master)" if kind == "master" else "", minutes,
                                                         "" if minutes == 1 else "s")
+        case = cases.setdefault(name, {"opened": since, "did": []})
+        checks = []
+
+        def found(conclusion):
+            case.update(conclusion=conclusion, found=("%s: %s." % (conclusion[0].upper() + conclusion[1:], "; ".join(checks)))
+                        if checks else conclusion[0].upper() + conclusion[1:] + ".")
+        # 1. did it say it goes down? (its last report, after the last look that saw it answer)
+        word = (words or {}).get(name)
+        if word and word.get("at", 0) >= seen_ok.get(name, 0) - REPORT_EVERY and now - word.get("at", 0) < 86400:
+            checks.append("it said %s ago that it %s%s" % (_ago(now - word["at"]), WORDS.get(word.get("reason"), "stops"),
+                                                          " (%s)" % word["why"] if word.get("why") else ""))
+            if word.get("reason") in ("poweroff", "halt"):
+                gone.pop(name, None)
+                found("switched off")
+                events.append({"host": name, "kind": "off", "planned": True, "text": "%s is switched off: %s" % (name, checks[0])})
+                continue
+            if word.get("reason") == "reboot":
+                if now - word["at"] < max(PLANNED_WAIT, after * 60):
+                    found("planned")
+                    events.append({"host": name, "kind": "waiting", "planned": True, "text": "%s restarts: %s" % (name, checks[0])})
+                    continue
+                checks.append("it is not back %s later" % _ago(now - word["at"]))
         if minutes < after:
+            found("not known yet")
             events.append({"host": name, "kind": "waiting", "text": what})
             continue
+        # 2. does any other machine of its site answer? None: the whole site is away, restarting one helps nothing
+        if site and site.get(name):
+            mates = sorted(n for n in kinds if n != name and site.get(n) == site[name])
+            if mates and not any(said.get(n, True) for n in mates):
+                checks.append("no other machine at %s answers either (%s)" % (site[name], ", ".join(mates)))
+                found("its whole site is away")
+                events.append({"host": name, "kind": "tell", "text": "%s. %s Nothing is restarted." % (what, case["found"])})
+                continue
+        # 3. do the machines that give it its permissions, or its standby, still reach it?
+        if reached:
+            try:
+                r = reached(name)
+            except KiwiError as e:
+                r = (None, "its voters could not be asked (%s)" % str(e).splitlines()[0][:80])
+            if r and r[1]:
+                checks.append(r[1])
+            if r and r[0]:
+                found("only the way from the control node is cut")
+                events.append({"host": name, "kind": "held", "text": "%s. %s Nothing is done." % (what, case["found"])})
+                continue
+        found("not known")
+        if checks:
+            what = "%s (%s)" % (what, "; ".join(checks))
         standbys = [s for s in fleet.standbys(name) if s.standby_endpoint] if point and kind == "master" else []
         if point and standbys and name not in pointed:
             sb = standbys[0]
@@ -163,6 +233,7 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
                            % str(e).splitlines()[0][:120]})
             continue
         times.append(now)
+        case["did"].append("restarted at its provider")
         events.append({"host": name, "kind": "restarted", "text": what + ": restarted at its provider"})
     return events
 

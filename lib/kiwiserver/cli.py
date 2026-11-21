@@ -2399,6 +2399,9 @@ def vps_revert(args, client, server, label):
     util.say("%s: its disk is as it was at %s; it starts as it was then" % (label, name))
 
 
+GIVEN = "for f in %s/state/*@%s.given; do [ -e \"$f\" ] && echo $(( $(date +%%s) - $(cat \"$f\") )); done; true"
+
+
 def cmd_recover(args):
     """One look at the machines that are gone, and what the policy allows done about it
     (watchdog.py). The control node runs this after every look at the machines."""
@@ -2460,8 +2463,6 @@ def cmd_recover(args):
         for f in os.listdir(args.reports):
             if f.endswith(".txt"):
                 last[f[:-4]] = os.path.getmtime(os.path.join(args.reports, f))
-    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
-                           point if can_point else None, last=last)
 
     def sees(standby, machine):
         """Whether `standby` reaches `machine` itself: at its address at home or on the VPN, by ping
@@ -2487,6 +2488,40 @@ def cmd_recover(args):
         if site_of(fleet.hosts[standby]) == site_of(fleet.hosts[machine]):
             return True
         return any(said.get(n) for n, k in kinds.items() if k == "master")
+    words = {}                  # the machines' last reports: why each went down (machineagent.py)
+    if args.reports and os.path.isdir(args.reports):
+        for f in os.listdir(args.reports):
+            if f.endswith(".last"):
+                try:
+                    words[f[:-5]] = json.loads(util.read_text(os.path.join(args.reports, f)))
+                except (OSError, ValueError):
+                    pass
+    from . import lease as leasemod
+    permits = leasemod.links(fleet, roles)
+
+    def reached(name):
+        """Whether the machines that give it its permissions, or its standby, still reach it: then
+        only the way from here is cut, and nothing is done to it."""
+        held = (state.get("leases") or {}).get(name) or []
+        voters = sorted({v for (m, p), vs in permits.items() if m == name and p in held for v in vs})
+        notes = []
+        for v in voters:
+            if not said.get(v):
+                continue
+            out = remote.run(remote.reach(fleet.hosts[v], None), GIVEN % (leasemod.DIR, shlex.quote(name))).decode(errors="replace")
+            ages = [int(x) for x in out.split() if x.isdigit()]
+            if ages and min(ages) < 150:
+                return True, "%s gave it its permission %s ago: it runs" % (v, util.count(min(ages), "second"))
+            notes.append("%s has not reached it%s" % (v, " for %s" % util.count(min(ages) // 60, "minute") if ages else ""))
+        for a, _p, sb in partstandby.links(fleet):
+            if a == name and sb not in voters and said.get(sb):
+                if sees(sb, name):
+                    return True, "%s, its standby, reaches it" % sb
+                notes.append("%s, its standby, does not reach it" % sb)
+        return (False, "; ".join(notes)) if notes else None
+    events = watchdog.step(fleet, kinds, said, state, time.time(), restart, where, waits, open_it,
+                           point if can_point else None, last=last, words=words,
+                           site={n: site_of(fleet.hosts[n]) for n in kinds}, reached=reached)
     # a part that runs by a permission (lease.py) is its voters' to switch: the standby took it by
     # itself when its machine was gone, and says so in its report. That is written down here.
     held = state.get("leases") or {}
@@ -5926,6 +5961,17 @@ def cmd_power(args):
     if args.action == "off":
         # off on purpose: not gone. Nothing switches its parts away and nothing restarts it, until it answers again
         mark_off(fleet, host.name, True)
+    # its parts that run by a permission: the standby does not take them while it is off on purpose, or
+    # for 15 minutes of a restart (lease.py); a standby that is not reached is told so on its next apply
+    from . import lease as leasemod
+    for (m, part), (standby, _w) in leasemod.links(fleet, roles).items():
+        if m == host.name:
+            try:
+                leasemod.hold(remote.reach(fleet.hosts[standby], None), part, m, None if args.action == "off" else 15)
+                util.say("%s: %s does not take %s %s" % (host.name, standby, part,
+                                                       "while it is off" if args.action == "off" else "for 15 minutes"))
+            except KiwiError as e:
+                util.warn("%s does not answer (%s): it may take %s while %s is away" % (standby, str(e).splitlines()[-1][:80], part, m))
     powermod.run(host, args.action, args.ssh)
 
 

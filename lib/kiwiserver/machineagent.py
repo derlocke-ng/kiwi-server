@@ -29,18 +29,37 @@ SCRIPT = r'''#!/bin/bash
 # containers of a part that went to its standby while this machine was gone stop (X-Kiwi-Hold),
 # until the apply that takes the part away from here.
 d=/etc/kiwi-server/agent
-exec 9>/run/kiwi-agent.lock; flock -n 9 || exit 0
 . "$d/conf" || exit 0
 body=$(mktemp) || exit 0; head=$(mktemp) || exit 0; trap 'rm -f "$body" "$head"' EXIT
-timeout 45 bash "$d/facts.sh" > "$body" 2>/dev/null
+if [ "${1:-}" = last ]; then
+    # its last report, when the machine goes down (kiwi-agent-last.service stops): why, so that a
+    # restart and a crash are no longer the same silence (docs/design/authority.md, step 3). Only
+    # while the whole machine stops: a unit restarted by an apply says nothing.
+    [ "$(systemctl is-system-running 2>/dev/null)" = stopping ] || exit 0
+    jobs=$(systemctl list-jobs --no-legend 2>/dev/null)
+    case $jobs in
+        *reboot.target*|*kexec.target*) reason=reboot ;;
+        *poweroff.target*) reason=poweroff ;;
+        *halt.target*) reason=halt ;;
+        *) reason=stop ;;
+    esac
+    why=$(head -c 200 /run/kiwi-server/going-down 2>/dev/null | tr '\n' ' ')
+    printf 'kiwi-last %s %s\n' "$reason" "$why" > "$body"
+    wait=8
+else
+    exec 9>/run/kiwi-agent.lock; flock -n 9 || exit 0
+    timeout 45 bash "$d/facts.sh" > "$body" 2>/dev/null
+    wait=20
+fi
 now=$(date +%s); boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 sum=$(sha256sum "$body" | cut -d' ' -f1)
 sign=$(printf '%s\n%s\n%s\n%s' "$NAME" "$now" "$boot" "$sum" | openssl dgst -sha256 -hmac "$(cat "$d/key")" -r 2>/dev/null | cut -d' ' -f1)
 if [ -z "$sign" ]; then out="no signature (is openssl there?)"; else
-out=$(curl -sS --max-time 20 --cacert "$d/ca.pem" -o /dev/null -D "$head" -w '%{http_code}' -X POST \
+out=$(curl -sS --max-time "$wait" --cacert "$d/ca.pem" -o /dev/null -D "$head" -w '%{http_code}' -X POST \
     -H "Content-Type: text/plain" -H "X-Kiwi-Host: $NAME" -H "X-Kiwi-Time: $now" -H "X-Kiwi-Boot: $boot" \
     -H "X-Kiwi-Sign: $sign" --data-binary @"$body" "$URL/api/report" 2>&1 | tail -1)
 fi
+[ "${1:-}" = last ] && { logger -t kiwi-agent "last report to $URL ($(cut -d' ' -f2- "$body")): $out"; exit 0; }
 [ "$out" = "$(cat /run/kiwi-agent.last 2>/dev/null)" ] || { logger -t kiwi-agent "report to $URL: $out"; echo "$out" > /run/kiwi-agent.last; }
 if [ "$out" = 200 ]; then
     for c in $(sed -n 's/^[Xx]-[Kk]iwi-[Hh]old: *//p' "$head" | tr -d '\r'); do
@@ -55,6 +74,12 @@ fi
 '''
 SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node how this machine is\nAfter=network-online.target\n\n"
            "[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH)
+# its last report: a unit that does nothing while the machine runs and reports when it stops. After the
+# network and the stack, so it stops before them (the VPN to the control node is in the stack)
+LAST_SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node when this machine goes down\n"
+                "After=network-online.target kiwi-stack.service\nWants=network-online.target\n\n"
+                "[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/true\nExecStop=%s last\nTimeoutStopSec=15\n\n"
+                "[Install]\nWantedBy=multi-user.target\n" % SCRIPT_PATH)
 TIMER = ("[Unit]\nDescription=kiwi-server: report to the control node every minute\n\n[Timer]\nOnBootSec=10s\nOnBootSec=45s\n"
          "OnUnitActiveSec=1min\nAccuracySec=5s\n\n[Install]\nWantedBy=timers.target\n")
 INSTALL = r'''set -eu
@@ -79,13 +104,19 @@ cat > /etc/systemd/system/%(unit)s.service <<'KIWI_EOF'
 %(service)sKIWI_EOF
 cat > /etc/systemd/system/%(unit)s.timer <<'KIWI_EOF'
 %(timer)sKIWI_EOF
+cat > /etc/systemd/system/%(unit)s-last.service <<'KIWI_EOF'
+%(last)sKIWI_EOF
 systemctl daemon-reload
+systemctl enable -q %(unit)s-last.service
+systemctl start %(unit)s-last.service
 systemctl enable -q %(unit)s.timer
 systemctl restart %(unit)s.timer
 systemctl start --no-block %(unit)s.service
 '''
-REMOVE = ("systemctl disable --now -q %s.timer 2>/dev/null || true; rm -rf %s %s /etc/systemd/system/%s.service "
-          "/etc/systemd/system/%s.timer; systemctl daemon-reload" % (UNIT, DIR, SCRIPT_PATH, UNIT, UNIT))
+REMOVE = ("systemctl disable -q %s-last.service 2>/dev/null || true; "
+          "systemctl disable --now -q %s.timer 2>/dev/null || true; rm -rf %s %s /etc/systemd/system/%s.service "
+          "/etc/systemd/system/%s.timer /etc/systemd/system/%s-last.service; systemctl daemon-reload"
+          % (UNIT, UNIT, DIR, SCRIPT_PATH, UNIT, UNIT, UNIT))
 
 
 def control_host(fleet):
@@ -161,7 +192,7 @@ def after_apply(fleet, host, tgt, ms, runner=None):
         ca = util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem"))
         script = INSTALL % {"dir": DIR, "url": where, "name": host.name, "ca": ca if ca.endswith("\n") else ca + "\n",
                             "facts": facts.SCRIPT, "path": SCRIPT_PATH, "script": SCRIPT, "unit": UNIT,
-                            "service": SERVICE, "timer": TIMER}
+                            "service": SERVICE, "timer": TIMER, "last": LAST_SERVICE}
         run(tgt, script, key(fleet, host).encode())
         util.say("%s: reports to %s every minute" % (host.name, where))
     except (KiwiError, OSError) as e:

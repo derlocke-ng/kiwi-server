@@ -42,7 +42,11 @@ def what(host, roles, action):
     return out
 
 
-SCRIPT = {"off": "systemctl poweroff --no-block", "restart": "systemctl reboot --no-block"}
+# the reason first, for the machine's last report (machineagent.py): the control node then knows the
+# silence that follows was asked for
+GOING_DOWN = "mkdir -p /run/kiwi-server && echo %s > /run/kiwi-server/going-down; "
+SCRIPT = {"off": GOING_DOWN % "'switched off by kiwi-server power'" + "systemctl poweroff --no-block",
+          "restart": GOING_DOWN % "'restarted by kiwi-server power'" + "systemctl reboot --no-block"}
 
 
 def run(host, action, ssh=None, runner=None):

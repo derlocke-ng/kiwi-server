@@ -38,6 +38,7 @@ pages:
   - design/scale.md: "Design: many machines, and services that move"
   - design/authority.md: "Design: one truth, permissions and policy"
   - design/runbook.md: "Design: a runbook, what happens in which case"
+  - design/basics-twice.md: "Design: the network's basics twice"
   - design/no-master.md: "Design: a network without a master"
   - design/public-services.md: "Design: services for the public"
   - design/website.md: "Design: a public website"

@@ -50,6 +50,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [The page and the apps as server management](design/ui.md) | the machines table by site, a machine's story and states, one name per thing, speed, the app on the shared kit |
 | [Many machines, and services that move](design/scale.md) | why not Ansible or one cluster, what 2.259 built, machines that report in, names by service, moving a service, standby and failover, site controllers |
 | [One truth, permissions and policy](design/authority.md) | what was wrong with how kiwi-server decided things by itself, and the rebuild: one writer of the fleet, permissions that run out (unused since 2.294.0), one policy table per part, a diagnosis before a decision; no part with data moves by itself |
+| [The basics twice](design/basics-twice.md) | DNS, DHCP and the gateway on two machines of a site, with a moving address. Not built |
 | [A runbook](design/runbook.md) | admins decide beforehand what happens in which case; each machine's agent acts on its own cases. Built: the lines checked and shown, part-down acted on by the machine |
 | [Services for the public](design/public-services.md) | accounts, sign-up, landing page, status |
 | [A public website](design/website.md) | the front page from a pinned repository of pages |

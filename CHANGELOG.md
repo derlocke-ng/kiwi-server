@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.297.0 — (unreleased)
+## 2.297.0 — the runbook on the control node, a store back from its copy
 
 - The moving address is said again every 30 seconds (kiwi-modules 0.117.1), and the Machines table
   names the machine that holds it.

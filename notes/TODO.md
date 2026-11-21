@@ -17,7 +17,7 @@ L: days. New ideas go to the end of their section.
    not answer; the master's `stream` door into a fail2ban jail.~~ Done (2.294.0).
 4. ~~A restore of a data part onto another machine when its machine is dead: `move --gone` from the
    newest backup without the source.~~ Built (next release); the drill on real machines is open. M
-5. A runbook: admins decide beforehand, per machine or part and case, what happens (a machine
+5. A runbook (docs/design/runbook.md): admins decide beforehand, per machine or part and case, what happens (a machine
    gone, a service down, a disk filling, a backup overdue, an update failed, cut off from the
    network): tell, restart, stop, restore elsewhere, wait for a person. Written in the fleet file,
    shown on the page and in the app. The owner, 22 Nov 2026: every node's agent handles its own

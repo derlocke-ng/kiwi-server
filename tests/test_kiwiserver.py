@@ -4676,6 +4676,32 @@ class TestOnion(Base):
             self.assertEqual(c.sshca_sign("ssh-ed25519 AAAAx helper@laptop", days=400), "ssh-ed25519-cert-v01@openssh.com CERT")
         self.assertFalse(any(n.startswith("tmp") for n in os.listdir(ram)))      # the key's folder is gone again
 
+    def test_a_take_by_the_standby_is_written_down_once(self):
+        # 21 Nov 2026: the next look came while the switch's applies still ran, the fleet file did not
+        # say so yet, and a second switch job started three minutes after the first
+        f = self.net()
+        fake = os.path.join(self.tmp, "fake-kiwi")
+        event = {"kind": "switch", "host": "quince", "part": "vault", "to": "medlar", "taken": True,
+                 "text": "medlar took vault from quince by itself 2 minutes ago"}
+        write(fake, "#!/bin/sh\n[ \"$1\" = gone ] && echo '%s'\nexit 0\n" % json.dumps({"events": [event]}))
+        os.chmod(fake, 0o755)
+        ram = os.path.join(self.tmp, "ram")
+        os.makedirs(ram)
+        c = controlmod.Control(f.path, kiwi_cmd=[fake], run_dir=ram)
+        write(os.path.join(c.run, "status.json"), "{}")
+        started = []
+
+        def start(action, hosts=(), user="admin", wait=False, at="", module=""):
+            started.append((action, list(hosts), at, module))
+            c._write({"id": "j%d" % len(started), "action": action, "hosts": list(hosts), "user": user, "state": "running",
+                      "started": None, "ended": None, "rc": None})
+            return "j%d" % len(started)
+        with mock.patch.object(c, "locked", lambda: False), mock.patch.object(c, "start", start):
+            c.recover()
+            c.recover()
+        self.assertEqual(started, [("switch", ["quince"], "taken", "vault")])
+        self.assertEqual(c.argv("switch", ["quince"], "taken", "vault")[-1], "--taken")
+
     def test_a_hidden_service_gets_a_new_address(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address", "--anyway")

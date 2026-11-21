@@ -2520,7 +2520,12 @@ class Control:
             elif e.get("kind") == "unlocked" and e["text"].endswith("it starts now"):
                 self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
             elif e.get("kind") == "switch" and e.get("part") and e.get("taken"):
-                # its standby took it by itself, by the permissions (lease.py): written down as a switch
+                # its standby took it by itself, by the permissions (lease.py): written down as a switch.
+                # Once: the next look comes while the switch's applies still run, and the fleet file does
+                # not say so yet (21 Nov 2026: a second switch job three minutes after the first)
+                if any(j.get("action") == "switch" and j.get("hosts") == [e["host"]] and j.get("state") in ("waiting", "running")
+                       for j in self.jobs(10)):
+                    continue
                 try:
                     self.start("switch", [e["host"]], user="control", module=e["part"], at="taken")
                     self.audit("control", e["text"], hosts=[e["host"], e.get("to", "")])

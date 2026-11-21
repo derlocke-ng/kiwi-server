@@ -2493,10 +2493,13 @@ def cmd_recover(args):
     for row in seen.get("hosts") or []:
         for t in (row.get("facts") or {}).get("took") or []:
             if (t["from"], t["part"], row["host"]) in partstandby.links(fleet):
+                # how long ago, not a clock time: the control node's container keeps UTC (it said
+                # "01:32" for 02:32, 21 Nov 2026)
+                ago = max(0, int(time.time()) - t["at"])
                 events.append({"kind": "switch", "host": t["from"], "part": t["part"], "to": row["host"], "taken": True,
-                               "text": "%s took %s from %s by itself %s: its permission there had run out and its witness "
+                               "text": "%s took %s from %s by itself %s ago: its permission there had run out and its witness "
                                        "agreed. Written down as a switch" % (row["host"], t["part"], t["from"],
-                                                                             time.strftime("%H:%M", time.localtime(t["at"])))})
+                                                                             util.count(max(1, ago // 60), "minute"))})
     events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds and l[1] not in (held.get(l[0]) or [])],
                                 said, state, time.time(), sees, copy_age, independent)
     if not args.dry_run:

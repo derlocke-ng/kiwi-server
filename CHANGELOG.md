@@ -27,6 +27,8 @@
   machine's role script differs from its last apply's in the stack's files, containers or names
   only, the apply writes those, restarts what changed and checks the stack; the machine's own
   steps are left out. `KIWI_FULL_APPLY=1` runs the whole role.
+- **A crash loop is told**: a container that systemd or docker restarted three times or more in ten
+  minutes is a warning ("it does not stay up"), with the way to its log.
 - **Devices by site**: the Devices page groups devices by the site of the master they connect to,
   with `site:NAME` in its filter.
 

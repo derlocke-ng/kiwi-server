@@ -5408,9 +5408,9 @@ def service_script(name, action, lines=200):
             else 'systemctl %s "$n.service"' % action)
     dock = 'docker logs --tail %d "$n" 2>&1' % lines if action == "logs" else 'docker %s "$n" >/dev/null' % action
     # a person's stop: the machine's runbook leaves it stopped (runbook.py), until it runs again
-    held = ({"stop": 'mkdir -p /run/kiwi-server/stopped && touch "/run/kiwi-server/stopped/$n"\n',
-             "start": 'rm -f "/run/kiwi-server/stopped/$n"\n', "restart": 'rm -f "/run/kiwi-server/stopped/$n"\n'}
-            .get(action, ""))
+    held = ({"stop": '{ mkdir -p /run/kiwi-server/stopped && touch "/run/kiwi-server/stopped/$n"; } 2>/dev/null || true\n',
+             "start": 'rm -f "/run/kiwi-server/stopped/$n" 2>/dev/null || true\n',
+             "restart": 'rm -f "/run/kiwi-server/stopped/$n" 2>/dev/null || true\n'}.get(action, ""))
     return ("n=%s\n"
             'if systemctl cat "$n.service" >/dev/null 2>&1; then %s\n'
             'elif command -v docker >/dev/null && docker inspect "$n" >/dev/null 2>&1; then %s\n'

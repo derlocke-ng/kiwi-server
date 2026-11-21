@@ -84,16 +84,22 @@ anything but one setting, and each computer's own `.kiwi-state.json`.
   no key of the network, so the master still holds none. A witness that lies
   can cause a switch only when the standby does not reach the machine either,
   and can hold a switch up. It reads nothing.
+- A permission lasts three minutes and is renewed every minute, with the
+  agent's report (the owner, 21 November). Its length is how long a part is
+  away after a power cut: the standby may take it only when it has run out, so
+  about four minutes, where the switch by itself took six. One renewal that is
+  lost stops nothing.
 - A part with no standby needs no permission: no other machine could run it.
-- The same rule decides which control node acts when there are two (step 4).
+- The same rule decides which control node acts when there are two (step 5).
 
 What goes: the hold in the agent's answer, the marks for switched off, seen and
 switched, and the standby's check whether it reaches the machine.
 
 ### 3. Policy: one table per part
 
-Each part says four things. Modules bring the defaults, the fleet file changes
-them, and one engine reads them.
+Each part says six things. Modules bring the defaults (a site's DNS and the
+gateway must be up, game servers can wait), the fleet file changes them per
+part, and one engine reads them.
 
 | Question | Answers |
 |---|---|
@@ -101,6 +107,8 @@ them, and one engine reads them.
 | How many copies? | one; one with a standby; two at once (a part that keeps no data) |
 | Its machine is lost | wait; switch to the standby; ask a person |
 | Its machine reaches no other voter | keep running (two copies are possible) or stop (none is possible) |
+| How much is it needed? | must be up; normal; can wait |
+| A question about it gets no answer | remind (after 1, 6 and 24 hours), or act anyway after a time the row names |
 
 The last question has no answer that is right for every part: software cannot
 tell a dead machine from a cut cable. The owner's default, 21 November: keep
@@ -111,7 +119,49 @@ machine stops. A drill per kind of row proves it.
 For machines the table that exists stays (`recovery:`): tell, or restart at
 the provider, after so many minutes.
 
-### 4. A second control node
+**What is done by itself** follows from two things: how much the part or
+machine is needed, and whether the action can be undone. A restart can be
+undone, a switch to a fresh copy can, a reinstall or a switch to an old copy
+cannot. Needed and undoable: it is done. Not undoable: a person is asked, and
+how much it is needed decides whether the question is repeated or, after the
+time its row names, acted on. Nothing that cannot be undone is ever done
+without a person.
+
+### 4. A diagnosis before a decision
+
+The owner, 21 November, on a master that does not answer: "check what's up, do
+we need the standby master, is the second master running, is it just a normal
+reboot (proper logging of what happens), did it maybe crash, status netcup
+check maybe, send alert." The checks exist today in separate places. They
+become one procedure that runs in a fixed order and ends in one conclusion:
+
+| Check, in this order | Conclusion | What follows |
+|---|---|---|
+| Was it told to restart, update or switch off? | planned | wait, no message |
+| Does its boot system answer? | it waits for its disk's key | its ring is forwarded |
+| What does its provider say? | switched off; or running and silent | started; or restarted |
+| Do other machines at its site answer? | the whole site is away | nothing to restart: said so |
+| Does its standby or a witness reach it? | only the way from here is cut | nothing is done |
+| None of these | not known | nothing is touched: a message with what was found, and the actions as buttons |
+
+Meanwhile a standby master takes the devices, as today.
+
+- **A machine says when it goes down.** Its agent sends a last report with the
+  reason (a restart for an update, `power off`, a shutdown at its console). A
+  restart and a crash are then no longer the same silence.
+- **One record per case**: what was found, the conclusion, what was done and
+  how it ended, in Activity and in the message. For example: "sorbet does not
+  answer. netcup says it runs, it was not told to restart, papaya answers: it
+  hangs. Restarted, the first of three tries."
+- **A fixed list, no rule language**: about ten events (a machine silent, a
+  part down on a machine that runs, a disk filling, a backup overdue, a
+  certificate running out, a copy kept ready that is old, a site silent, the
+  control node silent, an update that failed, an apply that failed), about
+  seven conclusions and six actions. What fits none of them is "not known".
+  That is the answer to what cannot be foreseen: nothing is touched, and a
+  person is told with everything that was found.
+
+### 5. A second control node
 
 The computer that manages the network runs the same control node, in the same
 container, while it is on. It holds the keys already. With one writer and a
@@ -121,21 +171,46 @@ node's own machine then restarts or hands over as its row says, or waits for
 the OK of the second control node, of kiwi-server or of an app (the owner,
 21 November).
 
+**A person outranks the automation** (the owner, 21 November: "in an emergency
+it should have the higher power").
+
+- The control node is gone: the computer becomes the control node that acts, by
+  the vote above.
+- The control node runs and the computer does not reach it: the computer keeps
+  its changes as a list. A person can still force an action on the machines
+  the computer does reach. That is said in so many words before it is done, it
+  is written down, and it raises a counter that every copy of the fleet
+  carries. When the two meet again the lower counter gives way: the control
+  node takes over what the person did.
+
+A person who holds the keys always can act. The system records it and follows.
+
 ## Order
 
 1. One truth. The observed and remembered data move first (they cause the
    conflicts), then computers send changes instead of files.
 2. Permissions, for the parts that have a standby. The switch by itself is
    rebuilt on them and loses its special cases.
-3. The table, and the sentence on the page.
-4. The second control node.
+3. The table and the sentence on the page; the diagnosis, the last report of a
+   machine that goes down, and the record of each case.
+4. The second control node, and the forced action of a person.
 
 Each step ends with its drills on real machines, and is released as one piece.
 
+## Decided (the owner, 21 November 2026)
+
+- New features that act by themselves wait for steps 1 and 2.
+- Witnesses are other nodes of the site; the master only where there is none.
+- A machine that reaches no other voter keeps its parts running, except a part
+  with a standby that switches by itself.
+- A permission lasts three minutes.
+- Modules bring how much a part is needed; the fleet file changes it per part.
+- A person's forced action counts, and the control node takes it over.
+- `power off` holds a switch (built in 2.284.0).
+
 ## Not decided
 
-- How long a permission lasts. It bounds how long a part is away after a power
-  cut (today six minutes) and how often the voters talk.
-- What a part does that waits for a person's answer and gets none for a day.
-- Whether a computer may write while the control node is unreachable but
-  running (two writers for a while), or only keep its list.
+- The lists of step 4 are a first draft: which events, conclusions and actions
+  exactly, and the checks for each event beside "a machine is silent".
+- The time after which a question about a part that must be up is acted on
+  without an answer, and for which actions that is allowed at all.

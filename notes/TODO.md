@@ -9,8 +9,10 @@ and gets its line in the changelog. New ideas go to the end, not to the front.
 No new feature that acts by itself until steps 1 and 2 of docs/design/authority.md are built:
 1. One truth: the control node writes, computers send changes; observed and remembered data leave the synced files.
 2. Permissions that run out, for parts with a standby (voters: the machine, its standby, another node of the site; the master only as a fallback).
-3. One policy table per part, and its sentence on the page.
-4. A second control node on the computer that manages the network.
+3. One policy table per part (where, copies, machine lost, alone, how much it is needed, no answer) and its sentence on the page;
+   the diagnosis before a decision, a machine's last report when it goes down, one record per case.
+4. A second control node on the computer that manages the network; a person's forced action counts (a counter, the lower gives way).
+Decided 21 Nov: a permission lasts three minutes; modules bring how much a part is needed; nothing that cannot be undone runs by itself.
 
 ## A. Shipped, never tried on real machines
 

@@ -604,6 +604,38 @@ at ("… has not answered for 16 minutes (it said 25 minutes ago that it restart
 back 25 minutes later)"). When the machine answers again, Activity gets one line for the
 case: how long it was away, what was found, and what was done.
 
+### What happens to each part
+
+Every part has a row in one table: whether it can move, whether a standby takes it over by
+itself, and how much the network needs it. The machine's page (*Services*, *When it stops*)
+and the app show it as one sentence, and each part's below it:
+
+```bash
+kiwi-server parts ~/kiwi/fleet.yaml           # one sentence per machine
+kiwi-server parts ~/kiwi/fleet.yaml medlar    # and each of its parts
+```
+
+```text
+When medlar stops: vault goes to quince after about four minutes; tang (the network needs it) and 11 more are away until it is back.
+```
+
+The kinds of parts bring their rows (a gateway, a site's DNS or an unlock ring runs on its
+machine only, and the network needs it; game servers can wait). The fleet file changes them
+per part:
+
+```yaml
+defaults:
+  parts:
+    vault: { lost: ask, need: must }    # lost: switch | wait | ask; need: must | normal | wait
+```
+
+`lost` says what happens when the part's machine is lost: its standby takes it by itself
+(`switch`, the default while `recovery: switch` is on), it waits for its machine (`wait`), or a
+person switches it (`ask`). Only a part with `switch` runs by a permission
+([backups.md](backups.md#permissions-a-part-runs-only-where-it-may)); the others keep running
+on a machine that is cut off, since nobody takes them. `need` is shown for now; messages do not
+go by it yet.
+
 `kiwi-server power off` also tells the standby of each of the machine's parts with a
 permission not to take them while the machine is off; `power restart` tells it to wait 15
 minutes. Both end when the machine answers again.

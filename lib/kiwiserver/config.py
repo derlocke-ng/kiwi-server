@@ -198,6 +198,8 @@ DEFAULTS = {
         "node": {"after": 60, "do": "tell"},
         "unlock": True,
     },
+    # per part, what happens to it when its machine stops: {part: {lost, need}} (policy.py)
+    "parts": {},
     # where messages go when something is wrong, and when it is fine again (notify.py, health.py)
     "notify": {
         "mail": {"to": [], "host": "", "port": 0, "tls": "starttls", "user": "", "password": "", "from": ""},

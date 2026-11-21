@@ -766,6 +766,10 @@ stopped until you start it or the machine restarts.</p>
 <input type="hidden" name="action" value="service"><input type="hidden" name="host" value="{{ m.name }}">
 <input type="hidden" name="module" value="{{ s.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
 {% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+{% if m.stops %}<h2 id="when">When it stops</h2><p>{{ m.stops }}</p>
+<details><summary class="muted small">Each part</summary><ul class="small">{% for r in m.parts_table %}<li>{{ r.sentence }}</li>{% endfor %}</ul>
+<p class="muted small">What happens to a part, and how much the network needs it: <code>defaults.parts</code> in the fleet file
+(<code>lost: switch|wait|ask</code>, <code>need: must|normal|wait</code>).</p></details>{% endif %}
 {% if m.phase not in fresh and (targets or standby) %}<h2 id="move">Move a part, or keep it ready</h2>
 <p class="muted small">A part moves to another machine with its data, its secrets and its name. A part that is kept ready has its
 data copied to a second machine every minute, and that machine can take it over{% if switch_after and "control" in m.modules %}:
@@ -2070,6 +2074,8 @@ def make_app(control: Control):
                         "locked": bool((s or {}).get("locked")), "stage": (s or {}).get("stage") or "",
                         "waiting": h["name"] in waits,
                         "keep_ready": h.get("keep_ready") or {},
+                        # what its stop does to its parts (policy.py): one sentence, and one per part
+                        "stops": h.get("stops") or "", "parts_table": h.get("parts_table") or [],
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",

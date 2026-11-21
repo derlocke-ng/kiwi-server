@@ -344,18 +344,21 @@ def hostkey_path(fleet, name):
     return partstandby._hostkey_path(fleet, name)
 
 
+def master_of(roles):
+    return lambda h: h.role in roles and roles[h.role].node_type == "master" and not h.standby_of
+
+
 def links(fleet, roles):
     """{(machine, part): (standby, witness)} of the parts that run by a permission: those with a
-    standby and a third machine to be the witness. One without a witness runs as before."""
-    def is_master(h):
-        return h.role in roles and roles[h.role].node_type == "master" and not h.standby_of
-    from . import partstandby
+    standby, a third machine to be the witness, and a row in the table (policy.py) that says the
+    standby takes them by itself. Any other part runs as before, without a permission."""
+    from . import partstandby, policy
     out = {}
     for machine, part, standby in partstandby.links(fleet):
         if machine not in fleet.hosts or standby not in fleet.hosts:
             continue
-        w = witness(fleet, machine, standby, is_master)
-        if w:
+        w = witness(fleet, machine, standby, master_of(roles))
+        if w and policy.row(fleet, fleet.hosts[machine], part, standby, w)["lost"] == "switch":
             out[(machine, part)] = (standby, w)
     return out
 
@@ -387,8 +390,9 @@ def plan(fleet, roles, host, leased_parts, switch_on):
     for (machine, part), (standby, wit) in sorted(every.items()):
         if host.name == standby:
             if known_line(machine) and known_line(wit):
+                # it runs by a permission because its row says the standby takes it by itself (links)
                 vote.append({"part": part, "machine": machine, "address": fleet.hosts[machine].hostname, "role": "standby",
-                             "switch": switch_on, "witness": fleet.hosts[wit].hostname, "containers": None})
+                             "switch": True, "witness": fleet.hosts[wit].hostname, "containers": None})
         elif host.name == wit:
             if known_line(machine):
                 vote.append({"part": part, "machine": machine, "address": fleet.hosts[machine].hostname, "role": "witness"})

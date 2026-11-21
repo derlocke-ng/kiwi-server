@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.289.0 — what happens to each part
+
+The rest of step 3 of the rebuild in [docs/design/authority.md](docs/design/authority.md).
+
+- **One table per part** (`policy.py`): whether it can move, whether its standby takes it by
+  itself, how much the network needs it. The kinds of parts bring their rows; the fleet file
+  changes them with `defaults.parts: { vault: { lost: ask, need: must } }`, checked by `validate`.
+- **One sentence per machine** on its page (*Services*, *When it stops*), in the app, and from
+  `kiwi-server parts <fleet> [machine]`: "When medlar stops: vault goes to quince after about
+  four minutes; tang (the network needs it) and 11 more are away until it is back."
+- **Permissions follow the table**: only a part whose standby takes it by itself runs by a
+  permission; one a person switches, or that waits, keeps running on a machine that is cut off.
+- Drill `tests/drills/last-report.sh` (2.288.0's last report, on the test machines): the reason
+  of a `power restart` reached the control node in 7 seconds, the standby did not take the part,
+  and the machine held its permission again 142 seconds after.
+
 ## 2.288.0 — a diagnosis before a decision
 
 Part of step 3 of the rebuild in [docs/design/authority.md](docs/design/authority.md).

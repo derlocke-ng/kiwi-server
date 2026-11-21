@@ -310,7 +310,7 @@ vpn_restart() {
 backup_first() {
     [[ -x $STACK_DIR/kiwi/backup.sh && ${KIWI_UPDATE_NO_BACKUP:-} != 1 ]] || return 0
     echo "a backup first"
-    "$STACK_DIR/kiwi/backup.sh" || { echo "the backup before the update failed: nothing was updated (kiwi-stack backup says why)" >&2; return 1; }
+    "$STACK_DIR/kiwi/backup.sh" backup || { echo "the backup before the update failed: nothing was updated (kiwi-stack backup says why)" >&2; return 1; }
 }
 # the images' disk, nearly full: a master in RAM keeps them in half its memory (crumble, 18 Nov 2026:
 # 95 %). podman auto-update pulls every new image before an old one goes; then there is no room.

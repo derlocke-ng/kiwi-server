@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 from kiwiserver import lease  # noqa: E402
@@ -18,7 +19,7 @@ for a in "$@"; do case $a in root@*) to=${a#root@}; shift; break ;; esac; shift;
 cmd="$*"
 [[ -e $NET/away-$to || -e $NET/cut-$ME-$to ]] && { echo "ssh: connect to host $to port 22: Connection timed out" >&2; exit 255; }
 case $cmd in
-    grant\ *) SSH_ORIGINAL_COMMAND=$cmd KIWI_LEASE_DIR=$NET/$to/lease KIWI_LEASE_RUN=$NET/$to/run ME=$to exec "$BIN/kiwi-lease" grant ;;
+    grant\ *) SSH_ORIGINAL_COMMAND=$cmd KIWI_LEASE_DIR=$NET/$to/lease KIWI_LEASE_RUN=$NET/$to/run ME=$to exec "$BIN/kiwi-lease" grant "$ME" ;;
     ask\ *)   SSH_ORIGINAL_COMMAND=$cmd KIWI_LEASE_DIR=$NET/$to/vote ME=$to exec "$BIN/kiwi-vote" ask ;;
 esac
 echo "no such forced command" >&2; exit 1
@@ -218,6 +219,46 @@ class TestLease(unittest.TestCase):
         self.assertFalse(self.may_run())            # nobody voted within LENGTH: stopped
         self.assertIn("lime lease stop vault vault-db", self.stack())
 
+    def test_a_boot_forgets_the_permissions_before_it(self):
+        # a clock that is behind at boot would keep an old permission good (the review of 22 Nov 2026)
+        self.put("bootid", "one")
+        os.environ["KIWI_LEASE_BOOT"] = os.path.join(self.net, "bootid")
+        self.addCleanup(os.environ.pop, "KIWI_LEASE_BOOT", None)
+        self.minutes(2)
+        self.assertTrue(self.may_run())
+        self.put("bootid", "two")                       # it booted again, before any vote came
+        self.tick()
+        self.assertFalse(self.may_run())
+        self.minutes(1)
+        self.assertTrue(self.may_run())                 # the voters give it anew
+
+    def test_a_key_votes_only_as_its_own_machine(self):
+        r = subprocess.run([os.path.join(self.bin, "kiwi-lease"), "grant", "quince"], capture_output=True, text=True,
+                           env=dict(self.env("lime"), SSH_ORIGINAL_COMMAND="grant vault medlar"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("this key is quince's", r.stderr)
+
+    def test_a_take_that_does_not_start_is_tried_again_and_said(self):
+        self.minutes(2)
+        self.put("away-lime", "")
+        self.put("stack-fails-quince", "")
+        self.minutes(6, away=("lime",))
+        self.assertIn("failed", self.read("quince/vote/state/vault.took"))
+        self.assertIsNone(self.read("quince/vote/state/vault@lime.refused"))       # it gives the permission again
+        self.assertIsNone(self.read("quince/standby/state/vault.taken"))
+        os.remove(os.path.join(self.net, "stack-fails-quince"))
+        self.minutes(1, away=("lime",))
+        self.assertNotIn("failed", self.read("quince/vote/state/vault.took"))       # the next minute: taken
+        self.assertIsNotNone(self.read("quince/standby/state/vault.taken"))          # nothing fetched over it now
+
+    def test_a_hold_outlives_a_grant_in_the_moment_of_the_power_off(self):
+        self.minutes(2)
+        self.put("quince/vote/state/vault@lime.hold", "0 %d" % self.now)
+        self.minutes(1)                                  # it still answered while it shut down
+        self.assertIsNotNone(self.read("quince/vote/state/vault@lime.hold"))
+        self.minutes(3)                                  # it answers well after: it is not off
+        self.assertIsNone(self.read("quince/vote/state/vault@lime.hold"))
+
     def test_a_stranger_gets_no_say(self):
         r = subprocess.run([os.path.join(self.bin, "kiwi-lease"), "grant"], capture_output=True, text=True,
                            env=dict(self.env("lime"), SSH_ORIGINAL_COMMAND="grant vault papaya"))
@@ -295,6 +336,18 @@ class TestPlan(unittest.TestCase):
         standby = lease.plan(self.fleet, self.roles, self.fleet.hosts["quince"], {}, True)
         self.assertEqual(standby["vote"], [])
         self.assertEqual(standby["waits"], ["medlar"])
+
+    @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen needed")
+    def test_an_apply_of_a_standby_waits_for_its_take_to_be_written_down(self):
+        from kiwiserver import remote
+        said = {"quince": "vault 1000 lime\n", "medlar": ""}
+        run = lambda tgt, script, data=None: said[tgt].encode()                     # noqa: E731
+        with mock.patch.object(remote, "reach", lambda h, ssh: h.name):
+            self.assertEqual(lease.unrecorded_takes(self.fleet, self.roles, self.fleet.hosts["quince"], run), [("vault", "lime")])
+            self.assertEqual(lease.unrecorded_takes(self.fleet, self.roles, self.fleet.hosts["medlar"], run), [])   # no standby
+            said["quince"] = ""
+            self.assertEqual(lease.unrecorded_takes(self.fleet, self.roles, self.fleet.hosts["quince"], run), [])
+        self.assertIn("grep -q failed", lease.TOOK)                                  # a failed take is no take
 
     def test_took(self):
         self.assertEqual(lease.took("vault 1000 lime\nbad\ngitea x y\n"), {"vault": (1000, "lime")})

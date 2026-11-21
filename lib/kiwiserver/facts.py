@@ -266,7 +266,7 @@ def parse(data, local_now=None):
         elif key == "took":
             p = value.split()
             if len(p) >= 3 and p[1].isdigit():
-                took.append({"part": p[0], "at": int(p[1]), "from": p[2]})
+                took.append({"part": p[0], "at": int(p[1]), "from": p[2], "failed": len(p) > 3 and p[3] == "failed"})
         elif key == "standby":
             p = value.split(" ", 2)
             if len(p) >= 2 and p[1].lstrip("-").isdigit():

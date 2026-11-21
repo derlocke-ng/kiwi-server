@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.291.0 — what the review of the permissions found
+
+An independent review of 2.286–2.290 found these; each is fixed and tested.
+
+- **A standby that took a part fetched over it**: its next fetch (rsync --delete) could write the
+  old machine's folders over the live part. Nothing is fetched over a part after its take.
+- **Writing a take down could stop the part** on its new machine: the apply found no permission
+  there. The switch now gives the new machine a start permission and sets the witness up anew.
+  An apply of a standby waits until its take is written down.
+- **A take that did not start lost the part**: both voters refused the old machine. Now the
+  standby gives it the permission again, tries every minute, and the control node tells you.
+- **The control node's own switch ignored the table and the diagnosis**: it moved parts a person
+  switches, and parts of a machine that said it restarts. It follows both now.
+- **A power off's hold could end at once**, when a permission was given in the seconds before the
+  machine went down. It ends only when the machine answers two minutes after it was set.
+- **A whole site away kept a master's devices from going to its standby master**; machines that are
+  off on purpose no longer count as away; a power off without a reason is no longer "planned".
+- The voters' times count from when a permission arrived, each SSH call has a limit, a boot drops
+  the permissions from before it, a voter's key votes only as that voter, old voter lines and a
+  part's old permission are cleaned up, lists in what the network remembers change item by item,
+  and an emergency told before 2.290 is repeated too.
+
 ## 2.290.1 — emergencies reach the app
 
 - Fixed: the app (and `status --porcelain` on a computer joined to a control node) did not get

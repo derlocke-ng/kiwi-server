@@ -350,8 +350,16 @@ possible witness runs as before, without a permission.
   fetched within the last 15 minutes. That is about four minutes after quince's power went
   out: 244 seconds in the drill. The control node is not needed for it. When it sees the
   take in medlar's next report, it writes it down as a switch.
+- From the take on, medlar fetches nothing more over the part: its copy is the part now. A take
+  whose containers do not start is tried again every minute; medlar then gives quince its
+  permission again, and the control node tells you.
 - A quince that comes back gets no permission for the part, so the part does not start
-  there. The apply that follows makes quince the standby.
+  there. The apply that follows makes quince the standby. An apply of medlar waits until the
+  take is written down: it would make the part a copy kept ready again.
+- When the switch is written down, medlar gets a permission from the switch itself and the
+  witness its new lines at once, so the part does not stop while the voters change.
+- After a boot, a machine counts no permission from before it (a clock that is behind at boot
+  would keep an old one good); its voters give it a new one within a minute.
 - A voter that never gave a permission does not count the machine as gone. When only the
   standby lost its way to quince, the witness still reaches it and nothing moves. When the
   witness is away as well as quince, nothing moves either, and a person switches.

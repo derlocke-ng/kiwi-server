@@ -188,7 +188,7 @@ def update(state, machines, services, happened, now, after=600, acks=None):
                                **({"hint": said[4]} if len(said) > 4 and said[4] else {})))
             if kind in ("machine", "service"):
                 state.setdefault("incidents", []).append({"key": key, "text": text, "from": item["since"], "to": None})
-        elif item.get("emergency") and item["told"] and not item.get("acked") and now - item.get("last", now) >= EMERGENCY_AGAIN:
+        elif item.get("emergency") and item["told"] and not item.get("acked") and now - (item.get("last") or item["since"]) >= EMERGENCY_AGAIN:
             item["last"] = now
             events.append({"kind": "wrong", "level": "emergency", "key": key,
                            "text": "Still, for %s, and nobody said they have it: %s" % (duration(now - item["since"]), text)})

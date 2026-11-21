@@ -47,6 +47,8 @@ def policy(fleet, kind):
 
 
 REPORT_EVERY = 60          # seconds between two reports of a machine's agent
+# conclusions of step()'s look under which nothing is done to the machine or its parts
+QUIET_CONCLUSIONS = ("planned", "switched off", "its whole site is away", "only the way from the control node is cut")
 PLANNED_WAIT = 600         # seconds a machine that said it restarts may be away before anything is done or told
 WORDS = {"reboot": "restarts", "poweroff": "switches off", "halt": "stops", "stop": "stops"}
 
@@ -157,7 +159,9 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         if word and word.get("at", 0) >= seen_ok.get(name, 0) - REPORT_EVERY and now - word.get("at", 0) < 86400:
             checks.append("it said %s ago that it %s%s" % (_ago(now - word["at"]), WORDS.get(word.get("reason"), "stops"),
                                                           " (%s)" % word["why"] if word.get("why") else ""))
-            if word.get("reason") in ("poweroff", "halt"):
+            if word.get("reason") in ("poweroff", "halt") and word.get("why"):
+                # switched off by kiwi-server (power off): left alone. One without a reason (the provider's
+                # maintenance, the button) is looked at like any other silence
                 gone.pop(name, None)
                 found("switched off")
                 events.append({"host": name, "kind": "off", "planned": True, "text": "%s is switched off: %s" % (name, checks[0])})
@@ -172,12 +176,26 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
             found("not known yet")
             events.append({"host": name, "kind": "waiting", "text": what})
             continue
+        def send_devices(what=what):
+            """A master gone for its `after`: its devices go to its standby (moved), also when its whole site is away."""
+            standbys = [s for s in fleet.standbys(name) if s.standby_endpoint] if point and kind == "master" else []
+            if point and standbys and name not in pointed:
+                sb = standbys[0]
+                try:
+                    before = point(sb.standby_endpoint)
+                except KiwiError as e:
+                    events.append({"host": name, "kind": "held", "text": what + ". Its devices could not be sent to its "
+                                   "standby %s (%s)" % (sb.name, str(e).splitlines()[0][:120])})
+                else:
+                    pointed[name] = {"standby": sb.name, "before": before, "since": now}
+                    events.append({"host": name, "kind": "moved", "text": what + ": its devices are sent to its standby %s" % sb.name})
         # 2. does any other machine of its site answer? None: the whole site is away, restarting one helps nothing
         if site and site.get(name):
-            mates = sorted(n for n in kinds if n != name and site.get(n) == site[name])
+            mates = sorted(n for n in kinds if n != name and site.get(n) == site[name] and n not in off)
             if mates and not any(said.get(n, True) for n in mates):
                 checks.append("no other machine at %s answers either (%s)" % (site[name], ", ".join(mates)))
                 found("its whole site is away")
+                send_devices(what)          # the devices still go to a standby master elsewhere
                 events.append({"host": name, "kind": "tell", "text": "%s. %s Nothing is restarted." % (what, case["found"])})
                 continue
         # 3. do the machines that give it its permissions, or its standby, still reach it?
@@ -195,17 +213,7 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         found("not known")
         if checks:
             what = "%s (%s)" % (what, "; ".join(checks))
-        standbys = [s for s in fleet.standbys(name) if s.standby_endpoint] if point and kind == "master" else []
-        if point and standbys and name not in pointed:
-            sb = standbys[0]
-            try:
-                before = point(sb.standby_endpoint)
-            except KiwiError as e:
-                events.append({"host": name, "kind": "held", "text": what + ". Its devices could not be sent to its "
-                               "standby %s (%s)" % (sb.name, str(e).splitlines()[0][:120])})
-            else:
-                pointed[name] = {"standby": sb.name, "before": before, "since": now}
-                events.append({"host": name, "kind": "moved", "text": what + ": its devices are sent to its standby %s" % sb.name})
+        send_devices(what)
         if do == "tell":
             events.append({"host": name, "kind": "tell", "text": what})
             continue
@@ -271,16 +279,24 @@ def switches(fleet, links, said, state, now, sees, copy_age=None, independent=No
     held, tell."""
     on, after = switch_policy(fleet)
     gone, done, events = state.get("gone") or {}, state.setdefault("switched", {}), []
+    from . import policy
     for src, part, dst in links:
         if said.get(src, True) or src not in gone or src in (state.get("off") or {}):
             continue
+        # what step()'s look found explains it: a restart it said it makes, switched off, its whole site away,
+        # or only the way from here cut. Nothing is switched then (the review of 22 Nov 2026)
+        if ((state.get("cases") or {}).get(src) or {}).get("conclusion") in QUIET_CONCLUSIONS:
+            continue
+        lost = policy.row(fleet, fleet.hosts[src], part, dst, None)["lost"] if src in fleet.hosts else ("switch" if on else "ask")
+        if lost == "wait":
+            continue        # its row says it waits for its machine
         h = fleet.hosts.get(src)
         if "control" in ((getattr(h, "modules", None) or []) + list(((getattr(h, "role_settings_raw", None) or {}).get("modules")) or [])):
             continue        # the control node's own machine: whoever reads this is not it (a computer's `gone`)
         minutes = int((now - gone[src]) / 60)
         what = "%s has not answered for %d minute%s; %s is kept ready on %s" % (src, minutes, "" if minutes == 1 else "s", part, dst)
         key = "%s/%s" % (src, part)
-        if not on:
+        if lost != "switch":                # a person switches it (its row, or recovery: switch off)
             events.append({"host": src, "kind": "tell", "part": part, "text": what + ": kiwi-server switch, by hand"})
             continue
         if minutes < after:

@@ -16094,6 +16094,48 @@ class TestRecovery(Base):
         self.assertTrue(any("stop" in sc for sc in on_papaya) and any("start" in sc for sc in on_papaya), on_papaya)
         self.assertEqual(util.read_text(f.path), before)                 # the fleet file as it was
 
+    def test_a_dead_machines_part_comes_from_its_newest_backup_on_another(self):
+        """move --gone: a person decides that papaya is dead; vault comes from papaya's newest backup
+        onto quince. Nothing is asked of papaya, and papaya is not applied."""
+        papaya, quince = self.network().raw["hosts"]["papaya"], self.network().raw["hosts"]["quince"]
+        f = self.network(quince=dict(quince, node=dict(quince["node"], modules=["vpn-client", "reverse-proxy", "backup"],
+                                                       backup={"servers": ["https://backup.lychee.kiwi"]})))
+        for name in f.hosts:
+            cli.record_applied(f, name)
+        ran, applied, restored = [], [], []
+
+        def run(tgt, script, data=None):
+            ran.append((tgt, script))
+            if tgt == "core@papaya" and away:
+                raise KiwiError("ssh: connect to host papaya port 22: No route to host")
+            return b""
+        away = False
+        args = cli.build_parser().parse_args(["move", f.path, "vault", "papaya", "quince", "--gone", "--yes"])
+        buf = io.StringIO()
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), mock.patch.object(remote, "run", run), \
+                contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit):                     # papaya answers: a move without --gone
+                args.fn(args)
+            self.assertIn("papaya answers: a move without --gone", buf.getvalue())
+            away = True
+            plain = cli.build_parser().parse_args(["move", f.path, "vault", "papaya", "quince"])
+            with self.assertRaises(SystemExit):
+                plain.fn(plain)
+            self.assertIn("if it is dead, --gone takes vault from its newest backup", buf.getvalue())
+            with mock.patch.object(cli, "main", lambda argv: applied.append(argv[2:]) or 0), \
+                    mock.patch.object(cli, "restore_from", lambda f2, r2, m2, dst, src, parts, **k:
+                                      restored.append((dst.name, src.name, parts)) or ""):
+                ran[:] = []
+                args.fn(args)
+        self.assertEqual(restored, [("quince", "papaya", ["vault"])])
+        self.assertEqual([t for t, _s in ran if t == "core@papaya"], ["core@papaya"])   # the one look whether it answers
+        self.assertEqual(applied[0], ["quince"])
+        self.assertFalse(any("papaya" in a for a in applied), applied)
+        after = yaml.safe_load(util.read_text(f.path))["hosts"]
+        self.assertIn("vault", after["quince"]["node"]["modules"])
+        self.assertNotIn("vault", after["papaya"]["node"]["modules"])
+        self.assertIn("Should papaya answer again, apply it", buf.getvalue())
+
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod
         node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
@@ -16455,6 +16497,7 @@ class TestRecovery(Base):
         self.assertIn("Kept ready on a second machine: vault of papaya on lychee. That copy is for moving a part while its "
                       "machine runs", machine["by_itself"])
         self.assertFalse(any("switch" in (h["command"] or "") for h in machine["how"]))     # not from a dead machine
+        self.assertEqual(machine["how"][0]["command"], "kiwi-server move fleet.yaml <part> <dead machine> <other machine> --gone")
         self.assertNotIn("rebuild:sorbet", rebuild)                 # the master has its own case
         self.assertEqual([h["app"] for h in by["computer"]["how"]], [None, "rotate"])
         self.assertEqual([h["app"] for h in by["network"]["how"]], ["restore-copy", "copy"])

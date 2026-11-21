@@ -5588,12 +5588,24 @@ def certificate_again(fleet, p, tgt):
 
 def move_part(args, part, src_name, dst_name):
     """A part to another machine, with its data, its secrets and its name (partmove.py). Without
-    --yes: the plan."""
+    --yes: the plan. --gone: the machine it leaves is dead, the part comes from its newest backup
+    (a person's decision: what came after that backup is lost)."""
     from . import partmove
     fleet, roles, ms = load(args)
     out_dir = out_dir_for(args, fleet)
+    gone = bool(getattr(args, "gone", False))
     p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {},
-                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h))
+                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h), gone=gone)
+    if not p["stops"] and src_name in fleet.hosts:
+        try:
+            remote.run(remote.reach(fleet.hosts[src_name], None), "true")
+            if gone:
+                p["stops"].append("%s answers: a move without --gone stops %s there and makes one last backup, "
+                                  "so nothing is lost" % (src_name, part))
+        except KiwiError as e:
+            if not gone:
+                p["stops"].append("%s does not answer (%s): if it is dead, --gone takes %s from its newest backup"
+                                  % (src_name, str(e).splitlines()[-1][:80], part))
     if args.porcelain:
         print(json.dumps({k: v for k, v in p.items() if k != "data"}, indent=1))
         if p["stops"]:
@@ -5605,8 +5617,8 @@ def move_part(args, part, src_name, dst_name):
         if p["stops"]:
             raise SystemExit(1)
         if not getattr(args, "yes", False):
-            print("\nNothing was changed. With --yes it is done: kiwi-server move %s %s %s %s --yes"
-                  % (typed_path(fleet.path), part, src_name, dst_name))
+            print("\nNothing was changed. With --yes it is done: kiwi-server move %s %s %s %s%s --yes"
+                  % (typed_path(fleet.path), part, src_name, dst_name, " --gone" if gone else ""))
             return
     src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
     # rendered as an apply renders it: only then its settings hold what the network adds (20 Nov 2026:
@@ -5614,11 +5626,15 @@ def move_part(args, part, src_name, dst_name):
     _script, bundle = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).script(src)
     services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
     s_tgt, d_tgt = remote.reach(src, None), remote.reach(dst, None)
+    if gone:
+        services = []           # nothing to stop or start there again: it is gone
+        util.say("%s is gone: %s comes from its newest backup" % (src_name, part))
     # 1. it stops where it is, and that machine makes its last copy of it
     for c in services:
         remote.run(s_tgt, service_script(c, "stop"))
-    util.say("%s: %s stopped%s" % (src_name, part, " (%s)" % ", ".join(services) if services else ""))
-    if p["carry"]:
+    if not gone:
+        util.say("%s: %s stopped%s" % (src_name, part, " (%s)" % ", ".join(services) if services else ""))
+    if p["carry"] and not gone:
         util.say("%s: one last backup" % src_name)
         rc = remote.run_stream(s_tgt, "kiwi-stack backup")
         if rc != 0:
@@ -5662,12 +5678,18 @@ def move_part(args, part, src_name, dst_name):
                 remote.run(s_tgt, service_script(c, "start"))
             except KiwiError as e:
                 util.warn("%s: %s was not started again: %s" % (src_name, c, e))
-        raise KiwiError("%s. %s runs on %s again, with its data as it was; the fleet file is as before%s"
-                        % (why, part, src_name, "" if not back else
+        raise KiwiError("%s. %s the fleet file is as before%s"
+                        % (why, "Nothing runs it now (%s is gone);" % src_name if gone else
+                           "%s runs on %s again, with its data as it was;" % (part, src_name), "" if not back else
                            ". %s still has the part's leftovers: kiwi-server apply %s %s" % (dst_name, typed_path(fleet.path), dst_name)))
-    # 5. the old machine, and everyone the change reaches
-    failed = again(["apply", fleet.path, src_name])
-    failed = again(["apply", fleet.path, "--changed"]) or failed
+    # 5. the old machine, and everyone the change reaches (a machine that is gone: not it)
+    if gone:
+        fleet2, roles2, ms2 = load(args)
+        now = [n for n in changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2)) if n != src_name]
+        failed = again(["apply", fleet.path] + now) if now else 0
+    else:
+        failed = again(["apply", fleet.path, src_name])
+        failed = again(["apply", fleet.path, "--changed"]) or failed
     certificate_again(fleet, p, d_tgt)
     # 6. from now on it is in the new machine's own store
     if p["carry"]:
@@ -5678,6 +5700,12 @@ def move_part(args, part, src_name, dst_name):
             util.warn("%s: its backup was not started (the nightly one does it): %s" % (dst_name, e))
     if failed:
         raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed" % (part, dst_name, typed_path(fleet.path)))
+    if gone:
+        util.say("%s runs on %s now%s, with the data of %s's newest backup. Should %s answer again, apply it "
+                 "(kiwi-server apply %s %s): until then it runs its old copy" % (
+                     part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name, src_name,
+                     typed_path(fleet.path), src_name))
+        return
     util.say("%s runs on %s now%s. Its data is still on %s's disk, unused: delete it there when all is well"
              % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
 
@@ -6597,6 +6625,8 @@ def build_parser():
     s = sub("move", cmd_move); s.add_argument("fleet")
     s.add_argument("what", nargs="*", metavar="PART FROM TO", help="a part to another machine, with its data, secrets and name")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")
+    s.add_argument("--gone", action="store_true",
+                   help="FROM is dead: the part comes from its newest backup (what came after it is lost)")
     s.add_argument("--mesh", help="the new mesh, like 10.42.0.0/16")
     s.add_argument("--domain", help="the new domain, like internal")
     s = sub("wake", cmd_wake); s.add_argument("fleet"); s.add_argument("host")

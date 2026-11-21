@@ -535,9 +535,12 @@ def cases(fleet, roles, ms, hosts, state, fleet_arg):
                              "once it is installed anew."
                              % names(["%s of %s on %s" % (part, a, m) for a, part, m in ready])),
                 "you": "Install it anew under the same name: make its install media, start the machine from them (its "
-                       "disk is erased), then Set it up. A machine that only waits at start with a locked disk is not "
+                       "disk is erased), then Set it up. A part needed before that comes from the machine's newest "
+                       "backup onto another machine of its kind (what came after that backup is lost). A machine that only waits at start with a locked disk is not "
                        "lost: Unlock it on its page." + (" Encrypted here: %s." % names(ring_hosts) if ring_hosts else ""),
-                "how": [_how("Rebuild %s" % h.name, rebuild_commands(h, fleet_arg), "/hosts/%s#rebuild" % h.name,
+                "how": [_how("A dead machine's part onto another machine, from its newest backup",
+                             "kiwi-server move %s <part> <dead machine> <other machine> --gone" % f, None, None)]
+                + [_how("Rebuild %s" % h.name, rebuild_commands(h, fleet_arg), "/hosts/%s#rebuild" % h.name,
                         "rebuild:%s" % h.name) for h in others]
                 + [_how("Unlock %s" % n, "kiwi-server unlock %s %s" % (f, n), None, "unlock:%s" % n) for n in ring_hosts]})
 

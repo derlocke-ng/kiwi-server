@@ -287,6 +287,22 @@ brings the data is
 kiwi-server backups ~/kiwi/fleet.yaml lychee git --restore --from medlar
 ```
 
+### From a machine that is dead
+
+A move needs the machine it leaves, for step 1. When that machine is dead and a part of it is
+needed before it is installed anew, `--gone` takes the part from that machine's newest backup:
+
+```bash
+kiwi-server move ~/kiwi/fleet.yaml git medlar lychee --gone          # the plan
+kiwi-server move ~/kiwi/fleet.yaml git medlar lychee --gone --yes    # do it
+```
+
+What came after that backup is lost: a person decides that. Steps 1 and 5 leave the dead
+machine out. A move refuses `--gone` while the machine answers, and refuses a plain move
+while it does not. Should the machine answer again, it still runs its old copy of the part
+until it is applied: apply it (`kiwi-server apply ~/kiwi/fleet.yaml medlar`), or install it
+anew.
+
 ## A standby for a part
 
 A second machine can keep a part's data current and take the part over:

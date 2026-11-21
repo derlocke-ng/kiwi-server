@@ -15,8 +15,8 @@ L: days. New ideas go to the end of their section.
 2. ~~A backup before an update (kiwi-stack update).~~ Done (kiwi-stack 0.9.31, in 2.294.0).
 3. ~~The diagnosis asks the provider; the control node's own update falls back when its page does
    not answer; the master's `stream` door into a fail2ban jail.~~ Done (2.294.0).
-4. A restore of a data part onto another machine when its machine is dead: `move` from the newest
-   backup without the source (today `move` and `switch` both need it), with a drill. M
+4. ~~A restore of a data part onto another machine when its machine is dead: `move --gone` from the
+   newest backup without the source.~~ Built (next release); the drill on real machines is open. M
 5. A runbook: admins decide beforehand, per machine or part and case, what happens (a machine
    gone, a service down, a disk filling, a backup overdue, an update failed, cut off from the
    network): tell, restart, stop, restore elsewhere, wait for a person. Written in the fleet file,

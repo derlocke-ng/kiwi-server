@@ -30,8 +30,13 @@ import sys
 from kiwiserver import fleettext, util
 path, m, part, on = sys.argv[1:5]
 text = util.read_text(path)
+import re, yaml
 value = [{"case": "part-down", "for": "part:" + part, "do": "restart", "after": 1, "tries": 2}] if on == "on" else []
-util.write_text(path, fleettext.put(text, ("hosts", m, "runbook"), value), 0o600)' "$fleet" "$m" "$part" "$1"
+new = fleettext.put(text, ("hosts", m, "runbook"), value)
+if on != "on":      # out again, not left empty: an older kiwi-server does not know the key (22 Nov 2026)
+    new = re.sub(r"(?m)^ +runbook: \[\]\n", "", new)
+    assert "runbook" not in (yaml.safe_load(new)["hosts"][m] or {})
+util.write_text(path, new, 0o600)' "$fleet" "$m" "$part" "$1"
 }
 "$KIWI" control pull "$fleet" > control-pull.log 2>&1 || say "note: nothing pulled from a control node"
 line on; check $? "the line for $part is in the fleet file"

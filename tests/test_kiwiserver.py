@@ -4704,6 +4704,21 @@ class TestOnion(Base):
         self.assertEqual(started, [("switch", ["quince"], "taken", "vault")])
         self.assertEqual(c.argv("switch", ["quince"], "taken", "vault")[-1], "--taken")
 
+    @unittest.skipUnless(have("openssl"), "openssl not installed")
+    def test_a_certificate_of_the_own_ca_running_out_is_renewed_by_an_apply(self):
+        # before 2.293, only a person's apply renewed it: a machine left alone for two years lost its names
+        c = controlmod.Control.__new__(controlmod.Control)
+        c.fleet_dir = self.tmp
+        c.fleet_info = lambda fresh=False: {"hosts": [{"name": n, "hostname": n + ".home", "phase": "applied"}
+                                                      for n in ("quince", "lime", "fig")]}
+        for name, days in (("quince", 10), ("lime", 400)):
+            d = os.path.join(self.tmp, "secrets", "ca", "hosts", name + ".home")
+            os.makedirs(d)
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", os.path.join(d, "privkey.pem"),
+                            "-out", os.path.join(d, "cert.pem"), "-days", str(days), "-subj", "/CN=%s.home" % name],
+                           capture_output=True, check=True)
+        self.assertEqual(c.certificates_due(), ["quince"])          # fig has none yet: not one
+
     def test_a_hidden_service_gets_a_new_address(self):
         f = self.net()
         rc, out, err = TestManage.run_cli(self, "onion", f.path, "vault.papaya", "--new-address", "--anyway")

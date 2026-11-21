@@ -2000,6 +2000,17 @@ def make_app(control: Control):
                        to_text=formmod.to_text, icon=icon, size=size, navitems=NAV, yesno=lambda v: "" if v is None else "yes" if v else "no")
     app = FastAPI(title="Kiwi control", version=VERSION, docs_url=None, redoc_url=None)
     PASSIVE = ("/setup/hoster/", "/machines/hoster/", "/static/", "/favicon", "/api/v1/events")
+    V1_OWN = ("state", "ack", "events")      # /api/v1/ routes with no older name
+
+    @app.middleware("http")
+    async def api_v1(request: Request, call_next):
+        """Every /api/NAME answers at /api/v1/NAME too (ui.md step 5): the versioned names for the
+        app and the phone, without a second copy of each route."""
+        path = request.scope.get("path") or ""
+        if path.startswith("/api/v1/") and path[8:].split("/", 1)[0] not in V1_OWN:
+            request.scope["path"] = "/api/" + path[8:]
+            request.scope["raw_path"] = request.scope["path"].encode()
+        return await call_next(request)
 
     @app.middleware("http")
     async def keep_session(request: Request, call_next):
@@ -4061,6 +4072,36 @@ def make_app(control: Control):
             return {"link": control.new_invite(base_url(request), who)}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=409)
+
+    JOB_FIELDS = ("id", "action", "hosts", "user", "state", "started", "ended", "rc")
+
+    @app.get("/api/jobs")
+    def api_jobs(request: Request):
+        """The newest tasks (/api/v1/jobs): what each did, on which machines, how it ended. No output."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        return {"jobs": [{k: j.get(k) for k in JOB_FIELDS} for j in control.jobs(50)]}
+
+    @app.get("/api/jobs/{jid}")
+    def api_job(request: Request, jid: str):
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        j = control.job(jid)
+        if not j:
+            return JSONResponse({"error": "no such job"}, status_code=404)
+        return {k: j.get(k) for k in JOB_FIELDS}
+
+    @app.get("/api/machines/{name}")
+    def api_machine(request: Request, name: str):
+        """One machine (/api/v1/machines/NAME): what the fleet file says of it and how the last look saw it."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        info = control.fleet_info() or {}
+        row = next((h for h in info.get("hosts") or [] if h.get("name") == name), None)
+        if row is None:
+            return JSONResponse({"error": "no such machine"}, status_code=404)
+        seen = next((h for h in (control.status() or {}).get("hosts") or [] if h.get("host") == name), None)
+        return {"machine": {k: v for k, v in row.items() if k not in ("dir", "iso")}, "status": seen}
 
     @app.get("/api/activity")
     @app.get("/api/v1/activity")

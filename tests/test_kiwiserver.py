@@ -15616,6 +15616,18 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(util.read_text(os.path.join(self.c.reports_dir, b + ".txt")).encode(), body)
         self.assertEqual(state(), {a: "ok", b: "ok"})
         self.assertEqual(list(self.c.reported()), [b])
+        # every /api/NAME answers at /api/v1/NAME too, and the tasks and one machine have their own (ui.md step 5)
+        self.c.start("plan", [b], wait=True)
+        st, _h, got = self.fetch("/api/v1/jobs", cookie)
+        self.assertEqual(st, 200)
+        jobs = json.loads(got)["jobs"]
+        self.assertTrue(jobs)
+        self.assertEqual(json.loads(self.fetch("/api/v1/jobs/%s" % jobs[0]["id"], cookie)[2])["id"], jobs[0]["id"])
+        st, _h, got = self.fetch("/api/v1/machines/%s" % b, cookie)
+        self.assertEqual((st, json.loads(got)["machine"]["name"]), (200, b))
+        self.assertEqual(self.fetch("/api/v1/machines/nobody", cookie)[0], 404)
+        self.assertEqual(self.fetch("/api/v1/devices", cookie)[0], self.fetch("/api/devices", cookie)[0])     # an older name
+        self.assertEqual(self.fetch("/api/v1/jobs")[0], 401)                              # nobody: nothing
         # an emergency on Home: its text and "I have it"; pressed, it says who has it
         util.write_text(self.c.health_file, json.dumps({"items": {"machine:%s" % b: {
             "kind": "machine", "since": 100, "told": True, "emergency": True, "text": "%s does not answer" % b}}}))

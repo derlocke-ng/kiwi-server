@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.292.0 — an update's restart does not move a part
+
+- When a machine says it restarts for an update (its last report), the control node tells the
+  standbys of its parts with a permission to wait 15 minutes, as `kiwi-server power restart` does.
+  A slow update no longer moves the part to its standby. After the leash's restart (a machine
+  that may have been carried off) they do not wait.
+- `kiwi-server standby <fleet> --hold MACHINE [--minutes N]` does the same by hand.
+
 ## 2.291.3 — reminders, not every hour
 
 - What the control node did by itself, or leaves to you (a part a person switches, a machine

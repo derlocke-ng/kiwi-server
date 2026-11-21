@@ -2359,6 +2359,10 @@ class Control:
             self.audit("control", "%s goes down: %s%s" % (name, {"reboot": "it restarts", "poweroff": "it switches off",
                                                                  "halt": "it stops"}.get(reason, "it stops"),
                                                           " (%s)" % said[:120] if said else ""), host=name)
+            if reason == "reboot" and said.startswith("an update"):
+                # a restart for an update: its standbys wait 15 minutes before they take its parts (kiwi-server power
+                # restart asks the same itself). Not after the leash: a machine carried off is to be taken over
+                threading.Thread(target=self._hold_standbys, args=(name,), daemon=True).start()
             return None
         last = self._reported_at.get(name, 0)
         if self.clock() - last < 10:        # it reports every minute; more often is nothing to keep
@@ -2378,6 +2382,13 @@ class Control:
             # it is back (or started anew): look at it now, from its report, and give it what waited
             threading.Thread(target=self._back, args=(name,), daemon=True).start()
         return None
+
+    def _hold_standbys(self, name):
+        try:
+            subprocess.run(list(self.kiwi) + ["standby", self.fleet_path, "--hold", name, "--minutes", "15"],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, env=self._env(), timeout=120)
+        except (OSError, subprocess.SubprocessError) as e:
+            util.warn("control: %s's standbys were not told to wait: %s" % (name, e))
 
     def _back(self, name):
         with self._book:

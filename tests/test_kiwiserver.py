@@ -15607,6 +15607,16 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(self.fetch("/ack?key=machine:%s" % b, cookie)[0], 303)        # the link in the message: Home
         # its last report, when it goes down: kept beside its reports with why, and said in Activity once
         last = b"kiwi-last reboot an update (its update window)\n"
+        held = []
+        with mock.patch.object(self.c, "_hold_standbys", lambda name: held.append(name)):
+            self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)
+            leash = b"kiwi-last reboot the leash: its site's rings did not answer for 30 minutes\n"
+            self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", leash), raw=leash), 200)
+            for _ in range(50):
+                if held:
+                    break
+                time.sleep(0.05)
+        self.assertEqual(held, [b])         # its standbys wait for an update's restart; not after the leash
         self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)
         word = json.loads(util.read_text(os.path.join(self.c.reports_dir, b + ".last")))
         self.assertEqual((word["reason"], word["why"]), ("reboot", "an update (its update window)"))

@@ -1794,10 +1794,14 @@ def machine_chips(m, mine):
     return out
 
 
-def tags(modules):
-    """What a machine is for the others, from its parts."""
-    return [word for part, word in (("control", "control node"), ("gateway", "gateway"), ("backup-server", "keeps backups"))
-            if part in (modules or [])]
+def tags(modules, facts=None):
+    """What a machine is for the others, from its parts; and the site's moving address while it holds it."""
+    out = [word for part, word in (("control", "control node"), ("gateway", "gateway"), ("backup-server", "keeps backups"))
+           if part in (modules or [])]
+    vip = (facts or {}).get("vip") or {}
+    if vip.get("holds"):
+        out.append("holds %s" % vip.get("address"))
+    return out
 
 
 def stats(machines, devices):
@@ -2110,7 +2114,7 @@ def make_app(control: Control):
         ready = all(m["phase"] == "applied" for m in out if m["role"] == "master")
         for m in out:
             m["master_ready"] = ready
-            m["bars"], m["tags"] = bars(m["facts"]), tags(m["modules"])
+            m["bars"], m["tags"] = bars(m["facts"]), tags(m["modules"], m["facts"])
             m["chips"] = [SERVICES.get(x.split(".", 1)[0], x.split(".", 1)[0].capitalize()) for x in m["sites"]]
         for name, s in said.items():            # a look at a machine the fleet file no longer names
             if name not in [m["name"] for m in out]:

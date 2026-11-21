@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.297.0 — (unreleased)
+
+- The moving address is said again every 30 seconds (kiwi-modules 0.117.1), and the Machines table
+  names the machine that holds it.
+
 ## 2.296.0 — a moving address for a site's basics
 
 - **The `vip` module** (kiwi-modules 0.117.0, docs/design/basics-twice.md): two machines of a site

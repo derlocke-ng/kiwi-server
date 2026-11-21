@@ -32,9 +32,9 @@ L: days. New ideas go to the end of their section.
    changed (`--stack-only`).~~ Done (2.295.0); stack-only drilled on quince (38 s against 189 s).
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6,
    design/basics-twice.md). Built (2.296.0): the vip module and the pair; lime and papaya share
-   192.168.2.70, drilled. Open: repeated gratuitous ARP (keepalived garp_master_refresh) for
-   clients with a stale cache; the page and the app naming who holds it; DHCP from both, drilled
-   on a LAN of its own; the gateway's switch drilled with a device behind it. M
+   192.168.2.70, drilled; said again every 30 s (kiwi-modules 0.117.1); the Machines table names
+   who holds it. Open: DHCP from both, drilled on a LAN of its own; the gateway's switch drilled
+   with a device behind it. M
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
 9. The Devices table by site on the page, as Machines (ui.md). S-M
 10. The client side: devices enrolled and kept by the network (bundles, the app, phones). M-L

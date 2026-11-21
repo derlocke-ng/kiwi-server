@@ -271,3 +271,12 @@ class TestMovingAddress(unittest.TestCase):
         f = facts.parse("now=1\nvip=192.168.2.70 waits\n", local_now=1)
         self.assertIn("waits for the moving address", " ".join(str(x) for x in facts.assess(f, now=1)))
         self.assertNotIn("vip", facts.parse("now=1\nvip=x maybe\n", local_now=1))
+
+    def test_the_machines_table_names_the_holder(self):
+        try:
+            from kiwiserver import web
+        except ImportError:
+            self.skipTest("the page's libraries are not here")
+        self.assertEqual(web.tags(["gateway", "vip"], {"vip": {"address": "192.168.2.70", "holds": True}}),
+                         ["gateway", "holds 192.168.2.70"])
+        self.assertEqual(web.tags(["gateway", "vip"], {"vip": {"address": "192.168.2.70", "holds": False}}), ["gateway"])

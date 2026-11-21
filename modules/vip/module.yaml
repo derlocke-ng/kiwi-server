@@ -68,4 +68,4 @@ settings:
   - key: image
     group: Advanced
     help: "The container image this module runs, pinned by tag. The default is this repository's build (images/keepalived)."
-    default: ghcr.io/derlocke-ng/keepalived:2.3-kiwi1
+    default: ghcr.io/derlocke-ng/keepalived:2.3-kiwi2

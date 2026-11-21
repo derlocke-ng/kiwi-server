@@ -1292,8 +1292,14 @@ class Control:
             # the machine the part left: applied from here. If it is away, that apply waits for it
             # (the book of waiting applies), and it stops the part the moment it answers again
             try:
+                # in the book first: this node's own try counts only for a machine in it (_note_applied), and the
+                # machine is usually the one that is away (22 Nov 2026: it was never applied when it came back)
+                with self._ending:
+                    data = self.waiting()
+                    data.setdefault(meta["hosts"][0], {"since": int(self.clock()), "tries": 0, "user": "control"})
+                    self._write_waiting(data)
                 self.start("apply", [meta["hosts"][0]], user="control")
-            except KiwiError as e:
+            except (KiwiError, OSError, ValueError) as e:
                 util.warn("control: %s was not applied after the switch: %s" % (meta["hosts"][0], e))
         if meta["action"] in CHANGES:           # how it ended, in the log that outlives a restart (a machine's History)
             failed = self._failed_hosts(meta) if len(meta["hosts"]) > 1 and meta["state"] == "failed" else None

@@ -15822,6 +15822,15 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(len(own), self.c.RETRIES)
         with open(os.path.join(self.c.dir, "audit.jsonl")) as fh:
             self.assertIn("gave up applying %s by itself" % b, fh.read())
+        # a part switched away from a machine that is away: that machine's apply waits for it (22 Nov 2026:
+        # this node's own try for a machine out of the book stayed out, and it was never applied)
+        self.c.start("switch", [b], user="control", module="vault", wait=True)
+        wait_jobs()
+        self.assertIn(b, self.c.waiting())
+        write(mode, "up")
+        self.c.refresh_status()
+        wait_jobs()
+        self.assertEqual(self.c.waiting(), {})
 
     def test_a_look_does_not_wait_for_a_job_on_another_machine(self):
         cookie, _csrf = self.made()

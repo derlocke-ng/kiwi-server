@@ -12214,6 +12214,22 @@ class TestWeb(WebBase):
         self.assertNotIn("PrivateKey", there)
         self.assertIn("No device matches", self.ask("/devices?q=nobody")[1])      # the filter, in the address
         self.assertIn("<b>annas-phone</b>", self.ask("/devices?q=anna")[1])
+        # two masters at two sites: each device under the site of the master it connects to (its Endpoint)
+        info = json.loads(util.read_text(os.path.join(self.c.run, "fleet.json"))) if os.path.isfile(os.path.join(self.c.run, "fleet.json")) else {}
+        info["hosts"] = list(info.get("hosts") or []) + [
+            {"name": "gate", "hostname": "gate.home", "role": "master", "site": "Main building", "wg_host": "1.2.3.4", "modules": []},
+            {"name": "gate2", "hostname": "gate2.home", "role": "master", "site": "HQ abroad", "wg_host": "vpn2.example.org", "modules": []}]
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps(info))
+        ddir = os.path.join(self.c.fleet_dir, "secrets", "devices")
+        util.write_text(os.path.join(ddir, "desk-07.conf"), "[Interface]\nAddress = 10.8.0.7/32\n[Peer]\nEndpoint = vpn2.example.org:51820\n")
+        util.write_text(os.path.join(ddir, "annas-phone.conf"), "[Interface]\nAddress = 10.8.0.2/32\n[Peer]\nEndpoint = 1.2.3.4:51820\n")
+        self.c._gen = getattr(self.c, "_gen", 0) + 1
+        there = self.ask("/devices")[1]
+        self.assertIn('<h3 id="site-hq-abroad">HQ abroad', there)
+        self.assertIn('<h3 id="site-main-building">Main building', there)
+        self.assertLess(there.index("desk-07"), there.index("<b>annas-phone</b>"))         # HQ abroad comes first
+        self.assertNotIn("<b>annas-phone</b>", self.ask("/devices?q=site:hq-abroad")[1])
+        os.remove(os.path.join(ddir, "desk-07.conf"))                                 # the rest of this test: one device
         # a laptop at home: only the network through the tunnel, and what to do so that its own names still work
         self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
                        "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write("

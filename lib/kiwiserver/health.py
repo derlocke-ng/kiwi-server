@@ -129,11 +129,16 @@ def duration(seconds):
             else util.count(s // 86400, "day"))
 
 
-def update(state, machines, services, happened, now, after=600):
+NEEDED_AFTER = 120      # seconds: a machine that runs a part the network needs is told about this soon
+EMERGENCY_AGAIN = 900   # seconds: an emergency nobody said "I have it" to is told again this often
+
+
+def update(state, machines, services, happened, now, after=600, acks=None):
     """One look, written into `state` (changed in place). Returns what is to be told now:
     [{kind: wrong|fine|did, level: bad|warn|info, text}].
 
-    machines: [{name, ok, problems: [{level, text}]}] of the machines that are set up;
+    machines: [{name, ok, problems: [{level, text}], need?}] of the machines that are set up (need: must,
+    told after NEEDED_AFTER; wait, not told; policy.py);
     services: [{site, host, admin, ok}] or None when they could not be asked from here;
     happened: what the control node did by itself this look: [{host, kind, text}].
     A thing counts as wrong when it has been wrong for `after` seconds; it is told once then,
@@ -144,12 +149,19 @@ def update(state, machines, services, happened, now, after=600):
     planned = {e["host"] for e in happened or [] if e.get("planned") and e.get("kind") in ("waiting", "off")}
     # what the look at a machine that is gone found (watchdog.step: its case), said in the message about it
     story = {e["host"]: e["text"] for e in happened or [] if e.get("kind") in ("waiting", "tell", "held", "restarted") and e.get("text")}
+    soon = {}                           # key: seconds before it is told, where that is not `after`
+    # an emergency (docs/design/authority.md): a machine that runs a part the network needs, gone. Told on every
+    # way at once, and again every EMERGENCY_AGAIN until someone says "I have it" (acks: {key: {by, at}})
+    urgent = set()
     for m in machines:
-        if not m["ok"] and m["name"] in planned:
-            continue
+        if not m["ok"] and (m["name"] in planned or m.get("need") == "wait"):
+            continue                    # went down as it said, or all it runs can wait: not told
         if not m["ok"]:
             seen["machine:" + m["name"]] = ("machine", "bad", story.get(m["name"]) or "%s does not answer" % m["name"],
                                             "%s answers again" % m["name"])
+            if m.get("need") == "must":
+                soon["machine:" + m["name"]] = min(after, NEEDED_AFTER)
+                urgent.add("machine:" + m["name"])
             continue
         for p in m.get("problems") or []:
             if p.get("level") in ("warn", "bad"):
@@ -165,11 +177,21 @@ def update(state, machines, services, happened, now, after=600):
         kind, level, text, fine = said[:4]
         item = items.setdefault(key, {"kind": kind, "since": now, "told": False})
         item.update(level=level, text=text, fine=fine)
-        if not item["told"] and now - item["since"] >= after:
-            item["told"] = True
-            events.append(dict({"kind": "wrong", "level": level, "text": text}, **({"hint": said[4]} if len(said) > 4 and said[4] else {})))
+        ack = (acks or {}).get(key) or {}
+        if ack.get("at") is not None and ack["at"] >= item["since"]:
+            item["acked"] = {"by": ack.get("by") or "", "at": ack["at"]}
+        if key in urgent:
+            item["emergency"] = True
+        if not item["told"] and now - item["since"] >= soon.get(key, after):
+            item["told"], item["last"] = True, now
+            events.append(dict({"kind": "wrong", "level": "emergency" if key in urgent else level, "text": text, "key": key},
+                               **({"hint": said[4]} if len(said) > 4 and said[4] else {})))
             if kind in ("machine", "service"):
                 state.setdefault("incidents", []).append({"key": key, "text": text, "from": item["since"], "to": None})
+        elif item.get("emergency") and item["told"] and not item.get("acked") and now - item.get("last", now) >= EMERGENCY_AGAIN:
+            item["last"] = now
+            events.append({"kind": "wrong", "level": "emergency", "key": key,
+                           "text": "Still, for %s, and nobody said they have it: %s" % (duration(now - item["since"]), text)})
     for key in [k for k in items if k not in seen]:
         if services is None and key.startswith("service:"):
             continue                    # not asked this time: nothing is known about it
@@ -247,9 +269,13 @@ def history(state, site, now, n=HISTORY_DAYS):
     return out, (100.0 * answered / asked if asked else None)
 
 
-def message(events, network=""):
-    """(title, text, level) of one message about these events."""
+def message(events, network="", ack_url=""):
+    """(title, text, level) of one message about these events. An emergency in it: its title says
+    so, and `ack_url` (the control page's) gives the link that says "I have it"."""
     name = "Kiwi %s" % network if network else "Kiwi"
+    urgent = [e for e in events if e.get("level") == "emergency"]
+    if urgent:
+        name += ", emergency"
     wrong = [e for e in events if e["kind"] != "fine"]
     if len(events) == 1:
         title = "%s: %s" % (name, events[0]["text"])
@@ -259,7 +285,10 @@ def message(events, network=""):
         title = "%s: fine again" % name
     lines = ["%s %s%s" % ("Fine again:" if e["kind"] == "fine" else "Done by itself:" if e["kind"] == "did" and e["level"] == "warn"
                            else "Wrong:", e["text"], "\n  What to do: " + e["hint"] if e.get("hint") else "") for e in events]
-    level = "bad" if any(e["level"] == "bad" for e in events) else "warn" if wrong else "info"
+    level = "emergency" if urgent else "bad" if any(e["level"] == "bad" for e in events) else "warn" if wrong else "info"
+    if urgent and ack_url:
+        lines.append("")
+        lines += ["I have it (%s): %s/ack?key=%s" % (e["key"].split(":", 1)[-1], ack_url.rstrip("/"), e["key"]) for e in urgent if e.get("key")]
     return title[:200], "\n".join(lines), level
 
 

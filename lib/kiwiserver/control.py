@@ -2609,6 +2609,37 @@ class Control:
         except (OSError, ValueError):
             return {}
 
+    def emergencies(self):
+        """The emergencies told and not taken yet (health.update): [{key, text, since, by}]: a machine
+        that runs a part the network needs, gone. `by` is set once someone said "I have it"."""
+        try:
+            acks = json.loads(util.read_text(os.path.join(self.dir, "acks.json")))
+        except (OSError, ValueError):
+            acks = {}
+        out = []
+        for key, item in sorted((self.health().get("items") or {}).items()):
+            if item.get("emergency") and item.get("told"):
+                ack = acks.get(key) or {}
+                out.append({"key": key, "text": item.get("text") or key, "since": item.get("since") or 0,
+                            "by": ack.get("by") if ack.get("at", 0) >= (item.get("since") or 0) else ""})
+        return out
+
+    def ack(self, key, who):
+        """Someone has it: the emergency `key` is told no more (a file of its own beside the look's
+        state, which the look never writes). Activity says who."""
+        if not re.match(r"^[a-z]+:[A-Za-z0-9._:-]{1,200}$", key or ""):
+            raise KiwiError("which emergency?")
+        path = os.path.join(self.dir, "acks.json")
+        with self.lock:
+            try:
+                acks = json.loads(util.read_text(path))
+            except (OSError, ValueError):
+                acks = {}
+            acks = {k: v for k, v in acks.items() if self.clock() - (v.get("at") or 0) < 7 * 86400}
+            acks[key] = {"by": who, "at": int(self.clock())}
+            util.write_text(path, json.dumps(acks, sort_keys=True) + "\n", 0o600)
+        self.audit(who, "has it: %s" % key.split(":", 1)[-1], part=key)
+
     def gone(self):
         """What the last look said about machines that do not answer: [{host, kind, text}]."""
         path = os.path.join(self.run, "recover.json")

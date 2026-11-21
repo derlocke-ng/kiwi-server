@@ -204,6 +204,8 @@ DEFAULTS = {
     "notify": {
         "mail": {"to": [], "host": "", "port": 0, "tls": "starttls", "user": "", "password": "", "from": ""},
         "ntfy": {"url": "", "token": ""},
+        # who else gets an emergency: other members of the network, or the company that runs it
+        "team": {"mail": [], "ntfy": "", "ntfy_token": ""},
         "webhook": {"url": ""},
         "heartbeat": "",
         "after": 10,

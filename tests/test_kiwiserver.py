@@ -11193,7 +11193,7 @@ class TestHealth(Base):
     """What is wrong, kept over time (health.py), and the messages about it (notify.py)."""
 
     def test_a_thing_is_told_once_when_it_lasts_and_once_when_it_is_fine_again(self):
-        from kiwiserver import health
+        from kiwiserver import health, notify
         st = {}
         ms = [{"name": "papaya", "ok": True, "problems": [{"level": "warn", "text": "disk /var is 91% full"}]},
               {"name": "lychee", "ok": False, "problems": [{"level": "bad", "text": "not said: it is gone"}]}]
@@ -11235,6 +11235,41 @@ class TestHealth(Base):
         self.assertEqual(health.message(events, "home")[::2], ("Kiwi home: fine again", "info"))
         self.assertTrue(all(i["to"] == 4000 for i in st["incidents"]))
         self.assertEqual(st["items"], {})
+        # how much a machine's parts are needed: one the network needs is told after two minutes, one
+        # whose parts can all wait not at all
+        st2 = {}
+        need = [{"name": "gate", "ok": False, "problems": [], "need": "must"}, {"name": "toy", "ok": False, "problems": [], "need": "wait"},
+                {"name": "pi", "ok": False, "problems": []}]
+        health.update(st2, need, [], [], 0)
+        self.assertEqual([e["text"] for e in health.update(st2, need, [], [], 130)], ["gate does not answer"])
+        self.assertEqual([e["text"] for e in health.update(st2, need, [], [], 700)], ["pi does not answer"])
+        self.assertNotIn("machine:toy", st2["items"])
+        # an emergency: a machine the network needs is gone. Told on every way, again every 15 minutes, until
+        # someone has it (docs/design/authority.md)
+        st3 = {}
+        must = [{"name": "gate", "ok": False, "problems": [], "need": "must"}]
+        health.update(st3, must, [], [], 0)
+        first = health.update(st3, must, [], [], 130)
+        self.assertEqual([(e["level"], e["key"]) for e in first], [("emergency", "machine:gate")])
+        title, text, level = health.message(first, "home", "https://control.papaya.home")
+        self.assertEqual((title, level), ("Kiwi home, emergency: gate does not answer", "emergency"))
+        self.assertIn("I have it (gate): https://control.papaya.home/ack?key=machine:gate", text)
+        self.assertEqual(health.update(st3, must, [], [], 600), [])                     # not before 15 minutes
+        again = health.update(st3, must, [], [], 130 + 900)
+        self.assertIn("Still, for 17 minutes, and nobody said they have it", again[0]["text"])
+        acks = {"machine:gate": {"by": "anna", "at": 1100}}
+        self.assertEqual(health.update(st3, must, [], [], 130 + 1900, acks=acks), [])  # anna has it: told no more
+        self.assertEqual(st3["items"]["machine:gate"]["acked"]["by"], "anna")
+        sent = []
+        with mock.patch.object(notify, "_mail", lambda c, t, x: sent.append(("mail", tuple(c["to"])))), \
+                mock.patch.object(notify, "_ntfy", lambda c, t, x, lv: sent.append(("ntfy", c["url"], lv))):
+            cfg = {"mail": {"to": ["me@example.org"], "host": "smtp.example.org"}, "ntfy": {"url": "https://ntfy.example.org/a"},
+                   "team": {"mail": ["team@example.org"], "ntfy": "https://ntfy.example.org/team"}}
+            notify.send(cfg, title, text, "emergency")
+            notify.send(cfg, "x", "y", "bad")
+        self.assertEqual(sent, [("mail", ("team@example.org",)), ("ntfy", "https://ntfy.example.org/team", "emergency"),
+                                ("mail", ("me@example.org",)), ("ntfy", "https://ntfy.example.org/a", "emergency"),
+                                ("mail", ("me@example.org",)), ("ntfy", "https://ntfy.example.org/a", "bad")])
         # what the control node did by itself is told at once, and not again and again
         did = [{"host": "sorbet", "kind": "restarted", "text": "sorbet did not answer: restarted at its provider"}]
         self.assertEqual([e["kind"] for e in health.update(st, ms, sv, did, 5000)], ["did"])
@@ -12835,6 +12870,22 @@ class TestControllers(StoreBase):
         self.assertEqual(self.laptop_does("push")[0], 0)
         self.assertEqual(sum(1 for e in self.n.audit_tail(200) if "fetched the fleet" in json.dumps(e)), fetched)
         self.assertEqual(self.n.revision(), revision)
+        # an emergency the control node told: a computer says "I have it", and it is told no more
+        util.write_text(self.n.health_file, json.dumps({"items": {"machine:gate": {
+            "kind": "machine", "since": 100, "told": True, "emergency": True, "text": "gate does not answer"}}}))
+        self.assertEqual([(e["key"], e["by"]) for e in self.n.emergencies()], [("machine:gate", "")])
+        rc, out = self.laptop_does("ack", "machine:gate")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([(e["key"], e["by"]) for e in self.n.emergencies()], [("machine:gate", "laptop")])
+        self.assertTrue(any(e.get("what") == "has it: gate" and e.get("user") == "laptop" for e in self.n.audit_tail(5)))
+        rc, out = self.laptop_does("ack", "not a key")
+        self.assertNotEqual(rc, 0)
+        stranger = urllib.request.Request(self.url + "/api/v1/ack", data=b'{"key": "machine:gate"}', method="POST",
+                                          headers={"Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(stranger, timeout=10)
+        self.assertEqual(e.exception.code, 401)
+        e.exception.close()
         req = urllib.request.Request(self.url + "/api/v1/state", data=b'{"steps": []}', method="POST",
                                      headers={"Content-Type": "application/json"})
         with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets nothing
@@ -15499,6 +15550,16 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(util.read_text(os.path.join(self.c.reports_dir, b + ".txt")).encode(), body)
         self.assertEqual(state(), {a: "ok", b: "ok"})
         self.assertEqual(list(self.c.reported()), [b])
+        # an emergency on Home: its text and "I have it"; pressed, it says who has it
+        util.write_text(self.c.health_file, json.dumps({"items": {"machine:%s" % b: {
+            "kind": "machine", "since": 100, "told": True, "emergency": True, "text": "%s does not answer" % b}}}))
+        _st, _h, home = self.fetch("/", cookie)
+        self.assertIn(b"Emergency", home)
+        self.assertIn(b"I have it", home)
+        self.c.ack("machine:%s" % b, "anna")
+        _st, _h, home = self.fetch("/", cookie)
+        self.assertIn(b"anna has it", home)
+        self.assertEqual(self.fetch("/ack?key=machine:%s" % b, cookie)[0], 303)        # the link in the message: Home
         # its last report, when it goes down: kept beside its reports with why, and said in Activity once
         last = b"kiwi-last reboot an update (its update window)\n"
         self.assertEqual(post(b, lambda when: agentmod.signature(key, b, when, "boot1", last), raw=last), 200)

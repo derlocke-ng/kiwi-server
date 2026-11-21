@@ -2570,6 +2570,9 @@ def cmd_recover(args):
         util.say("every machine that is set up answers")
 
 
+ACKS = "acks.json"      # beside the look's state: {key: {by, at}} (health.update)
+
+
 def cmd_notify(args):
     """After a look at the machines: every service asked for a page, what is wrong kept with
     its time (health.py), and a message sent about what has been wrong for a while or is fine
@@ -2606,7 +2609,13 @@ def cmd_notify(args):
         seen = asked("status", args.fleet, "--porcelain")
     rows = {h["name"]: h for h in asked("list", args.fleet, "--porcelain").get("hosts") or []}
     said = {h["host"]: h for h in seen.get("hosts") or []}
-    machines = [{"name": n, "ok": bool((said.get(n) or {}).get("ok")), "problems": (said.get(n) or {}).get("problems") or []}
+    # how much each machine's parts are needed (policy.py): one the network needs is told after two minutes,
+    # one whose parts can all wait is not told at all (its page says it)
+    def need_of(n):
+        needs = {pr.get("need") for pr in (rows.get(n) or {}).get("parts_table") or []}
+        return "must" if "must" in needs else "wait" if needs == {"wait"} else "normal"
+    machines = [{"name": n, "ok": bool((said.get(n) or {}).get("ok")), "problems": (said.get(n) or {}).get("problems") or [],
+                 "need": need_of(n)}
                 for n, h in rows.items() if h.get("phase") == "applied" and n in said]
     up = {m["name"] for m in machines if m["ok"]}
     sites = [(s, n, s in (h.get("admin_sites") or [])) for n, h in rows.items() if n in up for s in h.get("sites") or []]
@@ -2651,10 +2660,17 @@ def cmd_notify(args):
         except KiwiError:
             continue
     after = cfg.get("after")
-    events = health.update(state, machines, services, happened, time.time(), after=60 * (10 if after is None else int(after)))
+    # who said "I have it" to an emergency (the page, the app, the link in the message): a file of its own
+    # beside the state, so this look, which writes the state, never writes over one
+    try:
+        acks = json.loads(util.read_text(os.path.join(os.path.dirname(path), ACKS)))
+    except (OSError, ValueError):
+        acks = {}
+    events = health.update(state, machines, services, happened, time.time(), after=60 * (10 if after is None else int(after)),
+                           acks=acks if isinstance(acks, dict) else {})
     sent = []
     if events and not args.no_send:
-        title, text, level = health.message(events, network)
+        title, text, level = health.message(events, network, agentmod.url(fleet, ms) or "")
         sent = notify.send(cfg, title, text, level, network)
     if cfg.get("heartbeat") and machines and not args.no_send:
         notify.heartbeat(cfg["heartbeat"])
@@ -3772,6 +3788,12 @@ def cmd_control(args):
         if not controlsync.run_api(fleet_dir, fleet_name, args.link, args.more or [], key,
                                    module=getattr(args, "part", None) or "", at=getattr(args, "at", None) or ""):
             sys.exit(1)
+        return
+    if args.action == "ack":            # "I have it", for an emergency the control node told (its key)
+        if not args.link:
+            raise KiwiError("which emergency? kiwi-server control ack %s KEY (the page and the app show the keys)" % typed_path(args.fleet))
+        controlsync.ack_api(fleet_dir, args.link, key)
+        util.say("the control node tells no more about it: you have it")
         return
     if args.action == "watch":          # the control node's changes, a line each, as they come: for the app
         for mark in controlsync.watch_api(fleet_dir, key):
@@ -6526,10 +6548,10 @@ def build_parser():
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
     s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run",
-                                      "watch"])
+                                      "watch", "ack"])
     s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
-                                           "run: the action (apply, update, status, plan, check, backup …)")
+                                           "run: the action (apply, update, status, plan, check, backup …); ack: the emergency")
     s.add_argument("more", nargs="*", help="run: the machines")
     s.add_argument("--part", metavar="NAME", help="run: the part (move, switch), the container (service) or the ring the action is for")
     s.add_argument("--at", metavar="WHAT", help="run: what to do with it (service: restart, stop, start) or a snapshot's time (restore)")

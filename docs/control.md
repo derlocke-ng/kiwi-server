@@ -633,8 +633,10 @@ defaults:
 (`switch`, the default while `recovery: switch` is on), it waits for its machine (`wait`), or a
 person switches it (`ask`). Only a part with `switch` runs by a permission
 ([backups.md](backups.md#permissions-a-part-runs-only-where-it-may)); the others keep running
-on a machine that is cut off, since nobody takes them. `need` is shown for now; messages do not
-go by it yet.
+on a machine that is cut off, since nobody takes them. `need` decides the message about a
+machine that does not answer: one that runs a part the network needs is told after two minutes
+(or `notify: after`, if shorter), one whose parts can all wait is not told at all and only its
+page says it, and the others after `notify: after` (10 minutes).
 
 `kiwi-server power off` also tells the standby of each of the machine's parts with a
 permission not to take them while the machine is off; `power restart` tells it to wait 15
@@ -764,6 +766,25 @@ kiwi-server notify ~/kiwi/fleet.yaml --test
 When the control node itself is off, it cannot say so. That is what `heartbeat`
 is for: a service outside (healthchecks.io, or your own) that is asked after
 every look and tells you when the asking stops.
+
+**An emergency** is a machine that runs a part the network needs (a gateway, a site's DNS, an
+unlock ring, the control node; see [What happens to each part](#what-happens-to-each-part))
+and does not answer. It is told after two minutes on every way that is set, at ntfy's highest
+priority, with "emergency" in the title, and told again every 15 minutes until someone says
+"I have it": the button on Home, in the app, or the link in the message, or
+
+```bash
+kiwi-server control ack ~/kiwi/fleet.yaml machine:sorbet
+```
+
+Activity says who has it. A team beside you (other members of the network, or the people of
+the company that runs it) gets the emergencies too, not the other messages:
+
+```yaml
+defaults:
+  notify:
+    team: { mail: [oncall@example.org], ntfy: https://ntfy.sh/our-team-topic }
+```
 
 ## A website for strangers
 

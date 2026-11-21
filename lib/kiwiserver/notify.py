@@ -78,8 +78,8 @@ def _header(text):
 
 
 def _ntfy(c, title, text, level):
-    headers = {"Title": _header(title), "Priority": {"bad": "high", "warn": "default"}.get(level, "low"),
-               "Tags": {"bad": "rotating_light", "warn": "warning"}.get(level, "white_check_mark")}
+    headers = {"Title": _header(title), "Priority": {"emergency": "urgent", "bad": "high", "warn": "default"}.get(level, "low"),
+               "Tags": {"emergency": "sos", "bad": "rotating_light", "warn": "warning"}.get(level, "white_check_mark")}
     if c.get("token"):
         headers["Authorization"] = "Bearer %s" % c["token"]
     _post(str(c["url"]), text.encode(), headers)
@@ -90,9 +90,30 @@ def _webhook(c, title, text, level, network):
     _post(str(c["url"]), json.dumps(body).encode(), {"Content-Type": "application/json"})
 
 
+def team(cfg):
+    """The team for emergencies beside the admins (notify.team: other members of the network, or the
+    company that runs it; docs/design/authority.md): the same channels, to their own addresses."""
+    t = (cfg or {}).get("team") or {}
+    out = {}
+    mail = [str(x) for x in (t.get("mail") or []) if str(x).strip()]
+    if mail and ((cfg.get("mail") or {}).get("host")):
+        out["mail"] = dict(cfg["mail"], to=mail)            # through the same mail server
+    if t.get("ntfy"):
+        out["ntfy"] = {"url": str(t["ntfy"]), "token": str(t.get("ntfy_token") or "")}
+    return out
+
+
 def send(cfg, title, text, level="bad", network=""):
-    """The message on every channel that is set: [(channel, went out, why not)]."""
+    """The message on every channel that is set: [(channel, went out, why not)]. An emergency also
+    goes to the team's addresses (team), as "team mail" and "team ntfy"."""
     out = []
+    if level == "emergency":
+        for name, c in team(cfg).items():
+            try:
+                (_mail(c, title, text) if name == "mail" else _ntfy(c, title, text, level))
+                out.append(("team " + name, True, ""))
+            except (OSError, smtplib.SMTPException, urllib.error.URLError, ValueError, KeyError, KiwiError) as e:
+                out.append(("team " + name, False, str(e)[:200] or type(e).__name__))
     for name in channels(cfg):
         try:
             if name == "mail":

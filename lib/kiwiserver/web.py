@@ -582,7 +582,7 @@ placeholder="Filter: a name, state:down, site:{{ t.sites[0]|slug }}, part:dns, r
 <span class="sitec">{% if g.fine %}<span class="ok">all fine</span>{% else %}{% for c in g.counts %}<span class="{{ c.level }}">{{ c.n }} {{ c.words }}</span>{{ " · " if not loop.last }}{% endfor %}{% endif %}</span></summary>
 <div class="scroll"><table class="tbl mt"><thead><tr><th class="tick"><input type="checkbox" aria-label="Tick all of {{ g.site }}"
 onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type=checkbox]'))b.checked=this.checked;mtn()"></th>
-<th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb">Seen</th></tr></thead><tbody>
+<th class="cm">Machine</th><th class="cs">State</th><th class="w2 cr">Role</th><th class="w3">Parts</th><th class="w2 cd" title="CPU, memory and the fullest disk">Use</th><th class="w3 cb">Backup</th><th class="w4 cb" title="When it last got its role">Applied</th><th class="w4 cb">Seen</th></tr></thead><tbody>
 {% for m in g.machines %}<tr><td class="tick">{% if m.phase not in fresh %}<input type="checkbox" name="host" value="{{ m.name }}" aria-label="Tick {{ m.name }}" onclick="mtn()">{% endif %}</td>
 <td><a href="/hosts/{{ m.name }}"><b>{{ m.name }}</b></a>{% if g.masters and m.site and m.site != "home" %} <span class="sm">{{ m.site }}</span>{% endif %}{% for x in m.tags %} <span class="sm">{{ x }}</span>{% endfor %}{% if m.waiting %} <span class="sm warn" title="An apply did not reach it. It gets it by itself when it answers again.">apply waits</span>{% endif %}</td>
 <td><span class="badge {{ level(m.st) }}{{ " busy" if looking }}"{% if m.story %} title="{{ m.story }}"{% endif %}>{{ stword(m.st) }}</span></td>
@@ -590,6 +590,7 @@ onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type
 <td class="w3"{% if m.part_titles %} title="{{ m.part_titles|join(", ") }}"{% endif %}>{{ m.part_titles|join(", ") or "-" }}</td>
 <td class="w2">{% for b in m.bars %}<span class="mini" title="{{ b.label }} {{ b.pct }} %: {{ b.more }}"><span class="fill {{ b.level }}" style="width:{{ b.pct }}%"></span></span>{% else %}<span class="sm">-</span>{% endfor %}</td>
 <td class="w3">{% set bk = m.facts.backup %}{% if bk and bk.age is not none %}<span class="{{ "warn" if bk.age > 172800 }}">{{ age(bk.age) }} ago</span>{% elif bk %}<span class="bad">never</span>{% else %}<span class="sm">-</span>{% endif %}</td>
+<td class="w4 sm">{% if m.applied %}{{ ago(m.applied) }} ago{% else %}-{% endif %}</td>
 <td class="w4 sm">{% if m.seen %}{{ ago(m.seen) }} ago{% else %}-{% endif %}</td></tr>
 {% endfor %}</tbody></table></div></details>{% endfor %}
 <div class="mbar" id="mbar" hidden><span id="mn"></span><button name="action" value="status">Check</button><button name="action" value="plan">Preview</button>
@@ -2080,7 +2081,7 @@ def make_app(control: Control):
                         "here": bool(h.get("here")), "wol": bool(h.get("wol")),
                         "locked": bool((s or {}).get("locked")), "stage": (s or {}).get("stage") or "",
                         "waiting": h["name"] in waits,
-                        "keep_ready": h.get("keep_ready") or {},
+                        "keep_ready": h.get("keep_ready") or {}, "applied": h.get("applied") or 0,
                         # what its stop does to its parts (policy.py): one sentence, and one per part
                         "stops": h.get("stops") or "", "parts_table": h.get("parts_table") or [],
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,

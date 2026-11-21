@@ -1,0 +1,71 @@
+schema_version: "1.0"
+
+module:
+  name: vip
+  title: Moving address (VRRP)
+  version: 1.0.0
+  description: "An address on the LAN that two machines of a site share: one holds it while it is well, the other takes it within seconds when it is not. Devices get it as their DNS server and gateway and keep it (kiwi-server docs/design/basics-twice.md)."
+  category: network
+  node_types: [node]
+
+dependencies:
+  required: []
+  optional: [dns, gateway]
+
+network:
+  needs_vpn_dnat: false
+  open_ports: []
+
+firewall:
+  scope: self
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+storage:
+  bind_mounts: []
+
+settings:
+  - key: address
+    label: Moving address
+    help: "The address the two machines share, with the LAN's prefix (192.168.2.70/16). One that nothing else on the LAN uses: kiwi-server does not look for a free one. The same on both machines of the pair."
+    pattern: '[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?'
+    default: ""
+  - key: interface
+    group: Advanced
+    help: "The LAN interface. Empty: the one with the default route."
+    default: ""
+  - key: peers
+    type: list
+    group: Advanced
+    help: "The other machine's address on the LAN. Empty: kiwi-server fills in the machines of this site with the same moving address."
+    default: []
+  - key: priority
+    type: int
+    group: Advanced
+    help: "Higher holds the address. 0: kiwi-server sets it (the first of the pair by name is the one that holds it)."
+    default: 0
+  - key: router_id
+    type: int
+    group: Advanced
+    help: "1-255, the same on both machines and different from any other pair on this LAN. 0: the moving address's last number."
+    default: 0
+  - key: password
+    type: secret
+    group: Advanced
+    help: "The pair's password (VRRP keeps 8 characters). Empty: kiwi-server gives both the same one from the fleet's seed."
+    default: ""
+  - key: check_dns
+    type: bool
+    group: Advanced
+    help: "The address goes when this machine's Pi-hole does not answer a name (with the dns module)."
+    default: true
+  - key: check_ping
+    group: Advanced
+    help: "An address that must answer through this machine for it to hold the address (the master on the VPN, for a gateway). Empty: kiwi-server sets the master's VPN address on a machine with the gateway module."
+    default: ""
+  - key: image
+    group: Advanced
+    help: "The container image this module runs, pinned by tag. The default is this repository's build (images/keepalived)."
+    default: ghcr.io/derlocke-ng/keepalived:2.3-kiwi1

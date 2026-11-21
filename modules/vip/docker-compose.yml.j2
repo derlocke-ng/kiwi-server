@@ -1,0 +1,25 @@
+# vip — keepalived on the host's network: the site's moving address (basics-twice.md)
+services:
+  {{ container_prefix }}-vip:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-vip
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - NET_BROADCAST
+    environment:
+      TZ: "{{ timezone }}"
+      VIP_ADDRESS: "{{ address }}"
+      VIP_INTERFACE: "{{ interface }}"
+      VIP_PEERS: "{{ peers | join(' ') }}"
+      VIP_PRIORITY: "{{ priority or 100 }}"
+      VIP_ROUTER_ID: "{{ router_id or (address.split('/')[0].split('.')[-1] | int) }}"
+      VIP_PASSWORD: "{{ password }}"
+      VIP_CHECK_DNS: "{{ '1' if check_dns and 'dns' in modules else '0' }}"
+      VIP_CHECK_PING: "{{ check_ping }}"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m

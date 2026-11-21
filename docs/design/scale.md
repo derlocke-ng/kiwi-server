@@ -34,6 +34,26 @@ each), because a change on one machine can reach others (a new name the DNS mach
 know). Rendering only the machines a change reaches needs the renderer to record what each
 script reads; that is its own step.
 
+**The plan for that step (22 November 2026).** What one machine's script reads from the others
+was looked up: every machine with a stack carries every DNS record, the master's facts, its
+site's neighbours, the parts it keeps ready and the network's own CA. So a change of a name,
+an address or a machine's parts reaches nearly every machine, and that stays a full render. The
+common change is another: a setting of one part on one machine (a cloud's quota, a game's
+map). For that:
+
+1. While a machine is rendered, the other machines' data it reads is written down: which
+   machine, and which top-level key of its settings (`cfg`, its role block, a part's settings).
+   The fleet-wide look the renderer takes once (records, masters, neighbours, relays) counts as
+   read by every machine.
+2. A machine's fingerprint is its own resolved settings, the release, roles, modules, the
+   defaults, the secrets' tree, and the values of exactly what it read from the others.
+3. A machine whose fingerprint is the same as at its last render is not rendered again. What
+   it did not read cannot change its script, since a script is made only from what it reads.
+
+Anything read in a way that is not written down (the fleet file's raw text, say) makes that
+machine count as reading everything. Each step is checked against the full render: both must
+give the same scripts for every change in the suite's fleets.
+
 ## Decided (the owner, 20 November 2026)
 
 | Question | Answer |

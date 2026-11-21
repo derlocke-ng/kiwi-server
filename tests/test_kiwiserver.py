@@ -3322,6 +3322,33 @@ class TestSetup(Base):
         self.assertIn(node, got[0])
         self.assertGreater(len(got[0]), 1)
 
+    def test_only_the_stack_changed_takes_only_the_stacks_steps(self):
+        """The owner, 22 Nov 2026: "we don't need to update the whole machine". A script that differs
+        from the last applied one in the stack's files, quadlets or names only: --stack-only."""
+        fleet = types.SimpleNamespace(path=os.path.join(self.tmp, "fleet.yaml"))
+        write(fleet.path, "hosts: {}\n")
+        base = ("KS_VERSION='2.295.0'\nKS_HOST='lime'\nKS_FILES[ca_cert]='Q0E='\nKS_FILES[stack/kn-pihole/custom.list]='YQ=='\n"
+                "KS_FILES[quadlet/kn-pihole.container]='cQ=='\nKS_STACK_HOSTS=('10.8.0.2 a.home')\nks_main \"$@\"\n")
+        with mock.patch.object(cli, "fleet_state", lambda f: self.state), \
+                mock.patch.object(cli, "change_state", lambda f, fn: fn(self.state)):
+            self.state = {}
+            self.assertFalse(cli.stack_only(fleet, "lime", base))                     # never applied: the whole role
+            cli.record_rendered(fleet, "lime", base)
+            self.assertFalse(cli.stack_only(fleet, "lime", base))                     # nothing changed
+            names = base.replace("a.home", "b.home").replace("='YQ=='", "='Yg=='")
+            self.assertTrue(cli.stack_only(fleet, "lime", names))                     # new names and a file: the stack's
+            self.assertTrue(cli.stack_only(fleet, "lime", names.replace("cQ==", "cg==")))      # a quadlet too
+            self.assertFalse(cli.stack_only(fleet, "lime", names.replace("Q0E=", "Q0I=")))     # the CA: the machine's own
+            self.assertFalse(cli.stack_only(fleet, "lime", names + "KS_STACK_PORTS=(53)\n"))  # a port: the firewall
+            os.environ["KIWI_FULL_APPLY"] = "1"
+            try:
+                self.assertFalse(cli.stack_only(fleet, "lime", names))
+            finally:
+                del os.environ["KIWI_FULL_APPLY"]
+        lib = util.read_text(os.path.join(os.path.dirname(cli.__file__), "..", "..", "roles", "common", "lib.sh"))
+        self.assertIn("ks_stack_parts()", lib)
+        self.assertIn("--stack-only", lib)
+
     def test_as_many_machines_at_once_as_there_are(self):
         self.assertEqual(cli.at_once(70), 70)                                         # no fixed number
         self.assertEqual(cli.at_once(70, 8), 8)                                       # --at-once 8

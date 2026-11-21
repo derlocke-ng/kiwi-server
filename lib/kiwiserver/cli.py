@@ -1271,7 +1271,7 @@ def cmd_remove(args):
         if os.path.isdir(d):
             shutil.rmtree(d)
     def forget(state):
-        for key in ("applied", "backup_clients", "rendered", "hold", "hold_parts", "off", "installed_media"):
+        for key in ("applied", "backup_clients", "rendered", "rendered_system", "hold", "hold_parts", "off", "installed_media"):
             (state.get(key) or {}).pop(name, None)
     try:
         change_state(fleet, forget)
@@ -1706,11 +1706,36 @@ def _same_as_told(script, told):
     return False
 
 
+# the lines of a role script that only the stack's own steps act on (kiwi-stack --stack-only): its
+# files, its quadlets, the fleet's names in /etc/hosts. Every other line is the machine's own.
+_STACK_LINES = re.compile(r"^(KS_FILES\[stack/|KS_FILES\[quadlet/|KS_STACK_HOSTS=).*$\n?", re.M)
+
+
+def _system_print(script):
+    """The fingerprint of a role script without the lines only the stack's steps act on: the same as
+    at the last apply, a change is the stack's alone, and the stack's steps are all it takes."""
+    text = script.decode(errors="replace") if isinstance(script, bytes) else script
+    return _fingerprint(_STACK_LINES.sub("", text))
+
+
+def stack_only(fleet, name, script):
+    """Does an apply of `name` with `script` take only the stack's steps? Its last apply's script
+    differed from this one in the stack's lines alone. KIWI_FULL_APPLY=1: never."""
+    if os.environ.get("KIWI_FULL_APPLY") == "1":
+        return False
+    st = fleet_state(fleet)
+    told, system = (st.get("rendered") or {}).get(name), (st.get("rendered_system") or {}).get(name)
+    return bool(told and system) and system == _system_print(script) and not _same_as_told(script, told)
+
+
 def record_rendered(fleet, name, script):
     """What a machine got with its last apply, as a fingerprint of its role script (the same
-    settings render the same script, byte for byte)."""
+    settings render the same script, byte for byte), and of the script without the stack's lines."""
+    def note(state):
+        state.setdefault("rendered", {})[name] = _fingerprint(script)
+        state.setdefault("rendered_system", {})[name] = _system_print(script)
     try:
-        change_state(fleet, lambda state: state.setdefault("rendered", {}).__setitem__(name, _fingerprint(script)))
+        change_state(fleet, note)
     except OSError:
         pass
 
@@ -1743,7 +1768,7 @@ def inputs_key(fleet, ms, hosts=True):
                 continue
             with open(os.path.join(folder, f), "rb") as fh:
                 put("file", f, hashlib.sha256(fh.read()).hexdigest())
-    put("state", json.dumps({k: v for k, v in fleet_state(fleet).items() if k not in ("applied", "rendered")}, sort_keys=True))
+    put("state", json.dumps({k: v for k, v in fleet_state(fleet).items() if k not in ("applied", "rendered", "rendered_system")}, sort_keys=True))
     tree("secrets", os.environ.get("KIWI_SECRETS_DIR") or fleet.resolve_path("secrets"))
     tree("roles", rolesmod.roles_dir())
     for name, path in sorted({(m.name, m.dir) for m in ms.modules.values()}):
@@ -3517,8 +3542,12 @@ def cmd_apply(args):
                     record_backup_clients(fleet, h)
                     record_rendered(fleet, h.name, script)
                 return
-            util.say("%s: applying (the output below is the machine's)" % h.name)
-            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force", prefix=prefix)
+            # only the stack changed since its last apply (a part's settings, the network's names): only
+            # the stack's steps run there, its files and a restart of what changed (the owner, 22 Nov
+            # 2026: "we don't need to update the whole machine")
+            only = not update and stack_only(fleet, h.name, script)
+            util.say("%s: applying%s (the output below is the machine's)" % (h.name, ": only its stack changed" if only else ""))
+            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force" + (" --stack-only" if only else ""), prefix=prefix)
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
             if update:      # an apply fetches newer images; this brings them into use (only what changed restarts)

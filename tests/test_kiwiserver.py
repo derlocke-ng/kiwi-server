@@ -15600,7 +15600,8 @@ class TestFirstRunPage(StoreBase):
         status, where, _ = self.ask("/hosts/%s/switch" % a, {"part": part, "csrf": csrf}, cookie=cookie)
         self.assertEqual(status, 303)
         for _ in range(400):
-            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()) and len(self.c.jobs()) >= 2:
+            if ("switch %s" % self.c.fleet_path) in util.read_text(argv_log) and all(
+                    j["state"] in ("ok", "failed") for j in self.c.jobs()):
                 break
             time.sleep(0.05)
         said = util.read_text(argv_log)

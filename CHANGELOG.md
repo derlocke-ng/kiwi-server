@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.296.0 — a moving address for a site's basics
+
+- **The `vip` module** (kiwi-modules 0.117.0, docs/design/basics-twice.md): two machines of a site
+  share an address (VRRP, keepalived); one holds it while its Pi-hole answers and, on a gateway,
+  while the master answers through it; the other takes it within seconds. kiwi-server pairs the
+  machines of a site with the same `vip.address`, gives both one password, lets the first by name
+  hold it, and a Pi-hole that hands out leases gives the moving address as router and DNS server,
+  each Pi-hole from its half of the range. Each machine says whether it holds it (its notes).
+  Tried in two containers (it moved in about a second and came back); not yet on the test
+  network's machines.
+
 ## 2.295.0 — a dead machine's part elsewhere, and a runbook
 
 - **`move PART DEAD OTHER --gone`**: a part of a machine that is dead comes from that machine's

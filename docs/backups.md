@@ -373,6 +373,11 @@ sudo journalctl -t kiwi-vote          # on medlar and the witness: given, gone, 
 A switch by hand also ends quince's permission: the standby and the witness are told to
 give it no more, and quince drops the part from its list when it answers.
 
+A restart that was asked for does not move the part: `kiwi-server power off` tells medlar
+not to take it while quince is off, `power restart` for 15 minutes, and so does the control
+node when quince says it restarts for an update (its last report). Each ends when quince
+answers again. By hand: `kiwi-server standby ~/kiwi/fleet.yaml --hold quince --minutes 30`.
+
 What to know:
 
 - A folder a database lives in is read with the part's containers paused, for as long as

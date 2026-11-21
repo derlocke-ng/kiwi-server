@@ -5783,10 +5783,35 @@ def cmd_parts(args):
         util.say("each part: kiwi-server parts %s <machine>; change one: defaults.parts in the fleet file" % typed_path(fleet.path))
 
 
+def hold_standbys(fleet, roles, name, minutes):
+    """The standbys of `name`'s parts that run by a permission do not take them for `minutes` (lease.hold):
+    a restart it said it makes (an update). Returns the parts held."""
+    from . import lease as leasemod
+    held = []
+    for (m, part), (standby, _w) in leasemod.links(fleet, roles).items():
+        if m != name:
+            continue
+        try:
+            leasemod.hold(remote.reach(fleet.hosts[standby], None), part, m, minutes)
+            held.append(part)
+        except KiwiError as e:
+            util.warn("%s does not answer (%s): it may take %s while %s restarts" % (standby, str(e).splitlines()[-1][:80], part, m))
+    return held
+
+
 def cmd_standby(args):
-    """The parts another machine keeps ready (keep_ready, partstandby.py), and how old each copy is."""
+    """The parts another machine keeps ready (keep_ready, partstandby.py), and how old each copy is.
+    --hold MACHINE: their standbys wait --minutes before they take them (the control node, when the
+    machine said it restarts for an update)."""
     from . import lifecycle as lifecyclemod
     fleet, roles, ms = load(args)
+    if getattr(args, "hold", None):
+        if args.hold not in fleet.hosts:
+            raise KiwiError("no machine %s in %s" % (args.hold, typed_path(fleet.path)))
+        held = hold_standbys(fleet, roles, args.hold, int(args.minutes or 15))
+        util.say("%s: %s" % (args.hold, ("its standbys wait %d minutes before they take %s" % (int(args.minutes or 15), ", ".join(held)))
+                             if held else "no part of it runs by a permission"))
+        return
     rows = []
     for a, part, m in partstandby.links(fleet):
         age = None
@@ -6736,6 +6761,8 @@ def build_parser():
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
     s = sub("standby", cmd_standby); s.add_argument("fleet")
+    s.add_argument("--hold", metavar="MACHINE", help="its standbys wait before they take its parts (a restart it said it makes)")
+    s.add_argument("--minutes", type=int, default=15, help="--hold: how long (default 15)")
     s = sub("parts", cmd_parts); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s = sub("switch", cmd_switch); s.add_argument("fleet"); s.add_argument("part"); s.add_argument("host", nargs="?")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")

@@ -179,6 +179,11 @@ files, a restart of the containers whose files changed, and the check that every
 runs. The machine's own steps (packages, users, firewall, its units, new images) are left out,
 and the apply says "only its stack changed". `KIWI_FULL_APPLY=1` runs the whole role anyway.
 
+**One login per machine.** An apply makes some twenty calls to a machine after its role; they share
+one SSH connection, kept two minutes (a login is most of a call's second). A check whether a
+machine answers, its boot system and a test of a new key log in on their own.
+`KIWI_SSH_REUSE=0` logs in for every call; `KIWI_APPLY_TIMES=1` prints each call with its time.
+
 **A change can reach other machines.** A new site on a node is a new name the
 machines that answer for names (the master, a home gateway) must learn; a public
 name is one the master hands on; a new backup client is one its backup server

@@ -130,6 +130,7 @@ def duration(seconds):
 
 
 NEEDED_AFTER = 120      # seconds: a machine that runs a part the network needs is told about this soon
+REMIND = (3600, 6 * 3600, 24 * 3600)    # seconds after the first word when the same thing is said again
 EMERGENCY_AGAIN = 900   # seconds: an emergency nobody said "I have it" to is told again this often
 
 
@@ -206,16 +207,25 @@ def update(state, machines, services, happened, now, after=600, acks=None):
             for inc in state.get("incidents") or []:
                 if inc["key"] == key and inc["to"] is None:
                     inc["to"] = now
-    did = state.setdefault("did", {})
+    did, seen_did = state.setdefault("did", {}), set()
     for e in happened or []:
         if e.get("kind") in ("restarted", "unlocked", "locked", "held", "tell", "switch"):
             key = "%s:%s%s" % (e["host"], e["kind"], ":" + e["part"] if e.get("part") else "")
-            if now - did.get(key, 0) > 3600:       # the same thing said again and again is told once an hour at most
-                did[key] = now
+            d = did.get(key)
+            if not isinstance(d, dict):         # (before 2.291.3: the time it was last told)
+                d = {"first": d, "last": d, "n": 1} if isinstance(d, (int, float)) else None
+            # the same thing said again: told at once, then reminded after 1, 6 and 24 hours, then once a day
+            # (docs/design/authority.md: a question nobody answers is repeated, not every hour)
+            due = d is None or now - d["first"] >= REMIND[min(d["n"], len(REMIND)) - 1] + (
+                max(0, d["n"] - len(REMIND)) * 86400)
+            if due:
+                d = {"first": now, "last": now, "n": 1} if d is None else dict(d, last=now, n=d["n"] + 1)
                 events.append({"kind": "did", "level": "warn" if e["kind"] in ("restarted", "unlocked", "switch") else "bad",
-                               "text": e["text"]})
-    for key in [k for k, t in did.items() if now - t > 86400]:
-        del did[key]
+                               "text": e["text"] if d["n"] == 1 else "Still: %s" % e["text"]})
+            did[key] = d
+            seen_did.add(key)
+    for key in [k for k, d in did.items() if k not in seen_did and now - (d.get("last") if isinstance(d, dict) else d or 0) > 3600]:
+        del did[key]                            # no longer said for an hour: a new case when it comes again
     state["incidents"] = [i for i in state.get("incidents") or [] if (i["to"] or now) > now - KEEP_DAYS * 86400][-KEEP_INCIDENTS:]
     state["checked"] = now
     state["machines"] = {"on": len(machines) - len(down), "of": len(machines)}

@@ -54,8 +54,8 @@ def private_or_refuse():
 
 def main():
     private_or_refuse()
-    if len(sys.argv) != 3 or sys.argv[1] not in ("wizard", "unlock", "move"):
-        sys.exit("usage: tools/gui-preview.py wizard|unlock|move PATH/fleet.yaml")
+    if len(sys.argv) != 3 or sys.argv[1] not in ("wizard", "unlock", "move", "stops"):
+        sys.exit("usage: tools/gui-preview.py wizard|unlock|move|stops PATH/fleet.yaml")
     path = os.path.abspath(sys.argv[2])
 
     def activate(app):
@@ -72,6 +72,25 @@ def main():
                         "medlar": {"role": "node", "modules": ["git"]}, "lychee": {"role": "node", "modules": []},
                         "sorbet": {"role": "master", "modules": []}}
             gui.MoveDialog(w, "quince").present(w)
+            return
+        if sys.argv[1] == "stops":          # a machine's "When it stops" and Home's emergencies, with made-up data
+            w.doc = type("Doc", (), {"path": path})()
+            w.status = {"medlar": {"stops": "When medlar stops: vault goes to quince after about four minutes; tang (the network "
+                                            "needs it) and 11 more are away until it is back.",
+                                   "parts_table": [{"part": "vault", "sentence": "vault: quince takes it over about four minutes "
+                                                    "after medlar stops (witness: lime)."},
+                                                   {"part": "tang", "sentence": "tang: runs on medlar only, away while medlar is. "
+                                                    "The network needs it."}]}}
+            w.live = {"medlar": {"facts": {"leases": [{"part": "vault", "left": 150, "state": "running"}],
+                                           "took": [{"part": "git", "at": 0, "from": "lychee"}]}}}
+            w.emergencies = [{"key": "machine:lychee", "text": "lychee has not answered for 4 minutes", "since": 0, "by": ""},
+                             {"key": "machine:sorbet", "text": "sorbet does not answer", "since": 0, "by": "anna"}]
+            w.action_button = gui.Window.action_button.__get__(w)
+            w.spawn = lambda args, msg: print("would run", args, flush=True)
+            page = Adw.PreferencesPage()
+            page.add(gui.Window.emergency_group(w))
+            page.add(gui.Window.stops_group(w, "medlar"))
+            w.set_content(page)
             return
         data = json.loads(subprocess.run([CLI, "init", "--questions"], capture_output=True, text=True, check=True).stdout)
         gui.SetupWizard(w, path, data).present(w)

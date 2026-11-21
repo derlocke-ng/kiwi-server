@@ -757,7 +757,9 @@ defaults:
 ```
 
 One, two or all three; a place that fails says why in Activity and does not stop
-the others. "Send a test message" on the settings page tries them (in the app:
+the others. What the control node did by itself, or could not do and leaves to you (a part a
+person switches, a machine restarted three times today), is told at once and, while it lasts,
+again after 1, 6 and 24 hours, then once a day. "Send a test message" on the settings page tries them (in the app:
 Defaults, under the messages, beside "Open the status page"), as does:
 
 ```bash

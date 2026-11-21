@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.291.2 — the machine a part left gets its apply when it is back
+
+- Fixed: after a switch, the apply of the machine the part left did not wait for it when it was
+  away (the control node's own try counted only for a machine already in its book of waiting
+  applies). Once back, it kept its old role until someone applied it. Found by the permissions
+  drill of 22 Nov 2026.
+- Fixed: the control node's own machine, which applies itself detached, stayed "Changes not applied
+  yet" after every apply: what it was sent is noted when it is sent now.
+
 ## 2.291.1 — a switch while a ring is away
 
 - Fixed: when the control node applied its own machine and one of its disk's rings was on a machine

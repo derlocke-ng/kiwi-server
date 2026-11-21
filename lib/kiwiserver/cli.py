@@ -3447,6 +3447,13 @@ def cmd_apply(args):
                     return
                 util.say("%s: applying itself, detached (this page may drop for a moment); on the machine: "
                          "journalctl -u kiwi-self-apply -f" % h.name)
+                # what it was sent, noted now: the apply goes on without this process, and a machine whose
+                # role was sent counts as having it (22 Nov 2026: the control node's machine stayed
+                # "changes not applied yet" after every switch)
+                with book:
+                    record_applied(fleet, h.name)
+                    record_backup_clients(fleet, h)
+                    record_rendered(fleet, h.name, script)
                 return
             util.say("%s: applying (the output below is the machine's)" % h.name)
             rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force", prefix=prefix)

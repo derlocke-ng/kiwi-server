@@ -468,6 +468,14 @@ every other change of both sides is kept either way (in the app: Compare with th
 takes a push while it is open. A new password
 (`--set-password`, then push) locks it until that password logs in.
 
+What the network remembers about its machines is kept by the control node alone: when
+each machine was applied and with what, what a machine holds back, which is switched off
+on purpose, where copies of the network went (`.kiwi-state.json` in the fleet's folder).
+A computer reads the control node's with every sync and sends what it did itself (an apply
+from this computer, `power off`) with the next one. So the app shows a machine as *Changes
+not applied yet* only when it really is behind, whoever applied it last. Only one sync of a
+fleet folder runs at a time; a second one waits for it.
+
 ## What the control node did
 
 The page's *Activity* lists the newest tasks and who did what. A computer that

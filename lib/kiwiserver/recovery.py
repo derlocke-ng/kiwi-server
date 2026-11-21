@@ -42,16 +42,16 @@ def record_copy(fleet, hosts=(), local=None, fetched=False, now=None):
     A note that cannot be written costs the copy nothing."""
     from . import cli
     now = int(now if now is not None else time.time())
-    state = cli.fleet_state(fleet)
-    rec = state.setdefault("copy", {})
-    for name in hosts:
-        rec.setdefault("hosts", {})[name] = now
-    if local:
-        rec["local"] = {"time": now, "dir": os.path.abspath(local)}
-    if fetched:
-        rec["fetched"] = now
+    def note(state):
+        rec = state.setdefault("copy", {})
+        for name in hosts:
+            rec.setdefault("hosts", {})[name] = now
+        if local:
+            rec["local"] = {"time": now, "dir": os.path.abspath(local)}
+        if fetched:
+            rec["fetched"] = now
     try:
-        util.write_text(cli._state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        cli.change_state(fleet, note)
     except OSError as e:
         util.warn("where the copy went is not noted (%s): kiwi-server recovery will not know it" % e)
 

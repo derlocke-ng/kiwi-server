@@ -6,8 +6,8 @@ by itself. A review found ten ways for it to go wrong, a sync asked the owner
 to choose between copies that differed in nothing he had decided, and each fix
 was another special case. The owner, 21 November: "the whole system is kinda
 flawed … we are patching small things, but the main problem lies elsewhere."
-Nothing of this design is built. New features that act by themselves wait
-until its first two steps are.
+Step 1 is built (2.286.0, below); the rest is not. New features that act by
+themselves wait until steps 1 and 2 are.
 
 ## What is wrong
 
@@ -64,6 +64,20 @@ says for one part, in one place, what will happen to it.
 
 What goes: the file-by-file merge (`merge.py`), "changed on both sides" for
 anything but one setting, and each computer's own `.kiwi-state.json`.
+
+**As built (2.286.0).** What is remembered has one keeper (`fleetstate.py`).
+A change is worked out as steps down to single lines ("applied, lime: this
+time"); on a computer joined to a control node the steps wait in
+`control/state-out.json`, every sync sends them (`POST /api/v1/state`) and
+takes the control node's whole state back. The first exchange of a copy that
+kept its own until then hands over what is newer there. Only one sync of a
+folder runs at a time. The observed files stay in the store but merge by
+themselves since 2.284.0: host keys line by line, the MAC list by when each
+entry was seen, a provider's login by its time. The fleet files merge setting
+by setting on the computer, and the control node takes a push only when it
+builds on its newest copy: that is the one writer in practice, so the only
+question left is one setting changed on both sides. Sending single settings
+instead of the file is not needed for that and is not built.
 
 ### 2. Permissions: a part runs only while its machine may run it
 

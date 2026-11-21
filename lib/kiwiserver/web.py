@@ -4068,6 +4068,23 @@ def make_app(control: Control):
         control.audit(who, "fetched the fleet", address=address(request))
         return {"revision": revision, "files": {n: base64.b64encode(b).decode() for n, b in files.items()}}
 
+    @app.post("/api/v1/state")
+    async def api_state(request: Request):
+        """What the network remembers (fleetstate.py): a computer sends the changes it made, and
+        gets the whole state back. This node keeps it; the steps carry names and times, no secret."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+            steps = body.get("steps") or []
+            if not isinstance(steps, list) or len(steps) > 5000:
+                raise ValueError("steps: a list")
+        except (ValueError, AttributeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        state = await run_in_threadpool(control.take_state, steps)
+        return {"state": state}
+
     @app.put("/api/fleet")
     async def api_fleet_put(request: Request):
         who = bearer(request)

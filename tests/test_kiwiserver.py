@@ -9056,7 +9056,7 @@ class TestVps(Base):
         self.assertEqual([e["kind"] for e in self.recover(f, False)], ["held"])          # not twice within the hour
         self.assertEqual(len([1 for m, _p, _b in self.api.calls if m == "PATCH"]), 2)
         self.assertEqual(self.recover(f, True), [])              # it is back
-        self.assertEqual(cli.fleet_state(f)["gone"], {})
+        self.assertEqual(cli.fleet_state(f).get("gone") or {}, {})
 
     def test_a_locked_machine_with_no_ring_to_forward_is_told_about(self):
         f = self.fleet({"defaults": self.base_defaults(), "hosts": {
@@ -12723,6 +12723,37 @@ class TestControllers(StoreBase):
         self.assertIsNone(controlsync.home_address(d, "https://control.lychee.home"))       # the router gives it one: not known
         self.assertIsNone(controlsync.home_address(d, "https://control.quince.home"))
         self.assertIsNone(controlsync.home_address(os.path.join(self.tmp, "nowhere"), "https://control.papaya.home"))
+
+    def test_the_control_node_keeps_what_the_network_remembers(self):
+        # 21 Nov 2026: the control node applied lime; the laptop remembered its own older apply and
+        # showed lime as "changes not applied yet". Now the control node's state is the laptop's.
+        from kiwiserver import fleetstate
+        fleetstate._write(self.n.fleet_dir, {"applied": {"lime": 200, "quince": 50}, "rendered": {"lime": "v2:node"},
+                                             "off": {"sorbet": 7}})
+        rc, out = self.laptop_does("join", "--name", "laptop", stdin=self.n.new_invite(self.url) + "\n")
+        self.assertEqual(rc, 0, out)
+        here = os.path.dirname(self.laptop)
+        self.assertTrue(fleetstate.handed(here))                    # joining took the control node's state at once
+        # a copy that an older release kept: its own notes, nothing handed over yet
+        os.remove(os.path.join(here, fleetstate.HANDED))
+        fleetstate._write(here, {"applied": {"lime": 100, "quince": 90}, "rendered": {"lime": "v2:old", "quince": "v2:q"}})
+        rc, out = self.laptop_does("pull")
+        self.assertEqual(rc, 0, out)
+        want = {"applied": {"lime": 200, "quince": 90}, "rendered": {"lime": "v2:node", "quince": "v2:q"}, "off": {"sorbet": 7}}
+        self.assertEqual(fleetstate.read(here), want)               # its newer quince went there, the rest came here
+        self.assertEqual(fleetstate.read(self.n.fleet_dir), want)
+        # a change made on the laptop (power on of sorbet) goes with the next sync
+        with mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):
+            fleetstate.change(here, lambda st: st["off"].pop("sorbet"))
+        self.assertEqual(self.laptop_does("pull")[0], 0)
+        self.assertNotIn("off", fleetstate.read(self.n.fleet_dir))
+        self.assertEqual(fleetstate.outbox(here), [])
+        req = urllib.request.Request(self.url + "/api/v1/state", data=b'{"steps": []}', method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets nothing
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 401)
+        e.exception.close()
 
     def test_join_sync_remove(self):
         link = self.n.new_invite(self.url)

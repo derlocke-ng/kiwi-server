@@ -19,7 +19,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod
+from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod, fleetstate as statemod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -1214,11 +1214,11 @@ def cmd_remove(args):
     for d in {os.path.join(out_dir_for(args, fleet), name), os.path.join(media_dir_for(args, fleet), name)}:
         if os.path.isdir(d):
             shutil.rmtree(d)
-    state = fleet_state(fleet)
-    for key in ("applied", "backup_clients"):
-        (state.get(key) or {}).pop(name, None)
+    def forget(state):
+        for key in ("applied", "backup_clients", "rendered", "hold", "hold_parts", "off", "installed_media"):
+            (state.get(key) or {}).pop(name, None)
     try:
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        change_state(fleet, forget)
     except OSError:
         pass
     setupmod.remove_host(fleet.path, name)
@@ -1522,25 +1522,28 @@ def cmd_next(args):
                  % (path, h.name, h.admin["user"]))
 
 
+def _state_dir(fleet):
+    return fleet.dir
+
+
 def _state_path(fleet):
-    return fleet.resolve_path(".kiwi-state.json")
+    return statemod.path(_state_dir(fleet))
 
 
 def state_lock(fleet):
-    """One at a time, across processes, for reading, changing and writing what the fleet remembers:
-    two applies at once (two jobs on the control node) must not write over each other's lines."""
-    d = fleet.resolve_path("output")
-    os.makedirs(d, exist_ok=True)
-    return util.dir_lock(d)
+    """One at a time, across processes, for reading, changing and writing what the fleet remembers."""
+    return statemod.lock(_state_dir(fleet))
 
 
 def fleet_state(fleet):
-    """What this fleet's folder remembers about its machines, nothing secret: when each was
-    last applied. It goes with the folder to another computer."""
-    try:
-        return json.loads(util.read_text(_state_path(fleet)))
-    except (OSError, ValueError):
-        return {}
+    """What the network remembers about its machines, nothing secret (fleetstate.py): when each
+    was last applied. Its keeper is the control node where there is one."""
+    return statemod.read(_state_dir(fleet))
+
+
+def change_state(fleet, mutate):
+    """Change what the network remembers: fleetstate.change."""
+    return statemod.change(_state_dir(fleet), mutate)
 
 
 def switch_after(fleet):
@@ -1553,34 +1556,33 @@ def switch_after(fleet):
 def mark_off(fleet, name, off):
     """A machine switched off on purpose (power off), or no longer: the watchdog leaves one that is
     off alone (no switch of its parts, no restart) until it answers again."""
-    with state_lock(fleet):
-        state = fleet_state(fleet)
+    def do(state):
         marks = state.setdefault("off", {})
         if off:
             marks[name] = int(time.time())
-        elif marks.pop(name, None) is None:
-            return
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        else:
+            marks.pop(name, None)
+        if not marks:
+            state.pop("off")
+    change_state(fleet, do)
 
 
 def hold_back(fleet, name, containers, part=None):
     """Containers a machine must not run when it answers again (a part that was switched away
     while it was gone): told to its agent with every report until its next apply. With `part`, the
     hold ends by itself where the fleet file gives that part to the machine again."""
-    with state_lock(fleet):
-        state = fleet_state(fleet)
+    def do(state):
         held = state.setdefault("hold", {})
         held[name] = sorted(set(held.get(name) or []) | set(containers))
         if part:
             of = state.setdefault("hold_parts", {}).setdefault(name, {})
             of.update({c: part for c in containers})
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    change_state(fleet, do)
 
 
 def unhold(fleet, name, containers):
     """Containers a machine runs again (a part switched back to it): no longer held back there."""
-    with state_lock(fleet):
-        state = fleet_state(fleet)
+    def do(state):
         held = state.get("hold") or {}
         if name not in held:
             return
@@ -1592,25 +1594,21 @@ def unhold(fleet, name, containers):
         of = (state.get("hold_parts") or {}).get(name) or {}
         for c in containers:
             of.pop(c, None)
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    change_state(fleet, do)
 
 
 def record_applied(fleet, *names, only_new=False):
     """Remember that these machines have their role. `only_new`: for machines `status` found
     with a role applied, which an older release or another computer applied; their time stays."""
+    def do(state):
+        applied = state.setdefault("applied", {})
+        for n in [n for n in names if not (only_new and n in applied)]:
+            applied[n] = int(time.time())
+            if not only_new:
+                (state.get("hold") or {}).pop(n, None)      # applied: what it holds back is gone from it
+                (state.get("hold_parts") or {}).pop(n, None)
     try:
-        with state_lock(fleet):
-            state = fleet_state(fleet)
-            applied = state.setdefault("applied", {})
-            new = [n for n in names if not (only_new and n in applied)]
-            if not new:
-                return
-            for n in new:
-                applied[n] = int(time.time())
-                if not only_new:
-                    (state.get("hold") or {}).pop(n, None)      # applied: what it holds back is gone from it
-                    (state.get("hold_parts") or {}).pop(n, None)
-            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        change_state(fleet, do)
     except OSError:
         if not only_new:
             raise
@@ -1624,10 +1622,7 @@ def record_backup_clients(fleet, host):
     """Remember whose backups this server was told to take when it got its role."""
     if "backup-server" not in host.role_settings_raw:
         return
-    with state_lock(fleet):
-        state = fleet_state(fleet)
-        state.setdefault("backup_clients", {})[host.name] = _backup_clients(host)
-        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+    change_state(fleet, lambda state: state.setdefault("backup_clients", {}).__setitem__(host.name, _backup_clients(host)))
 
 
 def backup_untold(fleet):
@@ -1674,10 +1669,7 @@ def record_rendered(fleet, name, script):
     """What a machine got with its last apply, as a fingerprint of its role script (the same
     settings render the same script, byte for byte)."""
     try:
-        with state_lock(fleet):
-            state = fleet_state(fleet)
-            state.setdefault("rendered", {})[name] = _fingerprint(script)
-            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        change_state(fleet, lambda state: state.setdefault("rendered", {}).__setitem__(name, _fingerprint(script)))
     except OSError:
         pass
 
@@ -2235,10 +2227,7 @@ def vps_install(args, fleet, client, server):
                         "Build it again, then install: kiwi-server build %s %s" % (h.name, h.name, typed_path(fleet.path), h.name))
     netcup.install(client, server, base + ".iso", _iso_key(h), lambda m: util.say("%s: %s" % (h.name, m)))
     if mid:
-        with state_lock(fleet):
-            state = fleet_state(fleet)
-            state.setdefault("installed_media", {})[h.name] = mid
-            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+        change_state(fleet, lambda state: state.setdefault("installed_media", {}).__setitem__(h.name, mid))
     addresses = [a["ip"] for a in server.get("ipv4Addresses") or []]
     known = fleet.resolve_path("secrets/known_hosts")
     if os.path.isfile(known):                          # the reinstall made new host keys, and this is why
@@ -2408,6 +2397,7 @@ def cmd_recover(args):
     from . import watchdog
     fleet, roles, ms = load(args)
     state = fleet_state(fleet)
+    looked = json.loads(json.dumps(state))
     applied = state.get("applied") or {}
     kinds = {h.name: ("master" if h.role in roles and roles[h.role].node_type == "master" and not h.standby_of else "node")
              for h in fleet.hosts.values() if h.name in applied}
@@ -2490,8 +2480,10 @@ def cmd_recover(args):
     events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds], said, state, time.time(), sees,
                                 copy_age, independent)
     if not args.dry_run:
+        steps = statemod.diff(looked, state)     # only what this look changed: a change meanwhile stays
         try:
-            util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+            if steps:
+                change_state(fleet, lambda now: statemod.apply(now, steps))
         except OSError:
             pass
     if args.porcelain:
@@ -3386,12 +3378,12 @@ def cmd_apply(args):
                 partstandby.after_apply(fleet, h, tgt, roles, ms, r.script)
                 has = any(h.name in (a, m) for a, _p, m in partstandby.links(fleet))
                 if has != had:
-                    with book, state_lock(fleet):
-                        state = fleet_state(fleet)
+                    def link(state, has=has, name=h.name):
                         names = set(state.get("standby_links") or [])
-                        (names.add if has else names.discard)(h.name)
+                        (names.add if has else names.discard)(name)
                         state["standby_links"] = sorted(names)
-                        util.write_text(_state_path(fleet), json.dumps(state, indent=1, sort_keys=True) + "\n", 0o644)
+                    with book:
+                        change_state(fleet, link)
             if h.target == "coreos-ram":    # RAM forgets: the fleet keeps what the next boot needs
                 ram_t.keep(h, tgt)
                 ram_t.kept_now(fleet, h.name)

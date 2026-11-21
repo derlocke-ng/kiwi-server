@@ -1299,11 +1299,13 @@ class TestAdopt(Base):
         args = argparse.Namespace(hosts=[], ssh=None, reports=None, stream=False, direct=False, porcelain=True)
         now = time.time()
         look = {"time": now - 300, "hosts": [{"host": "a", "state": "ok", "seen": now - 30}, {"host": "b", "state": "down"},
-                                              {"host": "gone", "state": "ok"}]}
+                                              {"host": "gone", "state": "ok"}],
+                "emergencies": [{"key": "machine:b", "text": "b does not answer", "since": 1, "by": ""}]}
         with mock.patch.object(controlsync, "remote_of", lambda d: {"url": "https://control.x"}), \
                 mock.patch.object(controlsync, "status_api", lambda d: look), mock.patch.dict(os.environ, {"KIWI_CONTROL_HOST": ""}):
             got = cli.status_from_control(f, args)
             self.assertEqual((got["from"], [h["host"] for h in got["hosts"]]), ("control", ["a", "b"]))   # not the one it no longer has
+            self.assertEqual([e["key"] for e in got["emergencies"]], ["machine:b"])     # the app shows them (22 Nov 2026: lost here)
             for change in ({"direct": True}, {"hosts": ["a"]}, {"porcelain": False}, {"stream": True}, {"reports": "/x"}):
                 self.assertIsNone(cli.status_from_control(f, argparse.Namespace(**dict(vars(args), **change))), change)
             look["time"] = now - 2000                                            # b's word is old now (a's is fresh)

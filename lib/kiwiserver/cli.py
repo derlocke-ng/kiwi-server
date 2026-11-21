@@ -4190,7 +4190,8 @@ def status_from_control(fleet, args):
     fresh = lambda h: time.time() - max(when, h.get("seen") if isinstance(h.get("seen"), (int, float)) else 0) <= CONTROL_LOOK_AGE  # noqa: E731
     if not rows or {h["host"] for h in rows} != names or not all(fresh(h) for h in rows):
         return None             # a machine it does not know yet, or an old word on one: asked from here
-    return {"hosts": rows, "from": "control", "time": when}
+    # with the emergencies nobody has yet (Control.emergencies): the app shows them with "I have it"
+    return {"hosts": rows, "from": "control", "time": when, "emergencies": seen.get("emergencies") or []}
 
 
 def cmd_status(args):

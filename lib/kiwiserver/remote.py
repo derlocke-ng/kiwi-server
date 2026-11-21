@@ -8,6 +8,7 @@ import re
 import shlex
 import socket
 import subprocess
+import sys
 import threading
 import time
 
@@ -243,13 +244,23 @@ def _fail(where, r):
     raise KiwiError("%s: %s" % (where, lines[-1]))
 
 
+def _timed(tgt, script, began):
+    """KIWI_APPLY_TIMES=1: each call to a machine with how long it took (where an apply's time goes)."""
+    if os.environ.get("KIWI_APPLY_TIMES") == "1":
+        first = next((l.strip() for l in script.splitlines() if l.strip() and not l.strip().startswith("#")), "")
+        with _PRINT:
+            print("[times] %5.1f s  %s  %s" % (time.time() - began, tgt, first[:90]), file=sys.stderr, flush=True)
+
+
 def run(tgt, script, data=None, runner=subprocess.run, options=()):
     """A shell script as root on the machine; stdout as bytes. `options` are more for ssh."""
     argv = ["ssh"] + ssh_opts() + list(options) + [tgt, "sudo sh -c " + shlex.quote(script)]
+    began = time.time()
     try:
         r = runner(argv, input=data, capture_output=True)
     except FileNotFoundError:
         raise KiwiError("ssh is not installed")
+    _timed(tgt, script, began)
     if r.returncode != 0:
         _fail(tgt, r)
     return r.stdout
@@ -269,14 +280,19 @@ def run_stream(tgt, script, runner=subprocess.run, prefix=""):
                                  text=True, errors="replace")
         except FileNotFoundError:
             raise KiwiError("ssh is not installed")
+        began = time.time()
         for line in p.stdout:
             with _PRINT:
                 print("%s | %s" % (prefix, line.rstrip("\n")), flush=True)
-        return p.wait()
+        rc = p.wait()
+        _timed(tgt, script, began)
+        return rc
+    began = time.time()
     try:
         r = runner(argv, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         raise KiwiError("ssh is not installed")
+    _timed(tgt, script, began)
     return r.returncode
 
 

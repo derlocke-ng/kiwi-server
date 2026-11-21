@@ -119,13 +119,14 @@ class TestTrade(Base):
     def test_newer_applies_from_here_are_handed_over_once(self):
         self.joined()
         fs._write(self.dir, {"applied": {"lime": 300, "sorbet": 50}, "rendered": {"lime": "v2:here", "sorbet": "v2:s"},
-                             "copy": {"hosts": {"medlar": 90}}})
+                             "copy": {"hosts": {"medlar": 90}}, "off": {"quince": 70}, "hold": {"lime": ["kn-vault"]}})
         node = Node({"applied": {"lime": 200, "sorbet": 60}, "rendered": {"lime": "v2:there", "sorbet": "v2:t"}})
         cs.trade_state(self.dir, node)
         got = fs.read(node.dir)
         self.assertEqual(got["applied"], {"lime": 300, "sorbet": 60})
         self.assertEqual(got["rendered"], {"lime": "v2:here", "sorbet": "v2:t"})
         self.assertEqual(got["copy"], {"hosts": {"medlar": 90}})
+        self.assertEqual((got["off"], got["hold"]), ({"quince": 70}, {"lime": ["kn-vault"]}))    # switched off, held back from here
         self.assertEqual(fs.read(self.dir), got)
         node.sent.clear()
         cs.trade_state(self.dir, node)          # handed over once: the next exchange sends only new changes

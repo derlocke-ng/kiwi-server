@@ -73,6 +73,20 @@ filter   = kiwi-nginx-refused
 logpath  = /var/log/nginx/access.log
 backend  = polling
 maxretry = 40
+
+# the master's door (the stream block that hands connections on to the nodes): an address that keeps
+# on opening more connections at once than the door lets through is a flood, not a visitor. Counted
+# where nginx says it refused one; generous, as a busy household behind one address opens many
+[kiwi-nginx-door]
+enabled  = true
+port     = http,https
+{{ ban }}
+filter   = nginx-limit-req
+failregex = ^\s*\[[a-z]+\] \d+#\d+: \*\d+ limiting connections by zone "kiwi_door", client: <HOST>,
+logpath  = /var/log/nginx/error.log
+backend  = polling
+findtime = 5m
+maxretry = 300
 {% for j in f2b_jails %}
 
 # {{ j.name }}: wrong logins, as its own log tells them (kn-f2b-tap copies those lines out)

@@ -9,6 +9,8 @@
 #   backup-offsite.sh                 bring the copy up to date
 #   backup-offsite.sh list            what the copy holds (the names, decrypted here)
 #   backup-offsite.sh restore NAME DIR    one machine's repository from the copy into DIR
+#   backup-offsite.sh bring-back [NAME...]   a store installed anew: every repository the copy holds
+#                                     (or the ones named) that this store has not, from the copy
 set -u
 dir={{ docker_dir }}/{{ container_prefix }}-backup-server
 data={{ data_path }}
@@ -79,6 +81,22 @@ case "${1:-}" in
     restore) [[ -n ${2:-} && -n ${3:-} ]] || { echo "usage: backup-offsite.sh restore NAME DIR"; exit 2; }
              mkdir -p "$3" && "$rt" run --rm --env-file "$run/env" -v "$3:/back:z" -v "$run:/kiwi:ro,z" "$image" copy "kiwi:$2" /back --transfers 4 "${ca[@]}"
              exit $? ;;
+{% raw %}
+    bring-back)
+             # a repository this store has already is left as it is: the copy never replaces newer snapshots
+             names=("${@:2}")
+             if (( ${#names[@]} == 0 )); then mapfile -t names < <(rclone lsf --dirs-only kiwi: | sed 's|/$||'); fi
+             (( ${#names[@]} )) || { echo "the copy holds nothing"; exit 1; }
+             rc=0
+             for n in "${names[@]}"; do
+                 [[ $n =~ ^[A-Za-z0-9._-]+$ ]] || { echo "$n: not a name of a repository"; rc=1; continue; }
+                 if [[ -n $(ls -A "$data/$n" 2>/dev/null) ]]; then echo "$n: here already, left as it is"; continue; fi
+                 echo "$n: from the copy"
+                 mkdir -p "$data/$n" && "$rt" run --rm --env-file "$run/env" -v "$data/$n:/back:z" -v "$run:/kiwi:ro,z" "$image" \
+                     copy "kiwi:$n" /back --transfers 4 "${ca[@]}" || { echo "$n: did not come back"; rc=1; }
+             done
+             exit $rc ;;
+{% endraw %}
 esac
 started=$(date +%s)
 # first what is new (the packs), then the rest with what was pruned: a copy cut off half way still

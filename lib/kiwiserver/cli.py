@@ -1,6 +1,7 @@
 """The command line. bin/kiwi-server execs this; kiwi-server-gui calls it
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
+import copy
 import calendar
 import concurrent.futures
 import threading
@@ -19,7 +20,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod, fleetstate as statemod
+from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod, fleetstate as statemod, reach as reachmod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -325,12 +326,26 @@ def tls_needs_ca(host):
             and "reverse-proxy/tls_fullchain" not in host.module_files)
 
 
+def _plain(x):
+    """For a fingerprint: sets sorted, a machine by its name, anything else by its fields."""
+    if isinstance(x, (set, frozenset)):
+        return sorted(x, key=repr)
+    if isinstance(x, bytes):
+        return hashlib.sha256(x).hexdigest()
+    if isinstance(x, config.Host):
+        return "host:" + x.name
+    if hasattr(x, "__dict__"):
+        return {k: v for k, v in vars(x).items() if not k.startswith("__")}
+    return repr(x)
+
+
 class Renderer:
     def __init__(self, fleet, roles, out_dir, tc, modset=None, media_dir=None):
         self.fleet, self.roles, self.out_dir, self.tc = fleet, roles, out_dir, tc
         self.media_dir = media_dir or out_dir
         self.ms = modset or modmod.discover(extra=sourcesmod.folders(fleet))
         self._scanned = False
+        self.reads = {}             # name -> what its render read of the other machines' parts
         self._records = []
         self._names = {}        # every name a host's sites answer for, its public ones too: {hostname: [name]}
         self._node_lan = []
@@ -365,7 +380,12 @@ class Renderer:
 
     def prepare(self, host):
         role = self.roles[host.role]
-        rolesmod.resolve_settings(role, host, self.ms)
+        with reachmod.own(host.name):       # a machine's own settings, resolved: its own reads
+            rolesmod.resolve_settings(role, host, self.ms)
+            # its own copy: resolved values can be a module's default or the fleet file's block itself,
+            # and a render writes into them (access rules), which then leaked into every later machine
+            host.module_settings = copy.deepcopy(dict(host.module_settings))
+        reachmod.watch(host, self.ms.modules)     # what another machine's render reads of its parts is written down
         p = tls_problem(host)
         if p:
             raise KiwiError(p)
@@ -380,6 +400,21 @@ class Renderer:
         if self._scanned:
             return
         self._scanned = True
+        with reachmod.unwatched():      # what it found is in every fingerprint instead (scan_print)
+            self._scan()
+
+    # what is not what the fleet-wide look found (scan_print)
+    _NOT_FOUND = frozenset(("fleet", "roles", "out_dir", "tc", "media_dir", "ms", "reads", "_told", "_leases", "_scanned",
+                            "updating", "also_moving"))
+
+    def scan_print(self):
+        """A fingerprint of what the fleet-wide look found (records, masters, neighbours, relays…):
+        every machine's script reads it, so it is in every machine's fingerprint (reach.py)."""
+        self.scan()
+        found = {k: v for k, v in sorted(vars(self).items()) if k not in self._NOT_FOUND}
+        return hashlib.sha256(json.dumps(found, sort_keys=True, default=_plain).encode()).hexdigest()
+
+    def _scan(self):
         recs, needs_ca, master_ip, node_lan = [], False, "", []
         master_host, public_host, vpn_ips = None, "", {}
         self._caches = []       # (LAN interface, hostname, registries, apt, site) of the nodes that run the cache module
@@ -760,7 +795,7 @@ class Renderer:
                     name = namesmod.name_of(self.fleet, src, part, self.ms, namesmod.plan(self.fleet, self.ms))
                     if name:
                         settings[nb["setting"]] = ("https://" + name) if nb.get("url") else name
-                out[part] = (settings, {k: v for k, v in (src.module_files or {}).items() if k.startswith(part + "/")})
+                out[part] = (settings, reachmod.files_of(src, part))
         return out
 
     def moving_names(self):
@@ -789,10 +824,14 @@ class Renderer:
         return out
 
     def script(self, host):
-        role = self.prepare(host)
-        self.use_cache(host, role)
-        b = self.bundle(host, role)
-        return rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
+        seen = set()
+        with reachmod.reading(host.name, seen):       # the others' part-level data it reads (reach.py)
+            role = self.prepare(host)
+            self.use_cache(host, role)
+            b = self.bundle(host, role)
+            out = rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
+        self.reads[host.name] = seen
+        return out
 
     def write_stack(self, o, bundle, host, role):
         if os.path.isdir(o.stack):
@@ -1676,7 +1715,7 @@ def record_rendered(fleet, name, script):
         pass
 
 
-def inputs_key(fleet, ms):
+def inputs_key(fleet, ms, hosts=True):
     """One fingerprint of everything a role script is rendered from: this release, the fleet's files,
     what the fleet remembers (without when and what was applied), the secrets by name, size and
     time, the roles and the modules. The same key: every machine's script is the same as before."""
@@ -1698,6 +1737,10 @@ def inputs_key(fleet, ms):
     folder = os.path.dirname(os.path.abspath(fleet.path))
     for f in sorted(os.listdir(folder)):
         if f.endswith((".yaml", ".yml")):
+            if not hosts and f == os.path.basename(fleet.path):
+                # without the machines: each machine's fingerprint holds them (host_print)
+                put("file", f, json.dumps({k: v for k, v in (fleet.raw or {}).items() if k != "hosts"}, sort_keys=True, default=str))
+                continue
             with open(os.path.join(folder, f), "rb") as fh:
                 put("file", f, hashlib.sha256(fh.read()).hexdigest())
     put("state", json.dumps({k: v for k, v in fleet_state(fleet).items() if k not in ("applied", "rendered")}, sort_keys=True))
@@ -1715,46 +1758,121 @@ def _judged_path(r):
     return os.path.join(r.out_dir, ".rendered-prints.json")
 
 
+def _roster(fleet, roles, r):
+    """Every machine prepared (its settings resolved), and a fingerprint of what all fingerprints
+    hold of each: everything but its parts' own data (reach.shared_view)."""
+    views = []
+    for h in sorted(fleet.hosts.values(), key=lambda x: x.name):
+        if h.role in roles:
+            try:
+                r.prepare(h)
+            except KiwiError:
+                pass
+        views.append(reachmod.shared_view(h, r.ms.modules))
+    return hashlib.sha256(json.dumps(views, sort_keys=True, default=_plain).encode()).hexdigest()
+
+
+def host_print(pre, name, shared, reads):
+    """A machine's fingerprint (docs/design/scale.md): what is the same for all (`shared`: the
+    release, roles, modules, defaults, secrets, the fleet-wide look, every machine's shared view),
+    all of its own parts, and the parts of other machines its last render read (`reads`). `pre`:
+    {machine: {part: its data}}, taken right after the settings were resolved and before any
+    render (a render adds certificates to a machine's files)."""
+    d = hashlib.sha256()
+    d.update(shared.encode())
+    d.update(json.dumps(pre.get(name), sort_keys=True).encode())
+    for owner, part in sorted(reads):
+        theirs = pre.get(owner)
+        got = "gone" if theirs is None else theirs if part == "*" else theirs.get(part)
+        d.update(json.dumps([owner, part, got], sort_keys=True).encode())
+    return d.hexdigest()
+
+
+def _inputs_now(fleet, roles, r):
+    """(shared, pre) for the fingerprints (host_print), from the fleet as it is loaded, never from
+    one rendered already: a render changes what it is given in place (a resolved value, a
+    certificate). `pre` as text at once, before anything else can change it."""
+    clean = config.Fleet.load(fleet.path)
+    namesmod.assign(clean, r.ms)
+    rc = Renderer(clean, roles, r.out_dir, None, r.ms)
+    rc.scan()
+    shared = "%s:%s:%s:%s" % (inputs_key(clean, r.ms, hosts=False), rc.scan_print(), _roster(clean, roles, rc),
+                              json.dumps([bool(getattr(r, "updating", False)), sorted(getattr(r, "also_moving", None) or ())]))
+    pre = {h.name: {p: json.dumps(v, sort_keys=True, default=_plain) for p, v in reachmod.part_data(h, "*").items()}
+           for h in clean.hosts.values()}
+    return shared, pre
+
+
 def changed_since_apply(fleet, roles, r, skip=()):
     """Machines whose role script is another now than the one their last apply sent: a setting of
     theirs changed, or one elsewhere that reaches them (a new name the DNS machines must know, a
     public name the master hands on, a new client of a backup server). A machine this computer
     never applied with this release is not judged.
 
-    A script is rendered once per change, not once per question (the owner, 20 Nov 2026: "why all
-    machines, and not just what changed?!"): its fingerprint is kept beside the output under the
-    key of everything it was rendered from (`inputs_key`), and read from there while that key
-    stays, for an hour at most. KIWI_RENDER_ALWAYS=1 renders every time, as before."""
-    told, out = fleet_state(fleet).get("rendered") or {}, []
-    kept, key, dirty = {}, None, False
-    if os.environ.get("KIWI_RENDER_ALWAYS") != "1":
+    A machine is rendered again only when what its script is made from changed (the owner, 20 Nov
+    2026: "why all machines, and not just what changed?!"): its fingerprint (host_print) holds what
+    is the same for all, its own settings, and what its last render read of the other machines'
+    parts (reach.py). Kept beside the output for an hour at most (rendering also renews what runs
+    out). A render that changed what scripts are made from (a new certificate) has every machine
+    judged once more. KIWI_RENDER_ALWAYS=1 renders every time, as before."""
+    told = fleet_state(fleet).get("rendered") or {}
+    always = os.environ.get("KIWI_RENDER_ALWAYS") == "1"
+    state = None
+    if not always:
         try:
-            key = inputs_key(fleet, r.ms)
-            memo = json.loads(util.read_text(_judged_path(r)))
-            fresh = memo.get("key") == key and 0 <= time.time() - (memo.get("time") or 0) < KEPT_FOR
-            kept = dict(memo.get("prints") or {}) if fresh else {}
+            state = _inputs_now(fleet, roles, r)
+        except (KiwiError, OSError, ValueError, TypeError) as e:
+            util.warn("the fingerprints of the machines: %s; every machine is rendered" % str(e).splitlines()[-1][:120])
+            always = True
+    memo = {}
+    if not always:
+        try:
+            got = json.loads(util.read_text(_judged_path(r)))
+            memo = (got.get("hosts") or {}) if got.get("v") == 2 else {}
         except (OSError, ValueError, AttributeError):
-            kept = {}
-    for h in fleet.hosts.values():
-        if h.name in skip or h.name not in told or h.role not in roles or h.validate(roles):
-            continue
-        if told[h.name].startswith("v2:") and h.name in kept:
-            if kept[h.name] != told[h.name]:
+            memo = {}
+
+    def judge(state, memo):
+        out, kept, dirty = [], {}, False
+        shared, pre = state if state else (None, {})
+        for h in fleet.hosts.values():
+            if h.name in skip or h.name not in told or h.role not in roles or h.validate(roles):
+                continue
+            m = memo.get(h.name) or {}
+            reads = {tuple(x) for x in m.get("reads") or []}
+            if (shared and told[h.name].startswith("v2:") and m.get("print")
+                    and 0 <= time.time() - (m.get("time") or 0) < KEPT_FOR       # each rendered within the hour
+                    and m.get("key") == host_print(pre, h.name, shared, reads)):
+                kept[h.name] = m
+                if m["print"] != told[h.name]:
+                    out.append(h.name)
+                continue
+            try:
+                script, _b = r.script(h)
+            except KiwiError:
+                continue
+            reads = r.reads.get(h.name) or set()
+            kept[h.name], dirty = {"print": _fingerprint(script), "reads": sorted(reads), "time": int(time.time()),
+                                   "key": host_print(pre, h.name, shared, reads) if shared else ""}, True
+            if not _same_as_told(script, told[h.name]):
                 out.append(h.name)
-            continue
+        return out, kept, dirty
+
+    out, kept, dirty = judge(state, memo)
+    if dirty and state:
         try:
-            script, _b = r.script(h)
-        except KiwiError:
-            continue
-        kept[h.name], dirty = _fingerprint(script), True
-        if not _same_as_told(script, told[h.name]):
-            out.append(h.name)
-    if key and dirty:
-        try:
-            os.makedirs(r.out_dir, exist_ok=True)
-            util.write_text(_judged_path(r), json.dumps({"key": key, "time": int(time.time()), "prints": kept}, sort_keys=True), 0o600)
-        except OSError:
-            pass
+            after = _inputs_now(fleet, roles, r)
+        except (KiwiError, OSError, ValueError, TypeError):
+            after = None
+        if after != state:          # a render changed what the scripts are made from: once more, on that
+            out, kept, dirty = judge(after, kept) if after else (out, {}, False)
+            state = after
+        if state and kept:
+            try:
+                os.makedirs(r.out_dir, exist_ok=True)
+                util.write_text(_judged_path(r), json.dumps({"v": 2, "hosts": kept}, sort_keys=True), 0o600)
+            except OSError:
+                pass
     return out
 
 

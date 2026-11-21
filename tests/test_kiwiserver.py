@@ -3262,13 +3262,65 @@ class TestSetup(Base):
             cli.KEPT_FOR = keep
         self.assertTrue(calls)
         del calls[:]
-        write(dest, util.read_text(dest) + "\n# a line more\n")                      # the fleet file is another: rendered again
+        write(dest, util.read_text(dest) + "\n# a line more\n")                      # a comment: nothing to render
         fleet = config.Fleet.load(dest)
         r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
         real2 = r.script
         r.script = lambda h: (calls.append(h.name), real2(h))[1]
         self.assertEqual(cli.changed_since_apply(fleet, roles, r), changed)
-        self.assertTrue(calls)
+        self.assertEqual(calls, [])
+
+    def test_only_the_machines_a_change_reaches_are_rendered_and_none_is_missed(self):
+        """docs/design/scale.md: a part's setting on one machine renders that machine; a change that
+        reaches others renders them too. Each time the answer is the same as a full render's."""
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        wg = ("[Interface]\nPrivateKey = dGVzdC1wcml2YXRlLWtleS1ub3QtcmVhbC0wMDAwMDAwMDAwMDA=\nAddress = 10.8.0.%d/24\n"
+              "DNS = 10.8.0.1\n\n[Peer]\nPublicKey = dGVzdC1zZXJ2ZXItcHVibGljLWtleS1ub3QtcmVhbC0wMDAwMDA=\n"
+              "AllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n")
+        for i, h in enumerate(config.Fleet.load(dest).hosts.values()):
+            write(os.path.join(self.tmp, "secrets", "%s.conf" % h.hostname), wg % (20 + i))
+        roles = rolesmod.discover()
+
+        def judged(always=False):
+            fleet = config.Fleet.load(dest)
+            r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+            calls, real = [], r.script
+            r.script = lambda h: (calls.append(h.name), real(h))[1]
+            if always:
+                os.environ["KIWI_RENDER_ALWAYS"] = "1"
+            try:
+                return sorted(cli.changed_since_apply(fleet, roles, r)), sorted(set(calls))
+            finally:
+                os.environ.pop("KIWI_RENDER_ALWAYS", None)
+
+        fleet = config.Fleet.load(dest)
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+        ok = [h for h in fleet.hosts.values() if h.role in roles and not h.validate(roles)]
+        for h in ok:
+            cli.record_rendered(fleet, h.name, r.script(h)[0])
+        self.assertEqual(judged()[0], [])
+        self.assertEqual(judged(), ([], []))                                         # nothing changed: nothing rendered
+        node = next(h.name for h in ok if roles[h.role].node_type == "node" and "dns" not in h.modules)
+        part = next(m for m in fleet.hosts[node].modules if m == "portainer")
+
+        def change(fn):
+            data = yaml.safe_load(util.read_text(dest))
+            fn(data)
+            write(dest, yaml.safe_dump(data, sort_keys=False))
+            first = judged()                             # what is rendered for the change
+            got, full = judged(), judged(always=True)
+            self.assertEqual((first[0], got[0]), (full[0], full[0]))      # the same machines as a full render, none missed
+            return first
+        # a part's setting on one machine: that machine only, and only it is rendered
+        got = change(lambda d: d["hosts"][node].setdefault("node", {}).setdefault(part, {}).update({"image": "portainer/portainer-ce:2.0"}))
+        self.assertEqual(got, ([node], [node]))
+        # a new part on one machine: the machines that answer for names too
+        got = change(lambda d: d["hosts"][node]["node"].update(modules=list(fleet.hosts[node].modules) + ["paste"]))
+        self.assertIn(node, got[0])
+        self.assertGreater(len(got[0]), 1)
 
     def test_as_many_machines_at_once_as_there_are(self):
         self.assertEqual(cli.at_once(70), 70)                                         # no fixed number

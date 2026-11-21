@@ -41,6 +41,23 @@ def reading(who, seen):
 
 
 @contextlib.contextmanager
+def unwatched():
+    """Reads that are not written down: the fleet-wide look, whose results are fingerprinted instead."""
+    before = getattr(_state, "seen", None)
+    _state.seen = None
+    try:
+        yield
+    finally:
+        _state.seen = before
+
+
+def files_of(host, part):
+    """`host`'s files of one part, read as that part."""
+    _note(host.name, part)
+    return {k: v for k, v in dict.items(host.module_files or {}) if k.startswith(part + "/")}
+
+
+@contextlib.contextmanager
 def own(who):
     """Reads while `who`'s own settings are resolved count as its own (prepare)."""
     before = _who()
@@ -106,9 +123,8 @@ class Watched(dict):
         self._all()
         return dict(super().items())
 
-    def __len__(self):
-        self._all()
-        return super().__len__()
+    # len() and truth (`x or {}`): whether there are parts, not what is in them; a part added or
+    # removed changes the machine's parts, which every fingerprint holds anyway
 
     def __eq__(self, other):
         self._all()

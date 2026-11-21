@@ -25,6 +25,9 @@ L: days. New ideas go to the end of their section.
    before; an action only one machine may take at a time asks for a permission first (lease.py,
    unused until then). Nothing acts beyond what is written. Builds on the diagnosis and its
    record (authority.md step 3) and the agent (scale.md). M-L
+   Built: the lines checked and shown (step 1), `part-down` restarted by the machine itself
+   (`kiwi-runbook`). Open: its drill on a real machine, disk-full, update-failed, cut-off, the
+   control node's cases through the table, permissions for lines that name voters.
 6. Render only the machines a change reaches (scale.md). M-L
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6). L
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L

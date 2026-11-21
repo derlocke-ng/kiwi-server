@@ -122,8 +122,16 @@ the module says so (Jabber's 5222, 5223 and 5269).
 
 Add `cache` to one node's modules and the machines on its LAN fetch container
 images and Debian packages from it instead of the internet, by themselves;
-with the cache off they go to the source. `cache: { data_dir: /mnt/data/cache }`
-puts it on a big disk. Design: [Local first](design/local-first.md).
+with the cache off they go to the source. That covers their updates too: a uCore
+machine's new system image comes through it, as podman's images and apt's packages
+do. `cache: { data_dir: /mnt/data/cache }` puts it on a big disk.
+
+It also keeps install images (`files`, on unless set false): `kiwi-server build` on a
+computer on that LAN, or the control node, takes the Fedora CoreOS ISO and Debian's
+netinst from `cache.<hostname>/files/` first. Each is checked as before, the CoreOS
+image by Fedora's signature, the netinst by the checksum Debian's own server gives,
+and a cache that does not answer within three seconds means the image's own server.
+Design: [Local first](design/local-first.md).
 
 ## Game servers
 

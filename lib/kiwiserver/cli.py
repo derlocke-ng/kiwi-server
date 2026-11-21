@@ -4782,6 +4782,32 @@ def _drop_join(fleet, roles, ms, h, tgt):
     joinmod.drop(fleet, master, password, h)
 
 
+def lan_cache(fleet, roles, ms, cache_dir):
+    """The LAN's cache of install images (the cache module with files), for iso.py: {name, address,
+    ca} or None. The first applied machine at home with it and a fixed LAN address; the fleet CA's
+    certificate (public) copied beside the images, where the toolchain sees it. Whether this
+    computer is on that LAN shows when it asks (three seconds, then the image's own server)."""
+    applied = fleet_state(fleet).get("applied") or {}
+    for h in sorted(fleet.hosts.values(), key=lambda x: x.name):
+        raw = ((h.role_settings_raw or {}).get("cache")) if "cache" in (((h.role_settings_raw or {}).get("modules")) or []) else None
+        if raw is None or (raw or {}).get("files") is False or h.name not in applied:
+            continue
+        net = h.cfg.get("network") or {}
+        if net.get("dhcp", True) or not net.get("address"):
+            continue
+        ca = fleet.resolve_path("secrets/ca/kiwiCA.pem")
+        if not os.path.isfile(ca):
+            return None
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            copy = os.path.join(cache_dir, "kiwi-lan-ca.pem")
+            util.write_text(copy, util.read_text(ca), 0o644)
+        except OSError:
+            return None
+        return {"name": "cache." + h.hostname, "address": str(net["address"]).split("/")[0], "ca": copy}
+    return None
+
+
 def _render_or_build(args, build):
     fleet, roles, ms = load(args)
     hosts = fleet.select(args.hosts)
@@ -4796,6 +4822,8 @@ def _render_or_build(args, build):
     tc = make_tc(args)
     out_dir = out_dir_for(args, fleet)
     r = Renderer(fleet, roles, out_dir, tc, ms, media_dir_for(args, fleet))
+    if build:
+        isomod.LAN_CACHE = lan_cache(fleet, roles, ms, cache_dir_for(args))     # install images from the LAN first
     failed = []
     for h in hosts:
         try:

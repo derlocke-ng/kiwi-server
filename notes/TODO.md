@@ -50,7 +50,8 @@ L: days. New ideas go to the end of their section.
 - The VPN name of a public instance, `<site>-public.<machine>.home` (public-services.md). S-M
 - With an exit through a partner, DNS lookups still leave from the network's own master. M
 - `unlock.opens`: by itself, by a person, at home, as a setting (unlock.md step 2). M
-- The cache keeps install images (FCOS, Debian netinst) for the network (local-first.md §1). M
+- ~~The cache keeps install images (FCOS, Debian netinst) for the network (local-first.md §1).~~ Built (next release).
+- The LAN's DNS pointing Debian's plain-HTTP package servers at the cache, for every device (the owner's idea, 22 Nov): a setting, off at first; drill what a cache that is down does. S-M
 - Debian: a host firewall and a sysctl baseline by default (ROADMAP problem 57). M
 - Nostr as a message channel (recovery.md). S-M
 - The page restores a copy of the older passphrase kind (`.tar.enc`). M
@@ -74,7 +75,6 @@ L: days. New ideas go to the end of their section.
 Decisions:
 - Pull request 379: a second control node on his computer, a person's forced action.
 - data-partition.md's four questions (only new installs? 64 GB or asked? machines without rings? CoreOS first?).
-- local-first.md: should the cache also mirror Fedora/uCore OS updates?
 - no-master.md: should a node keep answering on its home address once a master comes?
 - controllers.md: may a site controller enroll devices?
 - recovery.md: who may answer an `ask` from a phone? `recovery: reinstall` (cannot be undone).

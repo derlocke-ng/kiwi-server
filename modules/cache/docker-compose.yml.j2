@@ -36,3 +36,18 @@ services:
       - {{ docker_dir }}/{{ container_prefix }}-cache/apt-nginx.conf:/etc/nginx/nginx.conf:ro,z
       - {{ data_path }}/apt:/var/cache/nginx/apt:z
 {% endif %}
+{% if files %}
+  {{ container_prefix }}-cache-files:
+    image: {{ apt_image }}
+    container_name: {{ container_prefix }}-cache-files
+    networks:
+      {{ network_name }}: {}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-cache/files-nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - {{ data_path }}/files:/var/cache/nginx/files:z
+{% endif %}

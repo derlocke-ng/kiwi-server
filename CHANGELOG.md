@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.299.0 — installs from the LAN
+
+The owner, 22 Nov 2026: the LAN's cache is for updates and installs, "less traffic usage, faster
+updates/installs since 1-10gbit/s possible here".
+
+- **Install images from the LAN's cache** (kiwi-modules 0.119.1, the cache's `files`):
+  `kiwi-server build` takes the Fedora CoreOS ISO and Debian's netinst from
+  `cache.<hostname>/files/` first, on a computer on that LAN or the control node. The netinst: 77 s
+  from the Internet the first time, 4 s from the cache after. Each image is checked as before
+  (Fedora's signature, the checksum from Debian's own server); a cache that does not answer within
+  three seconds means the image's own server.
+- Updates already came through the cache, now said in the docs: a uCore machine's new system image
+  (rpm-ostree pulls it through the registry mirror), podman's images, Debian's packages.
+- **The app remembers its window size** (kiwi-template's kit, ui.md step 6).
+
 ## 2.298.0 — one login per machine
 
 - **One SSH login per machine** for the calls of an apply (kept two minutes): an apply of lime went

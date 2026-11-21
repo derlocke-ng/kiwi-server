@@ -362,6 +362,68 @@ class Renderer:
         self.aliases = set()     # VPN names that send on to a public name (no service of their own)
         self._told = set()      # (machine, service): what was said once about a hidden service
 
+    def vip_pair(self, host):
+        """The machines of `host`'s site that share its moving address, by name: [(host, LAN address)]."""
+        def addr_of(h):
+            return str(((h.role_settings_raw or {}).get("vip") or {}).get("address") or "").split("/")[0]
+        mine = addr_of(host)
+        if not mine:
+            return []
+        out = []
+        for h in sorted(self.fleet.hosts.values(), key=lambda x: x.name):
+            if h.standby_of or "vip" not in (((h.role_settings_raw or {}).get("modules")) or []):
+                continue
+            if site_of(h) != site_of(host) or addr_of(h) != mine:
+                continue
+            net = h.cfg.get("network") or {}
+            lan = str(net.get("address") or "").split("/")[0] if not net.get("dhcp", True) else ""
+            out.append((h, lan))
+        return out
+
+    def fill_vip(self, host):
+        """The moving address's settings that come from the pair (docs/design/basics-twice.md): the
+        other machine's LAN address, who holds it (the first by name), one password for both, the
+        gateway's check, and for a Pi-hole that hands out leases: the moving address as router and
+        DNS server, and its half of the range."""
+        vs = host.module_settings["vip"]
+        address = str(vs.get("address") or "")
+        if not address:
+            raise KiwiError("%s: vip.address: the moving address is needed (one nothing else on the LAN uses)" % host.name)
+        pair = self.vip_pair(host)
+        names = [h.name for h, _lan in pair]
+        if not vs.get("peers"):
+            missing = [h.name for h, lan in pair if h.name != host.name and not lan]
+            if missing:
+                util.warn("%s: %s of its pair has no fixed LAN address (network.address): the moving address cannot "
+                          "reach it" % (host.name, ", ".join(missing)))
+            vs["peers"] = [lan for h, lan in pair if h.name != host.name and lan]
+        if len(pair) < 2:
+            util.warn("%s: the moving address %s has no second machine at this site yet: it stays here" % (host.name, address))
+        if not vs.get("priority"):
+            vs["priority"] = 150 - 50 * min(names.index(host.name), 2) if host.name in names else 100
+        if not vs.get("password"):
+            vs["password"] = self.fleet.derive_secret(address.split("/")[0], "vip", "password", length=8)
+        if not vs.get("check_ping") and "gateway" in host.modules and self._master_ip:
+            vs["check_ping"] = self._master_ip
+        ds = host.module_settings.get("dns") if "dns" in host.modules else None
+        if ds is not None and ds.get("dhcp_enabled"):
+            bare = address.split("/")[0]
+            ds["dhcp_router"] = ds.get("dhcp_router") or bare
+            extra = dict(ds.get("extra_env") or {})
+            key = next((k for k in extra if k.upper() == "FTLCONF_MISC_DNSMASQ_LINES"), "FTLCONF_misc_dnsmasq_lines")
+            lines = [x for x in str(extra.get(key) or "").split(";") if x.strip()]
+            extra[key] = ";".join(lines + ["dhcp-option=option:dns-server,%s" % bare])
+            ds["extra_env"] = extra
+            dhcp = [h for h, _lan in pair if ((h.role_settings_raw or {}).get("dns") or {}).get("dhcp_enabled")]
+            if len(dhcp) == 2 and host in dhcp and ds.get("dhcp_start") and ds.get("dhcp_end"):
+                # both hand out leases: each its half of the range
+                import ipaddress
+                a, b = int(ipaddress.ip_address(ds["dhcp_start"])), int(ipaddress.ip_address(ds["dhcp_end"]))
+                mid = a + (b - a) // 2
+                first = dhcp.index(host) == 0
+                ds["dhcp_start"], ds["dhcp_end"] = ((str(ipaddress.ip_address(a)), str(ipaddress.ip_address(mid))) if first
+                                                    else (str(ipaddress.ip_address(mid + 1)), str(ipaddress.ip_address(b))))
+
     def standby_endpoints(self):
         """address:WireGuard port:SSH port of the master, then of each of its standbys; [] without one."""
         master = next((h for h in self.fleet.hosts.values() if h.role in self.roles and not h.standby_of
@@ -710,6 +772,8 @@ class Renderer:
         if "reverse-proxy" in host.modules and accessmod.admin_ranges(everyone):
             # the admin areas inside a site (a master's too): not for the groups without the admin pages
             host.module_settings["reverse-proxy"].setdefault("access", {})["admin"] = accessmod.admin_ranges(everyone)
+        if "vip" in host.modules:
+            self.fill_vip(host)     # the site's moving address: its pair, password, checks (basics-twice.md)
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []

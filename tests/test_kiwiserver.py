@@ -1839,7 +1839,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 33)
+        self.assertEqual(len(ms.names()), 34)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -10194,7 +10194,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 33)
+        self.assertEqual(len(json.loads(out)["modules"]), 34)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -15600,7 +15600,8 @@ class TestFirstRunPage(StoreBase):
         status, where, _ = self.ask("/hosts/%s/switch" % a, {"part": part, "csrf": csrf}, cookie=cookie)
         self.assertEqual(status, 303)
         for _ in range(400):
-            if all(j["state"] in ("ok", "failed") for j in self.c.jobs()) and len(self.c.jobs()) >= 2:
+            if ("switch %s" % self.c.fleet_path) in util.read_text(argv_log) and all(
+                    j["state"] in ("ok", "failed") for j in self.c.jobs()):
                 break
             time.sleep(0.05)
         said = util.read_text(argv_log)
@@ -16259,6 +16260,37 @@ class TestRecovery(Base):
         self.assertIn("vault", after["quince"]["node"]["modules"])
         self.assertNotIn("vault", after["papaya"]["node"]["modules"])
         self.assertIn("Should papaya answer again, apply it", buf.getvalue())
+
+    def test_a_moving_address_for_the_two_machines_of_a_site(self):
+        """basics-twice.md: lychee and papaya share 192.168.2.70; the first by name holds it, each
+        knows the other, one password for both; both hand out leases, each half of the range."""
+        net = self.network()
+        lych, pap = net.raw["hosts"]["lychee"], net.raw["hosts"]["papaya"]
+        dhcp = {"dhcp_enabled": True, "dhcp_start": "192.168.2.100", "dhcp_end": "192.168.2.199"}
+
+        def with_vip(h):
+            node = dict(h["node"], modules=list(h["node"]["modules"]) + ["dns", "dhcp-relay", "vip"],
+                        vip={"address": "192.168.2.70/16"}, dns=dict(dhcp))
+            return dict(h, node=node)
+        f = self.network(lychee=with_vip(lych), papaya=with_vip(pap))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out"), None, self.ms)
+        env = {}
+        for name in ("lychee", "papaya"):
+            b = r.script(f.hosts[name])[1]
+            env[name] = dict(b.compose["services"]["kn-vip"]["environment"])
+            env[name]["dns"] = b.compose["services"]["kn-pihole"]["environment"]
+        self.assertEqual((env["lychee"]["VIP_PEERS"], env["papaya"]["VIP_PEERS"]), ("192.168.2.30", "192.168.2.61"))
+        self.assertEqual((env["lychee"]["VIP_PRIORITY"], env["papaya"]["VIP_PRIORITY"]), ("150", "100"))
+        self.assertEqual(env["lychee"]["VIP_PASSWORD"], env["papaya"]["VIP_PASSWORD"])
+        self.assertEqual(len(env["lychee"]["VIP_PASSWORD"]), 8)
+        self.assertEqual(env["lychee"]["VIP_ROUTER_ID"], "70")
+        lines = lambda e: next(x for x in e if x.startswith("FTLCONF_misc_dnsmasq_lines="))     # noqa: E731
+        self.assertIn("dhcp-option=option:dns-server,192.168.2.70", lines(env["lychee"]["dns"]))
+        self.assertIn("FTLCONF_dhcp_router=192.168.2.70", env["lychee"]["dns"])
+        self.assertIn("FTLCONF_dhcp_start=192.168.2.100", env["lychee"]["dns"])
+        self.assertIn("FTLCONF_dhcp_end=192.168.2.149", env["lychee"]["dns"])
+        self.assertIn("FTLCONF_dhcp_start=192.168.2.150", env["papaya"]["dns"])
+        self.assertIn("FTLCONF_dhcp_end=192.168.2.199", env["papaya"]["dns"])
 
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod

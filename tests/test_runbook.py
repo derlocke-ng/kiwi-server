@@ -259,3 +259,15 @@ class TestCrashLoop(unittest.TestCase):
         self.assertEqual(run(1060, 4), "restarts=kn-git 2\n")
         self.assertEqual(run(1120, 7), "restarts=kn-git 5\n")
         self.assertEqual(run(1900, 7), "")                          # ten minutes without one: quiet again
+
+
+class TestMovingAddress(unittest.TestCase):
+    def test_who_holds_it_is_in_the_facts_and_a_note(self):
+        from kiwiserver import facts
+        f = facts.parse("now=1\nvip=192.168.2.70 holds\n", local_now=1)
+        self.assertEqual(f["vip"], {"address": "192.168.2.70", "holds": True})
+        flat = " ".join(str(x) for x in facts.assess(f, now=1))
+        self.assertIn("holds the moving address 192.168.2.70", flat)
+        f = facts.parse("now=1\nvip=192.168.2.70 waits\n", local_now=1)
+        self.assertIn("waits for the moving address", " ".join(str(x) for x in facts.assess(f, now=1)))
+        self.assertNotIn("vip", facts.parse("now=1\nvip=x maybe\n", local_now=1))

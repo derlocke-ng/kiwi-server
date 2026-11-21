@@ -133,6 +133,14 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             [ -n "$first" ] && [ "$n" -gt "$first" ] && kv restarts "$s $((n - first))"
         done
     fi
+    # the site's moving address (the vip module): this machine holds it or waits for it
+    if "$rt" inspect "${STACK_PREFIX:-km}-vip" >/dev/null 2>&1; then
+        va=$("$rt" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${STACK_PREFIX:-km}-vip" 2>/dev/null \
+             | sed -n 's/^VIP_ADDRESS=//p' | cut -d/ -f1 | head -n 1)
+        if [ -n "$va" ]; then
+            if ip -4 -o addr show 2>/dev/null | grep -q " $va/"; then kv vip "$va holds"; else kv vip "$va waits"; fi
+        fi
+    fi
     # what this machine's runbook did in the last hour (runbook.py): when, and what
     if [ -f /var/lib/kiwi-server/runbook/log ]; then
         t0=$(( $(date +%s) - 3600 ))
@@ -235,7 +243,7 @@ def lasts_s(seconds):
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
     raw, disks, containers, units, certificates, repos, copies, onion, opened, partner_masters = {}, {}, {}, [], [], [], [], [], {}, {}
-    kept, acted, restarts = [], [], {}
+    kept, acted, restarts, out_extra = [], [], {}, {}
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -274,6 +282,11 @@ def parse(data, local_now=None):
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
+        elif key == "vip":
+            a, _sp, st = value.partition(" ")
+            if a and st.strip() in ("holds", "waits"):
+                raw_vip = {"address": a, "holds": st.strip() == "holds"}
+                out_extra["vip"] = raw_vip
         elif key == "restarts":
             name, _sp, n = value.partition(" ")
             if n.strip().isdigit() and int(n) > 0:
@@ -349,6 +362,7 @@ def parse(data, local_now=None):
         out["runbook"] = acted
     if restarts:
         out["restarts"] = restarts
+    out.update(out_extra)
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
     if _int(raw.get("plaindata")):
@@ -503,6 +517,8 @@ def assess(f, quiet=(), now=None):
         notes.append("an update is waiting for a reboot")
     if f.get("banned"):
         notes.append("fail2ban keeps %d %s out right now" % (f["banned"], "address" if f["banned"] == 1 else "addresses"))
+    if f.get("vip"):
+        notes.append("%s the moving address %s" % ("holds" if f["vip"]["holds"] else "waits for", f["vip"]["address"]))
     for a in f.get("runbook") or []:     # what its runbook did by itself, as the admins wrote it (the last hour)
         notes.append("the runbook, %s: %s" % (time.strftime("%H:%M", time.localtime(a["at"])), a["what"]))
     b = f.get("backup")

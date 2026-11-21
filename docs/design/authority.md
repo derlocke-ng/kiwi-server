@@ -185,7 +185,11 @@ app), and is repeated until one of them says "I have it" on the page, in the
 app or by the link in the message. It names the case, what was found, and the
 actions as buttons. The admins are the people in the accounts' group of
 admins where the network has accounts, and the addresses in `notify:`
-otherwise. Whether an action that cannot be undone may ever follow an
+otherwise. Beside them a network can name a team for emergencies: other
+members of the network, or people of the company that runs it (the owner,
+21 November). They get the same message and can say "I have it"; the actions
+stay with the admins, so a team member who is no admin sees what happened and
+whom to reach. Whether an action that cannot be undone may ever follow an
 emergency message nobody answered is a setting per part, off unless the owner
 turns it on.
 
@@ -238,5 +242,5 @@ Each step ends with its drills on real machines, and is released as one piece.
 
 ## Not decided
 
-- Who else gets an emergency message besides a network's own admins (a team
-  that looks after several networks), and by which way.
+Nothing that blocks steps 1 and 2. The lists of step 4 are written as its
+drills are built.

@@ -85,6 +85,19 @@ class TestMachineTable(unittest.TestCase):
         full = mt.device_table(rows, "group:family")
         self.assertEqual(full["groups"], [{"group": "family", "n": 2}, {"group": "staff", "n": 1}])
         self.assertEqual((full["all"], full["shown"], full["filtered"]), (4, 2, True))
+        self.assertEqual(full["site_names"], [])                                    # one network, no sites known: one table
+
+    def test_the_devices_by_the_site_of_their_master(self):
+        rows = [{"name": "annas-phone", "group": "family", "site": "Main building", "master": "gate"},
+                {"name": "desk-07", "group": "staff", "site": "HQ abroad", "master": "gate2"},
+                {"name": "desk-08", "group": "staff", "site": "HQ abroad", "master": "gate2"},
+                {"name": "old", "group": "", "site": "", "master": ""}]
+        t = mt.device_table(rows)
+        self.assertEqual(t["site_names"], ["HQ abroad", "Main building"])
+        self.assertEqual([(g["site"], [d["name"] for d in g["devices"]]) for g in t["sites"]],
+                         [("HQ abroad", ["desk-07", "desk-08"]), ("Main building", ["annas-phone"]), ("", ["old"])])
+        self.assertEqual([d["name"] for d in mt.device_table(rows, "site:hq-abroad")["devices"]], ["desk-07", "desk-08"])
+        self.assertEqual([d["name"] for d in mt.device_table(rows, "site:main-building group:staff")["devices"]], [])
 
     def test_many_machines_stay_fast(self):
         import time

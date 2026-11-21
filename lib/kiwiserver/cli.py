@@ -1291,6 +1291,9 @@ def cmd_list(args):
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
                      "site": site_of(h),
+                     # a master: where its devices connect to (their Endpoint), so a device is shown at its site
+                     "wg_host": str(((h.role_settings_raw or {}).get("vpn-server") or {}).get("wg_host") or "")
+                     if "vpn-server" in (h.modules or []) else "",
                      "keep_ready": partstandby.kept(h),     # {part: the machine that keeps it ready}
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
@@ -3410,11 +3413,21 @@ def cmd_apply(args):
                 except KiwiError as e:
                     # its rings are not there yet (the machine that serves them comes later): the disk
                     # keeps the key for its screen until an apply after they answer
-                    util.warn("%s: its disk is not bound to its rings yet: %s. It opens with its key until an apply after "
-                              "they answer" % (h.name, e))
-                    if h.target in ("coreos", "ucore"):
-                        unlock.drop_standin(h, tgt)
+                    try:
+                        bound = unlock.rings_bound(h, tgt)
+                    except KiwiError:
+                        bound = []
+                    if bound:
+                        # bound before, and a ring is only away now (22 Nov 2026: lychee off, and lime and papaya
+                        # were put to "its key only" for good): the binding stays as it is
+                        util.warn("%s: not all of its rings answered (%s): its disk's binding stays as it was; the next "
+                                  "apply checks it again" % (h.name, str(e).splitlines()[-1][:120]))
                     else:
+                        util.warn("%s: its disk is not bound to its rings yet: %s. It opens with its key until an apply "
+                                  "after they answer" % (h.name, e))
+                    if not bound and h.target in ("coreos", "ucore"):
+                        unlock.drop_standin(h, tgt)
+                    elif not bound:
                         remote.run(tgt, unlock.INSTALL_KEY_ONLY)
                         if h.cfg["unlock"].get("ssh"):
                             # who may reach its boot system (the openers) does not wait for every ring to answer

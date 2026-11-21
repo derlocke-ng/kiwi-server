@@ -966,16 +966,21 @@ so that only the network's names are asked through it and the computer's own nam
 {% for g in t.groups %}<a class="count{{ " on" if ("group:" ~ g.group) in t.q.split() }}" href="/devices?q={{ toggled(t.q, "group", g.group)|urlencode }}"
 title="Show only this group"><b>{{ g.n }}</b> {{ g.group }}</a>{% endfor %}</div>{% endif %}
 {% if t.all > 8 or t.q %}<form class="mfilter" method="get" action="/devices" role="search"><input type="search" name="q" value="{{ t.q }}"
-aria-label="Filter the devices" placeholder="Filter: a part of a name, an address, group:NAME"{% if t.q %} autofocus{% endif %}>
+aria-label="Filter the devices" placeholder="Filter: a part of a name, an address, group:NAME, site:NAME"{% if t.q %} autofocus{% endif %}>
 <button>Filter</button>{% if t.q %}<a class="btn" href="/devices">Show all</a>{% endif %}</form>{% endif %}
 {% if t.filtered %}<p class="muted small" style="margin:0 0 8px">{{ t.shown }} of {{ t.all }} shown.</p>{% endif %}
 {% if not t.shown %}<p class="muted">No device matches.</p>{% else %}
-<form method="post" action="/devices/show">{{ tok }}<div class="scroll"><table class="tbl dt"><thead><tr><th>Device</th><th class="w2">Group</th><th class="w2">Address</th><th class="w3">Through the VPN</th><th></th></tr></thead><tbody>
-{% for d in t.devices %}<tr><td><b>{{ d.name }}</b></td><td class="w2">{{ d.group or "-" }}</td><td class="w2"><code class="sm">{{ d.address or "-" }}</code></td>
+{% set by_site = t.site_names|length > 1 %}
+{% if by_site %}<div class="counts">{% for x in t.site_names %}<a class="count{{ " on" if ("site:" ~ x) in t.q.split() }}"
+href="/devices?q={{ toggled(t.q, "site", x)|urlencode }}" title="Show only this site">{{ x }}</a>{% endfor %}</div>{% endif %}
+<form method="post" action="/devices/show">{{ tok }}{% for g in (t.sites if by_site else [{"site": "", "devices": t.devices}]) %}
+{% if by_site %}<h3 id="site-{{ g.slug }}">{{ g.site or "Master not known" }} <span class="muted small">({{ g.devices|length }})</span></h3>{% endif %}
+<div class="scroll"><table class="tbl dt"><thead><tr><th>Device</th><th class="w2">Group</th><th class="w2">Address</th><th class="w3">Through the VPN</th><th></th></tr></thead><tbody>
+{% for d in g.devices %}<tr><td><b>{{ d.name }}</b></td><td class="w2">{{ d.group or "-" }}</td><td class="w2"><code class="sm">{{ d.address or "-" }}</code></td>
 <td class="w3">{{ "Only the network" if d.split else "Everything" }}</td>
 <td class="acts"><button name="name" value="{{ d.name }}" formaction="/devices/show">QR code</button>
 <button name="name" value="{{ d.name }}" formaction="/devices/remove" onclick="return confirm('Take '+this.value+' off the VPN? Its connection stops working at once.')">Remove</button></td></tr>
-{% endfor %}</tbody></table></div></form>{% endif %}{% endif %}
+{% endfor %}</tbody></table></div>{% endfor %}</form>{% endif %}{% endif %}
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
 <details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach
 your network, even with the WireGuard app still on it.</p></details>

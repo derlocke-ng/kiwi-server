@@ -128,23 +128,35 @@ def table(machines, q="", titles=None):
 
 
 def device_table(rows, q=""):
-    """The Devices table: {all, shown, q, filtered, devices, groups}. The filter's text:
-    `group:NAME` (twice is either-or) and bare words, each a part of a name or the start of an
-    address. `groups`: [{group, n}] of all devices, for the counts above the table."""
-    wanted, words = [], []
+    """The Devices table: {all, shown, q, filtered, devices, groups, sites}. The filter's text:
+    `group:NAME` and `site:NAME` (twice is either-or) and bare words, each a part of a name or the
+    start of an address. `groups`: [{group, n}] of all devices, for the counts above the table.
+    `sites`: the shown devices by the site of the master they connect to, [{site, slug, devices}],
+    as the Machines table (ui.md); one site: one group."""
+    wanted, sites, words = [], [], []
     for word in str(q or "").split()[:20]:
         key, sep, value = word.partition(":")
         if sep and key.lower() == "group":
             if value:
                 wanted.append(value.lower())
+        elif sep and key.lower() == "site":
+            if value:
+                sites.append(slug(value))
         else:
             words.append(word.lower())
 
     def ok(d):
         if wanted and (d.get("group") or "").lower() not in wanted:
             return False
+        if sites and slug(d.get("site") or "") not in sites:
+            return False
         return all(w in d["name"].lower() or (d.get("address") or "").startswith(w) for w in words)
     shown = sorted((d for d in rows if ok(d)), key=lambda d: ((d.get("group") or "~"), d["name"]))
     names = sorted({d.get("group") or "" for d in rows})
+    by = {}
+    for d in shown:
+        by.setdefault(d.get("site") or "", []).append(d)
     return {"all": len(rows), "shown": len(shown), "q": " ".join(str(q or "").split()), "filtered": len(shown) != len(rows),
-            "devices": shown, "groups": [{"group": g, "n": sum(1 for d in rows if (d.get("group") or "") == g)} for g in names if g]}
+            "devices": shown, "groups": [{"group": g, "n": sum(1 for d in rows if (d.get("group") or "") == g)} for g in names if g],
+            "sites": [{"site": s, "slug": slug(s), "devices": by[s]} for s in sorted(by, key=lambda s: (s == "", s.lower()))],
+            "site_names": sorted({d.get("site") for d in rows if d.get("site")}, key=str.lower)}

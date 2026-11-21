@@ -2672,7 +2672,10 @@ class Control:
         if not names:
             return []
         d = os.path.join(self.fleet_dir, "secrets", "devices")
-        groups = (self.fleet_info() or {}).get("groups") or {}
+        info = self.fleet_info() or {}
+        groups = info.get("groups") or {}
+        # the master a device connects to (its Endpoint) and that master's site
+        masters = {str(h.get("wg_host")): (h["name"], h.get("site") or "home") for h in info.get("hosts") or [] if h.get("wg_host")}
 
         def read():
             nets = []
@@ -2689,20 +2692,23 @@ class Control:
                     text = ""
                 m = re.search(r"^\s*Address\s*=\s*([0-9A-Fa-f.:]+)", text, re.M)
                 allowed = re.search(r"^\s*AllowedIPs\s*=\s*(.*)$", text, re.M)
+                end = re.search(r"^\s*Endpoint\s*=\s*(\S+)", text, re.M)
+                at = masters.get(end.group(1).rsplit(":", 1)[0].strip("[]") if end else "", ("", ""))
                 addr, group = (m.group(1) if m else ""), ""
                 try:
                     ip = ipaddress.ip_address(addr) if addr else None
                     group = next((g for g, net in nets if ip is not None and ip in net), "")
                 except ValueError:
                     pass
-                out.append({"name": n, "address": addr, "group": group,
+                out.append({"name": n, "address": addr, "group": group, "master": at[0], "site": at[1],
                             "split": bool(allowed) and "0.0.0.0/0" not in allowed.group(1)})
             return out
         try:
             changed = os.stat(d).st_mtime_ns
         except OSError:
             changed = 0
-        return self._read_once("devices", read, also=(tuple(names), changed, tuple(sorted(groups.items()))))
+        return self._read_once("devices", read, also=(tuple(names), changed, tuple(sorted(groups.items())),
+                                                      tuple(sorted(masters.items()))))
 
     def device_config(self, name):
         """A device's WireGuard config (from the open store), or None."""

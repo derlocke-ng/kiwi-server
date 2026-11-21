@@ -3,7 +3,7 @@
 # docs/backups.md "From a machine that is dead"), on real machines. FROM is a VM: it is switched
 # off hard at the hypervisor, as a dead machine is.
 #
-#   VMHOST=sh3 [KIWI_SERVER=bin/kiwi-server] tests/drills/part-gone.sh FLEET PART FROM TO DATA_DIR [--back]
+#   VMHOST=sh3 [KIWI_SERVER=bin/kiwi-server] [CONTAINER=kn-auth] tests/drills/part-gone.sh FLEET PART FROM TO DATA_DIR [--back]
 #
 # A marker goes into the part's data and FROM makes a backup; a second marker after it must be lost.
 # FROM off; the move; the first marker on TO, the second not; the part runs on TO and its name answers
@@ -28,7 +28,9 @@ on() { # MACHINE COMMAND: as root there
     ssh -i "$S/admin_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
         -o UserKnownHostsFile="$S/known_hosts" -o ConnectTimeout=10 "$user@$1.$domain" "sudo sh -c $(printf '%q' "$2")"
 }
-runs() { on "$1" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" | grep -Eq -- "-$part(-|\$)"; }
+# CONTAINER=: the part's container where it is not named after the part (authenticator: kn-auth)
+runs() { on "$1" "docker ps --format '{{.Names}}' 2>/dev/null; podman ps --format '{{.Names}}' 2>/dev/null" |
+         if [ -n "${CONTAINER:-}" ]; then grep -qx -- "$CONTAINER"; else grep -Eq -- "-$part(-|\$)"; fi; }
 
 ssh -o BatchMode=yes "$VMHOST" "$V domstate $from" 2>/dev/null | grep -q running; check $? "$from is a running VM on $VMHOST"
 [ "$fails" = 0 ] || { say "stopped: $from is not a VM there"; exit 1; }

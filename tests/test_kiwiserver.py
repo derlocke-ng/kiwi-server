@@ -1274,6 +1274,22 @@ class TestAdopt(Base):
         self.assertIn("clevis luks unbind -f", unlock.DROP_TPM_SCRIPT)
         self.assertIn("</dev/null", unlock.DROP_TPM_SCRIPT)        # unbind reads stdin: it must not read the script's
 
+    def test_a_ring_away_leaves_a_bound_disk_as_it_is_and_a_bind_ends_key_only(self):
+        """22 Nov 2026: lychee was off during an apply, and lime (bound to its rings) was put to "its
+        key only" for good: no restart for updates ever again."""
+        path = os.path.join(self.tmp, "undo.sh")
+        write(path, unlock.REMOVE_KEY_ONLY)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        self.assertIn("key-only.conf", unlock.REMOVE_KEY_ONLY)
+        h = types.SimpleNamespace(name="lime", cfg={})
+        listing = ("device /dev/mmcblk0p2\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"
+                   "3: tpm2 '{\"hash\":\"sha256\",\"key\":\"ecc\"}'\n")
+        with mock.patch.object(luks, "current_key", lambda host: "k"), \
+                mock.patch.object(remote, "run", lambda tgt, script, data=None: listing.encode()):
+            self.assertEqual(unlock.rings_bound(h, "t"), [("2", 1, ["http://192.168.2.61:7500"])])
+        with mock.patch.object(luks, "current_key", lambda host: ""):
+            self.assertEqual(unlock.rings_bound(h, "t"), [])
+
     def test_a_forced_rebind_binds_again_to_the_same_rings(self):
         """A ring's keys were rotated: the URLs are the same, the keys not, so the disk is bound again."""
         listing = "device /dev/vda3\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"
@@ -6683,6 +6699,9 @@ class TestUnlock(Base):
                 return b"updated\n"
             if "kiwi-leash" in script:                   # the leash, on or off: its own test
                 self.leash = (tgt, script, data)
+                return b""
+            if script == unlock.REMOVE_KEY_ONLY:         # "its key only" ends once it is bound: its own test
+                self.key_only_undone = tgt
                 return b""
             calls.append((tgt, script, data))
             if "tang-show-keys" in script:

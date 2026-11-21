@@ -680,6 +680,10 @@ if [ -f /etc/rpm-ostreed.conf ] && ! grep -q '^AutomaticUpdatePolicy=stage' /etc
 fi
 [ -z "$changed" ] || echo guarded
 ''' % {"path": KEY_ONLY_PATH}
+# a disk that opens by itself again (bound to its rings): it restarts for updates in its window again
+REMOVE_KEY_ONLY = ("removed=; for unit in kiwi-staged-reboot kiwi-reboot-if-required; do "
+                   "f=/etc/systemd/system/$unit.service.d/key-only.conf; [ -f $f ] && { rm -f $f; removed=1; }; done; "
+                   "rm -f %s; [ -z \"$removed\" ] || { systemctl daemon-reload; echo removed; }; true" % KEY_ONLY_PATH)
 
 
 def drop_standin(host, tgt, servers=None):
@@ -920,6 +924,8 @@ def bind(host, tgt, servers, force=False):
     if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
     changed = _rebind(host, tgt, key, wanted_tree, force=force)
+    if not coreos and b"removed" in remote.run(tgt, REMOVE_KEY_ONLY):
+        util.say("%s: its disk opens by itself again: it restarts for updates in its window again" % host.name)
     if host.target == "armbian":        # the encrypted volume to the size of its disk, once
         grown = re.search(r"^grown (\d+)", remote.run(tgt, GROW_SCRIPT, (key + "\n").encode()).decode(errors="replace"), re.M)
         if grown:
@@ -942,6 +948,16 @@ def bind(host, tgt, servers, force=False):
         if coreos:
             util.say("%s: SSH in the initramfs comes with the next boot" % host.name)
     return changed
+
+
+def rings_bound(host, tgt):
+    """[(slot, t, urls)] of the rings the disk is bound to now (no TPM), read on the machine with
+    the key on record; [] when none or no key."""
+    key = luks.current_key(host)
+    if not key:
+        return []
+    listing = remote.run(tgt, LIST_SCRIPT, (key + "\n").encode()).decode(errors="replace")
+    return [b for b in _bound(listing) if b[2] != ["tpm2"]]
 
 
 def _rebind(host, tgt, key, wanted_tree, force=False):

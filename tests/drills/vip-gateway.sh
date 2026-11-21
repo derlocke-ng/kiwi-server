@@ -99,7 +99,7 @@ for _ in $(seq 1 40); do
 done
 if [ -z "$mac" ] || [ "$seen" != "$mac" ]; then
     check 1 "$addr answers with this VM's card ($mac), not another device (${seen:-none})"
-    gone; say "stopped: nothing was asked of $addr"; say "$fails wrong"; exit 1
+    [ "${KEEP:-0}" = 1 ] || gone; say "stopped: nothing was asked of $addr"; say "$fails wrong"; exit 1
 fi
 check 0 "$addr is this VM ($mac)"
 up=""

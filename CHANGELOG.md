@@ -1,11 +1,14 @@
 # Changelog
 
-## 2.298.0 — (unreleased)
+## 2.298.0 — one login per machine
 
 - **One SSH login per machine** for the calls of an apply (kept two minutes): an apply of lime went
   from 54 s to 38 s, most calls from about a second to 0.2 s. A probe, the boot system and a test of
   a new key log in on their own. `KIWI_SSH_REUSE=0` turns it off; `KIWI_APPLY_TIMES=1` prints each
   call to a machine with its time.
+- The offsite drill: its stand-in on the host's network with its port opened on a firewalld machine,
+  the store's reach checked before anything changes, and `--from-offsite` drilled (lychee's store,
+  lime's repository back byte for byte).
 
 ## 2.297.0 — the runbook on the control node, a store back from its copy
 

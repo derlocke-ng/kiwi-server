@@ -80,12 +80,15 @@ fi
 
 if [ "$mode" = witness-away ]; then
     at "$wit" "systemctl stop kiwi-vote.timer"; check $? "$wit stops voting"
-    away=$(date +%s); moved=0; stopped=0
+    away=$(date +%s); moved=0; stopped=0; silent=0
     while (( $(date +%s) - away < 10 * 60 )); do
         sleep 30
-        runs "$on" || stopped=$((stopped + 1))
+        runs "$on"; r=$?
+        # a look that got no answer is no "not running" (22 Nov 2026: one in twenty, while kn-vault ran on)
+        if [ $r = 1 ]; then stopped=$((stopped + 1)); elif [ $r = 2 ]; then silent=$((silent + 1)); fi
         runs "$sb" && moved=$((moved + 1))
     done
+    [ "$silent" = 0 ] || say "        $silent of 20 looks at $on got no answer"
     at "$wit" "systemctl start kiwi-vote.timer"; check $? "$wit votes again"
     check "$(is [ "$stopped" = 0 ])" "$part ran on $on throughout the ten minutes (not running $stopped of 20 looks)"
     check "$(is [ "$moved" = 0 ])" "$sb took nothing (running there $moved of 20 looks)"

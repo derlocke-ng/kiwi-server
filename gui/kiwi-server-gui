@@ -6192,6 +6192,14 @@ class Window(Adw.ApplicationWindow):
         """What this machine's stop does to its parts (`kiwi-server parts`): one sentence, and one per part."""
         row_of = self.status.get(name) or {}
         g = Adw.PreferencesGroup(title="When it stops", description=row_of.get("stops") or "")
+        facts = ((self.live.get(name) or {}).get("facts") or {})
+        for l in facts.get("leases") or []:         # its parts that run by a permission, as its last report says
+            left = int(l.get("left") or 0)
+            g.add(plain_row("%s runs here by a permission" % l.get("part"),
+                            "%d seconds left, given again every minute" % left if left > 0 else
+                            "none left: %s" % ("it is stopped" if l.get("state") == "stopped" else "it stops")))
+        for t in facts.get("took") or []:
+            g.add(plain_row("%s was taken over from %s" % (t.get("part"), t.get("from")), "by itself, when its permission there had run out"))
         each = Adw.ExpanderRow(title="Each part", subtitle="Changed in the fleet file: defaults.parts (lost, need)")
         for r in row_of.get("parts_table") or []:
             line = Adw.ActionRow(title=r.get("part") or "", subtitle=(r.get("sentence") or "").split(": ", 1)[-1])

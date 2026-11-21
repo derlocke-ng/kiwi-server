@@ -129,11 +129,15 @@ def duration(seconds):
             else util.count(s // 86400, "day"))
 
 
+NEEDED_AFTER = 120      # seconds: a machine that runs a part the network needs is told about this soon
+
+
 def update(state, machines, services, happened, now, after=600):
     """One look, written into `state` (changed in place). Returns what is to be told now:
     [{kind: wrong|fine|did, level: bad|warn|info, text}].
 
-    machines: [{name, ok, problems: [{level, text}]}] of the machines that are set up;
+    machines: [{name, ok, problems: [{level, text}], need?}] of the machines that are set up (need: must,
+    told after NEEDED_AFTER; wait, not told; policy.py);
     services: [{site, host, admin, ok}] or None when they could not be asked from here;
     happened: what the control node did by itself this look: [{host, kind, text}].
     A thing counts as wrong when it has been wrong for `after` seconds; it is told once then,
@@ -144,12 +148,15 @@ def update(state, machines, services, happened, now, after=600):
     planned = {e["host"] for e in happened or [] if e.get("planned") and e.get("kind") in ("waiting", "off")}
     # what the look at a machine that is gone found (watchdog.step: its case), said in the message about it
     story = {e["host"]: e["text"] for e in happened or [] if e.get("kind") in ("waiting", "tell", "held", "restarted") and e.get("text")}
+    soon = {}                           # key: seconds before it is told, where that is not `after`
     for m in machines:
-        if not m["ok"] and m["name"] in planned:
-            continue
+        if not m["ok"] and (m["name"] in planned or m.get("need") == "wait"):
+            continue                    # went down as it said, or all it runs can wait: not told
         if not m["ok"]:
             seen["machine:" + m["name"]] = ("machine", "bad", story.get(m["name"]) or "%s does not answer" % m["name"],
                                             "%s answers again" % m["name"])
+            if m.get("need") == "must":
+                soon["machine:" + m["name"]] = min(after, NEEDED_AFTER)
             continue
         for p in m.get("problems") or []:
             if p.get("level") in ("warn", "bad"):
@@ -165,7 +172,7 @@ def update(state, machines, services, happened, now, after=600):
         kind, level, text, fine = said[:4]
         item = items.setdefault(key, {"kind": kind, "since": now, "told": False})
         item.update(level=level, text=text, fine=fine)
-        if not item["told"] and now - item["since"] >= after:
+        if not item["told"] and now - item["since"] >= soon.get(key, after):
             item["told"] = True
             events.append(dict({"kind": "wrong", "level": level, "text": text}, **({"hint": said[4]} if len(said) > 4 and said[4] else {})))
             if kind in ("machine", "service"):

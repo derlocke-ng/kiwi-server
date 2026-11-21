@@ -633,8 +633,10 @@ defaults:
 (`switch`, the default while `recovery: switch` is on), it waits for its machine (`wait`), or a
 person switches it (`ask`). Only a part with `switch` runs by a permission
 ([backups.md](backups.md#permissions-a-part-runs-only-where-it-may)); the others keep running
-on a machine that is cut off, since nobody takes them. `need` is shown for now; messages do not
-go by it yet.
+on a machine that is cut off, since nobody takes them. `need` decides the message about a
+machine that does not answer: one that runs a part the network needs is told after two minutes
+(or `notify: after`, if shorter), one whose parts can all wait is not told at all and only its
+page says it, and the others after `notify: after` (10 minutes).
 
 `kiwi-server power off` also tells the standby of each of the machine's parts with a
 permission not to take them while the machine is off; `power restart` tells it to wait 15

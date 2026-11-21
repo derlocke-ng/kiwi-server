@@ -11235,6 +11235,15 @@ class TestHealth(Base):
         self.assertEqual(health.message(events, "home")[::2], ("Kiwi home: fine again", "info"))
         self.assertTrue(all(i["to"] == 4000 for i in st["incidents"]))
         self.assertEqual(st["items"], {})
+        # how much a machine's parts are needed: one the network needs is told after two minutes, one
+        # whose parts can all wait not at all
+        st2 = {}
+        need = [{"name": "gate", "ok": False, "problems": [], "need": "must"}, {"name": "toy", "ok": False, "problems": [], "need": "wait"},
+                {"name": "pi", "ok": False, "problems": []}]
+        health.update(st2, need, [], [], 0)
+        self.assertEqual([e["text"] for e in health.update(st2, need, [], [], 130)], ["gate does not answer"])
+        self.assertEqual([e["text"] for e in health.update(st2, need, [], [], 700)], ["pi does not answer"])
+        self.assertNotIn("machine:toy", st2["items"])
         # what the control node did by itself is told at once, and not again and again
         did = [{"host": "sorbet", "kind": "restarted", "text": "sorbet did not answer: restarted at its provider"}]
         self.assertEqual([e["kind"] for e in health.update(st, ms, sv, did, 5000)], ["did"])

@@ -767,6 +767,9 @@ stopped until you start it or the machine restarts.</p>
 <input type="hidden" name="module" value="{{ s.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
 {% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 {% if m.stops %}<h2 id="when">When it stops</h2><p>{{ m.stops }}</p>
+{% for l in m.facts.leases or [] %}<p class="small"><b>{{ ptitle(l.part) }}</b> runs here by a permission:
+{% if l.left > 0 %}{{ l.left }} seconds left, given again every minute{% else %}none left, so it {{ "is stopped" if l.state == "stopped" else "stops" }}{% endif %}.</p>{% endfor %}
+{% for t in m.facts.took or [] %}<p class="small"><b>{{ ptitle(t.part) }}</b> was taken over from {{ t["from"] }} {{ ago(t.at) }} ago, by itself.</p>{% endfor %}
 <details><summary class="muted small">Each part</summary><ul class="small">{% for r in m.parts_table %}<li>{{ r.sentence }}</li>{% endfor %}</ul>
 <p class="muted small">What happens to a part, and how much the network needs it: <code>defaults.parts</code> in the fleet file
 (<code>lost: switch|wait|ask</code>, <code>need: must|normal|wait</code>).</p></details>{% endif %}

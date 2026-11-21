@@ -2606,7 +2606,13 @@ def cmd_notify(args):
         seen = asked("status", args.fleet, "--porcelain")
     rows = {h["name"]: h for h in asked("list", args.fleet, "--porcelain").get("hosts") or []}
     said = {h["host"]: h for h in seen.get("hosts") or []}
-    machines = [{"name": n, "ok": bool((said.get(n) or {}).get("ok")), "problems": (said.get(n) or {}).get("problems") or []}
+    # how much each machine's parts are needed (policy.py): one the network needs is told after two minutes,
+    # one whose parts can all wait is not told at all (its page says it)
+    def need_of(n):
+        needs = {pr.get("need") for pr in (rows.get(n) or {}).get("parts_table") or []}
+        return "must" if "must" in needs else "wait" if needs == {"wait"} else "normal"
+    machines = [{"name": n, "ok": bool((said.get(n) or {}).get("ok")), "problems": (said.get(n) or {}).get("problems") or [],
+                 "need": need_of(n)}
                 for n, h in rows.items() if h.get("phase") == "applied" and n in said]
     up = {m["name"] for m in machines if m["ok"]}
     sites = [(s, n, s in (h.get("admin_sites") or [])) for n, h in rows.items() if n in up for s in h.get("sites") or []]

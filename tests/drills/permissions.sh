@@ -49,6 +49,10 @@ at "$wit" "grep -q '^$part $on .* witness' /etc/kiwi-server/lease/vote.conf"; ch
 by=$(at "$on" "cat /etc/kiwi-server/lease/$part.by-* 2>/dev/null | cut -d' ' -f1 | sort -u | tr '\n' ' '")
 say "        given by: ${by:-nobody yet}"
 
+# CONTROL_AWAY=1 CONTROL=papaya: the control node is stopped too, for the take (the standby needs no control node)
+if [ "${CONTROL_AWAY:-}" = 1 ]; then
+    at "${CONTROL:?the machine of the control node}" "systemctl stop kn-control.service"; check $? "the control node on $CONTROL stopped"
+fi
 # the power cut
 ssh -o BatchMode=yes "$VMHOST" "$V destroy $on" >/dev/null; check $? "$on's power cut"
 cut=$(date +%s)
@@ -60,6 +64,9 @@ done
 check "$(is [ -n "$took" ])" "$sb runs $part, ${took:-never} s after the power cut (the permission lasts 180 s, a voter waits 60 more)"
 at "$wit" "ls /etc/kiwi-server/lease/state/$part@$on.refused" >/dev/null 2>&1; check $? "$wit said gone, and gives $on nothing more for $part"
 at "$sb" "journalctl -t kiwi-vote --since '-15 min' --no-pager -o cat | tail -5" | sed 's/^/        /'
+if [ "${CONTROL_AWAY:-}" = 1 ]; then
+    at "$CONTROL" "systemctl start kn-control.service"; check $? "the control node on $CONTROL back"
+fi
 
 # written down by the control node (WRITTEN=skip: a control node of an older release, which cannot)
 written=""

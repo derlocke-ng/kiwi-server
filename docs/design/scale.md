@@ -4,7 +4,7 @@ The owner, 20 November: the network grows, and managing it machine by machine do
 grow with it. He asked whether Ansible or Kubernetes should carry it, whether a service
 can move to another machine with its key and its backups, and answered seven questions.
 This design holds his answers and the order to build in. Built since: the agent, move, standby and switch of a
-part, and the switch by itself on permissions (authority.md). The steps below say what is open.
+part. The switch by itself was built and taken out again (step 4). The steps below say what is open.
 
 The size to design for is in [ui.md](ui.md): about 70 machines and 350 devices at five
 sites, three masters, linked networks beside it.
@@ -252,24 +252,14 @@ whose access rules would see the wrong address); 3 as `kiwi-stack ready start` p
 Measured: Vaultwarden ran on its standby 6 s after the switch began, its name answered there
 after 29 s (the container's own start).
 
-4. **By itself**: the standby's agent watches the machine that runs the part. When that one
-   does not answer and two others agree (the agents' vote; a machine that lost only its own
-   network sees it is the one cut off and does nothing), the standby does step 3 and tells
-   the control node. When the first machine comes back, the control node tells it to stand
-   by: it stops the part before it could write.
-
-   Built (2.276.0 to 2.278.0) with the control node as the one that decides: when the machine
-   has been silent for five minutes since its agent's last report and the standby does not
-   reach it either (ping or SSH port, at home or by name), the control node starts the switch
-   as a job. Two that agree, not three: the control node's look and the standby; a standby
-   that still reaches the machine holds it back. A machine that comes back starts the part
-   with its stack, and its agent's first report (ten seconds after the start) gets
-   `X-Kiwi-Hold` and stops it: 13 s side by side in the drill. The switch leaves the two a
-   pair (`keep_ready` turned round). Tried with power cuts in both directions
-   (tests/drills/part-failover.sh): the part ran on the standby 10 to 11 minutes after the cut.
-   Not built: the agents' own vote, for when the control node is the one that is gone.
-   The review of these releases and the owner's reaction led to [authority.md](authority.md),
-   which rebuilds this step on permissions that run out instead of adding to its rules.
+4. **By itself**: dropped. Built from 2.276.0 (the control node switched a part when its machine
+   had been silent five minutes) and rebuilt on permissions that run out ([authority.md](authority.md)),
+   then taken out again in 2.294.0. The owner, 22 November 2026: a part with data is not taken over
+   with an older copy, because the machine, back, holds a second version of the same database.
+   What stays: the copy kept ready and the switch while the machine runs (step 3, nothing lost),
+   `move` (from the machine's last backup), and a machine installed anew bringing its data back
+   from its backups. The permissions stay in the code, unused, for automation that needs one actor
+   at a time.
 
 ## Not decided
 

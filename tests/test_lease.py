@@ -290,7 +290,8 @@ class TestLease(unittest.TestCase):
 
 class TestPlan(unittest.TestCase):
     """What each machine gets on apply (lease.plan): lime runs vault, quince keeps it ready, medlar
-    is the witness at the same site, sorbet the master elsewhere."""
+    is the witness at the same site, sorbet the master elsewhere. No part runs by a permission since
+    22 Nov 2026 (links is empty); the building block is tested with one given here."""
 
     def setUp(self):
         import types
@@ -309,6 +310,9 @@ class TestPlan(unittest.TestCase):
             os.makedirs(os.path.join(self.tmp, "secrets", "standby"), exist_ok=True)
             with open(os.path.join(self.tmp, "secrets", "standby", "%s.hostkey" % name), "w") as fh:
                 fh.write("ssh-ed25519 AAAA%s root@%s\n" % (name, name))
+        given = mock.patch.object(lease, "links", lambda fleet, roles: {("lime", "vault"): ("quince", "medlar")})
+        given.start()
+        self.addCleanup(given.stop)
 
     @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen needed")
     def test_holder_standby_witness(self):
@@ -336,21 +340,6 @@ class TestPlan(unittest.TestCase):
         standby = lease.plan(self.fleet, self.roles, self.fleet.hosts["quince"], {}, True)
         self.assertEqual(standby["vote"], [])
         self.assertEqual(standby["waits"], ["medlar"])
-
-    @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen needed")
-    def test_an_apply_of_a_standby_waits_for_its_take_to_be_written_down(self):
-        from kiwiserver import remote
-        said = {"quince": "vault 1000 lime\n", "medlar": ""}
-        run = lambda tgt, script, data=None: said[tgt].encode()                     # noqa: E731
-        with mock.patch.object(remote, "reach", lambda h, ssh: h.name):
-            self.assertEqual(lease.unrecorded_takes(self.fleet, self.roles, self.fleet.hosts["quince"], run), [("vault", "lime")])
-            self.assertEqual(lease.unrecorded_takes(self.fleet, self.roles, self.fleet.hosts["medlar"], run), [])   # no standby
-            said["quince"] = ""
-            self.assertEqual(lease.unrecorded_takes(self.fleet, self.roles, self.fleet.hosts["quince"], run), [])
-        self.assertIn("grep -q failed", lease.TOOK)                                  # a failed take is no take
-
-    def test_took(self):
-        self.assertEqual(lease.took("vault 1000 lime\nbad\ngitea x y\n"), {"vault": (1000, "lime")})
 
 
 if __name__ == "__main__":

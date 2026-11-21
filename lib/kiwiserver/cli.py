@@ -1348,7 +1348,6 @@ def cmd_list(args):
                           # the networks linked to this one (federation.yaml): what the picture shows of them
                           "linked": linked_networks(fleet),
                           # a part kept ready goes to its standby by itself after this many minutes (0: by hand)
-                          "switch_after": switch_after(fleet),
                           "master_ip": master_ip, "groups": groups, "hosts": rows}, indent=2))
         return
     fmt = "%-12s %-24s %-7s %-11s %-16s %s"
@@ -1574,13 +1573,6 @@ def change_state(fleet, mutate):
     return statemod.change(_state_dir(fleet), mutate)
 
 
-def switch_after(fleet):
-    """Minutes after which a part kept ready goes to its standby by itself; 0: only by hand."""
-    from . import watchdog
-    on, after = watchdog.switch_policy(fleet)
-    return after if on else 0
-
-
 def mark_off(fleet, name, off):
     """A machine switched off on purpose (power off), or no longer: the watchdog leaves one that is
     off alone (no switch of its parts, no restart) until it answers again."""
@@ -1592,36 +1584,6 @@ def mark_off(fleet, name, off):
             marks.pop(name, None)
         if not marks:
             state.pop("off")
-    change_state(fleet, do)
-
-
-def hold_back(fleet, name, containers, part=None):
-    """Containers a machine must not run when it answers again (a part that was switched away
-    while it was gone): told to its agent with every report until its next apply. With `part`, the
-    hold ends by itself where the fleet file gives that part to the machine again."""
-    def do(state):
-        held = state.setdefault("hold", {})
-        held[name] = sorted(set(held.get(name) or []) | set(containers))
-        if part:
-            of = state.setdefault("hold_parts", {}).setdefault(name, {})
-            of.update({c: part for c in containers})
-    change_state(fleet, do)
-
-
-def unhold(fleet, name, containers):
-    """Containers a machine runs again (a part switched back to it): no longer held back there."""
-    def do(state):
-        held = state.get("hold") or {}
-        if name not in held:
-            return
-        left = sorted(set(held[name]) - set(containers))
-        if left:
-            held[name] = left
-        else:
-            held.pop(name)
-        of = (state.get("hold_parts") or {}).get(name) or {}
-        for c in containers:
-            of.pop(c, None)
     change_state(fleet, do)
 
 
@@ -2417,9 +2379,6 @@ def vps_revert(args, client, server, label):
     util.say("%s: its disk is as it was at %s; it starts as it was then" % (label, name))
 
 
-GIVEN = "for f in %s/state/*@%s.given; do [ -e \"$f\" ] && echo $(( $(date +%%s) - $(cat \"$f\") )); done; true"
-
-
 def cmd_recover(args):
     """One look at the machines that are gone, and what the policy allows done about it
     (watchdog.py). The control node runs this after every look at the machines."""
@@ -2496,16 +2455,6 @@ def cmd_recover(args):
                                                                      or (fleet.defaults.get("admin") or {}).get("ssh_port") or 22)))
         out = remote.run(remote.reach(fleet.hosts[standby], None), script).decode(errors="replace")
         return "kiwi-sees" in out
-    def copy_age(standby, part):
-        """How old the standby's copy of the part is (seconds), or None."""
-        out = remote.run(remote.reach(fleet.hosts[standby], None), partstandby.AGE).decode(errors="replace")
-        return partstandby.ages(out).get(part)
-    def independent(standby, machine):
-        """Whether the standby's word counts beside the control node's: at the same site it asks over the LAN;
-        at another site only over the VPN, and then only while the master answers (else both lost the same way)."""
-        if site_of(fleet.hosts[standby]) == site_of(fleet.hosts[machine]):
-            return True
-        return any(said.get(n) for n, k in kinds.items() if k == "master")
     words = {}                  # the machines' last reports: why each went down (machineagent.py)
     if args.reports and os.path.isdir(args.reports):
         for f in os.listdir(args.reports):
@@ -2514,25 +2463,12 @@ def cmd_recover(args):
                     words[f[:-5]] = json.loads(util.read_text(os.path.join(args.reports, f)))
                 except (OSError, ValueError):
                     pass
-    from . import lease as leasemod
-    permits = leasemod.links(fleet, roles)
-
     def reached(name):
-        """Whether the machines that give it its permissions, or its standby, still reach it: then
-        only the way from here is cut, and nothing is done to it."""
-        held = (state.get("leases") or {}).get(name) or []
-        voters = sorted({v for (m, p), vs in permits.items() if m == name and p in held for v in vs})
+        """Whether the machine that keeps a copy of its part ready still reaches it: then only the way
+        from here is cut, and nothing is done to it."""
         notes = []
-        for v in voters:
-            if not said.get(v):
-                continue
-            out = remote.run(remote.reach(fleet.hosts[v], None), GIVEN % (leasemod.DIR, shlex.quote(name))).decode(errors="replace")
-            ages = [int(x) for x in out.split() if x.isdigit()]
-            if ages and min(ages) < 150:
-                return True, "%s gave it its permission %s ago: it runs" % (v, util.count(min(ages), "second"))
-            notes.append("%s has not reached it%s" % (v, " for %s" % util.count(min(ages) // 60, "minute") if ages else ""))
         for a, _p, sb in partstandby.links(fleet):
-            if a == name and sb not in voters and said.get(sb):
+            if a == name and said.get(sb):
                 if sees(sb, name):
                     return True, "%s, its standby, reaches it" % sb
                 notes.append("%s, its standby, does not reach it" % sb)
@@ -2551,27 +2487,6 @@ def cmd_recover(args):
                            point if can_point else None, last=last, words=words,
                            site={n: site_of(fleet.hosts[n]) for n in kinds}, reached=reached,
                            provider=provider if not args.dry_run else None)
-    # a part that runs by a permission (lease.py) is its voters' to switch: the standby took it by
-    # itself when its machine was gone, and says so in its report. That is written down here.
-    held = state.get("leases") or {}
-    for row in seen.get("hosts") or []:
-        for t in (row.get("facts") or {}).get("took") or []:
-            if t.get("failed") and (t["from"], t["part"], row["host"]) in partstandby.links(fleet):
-                # it tried, and the containers did not start there: it tries again every minute, and a person looks
-                events.append({"host": t["from"], "kind": "tell", "part": t["part"],
-                               "text": "%s does not answer, and %s could not start %s, which it keeps ready: look at %s "
-                                       "(journalctl -t kiwi-vote)" % (t["from"], row["host"], t["part"], row["host"])})
-                continue
-            if (t["from"], t["part"], row["host"]) in partstandby.links(fleet):
-                # how long ago, not a clock time: the control node's container keeps UTC (it said
-                # "01:32" for 02:32, 21 Nov 2026)
-                ago = max(0, int(time.time()) - t["at"])
-                events.append({"kind": "switch", "host": t["from"], "part": t["part"], "to": row["host"], "taken": True,
-                               "text": "%s took %s from %s by itself %s ago: its permission there had run out and its witness "
-                                       "agreed. Written down as a switch" % (row["host"], t["part"], t["from"],
-                                                                             util.count(max(1, ago // 60), "minute"))})
-    events += watchdog.switches(fleet, [l for l in partstandby.links(fleet) if l[0] in kinds and l[1] not in (held.get(l[0]) or [])],
-                                said, state, time.time(), sees, copy_age, independent)
     if not args.dry_run:
         steps = statemod.diff(looked, state)     # only what this look changed: a change meanwhile stays
         try:
@@ -3419,19 +3334,6 @@ def cmd_apply(args):
                             "first time: kiwi-server next %s %s finds it%s; or give its address: --ssh %s@%s"
                             % (h.name, h.hostname, shown_path(args.fleet), h.name, " at " + addr if addr else "",
                                h.admin["user"], addr or "<address>"))
-        if not args.no_run:
-            # it took a part by itself that the fleet file does not say yet: an apply now would make that part
-            # a copy kept ready here again and stop it (the review of 22 Nov 2026). The switch is written first
-            from . import lease as leasemod
-            try:
-                takes = leasemod.unrecorded_takes(fleet, roles, h)
-            except KiwiError:
-                takes = []
-            if takes:
-                raise KiwiError("%s took %s by itself, and the fleet file does not say so yet: kiwi-server switch %s %s %s "
-                                "--taken --yes writes it down (the control node does that by itself), then apply"
-                                % (h.name, " and ".join("%s from %s" % t for t in takes), shown_path(args.fleet),
-                                   takes[0][0], takes[0][1]))
         try:
             if not args.no_run and h.target == "ucore":
                 coreos_t.wait_for_ucore(h.name, tgt)    # a fresh one restarts twice by itself first
@@ -3542,10 +3444,10 @@ def cmd_apply(args):
                         change_state(fleet, link)
             # permissions (lease.py): this machine holds them for its parts with a standby, or gives them
             # as a standby or a witness. Also when it no longer does: the fleet remembers who has them.
-            from . import lease as leasemod, watchdog as watchdogmod
+            from . import lease as leasemod
             had_lease = h.name in (fleet_state(fleet).get("lease_hosts") or [])
             if had_lease or any(h.name in (m, s, w) for (m, _p), (s, w) in leasemod.links(fleet, roles).items()):
-                held = leasemod.after_apply(fleet, h, tgt, roles, r.script, watchdogmod.switch_policy(fleet)[0])
+                held = leasemod.after_apply(fleet, h, tgt, roles, r.script, False)
                 if held is not None:
                     def lease_note(state, name=h.name, held=held):
                         involved = any(name in (m, s, w) for (m, _p), (s, w) in leasemod.links(fleet, roles).items())
@@ -4293,11 +4195,6 @@ def cmd_status(args):
             key = "locked" if at else "unreachable"
             problems = [{"level": "bad", "text": ("%s" if at else "unreachable: %s") % e, "key": key,
                          "hint": facts.HINTS[key], "actions": facts.actions(key)}]
-            if key == "unreachable":
-                # a part kept ready elsewhere: switched there from here, with a person's OK (the way when the
-                # control node is the machine that is gone, and the one that would switch by itself)
-                problems[0]["actions"] = [{"label": "Switch %s to %s" % (part, m), "run": "switch", "part": part}
-                                          for part, m in sorted(partstandby.kept(h).items())] + problems[0]["actions"]
             # its story: install media newer than its last apply mean it is being installed anew, or
             # waits at its first start for its disk's key (which no host key on record can tell yet)
             st = lifecyclemod.story(h.name, applied.get(h.name), lifecyclemod.media_time(media, h.name), False,
@@ -5813,36 +5710,11 @@ def cmd_parts(args):
         util.say("each part: kiwi-server parts %s <machine>; change one: defaults.parts in the fleet file" % typed_path(fleet.path))
 
 
-def hold_standbys(fleet, roles, name, minutes):
-    """The standbys of `name`'s parts that run by a permission do not take them for `minutes` (lease.hold):
-    a restart it said it makes (an update). Returns the parts held."""
-    from . import lease as leasemod
-    held = []
-    for (m, part), (standby, _w) in leasemod.links(fleet, roles).items():
-        if m != name:
-            continue
-        try:
-            leasemod.hold(remote.reach(fleet.hosts[standby], None), part, m, minutes)
-            held.append(part)
-        except KiwiError as e:
-            util.warn("%s does not answer (%s): it may take %s while %s restarts" % (standby, str(e).splitlines()[-1][:80], part, m))
-    return held
-
-
 def cmd_standby(args):
     """The parts another machine keeps ready (keep_ready, partstandby.py), and how old each copy is.
-    --hold MACHINE: their standbys wait --minutes before they take them (the control node, when the
-    machine said it restarts for an update)."""
+    """
     from . import lifecycle as lifecyclemod
     fleet, roles, ms = load(args)
-    if getattr(args, "hold", None):
-        if args.hold not in fleet.hosts:
-            raise KiwiError("no machine %s in %s" % (args.hold, typed_path(fleet.path)))
-        held = hold_standbys(fleet, roles, args.hold, int(args.minutes or 15))
-        util.say("%s: %s" % (args.hold, ("its standbys wait %s before they take %s" % (util.count(int(args.minutes or 15), "minute"),
-                                                                                      ", ".join(held)))
-                             if held else "no part of it runs by a permission"))
-        return
     rows = []
     for a, part, m in partstandby.links(fleet):
         age = None
@@ -5861,10 +5733,9 @@ def cmd_standby(args):
         how = "no copy yet (or %s does not answer)" % r["ready_on"] if r["age"] is None else "its copy is %s old" % lifecyclemod._ago(r["age"]) \
             if r["age"] >= 90 else "its copy is current"
         print("%-14s on %-10s kept ready on %-10s %s" % (r["part"], r["on"], r["ready_on"], how))
-    after = switch_after(fleet)
-    print("\n" + ("A part goes to its standby by itself when its machine has been gone for %d minutes and the standby does "
-                  "not reach it either (recovery.switch)." % after if after else
-                  "Nothing switches by itself (recovery.switch): kiwi-server switch %s PART --yes" % typed_path(fleet.path)))
+    print("\nA copy kept ready is for moving a part while its machine runs: kiwi-server switch %s PART --yes. "
+          "Nothing switches by itself; a machine that is gone gets its data back from its backups once it is "
+          "installed anew." % typed_path(fleet.path))
 
 
 MOVING_FILE = "%s-pihole/moving/kiwi.hosts"          # in a machine's stack folder (kiwi-modules' dns part)
@@ -5907,8 +5778,11 @@ def point_moving_name(args, name, skip=()):
 
 
 def cmd_switch(args):
-    """A part to the machine that keeps it ready (partstandby.py): with the data that machine has.
-    The machine it leaves need not answer. Without --yes: the plan."""
+    """A part to the machine that keeps it ready (partstandby.py), while the machine it runs on
+    answers: the part stops there, the copy is fetched once more, and it starts on the other one with
+    nothing lost. A machine that does not answer is not switched away from (the owner, 22 Nov 2026:
+    the copy would be older, and the machine, back, a second version): installed anew, it brings its
+    data back from its backups. Without --yes: the plan."""
     from . import lifecycle as lifecyclemod, partmove
     fleet, roles, ms = load(args)
     part = args.part
@@ -5926,8 +5800,16 @@ def cmd_switch(args):
         age = partstandby.ages(remote.run(d_tgt, partstandby.AGE).decode(errors="replace")).get(part)
     except KiwiError as e:
         p["stops"].append("%s does not answer: %s" % (dst_name, e))
-    taken = bool(getattr(args, "taken", False))      # it runs on the standby already (lease.py): only written down
-    if p["carry"] and age is None and not p["stops"] and not taken:
+    try:
+        s_tgt = remote.reach(fleet.hosts[src_name], None)
+        remote.run(s_tgt, "true")
+    except KiwiError as e:
+        # the owner, 22 Nov 2026: no switch from a machine that is gone (its copy is older, and back, it holds a second version)
+        p["stops"].append("%s does not answer (%s): a switch needs it, to stop %s there and give the last of its data. "
+                          "A machine that is gone: install it anew under its name, and it brings its data back from its "
+                          "backups (kiwi-server recovery %s: A machine is dead)"
+                          % (src_name, str(e).splitlines()[-1][:80], part, typed_path(fleet.path)))
+    if p["carry"] and age is None and not p["stops"]:
         p["stops"].append("%s has no copy of %s's data yet" % (dst_name, part))
     print("Switch %s from %s to its standby %s%s" % (part, src_name, dst_name, ": it stays %s" % p["name"] if p["name"] else ""))
     if p["stops"]:
@@ -5947,59 +5829,32 @@ def cmd_switch(args):
             return main(argv) or 0
         except SystemExit as e:
             return e.code if isinstance(e.code, int) else 1
-    # the machine it leaves, if it answers: the part stops there, and the standby fetches once more
-    src_up, services, why_not = True, [], ""
+    # the machine it leaves: the part stops there before it starts anywhere else (or it would run twice),
+    # and the standby fetches once more, so that nothing is lost
+    services, why_not = [], ""
     try:
         _script, bundle = Renderer(fleet, roles, out_dir, None, ms).script(src)
         services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
     except KiwiError as e:
         why_not = str(e).splitlines()[-1][:120]
-    from . import lease as leasemod
-    voters = leasemod.links(fleet, roles).get((src_name, part))      # (standby, witness) when it runs by a permission
+    if why_not or not services:
+        raise KiwiError("%s answers, but which containers of %s run there could not be worked out (%s): nothing was switched"
+                        % (src_name, part, why_not or "none found"))
+    for c in services:
+        remote.run(s_tgt, service_script(c, "stop"))
+    util.say("%s: %s stopped" % (src_name, part))
     try:
-        if taken:
-            raise KiwiError("its permission ran out there, so it stopped the part itself")
-        s_tgt = remote.reach(src, None)
-        remote.run(s_tgt, "true")
+        remote.run(d_tgt, partstandby.PULL_PATH)
+        util.say("%s: fetched its data once more" % dst_name)
     except KiwiError as e:
-        src_up = False
-        util.say("%s does not answer (%s): %s goes on with the copy %s has" % (src_name, str(e).splitlines()[-1][:80], part, dst_name)
-                 if not taken else "%s took %s by itself: %s" % (dst_name, part, e))
-    if voters and not taken:
-        # no permission for the part on the machine it leaves, from either voter: when that machine is
-        # back (or boots), nothing starts the part there again (docs/design/authority.md, step 2)
-        for who in voters:
-            try:
-                leasemod.refuse(remote.reach(fleet.hosts[who], None), part, src_name)
-            except KiwiError as e:
-                util.warn("%s gives %s the permission for %s until its next apply (%s)%s"
-                          % (who, src_name, part, str(e).splitlines()[-1][:80],
-                             ": the agent's hold keeps it stopped there" if not src_up else ""))
-    if taken:
-        pass
-    elif src_up:
-        # it answers: the part stops there before it starts anywhere else, or nothing is switched (it would run twice)
-        if why_not or not services:
-            raise KiwiError("%s answers, but which containers of %s run there could not be worked out (%s): nothing was switched"
-                            % (src_name, part, why_not or "none found"))
+        # without the last of its data the copy is older: the part goes on where it was
         for c in services:
-            remote.run(s_tgt, service_script(c, "stop"))
-        if voters:
-            leasemod.drop(s_tgt, part)      # and no boot starts it there again
-        util.say("%s: %s stopped" % (src_name, part))
-        try:
-            remote.run(d_tgt, partstandby.PULL_PATH)
-            util.say("%s: fetched its data once more" % dst_name)
-        except KiwiError as e:
-            util.warn("%s: the last fetch did not work (%s): it goes on with the copy it has"
-                      % (dst_name, str(e).splitlines()[-1][:80]))
-    elif services:
-        # when it comes back, its stack starts the part before its apply takes it away: its agent's
-        # first report gets told to hold those containers back (machineagent.py), until that apply
-        hold_back(fleet, src_name, services, part)
-    else:
-        util.warn("%s: which containers of %s run there could not be worked out (%s): when it is back, apply it before "
-                  "anything else, or the part runs there too" % (src_name, part, why_not or "none found"))
+            try:
+                remote.run(s_tgt, service_script(c, "start"))
+            except KiwiError as e2:
+                util.warn("%s: %s did not start again (%s)" % (src_name, c, str(e2).splitlines()[-1][:80]))
+        raise KiwiError("%s: the last fetch of %s did not work (%s): %s runs on %s again, nothing was switched"
+                        % (dst_name, part, str(e).splitlines()[-1][:80], part, src_name))
     # nothing is fetched over the part once it runs here; and the day it is kept ready here again (the pair
     # turned round), its first fetch finds data of its own in the folder and keeps it (partstandby.PULL)
     remote.run(d_tgt, "systemctl stop %s.timer %s.service 2>/dev/null || true; rm -f %s/state/%s.ok"
@@ -6011,20 +5866,11 @@ def cmd_switch(args):
         ready = (Renderer(fleet, roles, out_dir, None, ms).script(dst)[1].module_services or {}).get(part) or []
     except KiwiError:
         ready = []
-    if voters:
-        # the switch's own permission for the part there, until its voters give theirs: the apply below
-        # would stop it otherwise (the review of 22 Nov 2026)
-        try:
-            leasemod.start_permission(d_tgt, part)
-        except KiwiError as e:
-            util.warn("%s: no start permission for %s (%s): it may stop until its voters give one"
-                      % (dst_name, part, str(e).splitlines()[-1][:80]))
     partmove.write_fleet(fleet, p["data"])
     util.say("the fleet file: %s is among %s's parts now%s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else ""))
-    unhold(fleet, dst_name, set(ready) | set(services))      # it runs there now: an old hold must not stop it
     # kept ready there (its containers made, its images there): it starts now, and the apply below
-    # makes it that machine's own. Taken by itself: it runs there already
-    if ready and not taken:
+    # makes it that machine's own
+    if ready:
         try:
             said = remote.run(d_tgt, "kiwi-stack ready start %s 2>&1" % " ".join(shlex.quote(c) for c in ready)).decode(errors="replace")
             util.say("%s: %s runs there, %s after the switch began (it was kept ready)%s"
@@ -6034,7 +5880,7 @@ def cmd_switch(args):
             util.say("%s: what was kept ready of %s did not start (%s): the apply starts it"
                      % (dst_name, part, str(e).splitlines()[-1][:100]))
     if p["name"]:
-        told = point_moving_name(args, p["name"], skip=() if src_up else (src_name,))
+        told = point_moving_name(args, p["name"])
         if told:
             util.say("%s points at %s now on %s (%s after the switch began)" % (
                 p["name"], dst_name, ", ".join(told), util.count(int(time.time() - began), "second")))
@@ -6043,53 +5889,17 @@ def cmd_switch(args):
         raise KiwiError("%s is on %s in the fleet file, but %s could not be applied: kiwi-server apply %s %s"
                         % (part, dst_name, dst_name, typed_path(fleet.path), dst_name))
     # how long the part was away, said now: what follows only tells the other machines where it is
-    if taken:
-        util.say("%s runs on %s since it took it. Now the machines the change reaches" % (part, dst_name))
-    else:
-        util.say("%s runs on %s: it was away for %s. Now the machines the change reaches"
-                 % (part, dst_name, util.count(int(time.time() - began), "second")))
-    # everyone the change reaches. The machine it left, when it does not answer, is not asked now:
-    # its apply goes to the control node, which keeps it and applies it the moment the machine
-    # answers again (an apply that waits)
+    util.say("%s runs on %s: it was away for %s. Now the machines the change reaches"
+             % (part, dst_name, util.count(int(time.time() - began), "second")))
+    # everyone the change reaches, the machine it left among them
     fleet2, roles2, ms2 = load(args)
-    reached = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
-    now = [n for n in reached if src_up or n != src_name]
+    now = changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2))
     failed = again(["apply", fleet.path] + now) if now else 0
-    # the voters of the part where it runs now get their new lines at once, also when nothing of their role
-    # changed (a witness's role seldom does): they give the new machine its permission, not the old one
-    for (m, pt), vs in leasemod.links(fleet2, roles2).items():
-        if m != dst_name or pt != part:
-            continue
-        r2 = Renderer(fleet2, roles2, out_dir, None, ms2)
-        for h2 in fleet2.hosts.values():
-            settings_errors(roles2, ms2, h2)
-        for v in vs:
-            if v in now or (v == src_name and not src_up):
-                continue
-            try:
-                leasemod.after_apply(fleet2, fleet2.hosts[v], remote.reach(fleet2.hosts[v], None), roles2, r2.script, True)
-            except KiwiError as e:
-                util.warn("%s: its permissions were not set up anew (%s): apply it" % (v, str(e).splitlines()[-1][:80]))
     certificate_again(fleet, p, d_tgt)
-    later = ""
-    if not src_up:
-        from . import controlsync
-        later = "Apply %s when it is back: kiwi-server apply %s %s" % (src_name, typed_path(fleet.path), src_name)
-        if os.environ.get("KIWI_CONTROL_HOST"):     # this is the control node: it applies that machine itself after this job
-            later = "The control node applies %s the moment it answers again" % src_name
-        elif controlsync.remote_of(fleet.dir):
-            try:                        # the job fails there while the machine is away, and waits for it there
-                if controlsync.run_api(fleet.dir, os.path.basename(fleet.path), "apply", [src_name], write=lambda text: None):
-                    later = "%s answered after all and no longer runs it" % src_name
-                else:
-                    later = "The control node keeps %s's apply and runs it the moment %s answers again" % (src_name, src_name)
-            except KiwiError as e:
-                util.warn("the control node did not take %s's apply: %s" % (src_name, e))
     if failed:
         raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed"
                         % (part, dst_name, typed_path(fleet.path)))
-    util.say("%s runs on %s now%s. %s" % (part, dst_name, ", as %s" % p["name"] if p["name"] else "",
-                                         later or "%s no longer runs it" % src_name))
+    util.say("%s runs on %s now%s. %s no longer runs it" % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
 
 
 def cmd_move(args):
@@ -6143,17 +5953,6 @@ def cmd_power(args):
     if args.action == "off":
         # off on purpose: not gone. Nothing switches its parts away and nothing restarts it, until it answers again
         mark_off(fleet, host.name, True)
-    # its parts that run by a permission: the standby does not take them while it is off on purpose, or
-    # for 15 minutes of a restart (lease.py); a standby that is not reached is told so on its next apply
-    from . import lease as leasemod
-    for (m, part), (standby, _w) in leasemod.links(fleet, roles).items():
-        if m == host.name:
-            try:
-                leasemod.hold(remote.reach(fleet.hosts[standby], None), part, m, None if args.action == "off" else 15)
-                util.say("%s: %s does not take %s %s" % (host.name, standby, part,
-                                                       "while it is off" if args.action == "off" else "for 15 minutes"))
-            except KiwiError as e:
-                util.warn("%s does not answer (%s): it may take %s while %s is away" % (standby, str(e).splitlines()[-1][:80], part, m))
     powermod.run(host, args.action, args.ssh)
 
 
@@ -6792,12 +6591,9 @@ def build_parser():
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")
     s = sub("standby", cmd_standby); s.add_argument("fleet")
-    s.add_argument("--hold", metavar="MACHINE", help="its standbys wait before they take its parts (a restart it said it makes)")
-    s.add_argument("--minutes", type=int, default=15, help="--hold: how long (default 15)")
     s = sub("parts", cmd_parts); s.add_argument("fleet"); s.add_argument("hosts", nargs="*")
     s = sub("switch", cmd_switch); s.add_argument("fleet"); s.add_argument("part"); s.add_argument("host", nargs="?")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")
-    s.add_argument("--taken", action="store_true", help="the standby took it already, by the permissions: write it down")
     s = sub("move", cmd_move); s.add_argument("fleet")
     s.add_argument("what", nargs="*", metavar="PART FROM TO", help="a part to another machine, with its data, secrets and name")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")

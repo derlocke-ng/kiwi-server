@@ -1,5 +1,7 @@
-"""Permissions that run out (docs/design/authority.md, step 2): a part that has a standby runs on
-its machine only while one of its voters said so within the last three minutes. The voters are
+"""Permissions that run out (docs/design/authority.md, step 2). Not used since 22 Nov 2026 (no part is
+taken over by itself any more: `links` gives none, and an apply removes what an older release set
+up); kept, with its tests, for automation that needs one actor at a time. As it was built: a part
+that has a standby runs on its machine only while one of its voters said so within the last three minutes. The voters are
 the standby and a witness (another node at the machine's site; the master where there is none).
 They give the permission; the machine never asks. So a machine that is cut off, or that comes
 back after its part went to the standby, has stopped the part by itself, and nobody has to tell
@@ -385,18 +387,12 @@ def master_of(roles):
 
 
 def links(fleet, roles):
-    """{(machine, part): (standby, witness)} of the parts that run by a permission: those with a
-    standby, a third machine to be the witness, and a row in the table (policy.py) that says the
-    standby takes them by itself. Any other part runs as before, without a permission."""
-    from . import partstandby, policy
-    out = {}
-    for machine, part, standby in partstandby.links(fleet):
-        if machine not in fleet.hosts or standby not in fleet.hosts:
-            continue
-        w = witness(fleet, machine, standby, master_of(roles))
-        if w and policy.row(fleet, fleet.hosts[machine], part, standby, w)["lost"] == "switch":
-            out[(machine, part)] = (standby, w)
-    return out
+    """{(machine, part): (standby, witness)} of the parts that run by a permission. None now: the
+    standby that took a part by itself is gone (the owner, 22 Nov 2026: a part with data is moved by
+    a person, never taken over with an older copy). The protocol stays for automation that needs one
+    actor at a time (docs/design/authority.md); an apply takes what an older release set up away
+    again (after_apply with nothing to hold)."""
+    return {}
 
 
 def plan(fleet, roles, host, leased_parts, switch_on):
@@ -504,59 +500,3 @@ def after_apply(fleet, host, tgt, roles, render, switch_on, runner=None):
     except (KiwiError, OSError, subprocess.CalledProcessError) as e:
         util.warn("%s: its permissions were not set up: %s" % (host.name, e))
         return None
-
-
-def refuse(tgt, part, machine, runner=None):
-    """On a voter: give `machine` no more permission for `part` (a switch moved it away)."""
-    run = runner or remote.run
-    run(tgt, "[ -d %s ] && mkdir -p %s/state && date +%%s > %s/state/%s@%s.refused || true"
-        % (DIR, DIR, DIR, shlex.quote(part), shlex.quote(machine)))
-
-
-def hold(tgt, part, machine, minutes=None, runner=None):
-    """On a standby: do not take `part` while `machine` is switched off on purpose (power off; the
-    owner, 21 Nov 2026: "power off should hold the switch"), or for `minutes` after a restart asked
-    for. Ends when the machine answers again."""
-    run = runner or remote.run
-    until = "0" if minutes is None else "$(( $(date +%%s) + %d ))" % (int(minutes) * 60)
-    run(tgt, "[ -d %s ] && mkdir -p %s/state && echo %s $(date +%%s) > %s/state/%s@%s.hold || true"
-        % (DIR, DIR, until, DIR, shlex.quote(part), shlex.quote(machine)))
-
-
-def start_permission(tgt, part, runner=None):
-    """On the machine a part is switched to: the permission for its first LENGTH seconds, given by
-    the switch itself (a person or the control node), until its voters give theirs. Without it, the
-    apply that makes the part its own would stop it while its voters still give the old machine's."""
-    run = runner or remote.run
-    run(tgt, "mkdir -p %s && echo $(( $(date +%%s) + %d )) > %s/%s.until" % (DIR, LENGTH, DIR, shlex.quote(part)))
-
-
-def unrecorded_takes(fleet, roles, host, runner=None):
-    """[(part, machine)] this machine took by itself that the fleet file does not say yet. An apply of
-    it then would make the part a copy kept ready again and stop it: the switch is written down first."""
-    if not any(host.name == sb for (_m, _p), (sb, _w) in links(fleet, roles).items()):
-        return []
-    run = runner or remote.run
-    out = took(run(remote.reach(host, None), TOOK).decode(errors="replace"))
-    return [(p, m) for p, (_t, m) in out.items() if (m, p) in links(fleet, roles) and links(fleet, roles)[(m, p)][0] == host.name]
-
-
-def drop(tgt, part, runner=None):
-    """On the machine a part leaves: its permission for it goes, so no boot starts it there again."""
-    run = runner or remote.run
-    run(tgt, "[ -f %s/parts ] && sed -i '/^%s /d' %s/parts; rm -f %s/%s.until %s/%s.fresh; true"
-        % (DIR, part, DIR, DIR, part, DIR, part))
-
-
-TOOK = ("for f in %s/state/*.took; do [ -e \"$f\" ] || continue; b=${f##*/}; grep -q failed \"$f\" && continue; "
-        "echo \"${b%%.took} $(cat \"$f\")\"; done" % DIR)
-
-
-def took(text):
-    """{part: (when, machine)} from what TOOK prints on a standby: the parts it took by itself."""
-    out = {}
-    for line in (text or "").splitlines():
-        p = line.split()
-        if len(p) >= 2 and p[1].isdigit():
-            out[p[0]] = (int(p[1]), p[2] if len(p) > 2 else "")
-    return out

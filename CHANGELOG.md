@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.294.0 — no part with data moves by itself
+
+The owner, 22 November 2026: fast recovery with a copy kept ready uses older data, and the
+machine, back, holds a second version of the same database. The network is for setting up and
+running many servers and clients with ease; DNS, the VPN and the gateway can go over, a part with
+data is moved by a person.
+
+- **Taken out**: the standby's take with permissions, the control node's switch by itself
+  (`recovery.switch`), the holds after a power off or restart (`standby --hold`, `X-Kiwi-Hold`),
+  `switch --taken`, `defaults.parts.*.lost` (left in a fleet file it does nothing). An apply takes
+  the permission scripts off the machines. The permissions stay in the code, unused, for
+  automation that needs one actor at a time.
+- **Kept**: a copy kept ready (`keep_ready`), `switch` and `move`, backups, emergencies and messages.
+- **A switch needs the machine it leaves** and loses nothing: the part stops there, the standby
+  fetches once more; when that last fetch fails, the part starts there again and nothing is
+  switched. A machine that does not answer is not switched away from: installed anew under its
+  name, it brings its data back from its backups.
+- **A backup before an update** (kiwi-stack 0.9.31): `kiwi-stack update` backs the machine up
+  first; when that fails, nothing is updated.
+- **The diagnosis asks the provider**: switched off there means it is started, running and silent
+  means it hangs.
+- **The control node's own update** checks its page after the restart and goes back to the image
+  before when the page does not answer.
+- **The master's door** (kiwi-modules 0.116.2): an address that keeps opening more connections than
+  the limit lets through goes into a fail2ban jail.
+- notes/TODO.md cut down to the core; new: a runbook in which admins decide beforehand what happens
+  in which case, carried out by each node's agent.
+
 ## 2.293.0 — the backlog, first part
 
 notes/TODO.md is one list again, merged from every note, the roadmap and every design, each item

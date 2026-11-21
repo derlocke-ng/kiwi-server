@@ -14,6 +14,20 @@ built: "act after a time" for a question nobody answers (off unless the owner
 turns it on per part, so nothing acts by it yet), and step 4 (its plan waits
 for the owner).
 
+**The owner, 22 November 2026: no part with data moves by itself.** Fast
+recovery with a copy kept ready uses older data, and the machine, back, holds a
+second version of the same database. The focus of the network is easy setup
+and use of many servers and clients, not uptime of data-heavy services. So
+2.294.0 takes out the standby's take, the control node's switch by itself, the
+holds and `lost:`. What stays: one truth (step 1), the diagnosis and the record
+of each case, emergencies and messages (step 3), the copy kept ready with the
+switch while the machine runs, `move`, backups before updates and every night.
+The permissions (step 2) stay in the code, unused, as a building block for
+automation that needs one actor at a time. Later: a runbook in which admins
+decide beforehand what happens in which case with which machine, and each
+node's agent acts on it by itself when it has to, asking for a permission
+where only one machine may act (the open list in the notes).
+
 ## What is wrong
 
 kiwi-server began as a tool a person runs: it renders a role and applies it.

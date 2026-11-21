@@ -1,5 +1,5 @@
 """The table per part (policy.py, docs/design/authority.md step 3): for every part, in one place, what
-happens to it when its machine stops, and its sentence."""
+happens to it when its machine stops, and its sentence. Nothing moves by itself."""
 import os
 import sys
 import types
@@ -30,37 +30,30 @@ class TestPolicy(unittest.TestCase):
     def test_the_rows_and_their_sentences(self):
         r = self.rows(self.fleet())
         vault = r[("medlar", "vault")]
-        self.assertEqual((vault["copies"], vault["lost"], vault["alone"], vault["standby"], vault["witness"]),
-                         ("standby", "switch", "stop", "quince", "lime"))
-        self.assertEqual(policy.sentence(vault), "vault: quince takes it over about four minutes after medlar stops (witness: lime).")
+        self.assertEqual((vault["copies"], vault["standby"], vault["need"]), ("standby", "quince", "normal"))
+        self.assertEqual(policy.sentence(vault), "vault: away while medlar is; a copy is kept ready on quince, to move it "
+                                                 "there while medlar runs.")
         self.assertEqual((r[("medlar", "dns")]["where"], r[("medlar", "dns")]["need"]), ("here", "must"))
-        self.assertEqual(policy.sentence(r[("medlar", "games")]), "games: away while medlar is (no standby). It can wait.")
+        self.assertEqual(policy.sentence(r[("medlar", "games")]),
+                         "games: away while medlar is; back from its backups if medlar is installed anew. It can wait.")
         self.assertEqual(policy.sentence(r[("quince", "gateway")]),
                          "gateway: runs on quince only, away while quince is. The network needs it.")
         mine = [x for x in r.values() if x["machine"] == "medlar"]
-        self.assertEqual(policy.summary("medlar", mine), "When medlar stops: vault goes to quince after about four minutes; "
-                                                         "dns (the network needs it) and 1 more are away until it is back.")
+        self.assertEqual(policy.summary("medlar", mine), "When medlar stops: dns (the network needs it) and 2 more are "
+                                                         "away until it is back.")
+        # nothing takes a part over by itself (the owner, 22 Nov 2026): no permissions are set up
+        self.assertEqual(lease.links(self.fleet(), self.roles), {})
 
     def test_the_fleet_file_changes_a_part(self):
+        # lost: an older release's switch by itself, left in a fleet file: it does nothing now
         f = self.fleet(parts={"vault": {"lost": "ask", "need": "must"}, "games": {"need": "normal"}})
         r = self.rows(f)
-        self.assertEqual((r[("medlar", "vault")]["lost"], r[("medlar", "vault")]["alone"]), ("ask", "keep"))
-        self.assertIn("a person switches it", policy.sentence(r[("medlar", "vault")]))
+        self.assertEqual(policy.table(f)["vault"], {"need": "must"})
         self.assertIn("The network needs it", policy.sentence(r[("medlar", "vault")]))
         self.assertNotIn("It can wait", policy.sentence(r[("medlar", "games")]))
-        # a part that a person switches needs no permission: nobody takes it by itself
-        self.assertEqual(lease.links(f, self.roles), {})
-        self.assertEqual(lease.links(self.fleet(), self.roles), {("medlar", "vault"): ("quince", "lime")})
-
-    def test_the_switch_by_itself_off_for_every_part(self):
-        f = self.fleet(recovery={"switch": {"do": "tell"}})
-        self.assertEqual(self.rows(f)[("medlar", "vault")]["lost"], "ask")
-        self.assertEqual(lease.links(f, self.roles), {})
-        on = self.fleet(parts={"vault": {"lost": "switch"}}, recovery={"switch": {"do": "tell"}})
-        self.assertEqual(lease.links(on, self.roles), {("medlar", "vault"): ("quince", "lime")})     # this one part, by itself
 
     def test_what_the_fleet_file_may_say(self):
-        for bad in ({"vault": {"lost": "maybe"}}, {"vault": {"need": "very"}}, {"vault": {"where": "here"}}, {"vault": "ask"}, ["vault"]):
+        for bad in ({"vault": {"need": "very"}}, {"vault": {"where": "here"}}, {"vault": "ask"}, ["vault"]):
             with self.assertRaises(KiwiError):
                 policy.table(types.SimpleNamespace(defaults={"parts": bad}))
         self.assertEqual(policy.table(types.SimpleNamespace(defaults={})), {})

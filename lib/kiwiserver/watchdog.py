@@ -14,11 +14,10 @@ node is what stays in the house. That is how a rented master comes back after a 
 `tell` says it (the page shows it). `restart` is a power cycle through the machine's
 provider: it destroys nothing. `reinstall` is not built yet and is read as `restart`.
 
-A part kept ready on another machine (`keep_ready`) goes there by itself when the machine that
-runs it has not answered for `recovery: { switch: { after: 5 } }` minutes, its standby answers,
-and the standby cannot reach that machine either: two that agree, the control node's look and
-the standby. A machine that lost only its way to the control node is still seen by its standby,
-and nothing is switched. `recovery: { switch: false }` leaves it to a person.
+A part is never moved by itself to another machine: what a machine held when it went silent is
+not on any other (a copy kept ready is a minute behind, and the machine, back, would hold a second
+version). Such a part comes back from its backups when its machine is installed anew (the owner,
+22 Nov 2026), and is moved while its machine runs (`switch`, `move`).
 Guards no policy switches off: the same machine is not acted on twice within an hour (unless
 it answered in between: then the act worked, and a new outage is a new one) nor more than
 three times a day, and nothing is done when the provider cannot be asked, since then this
@@ -47,8 +46,6 @@ def policy(fleet, kind):
 
 
 REPORT_EVERY = 60          # seconds between two reports of a machine's agent
-# conclusions of step()'s look under which nothing is done to the machine or its parts
-QUIET_CONCLUSIONS = ("planned", "switched off", "its whole site is away", "only the way from the control node is cut")
 PLANNED_WAIT = 600         # seconds a machine that said it restarts may be away before anything is done or told
 WORDS = {"reboot": "restarts", "poweroff": "switches off", "halt": "stops", "stop": "stops"}
 
@@ -260,100 +257,4 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
     for e in events:        # since when it is silent: the messages count from then (health.update)
         if e.get("host") in gone:
             e.setdefault("since", gone[e["host"]])
-    return events
-
-
-SWITCH_AFTER = 5            # minutes a machine is gone before its parts kept ready elsewhere go there
-COPY_LAG = 600              # seconds a copy kept ready may have been behind when its machine went silent
-SWITCH_AGAIN = 1800         # seconds before the same part is switched by itself once more
-
-
-def switch_policy(fleet):
-    """(on, after minutes) for parts kept ready on another machine."""
-    rec = fleet.defaults.get("recovery") or {}
-    sw = rec.get("switch", {})
-    if sw is False:
-        return False, SWITCH_AFTER
-    if not isinstance(sw, dict):
-        return False, SWITCH_AFTER          # a word where a block belongs: by hand, the safe side
-    try:
-        after = max(1, int(sw.get("after", SWITCH_AFTER)))
-    except (TypeError, ValueError):
-        after = SWITCH_AFTER
-    return sw.get("do", "switch") == "switch", after        # tell, or a word it does not know: by hand
-
-
-def switches(fleet, links, said, state, now, sees, copy_age=None, independent=None):
-    """After step(): the parts kept ready on another machine whose machine is gone. `links`:
-    [(machine it runs on, part, standby)]; `said` as for step(); `state` the fleet's state, with
-    step()'s `gone`; `sees(standby, machine)` whether the standby reaches that machine itself;
-    `copy_age(standby, part)` how old the standby's copy is (seconds, None: none); `independent(standby,
-    machine)` whether the standby's word counts beside the control node's (not when both reach the
-    machine the same way, the VPN, and that way is down). A copy that was
-    behind already when the machine went silent is not switched to by itself: that would lose
-    what came since, and the machine, once back, would take the old copy over its own.
-    Returns events: kind `switch` (with `part`: the control node starts the switch), or waiting,
-    held, tell."""
-    on, after = switch_policy(fleet)
-    gone, done, events = state.get("gone") or {}, state.setdefault("switched", {}), []
-    from . import policy
-    for src, part, dst in links:
-        if said.get(src, True) or src not in gone or src in (state.get("off") or {}):
-            continue
-        # what step()'s look found explains it: a restart it said it makes, switched off, its whole site away,
-        # or only the way from here cut. Nothing is switched then (the review of 22 Nov 2026)
-        if ((state.get("cases") or {}).get(src) or {}).get("conclusion") in QUIET_CONCLUSIONS:
-            continue
-        lost = policy.row(fleet, fleet.hosts[src], part, dst, None)["lost"] if src in fleet.hosts else ("switch" if on else "ask")
-        if lost == "wait":
-            continue        # its row says it waits for its machine
-        h = fleet.hosts.get(src)
-        if "control" in ((getattr(h, "modules", None) or []) + list(((getattr(h, "role_settings_raw", None) or {}).get("modules")) or [])):
-            continue        # the control node's own machine: whoever reads this is not it (a computer's `gone`)
-        minutes = int((now - gone[src]) / 60)
-        what = "%s has not answered for %d minute%s; %s is kept ready on %s" % (src, minutes, "" if minutes == 1 else "s", part, dst)
-        key = "%s/%s" % (src, part)
-        if lost != "switch":                # a person switches it (its row, or recovery: switch off)
-            events.append({"host": src, "kind": "tell", "part": part, "text": what + ": kiwi-server switch, by hand"})
-            continue
-        if minutes < after:
-            events.append({"host": src, "kind": "waiting", "part": part, "text": what})
-            continue
-        if now - done.get(key, 0) < SWITCH_AGAIN:
-            events.append({"host": src, "kind": "held", "part": part, "text": what + ": its switch is on its way"})
-            continue
-        if not said.get(dst):
-            events.append({"host": src, "kind": "held", "part": part,
-                           "text": what + ", which does not answer either: nothing is switched"})
-            continue
-        if independent is not None and not independent(dst, src):
-            events.append({"host": src, "kind": "held", "part": part,
-                           "text": what + ": %s is at another site and the master does not answer, so %s may only be cut off "
-                                          "the same way; nothing is switched" % (dst, src)})
-            continue
-        try:
-            seen = sees(dst, src)
-        except KiwiError as e:
-            events.append({"host": src, "kind": "held", "part": part,
-                           "text": what + ": %s could not be asked whether it reaches %s (%s)" % (dst, src, str(e).splitlines()[-1][:100])})
-            continue
-        if seen:
-            events.append({"host": src, "kind": "held", "part": part,
-                           "text": what + ": %s still reaches it, so only the way from here is cut; nothing is switched" % dst})
-            continue
-        if copy_age is not None:
-            try:
-                age = copy_age(dst, part)
-            except KiwiError:
-                age = None
-            behind = None if age is None else age - (now - gone[src])      # how far behind it was when the machine fell silent
-            if behind is None or behind > COPY_LAG:
-                events.append({"host": src, "kind": "tell", "part": part, "text": what + ": %s, so nothing is switched by itself "
-                               "(kiwi-server switch, by hand, if that copy will do)" % (
-                                   "%s has no copy of it" % dst if age is None else
-                                   "its copy there was %d minutes behind already when %s fell silent" % (behind // 60, src))})
-                continue
-        done[key] = now
-        events.append({"host": src, "kind": "switch", "part": part, "to": dst,
-                       "text": what + ", and %s does not reach it either: %s goes to %s" % (dst, part, dst)})
     return events

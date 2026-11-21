@@ -1188,6 +1188,8 @@ Then a machine takes its modules in its settings, like the built-in ones.</p>
 
     "controllers.html": """{% extends "base.html" %}{% block main %}
 {% if changed %}<p class="banner ok">The password is changed. Use the new one from now on.</p>{% endif %}
+{% if removed %}<p class="banner ok">{{ removed }} is removed: it gets nothing new. If it was lost or stolen, it still knows
+the keys it saw: replace them under <a href="#lost">If a computer was lost or stolen</a>.</p>{% endif %}
 <h1>Controllers</h1><p class="muted">The computers that can manage this network with the Kiwi Server app. Each has its own key.</p>
 {% for name, key in ways %}<div class="card row"><span><strong>{{ name }}</strong>
 {% if name == "control" %}<span class="muted"> · this machine (your password)</span>
@@ -1207,7 +1209,7 @@ onsubmit="return confirm('Remove {{ name }}? It can no longer open the network.'
 <p>Makes a link. Pasted into Kiwi Server on another computer, it gives that computer the whole network to manage.</p>
 <button class="primary">Add a computer</button></form>{% endif %}
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
-<h2>If a computer was lost or stolen</h2>
+<h2 id="lost">If a computer was lost or stolen</h2>
 <div class="card"><p>Removing it stops it from getting anything new. It still knows the keys it saw.
 Replace them here, one after the other.</p>
 <p><strong>1. The keys that open your machines</strong><br><span class="muted small">
@@ -3980,7 +3982,8 @@ def make_app(control: Control):
     def controllers(request: Request):
         if not user(request):
             return login_page()
-        return controllers_page(request)
+        removed = request.query_params.get("removed") or ""
+        return controllers_page(request, removed=removed if re.match(r"^[A-Za-z0-9._-]{1,64}$", removed) else "")
 
     @app.post("/controllers/{what}")
     def controllers_do(request: Request, what: str, name: str = Form(""), csrf: str = Form(""),
@@ -3995,6 +3998,7 @@ def make_app(control: Control):
                 return controllers_page(request, invite=link, invite_qr=markupsafe.Markup(control.qr_svg(link)))
             if what == "remove":
                 control.remove(name, u)
+                return RedirectResponse("/controllers?removed=%s" % urllib.parse.quote(name), status_code=303)
             if what == "sshca-init":
                 control.sshca_init(u)
                 return controllers_page(request, ca_made=True)

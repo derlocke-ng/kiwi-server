@@ -977,7 +977,8 @@ class Control:
             self.store.remove(name)
             self._for_the_keys_now()
         self._tokens = {t: v for t, v in self._tokens.items() if v[0] != name}
-        self.audit(user, "removed controller %s" % name)
+        self.audit(user, "removed controller %s: it gets nothing new; what it saw before it knows (Controllers: "
+                         "If a computer was lost or stolen)" % name)
 
     def challenge(self, name):
         """A token only that controller can read: encrypted to its key. None when there is no

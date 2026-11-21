@@ -12296,7 +12296,8 @@ class TestWeb(WebBase):
         self.assertIn("<strong>laptop</strong>", self.ask("/controllers")[1])
         self.ask("/controllers/remove", {"name": "laptop"})                       # forged: nothing
         self.assertIn("laptop", [n for n, _k in self.c.controllers()])
-        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "/controllers"))
+        self.assertEqual(self.ask("/controllers/remove", {"name": "laptop", "csrf": tok}), (303, "/controllers?removed=laptop"))
+        self.assertIn("laptop is removed: it gets nothing new", self.ask("/controllers?removed=laptop")[1])
         self.assertNotIn("laptop", [n for n, _k in self.c.controllers()])
         code, body = self.ask("/controllers/remove", {"name": "control", "csrf": tok})
         self.assertIn("own key", body)                                            # said on the page, not a crash

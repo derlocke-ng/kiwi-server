@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.291.3 — reminders, not every hour
+
+- What the control node did by itself, or leaves to you (a part a person switches, a machine
+  restarted three times today), is told at once and, while it lasts, again after 1, 6 and 24
+  hours, then once a day. It was repeated every hour.
+- `tools/gui-preview.py stops`: the app's "When it stops" and Home's emergencies with made-up data,
+  in a private session (looked at on 22 Nov 2026: both show, "I have it" runs `control ack`).
+
 ## 2.291.2 — the machine a part left gets its apply when it is back
 
 - Fixed: after a switch, the apply of the machine the part left did not wait for it when it was

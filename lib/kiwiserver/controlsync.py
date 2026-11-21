@@ -747,6 +747,8 @@ def _push_api(fleet_dir, fleet_name, force=False, key=None, keep=None, api=None)
         raise KiwiError("the control node refused (%d)" % status)
     there = out.get("revision") or ""
     _here, then = _stamp(fleet_dir)
+    if there and there == then and _here and not force and here_digest(fleet_dir, fleet_name) == _here:
+        return 0, api       # nothing new on either side: nothing to send (a push made a new revision for nothing)
     if there and there != then and not force:
         # another controller, an apply there, or only a host key it learned: the two copies
         # become one here, file by file, and that one goes there
@@ -783,6 +785,12 @@ def _pull_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
         st.sync()
         changed_here = bool(here) and here_digest(fleet_dir, fleet_name) != here and not force
     api, key = api_for(fleet_dir, key)
+    if st.exists() and then and not force:
+        # the revision first: the whole fleet only when there is something new there (the app
+        # pulls whenever the control node says something changed)
+        status, out = api.call("GET", "/api/fleet/revision")
+        if status == 200 and (out or {}).get("revision") == then:
+            return (None if changed_here else 0), api
     status, out = api.call("GET", "/api/fleet")
     if status != 200 or not out.get("files"):
         raise KiwiError("the control node holds no fleet, or refused (%d)" % status)

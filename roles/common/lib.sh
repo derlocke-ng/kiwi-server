@@ -908,6 +908,7 @@ ks_stack_unpack() {
         echo "STACK_RUNTIME=$KS_STACK_RUNTIME"
         echo "STACK_SERVICES=\"${KS_STACK_SERVICES[*]}\""
         echo "STACK_READY=\"${KS_STACK_READY[*]:-}\""
+        echo "STACK_LEASED=\"${KS_STACK_LEASED[*]:-}\""
         echo "STACK_PREFIX=$KS_STACK_PREFIX"
         echo "STACK_VPN_CONTAINER=$KS_STACK_VPN_CONTAINER"
         echo "STACK_VPN_DEPENDENTS=\"${KS_STACK_VPN_DEPENDENTS[*]}\""
@@ -920,6 +921,22 @@ ks_stack_unpack() {
         echo "STACK_SEED_ID=${KS_SEED_ID:-}"
         echo "STACK_AUTO_UPDATE=${KS_STACK_AUTO_UPDATE:-registry}"
     } | ks_write "$KS_STACK_ENV" 0644
+}
+
+ks_stack_leased() {  # the parts of this machine that have a standby: they run by their permission
+    # docker gets their containers made with what this apply changed (a profile no `up` starts);
+    # then the permissions decide at once what runs (kiwi-lease tick), not at its next round.
+    [[ -n ${KS_STACK_LEASED[*]:-} ]] || return 0
+    if [[ $KS_STACK_RUNTIME == docker ]]; then
+        docker compose --file "$KS_STACK_DIR/docker-compose.yml" --profile kiwi-leased up --no-start "${KS_STACK_LEASED[@]}" >/dev/null 2>&1 \
+            || ks_warn "the parts that run by a permission could not be made (${KS_STACK_LEASED[*]})"
+    fi
+    if [[ -x /usr/local/sbin/kiwi-lease ]]; then
+        rm -f /run/kiwi-lease/state-*          # asked again: what runs now and what may
+        /usr/local/sbin/kiwi-lease tick || true
+    fi
+    ks_say "run by their permission (kiwi-lease show): ${KS_STACK_LEASED[*]}"
+    return 0
 }
 
 ks_stack_ready() {   # the parts kept ready for another machine: made here, not started
@@ -1256,6 +1273,10 @@ ks_stack_apply() {
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         local failed=0
         for svc in "${changed[@]}"; do
+            if [[ " ${KS_STACK_LEASED[*]:-} " == *" $svc "* ]]; then    # only if it runs: it runs by its permission
+                systemctl try-restart "$svc.service" || { ks_warn "$svc did not restart — kiwi-stack logs $svc"; failed=1; }
+                continue
+            fi
             systemctl restart "$svc.service" || { ks_warn "$svc did not restart — kiwi-stack logs $svc"; failed=1; }
         done
         (( failed )) || rm -f "$KS_PENDING"
@@ -1267,6 +1288,7 @@ ks_stack_apply() {
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
     ks_stack_ready
+    ks_stack_leased
     ks_stack_prune
     for unit in "${KS_STACK_UNITS[@]}"; do
         systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]

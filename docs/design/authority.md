@@ -109,6 +109,37 @@ instead of the file is not needed for that and is not built.
 What goes: the hold in the agent's answer, the marks for switched off, seen and
 switched, and the standby's check whether it reaches the machine.
 
+**How it is built** (planned after 2.286.0). The voters give the permission;
+the machine never asks. That fits what exists: the standby already logs in to
+the machine every minute with a key that can do one thing there (fetch the
+part's folders).
+
+- *Given.* The standby's minute run, and the witness's own timer, write a
+  permission to the machine over that kind of key: "PART runs here until T",
+  T three minutes on. A second forced command beside the fetch takes it and
+  keeps the latest T in `/etc/kiwi-server/lease/PART`. Each voter writes down
+  the last T it gave.
+- *Kept.* On the machine, `kiwi-stack` starts a part with a standby only with a
+  permission that has not run out, and a timer stops it within a minute after
+  it ran out. A part without a standby is not touched.
+- *Taken.* The standby takes the part when four things hold: the switch by
+  itself is set for it, the standby has not reached the machine since the last
+  permission it gave ran out, the witness says the same of its own (asked over
+  a key of the same kind), and its copy is fresh. The witness then gives the
+  machine no permission for that part any more. The standby starts the part
+  and says so with its next report.
+- *Written down.* The control node takes that report as the switch (the fleet
+  file, the pins, the moving names), as `switch` does today. When the control
+  node is away, the part runs on the standby anyway, and the control node
+  catches up when it is back.
+- *Back.* A machine that comes back has stopped the part by itself, and gets no
+  permission for it while the other runs it. The hold in the agent's answer and
+  the watchdog's switch go.
+- *Drills.* A power cut of the machine (the standby has the part after about
+  four minutes); the same with the control node away; the machine's network
+  cut while it runs (it stops the part, nothing runs twice); a witness that is
+  away (nothing changes while the standby reaches the machine).
+
 ### 3. Policy: one table per part
 
 Each part says six things. Modules bring the defaults (a site's DNS and the

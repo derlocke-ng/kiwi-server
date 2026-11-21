@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.287.0 — a part runs only where it may
+
+Step 2 of the rebuild in [docs/design/authority.md](docs/design/authority.md).
+
+- **Permissions that run out.** A part with a standby runs on its machine only while the
+  standby or a witness (another machine at the site, or the master) gave it the permission
+  within the last three minutes. Neither an apply nor a boot starts it without one. A machine
+  that is cut off stops the part by itself; one that comes back after the part moved gets no
+  permission, so nothing runs twice and nobody has to tell it (`kiwi-lease`, `kiwi-vote`;
+  kiwi-modules 0.116.0, kiwi-stack 0.9.29).
+- **The standby takes the part by itself**, without the control node, when its own and the
+  witness's permissions have run out, the switch by itself is on and its copy is fresh: 244
+  seconds after the power cut in the drill (tests/drills/permissions.sh). The control node writes
+  it down as a switch from the standby's next report (`switch --taken`) and leaves such parts to
+  their voters. A part without a possible witness is switched by the control node as before.
+- **A switch by hand ends the permission** on the machine the part leaves: its voters give it no
+  more, and it drops the part from its list.
+- **The app follows the control node**: when the control node says something changed (an apply,
+  a job), the app fetches what it holds and what it remembers. An idle sync asks for the revision
+  only, and a push with nothing new sends nothing.
+- Docs: [backups.md](docs/backups.md#permissions-a-part-runs-only-where-it-may),
+  [security.md](docs/security.md#the-voters-keys).
+
 ## 2.286.0 — one keeper for what the network remembers
 
 The first step of the rebuild in [docs/design/authority.md](docs/design/authority.md).

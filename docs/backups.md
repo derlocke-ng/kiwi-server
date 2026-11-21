@@ -326,9 +326,44 @@ part; from then on quince keeps it ready (the switch writes `keep_ready: { vault
 medlar), so the two stay a pair and the part can go back the same way. A machine that answers for names and was not applied since the standby was set up
 learns the new address with its apply.
 
-Nobody has to be there: when quince is gone for five minutes and medlar cannot reach it
-either, the control node switches the part by itself (see
-[control.md](control.md#when-a-machine-does-not-answer)).
+Nobody has to be there: when quince is gone, medlar takes the part by itself, as the next
+section says. A part without a third machine to be its witness is switched by the control
+node instead (see [control.md](control.md#when-a-machine-does-not-answer)).
+
+### Permissions: a part runs only where it may
+
+A part with a standby runs on its machine only while that machine holds a permission for it.
+Two machines give it: the standby and a witness. The witness is another machine at the same
+site (the first by name), or the master when the site has no third machine. A part with no
+possible witness runs as before, without a permission.
+
+- Every minute the standby and the witness each give quince the permission for the next
+  three minutes (`kiwi-vote`, over a key that can do only that). Every 20 seconds quince
+  starts the part if it may run and stops it if it may not (`kiwi-lease`). Neither an apply
+  nor a boot starts the part without a permission.
+- quince runs the part while either of the two reaches it. A quince that is cut off stops
+  the part by itself within three minutes.
+- medlar takes the part when four things hold: the switch by itself is on
+  (`recovery: switch`, see [control.md](control.md#when-a-machine-does-not-answer)), its own
+  last permission ran out more than a minute ago, the witness says the same of its own
+  (from then on the witness gives quince nothing for that part), and medlar's copy was
+  fetched within the last 15 minutes. That is about four minutes after quince's power went
+  out: 244 seconds in the drill. The control node is not needed for it. When it sees the
+  take in medlar's next report, it writes it down as a switch.
+- A quince that comes back gets no permission for the part, so the part does not start
+  there. The apply that follows makes quince the standby.
+- A voter that never gave a permission does not count the machine as gone. When only the
+  standby lost its way to quince, the witness still reaches it and nothing moves. When the
+  witness is away as well as quince, nothing moves either, and a person switches.
+
+```bash
+sudo kiwi-lease show                  # on quince: each part, the seconds left, running or stopped
+sudo journalctl -t kiwi-lease         # on quince: started, stopped
+sudo journalctl -t kiwi-vote          # on medlar and the witness: given, gone, taken
+```
+
+A switch by hand also ends quince's permission: the standby and the witness are told to
+give it no more, and quince drops the part from its list when it answers.
 
 What to know:
 

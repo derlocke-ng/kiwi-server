@@ -57,6 +57,10 @@ def stack_vars(host, bundle):
             _bash_var("KS_STACK_AUTO_UPDATE", getattr(bundle, "auto_update", "registry") or "registry"),
             _bash_var("KS_SEED_ID", host.secrets.seed_id() if host.secrets.has_seed() else ""),
         ]
+    leased = getattr(bundle, "leased_parts", None) or {}
+    if leased:
+        # the containers that run only with a permission (kiwi-lease): an apply leaves them to it
+        lines.append(_bash_var("KS_STACK_LEASED", [s for p in sorted(leased) for s in leased[p]]))
     if getattr(bundle, "ready_services", None):
         # the containers of parts kept ready for another machine: made, never started by an apply
         lines.append(_bash_var("KS_STACK_READY", list(bundle.ready_services)))

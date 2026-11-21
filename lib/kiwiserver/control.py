@@ -1118,7 +1118,8 @@ class Control:
         if action == "switch":              # module: the part; hosts: the machine it runs on
             if len(hosts) != 1 or not MODULE.match(module or ""):
                 raise KiwiError("which part, on which machine?")
-            return list(self.kiwi) + ["switch", self.fleet_path, module, hosts[0], "--yes"]
+            # at "taken": the standby took it by itself (lease.py); the switch writes it down
+            return list(self.kiwi) + ["switch", self.fleet_path, module, hosts[0], "--yes"] + (["--taken"] if at == "taken" else [])
         if action == "rotate-ring":         # module: the ring; hosts: left out (gone for good)
             if not MODULE.match(module or ""):
                 raise KiwiError("which ring?")
@@ -2518,6 +2519,14 @@ class Control:
                 self.audit("control", "restarted %s at its provider: it did not answer" % e["host"], host=e["host"])
             elif e.get("kind") == "unlocked" and e["text"].endswith("it starts now"):
                 self.audit("control", "forwarded the unlock ring of %s: its disk waited at boot" % e["host"], host=e["host"])
+            elif e.get("kind") == "switch" and e.get("part") and e.get("taken"):
+                # its standby took it by itself, by the permissions (lease.py): written down as a switch
+                try:
+                    self.start("switch", [e["host"]], user="control", module=e["part"], at="taken")
+                    self.audit("control", e["text"], hosts=[e["host"], e.get("to", "")])
+                except KiwiError as err:
+                    self.audit("control", "could not write down that %s took %s: %s" % (e.get("to", "its standby"), e["part"], str(err)[:200]),
+                               host=e["host"])
             elif e.get("kind") == "switch" and e.get("part"):
                 # gone, and its standby does not reach it either: the part goes there, as a job like the page's
                 try:

@@ -88,6 +88,15 @@ if [ -f /etc/kiwi-server/stack.env ]; then
             kv standby "$p $age $(head -c 160 "/etc/kiwi-server/standby/state/$p.said" 2>/dev/null | tr '\n' ' ')"
         done
     fi
+    # permissions (lease.py): the parts that run here by one (seconds left, running or stopped), and
+    # the parts this machine took by itself as their standby (when, from which machine)
+    if [ -x /usr/local/sbin/kiwi-lease ] && [ -s /etc/kiwi-server/lease/parts ]; then
+        /usr/local/sbin/kiwi-lease show 2>/dev/null | while read -r p left st; do kv lease "$p $left $st"; done
+    fi
+    for f in /etc/kiwi-server/lease/state/*.took; do
+        [ -e "$f" ] || continue
+        b=${f##*/}; kv took "${b%.took} $(head -c 80 "$f" | tr '\n' ' ')"
+    done
     for c in "${STACK_DIR:-}/${STACK_PREFIX:-km}-nginx/acme"/*/fullchain.pem; do
         [ -f "$c" ] || continue
         kv certificate "$(basename "$(dirname "$c")") $(date -d "$(openssl x509 -enddate -noout -in "$c" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null)"
@@ -211,7 +220,7 @@ def lasts_s(seconds):
 def parse(data, local_now=None):
     """The probe's lines as a dict."""
     raw, disks, containers, units, certificates, repos, copies, onion, opened, partner_masters = {}, {}, {}, [], [], [], [], [], {}, {}
-    kept = []
+    kept, leases, took = [], [], []
     for line in data.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
@@ -250,6 +259,14 @@ def parse(data, local_now=None):
         elif key == "certificate":
             name, _, expires = value.partition(" ")
             certificates.append({"name": name, "expires": _int(expires)})
+        elif key == "lease":
+            p = value.split()
+            if len(p) >= 2 and p[1].isdigit():
+                leases.append({"part": p[0], "left": int(p[1]), "state": p[2] if len(p) > 2 else "-"})
+        elif key == "took":
+            p = value.split()
+            if len(p) >= 3 and p[1].isdigit():
+                took.append({"part": p[0], "at": int(p[1]), "from": p[2]})
         elif key == "standby":
             p = value.split(" ", 2)
             if len(p) >= 2 and p[1].lstrip("-").isdigit():
@@ -313,6 +330,10 @@ def parse(data, local_now=None):
         out["certificates"] = [dict(c, left=c["expires"] - remote_now) for c in certificates if c["expires"] and remote_now]
     if kept:
         out["standby"] = kept
+    if leases:
+        out["leases"] = leases
+    if took:
+        out["took"] = took
     if raw.get("banned", "").isdigit():
         out["banned"] = int(raw["banned"])
     if _int(raw.get("plaindata")):

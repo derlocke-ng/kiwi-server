@@ -592,8 +592,12 @@ machine's page does it by hand. A machine whose rings are all at home opens
 when one of the machines that serve them is back.
 
 A part kept ready on a second machine (`keep_ready`, see
-[backups.md](backups.md#a-standby-for-a-part)) goes there by itself when two
-agree that its machine is gone: the control node has not heard from it for
+[backups.md](backups.md#a-standby-for-a-part)) whose machine has a witness runs
+by a permission, and its standby takes it by itself
+([backups.md](backups.md#permissions-a-part-runs-only-where-it-may)); the
+control node only writes the switch down when the standby's report says so,
+and leaves such parts to their voters. One without a witness goes there by
+itself when two agree that its machine is gone: the control node has not heard from it for
 five minutes, and the machine that keeps the part ready cannot reach it
 either (by ping or at its SSH port, at its address at home and by its name).
 If that machine still reaches it, only the way to the control node is cut,

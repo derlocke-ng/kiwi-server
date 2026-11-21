@@ -16310,6 +16310,27 @@ class TestRecovery(Base):
         self.assertIn("FTLCONF_dhcp_start=192.168.2.150", env["papaya"]["dns"])
         self.assertIn("FTLCONF_dhcp_end=192.168.2.199", env["papaya"]["dns"])
 
+    def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
+        lych = self.network().raw["hosts"]["lychee"]
+        bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",
+                  offsite_password="dav-pass-of-the-test")
+        f = self.network(lychee=dict(lych, node=dict(lych["node"], **{"backup-server": bs})))
+        ran = []
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), \
+                mock.patch.object(remote, "run_stream", lambda tgt, script, **k: ran.append((tgt, script)) or 0):
+            self.assertEqual(cli.main(["backups", f.path, "lychee", "--from-offsite", "papaya.kiwi"]), 0)
+            self.assertEqual(cli.main(["backups", f.path, "lychee", "--from-offsite"]), 0)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(cli.main(["backups", f.path, "papaya", "--from-offsite"]), 1)
+                self.assertEqual(cli.main(["backups", f.path, "lychee", "--from-offsite", "a b"]), 1)
+        self.assertEqual(ran[0][0], "core@lychee")
+        self.assertTrue(ran[0][1].endswith("/kiwi/backup-offsite.sh bring-back papaya.kiwi"), ran[0][1])
+        self.assertTrue(ran[1][1].endswith("bring-back "), ran[1][1])
+        self.assertIn("keeps no copy at another place", err.getvalue())
+        self.assertIn("is not a machine's name", err.getvalue())
+        self.assertEqual(len(ran), 2)
+
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod
         node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}

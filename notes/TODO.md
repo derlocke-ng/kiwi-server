@@ -45,7 +45,7 @@ L: days. New ideas go to the end of their section.
 
 ## 2. Smaller, no decision needed
 
-- `backups --offsite`: restore from the offsite copy without logging in to the store's machine. M
+- ~~`backups --offsite`: restore from the offsite copy without logging in to the store's machine.~~ Built: `backups STORE --from-offsite` (kiwi-modules 0.118.0), the next release; drill with a real place open.
 - A "through the VPN" switch for any module, instead of hand-written `network_mode` (onion.md). M
 - The VPN name of a public instance, `<site>-public.<machine>.home` (public-services.md). S-M
 - With an exit through a partner, DNS lookups still leave from the network's own master. M

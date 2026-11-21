@@ -4952,6 +4952,24 @@ def cmd_backups(args):
     fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
     rolesmod.resolve_settings(roles[h.role], h, ms)
+    if args.from_offsite is not None:
+        # a backup store installed anew: what its copy at the other place holds comes back (kiwi-modules 0.118)
+        bs = h.module_settings.get("backup-server") if "backup-server" in (h.modules or []) else None
+        if not bs or not bs.get("offsite_url"):
+            raise KiwiError("%s keeps no copy at another place (backup-server.offsite_url)" % h.name)
+        for n in args.from_offsite:
+            if not re.match(r"^[A-Za-z0-9._-]+$", n):
+                raise KiwiError("%r is not a machine's name (its hostname, like lime.home)" % n)
+        script = "%s/kiwi/backup-offsite.sh" % (h.role_settings.get("docker_dir") or "/home/user/docker")
+        util.say("%s: its repositories from the copy at %s%s" % (h.name, bs["offsite_url"],
+                                                                 " (%s)" % ", ".join(args.from_offsite) if args.from_offsite else ""))
+        rc = remote.run_stream(remote.reach(h, args.ssh), "bash %s bring-back %s" % (
+            shlex.quote(script), " ".join(shlex.quote(n) for n in args.from_offsite)))
+        if rc != 0:
+            raise KiwiError("%s: not everything came back from the copy (exit %d)" % (h.name, rc))
+        util.say("%s: back from the copy. Each machine restores from it as before (kiwi-server backups %s MACHINE --restore)"
+                 % (h.name, typed_path(fleet.path)))
+        return
     if "backup" not in (h.modules or []):
         raise KiwiError("%s has no backup module" % h.name)
     tgt = remote.reach(h, args.ssh)
@@ -6849,6 +6867,9 @@ def build_parser():
     s.add_argument("--at", metavar="TIME", help="with --restore: the newest snapshot from then or before, e.g. '2026-11-10 19:00'")
     s.add_argument("--from", dest="from_host", metavar="MACHINE",
                    help="with --restore: the copies MACHINE made of these parts (a part that moved here from it)")
+    s.add_argument("--from-offsite", nargs="*", metavar="NAME",
+                   help="HOST is a backup store installed anew: every repository its copy at the other place holds "
+                        "(or the ones named, by hostname) and it has not, back from that copy")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("recovery", recoverymod.cmd); s.add_argument("fleet")
     s.add_argument("--status", metavar="FILE", help="what status --porcelain said last: then it also says how old each machine's backup is")

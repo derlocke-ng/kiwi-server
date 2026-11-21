@@ -7,6 +7,9 @@
 - **The runbook on the control node**: `machine-gone` lines take the place of `recovery:` for the
   machines they fit, `backup-overdue: backup-now` starts a backup that is late, and
   `certificate-due: tell` leaves a certificate to a person.
+- **A backup store back from its offsite copy**: a store installed anew after its machine was lost
+  gets every repository its copy at the other place holds, and it has not, with
+  `kiwi-server backups FLEET STORE --from-offsite` (kiwi-modules 0.118.0, `backup-offsite.sh bring-back`).
 
 ## 2.296.0 — a moving address for a site's basics
 

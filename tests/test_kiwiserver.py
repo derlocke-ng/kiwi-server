@@ -11279,6 +11279,11 @@ class TestHealth(Base):
         self.assertEqual([e["text"] for e in health.update(st2, need, [], [], 130)], ["gate does not answer"])
         self.assertEqual([e["text"] for e in health.update(st2, need, [], [], 700)], ["pi does not answer"])
         self.assertNotIn("machine:toy", st2["items"])
+        # it counts from when the machine fell silent, as the watchdog says, not from this look
+        st4 = {}
+        gone = [{"host": "gate", "kind": "waiting", "text": "gate has not answered for 2 minutes", "since": 880}]
+        told = health.update(st4, [{"name": "gate", "ok": False, "problems": [], "need": "must"}], [], gone, 1000)
+        self.assertEqual([(e["level"], e["text"]) for e in told], [("emergency", "gate has not answered for 2 minutes")])
         # an emergency: a machine the network needs is gone. Told on every way, again every 15 minutes, until
         # someone has it (docs/design/authority.md)
         st3 = {}

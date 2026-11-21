@@ -149,6 +149,9 @@ def update(state, machines, services, happened, now, after=600, acks=None):
     planned = {e["host"] for e in happened or [] if e.get("planned") and e.get("kind") in ("waiting", "off")}
     # what the look at a machine that is gone found (watchdog.step: its case), said in the message about it
     story = {e["host"]: e["text"] for e in happened or [] if e.get("kind") in ("waiting", "tell", "held", "restarted") and e.get("text")}
+    # since when a machine is silent, as the look at machines that are gone counts it (its agent's last report):
+    # a message about it counts from then, not from when this look first saw it
+    silent_since = {e["host"]: e["since"] for e in happened or [] if isinstance(e.get("since"), (int, float))}
     soon = {}                           # key: seconds before it is told, where that is not `after`
     # an emergency (docs/design/authority.md): a machine that runs a part the network needs, gone. Told on every
     # way at once, and again every EMERGENCY_AGAIN until someone says "I have it" (acks: {key: {by, at}})
@@ -175,7 +178,8 @@ def update(state, machines, services, happened, now, after=600, acks=None):
                                             "%s answers again (%s)" % (label(s["site"]), s["site"]))
     for key, said in seen.items():
         kind, level, text, fine = said[:4]
-        item = items.setdefault(key, {"kind": kind, "since": now, "told": False})
+        first = silent_since.get(key.split(":", 1)[1]) if kind == "machine" else None
+        item = items.setdefault(key, {"kind": kind, "since": min(now, first) if first else now, "told": False})
         item.update(level=level, text=text, fine=fine)
         ack = (acks or {}).get(key) or {}
         if ack.get("at") is not None and ack["at"] >= item["since"]:

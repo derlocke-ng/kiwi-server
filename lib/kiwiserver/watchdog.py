@@ -246,6 +246,9 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
         times.append(now)
         case["did"].append("restarted at its provider")
         events.append({"host": name, "kind": "restarted", "text": what + ": restarted at its provider"})
+    for e in events:        # since when it is silent: the messages count from then (health.update)
+        if e.get("host") in gone:
+            e.setdefault("since", gone[e["host"]])
     return events
 
 

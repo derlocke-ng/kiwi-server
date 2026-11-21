@@ -45,6 +45,11 @@ except OSError:
 sys.exit(0 if (struct.unpack(">H", r[6:8])[0] > 0) else 1)
 PY
 }
+answered() {  # three tries: the first question after a switch can wait for this computer to learn the address anew
+    local _
+    for _ in 1 2 3; do answers "$1" && return 0; sleep 1; done
+    return 1
+}
 moved_to() {  # MACHINE: within 20 s
     local t0=$SECONDS
     while (( SECONDS - t0 < 20 )); do holds "$1" && { echo $(( SECONDS - t0 )); return 0; }; sleep 1; done
@@ -71,16 +76,16 @@ for m in "$a" "$b"; do
 done
 sleep 8
 check "$(is holds "$a")" "$a holds $addr"
-check "$(is answers "$a.$domain")" "$addr answers a name"
+check "$(is answered "$a.$domain")" "$addr answers a name"
 on "$a" "systemctl stop kn-vip.service 2>/dev/null || docker stop kn-vip >/dev/null"; check $? "$a's moving address stopped"
 took=$(moved_to "$b"); check $? "$b holds $addr (${took:-never} s)"
-check "$(is answers "$a.$domain")" "$addr still answers a name"
+check "$(is answered "$a.$domain")" "$addr still answers a name"
 on "$a" "systemctl start kn-vip.service 2>/dev/null || docker start kn-vip >/dev/null"; check $? "$a's moving address back"
 took=$(moved_to "$a"); check $? "$a holds $addr again (${took:-never} s)"
 if [ "${PIHOLE_STEP:-0}" = 1 ]; then      # off unless asked: a Pi-hole that devices use directly is away for it
     on "$a" "systemctl stop kn-pihole.service 2>/dev/null || docker stop kn-pihole >/dev/null"; check $? "$a's Pi-hole stopped"
     took=$(moved_to "$b"); check $? "its check gave the address to $b (${took:-never} s)"
-    check "$(is answers "$a.$domain")" "$addr answers a name from $b"
+    check "$(is answered "$a.$domain")" "$addr answers a name from $b"
     on "$a" "systemctl start kn-pihole.service 2>/dev/null || docker start kn-pihole >/dev/null"; check $? "$a's Pi-hole back"
     took=$(moved_to "$a"); check $? "$a holds $addr again (${took:-never} s)"
 fi

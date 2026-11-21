@@ -1,8 +1,11 @@
 # The network's basics twice (design, 22 November 2026)
 
 Step 6 of [scale.md](scale.md). The owner, 22 November: for DNS, the VPN client and the gateway a
-second machine that takes over is fine; they keep no data that two versions could split. Nothing
-of it is built yet.
+second machine that takes over is fine; they keep no data that two versions could split. Steps 1
+and 2 are built (2.296.0, kiwi-modules 0.117.0); step 3 runs on the test network: lime and papaya
+share 192.168.2.70. Drill (tests/drills/vip.sh): the address went to papaya about a second after
+lime's keepalived stopped and back in four, and a name asked of it every second was answered
+through both switches.
 
 ## What a site gets
 

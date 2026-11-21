@@ -23,9 +23,11 @@ firewall:
 templates:
   compose: docker-compose.yml.j2
   apt_conf: apt-nginx.conf.j2
+  files_conf: files-nginx.conf.j2
 
 outputs:
   apt_conf: { path: "{{ container_prefix }}-cache/apt-nginx.conf", mode: 0644, when: apt }
+  files_conf: { path: "{{ container_prefix }}-cache/files-nginx.conf", mode: 0644, when: files }
 
 derived:
   cache_host: "cache.{{ hostname }}"
@@ -36,9 +38,10 @@ storage:
     - { host: "{{ data_path }}", type: dir, required: true }
     - { each: registries, host: "{{ data_path }}/{{ item }}", type: dir }
     - { host: "{{ data_path }}/apt", type: dir, when: apt }
+    - { host: "{{ data_path }}/files", type: dir, when: files }
 
 urls:
-  - "Cache: https://{{ cache_host }} (images of {{ registries | join(', ') }}){{ ', apt proxy on port 3142' if apt else '' }}"
+  - "Cache: https://{{ cache_host }} (images of {{ registries | join(', ') }}){{ ', apt proxy on port 3142' if apt else '' }}{{ ', install images at /files/' if files else '' }}"
 
 nginx:
   # /v2/<registry>/… goes to that registry's mirror; podman's mirror location is cache.<hostname>/<registry>
@@ -58,6 +61,9 @@ nginx:
       config: "set $mirror http://{{ container_prefix }}-cache-ghcr:5000; rewrite ^/v2/ghcr\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
     - path: "~ ^/v2/quay\\.io/(.*)$"
       config: "set $mirror http://{{ container_prefix }}-cache-quay:5000; rewrite ^/v2/quay\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
+    - path: "/files/"
+      when: files
+      config: "set $files http://{{ container_prefix }}-cache-files:8080; proxy_pass $files; proxy_buffering on; proxy_read_timeout 900s;"
     - path: "~ ^/v2/lscr\\.io/(.*)$"
       config: "set $mirror http://{{ container_prefix }}-cache-lscr:5000; rewrite ^/v2/lscr\\.io/(.*)$ /v2/$1 break; proxy_pass $mirror; proxy_set_header Host $host; proxy_buffering off;"
 
@@ -77,6 +83,16 @@ settings:
     label: Room for packages
     help: "The most the package cache keeps, e.g. 10g; the oldest go first."
     default: "10g"
+    pattern: '[0-9]+[mg]'
+  - key: files
+    type: bool
+    label: Install images
+    help: "Keeps the install images kiwi-server build fetches (Fedora CoreOS, Debian's netinst) at cache.<hostname>/files/: one download for the LAN."
+    default: true
+  - key: files_size
+    label: Room for install images
+    help: "The most the image cache keeps, e.g. 20g; the oldest go first."
+    default: "20g"
     pattern: '[0-9]+[mg]'
   - key: data_dir
     label: Where the cache lives

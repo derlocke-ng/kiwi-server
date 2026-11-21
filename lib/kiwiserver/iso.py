@@ -13,10 +13,12 @@ original El Torito / isohybrid boot setup, so the result boots on BIOS and UEFI
 exactly like the stock image.
 """
 import hashlib
+import json
 import os
 import re
 import secrets
 import shutil
+from urllib.parse import urlparse
 
 from . import util
 from .util import KiwiError
@@ -36,10 +38,56 @@ def _md5(path):
 
 # ---- Fedora CoreOS -----------------------------------------------------------------
 
+# The LAN's cache of install images (the cache module, files: cache.<hostname>/files/<server>/<path>),
+# set by the CLI when the fleet has one: {"name", "address", "ca"} (ca: a copy of the fleet CA's
+# certificate inside the image folder, so the toolchain sees it). The owner, 22 Nov 2026: one
+# download for the LAN, at the LAN's speed.
+LAN_CACHE = None
+
+
+def through_cache(tc, url, path, cache_dir):
+    """`url` fetched to `path` from the LAN's cache, when there is one and it answers: True. Each
+    image is checked where it is used (a signature, a checksum from its own server), so the copy
+    needs no trust of its own. False: nothing there, the caller fetches it from its server."""
+    c = LAN_CACHE
+    if not c:
+        return False
+    u = urlparse(url)
+    via = "https://%s/files/%s%s" % (c["name"], u.netloc, u.path)
+    r = tc.run(["curl", "-fL", "--retry", "2", "--connect-timeout", "3", "--resolve", "%s:443:%s" % (c["name"], c["address"]),
+                "--cacert", c["ca"], "-o", path + ".part", via], mounts=[cache_dir], capture=True, check=False)
+    if r.returncode != 0:
+        if os.path.exists(path + ".part"):
+            os.unlink(path + ".part")
+        return False
+    os.replace(path + ".part", path)
+    util.say("%s from the LAN's cache (%s)" % (os.path.basename(path), c["name"]))
+    return True
+
+
+def _fcos_from_cache(tc, stream, cache_dir):
+    """The stream's metal ISO and its signature into `cache_dir` from the LAN's cache, where
+    coreos-installer download finds them and checks Fedora's signature as for its own."""
+    if not LAN_CACHE:
+        return
+    r = tc.run(["curl", "-fsSL", "--retry", "2", "https://builds.coreos.fedoraproject.org/streams/%s.json" % stream],
+               mounts=[cache_dir], capture=True, check=False)
+    try:
+        iso = json.loads(r.stdout)["architectures"]["x86_64"]["artifacts"]["metal"]["formats"]["iso"]["disk"]
+    except (ValueError, KeyError, TypeError):
+        return
+    path = os.path.join(cache_dir, os.path.basename(urlparse(iso["location"]).path))
+    if os.path.isfile(path) and os.path.isfile(path + ".sig"):
+        return
+    if through_cache(tc, iso["signature"], path + ".sig", cache_dir) and not through_cache(tc, iso["location"], path, cache_dir):
+        os.unlink(path + ".sig")
+
+
 def fcos_base_iso(tc, stream, cache_dir):
     """coreos-installer download verifies the Fedora signature and prints the
-    path; an already present, valid file is reused."""
+    path; an already present, valid file is reused (one the LAN's cache gave too)."""
     os.makedirs(cache_dir, exist_ok=True)
+    _fcos_from_cache(tc, stream, cache_dir)
     r = tc.run(["coreos-installer", "download", "-s", stream, "-p", "metal", "-f", "iso",
                 "-C", cache_dir, "--fetch-retries", "3"], mounts=[cache_dir], capture=True)
     lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
@@ -324,6 +372,8 @@ def debian_base_iso(tc, cfg, cache_dir):
     if os.path.isfile(path) and (sha is None or util.sha256_file(path) == sha):
         util.say("using cached %s" % name)
         return path
+    if through_cache(tc, url, path, cache_dir) and (sha is None or util.sha256_file(path) == sha):
+        return path         # checked against the SHA256SUMS of Debian's own server
     util.say("downloading %s" % url)
     tc.run(["curl", "-fL", "--retry", "3", "-o", path + ".part", url], mounts=[cache_dir])
     if sha and util.sha256_file(path + ".part") != sha:

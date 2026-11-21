@@ -15,7 +15,13 @@ One node per home keeps what every machine there would fetch again:
   other nodes finds it with a small detect script and goes direct when it is away; the Debian
   installer takes it as its proxy.
 - **Install images** (Fedora CoreOS, Debian netinst): what `kiwi-server build` downloads, and
-  what netboot serves.
+  what netboot serves. Built (kiwi-modules 0.119.0, kiwi-server 2.299.0): the cache's `files`.
+- **Updates** (the owner, 22 November 2026: "our local repos and registries are for updates
+  too … less traffic usage, faster updates/installs since 1-10gbit/s possible here"): a uCore
+  machine's system image comes through the registry mirror (seen: rpm-ostree's pulls of
+  ublue-os/ucore from the cache), podman's image updates and apt's packages too. Plain-HTTP
+  package servers could also be pointed at the cache by the LAN's DNS for every device; a
+  cache that is down would then take them away for all, so that is a choice, not yet built.
 
 Only machines on the cache's own LAN use it: over the mesh every byte would cross the master.
 The fleet knows the LAN addresses, so nothing is set per machine. Nothing breaks when the cache

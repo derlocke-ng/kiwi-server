@@ -251,6 +251,31 @@ node's own machine then restarts or hands over as its row says, or waits for
 the OK of the second control node, of kiwi-server or of an app (the owner,
 21 November).
 
+**How it would be built** (a plan, 22 November; not started: it runs a container
+on the owner's computer, and he decides that first).
+
+- *Two control nodes, one that acts.* The second one is the same image, started
+  by the app as a user container while the app runs (podman, no root, no port
+  open to the network). Both look at the machines and keep the pages; only the
+  one that holds the permission "acts" restarts, switches, applies a waiting
+  apply, writes the fleet and sends messages. The other shows what it sees.
+- *The permission* is the same as for a part: three minutes, renewed every
+  minute, voters the control node at home, the computer and a witness (a node
+  at home). The control node at home holds it while it reaches one voter. The
+  computer takes it when the control node at home is gone, the witness agrees,
+  and its last permission has run out.
+- *One writer.* The acting control node keeps the fleet and what the network
+  remembers; the other syncs with it as a computer does now. When the computer
+  acts, the control node at home, once back, gets no permission and syncs.
+- *A person's forced action.* The app can act on machines it reaches while the
+  control node does not answer ("Act anyway"). That raises a counter in the
+  fleet; at the next sync the copy with the higher counter wins its conflicts,
+  so the control node takes over what the person did.
+- *Drills.* The control node at home loses its power: the computer acts within
+  about four minutes (a message is sent, a waiting apply runs). It comes back:
+  it acts again only after the computer's permission ran out, and nothing is
+  done twice.
+
 **A person outranks the automation** (the owner, 21 November: "in an emergency
 it should have the higher power").
 

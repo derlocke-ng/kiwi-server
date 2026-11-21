@@ -12748,6 +12748,13 @@ class TestControllers(StoreBase):
         self.assertEqual(self.laptop_does("pull")[0], 0)
         self.assertNotIn("off", fleetstate.read(self.n.fleet_dir))
         self.assertEqual(fleetstate.outbox(here), [])
+        # nothing new on either side: a pull asks for the revision only, a push sends nothing
+        fetched = sum(1 for e in self.n.audit_tail(200) if "fetched the fleet" in json.dumps(e))
+        revision = self.n.revision()
+        self.assertEqual(self.laptop_does("pull")[0], 0)
+        self.assertEqual(self.laptop_does("push")[0], 0)
+        self.assertEqual(sum(1 for e in self.n.audit_tail(200) if "fetched the fleet" in json.dumps(e)), fetched)
+        self.assertEqual(self.n.revision(), revision)
         req = urllib.request.Request(self.url + "/api/v1/state", data=b'{"steps": []}', method="POST",
                                      headers={"Content-Type": "application/json"})
         with self.assertRaises(urllib.error.HTTPError) as e:                              # a stranger gets nothing

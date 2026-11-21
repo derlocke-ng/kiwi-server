@@ -4771,6 +4771,7 @@ class Window(Adw.ApplicationWindow):
         self.polling = False
         self.generation = 0       # one per fleet opened: an answer about the previous one is dropped
         self.watching, self.watcher, self.watch_due, self.last_poll = None, None, False, 0     # control watch
+        self.following = False    # a fetch after the control node said something changed (follow_there)
         self.busy = False
         self._pulse = None
         self.current_scope = None
@@ -5275,13 +5276,16 @@ class Window(Adw.ApplicationWindow):
         d = os.path.join(os.path.dirname(self.doc.path or ""), "control")
         return bool(self.doc.path) and (os.path.isfile(os.path.join(d, "remote")) or os.path.isfile(os.path.join(d, "folder")))
 
-    def sync(self, say=False, after_save=False):
+    def sync(self, say=False, after_save=False, pull_only=False, then=None):
         """Keep in step with the control node, in the background: fetch what is newer there
         (on opening), send what was saved here. Changes on both sides become one copy by
-        themselves; only when both changed the same thing a person is asked which counts."""
+        themselves; only when both changed the same thing a person is asked which counts.
+        `then`: called when it is done, whatever came of it."""
         if not self.joined():
             if say:
                 self.toast("This network is not shared yet: Use another computer… in the menu")
+            if then:
+                then()
             return
         path, generation, dirty = self.doc.path, self.generation, self.doc.dirty
 
@@ -5292,7 +5296,7 @@ class Window(Adw.ApplicationWindow):
                 return 0
 
         def work():
-            steps = ["push"] if after_save else (["pull"] if dirty else ["pull", "push"])
+            steps = ["push"] if after_save else (["pull"] if dirty or pull_only else ["pull", "push"])
             rc, text, was = 0, "", stamp()
             for step in steps:
                 rc, out, err = run_cli(self.cli, ["control", step, path], timeout=180)
@@ -5328,8 +5332,26 @@ class Window(Adw.ApplicationWindow):
                            "Menu, Compare with the other copy… shows what differs and who changed it.")
             elif say:
                 self.toast("In step")
+            if then:
+                then()
             return False
         threading.Thread(target=work, daemon=True).start()
+
+    def follow_there(self):
+        """The control node says something changed (a look, a job, an apply there): fetch what it
+        holds and what it remembers (cheap when the fleet is the same), then ask again. Without
+        the fetch, a machine the control node had just applied stayed "Changes not applied yet"
+        here until the next sync (21 Nov 2026)."""
+        if self.doc.dirty or self.busy or self.following:
+            self.poll_soon()
+            return False
+        self.following = True
+
+        def then():
+            self.following = False
+            self.poll_soon()
+        self.sync(pull_only=True, then=then)
+        return False
 
     def both_changed(self, path, text):
         """This computer and another changed the same thing: a person says which counts."""
@@ -6597,7 +6619,7 @@ class Window(Adw.ApplicationWindow):
                     if first:               # the mark as it is: nothing new yet
                         first = False
                         continue
-                    GLib.idle_add(self.poll_soon)
+                    GLib.idle_add(self.follow_there)
                 p.kill()
                 p.wait()
                 for _ in range(60):

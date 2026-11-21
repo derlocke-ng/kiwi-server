@@ -1,6 +1,7 @@
 """The command line. bin/kiwi-server execs this; kiwi-server-gui calls it
 with --porcelain and parses JSON, so the CLI stays the single source of truth."""
 import argparse
+import copy
 import calendar
 import concurrent.futures
 import threading
@@ -19,7 +20,7 @@ import time
 
 from . import VERSION, access as accessmod, address as addressmod, adopt as adoptmod, qr as qrmod, backup as backupmod, certs, config, federation as fedmod, iso as isomod, modules as modmod, plan as planmod, roles as rolesmod, sshca, sshport
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
-from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod, fleetstate as statemod
+from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod, fleetstate as statemod, reach as reachmod
 from .config import TARGETS
 from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
@@ -325,12 +326,26 @@ def tls_needs_ca(host):
             and "reverse-proxy/tls_fullchain" not in host.module_files)
 
 
+def _plain(x):
+    """For a fingerprint: sets sorted, a machine by its name, anything else by its fields."""
+    if isinstance(x, (set, frozenset)):
+        return sorted(x, key=repr)
+    if isinstance(x, bytes):
+        return hashlib.sha256(x).hexdigest()
+    if isinstance(x, config.Host):
+        return "host:" + x.name
+    if hasattr(x, "__dict__"):
+        return {k: v for k, v in vars(x).items() if not k.startswith("__")}
+    return repr(x)
+
+
 class Renderer:
     def __init__(self, fleet, roles, out_dir, tc, modset=None, media_dir=None):
         self.fleet, self.roles, self.out_dir, self.tc = fleet, roles, out_dir, tc
         self.media_dir = media_dir or out_dir
         self.ms = modset or modmod.discover(extra=sourcesmod.folders(fleet))
         self._scanned = False
+        self.reads = {}             # name -> what its render read of the other machines' parts
         self._records = []
         self._names = {}        # every name a host's sites answer for, its public ones too: {hostname: [name]}
         self._node_lan = []
@@ -365,7 +380,12 @@ class Renderer:
 
     def prepare(self, host):
         role = self.roles[host.role]
-        rolesmod.resolve_settings(role, host, self.ms)
+        with reachmod.own(host.name):       # a machine's own settings, resolved: its own reads
+            rolesmod.resolve_settings(role, host, self.ms)
+            # its own copy: resolved values can be a module's default or the fleet file's block itself,
+            # and a render writes into them (access rules), which then leaked into every later machine
+            host.module_settings = copy.deepcopy(dict(host.module_settings))
+        reachmod.watch(host, self.ms.modules)     # what another machine's render reads of its parts is written down
         p = tls_problem(host)
         if p:
             raise KiwiError(p)
@@ -380,6 +400,21 @@ class Renderer:
         if self._scanned:
             return
         self._scanned = True
+        with reachmod.unwatched():      # what it found is in every fingerprint instead (scan_print)
+            self._scan()
+
+    # what is not what the fleet-wide look found (scan_print)
+    _NOT_FOUND = frozenset(("fleet", "roles", "out_dir", "tc", "media_dir", "ms", "reads", "_told", "_leases", "_scanned",
+                            "updating", "also_moving"))
+
+    def scan_print(self):
+        """A fingerprint of what the fleet-wide look found (records, masters, neighbours, relays…):
+        every machine's script reads it, so it is in every machine's fingerprint (reach.py)."""
+        self.scan()
+        found = {k: v for k, v in sorted(vars(self).items()) if k not in self._NOT_FOUND}
+        return hashlib.sha256(json.dumps(found, sort_keys=True, default=_plain).encode()).hexdigest()
+
+    def _scan(self):
         recs, needs_ca, master_ip, node_lan = [], False, "", []
         master_host, public_host, vpn_ips = None, "", {}
         self._caches = []       # (LAN interface, hostname, registries, apt, site) of the nodes that run the cache module
@@ -760,7 +795,7 @@ class Renderer:
                     name = namesmod.name_of(self.fleet, src, part, self.ms, namesmod.plan(self.fleet, self.ms))
                     if name:
                         settings[nb["setting"]] = ("https://" + name) if nb.get("url") else name
-                out[part] = (settings, {k: v for k, v in (src.module_files or {}).items() if k.startswith(part + "/")})
+                out[part] = (settings, reachmod.files_of(src, part))
         return out
 
     def moving_names(self):
@@ -789,10 +824,14 @@ class Renderer:
         return out
 
     def script(self, host):
-        role = self.prepare(host)
-        self.use_cache(host, role)
-        b = self.bundle(host, role)
-        return rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
+        seen = set()
+        with reachmod.reading(host.name, seen):       # the others' part-level data it reads (reach.py)
+            role = self.prepare(host)
+            self.use_cache(host, role)
+            b = self.bundle(host, role)
+            out = rolesmod.render_script(host, role, VERSION, bundle=b, ca_cert=self.ca_cert(host)), b
+        self.reads[host.name] = seen
+        return out
 
     def write_stack(self, o, bundle, host, role):
         if os.path.isdir(o.stack):
@@ -1008,11 +1047,12 @@ def warn_data_on_master(h, roles, ms):
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     errs += partstandby.errors(fleet, roles)
-    from . import policy as policymod
+    from . import policy as policymod, runbook as runbookmod
     try:
         policymod.table(fleet)
     except KiwiError as e:
         errs.append(str(e))
+    errs += runbookmod.errors(fleet)
     for h in hosts:
         errs += h.validate(roles)
         errs += settings_errors(roles, ms, h)
@@ -1231,7 +1271,7 @@ def cmd_remove(args):
         if os.path.isdir(d):
             shutil.rmtree(d)
     def forget(state):
-        for key in ("applied", "backup_clients", "rendered", "hold", "hold_parts", "off", "installed_media"):
+        for key in ("applied", "backup_clients", "rendered", "rendered_system", "hold", "hold_parts", "off", "installed_media"):
             (state.get(key) or {}).pop(name, None)
     try:
         change_state(fleet, forget)
@@ -1290,6 +1330,9 @@ def cmd_list(args):
         nxt = next_step(fleet, roles, h, errs, o)
         rows.append({"name": h.name, "hostname": h.hostname, "target": h.target, "role": h.role, "standby_of": h.standby_of or "",
                      "site": site_of(h),
+                     # a master: where its devices connect to (their Endpoint), so a device is shown at its site
+                     "wg_host": str(((h.role_settings_raw or {}).get("vpn-server") or {}).get("wg_host") or "")
+                     if "vpn-server" in (h.modules or []) else "",
                      "keep_ready": partstandby.kept(h),     # {part: the machine that keeps it ready}
                      "phase": nxt[0], "next": nxt[1], "here": starter_host(fleet) == h.name, "provider": (h.cfg.get("vps") or {}).get("provider") or "",
                      "on_done": (h.cfg.get("install") or {}).get("on_done", "poweroff"), "admin_user": h.admin["user"],
@@ -1321,6 +1364,14 @@ def cmd_list(args):
             row["parts_table"] = [dict(pr, sentence=policymod.sentence(pr)) for pr in mine]
     except KiwiError as e:
         util.warn("the table per part: %s" % e)
+    # what happens in which case, as the runbook says (runbook.py): only the cases a line covers
+    from . import runbook as runbookmod
+    for row in rows:
+        try:
+            got = runbookmod.for_machine(fleet.hosts[row["name"]])
+            row["runbook"] = [{"case": c, "do": l["do"], "sentence": runbookmod.sentence(c, l)} for c, l in got.items() if l]
+        except (KiwiError, KeyError):
+            row["runbook"] = []
     if args.porcelain:
         groups, default_group = {}, None     # the master's client groups: where a new device may go
         for h in fleet.hosts.values():
@@ -1655,16 +1706,41 @@ def _same_as_told(script, told):
     return False
 
 
+# the lines of a role script that only the stack's own steps act on (kiwi-stack --stack-only): its
+# files, its quadlets, the fleet's names in /etc/hosts. Every other line is the machine's own.
+_STACK_LINES = re.compile(r"^(KS_FILES\[stack/|KS_FILES\[quadlet/|KS_STACK_HOSTS=).*$\n?", re.M)
+
+
+def _system_print(script):
+    """The fingerprint of a role script without the lines only the stack's steps act on: the same as
+    at the last apply, a change is the stack's alone, and the stack's steps are all it takes."""
+    text = script.decode(errors="replace") if isinstance(script, bytes) else script
+    return _fingerprint(_STACK_LINES.sub("", text))
+
+
+def stack_only(fleet, name, script):
+    """Does an apply of `name` with `script` take only the stack's steps? Its last apply's script
+    differed from this one in the stack's lines alone. KIWI_FULL_APPLY=1: never."""
+    if os.environ.get("KIWI_FULL_APPLY") == "1":
+        return False
+    st = fleet_state(fleet)
+    told, system = (st.get("rendered") or {}).get(name), (st.get("rendered_system") or {}).get(name)
+    return bool(told and system) and system == _system_print(script) and not _same_as_told(script, told)
+
+
 def record_rendered(fleet, name, script):
     """What a machine got with its last apply, as a fingerprint of its role script (the same
-    settings render the same script, byte for byte)."""
+    settings render the same script, byte for byte), and of the script without the stack's lines."""
+    def note(state):
+        state.setdefault("rendered", {})[name] = _fingerprint(script)
+        state.setdefault("rendered_system", {})[name] = _system_print(script)
     try:
-        change_state(fleet, lambda state: state.setdefault("rendered", {}).__setitem__(name, _fingerprint(script)))
+        change_state(fleet, note)
     except OSError:
         pass
 
 
-def inputs_key(fleet, ms):
+def inputs_key(fleet, ms, hosts=True):
     """One fingerprint of everything a role script is rendered from: this release, the fleet's files,
     what the fleet remembers (without when and what was applied), the secrets by name, size and
     time, the roles and the modules. The same key: every machine's script is the same as before."""
@@ -1686,9 +1762,13 @@ def inputs_key(fleet, ms):
     folder = os.path.dirname(os.path.abspath(fleet.path))
     for f in sorted(os.listdir(folder)):
         if f.endswith((".yaml", ".yml")):
+            if not hosts and f == os.path.basename(fleet.path):
+                # without the machines: each machine's fingerprint holds them (host_print)
+                put("file", f, json.dumps({k: v for k, v in (fleet.raw or {}).items() if k != "hosts"}, sort_keys=True, default=str))
+                continue
             with open(os.path.join(folder, f), "rb") as fh:
                 put("file", f, hashlib.sha256(fh.read()).hexdigest())
-    put("state", json.dumps({k: v for k, v in fleet_state(fleet).items() if k not in ("applied", "rendered")}, sort_keys=True))
+    put("state", json.dumps({k: v for k, v in fleet_state(fleet).items() if k not in ("applied", "rendered", "rendered_system")}, sort_keys=True))
     tree("secrets", os.environ.get("KIWI_SECRETS_DIR") or fleet.resolve_path("secrets"))
     tree("roles", rolesmod.roles_dir())
     for name, path in sorted({(m.name, m.dir) for m in ms.modules.values()}):
@@ -1703,46 +1783,121 @@ def _judged_path(r):
     return os.path.join(r.out_dir, ".rendered-prints.json")
 
 
+def _roster(fleet, roles, r):
+    """Every machine prepared (its settings resolved), and a fingerprint of what all fingerprints
+    hold of each: everything but its parts' own data (reach.shared_view)."""
+    views = []
+    for h in sorted(fleet.hosts.values(), key=lambda x: x.name):
+        if h.role in roles:
+            try:
+                r.prepare(h)
+            except KiwiError:
+                pass
+        views.append(reachmod.shared_view(h, r.ms.modules))
+    return hashlib.sha256(json.dumps(views, sort_keys=True, default=_plain).encode()).hexdigest()
+
+
+def host_print(pre, name, shared, reads):
+    """A machine's fingerprint (docs/design/scale.md): what is the same for all (`shared`: the
+    release, roles, modules, defaults, secrets, the fleet-wide look, every machine's shared view),
+    all of its own parts, and the parts of other machines its last render read (`reads`). `pre`:
+    {machine: {part: its data}}, taken right after the settings were resolved and before any
+    render (a render adds certificates to a machine's files)."""
+    d = hashlib.sha256()
+    d.update(shared.encode())
+    d.update(json.dumps(pre.get(name), sort_keys=True).encode())
+    for owner, part in sorted(reads):
+        theirs = pre.get(owner)
+        got = "gone" if theirs is None else theirs if part == "*" else theirs.get(part)
+        d.update(json.dumps([owner, part, got], sort_keys=True).encode())
+    return d.hexdigest()
+
+
+def _inputs_now(fleet, roles, r):
+    """(shared, pre) for the fingerprints (host_print), from the fleet as it is loaded, never from
+    one rendered already: a render changes what it is given in place (a resolved value, a
+    certificate). `pre` as text at once, before anything else can change it."""
+    clean = config.Fleet.load(fleet.path)
+    namesmod.assign(clean, r.ms)
+    rc = Renderer(clean, roles, r.out_dir, None, r.ms)
+    rc.scan()
+    shared = "%s:%s:%s:%s" % (inputs_key(clean, r.ms, hosts=False), rc.scan_print(), _roster(clean, roles, rc),
+                              json.dumps([bool(getattr(r, "updating", False)), sorted(getattr(r, "also_moving", None) or ())]))
+    pre = {h.name: {p: json.dumps(v, sort_keys=True, default=_plain) for p, v in reachmod.part_data(h, "*").items()}
+           for h in clean.hosts.values()}
+    return shared, pre
+
+
 def changed_since_apply(fleet, roles, r, skip=()):
     """Machines whose role script is another now than the one their last apply sent: a setting of
     theirs changed, or one elsewhere that reaches them (a new name the DNS machines must know, a
     public name the master hands on, a new client of a backup server). A machine this computer
     never applied with this release is not judged.
 
-    A script is rendered once per change, not once per question (the owner, 20 Nov 2026: "why all
-    machines, and not just what changed?!"): its fingerprint is kept beside the output under the
-    key of everything it was rendered from (`inputs_key`), and read from there while that key
-    stays, for an hour at most. KIWI_RENDER_ALWAYS=1 renders every time, as before."""
-    told, out = fleet_state(fleet).get("rendered") or {}, []
-    kept, key, dirty = {}, None, False
-    if os.environ.get("KIWI_RENDER_ALWAYS") != "1":
+    A machine is rendered again only when what its script is made from changed (the owner, 20 Nov
+    2026: "why all machines, and not just what changed?!"): its fingerprint (host_print) holds what
+    is the same for all, its own settings, and what its last render read of the other machines'
+    parts (reach.py). Kept beside the output for an hour at most (rendering also renews what runs
+    out). A render that changed what scripts are made from (a new certificate) has every machine
+    judged once more. KIWI_RENDER_ALWAYS=1 renders every time, as before."""
+    told = fleet_state(fleet).get("rendered") or {}
+    always = os.environ.get("KIWI_RENDER_ALWAYS") == "1"
+    state = None
+    if not always:
         try:
-            key = inputs_key(fleet, r.ms)
-            memo = json.loads(util.read_text(_judged_path(r)))
-            fresh = memo.get("key") == key and 0 <= time.time() - (memo.get("time") or 0) < KEPT_FOR
-            kept = dict(memo.get("prints") or {}) if fresh else {}
+            state = _inputs_now(fleet, roles, r)
+        except (KiwiError, OSError, ValueError, TypeError) as e:
+            util.warn("the fingerprints of the machines: %s; every machine is rendered" % str(e).splitlines()[-1][:120])
+            always = True
+    memo = {}
+    if not always:
+        try:
+            got = json.loads(util.read_text(_judged_path(r)))
+            memo = (got.get("hosts") or {}) if got.get("v") == 2 else {}
         except (OSError, ValueError, AttributeError):
-            kept = {}
-    for h in fleet.hosts.values():
-        if h.name in skip or h.name not in told or h.role not in roles or h.validate(roles):
-            continue
-        if told[h.name].startswith("v2:") and h.name in kept:
-            if kept[h.name] != told[h.name]:
+            memo = {}
+
+    def judge(state, memo):
+        out, kept, dirty = [], {}, False
+        shared, pre = state if state else (None, {})
+        for h in fleet.hosts.values():
+            if h.name in skip or h.name not in told or h.role not in roles or h.validate(roles):
+                continue
+            m = memo.get(h.name) or {}
+            reads = {tuple(x) for x in m.get("reads") or []}
+            if (shared and told[h.name].startswith("v2:") and m.get("print")
+                    and 0 <= time.time() - (m.get("time") or 0) < KEPT_FOR       # each rendered within the hour
+                    and m.get("key") == host_print(pre, h.name, shared, reads)):
+                kept[h.name] = m
+                if m["print"] != told[h.name]:
+                    out.append(h.name)
+                continue
+            try:
+                script, _b = r.script(h)
+            except KiwiError:
+                continue
+            reads = r.reads.get(h.name) or set()
+            kept[h.name], dirty = {"print": _fingerprint(script), "reads": sorted(reads), "time": int(time.time()),
+                                   "key": host_print(pre, h.name, shared, reads) if shared else ""}, True
+            if not _same_as_told(script, told[h.name]):
                 out.append(h.name)
-            continue
+        return out, kept, dirty
+
+    out, kept, dirty = judge(state, memo)
+    if dirty and state:
         try:
-            script, _b = r.script(h)
-        except KiwiError:
-            continue
-        kept[h.name], dirty = _fingerprint(script), True
-        if not _same_as_told(script, told[h.name]):
-            out.append(h.name)
-    if key and dirty:
-        try:
-            os.makedirs(r.out_dir, exist_ok=True)
-            util.write_text(_judged_path(r), json.dumps({"key": key, "time": int(time.time()), "prints": kept}, sort_keys=True), 0o600)
-        except OSError:
-            pass
+            after = _inputs_now(fleet, roles, r)
+        except (KiwiError, OSError, ValueError, TypeError):
+            after = None
+        if after != state:          # a render changed what the scripts are made from: once more, on that
+            out, kept, dirty = judge(after, kept) if after else (out, {}, False)
+            state = after
+        if state and kept:
+            try:
+                os.makedirs(r.out_dir, exist_ok=True)
+                util.write_text(_judged_path(r), json.dumps({"v": 2, "hosts": kept}, sort_keys=True), 0o600)
+            except OSError:
+                pass
     return out
 
 
@@ -3387,8 +3542,12 @@ def cmd_apply(args):
                     record_backup_clients(fleet, h)
                     record_rendered(fleet, h.name, script)
                 return
-            util.say("%s: applying (the output below is the machine's)" % h.name)
-            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force", prefix=prefix)
+            # only the stack changed since its last apply (a part's settings, the network's names): only
+            # the stack's steps run there, its files and a restart of what changed (the owner, 22 Nov
+            # 2026: "we don't need to update the whole machine")
+            only = not update and stack_only(fleet, h.name, script)
+            util.say("%s: applying%s (the output below is the machine's)" % (h.name, ": only its stack changed" if only else ""))
+            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force" + (" --stack-only" if only else ""), prefix=prefix)
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
             if update:      # an apply fetches newer images; this brings them into use (only what changed restarts)
@@ -3401,11 +3560,21 @@ def cmd_apply(args):
                 except KiwiError as e:
                     # its rings are not there yet (the machine that serves them comes later): the disk
                     # keeps the key for its screen until an apply after they answer
-                    util.warn("%s: its disk is not bound to its rings yet: %s. It opens with its key until an apply after "
-                              "they answer" % (h.name, e))
-                    if h.target in ("coreos", "ucore"):
-                        unlock.drop_standin(h, tgt)
+                    try:
+                        bound = unlock.rings_bound(h, tgt)
+                    except KiwiError:
+                        bound = []
+                    if bound:
+                        # bound before, and a ring is only away now (22 Nov 2026: lychee off, and lime and papaya
+                        # were put to "its key only" for good): the binding stays as it is
+                        util.warn("%s: not all of its rings answered (%s): its disk's binding stays as it was; the next "
+                                  "apply checks it again" % (h.name, str(e).splitlines()[-1][:120]))
                     else:
+                        util.warn("%s: its disk is not bound to its rings yet: %s. It opens with its key until an apply "
+                                  "after they answer" % (h.name, e))
+                    if not bound and h.target in ("coreos", "ucore"):
+                        unlock.drop_standin(h, tgt)
+                    elif not bound:
                         remote.run(tgt, unlock.INSTALL_KEY_ONLY)
                         if h.cfg["unlock"].get("ssh"):
                             # who may reach its boot system (the openers) does not wait for every ring to answer
@@ -3428,6 +3597,17 @@ def cmd_apply(args):
                 from . import opener as openermod
                 openermod.after_apply(h, tgt, servers)      # opens the way for a machine away from home (openers)
             agentmod.after_apply(fleet, h, tgt, ms)     # reports to the control node every minute (the agent)
+            # what it does itself, as the admins wrote it (runbook.py); the fleet remembers who has lines
+            from . import runbook as runbookmod
+            had_book = h.name in (fleet_state(fleet).get("runbook_hosts") or [])
+            booked = runbookmod.after_apply(fleet, h, tgt, r.script, had_book)
+            if booked is not None and bool(booked) != had_book:
+                def book_note(state, name=h.name, on=bool(booked)):
+                    hosts = set(state.get("runbook_hosts") or [])
+                    (hosts.add if on else hosts.discard)(name)
+                    state["runbook_hosts"] = sorted(hosts)
+                with book:
+                    change_state(fleet, book_note)
             # a standby for a part: this machine gives or fetches its data. Also when it no longer does:
             # a fetcher left behind would fetch the old machine's stale copy over a part that now runs
             # here (found by the standby drill, 20 Nov 2026). The fleet remembers who has a link.
@@ -5227,11 +5407,15 @@ def service_script(name, action, lines=200):
     unit = ('journalctl -u "$n.service" -n %d --no-pager -o short-iso' % lines if action == "logs"
             else 'systemctl %s "$n.service"' % action)
     dock = 'docker logs --tail %d "$n" 2>&1' % lines if action == "logs" else 'docker %s "$n" >/dev/null' % action
+    # a person's stop: the machine's runbook leaves it stopped (runbook.py), until it runs again
+    held = ({"stop": '{ mkdir -p /run/kiwi-server/stopped && touch "/run/kiwi-server/stopped/$n"; } 2>/dev/null || true\n',
+             "start": 'rm -f "/run/kiwi-server/stopped/$n" 2>/dev/null || true\n',
+             "restart": 'rm -f "/run/kiwi-server/stopped/$n" 2>/dev/null || true\n'}.get(action, ""))
     return ("n=%s\n"
             'if systemctl cat "$n.service" >/dev/null 2>&1; then %s\n'
             'elif command -v docker >/dev/null && docker inspect "$n" >/dev/null 2>&1; then %s\n'
             'else echo "this machine has no service $n" >&2; exit 3; fi\n' % (shlex.quote(name), unit, dock)
-            + ('echo "$n: %s"\n' % done if done else ""))
+            + held + ('echo "$n: %s"\n' % done if done else ""))
 
 
 def game_servers(h):
@@ -5588,12 +5772,24 @@ def certificate_again(fleet, p, tgt):
 
 def move_part(args, part, src_name, dst_name):
     """A part to another machine, with its data, its secrets and its name (partmove.py). Without
-    --yes: the plan."""
+    --yes: the plan. --gone: the machine it leaves is dead, the part comes from its newest backup
+    (a person's decision: what came after that backup is lost)."""
     from . import partmove
     fleet, roles, ms = load(args)
     out_dir = out_dir_for(args, fleet)
+    gone = bool(getattr(args, "gone", False))
     p = partmove.plan(fleet, roles, ms, part, src_name, dst_name, applied=fleet_state(fleet).get("applied") or {},
-                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h))
+                      render=lambda f, h: Renderer(f, roles, out_dir, None, ms).script(h), gone=gone)
+    if not p["stops"] and src_name in fleet.hosts:
+        try:
+            remote.run(remote.reach(fleet.hosts[src_name], None), "true")
+            if gone:
+                p["stops"].append("%s answers: a move without --gone stops %s there and makes one last backup, "
+                                  "so nothing is lost" % (src_name, part))
+        except KiwiError as e:
+            if not gone:
+                p["stops"].append("%s does not answer (%s): if it is dead, --gone takes %s from its newest backup"
+                                  % (src_name, str(e).splitlines()[-1][:80], part))
     if args.porcelain:
         print(json.dumps({k: v for k, v in p.items() if k != "data"}, indent=1))
         if p["stops"]:
@@ -5605,8 +5801,8 @@ def move_part(args, part, src_name, dst_name):
         if p["stops"]:
             raise SystemExit(1)
         if not getattr(args, "yes", False):
-            print("\nNothing was changed. With --yes it is done: kiwi-server move %s %s %s %s --yes"
-                  % (typed_path(fleet.path), part, src_name, dst_name))
+            print("\nNothing was changed. With --yes it is done: kiwi-server move %s %s %s %s%s --yes"
+                  % (typed_path(fleet.path), part, src_name, dst_name, " --gone" if gone else ""))
             return
     src, dst = fleet.hosts[src_name], fleet.hosts[dst_name]
     # rendered as an apply renders it: only then its settings hold what the network adds (20 Nov 2026:
@@ -5614,11 +5810,15 @@ def move_part(args, part, src_name, dst_name):
     _script, bundle = Renderer(fleet, roles, out_dir_for(args, fleet), None, ms).script(src)
     services = sorted(c for c, mod in (getattr(bundle, "service_modules", {}) or {}).items() if mod == part)
     s_tgt, d_tgt = remote.reach(src, None), remote.reach(dst, None)
+    if gone:
+        services = []           # nothing to stop or start there again: it is gone
+        util.say("%s is gone: %s comes from its newest backup" % (src_name, part))
     # 1. it stops where it is, and that machine makes its last copy of it
     for c in services:
         remote.run(s_tgt, service_script(c, "stop"))
-    util.say("%s: %s stopped%s" % (src_name, part, " (%s)" % ", ".join(services) if services else ""))
-    if p["carry"]:
+    if not gone:
+        util.say("%s: %s stopped%s" % (src_name, part, " (%s)" % ", ".join(services) if services else ""))
+    if p["carry"] and not gone:
         util.say("%s: one last backup" % src_name)
         rc = remote.run_stream(s_tgt, "kiwi-stack backup")
         if rc != 0:
@@ -5662,12 +5862,18 @@ def move_part(args, part, src_name, dst_name):
                 remote.run(s_tgt, service_script(c, "start"))
             except KiwiError as e:
                 util.warn("%s: %s was not started again: %s" % (src_name, c, e))
-        raise KiwiError("%s. %s runs on %s again, with its data as it was; the fleet file is as before%s"
-                        % (why, part, src_name, "" if not back else
+        raise KiwiError("%s. %s the fleet file is as before%s"
+                        % (why, "Nothing runs it now (%s is gone);" % src_name if gone else
+                           "%s runs on %s again, with its data as it was;" % (part, src_name), "" if not back else
                            ". %s still has the part's leftovers: kiwi-server apply %s %s" % (dst_name, typed_path(fleet.path), dst_name)))
-    # 5. the old machine, and everyone the change reaches
-    failed = again(["apply", fleet.path, src_name])
-    failed = again(["apply", fleet.path, "--changed"]) or failed
+    # 5. the old machine, and everyone the change reaches (a machine that is gone: not it)
+    if gone:
+        fleet2, roles2, ms2 = load(args)
+        now = [n for n in changed_since_apply(fleet2, roles2, Renderer(fleet2, roles2, out_dir, None, ms2)) if n != src_name]
+        failed = again(["apply", fleet.path] + now) if now else 0
+    else:
+        failed = again(["apply", fleet.path, src_name])
+        failed = again(["apply", fleet.path, "--changed"]) or failed
     certificate_again(fleet, p, d_tgt)
     # 6. from now on it is in the new machine's own store
     if p["carry"]:
@@ -5678,6 +5884,12 @@ def move_part(args, part, src_name, dst_name):
             util.warn("%s: its backup was not started (the nightly one does it): %s" % (dst_name, e))
     if failed:
         raise KiwiError("%s runs on %s, but an apply after it failed: kiwi-server apply %s --changed" % (part, dst_name, typed_path(fleet.path)))
+    if gone:
+        util.say("%s runs on %s now%s, with the data of %s's newest backup. Should %s answer again, apply it "
+                 "(kiwi-server apply %s %s): until then it runs its old copy" % (
+                     part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name, src_name,
+                     typed_path(fleet.path), src_name))
+        return
     util.say("%s runs on %s now%s. Its data is still on %s's disk, unused: delete it there when all is well"
              % (part, dst_name, ", as %s" % p["name"] if p["name"] else "", src_name))
 
@@ -5693,17 +5905,22 @@ def cmd_parts(args):
     for h in fleet.hosts.values():
         settings_errors(roles, ms, h)        # its parts, resolved as the role gives them
     rows = [dict(r, sentence=policymod.sentence(r)) for r in policymod.rows(fleet, roles) if not want or r["machine"] in want]
+    from . import runbook as runbookmod
+    book = {n: runbookmod.for_machine(fleet.hosts[n]) for n in sorted(want)}
     if args.porcelain:
-        print(json.dumps({"parts": rows}, indent=2))
+        print(json.dumps({"parts": rows, "runbook": {n: {c: runbookmod.sentence(c, l) for c, l in got.items()}
+                                                     for n, got in book.items()}}, indent=2))
         return
     by = {}
     for r in rows:
         by.setdefault(r["machine"], []).append(r)
     for machine, mine in by.items():
         print(policymod.summary(machine, mine))
-        if want:                                    # a machine named: each of its parts
+        if want:                                    # a machine named: each of its parts, and its runbook
             for r in mine:
                 print("   %s" % r["sentence"])
+            for case, line in (book.get(machine) or {}).items():
+                print("   %s" % runbookmod.sentence(case, line))
     if not rows:
         util.say("no machine has a part yet")
     elif not want:
@@ -6597,6 +6814,8 @@ def build_parser():
     s = sub("move", cmd_move); s.add_argument("fleet")
     s.add_argument("what", nargs="*", metavar="PART FROM TO", help="a part to another machine, with its data, secrets and name")
     s.add_argument("--yes", action="store_true", help="do it (without: the plan)")
+    s.add_argument("--gone", action="store_true",
+                   help="FROM is dead: the part comes from its newest backup (what came after it is lost)")
     s.add_argument("--mesh", help="the new mesh, like 10.42.0.0/16")
     s.add_argument("--domain", help="the new domain, like internal")
     s = sub("wake", cmd_wake); s.add_argument("fleet"); s.add_argument("host")

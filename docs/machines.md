@@ -172,11 +172,22 @@ a password; the install gave the admin user passwordless sudo.
 The script runs with `--force`, so the stack is rewritten and restarted with
 whatever changed; the disk and the OS are not touched.
 
+**Only the stack changed.** When the role script differs from the one the last apply sent only
+in the stack's files, its containers' definitions or the network's names (a part's setting, a
+new name the machine must know), only the stack's steps run: the names in `/etc/hosts`, the
+files, a restart of the containers whose files changed, and the check that every container
+runs. The machine's own steps (packages, users, firewall, its units, new images) are left out,
+and the apply says "only its stack changed". `KIWI_FULL_APPLY=1` runs the whole role anyway.
+
 **A change can reach other machines.** A new site on a node is a new name the
 machines that answer for names (the master, a home gateway) must learn; a public
 name is one the master hands on; a new backup client is one its backup server
 must take. kiwi-server remembers what each apply sent and names every machine
-whose role script is another now:
+whose role script is another now. To find them it renders only the machines a change can
+reach: a machine's fingerprint holds its own settings, what every machine shares (names,
+addresses, parts, the masters) and what its last render read of the other machines' parts. A
+part's setting on one machine renders that machine alone; a comment in the fleet file renders
+nothing:
 
 ```bash
 kiwi-server apply fleet.yaml --changed          # every machine with changes not applied yet
@@ -185,8 +196,8 @@ kiwi-server apply fleet.yaml medlar --changed   # medlar, and every other one th
 
 **Several machines at once.** An apply of several machines goes in turns: the masters
 first, one after the other; then the machines that answer for names or open disks
-(`dns`, `tang`), together; then all the others together, up to six at a time; the control
-node last when it applies itself. Each line of a machine's output starts with its name.
+(`dns`, `tang`), together; then all the others together; the control node last when it
+applies itself. `--at-once N` (or `KIWI_AT_ONCE`) limits how many run together. Each line of a machine's output starts with its name.
 
 The app's **Apply** offers them along; the page has **Save & apply** in the
 settings and **Apply all** on Home under "Changes not applied yet". The GUI has the same

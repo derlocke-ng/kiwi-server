@@ -66,7 +66,10 @@ backs up as before. A machine without backups starts empty.
 
 A part that is [kept ready](backups.md#a-standby-for-a-part) on a second machine waits
 for the rebuild too: its copy there is a minute behind, and is for moving the part while
-its machine runs. A dead machine's parts come back from its backups.
+its machine runs. A dead machine's parts come back from its backups. A part needed before
+the rebuild comes from the machine's newest backup onto another machine of its kind:
+`kiwi-server move fleet.yaml PART DEAD OTHER --gone` ([backups.md](backups.md#from-a-machine-that-is-dead)).
+What came after that backup is lost.
 
 **What you do.** Install it anew under the same name: make its install
 media, start the machine from them (its disk is erased), then set it up. The

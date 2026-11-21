@@ -200,6 +200,8 @@ DEFAULTS = {
     },
     # per part, what happens to it when its machine stops: {part: {lost, need}} (policy.py)
     "parts": {},
+    # what happens in which case, as the admins wrote it beforehand (runbook.py, design/runbook.md)
+    "runbook": [],
     # where messages go when something is wrong, and when it is fine again (notify.py, health.py)
     "notify": {
         "mail": {"to": [], "host": "", "port": 0, "tls": "starttls", "user": "", "password": "", "from": ""},

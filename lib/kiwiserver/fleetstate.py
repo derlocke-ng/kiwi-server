@@ -227,7 +227,7 @@ def hand_over(fleet_dir, theirs):
     for name, t in (mine.get("applied") or {}).items():
         if isinstance(t, (int, float)) and t > ((theirs.get("applied") or {}).get(name) or 0):
             steps.append(["set", ["applied", name], t])
-            for key in ("rendered", "backup_clients"):
+            for key in ("rendered", "rendered_system", "backup_clients"):
                 if name in (mine.get(key) or {}):
                     steps.append(["set", [key, name], mine[key][name]])
     for name, mid in (mine.get("installed_media") or {}).items():

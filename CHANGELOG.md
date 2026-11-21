@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.295.0 — a dead machine's part elsewhere, and a runbook
+
+- **`move PART DEAD OTHER --gone`**: a part of a machine that is dead comes from that machine's
+  newest backup onto another machine. A person decides it: what came after that backup is lost.
+  The dead machine is neither asked nor applied; a plain move points at `--gone` when the machine
+  does not answer, and `--gone` is refused while it answers. The recovery case "A machine is dead"
+  offers it. Drill: tests/drills/part-gone.sh.
+- **The runbook** (docs/design/runbook.md): `defaults.runbook` and `hosts.NAME.runbook` say
+  beforehand what happens in which case; checked, and shown per machine (`kiwi-server parts`, the
+  page, the app). `part-down` acts: a machine with such a line restarts a failed, crashed or
+  unhealthy container of the part by itself (`kiwi-runbook`), at most `tries` times a day, and
+  leaves a person's stop alone. `disk-full` acts too: images no container uses, a day old, are
+  removed when the disk passes its mark, once an hour at most. What it did is in its notes for an hour.
+- **Fixed: a ring away during an apply** put a disk that was bound to its rings to "its key only"
+  for good, with no restart for updates any more (lime, while lychee was off). The binding now
+  stays as it is, and a bind removes that guard again.
+- **Fixed: every apply of a Debian or Armbian machine with rings rebuilt its initramfs** (a
+  comparison that never matched); now only when something changed.
+- **Only the machines a change reaches are rendered** (docs/design/scale.md): a fingerprint per
+  machine of its own settings, what every machine shares and what its last render read of the
+  others. A part's setting on one machine renders that machine alone, a comment nothing; each
+  answer is the same as a full render's (test). Fixed on the way: a resolved setting could be a
+  module's default itself, and a render wrote into it (access rules) for every later machine.
+- **Only the stack changed: only the stack's steps** (kiwi-stack 0.9.32, `--stack-only`): when a
+  machine's role script differs from its last apply's in the stack's files, containers or names
+  only, the apply writes those, restarts what changed and checks the stack; the machine's own
+  steps are left out. `KIWI_FULL_APPLY=1` runs the whole role.
+- **A crash loop is told**: a container that systemd or docker restarted three times or more in ten
+  minutes is a warning ("it does not stay up"), with the way to its log.
+- **Devices by site**: the Devices page groups devices by the site of the master they connect to,
+  with `site:NAME` in its filter.
+
 ## 2.294.0 — no part with data moves by itself
 
 The owner, 22 November 2026: fast recovery with a copy kept ready uses older data, and the

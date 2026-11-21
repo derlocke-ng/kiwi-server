@@ -1274,6 +1274,32 @@ class TestAdopt(Base):
         self.assertIn("clevis luks unbind -f", unlock.DROP_TPM_SCRIPT)
         self.assertIn("</dev/null", unlock.DROP_TPM_SCRIPT)        # unbind reads stdin: it must not read the script's
 
+    def test_a_ring_away_leaves_a_bound_disk_as_it_is_and_a_bind_ends_key_only(self):
+        """22 Nov 2026: lychee was off during an apply, and lime (bound to its rings) was put to "its
+        key only" for good: no restart for updates ever again."""
+        path = os.path.join(self.tmp, "undo.sh")
+        write(path, unlock.REMOVE_KEY_ONLY)
+        self.assertEqual(subprocess.run(["bash", "-n", path]).returncode, 0)
+        self.assertIn("key-only.conf", unlock.REMOVE_KEY_ONLY)
+        h = types.SimpleNamespace(name="lime", cfg={})
+        listing = ("device /dev/mmcblk0p2\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"
+                   "3: tpm2 '{\"hash\":\"sha256\",\"key\":\"ecc\"}'\n")
+        with mock.patch.object(luks, "current_key", lambda host: "k"), \
+                mock.patch.object(remote, "run", lambda tgt, script, data=None: listing.encode()):
+            self.assertEqual(unlock.rings_bound(h, "t"), [("2", 1, ["http://192.168.2.61:7500"])])
+        with mock.patch.object(luks, "current_key", lambda host: ""):
+            self.assertEqual(unlock.rings_bound(h, "t"), [])
+
+    def test_the_ring_timeouts_hook_is_written_once(self):
+        """22 Nov 2026: the comparison never matched (a last newline), so every apply of a Debian or
+        Armbian machine rebuilt its initramfs and said so."""
+        part = unlock.PREPARE_DEBIAN.split("h=/etc/initramfs-tools/hooks/kiwi-ring-timeouts")[1].split('if [ -n "$changed" ]')[0]
+        hook = os.path.join(self.tmp, "hook")
+        script = 'changed=\nh=%s%s\necho "changed=$changed"\n' % (hook, part.replace("%%", "%"))
+        first = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        second = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual((first.stdout.strip(), second.stdout.strip()), ("changed=1", "changed="), first.stderr + second.stderr)
+
     def test_a_forced_rebind_binds_again_to_the_same_rings(self):
         """A ring's keys were rotated: the URLs are the same, the keys not, so the disk is bound again."""
         listing = "device /dev/vda3\n2: sss '{\"t\":1,\"pins\":{\"tang\":[{\"url\":\"http://192.168.2.61:7500\"}]}}'\n"
@@ -3236,13 +3262,92 @@ class TestSetup(Base):
             cli.KEPT_FOR = keep
         self.assertTrue(calls)
         del calls[:]
-        write(dest, util.read_text(dest) + "\n# a line more\n")                      # the fleet file is another: rendered again
+        write(dest, util.read_text(dest) + "\n# a line more\n")                      # a comment: nothing to render
         fleet = config.Fleet.load(dest)
         r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
         real2 = r.script
         r.script = lambda h: (calls.append(h.name), real2(h))[1]
         self.assertEqual(cli.changed_since_apply(fleet, roles, r), changed)
-        self.assertTrue(calls)
+        self.assertEqual(calls, [])
+
+    def test_only_the_machines_a_change_reaches_are_rendered_and_none_is_missed(self):
+        """docs/design/scale.md: a part's setting on one machine renders that machine; a change that
+        reaches others renders them too. Each time the answer is the same as a full render's."""
+        answers = os.path.join(self.tmp, "answers.json")
+        write(answers, json.dumps(self.ANSWERS))
+        dest = os.path.join(self.tmp, "fleet.yaml")
+        self.assertEqual(self.run_cli("init", dest, "--answers", answers, "--no-store")[0], 0)
+        wg = ("[Interface]\nPrivateKey = dGVzdC1wcml2YXRlLWtleS1ub3QtcmVhbC0wMDAwMDAwMDAwMDA=\nAddress = 10.8.0.%d/24\n"
+              "DNS = 10.8.0.1\n\n[Peer]\nPublicKey = dGVzdC1zZXJ2ZXItcHVibGljLWtleS1ub3QtcmVhbC0wMDAwMDA=\n"
+              "AllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n")
+        for i, h in enumerate(config.Fleet.load(dest).hosts.values()):
+            write(os.path.join(self.tmp, "secrets", "%s.conf" % h.hostname), wg % (20 + i))
+        roles = rolesmod.discover()
+
+        def judged(always=False):
+            fleet = config.Fleet.load(dest)
+            r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+            calls, real = [], r.script
+            r.script = lambda h: (calls.append(h.name), real(h))[1]
+            if always:
+                os.environ["KIWI_RENDER_ALWAYS"] = "1"
+            try:
+                return sorted(cli.changed_since_apply(fleet, roles, r)), sorted(set(calls))
+            finally:
+                os.environ.pop("KIWI_RENDER_ALWAYS", None)
+
+        fleet = config.Fleet.load(dest)
+        r = cli.Renderer(fleet, roles, os.path.join(self.tmp, "out"), None, cli.modset(fleet))
+        ok = [h for h in fleet.hosts.values() if h.role in roles and not h.validate(roles)]
+        for h in ok:
+            cli.record_rendered(fleet, h.name, r.script(h)[0])
+        self.assertEqual(judged()[0], [])
+        self.assertEqual(judged(), ([], []))                                         # nothing changed: nothing rendered
+        node = next(h.name for h in ok if roles[h.role].node_type == "node" and "dns" not in h.modules)
+        part = next(m for m in fleet.hosts[node].modules if m == "portainer")
+
+        def change(fn):
+            data = yaml.safe_load(util.read_text(dest))
+            fn(data)
+            write(dest, yaml.safe_dump(data, sort_keys=False))
+            first = judged()                             # what is rendered for the change
+            got, full = judged(), judged(always=True)
+            self.assertEqual((first[0], got[0]), (full[0], full[0]))      # the same machines as a full render, none missed
+            return first
+        # a part's setting on one machine: that machine only, and only it is rendered
+        got = change(lambda d: d["hosts"][node].setdefault("node", {}).setdefault(part, {}).update({"image": "portainer/portainer-ce:2.0"}))
+        self.assertEqual(got, ([node], [node]))
+        # a new part on one machine: the machines that answer for names too
+        got = change(lambda d: d["hosts"][node]["node"].update(modules=list(fleet.hosts[node].modules) + ["paste"]))
+        self.assertIn(node, got[0])
+        self.assertGreater(len(got[0]), 1)
+
+    def test_only_the_stack_changed_takes_only_the_stacks_steps(self):
+        """The owner, 22 Nov 2026: "we don't need to update the whole machine". A script that differs
+        from the last applied one in the stack's files, quadlets or names only: --stack-only."""
+        fleet = types.SimpleNamespace(path=os.path.join(self.tmp, "fleet.yaml"))
+        write(fleet.path, "hosts: {}\n")
+        base = ("KS_VERSION='2.295.0'\nKS_HOST='lime'\nKS_FILES[ca_cert]='Q0E='\nKS_FILES[stack/kn-pihole/custom.list]='YQ=='\n"
+                "KS_FILES[quadlet/kn-pihole.container]='cQ=='\nKS_STACK_HOSTS=('10.8.0.2 a.home')\nks_main \"$@\"\n")
+        with mock.patch.object(cli, "fleet_state", lambda f: self.state), \
+                mock.patch.object(cli, "change_state", lambda f, fn: fn(self.state)):
+            self.state = {}
+            self.assertFalse(cli.stack_only(fleet, "lime", base))                     # never applied: the whole role
+            cli.record_rendered(fleet, "lime", base)
+            self.assertFalse(cli.stack_only(fleet, "lime", base))                     # nothing changed
+            names = base.replace("a.home", "b.home").replace("='YQ=='", "='Yg=='")
+            self.assertTrue(cli.stack_only(fleet, "lime", names))                     # new names and a file: the stack's
+            self.assertTrue(cli.stack_only(fleet, "lime", names.replace("cQ==", "cg==")))      # a quadlet too
+            self.assertFalse(cli.stack_only(fleet, "lime", names.replace("Q0E=", "Q0I=")))     # the CA: the machine's own
+            self.assertFalse(cli.stack_only(fleet, "lime", names + "KS_STACK_PORTS=(53)\n"))  # a port: the firewall
+            os.environ["KIWI_FULL_APPLY"] = "1"
+            try:
+                self.assertFalse(cli.stack_only(fleet, "lime", names))
+            finally:
+                del os.environ["KIWI_FULL_APPLY"]
+        lib = util.read_text(os.path.join(os.path.dirname(cli.__file__), "..", "..", "roles", "common", "lib.sh"))
+        self.assertIn("ks_stack_parts()", lib)
+        self.assertIn("--stack-only", lib)
 
     def test_as_many_machines_at_once_as_there_are(self):
         self.assertEqual(cli.at_once(70), 70)                                         # no fixed number
@@ -6683,6 +6788,9 @@ class TestUnlock(Base):
                 return b"updated\n"
             if "kiwi-leash" in script:                   # the leash, on or off: its own test
                 self.leash = (tgt, script, data)
+                return b""
+            if script == unlock.REMOVE_KEY_ONLY:         # "its key only" ends once it is bound: its own test
+                self.key_only_undone = tgt
                 return b""
             calls.append((tgt, script, data))
             if "tang-show-keys" in script:
@@ -12195,6 +12303,22 @@ class TestWeb(WebBase):
         self.assertNotIn("PrivateKey", there)
         self.assertIn("No device matches", self.ask("/devices?q=nobody")[1])      # the filter, in the address
         self.assertIn("<b>annas-phone</b>", self.ask("/devices?q=anna")[1])
+        # two masters at two sites: each device under the site of the master it connects to (its Endpoint)
+        info = json.loads(util.read_text(os.path.join(self.c.run, "fleet.json"))) if os.path.isfile(os.path.join(self.c.run, "fleet.json")) else {}
+        info["hosts"] = list(info.get("hosts") or []) + [
+            {"name": "gate", "hostname": "gate.home", "role": "master", "site": "Main building", "wg_host": "1.2.3.4", "modules": []},
+            {"name": "gate2", "hostname": "gate2.home", "role": "master", "site": "HQ abroad", "wg_host": "vpn2.example.org", "modules": []}]
+        util.write_text(os.path.join(self.c.run, "fleet.json"), json.dumps(info))
+        ddir = os.path.join(self.c.fleet_dir, "secrets", "devices")
+        util.write_text(os.path.join(ddir, "desk-07.conf"), "[Interface]\nAddress = 10.8.0.7/32\n[Peer]\nEndpoint = vpn2.example.org:51820\n")
+        util.write_text(os.path.join(ddir, "annas-phone.conf"), "[Interface]\nAddress = 10.8.0.2/32\n[Peer]\nEndpoint = 1.2.3.4:51820\n")
+        self.c._gen = getattr(self.c, "_gen", 0) + 1
+        there = self.ask("/devices")[1]
+        self.assertIn('<h3 id="site-hq-abroad">HQ abroad', there)
+        self.assertIn('<h3 id="site-main-building">Main building', there)
+        self.assertLess(there.index("desk-07"), there.index("<b>annas-phone</b>"))         # HQ abroad comes first
+        self.assertNotIn("<b>annas-phone</b>", self.ask("/devices?q=site:hq-abroad")[1])
+        os.remove(os.path.join(ddir, "desk-07.conf"))                                 # the rest of this test: one device
         # a laptop at home: only the network through the tunnel, and what to do so that its own names still work
         self.c.kiwi = [sys.executable, "-c", "import sys,os; d=os.path.join(os.path.dirname(sys.argv[2]),'secrets','devices'); "
                        "os.makedirs(d,exist_ok=True); open(os.path.join(d,sys.argv[3]+'.conf'),'w').write("
@@ -16094,6 +16218,48 @@ class TestRecovery(Base):
         self.assertTrue(any("stop" in sc for sc in on_papaya) and any("start" in sc for sc in on_papaya), on_papaya)
         self.assertEqual(util.read_text(f.path), before)                 # the fleet file as it was
 
+    def test_a_dead_machines_part_comes_from_its_newest_backup_on_another(self):
+        """move --gone: a person decides that papaya is dead; vault comes from papaya's newest backup
+        onto quince. Nothing is asked of papaya, and papaya is not applied."""
+        papaya, quince = self.network().raw["hosts"]["papaya"], self.network().raw["hosts"]["quince"]
+        f = self.network(quince=dict(quince, node=dict(quince["node"], modules=["vpn-client", "reverse-proxy", "backup"],
+                                                       backup={"servers": ["https://backup.lychee.kiwi"]})))
+        for name in f.hosts:
+            cli.record_applied(f, name)
+        ran, applied, restored = [], [], []
+
+        def run(tgt, script, data=None):
+            ran.append((tgt, script))
+            if tgt == "core@papaya" and away:
+                raise KiwiError("ssh: connect to host papaya port 22: No route to host")
+            return b""
+        away = False
+        args = cli.build_parser().parse_args(["move", f.path, "vault", "papaya", "quince", "--gone", "--yes"])
+        buf = io.StringIO()
+        with mock.patch.object(remote, "reach", lambda h, ssh=None: "core@%s" % h.name), mock.patch.object(remote, "run", run), \
+                contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit):                     # papaya answers: a move without --gone
+                args.fn(args)
+            self.assertIn("papaya answers: a move without --gone", buf.getvalue())
+            away = True
+            plain = cli.build_parser().parse_args(["move", f.path, "vault", "papaya", "quince"])
+            with self.assertRaises(SystemExit):
+                plain.fn(plain)
+            self.assertIn("if it is dead, --gone takes vault from its newest backup", buf.getvalue())
+            with mock.patch.object(cli, "main", lambda argv: applied.append(argv[2:]) or 0), \
+                    mock.patch.object(cli, "restore_from", lambda f2, r2, m2, dst, src, parts, **k:
+                                      restored.append((dst.name, src.name, parts)) or ""):
+                ran[:] = []
+                args.fn(args)
+        self.assertEqual(restored, [("quince", "papaya", ["vault"])])
+        self.assertEqual([t for t, _s in ran if t == "core@papaya"], ["core@papaya"])   # the one look whether it answers
+        self.assertEqual(applied[0], ["quince"])
+        self.assertFalse(any("papaya" in a for a in applied), applied)
+        after = yaml.safe_load(util.read_text(f.path))["hosts"]
+        self.assertIn("vault", after["quince"]["node"]["modules"])
+        self.assertNotIn("vault", after["papaya"]["node"]["modules"])
+        self.assertIn("Should papaya answer again, apply it", buf.getvalue())
+
     def test_openers_open_the_way_for_a_master_away_from_home(self):
         from kiwiserver import opener as openermod
         node = {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"}}
@@ -16455,6 +16621,7 @@ class TestRecovery(Base):
         self.assertIn("Kept ready on a second machine: vault of papaya on lychee. That copy is for moving a part while its "
                       "machine runs", machine["by_itself"])
         self.assertFalse(any("switch" in (h["command"] or "") for h in machine["how"]))     # not from a dead machine
+        self.assertEqual(machine["how"][0]["command"], "kiwi-server move fleet.yaml <part> <dead machine> <other machine> --gone")
         self.assertNotIn("rebuild:sorbet", rebuild)                 # the master has its own case
         self.assertEqual([h["app"] for h in by["computer"]["how"]], [None, "rotate"])
         self.assertEqual([h["app"] for h in by["network"]["how"]], ["restore-copy", "copy"])

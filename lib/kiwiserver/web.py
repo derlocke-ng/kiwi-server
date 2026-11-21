@@ -774,7 +774,10 @@ stopped until you start it or the machine restarts.</p>
 {% if m.stops %}<h2 id="when">When it stops</h2><p>{{ m.stops }}</p>
 <details><summary class="muted small">Each part</summary><ul class="small">{% for r in m.parts_table %}<li>{{ r.sentence }}</li>{% endfor %}</ul>
 <p class="muted small">How much the network needs a part: <code>defaults.parts</code> in the fleet file
-(<code>need: must|normal|wait</code>).</p></details>{% endif %}
+(<code>need: must|normal|wait</code>).</p></details>
+<p class="small">{% for r in m.runbook %}{{ r.sentence }} {% endfor %}{% if m.runbook %}Every other case: you are told,
+nothing is done.{% else %}In every case you are told, and nothing is done.{% endif %}
+<span class="muted">What happens in which case: <code>defaults.runbook</code> in the fleet file.</span></p>{% endif %}
 {% if m.phase not in fresh and (targets or standby) %}<h2 id="move">Move a part, or keep it ready</h2>
 <p class="muted small">A part moves to another machine with its data, its secrets and its name. A part that is kept ready has its
 data copied to a second machine every minute: a switch moves it there while this machine runs, with nothing lost.
@@ -963,16 +966,21 @@ so that only the network's names are asked through it and the computer's own nam
 {% for g in t.groups %}<a class="count{{ " on" if ("group:" ~ g.group) in t.q.split() }}" href="/devices?q={{ toggled(t.q, "group", g.group)|urlencode }}"
 title="Show only this group"><b>{{ g.n }}</b> {{ g.group }}</a>{% endfor %}</div>{% endif %}
 {% if t.all > 8 or t.q %}<form class="mfilter" method="get" action="/devices" role="search"><input type="search" name="q" value="{{ t.q }}"
-aria-label="Filter the devices" placeholder="Filter: a part of a name, an address, group:NAME"{% if t.q %} autofocus{% endif %}>
+aria-label="Filter the devices" placeholder="Filter: a part of a name, an address, group:NAME, site:NAME"{% if t.q %} autofocus{% endif %}>
 <button>Filter</button>{% if t.q %}<a class="btn" href="/devices">Show all</a>{% endif %}</form>{% endif %}
 {% if t.filtered %}<p class="muted small" style="margin:0 0 8px">{{ t.shown }} of {{ t.all }} shown.</p>{% endif %}
 {% if not t.shown %}<p class="muted">No device matches.</p>{% else %}
-<form method="post" action="/devices/show">{{ tok }}<div class="scroll"><table class="tbl dt"><thead><tr><th>Device</th><th class="w2">Group</th><th class="w2">Address</th><th class="w3">Through the VPN</th><th></th></tr></thead><tbody>
-{% for d in t.devices %}<tr><td><b>{{ d.name }}</b></td><td class="w2">{{ d.group or "-" }}</td><td class="w2"><code class="sm">{{ d.address or "-" }}</code></td>
+{% set by_site = t.site_names|length > 1 %}
+{% if by_site %}<div class="counts">{% for x in t.site_names %}<a class="count{{ " on" if ("site:" ~ x) in t.q.split() }}"
+href="/devices?q={{ toggled(t.q, "site", x)|urlencode }}" title="Show only this site">{{ x }}</a>{% endfor %}</div>{% endif %}
+<form method="post" action="/devices/show">{{ tok }}{% for g in (t.sites if by_site else [{"site": "", "devices": t.devices}]) %}
+{% if by_site %}<h3 id="site-{{ g.slug }}">{{ g.site or "Master not known" }} <span class="muted small">({{ g.devices|length }})</span></h3>{% endif %}
+<div class="scroll"><table class="tbl dt"><thead><tr><th>Device</th><th class="w2">Group</th><th class="w2">Address</th><th class="w3">Through the VPN</th><th></th></tr></thead><tbody>
+{% for d in g.devices %}<tr><td><b>{{ d.name }}</b></td><td class="w2">{{ d.group or "-" }}</td><td class="w2"><code class="sm">{{ d.address or "-" }}</code></td>
 <td class="w3">{{ "Only the network" if d.split else "Everything" }}</td>
 <td class="acts"><button name="name" value="{{ d.name }}" formaction="/devices/show">QR code</button>
 <button name="name" value="{{ d.name }}" formaction="/devices/remove" onclick="return confirm('Take '+this.value+' off the VPN? Its connection stops working at once.')">Remove</button></td></tr>
-{% endfor %}</tbody></table></div></form>{% endif %}{% endif %}
+{% endfor %}</tbody></table></div>{% endfor %}</form>{% endif %}{% endif %}
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
 <details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach
 your network, even with the WireGuard app still on it.</p></details>
@@ -2093,6 +2101,7 @@ def make_app(control: Control):
                         "keep_ready": h.get("keep_ready") or {}, "applied": h.get("applied") or 0,
                         # what its stop does to its parts (policy.py): one sentence, and one per part
                         "stops": h.get("stops") or "", "parts_table": h.get("parts_table") or [],
+                        "runbook": h.get("runbook") or [],
                         "story": (s or {}).get("story") or "", "seen": (s or {}).get("seen") or (st.get("time") if s else 0) or 0,
                         "media": (control.media(h["name"]) or (None, 0))[1], "on_done": h.get("on_done") or "poweroff",
                         "known": bool(s), "state": (s or {}).get("state") or "unknown",

@@ -15,9 +15,9 @@ L: days. New ideas go to the end of their section.
 2. ~~A backup before an update (kiwi-stack update).~~ Done (kiwi-stack 0.9.31, in 2.294.0).
 3. ~~The diagnosis asks the provider; the control node's own update falls back when its page does
    not answer; the master's `stream` door into a fail2ban jail.~~ Done (2.294.0).
-4. A restore of a data part onto another machine when its machine is dead: `move` from the newest
-   backup without the source (today `move` and `switch` both need it), with a drill. M
-5. A runbook: admins decide beforehand, per machine or part and case, what happens (a machine
+4. ~~A restore of a data part onto another machine when its machine is dead: `move --gone` from the
+   newest backup without the source.~~ Done (2.295.0), drilled: lychee off, authenticator onto medlar and home again.
+5. A runbook (docs/design/runbook.md): admins decide beforehand, per machine or part and case, what happens (a machine
    gone, a service down, a disk filling, a backup overdue, an update failed, cut off from the
    network): tell, restart, stop, restore elsewhere, wait for a person. Written in the fleet file,
    shown on the page and in the app. The owner, 22 Nov 2026: every node's agent handles its own
@@ -25,7 +25,11 @@ L: days. New ideas go to the end of their section.
    before; an action only one machine may take at a time asks for a permission first (lease.py,
    unused until then). Nothing acts beyond what is written. Builds on the diagnosis and its
    record (authority.md step 3) and the agent (scale.md). M-L
-6. Render only the machines a change reaches (scale.md). M-L
+   Built: the lines checked and shown (step 1), `part-down` restarted by the machine itself
+   (`kiwi-runbook`, drilled on quince), disk-full. Open: update-failed, cut-off, a crash loop told, the
+   control node's cases through the table, permissions for lines that name voters.
+6. ~~Render only the machines a change reaches (scale.md); apply only the stack when only it
+   changed (`--stack-only`).~~ Done (2.295.0); stack-only drilled on quince (38 s against 189 s).
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6). L
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
 9. The Devices table by site on the page, as Machines (ui.md). S-M

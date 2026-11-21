@@ -1306,6 +1306,41 @@ ks_stack_apply() {
     for url in "${KS_STACK_URLS[@]}"; do ks_say "  $url"; done
 }
 
+# Only the stack changed (kiwi-server compared the rest of the role script with the one the last
+# apply sent, `--stack-only`): the fleet's names in /etc/hosts, the stack's files and quadlets, and
+# what changed restarts. The machine's own steps (packages, users, firewall, units, the pull of new
+# images) are the same as before and are left out: seconds instead of minutes.
+ks_stack_parts() {
+    [[ -x /usr/local/bin/kiwi-stack && -f $KS_STACK_ENV ]] || { ks_say "no stack here yet: the whole role instead"; return 1; }
+    ks_say "only the stack changed: its names and files, and what changed restarts"
+    ks_stack_hosts
+    ks_stack_unpack
+    systemctl daemon-reload
+    if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service; then
+        local changed=() svc failed=0
+        mapfile -t changed < <(ks_stack_restart_due)
+        ks_say "restarting what changed (${changed[*]:-nothing}), starting what is new"
+        /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
+        for svc in "${changed[@]}"; do
+            if [[ " ${KS_STACK_LEASED[*]:-} " == *" $svc "* ]]; then
+                systemctl try-restart "$svc.service" || { ks_warn "$svc did not restart — kiwi-stack logs $svc"; failed=1; }
+                continue
+            fi
+            systemctl restart "$svc.service" || { ks_warn "$svc did not restart — kiwi-stack logs $svc"; failed=1; }
+        done
+        (( failed )) || rm -f "$KS_PENDING"
+    else
+        systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
+        rm -f "$KS_PENDING"
+    fi
+    ks_say "checking that every container is running"
+    /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
+    ks_stack_ready
+    ks_stack_leased
+    sync -f "$KS_STACK_DIR" 2>/dev/null || sync
+    return 0
+}
+
 ks_stack_standalone() { # DIR   — `kiwi-stack apply DIR`: a bundle without a role script
     local dir=$1
     [[ $EUID -eq 0 ]] || ks_die "this must run as root"
@@ -1380,10 +1415,16 @@ ks_main() {
     # a failed step names itself and leaves role.failed; a success removes it
     trap 'ks_fail $? $LINENO "$BASH_COMMAND"' ERR
     set -E
-    ks_wait_dns
-    ks_base
-    ks_role_apply
-    ks_post_script
+    local a stack_only=0
+    for a in "$@"; do [[ $a == --stack-only ]] && stack_only=1; done
+    if (( stack_only )) && (( ${KS_STACK:-0} )) && ks_stack_parts; then
+        :
+    else
+        ks_wait_dns
+        ks_base
+        ks_role_apply
+        ks_post_script
+    fi
     trap - ERR
     rm -f "$KS_FAILED"
     sync            # a role that says it is done is on the disk

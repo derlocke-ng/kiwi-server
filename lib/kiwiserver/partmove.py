@@ -94,8 +94,9 @@ def changed_data(raw, part, src, dst, name_setting=None, name_value=None, open_t
     return data
 
 
-def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, standby=False):
+def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, standby=False, gone=False):
     """{part, from, to, name, carry, pins, steps, stops, notes, data}: what a move would do.
+    `gone`: the machine it leaves is dead; the part comes from its newest backup.
     `stops` non-empty: it cannot be done as things are. `data`: the fleet file's data after it.
     `render(fleet, host)`: renders a machine as an apply would and raises KiwiError on what an
     apply would refuse; with it the plan tries both machines as they would be after the move
@@ -199,20 +200,30 @@ def plan(fleet, roles, ms, part, src_name, dst_name, applied=None, render=None, 
     out["closes"] = closes
     if not backup:
         notes.append("%s keeps no data of its own to carry: only its settings and secrets move" % part)
-    notes.append("%s's data stays on %s's disk after the move, unused: delete it there when the part runs well on %s"
-                 % (part, src_name, dst_name))
+    if gone and backup:
+        notes.append("%s's data is as %s's newest backup has it: what came after that backup is lost "
+                     "(kiwi-server backups %s %s lists them)" % (part, src_name, fleet.path, src_name))
+    if gone:
+        notes.append("should %s answer again, it still runs its old copy of %s until it is applied: apply it, or "
+                     "install it anew" % (src_name, part))
+    else:
+        notes.append("%s's data stays on %s's disk after the move, unused: delete it there when the part runs well on %s"
+                     % (part, src_name, dst_name))
     if nb and is_public(out["name"], src):
         notes.append("%s is a public name: it answers from %s once the master is applied too (the move does that) and "
                      "%s has its certificate from Let's Encrypt, a minute or two" % (out["name"], dst_name, dst_name))
     out["steps"] = [
+        ("%s does not answer: %s comes from its newest backup" % (src_name, part)) if gone else
         "%s stops on %s%s" % (part, src_name, ", and %s makes one last backup" % src_name if backup else ""),
-        ("its %d generated secret%s stay%s what they are, pinned to %s" % (
-            len(out["pins"]), "" if len(out["pins"]) == 1 else "s", "s" if len(out["pins"]) == 1 else "", dst_name))
+        ("its %d generated secret%s %s, pinned to %s" % (
+            len(out["pins"]), "" if len(out["pins"]) == 1 else "s",
+            "stays what it is" if len(out["pins"]) == 1 else "stay what they are", dst_name))
         if out["pins"] else "it has no generated secrets",
         "the fleet file: %s and its settings move from %s to %s%s%s" % (
             part, src_name, dst_name, "; it stays %s" % out["name"] if out["name"] else "",
             "; %s's proxy opens to the Internet for that name, as %s's is" % (dst_name, src_name) if open_too else ""),
         "%s is applied%s" % (dst_name, ", and gets %s's data from %s's backups" % (part, src_name) if backup else ""),
+        ("every machine the change reaches; not %s, which is gone" % src_name) if gone else
         "%s is applied (the part is gone there%s), then every machine the change reaches" % (
             src_name, "; its proxy closes to the Internet, no public name is left there" if closes else ""),
     ] + (["%s starts a backup: from then on %s is in its own store" % (dst_name, part)] if backup else [])

@@ -637,6 +637,35 @@ network needs is told after two minutes (or `notify: after`, if shorter), one wh
 all wait is not told at all and only its page says it, and the others after `notify: after`
 (10 minutes). A `lost:` left from an older release does nothing.
 
+### The runbook
+
+What happens in which case is written beforehand, as lines in the fleet file
+([design](design/runbook.md)). A machine's own lines (`hosts.NAME.runbook`) come before the
+defaults'; the first line that fits wins. `kiwi-server parts FLEET MACHINE`, the machine's page
+and the app say what each case does there.
+
+So far two cases act on the machine itself. `part-down`: a machine with such a line gets a small timer from its apply
+(`kiwi-runbook`, every minute) and restarts a container of the part itself, without the control
+node, when it has failed, exited with an error or is unhealthy for `after` minutes, at most
+`tries` times a day (3 if not set); then it leaves it to a person. A container that a person
+stopped (`kiwi-server service … stop`, the page's Stop) or that stopped cleanly (a game server
+asleep) is not down. What it did is in the machine's journal (`journalctl -t kiwi-runbook`) and,
+for an hour, in its notes on the page and in `status`. `disk-full` with `do: prune-images, at: 90`:
+when the disk of its images is 90 % full or more, images that no container uses and that are a day
+old are removed, once an hour at most; still full after that, it is left to a person. Old backup
+snapshots are not: a machine cannot delete its backups (`kiwi-server prune` does, from where the
+keys are). Every other case: you are told, and nothing is done.
+
+```yaml
+defaults:
+  runbook:
+    - { case: part-down, for: "role:node", do: restart, after: 2, tries: 3 }
+    - { case: disk-full, for: all, do: prune-images, at: 90 }
+```
+
+Cases: `part-down`, `disk-full`, `update-failed`, `cut-off`, `machine-gone`, `backup-overdue`,
+`certificate-due`. `for`: `all`, a machine's name, `role:NAME`, `site:NAME` or `part:NAME`.
+
 A machine whose disk waits to be unlocked at boot counts as there, not as gone.
 The control node forwards its unlock ring by itself, so a rented master with an
 encrypted disk comes back after a restart with nobody there. The ring stays at

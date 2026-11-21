@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.290.1 — emergencies reach the app
+
+- Fixed: the app (and `status --porcelain` on a computer joined to a control node) did not get
+  the control node's emergencies, so it showed no "I have it". Found by the emergency drill
+  (tests/drills/emergency.sh).
+- kiwi-modules 0.116.1: on Docker, a part that runs by a permission restarts when it fails, but no
+  boot starts it before its permission is asked (`restart: on-failure`).
+
 ## 2.290.0 — emergencies, and messages by how much a part is needed
 
 - **Emergency messages** (docs/design/authority.md): a machine that runs a part the network

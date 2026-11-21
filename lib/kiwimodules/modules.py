@@ -743,6 +743,10 @@ class Renderer:
                     continue
                 if name in spec.leased:         # started by its permission, not by `up` (kiwi-stack lease)
                     body = services[svc] = dict(body or {}, profiles=[LEASED])
+                    # and not by docker at boot: `on-failure` restarts one that fails, and no daemon start
+                    # starts it (always and unless-stopped do, before its permission is asked)
+                    if str(body.get("restart") or "no") in ("always", "unless-stopped"):
+                        body["restart"] = "on-failure"
                     bundle.leased_parts.setdefault(name, []).append(svc)
                 bundle.services.append(svc)
                 module_services.setdefault(name, []).append(svc)

@@ -13141,6 +13141,32 @@ class TestControllers(StoreBase):
         self.assertIn("a-key-the-node-saw", util.read_text(os.path.join(os.path.dirname(self.laptop), "secrets", "known_hosts")))
         self.assertIn("# and once more", util.read_text(self.n.fleet_path))
         self.assertIn("a-key-the-node-saw", util.read_text(os.path.join(os.path.dirname(self.n.fleet_path), "secrets", "known_hosts")))
+        # the laptop's store locked (its idle time): the sync still runs, in memory, and leaves it
+        # locked (the owner, 22 Nov 2026: the lock is for people, not for the background)
+        def secrets_cli(*a):
+            r = subprocess.run([sys.executable, "-m", "kiwiserver", "secrets", a[0], self.laptop] + list(a[1:]),
+                               capture_output=True, text=True, env=self.env)
+            return r.returncode, r.stdout + r.stderr
+        lst = store.Store.for_fleet(self.laptop)
+        self.assertEqual(secrets_cli("lock")[0], 0)
+        self.assertFalse(lst.is_open())
+        write(os.path.join(os.path.dirname(self.n.fleet_path), "secrets", "known_hosts"), "m1 a-key-the-node-saw\nm2 one-more\n")
+        self.n.store.sync()
+        with open(self.laptop, "a") as fh:
+            fh.write("# while locked\n")
+        rc, out = self.laptop_does("push")
+        self.assertEqual(rc, 0, out)                                                     # both changed: merged in memory
+        self.assertFalse(lst.is_open())                                                  # and still locked
+        self.assertIn("# while locked", util.read_text(self.n.fleet_path))
+        with open(self.n.fleet_path, "a") as fh:
+            fh.write("# from the node, the laptop locked\n")
+        self.n.save_fleet()
+        rc, out = self.laptop_does("pull")
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(lst.is_open())                                                  # a pull does not open it either
+        self.assertIn("# from the node, the laptop locked", util.read_text(self.laptop))
+        self.assertEqual(secrets_cli("unlock")[0], 0)
+        self.assertIn("m2 one-more", util.read_text(os.path.join(os.path.dirname(self.laptop), "secrets", "known_hosts")))
         # the node changes the fleet file too (a job), and so does the laptop: that is for a person
         with open(self.n.fleet_path, "a") as fh:
             fh.write("# from the node\n")

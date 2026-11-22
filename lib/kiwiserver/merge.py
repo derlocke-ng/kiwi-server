@@ -334,9 +334,10 @@ def read_tree(root):
     return out
 
 
-def local_tree(fleet_dir, fleet_name, plain):
+def local_tree(fleet_dir, fleet_name, plain, identity=None):
     """This computer's copy: the fleet files by their names on the node, the open store's
-    files below secrets/."""
+    files below secrets/. A locked store is opened in memory with `identity` (this computer's
+    key): the sync runs while people are locked out (the owner, 22 Nov 2026)."""
     out = {}
     for name in plain:
         path = os.path.join(fleet_dir, fleet_name if name == "fleet.yaml" else name)
@@ -344,14 +345,19 @@ def local_tree(fleet_dir, fleet_name, plain):
             out[name] = util.read_bytes(path)
     secrets = os.path.join(fleet_dir, "secrets")
     if not os.path.isdir(secrets):
+        store = os.path.join(fleet_dir, "secrets.age")
+        if identity and os.path.isfile(store):
+            out.update(store_tree(util.read_bytes(store), identity))
+            return out
         raise KiwiError("the secret store is locked: kiwi-server secrets unlock first")
     for rel, data in read_tree(secrets).items():
         out["secrets/" + rel] = data
     return out
 
 
-def put_tree(fleet_dir, fleet_name, plain, tree):
-    """Make this computer's copy the given one: fleet files and the open store's files."""
+def put_tree(fleet_dir, fleet_name, plain, tree, st=None):
+    """Make this computer's copy the given one: fleet files and the open store's files; a
+    locked store (`st`) gets them encrypted anew, and stays locked."""
     for name in plain:
         path = os.path.join(fleet_dir, fleet_name if name == "fleet.yaml" else name)
         if name in tree:
@@ -360,6 +366,11 @@ def put_tree(fleet_dir, fleet_name, plain, tree):
             os.remove(path)
     secrets = os.path.join(fleet_dir, "secrets")
     want = {p[len("secrets/"):]: d for p, d in tree.items() if p.startswith("secrets/")}
+    if not os.path.isdir(secrets):
+        if st is None or not st.exists():
+            raise KiwiError("the secret store is locked: kiwi-server secrets unlock first")
+        util.write_bytes(st.file, storemod.encrypt_bytes(st.recipients, _pack(want)), 0o600)
+        return
     for rel in read_tree(secrets):
         if rel not in want:
             os.remove(os.path.join(secrets, rel))

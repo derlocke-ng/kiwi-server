@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.300.0 — updates run again
+
+- **The nightly update stopped on every machine with a backup module** since 2.294.0 (kiwi-stack
+  0.9.31): the backup before the update called the module's script without its `backup` verb, the
+  script printed its usage and the update counted that as a failed backup. kiwi-stack 0.9.33 asks
+  for a backup. Seen as a failed `kiwi-stack-update.service` on lime, lychee and quince.
+- The drill for a device behind the site's moving address, tests/drills/vip-gateway.sh (written,
+  not yet passed: notes/TODO.md).
+
 ## 2.299.0 — installs from the LAN
 
 The owner, 22 Nov 2026: the LAN's cache is for updates and installs, "less traffic usage, faster

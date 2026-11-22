@@ -1,0 +1,10 @@
+[Unit]
+Description=Kiwi Network: the VPN client connects anew every day at {{ reconnect }} ({{ hostname }})
+Documentation=https://github.com/derlocke-ng/kiwi-server
+
+[Timer]
+OnCalendar=*-*-* {{ reconnect }}:00
+Unit={{ container_prefix }}-vpn-reconnect.service
+
+[Install]
+WantedBy=timers.target

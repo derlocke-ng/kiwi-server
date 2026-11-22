@@ -464,21 +464,23 @@ def _take(fleet_dir, fleet_name, st, got, key):
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-    was_open = st.is_open()
+    was_open, had = st.is_open(), st.exists()
     for name, content in list(plain.items()) + [(n, got[n]) for n in AS_IS if n in got]:
         dest = _local(fleet_dir, fleet_name, name)
         os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
         util.write_bytes(dest, content, 0o644 if name == "secrets.recipients" else 0o600)
-    if was_open or not os.path.lexists(st.link):
-        st.unlock(key)      # the open tree was the old store's (saved before, so nothing is lost)
+    if was_open or not had:
+        # the open tree was the old store's (saved before, so nothing is lost), or this copy is
+        # new; a locked store stays locked: the sync runs in the background, people unlock
+        st.unlock(key)
     return len(plain) + len([n for n in AS_IS if n in got])
 
 
-def _tree(fleet_dir, fleet_name):
-    """This copy as {path: bytes}: the fleet files, the open store's files, and the two files
-    that say who may open it."""
+def _tree(fleet_dir, fleet_name, key=None):
+    """This copy as {path: bytes}: the fleet files, the store's files (a locked store opened in
+    memory with `key`), and the two files that say who may open it."""
     from . import merge
-    tree = merge.local_tree(fleet_dir, fleet_name, PLAIN)
+    tree = merge.local_tree(fleet_dir, fleet_name, PLAIN, identity=key)
     for name in ("secrets.recipients", "control/salt"):
         path = os.path.join(fleet_dir, name)
         if os.path.isfile(path):
@@ -486,13 +488,21 @@ def _tree(fleet_dir, fleet_name):
     return tree
 
 
-def _save_base(fleet_dir, fleet_name, st):
-    """What both sides hold now, kept for the next time both have changed (merge.py). Only
-    with the store open; without it the older base stays, which can only make the next merge
-    more careful."""
+def _save_base(fleet_dir, fleet_name, st, key=None):
+    """What both sides hold now, kept for the next time both have changed (merge.py). A locked
+    store is read in memory with this computer's key; without one the older base stays, which
+    can only make the next merge more careful."""
     from . import merge
-    if st.exists() and st.is_open():
-        merge.save_base(fleet_dir, st, _tree(fleet_dir, fleet_name))
+    if not st.exists():
+        return
+    if not st.is_open() and not key:
+        try:
+            key = storemod.keyring_key(st.store_id())
+        except KiwiError:
+            return
+        if not key:
+            return
+    merge.save_base(fleet_dir, st, _tree(fleet_dir, fleet_name, key))
 
 
 def _there_tree(fleet_dir, got, key):
@@ -524,8 +534,8 @@ def compare(fleet_dir, fleet_name, got, key):
     st.sync()
     if not key:
         raise KiwiError("this computer has no key for the fleet in its keyring: --identity FILE")
-    base = merge.load_base(fleet_dir, key) if st.is_open() else None
-    return merge.differences(base, _tree(fleet_dir, fleet_name), _there_tree(fleet_dir, got, key))
+    base = merge.load_base(fleet_dir, key)
+    return merge.differences(base, _tree(fleet_dir, fleet_name, key), _there_tree(fleet_dir, got, key))
 
 
 def other_copy(fleet_dir, fleet=None, host=None, tgt=None, key=None):
@@ -549,9 +559,9 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other, keep=None):
     is the other side's files as they travel. Returns the paths taken from there; raises when
     a file changed on both sides, or when there is nothing to compare with."""
     from . import merge
-    base = merge.load_base(fleet_dir, key) if st.is_open() else None
+    base = merge.load_base(fleet_dir, key)
     there = _there_tree(fleet_dir, got, key)
-    here = _tree(fleet_dir, fleet_name)
+    here = _tree(fleet_dir, fleet_name, key)
     if there == here:       # the same content, only encrypted anew there: nothing to merge
         return []
     if base is None:
@@ -562,7 +572,7 @@ def _reconcile(fleet_dir, fleet_name, st, got, key, other, keep=None):
         raise KiwiError("changed on both sides since the last sync: %s. Which counts for that? kiwi-server control push "
                         "--keep here keeps this computer's, --keep there %s; everything else is merged either way"
                         % (", ".join(both), other))
-    merge.put_tree(fleet_dir, fleet_name, PLAIN, merged)
+    merge.put_tree(fleet_dir, fleet_name, PLAIN, merged, st=st)
     for name in ("secrets.recipients", "control/salt"):
         if name in merged:
             dest = os.path.join(fleet_dir, name)
@@ -774,7 +784,7 @@ def _push_api(fleet_dir, fleet_name, force=False, key=None, keep=None, api=None)
     if status != 200:
         raise KiwiError("the control node did not take the push (%d)" % status)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
-    _save_base(fleet_dir, fleet_name, st)
+    _save_base(fleet_dir, fleet_name, st, _key)
     return len(blobs), api
 
 
@@ -811,7 +821,7 @@ def _pull_api(fleet_dir, fleet_name, force=False, key=None, keep=None):
         return _push_api(fleet_dir, fleet_name, key=key, keep=keep, api=api)
     n = _take(fleet_dir, fleet_name, st, got, key)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), out["revision"])
-    _save_base(fleet_dir, fleet_name, st)
+    _save_base(fleet_dir, fleet_name, st, key)
     return n, api
 
 
@@ -942,7 +952,7 @@ def _pull_dir(fleet_dir, fleet_name, folder, force=False, key=None, keep=None):
                         "that has the fleet: kiwi-server control accept), or it was removed" % folder)
     _set_stamp(fleet_dir, here_digest(fleet_dir, fleet_name), there, FOLDER_STAMP)
     _remember_folder(fleet_dir, folder)
-    _save_base(fleet_dir, fleet_name, st)
+    _save_base(fleet_dir, fleet_name, st, key)
     return n
 
 

@@ -22,7 +22,7 @@ from . import VERSION, access as accessmod, address as addressmod, adopt as adop
 from . import facts, fleettext, form as formmod, logins as loginsmod, onion as onionmod, luks, mtu, netcup, providers, remote, router as routermod, setup as setupmod, store, toolchain as tcmod, unlock, util, wgeasy
 from . import machineagent as agentmod, partstandby, asleep as asleepmod, names as namesmod, health as healthmod, join as joinmod, recovery as recoverymod, sources as sourcesmod, starter as startermod, wake as wakemod, fleetstate as statemod, reach as reachmod
 from .config import TARGETS
-from .targets import armbian as armbian_t, coreos as coreos_t, debian as debian_t, ram as ram_t
+from .targets import armbian as armbian_t, armbian_build, coreos as coreos_t, debian as debian_t, ram as ram_t
 from .util import KiwiError
 
 EXIT_INVALID = 2
@@ -1014,7 +1014,10 @@ class Renderer:
         if host.target != "armbian" and not host.cfg.get("disk"):
             raise KiwiError("%s: disk: is required to build an ISO (it is wiped on boot)" % host.name)
         os.makedirs(o.media, exist_ok=True)
-        if host.target == "armbian":       # the board's own image, the first boot written in
+        if host.target == "armbian" and host.cfg["armbian"].get("encrypt") and host.cfg["armbian"].get("builder"):
+            # encrypted: built with Armbian's framework on its builder; the rest comes with adopt and apply
+            armbian_build.image(host, o.iso)
+        elif host.target == "armbian":       # the board's own image, the first boot written in
             base = armbian_t.base_image(self.tc, host.cfg["armbian"], cache_dir)
             armbian_t.image(self.tc, host, util.read_text(o.script), base, o.iso, o.work)
         elif host.target == "debian":

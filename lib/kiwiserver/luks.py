@@ -77,6 +77,11 @@ def _make(path, length):
 
 
 def uses_one_time_key(host):
+    """Installed with a one-time key that the first apply replaces: an encrypted Debian install,
+    or an encrypted board whose image kiwi-server built (armbian.encrypt with a builder)."""
+    if host.target == "armbian":
+        a = host.cfg.get("armbian") or {}
+        return bool(a.get("encrypt") and a.get("builder")) and not a.get("passphrase")
     d = host.cfg["debian"]
     return host.target == "debian" and bool(d.get("encrypt") or d.get("partitioning") == "crypto") \
         and not d.get("passphrase")
@@ -101,7 +106,8 @@ def install_key(host):
 
 def current_key(host):
     """The key that opens the disk now, if there is one on record."""
-    return _read(_path(host.fleet, host.name, "key")) or str(host.cfg["debian"].get("passphrase") or "")
+    block = host.cfg.get("armbian" if host.target == "armbian" else "debian") or {}
+    return _read(_path(host.fleet, host.name, "key")) or str(block.get("passphrase") or "")
 
 
 def one_time_key(host):
@@ -122,7 +128,7 @@ def make_key(host):
 
 
 def wants_reencrypt(host):
-    setting = host.cfg["debian"].get("reencrypt")
+    setting = (host.cfg.get("armbian" if host.target == "armbian" else "debian") or {}).get("reencrypt")
     return host.role == "master" if setting is None else bool(setting)
 
 

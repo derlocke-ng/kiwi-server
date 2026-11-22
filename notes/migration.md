@@ -74,19 +74,26 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 1. Master A on its VPS, a new fleet (new keys, a new 10.X subnet, so v1's 10.8 and `.kiwi` stay
    apart and a device can hold both).
 2. gw1 (Rock Pi E) next to v1: gateway, Pi-hole, ring, no DHCP yet.
-3. sh3 reinstalled (Debian 13, encrypted, rings on gw1 and later gw2 plus its key by hand), its
-   parts applied, the data taken back from the cold copy as rehearsed.
+3. sh3 reinstalled (uCore, encrypted, rings on gw1, gw2 and the Banana Pi, plus its key by hand),
+   its parts applied, the data taken back from the cold copy as rehearsed.
 4. DHCP: v1's DHCP off, gw1's on.
 5. gw2: the M1 reinstalled as gateway, control node, cache and status; the vip pair.
 6. The devices enrolled in A's VPN; v1's VPN stays until the last one has moved.
 7. v1's master off; its VPS becomes master B, linked to A.
 
-## The owner decides
+## Decided (the owner, 22 Nov 2026)
 
-1. Which VPS becomes master A: sorbet (the test network then uses crumble) or a new one.
-2. The network's domain: `home` (the default) or another; not `kiwi` while v1 runs.
-3. The two exits: Mullvad on both (two countries) or B's own address.
-4. After a power cut every machine waits for a ring. One ring has to come up by itself: a small
-   board without disk encryption holding a ring, a ring away from home through the master's
-   relay, or a key typed by hand on one gateway (`kiwi-server unlock … --manual`).
-5. sh3's VMs (id-*, the test machines): kept, moved, or made again after the reinstall.
+1. Which VPS becomes master A: later. Master B is a network of its own, on another subnet, whose
+   web services A's devices reach too (the link's `share`): for hosting and trying web services.
+2. The domain: `home`.
+3. Both exits through Mullvad, each rotating among different servers (`server_countries`/
+   `server_cities` per master; gluetun takes a random server of those at every connect). Open: a
+   rotation on a timer, if a connect is not often enough.
+4. After a power cut: a Banana Pi M1/M2 (Wi-Fi, on a battery, no disk encryption) holds a ring
+   and comes up by itself; the second way is a person, on the control page's "Unlock it" over the
+   VPN or at home. Open: the tang image for 32-bit ARM (it is built for arm64 and amd64 only),
+   and Wi-Fi for a board in the fleet file.
+5. sh3's VMs: moved, and backed up first.
+6. The new sh3 (or sh4, or a fruit's name) runs uCore, not Debian: an encrypted install bound to
+   the rings, its VMs on libvirt there. Its disk opens by SSH today already (dropbear).
+7. Slowly: one step at a time, each checked before the next.

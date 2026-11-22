@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.301.0 — one Pi-hole at a time
+
+- **DHCP from the site's pair, done again** (kiwi-modules 0.120.0): only the machine that holds the
+  moving address hands out leases; kiwi-server gives its dhcp-relay `follow` with that address,
+  and both Pi-holes keep the whole range. The halves of 2.296.0 broke devices' addresses: Pi-hole's
+  DHCP is authoritative, so each refused the other's leases and a device got another address at
+  nearly every restart. tests/drills/dhcp-pair.sh (two Pi-holes and a dhcpcd client on a podman
+  network of their own): the same address through two switches and with one Pi-hole gone, 14 of
+  14; `HALVES=1` shows the old way (two addresses, 14 refusals in 7 asks).
+- The app: a locked secret store holds the sync back until it is unlocked, instead of "Not in
+  step"; a store that locked itself after the app's idle time says so.
+- notes/migration.md: the plan for moving the owner's network to v2.
+
 ## 2.300.0 — updates run again
 
 - **The nightly update stopped on every machine with a backup module** since 2.294.0 (kiwi-stack

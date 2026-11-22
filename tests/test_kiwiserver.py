@@ -16288,7 +16288,8 @@ class TestRecovery(Base):
 
     def test_a_moving_address_for_the_two_machines_of_a_site(self):
         """basics-twice.md: lychee and papaya share 192.168.2.70; the first by name holds it, each
-        knows the other, one password for both; both hand out leases, each half of the range."""
+        knows the other, one password for both; both have the whole range, and each relays DHCP only
+        while it holds the address (one Pi-hole at a time hands out leases)."""
         net = self.network()
         lych, pap = net.raw["hosts"]["lychee"], net.raw["hosts"]["papaya"]
         dhcp = {"dhcp_enabled": True, "dhcp_start": "192.168.2.100", "dhcp_end": "192.168.2.199"}
@@ -16312,10 +16313,13 @@ class TestRecovery(Base):
         lines = lambda e: next(x for x in e if x.startswith("FTLCONF_misc_dnsmasq_lines="))     # noqa: E731
         self.assertIn("dhcp-option=option:dns-server,192.168.2.70", lines(env["lychee"]["dns"]))
         self.assertIn("FTLCONF_dhcp_router=192.168.2.70", env["lychee"]["dns"])
-        self.assertIn("FTLCONF_dhcp_start=192.168.2.100", env["lychee"]["dns"])
-        self.assertIn("FTLCONF_dhcp_end=192.168.2.149", env["lychee"]["dns"])
-        self.assertIn("FTLCONF_dhcp_start=192.168.2.150", env["papaya"]["dns"])
-        self.assertIn("FTLCONF_dhcp_end=192.168.2.199", env["papaya"]["dns"])
+        for name in ("lychee", "papaya"):
+            self.assertIn("FTLCONF_dhcp_start=192.168.2.100", env[name]["dns"])
+            self.assertIn("FTLCONF_dhcp_end=192.168.2.199", env[name]["dns"])
+            b = r.script(f.hosts[name])[1]
+            relay = b.compose["services"]["kn-dhcphelper"]
+            self.assertEqual(relay["command"], ["/kiwi/follow.sh"])
+            self.assertIn('VIP="192.168.2.70"', b.files["kn-dhcphelper/follow.sh"][0])
 
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]

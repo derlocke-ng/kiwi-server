@@ -384,7 +384,7 @@ class Renderer:
         """The moving address's settings that come from the pair (docs/design/basics-twice.md): the
         other machine's LAN address, who holds it (the first by name), one password for both, the
         gateway's check, and for a Pi-hole that hands out leases: the moving address as router and
-        DNS server, and its half of the range."""
+        DNS server, and its relay only while it holds the address."""
         vs = host.module_settings["vip"]
         address = str(vs.get("address") or "")
         if not address:
@@ -414,15 +414,13 @@ class Renderer:
             lines = [x for x in str(extra.get(key) or "").split(";") if x.strip()]
             extra[key] = ";".join(lines + ["dhcp-option=option:dns-server,%s" % bare])
             ds["extra_env"] = extra
-            dhcp = [h for h, _lan in pair if ((h.role_settings_raw or {}).get("dns") or {}).get("dhcp_enabled")]
-            if len(dhcp) == 2 and host in dhcp and ds.get("dhcp_start") and ds.get("dhcp_end"):
-                # both hand out leases: each its half of the range
-                import ipaddress
-                a, b = int(ipaddress.ip_address(ds["dhcp_start"])), int(ipaddress.ip_address(ds["dhcp_end"]))
-                mid = a + (b - a) // 2
-                first = dhcp.index(host) == 0
-                ds["dhcp_start"], ds["dhcp_end"] = ((str(ipaddress.ip_address(a)), str(ipaddress.ip_address(mid))) if first
-                                                    else (str(ipaddress.ip_address(mid + 1)), str(ipaddress.ip_address(b))))
+            # one Pi-hole at a time hands out leases: the relay of the machine that holds the moving
+            # address (kiwi-modules' dhcp-relay `follow`). Both keep the whole range; the one that takes
+            # over gives a device the address it asks for again. Halves on both at once gave devices
+            # another address at nearly every restart (tests/drills/dhcp-pair.sh, 22 Nov 2026).
+            rs = host.module_settings.get("dhcp-relay") if "dhcp-relay" in host.modules else None
+            if rs is not None and not rs.get("follow"):
+                rs["follow"] = bare
 
     def standby_endpoints(self):
         """address:WireGuard port:SSH port of the master, then of each of its standbys; [] without one."""

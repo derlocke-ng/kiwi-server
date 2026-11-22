@@ -26,9 +26,14 @@ hosts:
   gives the address up at once; the other takes it within seconds.
 - The two talk to each other by unicast at their own LAN addresses (no multicast on the home's
   LAN), with a password from the seed.
-- DHCP: both Pi-holes hand out leases, each from its half of the range (`dhcp_start`/`dhcp_end`
-  split by kiwi-server), with the moving address as router and DNS server. A device that renews
-  at the other one may get another address; nothing breaks by that.
+- DHCP: only the machine that holds the moving address hands out leases: its dhcp-relay relays the
+  LAN's DHCP to its Pi-hole while it holds the address (kiwi-server fills in `dhcp-relay.follow`).
+  Both Pi-holes have the whole range, with the moving address as router and DNS server; the one
+  that takes over gives a device the address it asks for again, since Pi-hole's DHCP is
+  authoritative. Halves of the range on both at once were the first plan: each Pi-hole then
+  refused the other's leases and a device got another address at nearly every restart
+  (tests/drills/dhcp-pair.sh, 22 November 2026: two addresses and 14 refusals in 7 asks; with the
+  relay following the address, the same address through every switch).
 - The moving address is written in the fleet file: kiwi-server never looks for a free one on a LAN.
   On the test network: 192.168.2.70 (the test machines' range starts at .60).
 

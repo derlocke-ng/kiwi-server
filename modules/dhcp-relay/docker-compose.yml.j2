@@ -7,6 +7,12 @@ services:
     environment:
       IP: "{{ dns_ip }}"
       TZ: "{{ timezone }}"
+{% if follow %}
+    entrypoint: ["/bin/sh"]
+    command: ["/kiwi/follow.sh"]
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-dhcphelper/follow.sh:/kiwi/follow.sh:ro,z
+{% endif %}
     cap_add:
       - NET_ADMIN
     restart: unless-stopped

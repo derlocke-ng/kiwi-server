@@ -9,8 +9,8 @@ v1 network (its master, the M1, sh3, the old kiwi-node); nothing there is touche
 |---|---|---|
 | master A | VPS (the network's own) | VPN server, exit through Mullvad, the relay to the rings at home |
 | master B | VPS (v1's master once v1 is off) | a second network of its own, linked to A: the second exit, and to try things on |
-| gw1 | Rock Pi E (2 ports) | gateway, Pi-hole, the moving address (vip), a ring, half of DHCP |
-| gw2 | Odroid M1 | gateway, Pi-hole, vip, a ring, half of DHCP, control node, cache, status page |
+| gw1 | Rock Pi E | gateway, Pi-hole, the moving address (vip), a ring, DHCP while it holds the address |
+| gw2 | Odroid M1 | gateway, Pi-hole, vip, a ring, DHCP while it holds the address, control node, cache, status page |
 | sh3 | x86, 16 cores, 60 GB | cloud, vault, opencloud, immich, paperless, git (VPN + Tor, no Kanidm), downloader, games, backups |
 
 Later: a backup server with the 18 TB disk, an offsite node.
@@ -22,7 +22,7 @@ Later: a backup server with the 18 TB disk, an offsite node.
 | VPN, phones, laptops | built; drilled with VMs and stand-in clients, never with a real phone over 5G |
 | Master's backup and rebuild | built; RAM master rebuilt with the same keys (drilled 11 and 17 Nov) |
 | Two exits to choose from | one exit per network today; a linked network as the exit is drilled, a choice per group or device is not built |
-| Two gateways, one address (vip) | drilled on lime + papaya; DHCP from both never ran on a real LAN |
+| Two gateways, one address (vip) | drilled on lime + papaya; DHCP only from the holder, drilled in podman, never on a real LAN |
 | M1 / Rock Pi E | Armbian images exist for both (trixie); every image the gateway and control modules use has arm64 builds (checked 22 Nov); the encrypted Armbian image is built by hand |
 | Control + ring + cache on one machine | done on papaya (x86), not on an ARM board |
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
@@ -52,8 +52,9 @@ Later: a backup server with the 18 TB disk, an offsite node.
 
 ## What I close this week, in order
 
-1. DHCP from both gateways and a device behind the moving address: drilled on a LAN of its own
-   (VMs on an isolated network on sh3, not the house LAN, where v1's DHCP runs).
+1. ~~DHCP from both gateways~~: halves on both broke devices' addresses; now only the holder of
+   the moving address hands out leases (kiwi-modules 0.120.0), drilled 14 of 14
+   (tests/drills/dhcp-pair.sh). Open: a device behind the moving address on a real machine.
 2. The rehearsal: v1's data into v2 on a VM with copies (Nextcloud's volumes and data folder,
    Vaultwarden's folder, a game save, Forgejo), each checked after.
 3. The exit per VPN group: a group of master A's network that leaves through master B (the
@@ -71,7 +72,7 @@ Later: a backup server with the 18 TB disk, an offsite node.
 3. sh3 reinstalled (Debian 13, encrypted, rings on gw1 and later gw2 plus its key by hand), its
    parts applied, the data taken back from the cold copy as rehearsed.
 4. DHCP: v1's DHCP off, gw1's on.
-5. gw2: the M1 reinstalled as gateway, control node, cache and status; the vip pair; DHCP halves.
+5. gw2: the M1 reinstalled as gateway, control node, cache and status; the vip pair.
 6. The devices enrolled in A's VPN; v1's VPN stays until the last one has moved.
 7. v1's master off; its VPS becomes master B, linked to A.
 

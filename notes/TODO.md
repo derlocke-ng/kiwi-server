@@ -34,7 +34,8 @@ L: days. New ideas go to the end of their section.
 7. DNS, DHCP and the gateway twice per site, with a moving address (scale.md step 6,
    design/basics-twice.md). Built (2.296.0): the vip module and the pair; lime and papaya share
    192.168.2.70, drilled; said again every 30 s (kiwi-modules 0.117.1); the Machines table names
-   who holds it. Open: DHCP from both, drilled on a LAN of its own; the gateway's switch drilled
+   who holds it. DHCP from the holder only (kiwi-modules 0.120.0), drilled on a podman network of
+   its own (tests/drills/dhcp-pair.sh, 14 of 14). Open: DHCP on a real LAN (at the move); the gateway's switch drilled
    with a device behind it: tests/drills/vip-gateway.sh is written (a cloud-image VM on sh3, its MAC
    proven before anything logs in), but its static address never came up there, and its console
    cannot be read without root on sh3. Next: why (a DHCP first boot, or a device from kiwi-server's

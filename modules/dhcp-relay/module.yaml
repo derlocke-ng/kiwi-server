@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: dhcp-relay
   title: DHCP relay
-  version: 1.0.0
+  version: 1.1.0
   description: "Relays the LAN's DHCP broadcasts to the Pi-hole container, so Pi-hole can be the LAN's DHCP server although it sits in a bridge network"
   category: network
   node_types: [node]
@@ -22,6 +22,10 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  follow_script: follow.sh.j2
+
+outputs:
+  follow_script: { path: "{{ container_prefix }}-dhcphelper/follow.sh", mode: 0755, when: follow }
 
 storage:
   bind_mounts: []
@@ -31,3 +35,9 @@ settings:
     group: Advanced
     help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default, latest, follows each new release."
     default: docker.io/homeall/dhcphelper:latest
+  - key: follow
+    group: Advanced
+    label: Relay only while this machine holds
+    help: "The site's moving address (the vip module). Filled in by kiwi-server when the machine has vip: only the machine that holds the address relays, so one Pi-hole hands out leases at a time. Empty: always relay."
+    default: ""
+

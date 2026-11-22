@@ -86,13 +86,17 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 1. Which VPS becomes master A: later. Master B is a network of its own, on another subnet, whose
    web services A's devices reach too (the link's `share`): for hosting and trying web services.
 2. The domain: `home`.
-3. Both exits through Mullvad, each rotating among different servers (`server_countries`/
-   `server_cities` per master; gluetun takes a random server of those at every connect). Open: a
-   rotation on a timer, if a connect is not often enough.
-4. After a power cut: a Banana Pi M1/M2 (Wi-Fi, on a battery, no disk encryption) holds a ring
-   and comes up by itself; the second way is a person, on the control page's "Unlock it" over the
-   VPN or at home. Open: the tang image for 32-bit ARM (it is built for arm64 and amd64 only),
-   and Wi-Fi for a board in the fleet file.
+3. Both exits through Mullvad, each rotating among different servers: `server_cities` per master,
+   a random one of them at every connect, a new connect every morning. v1's master does it with
+   `00 07 * * * docker restart kmvpn-client` and six cities (checked 22 Nov); v2: vpn-client
+   `reconnect`.
+4. After a power cut: a Banana Pi M1/M2 on a battery holds a ring. It is encrypted, on a LAN
+   cable, and unlocked by hand once (over SSH at its boot system, `kiwi-server unlock --manual`,
+   or a keyboard); the battery keeps it up through a power cut, so it opens the others when the
+   power is back. Unlocked by hand again only when the battery ran empty. No Wi-Fi (its password
+   would lie open in the boot partition). The second way is a person, on the control page's
+   "Unlock it" over the VPN or at home. Tang for 32-bit ARM: kiwi-modules 0.121.1. Open: the
+   first encrypted `bananapi` image, and Docker on 32-bit Armbian.
 5. sh3's VMs: moved, and backed up first.
 6. The new sh3 (or sh4, or a fruit's name) runs uCore, not Debian: an encrypted install bound to
    the rings, its VMs on libvirt there. Its disk opens by SSH today already (dropbear).

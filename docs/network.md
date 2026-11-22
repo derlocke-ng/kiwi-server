@@ -588,6 +588,20 @@ operators (2.227.0) the cards carry the requests: `--accept` of a partner's card
 sign your names. Networks linked before 2.222.0 bring their CA when they are linked
 again.
 
+### Another exit every day
+
+A master whose VPN client uses a provider such as Mullvad can connect anew every day; with a
+list of countries or cities, the provider gives a random server of those each time:
+
+```yaml
+sorbet:
+  master:
+    vpn-client: { vpn_provider: mullvad, server_cities: "Zurich,Amsterdam,Vienna", reconnect: "07:00" }
+```
+
+At that time the VPN client restarts (`kiwi-stack vpn-restart`); what runs in its network
+follows it, and the tunnel is away for a few seconds.
+
 ### Leave to the Internet through a partner
 
 One network can use the other as its way to the Internet: a device of the first comes

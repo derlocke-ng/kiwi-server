@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.304.0 — another exit every day, a ring on a small board
+
+- **vpn-client `reconnect`** (kiwi-modules 0.122.0): `reconnect: "07:00"` connects the VPN client
+  anew every day; with `server_countries` or `server_cities` the provider gives a random server of
+  those each time, so the exit changes every day. The owner's v1 master does the same with a
+  daily restart and six Mullvad cities.
+- **Tang for 32-bit ARM** (kiwi-modules 0.121.1, `tang:15-kiwi7`): a Banana Pi M1/M2 on a battery
+  can hold a ring. A machine's ring moves to the new image at its next apply.
+- notes/migration.md: the owner's answers (the Banana Pi on a LAN cable, encrypted, unlocked by
+  hand once; the daily new exit).
+
 ## 2.303.0 — encrypted boards built, and a lock for people
 
 - **The encrypted Armbian image, built by kiwi-server**: `armbian: {encrypt: true, builder: sh3}`

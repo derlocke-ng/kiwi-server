@@ -28,6 +28,8 @@ env:
     DOT_PROVIDERS: "cloudflare"
 
 validate:
+  - when: "reconnect and (reconnect | string) is not match('^([01][0-9]|2[0-3]):[0-5][0-9]$')"
+    error: "vpn-client.reconnect is a time of day like 07:00"
   - when: "vpn_type == 'openvpn' and vpn_provider == 'custom' and not openvpn_config_present"
     error: "provider custom with vpn_type openvpn needs openvpn_config: the provider's .ovpn with its certificates inside"
   - when: "openvpn_config_present and not (vpn_type == 'openvpn' and vpn_provider == 'custom')"
@@ -46,6 +48,8 @@ templates:
   post_rules: post-rules.txt.j2
   master_switch: master-switch.sh.j2
   master_switch_service: kn-master-switch.service.j2
+  reconnect_service: vpn-reconnect.service.j2
+  reconnect_timer: vpn-reconnect.timer.j2
 
 outputs:
   post_rules: { path: "{{ container_prefix }}-vpn-client/post-rules.txt", mode: 0644 }
@@ -53,6 +57,8 @@ outputs:
   openvpn_config: { path: "{{ container_prefix }}-vpn-client/custom.ovpn", mode: 0600 }
   master_switch: { path: "{{ container_prefix }}-vpn-client/master-switch.sh", mode: 0755, when: standby_endpoints }
   master_switch_service: { kind: host_unit, name: kn-master-switch.service, when: standby_endpoints }
+  reconnect_service: { kind: host_unit, name: "{{ container_prefix }}-vpn-reconnect.service", when: reconnect }
+  reconnect_timer: { kind: host_unit, name: "{{ container_prefix }}-vpn-reconnect.timer", when: reconnect }
 
 storage:
   bind_mounts:
@@ -115,6 +121,10 @@ settings:
   - key: server_cities
     label: Server cities
     help: "VPN providers: narrow it to cities, e.g. Frankfurt. Comma separated."
+  - key: reconnect
+    label: Connect anew every day at
+    help: "A time like 07:00: the VPN client connects anew every day then (kiwi-stack vpn-restart; what runs in its network follows it, a few seconds without a tunnel). With server_countries or server_cities, a provider gives a random server of those at every connect: another exit every day. Empty: only when it has to."
+    default: ""
   - key: server_hostnames
     group: Advanced
     label: Server names

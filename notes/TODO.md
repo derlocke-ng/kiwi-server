@@ -62,6 +62,12 @@ L: days. New ideas go to the end of their section.
 - A backup store per service (scale.md step 3). L
 - Moving a whole network (`move --mesh/--domain`, federation.md). L
 - The emergency channel over Tor (recovery.md steps 4-5). L
+- The store's lock is for people, not for the background (the owner, 22 Nov 2026: "a lock that no
+  one can use the app/cli tool but not for the daemon/control stuff"): the sync with the control
+  node opens what it needs in memory with this computer's key from the keyring (as `pull` does) and
+  runs while the store is locked; apply, build and showing secrets still ask to unlock. Today a push
+  reads the open store's files, so the app's sync stops while it is locked (the app now waits and
+  syncs after the unlock, 2.301.0). M
 - What a move leaves behind: the old data and the old backup store stay until someone deletes them
   (how long to keep them is the owner's). S
 

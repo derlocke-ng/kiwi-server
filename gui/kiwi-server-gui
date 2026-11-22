@@ -5334,6 +5334,13 @@ class Window(Adw.ApplicationWindow):
             if then:
                 then()
             return
+        if self.locked():       # nothing to fetch or send with: it runs once the store is open (22 Nov 2026)
+            self._sync_waits = True
+            if say:
+                self.toast("The secret store is locked: the sync runs once it is unlocked")
+            if then:
+                then()
+            return
         path, generation, dirty = self.doc.path, self.generation, self.doc.dirty
 
         def stamp():
@@ -5373,6 +5380,10 @@ class Window(Adw.ApplicationWindow):
                 return False
             if rc != 0 and "changed on both sides" in text:
                 self.both_changed(path, text)
+            elif rc != 0 and "is locked" in text:     # it locked itself after the app's idle time
+                self._sync_waits = True
+                self.toast("The secret store locked itself: the sync runs once it is unlocked")
+                self.poll()
             elif rc != 0:
                 self.toast("Not in step with the other computers: %s" % (text.splitlines() or ["?"])[-1][:140], "warn",
                            "Your changes stay on this computer and go to the others with the next sync (menu: Sync now). "
@@ -6630,6 +6641,11 @@ class Window(Adw.ApplicationWindow):
             if rc != 0:
                 self.alert("The store did not %s" % action,
                            "%s\n\nIn a terminal it can ask for the recovery key:\n  kiwi-server secrets unlock %s" % (text.strip(), path))
+            elif action == "unlock":
+                self.store = dict(self.store or {}, open=True)
+                if getattr(self, "_sync_waits", False):        # what waited for the store
+                    self._sync_waits = False
+                    self.sync()
             self.poll()
             return False
 

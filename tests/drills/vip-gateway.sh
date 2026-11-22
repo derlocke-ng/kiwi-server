@@ -8,7 +8,7 @@
 # could not be read; a namespace on a machine of the fleet needs neither.)
 #
 #   tests/drills/vip-gateway.sh FLEET HOST FIRST VIP DEVICE/PREFIX [OTHER_FLEET...]
-#   e.g. ~/kiwi/fleet.yaml medlar lime 192.168.2.70 192.168.2.72/16 ~/kiwi-2/fleet.yaml
+#   e.g. ~/kiwi/fleet.yaml medlar lime 192.168.2.69 ADDRESS/16 ~/kiwi-2/fleet.yaml
 # DEVICE must be an address no machine of the fleets has, and nothing on the LAN may answer it.
 # One PASS or FAIL line per check.
 set -u
@@ -36,20 +36,18 @@ in_ns() { on "$host" "ip netns exec $ns $1"; }
 gone() { on "$host" "ip netns del $ns 2>/dev/null; rm -rf /etc/netns/$ns; true"; }
 
 # the address: no machine of the fleets has it, and nothing on the LAN answers it
+# every address written anywhere in the fleet files, a standby's block too (22 Nov 2026: crumble-b,
+# the second network's standby, had the address given to the moving one)
 taken=$(python3 - "$addr" "$fleet" "$@" <<'EOF'
-import sys, yaml
+import re, sys
 addr, found = sys.argv[1], []
 for path in sys.argv[2:]:
-    for n, h in (yaml.safe_load(open(path)).get("hosts") or {}).items():
-        h = h or {}
-        block = h.get(h.get("role", "node")) or {}
-        for a in (str((h.get("network") or {}).get("address") or ""), str((block.get("vip") or {}).get("address") or "")):
-            if a.split("/")[0] == addr:
-                found.append("%s (%s)" % (n, path))
+    if re.search(r"(?<![0-9.])%s(?![0-9])" % re.escape(addr), open(path).read()):
+        found.append(path)
 print(", ".join(found))
 EOF
 )
-check "$(is [ -z "$taken" ])" "$addr is no machine's of the fleets${taken:+: $taken}"
+check "$(is [ -z "$taken" ])" "$addr is written in none of the fleet files${taken:+: $taken}"
 [ -z "$taken" ] || { say "$fails wrong"; exit 1; }
 ! ping -c 2 -W 1 "$addr" >/dev/null 2>&1; check $? "nothing on the LAN answers $addr"
 [ "$fails" = 0 ] || { say "stopped: nothing was set up"; say "$fails wrong"; exit 1; }

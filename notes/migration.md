@@ -11,9 +11,13 @@ v1 network (its master, the M1, sh3, the old kiwi-node); nothing there is touche
 | master B | VPS (v1's master once v1 is off) | a second network of its own, linked to A: the second exit, and to try things on |
 | gw1 | Rock Pi E | gateway, Pi-hole, the moving address (vip), a ring, DHCP while it holds the address |
 | gw2 | Odroid M1 | gateway, Pi-hole, vip, a ring, DHCP while it holds the address, control node, cache, status page |
-| sh3 | x86, 16 cores, 60 GB | cloud, vault, opencloud, immich, paperless, git (VPN + Tor, no Kanidm), downloader, games, backups |
+| sh3 | x86, 16 cores, 60 GB | cloud, vault, opencloud, immich, paperless, git, downloader, games, backups |
 
 Later: a backup server with the 18 TB disk, an offsite node.
+
+Through Tor: git only, nothing else, and only for named keys (`kiwi-server onion FLEET git.sh3
+--client NAME`: Tor's client authorization; without the key the service cannot even be found).
+Git's own accounts, no Kanidm. Everything else over the VPN only.
 
 ## What works today
 

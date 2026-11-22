@@ -16,8 +16,8 @@ three to four seconds; connections through the gateway that were open start agai
 
 ```yaml
 hosts:
-  lime:   { node: { modules: [dns, gateway, vip], vip: { address: 192.168.2.70 } } }
-  papaya: { node: { modules: [dns, gateway, vip], vip: { address: 192.168.2.70 } } }
+  lime:   { node: { modules: [dns, gateway, vip], vip: { address: 192.168.2.69 } } }
+  papaya: { node: { modules: [dns, gateway, vip], vip: { address: 192.168.2.69 } } }
 ```
 
 - The pair: the machines of one site whose `vip.address` is the same. The first by name holds
@@ -35,7 +35,9 @@ hosts:
   (tests/drills/dhcp-pair.sh, 22 November 2026: two addresses and 14 refusals in 7 asks; with the
   relay following the address, the same address through every switch).
 - The moving address is written in the fleet file: kiwi-server never looks for a free one on a LAN.
-  On the test network: 192.168.2.70 (the test machines' range starts at .60).
+  On the test network: 192.168.2.69 (the test machines' range starts at .60). It was .70 until
+  22 November 2026, which the second test network's standby crumble-b also had: an address is
+  looked for in every fleet file on the LAN, standby blocks too.
 
 ## Not here
 

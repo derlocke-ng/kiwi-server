@@ -7,7 +7,10 @@
   Internet at B's master, each group with its own kill switch, and the others by A's own master.
   A device chooses its way out by its group. The control page and the app have a field beside the
   switch. A group the VPN does not have stops the master's render.
-- tests/drills/multihop.py takes `--group` and `--elsewhere` for it.
+- tests/drills/multihop.py takes `--group` and `--elsewhere` for it. Tried on the two test networks:
+  sorbet's group family leaves at crumble's exit, its group guests at sorbet's own.
+- The test network's moving address is 192.168.2.69: .70 was also the address of the second test
+  network's standby crumble-b. The drills look for a free address in every line of the fleet files.
 - tests/drills/vip-gateway.sh: the device behind the moving address is a network namespace on a test
   machine (its own card and address) instead of a VM; through two switches it lost 3 of 58 fetches.
 

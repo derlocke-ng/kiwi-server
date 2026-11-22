@@ -1753,7 +1753,12 @@ class FederationDialog(Adw.Dialog):
                                 subtitle="Your devices come out at %s's master. It has to allow that on its side." % name)
             let = Adw.SwitchRow(title="It may leave to the Internet through this network", active=bool(p.get("internet")),
                                 subtitle="%s's devices come out at your master. To the Internet only." % name)
+            ex = p.get("exit")
+            only = Adw.EntryRow(title="Only these VPN groups (empty: every device)",
+                                text=" ".join(ex) if isinstance(ex, list) else "")
+            only.set_tooltip_text("Like family phones: only their devices leave through %s, the others by your own master" % name)
             g.add(out)
+            g.add(only)
             g.add(let)
             # its CA, for this network's devices: only one that signs its own names only (kiwi-server federate --ca)
             ca = Adw.ActionRow(title="Its certificates", subtitle="Save its CA and import it on your devices, to open "
@@ -1762,7 +1767,7 @@ class FederationDialog(Adw.Dialog):
             get.connect("clicked", lambda _b, n=name: self.save_ca(n))
             ca.add_suffix(get)
             g.add(ca)
-            self.rows[name] = (share, frm, out, let)
+            self.rows[name] = (share, frm, out, let, only)
             page.add(g)
         save = Gtk.Button(label="Save", css_classes=["suggested-action"], sensitive=bool(self.rows))
         save.connect("clicked", lambda *_: self.save())
@@ -1779,11 +1784,11 @@ class FederationDialog(Adw.Dialog):
             self.win.toast("Two networks cannot leave through each other" if both else
                            "Only one partner can be the way to the Internet")
             return
-        for name, (share, frm, out, let) in self.rows.items():
+        for name, (share, frm, out, let, only) in self.rows.items():
             entry = dict(self.data.get(name) or {}, share=share.get_text().split(), **{"from": frm.get_text().split()})
             for key, row in (("exit", out), ("internet", let)):
-                if row.get_active():
-                    entry[key] = True
+                if row.get_active():        # exit: the groups that leave that way, or every device
+                    entry[key] = (only.get_text().split() or True) if key == "exit" else True
                 else:
                     entry.pop(key, None)
             self.data[name] = entry

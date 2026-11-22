@@ -6,7 +6,7 @@
 # the address up the same way. The setting stays in the fleet file afterwards.
 #
 #   [KIWI_SERVER=bin/kiwi-server] tests/drills/vip.sh FLEET FIRST SECOND ADDRESS/PREFIX
-#   e.g. lime papaya 192.168.2.70/16   (this computer must be on that LAN to ask the address)
+#   e.g. lime papaya 192.168.2.69/16   (this computer must be on that LAN to ask the address)
 # One PASS or FAIL line per check.
 set -u
 fleet=${1:?the fleet file}; a=${2:?the first machine (by name)}; b=${3:?the second}; vip=${4:?the moving address with its prefix}

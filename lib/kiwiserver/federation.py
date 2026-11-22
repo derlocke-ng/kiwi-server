@@ -93,9 +93,17 @@ def partners(fleet_dir):
         spec["groups"] = {str(k): str(v) for k, v in (spec.get("groups") or {}).items()}
         spec["from"] = [_source(p, name, spec, x) for x in spec.get("from") or []]
         for k in ("exit", "internet"):
-            if spec.get(k) not in (None, True, False):
-                raise KiwiError("%s: %s: %s is true or false" % (p, name, k))
-            spec[k] = bool(spec.get(k))
+            v = spec.get(k)
+            if k == "exit" and isinstance(v, list):     # the way out of these groups only (kiwi-modules 0.121.0)
+                groups = [str(x) for x in v]
+                bad = [g for g in groups if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", g)]
+                if bad:
+                    raise KiwiError("%s: %s: exit: %r is not a group's name" % (p, name, bad[0]))
+                spec[k] = groups or False
+                continue
+            if v not in (None, True, False):
+                raise KiwiError("%s: %s: %s is true or false%s" % (p, name, k, ", or a list of the VPN's groups" if k == "exit" else ""))
+            spec[k] = bool(v)
         spec["seen_as"] = _seen_as(p, name, spec.get("seen_as"))
         if spec["exit"] and spec["internet"]:
             raise KiwiError("%s: %s is both this network's way to the internet (exit) and let out through it (internet): "
@@ -392,13 +400,14 @@ def set_share(fleet_dir, partner, share):
 
 
 def set_flag(fleet_dir, partner, key, on):
-    """`exit` or `internet` of one partner, the rest of the file as it is."""
+    """`exit` or `internet` of one partner, the rest of the file as it is. `on` for exit can be a
+    list of groups: the way out of those only."""
     p = os.path.join(fleet_dir, FILE)
     data = (yaml.safe_load(util.read_text(p)) or {}) if os.path.isfile(p) else {}
     if partner not in data:
         raise KiwiError("%s: no partner called %s" % (p, partner))
     if on:
-        data[partner][key] = True
+        data[partner][key] = list(on) if isinstance(on, (list, tuple)) else True
     else:
         data[partner].pop(key, None)
     util.write_text(p, dump(data), 0o644)

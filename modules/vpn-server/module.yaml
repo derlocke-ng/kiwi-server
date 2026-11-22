@@ -68,6 +68,10 @@ backup:
     containers: ["{{ container_prefix }}-vpn-server"]
     paths: ["${DOCKERDIR}/{{ container_prefix }}-vpn-server"]
 
+validate:
+  - when: "federation.values() | rejectattr('exit', 'sameas', true) | selectattr('exit') | map(attribute='exit') | sum(start=[]) | reject('in', (groups or {}).keys() | list + (['isolated'] if isolated_subnet else [])) | list"
+    error: "federation.yaml: exit names groups this VPN does not have: {{ federation.values() | rejectattr('exit', 'sameas', true) | selectattr('exit') | map(attribute='exit') | sum(start=[]) | reject('in', (groups or {}).keys() | list + (['isolated'] if isolated_subnet else [])) | join(', ') }} (its groups: {{ (groups or {}).keys() | join(', ') }})"
+
 settings:
   - key: wg_host
     required: true
@@ -123,7 +127,7 @@ settings:
   - key: federation
     type: object
     label: Federation partners
-    help: "Other networks this one is linked to, from federation.yaml next to the fleet file (kiwi-server federate): per partner endpoint, public_key, mesh, domain, dns, and what it may reach here (share: nodes, node:port or service.node; from: its groups' subnets or addresses, empty: its whole mesh; as: the address of this mesh its connections come from; exit: true makes that partner this network's way to the internet, over the link; internet: true lets that partner leave to the internet through this master)."
+    help: "Other networks this one is linked to, from federation.yaml next to the fleet file (kiwi-server federate): per partner endpoint, public_key, mesh, domain, dns, and what it may reach here (share: nodes, node:port or service.node; from: its groups' subnets or addresses, empty: its whole mesh; as: the address of this mesh its connections come from; exit: true makes that partner this network's way to the internet, over the link, and a list of groups (exit: [family, phones]) makes it the way out of those groups only, the others leaving by this master's own way; internet: true lets that partner leave to the internet through this master)."
     default: {}
   - key: federation_port
     type: int

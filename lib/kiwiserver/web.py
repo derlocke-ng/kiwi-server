@@ -1076,6 +1076,9 @@ without a warning.</span></p>{% elif c %}<p class="muted">Its certificates: not 
 <label><input type="checkbox" name="exit.{{ name }}" style="width:auto"{% if p.exit %} checked{% endif %}>
 Leave to the Internet through {{ name }}</label><p class="muted" style="margin:0">Your devices come out at its master.
 It has to allow that on its side.</p>
+<label for="eg-{{ name }}">Only these VPN groups</label><p class="muted" style="margin:0 0 4px">Like family phones: only
+their devices leave through {{ name }}, the others by your own master. Empty: every device.</p>
+<input id="eg-{{ name }}" name="exit_groups.{{ name }}" value="{{ p.exit | join(' ') if p.exit is not sameas true and p.exit else '' }}">
 <label><input type="checkbox" name="internet.{{ name }}" style="width:auto"{% if p.internet %} checked{% endif %}>
 {{ name }} may leave to the Internet through this network</label><p class="muted" style="margin:0">Its devices come
 out at your master. To the Internet only, never to your machines.</p>
@@ -3790,7 +3793,8 @@ def make_app(control: Control):
                     raise KiwiError("%s: {share: [...], from: [...], exit, internet}" % name)
                 changes[name] = {"share": [str(x) for x in c["share"]] if "share" in c else had[name].get("share") or [],
                                  "from": [str(x) for x in c["from"]] if "from" in c else had[name].get("from") or [],
-                                 "exit": (c["exit"] is True) if "exit" in c else bool(had[name].get("exit")),
+                                 "exit": (([str(x) for x in c["exit"]] or False) if isinstance(c["exit"], list) else c["exit"] is True)
+                                         if "exit" in c else (had[name].get("exit") or False),
                                  "internet": (c["internet"] is True) if "internet" in c else bool(had[name].get("internet"))}
             await run_in_threadpool(control.save_federation, changes, who)
         except KiwiError as e:
@@ -3850,7 +3854,8 @@ def make_app(control: Control):
             had = control.federation()
             changes = {n: {"share": str(form["share." + n]).split() if "share." + n in form else had[n]["share"],
                            "from": str(form.get("from." + n, "")).split(),
-                           "exit": "exit." + n in form, "internet": "internet." + n in form} for n in names}
+                           "exit": (str(form.get("exit_groups." + n, "")).split() or True) if "exit." + n in form else False,
+                           "internet": "internet." + n in form} for n in names}
             await run_in_threadpool(control.save_federation, changes, u)
         except KiwiError as e:
             return federation_page(request, error=str(e))

@@ -8,7 +8,7 @@ v1 network (its master, the M1, sh3, the old kiwi-node); nothing there is touche
 | Machine | Hardware | Runs |
 |---|---|---|
 | master A | VPS (the network's own) | VPN server, exit through Mullvad, the relay to the rings at home |
-| master B | VPS (v1's master once v1 is off) | a second network of its own, linked to A: the second exit, and to try things on |
+| master B | VPS (v1's master once v1 is off) | A's standby: takes over when A is down; its own Mullvad exit while it does |
 | gw1 | Rock Pi E | gateway, Pi-hole, the moving address (vip), a ring, DHCP while it holds the address |
 | gw2 | Odroid M1 | gateway, Pi-hole, vip, a ring, DHCP while it holds the address, control node, cache, status page |
 | sh3 | x86, 16 cores, 60 GB | cloud, vault, opencloud, immich, paperless, git, downloader, games, backups |
@@ -49,10 +49,21 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 
 ## Before the move (the owner)
 
-1. Recycle hdd_18 until everything on sh3 fits on it, then copy everything there and take it out:
-   the cold copy while sh3 is reinstalled, later the backup server's disk.
-2. Decide the disks for the new sh3 (the spare 5 TB with or instead of the 4.5 TB).
-3. A Nextcloud AIO backup and a Vaultwarden export, on the cold copy too.
+1. Go through the data (the local AI below can read along; nothing leaves the house). What stays,
+   what goes, what moves to the backup server later.
+2. **The data disks' key files.** nvme_2tb, hdd_5_2 and hdd_18 open with key files that lie on
+   the root disk, which the reinstall wipes. Before anything is wiped: a passphrase in a second
+   slot of each (`cryptsetup luksAddKey`), or the key files copied into the new fleet's store.
+   Without it the 22 TB do not open again.
+3. The sizes only root can read (`sudo du -sh`): /mnt/nvme_2tb/docker/knnc-data (Nextcloud's
+   files), /mnt/hdd_5_2/nc_dlcom_data, /var/lib/docker/volumes, /var/lib/libvirt/images (the VMs'
+   disks, on the root disk: wiped with it unless copied).
+4. The cold copy: what lives on the root disk and nvme_2tb (Nextcloud, Vaultwarden, the game
+   saves, the VMs' disks, ~/build, ~/docker) onto a disk that stays out during the reinstall: the
+   spare 5 TB, or hdd_18 once it has room.
+5. A Nextcloud AIO backup (its own, borg) and a Vaultwarden export, on the cold copy too.
+6. The disks of the new sh3 (the spare 5 TB with or instead of the 4.5 TB; the 18 TB later in a
+   backup server).
 
 ## What I close this week, in order
 
@@ -68,6 +79,8 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
    the SD card), then the pair with lime on real ARM boards.
 5. The control node, ring and cache together on an ARM board (the Rock Pi E first).
 6. ~~The store's lock for people, not for the sync~~ (2.303.0).
+7. The local AI on the workstation (docs/design/ai.md), for going through the data first: once
+   the owner has given its settings.
 
 ## The move
 
@@ -79,12 +92,16 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 4. DHCP: v1's DHCP off, gw1's on.
 5. gw2: the M1 reinstalled as gateway, control node, cache and status; the vip pair.
 6. The devices enrolled in A's VPN; v1's VPN stays until the last one has moved.
-7. v1's master off; its VPS becomes master B, linked to A.
+7. v1's master off; its VPS becomes master B, A's standby.
 
 ## Decided (the owner, 22 Nov 2026)
 
-1. Which VPS becomes master A: later. Master B is a network of its own, on another subnet, whose
-   web services A's devices reach too (the link's `share`): for hosting and trying web services.
+1. Which VPS becomes master A: later. Master B is A's fallback, on a second VPS that runs all the
+   time: when A is down there is no remote access at all, so B takes over (the owner: "second
+   master should be a fallback, cause what happens if master a is down? yes, no remote access at
+   all, so master b does the job"). Built for this: a standby master (docs/design/standby.md, drilled
+   17 Nov): the same master on a second machine, devices follow it by name. Open: phones following
+   it through DDNS, never tried live; a standby on a VPS has Tor, one at home has none.
 2. The domain: `home`.
 3. Both exits through Mullvad, each rotating among different servers: `server_cities` per master,
    a random one of them at every connect, a new connect every morning. v1's master does it with

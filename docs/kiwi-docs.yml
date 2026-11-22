@@ -28,6 +28,7 @@ pages:
   - design/federation.md: "Design: federation"
   - design/lans.md: "Design: groups of the home network, and VLANs"
   - design/local-first.md: "Design: local first"
+  - design/ai.md: "Design: a local AI"
   - design/recovery.md: "Design: autonomy and recovery"
   - design/onion.md: "Design: hidden services"
   - design/starter.md: "Design: the starter image"

@@ -46,6 +46,11 @@ L: days. New ideas go to the end of their section.
 11. The agent takes orders from the control node: restart a service, update now (scale.md; the
     runbook's actions, asked for by a person). M
 12. An upgrade rehearsal drill: the previous release on a throwaway VM, data, the new one, `check`. M
+13. A local AI (docs/design/ai.md, the owner, 23 Nov 2026; a priority: it helps him go through
+    his data before the move): the `ai` module with Unsloth Studio (web UI and OpenAI API) on LAN
+    and/or VPN, its tools off; a machine that is off on purpose (`on_demand`) shown as no problem;
+    `kiwi-server ai bench` to compare models; `ai connect` for opencode. Waits for the owner's
+    settings (GPU, models). L
 
 ## 2. Smaller, no decision needed
 

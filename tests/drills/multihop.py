@@ -11,6 +11,8 @@ Endpoint of the entry master's config), the entry master's names resolve to its 
 address, and the exit network's mesh is closed to it.
 
     tests/drills/multihop.py ~/kiwi/fleet.yaml sorbet [--exit-mesh 10.10.0.1]
+    ... --group family                 a client in that group (exit: [family] leaves it through the partner)
+    ... --group guests --elsewhere     a client of a group that does not: anywhere but the partner
 
 Needs podman with /dev/net/tun. Touches nothing on the machines but the one client.
 """
@@ -29,6 +31,9 @@ more = argparse.ArgumentParser()
 more.add_argument("--exit-mesh", help="an address in the exit network's mesh that must stay closed")
 more.add_argument("--expect", help="the public address to expect instead of the exit master's, when the exit "
                   "master itself leaves through a VPN (Riseup, Mullvad, …): kiwi -> kiwi2 -> Riseup, 17 Nov 2026")
+more.add_argument("--group", help="the client in this group of the master (enroll --group)")
+more.add_argument("--elsewhere", action="store_true", help="the client must NOT leave at the exit master: its group "
+                  "is not in the partner's exit list (exit: [groups], 22 Nov 2026)")
 opts = more.parse_args(extra)
 master = m["master"]
 h = master.host
@@ -45,15 +50,16 @@ else:
 own_ip = h.module_settings["vpn-server"].get("server_ip")
 say("%s exits through %s; its own mesh address %s" % (h.name, exit_ip, own_ip))
 
-device = fleet.resolve_path("secrets/devices/drill-multihop.conf")
-cmd = ["enroll", args.fleet, "drill-multihop", "--ssh", master.target]
+dname = "drill-multihop" + ("-" + opts.group if opts.group else "")
+device = fleet.resolve_path("secrets/devices/%s.conf" % dname)
+cmd = ["enroll", args.fleet, dname, "--ssh", master.target] + (["--group", opts.group] if opts.group else [])
 if os.path.isfile(device):
     cmd.append("--existing")
 rc, out = kiwi(*cmd, timeout=300)
 if rc != 0:
     raise SystemExit("drill: enroll failed: %s" % " ".join(out[-2:]))
 
-name = "kiwi-drill-multihop"
+name = "kiwi-" + dname
 subprocess.run(["podman", "rm", "-f", name], capture_output=True)
 try:
     subprocess.run(["podman", "run", "-d", "--name", name, "--security-opt", "label=disable", "--cap-add", "NET_ADMIN",
@@ -77,8 +83,12 @@ try:
         except subprocess.TimeoutExpired:
             return 124, ""
     want = opts.expect or exit_ip
-    results = [("leaves the internet at %s" % ("the exit master's own exit" if opts.expect else "the exit master"),
-                seen == want, seen or "no tunnel")]
+    if opts.elsewhere:
+        results = [("leaves the internet, not at the exit master %s" % exit_ip, bool(seen) and seen != exit_ip,
+                    seen or "no tunnel")]
+    else:
+        results = [("leaves the internet at %s" % ("the exit master's own exit" if opts.expect else "the exit master"),
+                    seen == want, seen or "no tunnel")]
     _rc, dns = run("nslookup", h.hostname, own_ip)
     answers = re.findall(r"Address:\s*([0-9.]+)$", dns, re.M)
     results.append(("%s resolves to its own mesh address" % h.hostname, own_ip in answers, " ".join(answers) or "no answer"))

@@ -97,7 +97,9 @@ that is not private, masqueraded like its own clients. Both keys have to be set 
 packet to pass: `exit` alone leaves the first network without internet, `internet` alone
 does nothing.
 
-One exit per network; two networks cannot leave through each other. The older way stays
+One exit per network; two networks cannot leave through each other. Since 2.302.0 the exit can be
+the way out of some groups only (`exit: [family, phones]`): a rule per group's subnet instead of
+one for all of `wg0`, and a kill switch per group; the other clients leave by the master's own way. The older way stays
 for an exit that is not a Kiwi network (any WireGuard provider, `vpn_provider: custom`).
 Not done: the entry network's DNS lookups still leave from its own master.
 

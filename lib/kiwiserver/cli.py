@@ -1366,7 +1366,10 @@ def cmd_validate(args):
                           "into the secret store, unchanged" % (channel, key))
             util.say("%s: %d host(s) valid" % (os.path.basename(fleet.path), len(hosts)))
             for name, x in fedmod.partners(fleet.dir).items():
-                if x["exit"]:
+                if isinstance(x["exit"], list):
+                    util.say("its groups %s leave to the internet through %s, over the link; the others by its own master "
+                             "(federation.yaml: exit)" % (", ".join(x["exit"]), name))
+                elif x["exit"]:
                     util.say("its devices leave to the internet through %s, over the link (federation.yaml: exit)" % name)
                 if x["internet"]:
                     util.say("%s leaves to the internet through this network (federation.yaml: internet)" % name)
@@ -5846,13 +5849,16 @@ def cmd_federate(args):
         # the first network leaves to the internet through the second, over the link: the
         # first says so (exit), the second allows it (internet)
         on = bool(args.exit)
-        fedmod.set_flag(fa.dir, nb, "exit", on)
+        groups = [g for g in str(args.exit).split(",") if g.strip()] if isinstance(args.exit, str) else None
+        fedmod.set_flag(fa.dir, nb, "exit", [g.strip() for g in groups] if groups else on)
         fedmod.set_flag(fb.dir, na, "internet", on)
         fedmod.partners(fa.dir)             # says so when two partners would be the exit, or the two leave through each other
         fedmod.partners(fb.dir)
         if on:
-            util.say("%s leaves to the internet through %s, over their link. Apply %s's master first (it lets %s out), "
-                     "then %s's: until both are done, %s's devices have no internet" % (na, nb, nb, na, na, na))
+            who = ("%s's groups %s" % (na, ", ".join(groups))) if groups else na
+            util.say("%s leave%s to the internet through %s, over their link. Apply %s's master first (it lets %s out), "
+                     "then %s's: until both are done, %s have no internet" % (
+                         who, "" if groups else "s", nb, nb, na, na, "those groups" if groups else na + "'s devices"))
         else:
             util.say("%s leaves by its own way again. Apply %s's master, then %s's" % (na, na, nb))
         return
@@ -6915,7 +6921,9 @@ def build_parser():
     s = sub("federate", cmd_federate); s.add_argument("fleet"); s.add_argument("other", nargs="?", help="the partner network's fleet file")
     s.add_argument("--invite", metavar="CARD", help="write this network's card for a partner run by someone else")
     s.add_argument("--accept", metavar="CARD", help="take a partner's card (and write this network's for them)")
-    s.add_argument("--exit", action="store_true", help="the first network leaves to the internet through the second, over the link")
+    s.add_argument("--exit", nargs="?", const=True, metavar="GROUPS",
+                   help="the first network leaves to the internet through the second, over the link; with GROUPS "
+                        "(family,phones): only those VPN groups do, the others by their own master")
     s.add_argument("--no-exit", action="store_true", help="the first network leaves by its own way again")
     s.add_argument("--ca", metavar="PARTNER", help="print the partner's CA certificate, for your devices to import, "
                    "when it can sign only the partner's own names")

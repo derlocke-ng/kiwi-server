@@ -312,8 +312,16 @@ iptables -A KIWI_FED -j DROP
 # not a client of the other's VPN server, needs no second tunnel and no login there.
 # What comes in from the clients looks in table 202 first: the internet through the link,
 # everything of the meshes and of this machine as before (throw: on to the main table).
+{% set only = p.exit if p.exit is not sameas true else [] %}
 while ip rule del iif wg0 table 202 2>/dev/null; do :; done
+{% if only %}
+# only these groups leave through {{ pname }}; the other clients leave by this master's own way
+{% for g in only %}
+ip rule add iif wg0 from {{ all_groups[g].subnet }} table 202
+{% endfor %}
+{% else %}
 ip rule add iif wg0 table 202
+{% endif %}
 ip route flush table 202 2>/dev/null
 ip route add default dev wg-fed table 202
 # the answers from the internet come in on the link, from addresses this master would
@@ -332,7 +340,13 @@ iptables -t nat -A KIWI_FED_SNAT -j SNAT --to-source {{ server_ip }}
 iptables -t nat -A POSTROUTING -o wg-fed -j KIWI_FED_SNAT
 # the kill switch: with the link down the clients have no internet, they do not fall back
 # to this master's own connection
+{% if only %}
+{% for g in only %}
+iptables -I FORWARD 1 -i wg0 -s {{ all_groups[g].subnet }} -o eth0 ! -d {{ docker_subnet }} -j DROP
+{% endfor %}
+{% else %}
 iptables -I FORWARD 1 -i wg0 -o eth0 ! -d {{ docker_subnet }} -j DROP
+{% endif %}
 {% endif %}
 {% endfor %}
 {% endif %}

@@ -1440,8 +1440,8 @@ class Control:
                         raise KiwiError("%r is not an address or a network like 10.10.3.0/24" % x)
                 entry = dict(data[name] or {}, share=share, **{"from": frm})
                 for k in ("exit", "internet"):
-                    if c.get(k):
-                        entry[k] = True
+                    if c.get(k):        # exit: true, or the groups that leave that way
+                        entry[k] = [str(x) for x in c[k]] if k == "exit" and isinstance(c[k], list) else True
                     else:
                         entry.pop(k, None)
                 data[name] = entry

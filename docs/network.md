@@ -610,6 +610,18 @@ the first's.
 - With the link down, the first network's devices have no Internet. They do not fall
   back to their master's own connection.
 - A network has one such exit, and two networks cannot leave through each other.
+
+Only some groups of the VPN can leave that way, the others by their own master:
+
+```bash
+kiwi-server federate ~/kiwi/fleet.yaml ~/kiwi2/fleet.yaml --exit family,phones
+```
+
+This writes `exit: [family, phones]`. A device chooses its way out by its group: put it into
+one of those groups to leave through the partner, into another to leave through its own master.
+The kill switch is per group: with the link down, those groups have no Internet, the others
+are not touched. A group the VPN does not have stops the render of the master. The control
+page and the app have the same as a field beside the switch.
 - The names a device asks for are still answered by its own master's Pi-hole, which
   asks its resolvers from the first master, not through the partner.
 

@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# A device behind the site's moving address (the vip module, docs/design/basics-twice.md): a
-# throwaway VM on VMHOST (Debian's cloud image, cloud-init) at DEVICE/PREFIX with VIP as its gateway
-# and DNS server. It fetches a page through VIP every second while FIRST's keepalived stops and
-# starts again; the misses are counted. The VM and its volumes are removed afterwards.
+# A device behind the site's moving address (the vip module, docs/design/basics-twice.md): on HOST, a
+# test machine on the same LAN, a network namespace with an address of its own (a macvlan card, its
+# own MAC) whose gateway and DNS server are VIP. It fetches a page through VIP every second while
+# FIRST's keepalived stops and starts again; the misses are counted. HOST's own network is not
+# touched; the namespace and its card are removed afterwards.
+# (22 Nov 2026: first written with a VM on sh3, whose static address never came up and whose console
+# could not be read; a namespace on a machine of the fleet needs neither.)
 #
-#   VMHOST=sh3 tests/drills/vip-gateway.sh FLEET FIRST VIP DEVICE/PREFIX
-#   e.g. lime 192.168.2.70 192.168.2.72/16   (an address no machine of either test network has)
-# The device's SSH host key is made here and given to it, so its key is known before it is asked.
+#   tests/drills/vip-gateway.sh FLEET HOST FIRST VIP DEVICE/PREFIX [OTHER_FLEET...]
+#   e.g. ~/kiwi/fleet.yaml medlar lime 192.168.2.70 192.168.2.72/16 ~/kiwi-2/fleet.yaml
+# DEVICE must be an address no machine of the fleets has, and nothing on the LAN may answer it.
 # One PASS or FAIL line per check.
 set -u
-fleet=${1:?the fleet file}; first=${2:?the machine that holds the address}; vip=${3:?the moving address}
-dev=${4:?the address of the device with its prefix}
-VMHOST=${VMHOST:?the ssh name of the hypervisor}
-V="virsh -c qemu:///system"
-name=kiwi-device
-image_url=${IMAGE_URL:-https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2}
+fleet=${1:?the fleet file}; host=${2:?a test machine on the LAN}; first=${3:?the machine that holds the address}
+vip=${4:?the moving address}; dev=${5:?the address of the device with its prefix}; shift 5
+addr=${dev%/*}
+ns=kiwi-device
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 fails=0
 check() { if [ "$1" = 0 ]; then say "PASS $2"; else say "FAIL $2"; fails=$((fails + 1)); fi; }
 is() { if "$@"; then echo 0; else echo 1; fi; }
 dir=$(cd "$(dirname "$fleet")" && pwd); S=$(readlink -f "$dir/secrets")
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 user=$(python3 -c '
 import sys, yaml
 print(yaml.safe_load(open(sys.argv[1]))["defaults"]["admin"]["user"])' "$fleet")
@@ -32,94 +32,65 @@ on() {
     ssh -i "$S/admin_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
         -o UserKnownHostsFile="$S/known_hosts" -o ConnectTimeout=8 "$user@$(lanof "$1")" "sudo sh -c $(printf '%q' "$2")"
 }
-addr=${dev%/*}
-device() {
-    ssh -i "$S/admin_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
-        -o UserKnownHostsFile="$work/known_hosts" -o ConnectTimeout=6 "kiwi@$addr" "$@"
-}
-gone() { ssh -o BatchMode=yes "$VMHOST" "$V destroy $name >/dev/null 2>&1; $V undefine $name >/dev/null 2>&1
-    $V vol-delete $name.qcow2 default >/dev/null 2>&1; $V vol-delete $name-seed.iso default >/dev/null 2>&1; rm -rf /tmp/$name"; }
+in_ns() { on "$host" "ip netns exec $ns $1"; }
+gone() { on "$host" "ip netns del $ns 2>/dev/null; rm -rf /etc/netns/$ns; true"; }
 
-# the device: its own host key, the fleet's admin key to log in, a fixed address behind the moving one
-ssh-keygen -q -t ed25519 -N '' -C "$name" -f "$work/host" >/dev/null
-echo "$addr $(cut -d' ' -f1,2 "$work/host.pub")" > "$work/known_hosts"
-python3 - "$work" "$(cat "$S/admin_ed25519.pub")" "$dev" "$vip" <<'EOF'
-import os, sys
-work, key, dev, vip = sys.argv[1:]
-host = open(os.path.join(work, "host")).read()
-pub = open(os.path.join(work, "host.pub")).read().strip()
-ind = lambda text, n: "\n".join(" " * n + l for l in text.strip("\n").split("\n"))
-open(os.path.join(work, "user-data"), "w").write("""#cloud-config
-hostname: kiwi-device
-users:
-  - name: kiwi
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys: [%s]
-ssh_deletekeys: true
-ssh_keys:
-  ed25519_private: |
-%s
-  ed25519_public: %s
-""" % (key, ind(host, 4), pub))
-open(os.path.join(work, "network-config"), "w").write("""version: 2
-ethernets:
-  lan:
-    match: {name: "en*"}
-    addresses: [%s]
-    routes: [{to: default, via: %s}]
-    nameservers: {addresses: [%s]}
-""" % (dev, vip, vip))
-open(os.path.join(work, "meta-data"), "w").write("instance-id: kiwi-device-1\nlocal-hostname: kiwi-device\n")
+# the address: no machine of the fleets has it, and nothing on the LAN answers it
+taken=$(python3 - "$addr" "$fleet" "$@" <<'EOF'
+import sys, yaml
+addr, found = sys.argv[1], []
+for path in sys.argv[2:]:
+    for n, h in (yaml.safe_load(open(path)).get("hosts") or {}).items():
+        h = h or {}
+        block = h.get(h.get("role", "node")) or {}
+        for a in (str((h.get("network") or {}).get("address") or ""), str((block.get("vip") or {}).get("address") or "")):
+            if a.split("/")[0] == addr:
+                found.append("%s (%s)" % (n, path))
+print(", ".join(found))
 EOF
+)
+check "$(is [ -z "$taken" ])" "$addr is no machine's of the fleets${taken:+: $taken}"
+[ -z "$taken" ] || { say "$fails wrong"; exit 1; }
+! ping -c 2 -W 1 "$addr" >/dev/null 2>&1; check $? "nothing on the LAN answers $addr"
+[ "$fails" = 0 ] || { say "stopped: nothing was set up"; say "$fails wrong"; exit 1; }
+
 gone
-ssh -o BatchMode=yes "$VMHOST" "mkdir -p /tmp/$name" && scp -q -o BatchMode=yes "$work/user-data" "$work/meta-data" "$work/network-config" "$VMHOST:/tmp/$name/"
-check $? "the device's seed on $VMHOST"
-ssh -o BatchMode=yes "$VMHOST" "set -e; cd /tmp/$name
-  [ -s /tmp/$name-base.qcow2 ] || curl -fsSL -o /tmp/$name-base.qcow2 '$image_url'      # kept between runs
-  cp /tmp/$name-base.qcow2 base.qcow2
-  xorriso -as mkisofs -quiet -o seed.iso -V cidata -J -r user-data meta-data network-config
-  $V vol-create-as default $name.qcow2 \$(stat -c %s base.qcow2) --format qcow2 >/dev/null
-  $V vol-upload $name.qcow2 base.qcow2 --pool default
-  $V vol-create-as default $name-seed.iso \$(stat -c %s seed.iso) --format raw >/dev/null
-  $V vol-upload $name-seed.iso seed.iso --pool default
-  virt-install --connect qemu:///system --name $name --memory 1024 --vcpus 1 --import --osinfo \${OSINFO:-debian11} \
-    --disk vol=default/$name.qcow2,bus=virtio --disk vol=default/$name-seed.iso,device=cdrom \
-    --network bridge=br0,model=virtio --graphics none --noautoconsole >/dev/null"
-check $? "the device runs on $VMHOST"
-# the address must be this VM's before anything logs in there (22 Nov 2026: .71 was another test
-# machine's, the second network's damson): the MAC that answers is compared with the VM's own
-mac=$(ssh -o BatchMode=yes "$VMHOST" "$V domiflist $name" | awk 'NR > 2 && $5 != "" {print $5; exit}')
-seen=""
-for _ in $(seq 1 40); do
-    sleep 5
-    ping -c 1 -W 1 "$addr" >/dev/null 2>&1 || continue
-    seen=$(ip neigh show "$addr" | awk '{print $5}')
-    [ -n "$seen" ] && break
-done
-if [ -z "$mac" ] || [ "$seen" != "$mac" ]; then
-    check 1 "$addr answers with this VM's card ($mac), not another device (${seen:-none})"
-    [ "${KEEP:-0}" = 1 ] || gone; say "stopped: nothing was asked of $addr"; say "$fails wrong"; exit 1
-fi
-check 0 "$addr is this VM ($mac)"
-up=""
-for _ in $(seq 1 40); do device true 2>/dev/null && { up=1; break; }; sleep 5; done
-check "$(is [ -n "$up" ])" "the device answers at $addr (its host key as made here)"
-[ -n "$up" ] || { [ "${KEEP:-0}" = 1 ] || gone; say "$fails wrong"; exit 1; }       # KEEP=1: left there to look at
-device "ip route show default" | grep -q "via $vip"; check $? "its gateway is $vip"
-device "getent hosts deb.debian.org >/dev/null"; check $? "it resolves a name through $vip"
-device "curl -fsS -m 8 -o /dev/null https://deb.debian.org/debian/dists/stable/Release"; check $? "it reaches the Internet through $vip"
+lan=$(on "$host" "ip -o -4 route get $vip | sed -nE 's/.* dev ([^ ]+).*/\1/p'")
+# the same card every run (locally administered, from the address): with a new one each time, the
+# machines of the LAN keep the last run's card for that address until it times out, and the device's
+# first half minute goes nowhere (22 Nov 2026); a real device keeps its card
+mac=$(awk -F. '{printf "02:6b:69:%02x:%02x:%02x", $2, $3, $4}' <<<"$addr")
+check "$(is [ -n "$lan" ])" "$host reaches $vip on ${lan:-nothing}"
+on "$host" "set -e
+  ip netns add $ns
+  ip link add $ns link $lan address $mac type macvlan mode bridge
+  ip link set $ns netns $ns
+  ip netns exec $ns ip link set lo up
+  ip netns exec $ns ip addr add $dev dev $ns
+  ip netns exec $ns ip link set $ns up
+  ip netns exec $ns ip route add default via $vip
+  mkdir -p /etc/netns/$ns && echo 'nameserver $vip' > /etc/netns/$ns/resolv.conf"
+check $? "the device on $host: $dev, its gateway and DNS server $vip"
+trap gone EXIT
+sleep 3
+in_ns "ip route show default" | grep -q "via $vip"; check $? "its gateway is $vip"
+in_ns "getent hosts deb.debian.org" >/dev/null; check $? "it resolves a name through $vip"
+in_ns "curl -fsS -m 8 -o /dev/null https://deb.debian.org/debian/dists/stable/Release"; check $? "it reaches the Internet through $vip"
+holder_ip=$(in_ns "curl -fsS -m 8 https://am.i.mullvad.net/ip" 2>/dev/null)
+say "        it leaves the Internet at ${holder_ip:-?}"
 # a page every second through the moving address while it moves
-device "nohup sh -c 'i=0; while [ \$i -lt 60 ]; do if curl -fsS -m 2 -o /dev/null https://deb.debian.org/debian/dists/stable/Release; then echo ok; else echo miss; fi; i=\$((i+1)); sleep 1; done' > /tmp/probe 2>&1 &"
+in_ns "sh -c 'i=0; while [ \$i -lt 70 ]; do if curl -fsS -m 2 -o /dev/null https://deb.debian.org/debian/dists/stable/Release; then echo ok; else echo miss; fi; i=\$((i+1)); sleep 1; done' > /run/$ns-probe 2>&1 &"
 sleep 8
 on "$first" "systemctl stop kn-vip.service 2>/dev/null || docker stop kn-vip >/dev/null"; check $? "$first's moving address stopped"
-sleep 20
+sleep 25
+in_ns "curl -fsS -m 8 -o /dev/null https://deb.debian.org/debian/dists/stable/Release"; check $? "the device still reaches the Internet, through the other machine"
 on "$first" "systemctl start kn-vip.service 2>/dev/null || docker start kn-vip >/dev/null"; check $? "$first's moving address back"
-sleep 35
-probe=$(device "cat /tmp/probe")
+sleep 40
+probe=$(on "$host" "cat /run/$ns-probe; rm -f /run/$ns-probe")
 oks=$(grep -c '^ok' <<<"$probe"); misses=$(grep -c '^miss' <<<"$probe")
 say "        $oks of $((oks + misses)) fetches went through, $misses missed"
-check "$(is [ "$misses" -le 6 ])" "the device lost at most a few seconds over two switches ($misses misses)"
-gone; check $? "the device and its volumes are gone"
+check "$(is [ "$misses" -le 8 ])" "the device lost only seconds over two switches ($misses misses)"
+gone; trap - EXIT
+! on "$host" "ip netns list | grep -qw $ns"; check $? "the device is gone from $host"
 say "$fails wrong"
 exit $((fails > 0))

@@ -5361,6 +5361,28 @@ class TestFederation(Base):
         self.assertEqual(rc, 0, err)
         self.assertIsNone(fedmod.exit_through(self.tmp))
         self.assertFalse(fedmod.partners(other)[mine_name]["internet"])
+        # the way out of some groups only (kiwi-modules 0.121.0): the others by their own master
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path, "--exit", "family,devices")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("groups family, devices leave to the internet through other", err + out)
+        self.assertEqual(fedmod.partners(self.tmp)["other"]["exit"], ["family", "devices"])
+        self.assertTrue(fedmod.partners(other)[mine_name]["internet"])
+        fed = config.Fleet.load(a.path).hosts["gate"].cfg["master"]["vpn-server"]["federation"]["other"]
+        self.assertEqual(fed["exit"], ["family", "devices"])
+        rc, out, err = TestManage.run_cli(self, "validate", a.path)
+        self.assertIn("its groups family, devices leave to the internet through other", err + out)
+        with open(os.path.join(self.tmp, "federation.yaml")) as fh:
+            bad = yaml.safe_load(fh)
+        bad["other"]["exit"] = ["fam ily"]
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(bad))
+        with self.assertRaises(KiwiError) as e:
+            fedmod.partners(self.tmp)
+        self.assertIn("is not a group's name", str(e.exception))
+        bad["other"]["exit"] = ["family"]
+        write(os.path.join(self.tmp, "federation.yaml"), yaml.safe_dump(bad))
+        rc, out, err = TestManage.run_cli(self, "federate", a.path, b_path, "--no-exit")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(fedmod.exit_through(self.tmp))
 
     def two_fleets(self):
         a = self.fleet({"defaults": dict(self.base_defaults(), master={"mesh_subnet": "10.9.0.0/16"}),
@@ -15163,6 +15185,11 @@ class TestFirstRunPage(StoreBase):
         got = fedmod.partners(self.dir)["kiwi2"]
         self.assertEqual((got["share"], got["from"], got["exit"], got["internet"]),
                          (["cloud.papaya", "papaya:22"], ["10.10.3.0/24"], True, False))
+        # the way out of some groups only: kept as the list, shown in the field again
+        self.ask("/federation", {"csrf": csrf, "share.kiwi2": "cloud.papaya papaya:22", "from.kiwi2": "10.10.3.0/24",
+                                 "exit.kiwi2": "on", "exit_groups.kiwi2": "family devices"}, cookie=cookie)
+        self.assertEqual(fedmod.partners(self.dir)["kiwi2"]["exit"], ["family", "devices"])
+        self.assertIn('name="exit_groups.kiwi2" value="family devices"', self.ask("/federation", cookie=cookie)[1])
         # what makes no sense is said, and the file stays as it was
         body = self.ask("/federation", {"csrf": csrf, "share.kiwi2": "", "from.kiwi2": "", "exit.kiwi2": "on",
                                         "internet.kiwi2": "on"}, cookie=cookie)[1]

@@ -21,7 +21,7 @@ Later: a backup server with the 18 TB disk, an offsite node.
 |---|---|
 | VPN, phones, laptops | built; drilled with VMs and stand-in clients, never with a real phone over 5G |
 | Master's backup and rebuild | built; RAM master rebuilt with the same keys (drilled 11 and 17 Nov) |
-| Two exits to choose from | one exit per network today; a linked network as the exit is drilled, a choice per group or device is not built |
+| Two exits to choose from | a linked network as the exit is drilled; per VPN group built (2.302.0), not yet tried on the masters |
 | Two gateways, one address (vip) | drilled on lime + papaya; DHCP only from the holder, drilled in podman, never on a real LAN |
 | M1 / Rock Pi E | Armbian images exist for both (trixie); every image the gateway and control modules use has arm64 builds (checked 22 Nov); the encrypted Armbian image is built by hand |
 | Control + ring + cache on one machine | done on papaya (x86), not on an ARM board |
@@ -57,9 +57,8 @@ Later: a backup server with the 18 TB disk, an offsite node.
    (tests/drills/dhcp-pair.sh). Open: a device behind the moving address on a real machine.
 2. The rehearsal: v1's data into v2 on a VM with copies (Nextcloud's volumes and data folder,
    Vaultwarden's folder, a game save, Forgejo), each checked after.
-3. The exit per VPN group: a group of master A's network that leaves through master B (the
-   linked network's exit, which works for a whole network today). Until then a device can hold
-   both networks' WireGuard configs and switch in the app.
+3. ~~The exit per VPN group~~: `federate A B --exit family,phones` (2.302.0); a device chooses
+   its way out by its group. Open: tried on the two test masters.
 4. The encrypted Armbian image for the Rock Pi E and the M1, as a step of kiwi-server.
 5. The control node, ring and cache together on an ARM board (the Rock Pi E first).
 6. The store's lock for people, not for the sync (notes/TODO.md).

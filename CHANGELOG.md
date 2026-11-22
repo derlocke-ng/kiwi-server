@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.302.0 — a way out per group
+
+- **Leave through a linked network, by group** (kiwi-modules 0.121.0): `kiwi-server federate A B
+  --exit family,phones` writes `exit: [family, phones]`; only those VPN groups' devices leave to the
+  Internet at B's master, each group with its own kill switch, and the others by A's own master.
+  A device chooses its way out by its group. The control page and the app have a field beside the
+  switch. A group the VPN does not have stops the master's render.
+- tests/drills/multihop.py takes `--group` and `--elsewhere` for it.
+- tests/drills/vip-gateway.sh: the device behind the moving address is a network namespace on a test
+  machine (its own card and address) instead of a VM; through two switches it lost 3 of 58 fetches.
+
 ## 2.301.0 — one Pi-hole at a time
 
 - **DHCP from the site's pair, done again** (kiwi-modules 0.120.0): only the machine that holds the

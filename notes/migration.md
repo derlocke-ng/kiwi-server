@@ -27,7 +27,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | Master's backup and rebuild | built; RAM master rebuilt with the same keys (drilled 11 and 17 Nov) |
 | Two exits to choose from | a linked network as the exit is drilled; per VPN group built (2.302.0), not yet tried on the masters |
 | Two gateways, one address (vip) | drilled on lime + papaya; DHCP only from the holder, drilled in podman, never on a real LAN |
-| M1 / Rock Pi E | Armbian images exist for both (trixie); every image the gateway and control modules use has arm64 builds (checked 22 Nov); the encrypted Armbian image is built by hand |
+| M1 / Rock Pi E | every image the gateway and control modules use has arm64 builds (checked 22 Nov); the encrypted image is built by kiwi-server on sh3 (2.303.0), not yet booted on a board |
 | Control + ring + cache on one machine | done on papaya (x86), not on an ARM board |
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
@@ -63,9 +63,11 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
    Vaultwarden's folder, a game save, Forgejo), each checked after.
 3. ~~The exit per VPN group~~: `federate A B --exit family,phones` (2.302.0); a device chooses
    its way out by its group. Open: tried on the two test masters.
-4. The encrypted Armbian image for the Rock Pi E and the M1, as a step of kiwi-server.
+4. ~~The encrypted Armbian image as a step~~: `armbian.builder: sh3` and `kiwi-server build`
+   (2.303.0); built for the Rock Pi E in five minutes. Open: flashed and first started (yours:
+   the SD card), then the pair with lime on real ARM boards.
 5. The control node, ring and cache together on an ARM board (the Rock Pi E first).
-6. The store's lock for people, not for the sync (notes/TODO.md).
+6. ~~The store's lock for people, not for the sync~~ (2.303.0).
 
 ## The move
 

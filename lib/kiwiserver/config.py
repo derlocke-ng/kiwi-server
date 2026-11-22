@@ -149,6 +149,12 @@ DEFAULTS = {
         # its root is in LUKS: an image built with Armbian's build framework (CRYPTROOT_ENABLE), its
         # key in secrets/luks/<host>.key. Then unlock.rings binds it as a Debian machine's disk.
         "encrypt": False,
+        # where kiwi-server builds that image: the SSH name of a machine with Docker (targets/
+        # armbian_build.py). It gets the board's one-time disk key on a tmpfs and public keys only.
+        "builder": None,
+        "builder_dir": "/var/tmp/kiwi-armbian-build",
+        "build_ref": "main",     # the build framework's tag or branch
+        "passphrase": None,      # empty with a builder: a one-time key, replaced at the first apply
     },
     "unlock": {
         # the Tang rings that may open this machine's disk at boot (the tang module serves them)
@@ -590,6 +596,10 @@ class Host:
                 errs.append("armbian.variant must be minimal or server")
             if not isinstance(ab.get("encrypt", False), bool):
                 errs.append("armbian.encrypt must be true or false")
+            elif ab.get("builder") and not re.fullmatch(r"[A-Za-z0-9._@-]+", str(ab["builder"])):
+                errs.append("armbian.builder is an SSH name like sh3 or user@sh3")
+            elif ab.get("builder") and not ab.get("encrypt"):
+                errs.append("armbian.builder builds an encrypted image: armbian.encrypt: true, or no builder")
             elif (c["unlock"].get("rings") or []) and not ab.get("encrypt"):
                 errs.append("unlock.rings: this board's disk is not encrypted (armbian.encrypt: true says its image was "
                             "built encrypted)")

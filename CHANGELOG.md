@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.303.0 — encrypted boards built, and a lock for people
+
+- **The encrypted Armbian image, built by kiwi-server**: `armbian: {encrypt: true, builder: sh3}`
+  and `kiwi-server build` builds it with Armbian's framework on that machine, in a privileged
+  container of its own (Armbian's Docker mode prunes the machine's images: not used; nothing there
+  is removed). The builder gets the board's one-time disk key on a tmpfs and public keys only;
+  with a fixed address the boot system takes it. The first `apply` replaces the one-time key, as
+  for Debian. Built on sh3 for a Rock Pi E in about five minutes; the key in no log or file.
+- **The secret store's lock is for people** (the owner, 22 Nov 2026): the sync with the control
+  node runs while the store is locked. A merge opens it in memory with this computer's key and
+  writes it back encrypted; a pull leaves a locked store locked (it opened it until now). The app
+  syncs while locked and waits only when its key has a password of its own.
+
 ## 2.302.0 — a way out per group
 
 - **Leave through a linked network, by group** (kiwi-modules 0.121.0): `kiwi-server federate A B

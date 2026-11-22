@@ -1573,6 +1573,54 @@ class TestArmbian(Base):
         self.assertEqual(armbian_t.download_url(self.host().cfg["armbian"]),
                          "https://dl.armbian.com/odroidn2/Trixie_current_minimal")
 
+    def test_an_encrypted_image_built_on_a_builder(self):
+        """armbian.builder (targets/armbian_build.py): Armbian's framework on a machine with Docker,
+        the board's one-time key on a tmpfs there, public keys and the fixed address only; the
+        first apply replaces the key."""
+        from kiwiserver.targets import armbian_build
+        h = self.host(armbian={"board": "rockpi-e", "encrypt": True, "builder": "sh3"},
+                      network={"dhcp": False, "address": "192.168.2.5/16", "gateway": "192.168.2.1"},
+                      unlock={"ssh": True})
+        self.assertEqual(h.validate(self.roles), [])
+        self.assertTrue(luks.uses_one_time_key(h))
+        self.assertFalse(luks.uses_one_time_key(self.host(armbian={"board": "odroidn2", "encrypt": True})))   # made by hand
+        self.assertTrue(any("armbian.builder builds an encrypted image" in e
+                            for e in self.host(armbian={"board": "rockpi-e", "builder": "sh3"}).validate(self.roles)))
+        self.assertTrue(any("armbian.builder is an SSH name" in e
+                            for e in self.host(armbian={"board": "rockpi-e", "encrypt": True, "builder": "a b"}).validate(self.roles)))
+        args = armbian_build.compile_args(h.cfg["armbian"])
+        for want in ("BOARD=rockpi-e", "RELEASE=trixie", "CRYPTROOT_ENABLE=yes", "CRYPTROOT_SSH_UNLOCK_PORT=2222",
+                     "PREFER_DOCKER=no", "BUILD_MINIMAL=yes"):
+            self.assertIn(want, args)
+        self.assertNotIn("PASSPHRASE", args)                            # the key never on a command line
+        self.assertIn("extraargs=ip=192.168.2.5::192.168.2.1:255.255.0.0:n2::off", armbian_build.customize(h))
+        self.assertNotIn("extraargs", armbian_build.customize(self.host(armbian={"board": "rockpi-e", "encrypt": True,
+                                                                                 "builder": "sh3"})))
+        # the run: the key goes on stdin into the container's tmpfs, the image comes back
+        calls = []
+
+        def fake(cmd, input=None, capture_output=False, **_k):
+            calls.append((cmd, input))
+            out = b""
+            if cmd[-1] == "bash -s" and input and b"output/images" in input:
+                out = b"/var/tmp/kiwi-armbian-build/output/images/Armbian_26.11_Rockpi-e_trixie_current_6.18-crypt_minimal.img\n"
+            if cmd[0] == "scp":
+                util.write_bytes(cmd[-1], b"image", 0o600)
+            return types.SimpleNamespace(returncode=0, stdout=out, stderr=b"")
+        os.makedirs(os.path.join(self.tmp, "secrets"), exist_ok=True)
+        write(os.path.join(self.tmp, "secrets", "admin_ed25519.pub"), KEY + "\n")
+        out = os.path.join(self.tmp, "out", "n2.img")
+        with mock.patch.object(armbian_build.subprocess, "run", fake):
+            armbian_build.image(h, out)
+        once = util.read_text(luks.once_file(h)).strip()
+        self.assertEqual(len(once), luks.ONCE_LENGTH)
+        sent = [(c, i) for c, i in calls if i == once.encode()]
+        self.assertEqual(len(sent), 1)
+        self.assertIn("cat > /secret/pass", sent[0][0][-1])             # into the container's tmpfs
+        self.assertTrue(all(once.encode() not in (i or b"") for c, i in calls if (c, i) not in sent))
+        self.assertEqual(util.read_bytes(out), b"image")
+        self.assertTrue(any(b"rm -f /secret/pass" in (i or b"") for _c, i in calls))
+
     def test_first_boot_files(self):
         fs = armbian_t.files(self.host(), "#!/bin/bash\necho role\n")
         self.assertIn("passwd -l root", fs["/var/lib/kiwi-server/adopt/adopt.sh"][0])   # Armbian's root is 1234

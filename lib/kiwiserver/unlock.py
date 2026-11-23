@@ -29,10 +29,12 @@ DEBIAN_PACKAGES = "clevis clevis-luks clevis-initramfs"
 PREPARE_DEBIAN = r'''
 set -eu
 IFS= read -r ip
+IFS= read -r want_dev || true      # network.interface, or nothing
 if ! dpkg -s clevis-initramfs >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q %s >/dev/null
 fi
-dev=$(ip -4 route show default | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+dev=$want_dev
+[ -n "$dev" ] || dev=$(ip -4 route show default | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
 [ -n "$dev" ] || { echo "no default route to take the interface from" >&2; exit 1; }
 want="IP=$(printf %%s "$ip" | sed "s/IFACE/$dev/")"
 f=/etc/initramfs-tools/conf.d/kiwi-unlock
@@ -912,6 +914,19 @@ def leash_script(host, wanted_tree):
     return LEASH_SCRIPT.replace("URLS", " ".join(urls)).replace("MINUTES", str(max(minutes, 5)))
 
 
+def grow(host, tgt, key=None):
+    """An encrypted board's volume to the size of its disk, once (Armbian's first start grows the
+    partition only). Before its role too: the image's root is about 2 GB, and the role's images
+    did not fit (a Rock Pi E, 23 Nov 2026)."""
+    key = key or luks.current_key(host) or luks.one_time_key(host)
+    if not key:
+        return False
+    grown = re.search(r"^grown (\d+)", remote.run(tgt, GROW_SCRIPT, (key + "\n").encode()).decode(errors="replace"), re.M)
+    if grown:
+        util.say("%s: its encrypted volume now fills its disk (%d GiB more)" % (host.name, round(int(grown.group(1)) / 1024)))
+    return bool(grown)
+
+
 def bind(host, tgt, servers, force=False):
     """Bind the disk to the host's rings; what is already right stays as it is. `force`: bound
     again even so, to the rings' keys as they are now (a ring's keys were rotated)."""
@@ -922,15 +937,14 @@ def bind(host, tgt, servers, force=False):
     if not key:
         raise KiwiError("%s: unlock: is set but the disk's key is not on record (secrets/luks/%s.key)" % (host.name, host.name))
     wanted_tree = tree(host, servers)
-    if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
+    iface = str((host.cfg.get("network") or {}).get("interface") or "")     # a board with two ports: the one named
+    if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n" + iface + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
     changed = _rebind(host, tgt, key, wanted_tree, force=force)
     if not coreos and b"removed" in remote.run(tgt, REMOVE_KEY_ONLY):
         util.say("%s: its disk opens by itself again: it restarts for updates in its window again" % host.name)
     if host.target == "armbian":        # the encrypted volume to the size of its disk, once
-        grown = re.search(r"^grown (\d+)", remote.run(tgt, GROW_SCRIPT, (key + "\n").encode()).decode(errors="replace"), re.M)
-        if grown:
-            util.say("%s: its encrypted volume now fills its disk (%d GiB more)" % (host.name, round(int(grown.group(1)) / 1024)))
+        grow(host, tgt, key)
     if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")

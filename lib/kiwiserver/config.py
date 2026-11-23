@@ -81,6 +81,9 @@ DEFAULTS = {
     # a machine that sleeps by day and wakes for the night's backups: {from: "06:00", until: "02:30"}
     # (asleep.py); empty: always awake
     "asleep": {},
+    # off unless someone starts it (a workstation booted into the fleet's system now and then, for
+    # its local AI, docs/design/ai.md): off is no problem, Wake (Wake-on-LAN) starts it
+    "on_demand": False,
     "updates": {
         # When an update may REBOOT the machine. Updates themselves are fetched
         # continuously on every target; the window only gates the reboot.

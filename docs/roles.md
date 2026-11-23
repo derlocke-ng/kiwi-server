@@ -431,6 +431,38 @@ hosts:
   service needs a few minutes before it is found. Not tried: mainnet's first
   sync. Lightning is not part of it.
 
+## A local AI
+
+The `ai` module runs Unsloth Studio on a machine with a graphics card: its page and its
+OpenAI-compatible API (`/v1/...`) at `ai.<hostname>`, for front-ends such as opencode. It is
+reached from the machine's home network and through the VPN only, never from the Internet
+([design](design/ai.md)).
+
+```yaml
+desk:
+  on_demand: true          # off unless someone starts it: no problem when it is off
+  node:
+    modules: [vpn-client, reverse-proxy, ai]
+    ai: { gpu: amd, listen: [lan, vpn] }
+```
+
+- `gpu`: `amd` (the ROCm image; Radeon RX 6000 to 9000) or `nvidia` (the CUDA image).
+- `listen`: `lan`, `vpn` or both. `lan` takes the home network from the machine's fixed address.
+- Studio's login is `unsloth` with a password from the seed (`kiwi-server logins`). Its own tools
+  (web search, running code) cannot be switched off in its container; they run inside it, which
+  sees the models and its own data only.
+- The API key is made on its page (Settings, API) and shown once:
+
+```bash
+kiwi-server ai key ~/kiwi/fleet.yaml desk          # the key, into the secret store
+kiwi-server ai connect ~/kiwi/fleet.yaml desk      # opencode's provider block
+kiwi-server ai bench ~/kiwi/fleet.yaml desk        # each model: first token, tokens/s, known answers
+```
+
+`bench` keeps its results in `ai-bench/<machine>.jsonl` beside the fleet file, to compare models
+and machines over time. `on_demand: true` makes a machine that is off a normal state: no alarm, no
+backup overdue; Wake starts it.
+
 ## Writing a role
 
 A role is `roles/<name>/` with `role.yaml` and `apply.sh`. A module role

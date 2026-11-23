@@ -1899,7 +1899,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 34)
+        self.assertEqual(len(ms.names()), 35)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -6990,7 +6990,7 @@ class TestUnlock(Base):
         with a, b:
             unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
         prepare = next(c for c in calls if "update-initramfs" in c[1])
-        self.assertEqual(prepare[2], b"192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n")
+        self.assertEqual(prepare[2], b"192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n\n")      # and network.interface: none
         self.assertIn("clevis-initramfs", prepare[1])
 
     def test_what_is_already_bound_stays(self):
@@ -10337,7 +10337,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 34)
+        self.assertEqual(len(json.loads(out)["modules"]), 35)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 
@@ -16470,6 +16470,26 @@ class TestRecovery(Base):
             self.assertEqual(relay["command"], ["/kiwi/follow.sh"])
             self.assertIn('VIP="192.168.2.70"', b.files["kn-dhcphelper/follow.sh"][0])
 
+    def test_the_local_ai_is_reached_from_the_lan_and_the_vpn_only(self):
+        """ai.listen (docs/design/ai.md): kiwi-server fills in the machine's home network and the mesh."""
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        node = dict(pap["node"], modules=list(pap["node"]["modules"]) + ["ai"], ai={"gpu": "amd"})
+        f = self.network(papaya=dict(pap, node=node, on_demand=True))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out"), None, self.ms)
+        b = r.script(f.hosts["papaya"])[1]
+        svc = b.compose["services"]["kn-ai"]
+        self.assertEqual(svc["devices"], ["/dev/kfd", "/dev/dri"])
+        allow = f.hosts["papaya"].module_settings["ai"]["allow"]
+        self.assertEqual(allow[0], "192.168.0.0/16" if pap["network"]["address"].endswith("/16") else allow[0])
+        self.assertEqual(len(allow), 2)
+        self.assertTrue(f.hosts["papaya"].cfg["on_demand"])
+        node["ai"] = {"gpu": "amd", "listen": ["vpn"]}
+        f = self.network(papaya=dict(pap, node=node))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out2"), None, self.ms)
+        r.script(f.hosts["papaya"])
+        self.assertEqual(len(f.hosts["papaya"].module_settings["ai"]["allow"]), 1)
+
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]
         bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",
@@ -16890,3 +16910,56 @@ class TestRecovery(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLocalAI(unittest.TestCase):
+    """kiwi-server ai (docs/design/ai.md): opencode's block, and the benchmark through a stand-in API."""
+
+    def host_and_fleet(self, tmp):
+        fleet = types.SimpleNamespace(dir=tmp, resolve_path=lambda p: os.path.join(tmp, p))
+        return fleet, types.SimpleNamespace(name="desk", hostname="desk.home", modules=["ai"])
+
+    def test_opencode_gets_the_models_and_the_key_from_the_environment(self):
+        from kiwiserver import ai
+        fleet, h = self.host_and_fleet(tempfile.mkdtemp())
+        env, block = ai.opencode_block(fleet, h, ["qwen3-14b", "gemma-3-12b"])
+        self.assertEqual(env, "KIWI_AI_DESK_KEY")
+        p = block["provider"]["kiwi-desk"]
+        self.assertEqual(p["options"], {"baseURL": "https://ai.desk.home/v1", "apiKey": "{env:KIWI_AI_DESK_KEY}"})
+        self.assertEqual(sorted(p["models"]), ["gemma-3-12b", "qwen3-14b"])
+
+    def test_the_benchmark_times_each_model_and_checks_the_known_answers(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(tmp)
+        answers = {"17 multiplied": "391", "capital of Australia": "Canberra", "bloops": "Yes",
+                   "German": "Die Katze schläft auf dem Sofa.", "is_even": "def is_even(n):\n    return n % 2 == 0"}
+
+        class Stream:
+            def __init__(self, prompt):
+                text = next((a for k, a in answers.items() if k in prompt), "word " * 50)
+                self.lines = [("data: " + json.dumps({"choices": [{"delta": {"content": w}}]}) + "\n").encode()
+                              for w in re.findall(r"\S+\s*", text)]
+                self.lines += [("data: " + json.dumps({"choices": [], "usage": {"completion_tokens": len(self.lines)}}) + "\n").encode(),
+                               b"data: [DONE]\n"]
+
+            def __iter__(self):
+                return iter(self.lines)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def call(fleet, host, path, body=None, timeout=300, stream=False):
+            return Stream(body["messages"][0]["content"])
+        with mock.patch.object(ai, "_call", call):
+            rows = ai.bench(fleet, h, ["qwen3-14b"], say=lambda s: None)
+        self.assertEqual(rows[0]["tasks"], "5/5")
+        self.assertGreater(rows[0]["tokens_per_s"], 0)
+        with open(os.path.join(tmp, "ai-bench", "desk.jsonl")) as f:
+            self.assertEqual(json.loads(f.readline())["model"], "qwen3-14b")
+        with self.assertRaises(KiwiError) as e:
+            ai._call(fleet, h, "/v1/models")
+        self.assertIn("no API key on record", str(e.exception))

@@ -4,7 +4,8 @@ Asked for by the owner on 23 November 2026: a language model at home, on his gam
 as the back-end for his other computers, with opencode (a Flatpak) as the front-end. It reads
 sensitive data (his files, before the move to v2), so nothing of it may leave the house.
 
-Status: designed, not built. The owner gives the machine's settings later.
+Status: built (2.306.0: the module, `on_demand`, `kiwi-server ai key|connect|bench`); not yet run on
+the workstation.
 
 ## What runs
 

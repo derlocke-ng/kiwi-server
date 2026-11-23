@@ -79,9 +79,15 @@ def _ssh(builder, script, stdin=None, stream=False):
 
 def customize(host):
     """userpatches/customize-image.sh: with a fixed address, the boot system takes it (the first
-    unlock at a known address); nothing secret."""
+    unlock at a known address); root takes the fleet admin's key, so `adopt` needs no password,
+    and Armbian's first-login questions are skipped (adopt locks root's password). Nothing secret."""
     net = host.cfg.get("network") or {}
     lines = ["#!/bin/bash", "# kiwi-server: for %s" % host.name, "set -e"]
+    pub = host.fleet.resolve_path("secrets/admin_ed25519.pub")
+    if os.path.isfile(pub):
+        key = " ".join(util.read_text(pub).split()[:2])
+        lines += ["install -d -m 0700 /root/.ssh", "echo %s >> /root/.ssh/authorized_keys" % shlex.quote(key),
+                  "chmod 0600 /root/.ssh/authorized_keys", "rm -f /root/.not_logged_in_yet"]
     if not net.get("dhcp", True) and net.get("address"):
         iface = ipaddress.ip_interface(str(net["address"]))
         gw = str(net.get("gateway") or "")
@@ -89,6 +95,14 @@ def customize(host):
         arg = "ip=%s::%s:%s:%s:%s:off" % (iface.ip, gw, iface.network.netmask, host.hostname.split(".")[0], dev)
         lines.append("sed -i '/^extraargs=/d' /boot/armbianEnv.txt")
         lines.append("echo 'extraargs=%s' >> /boot/armbianEnv.txt" % arg)
+        # the system takes the same address from its first start, on that port (any Ethernet port
+        # without one), before netplan's DHCP (10-netplan-*): no lease, no hunt for its address
+        dns = "".join("DNS=%s\\n" % d for d in (net.get("dns") or []))
+        unit = ("# kiwi-server: the fixed address of this machine, as the fleet file says (network.address)\\n"
+                "[Match]\\nName=%s\\n\\n[Network]\\nAddress=%s\\nGateway=%s\\n%sDHCP=no\\n"
+                % (dev or "e*", iface, gw, dns))
+        lines.append("install -d /etc/systemd/network")
+        lines.append("printf '%s' > /etc/systemd/network/05-kiwi-static.network" % unit)
     return "\n".join(lines) + "\n"
 
 

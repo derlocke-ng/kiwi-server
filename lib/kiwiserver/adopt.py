@@ -15,6 +15,7 @@ the machine's TPM until now) is kept: `apply` binds it to the network's rings an
 console, and removes the TPM (docs/design/encryption.md).
 """
 import io
+import os
 import shlex
 import subprocess
 import tarfile
@@ -49,7 +50,9 @@ install -d -m 0700 -o "$U" -g "$U" "$H/.ssh"
 install -m 0600 -o "$U" -g "$U" "$D/authorized_keys" "$H/.ssh/authorized_keys"
 command -v sudo >/dev/null || apt-get -y -q install sudo
 install -m 0440 "$D/sudoers-kiwi" /etc/sudoers.d/kiwi-admin
-visudo -cq
+# our file only: a board's own file with loose permissions fails the whole check (Armbian's
+# armbian-newt-colors, 0644, 23 Nov 2026), and sudo itself reads ours anyway
+visudo -cqf /etc/sudoers.d/kiwi-admin
 install -d /etc/ssh/sshd_config.d
 grep -qi '^Include /etc/ssh/sshd_config.d/' /etc/ssh/sshd_config || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
 install -m 0644 "$D/sshd-kiwi.conf" /etc/ssh/sshd_config.d/50-kiwi.conf
@@ -76,7 +79,8 @@ systemctl enable kiwi-reboot-if-required.timer"""
 # has for the card. On an image's first start it takes effect at once; on a running board that is
 # being adopted over SSH with the next restart, so the session and the apply after it stay.
 _NETWORK = r"""
-dev=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+dev=%(iface)s
+[ -n "$dev" ] || dev=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 if [ -n "$dev" ] && systemctl is-active -q systemd-networkd; then
     install -d /etc/systemd/network
     printf '%%s\n' '# kiwi-server: the fixed address of this machine, as the fleet file says (network.address)' \
@@ -102,6 +106,9 @@ def network_script(host, now=False):
         return ""
     dns = [str(d) for d in net.get("dns") or []]
     return _NETWORK % {
+        # the card the fleet file names (network.interface: a board with two ports), else the one of
+        # the default route
+        "iface": shlex.quote(str(net.get("interface") or "")),
         "address": shlex.quote(str(net["address"])), "gateway": shlex.quote(str(net["gateway"])),
         "dns": " ".join(shlex.quote("DNS=" + d) for d in dns), "dns_nm": shlex.quote(" ".join(dns)),
         "now": "networkctl reload 2>/dev/null || systemctl restart systemd-networkd" if now else ":",
@@ -311,8 +318,12 @@ def run(host, login, runner=subprocess.run, new_host_key=False):
         forget_host_key(login, runner)
     with tempfile.TemporaryDirectory(prefix="kiwi-adopt-") as tmp:
         # one connection, its password asked once; the host key goes to the fleet's known_hosts
+        # IdentitiesOnly: an agent with many keys offers them all and the board hangs up before it
+        # asks for its password ("Too many authentication failures", 23 Nov 2026)
         opts = ["-o", "ConnectTimeout=15", "-o", "ControlMaster=auto", "-o", "ControlPath=%s/c" % tmp,
-                "-o", "ControlPersist=120"]
+                "-o", "ControlPersist=120", "-o", "IdentitiesOnly=yes"]
+        if remote.KNOWN_HOSTS and os.path.isfile(host.fleet.resolve_path("secrets/admin_ed25519")):
+            opts += ["-i", host.fleet.resolve_path("secrets/admin_ed25519")]    # a board kiwi-server built takes it
         if remote.KNOWN_HOSTS:
             opts += ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=%s" % remote.KNOWN_HOSTS]
         dest = "/tmp/kiwi-adopt"

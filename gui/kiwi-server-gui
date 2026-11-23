@@ -757,6 +757,40 @@ class Form:
                 row.add_suffix(btn)
         return row
 
+    def known_rings(self):
+        """{ring: machine} of the network: every machine with the tang module, its rings (the
+        module's own default: infra)."""
+        out = {}
+        data = self.doc.data or {}
+        for name, h in sorted((data.get("hosts") or {}).items()):
+            h = h or {}
+            block = h.get(h.get("role") or "node") or {}
+            if "tang" in (block.get("modules") or []):
+                for ring in ((block.get("tang") or {}).get("rings") or {"infra": "7500"}):
+                    out.setdefault(str(ring), name)
+        return out
+
+    def ring_picker(self, row):
+        """A menu of the network's rings at a rings field: ticking one writes its name into the field."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=6, margin_bottom=6,
+                      margin_start=6, margin_end=6)
+        rings = self.known_rings()
+        chosen = set(row.get_text().split())
+        if not rings:
+            box.append(Gtk.Label(label="No machine holds a ring yet (the tang module)", css_classes=["dim-label"]))
+        for ring, machine in rings.items():
+            check = Gtk.CheckButton(label="%s  (on %s)" % (ring, machine), active=ring in chosen)
+
+            def toggled(c, r=ring):
+                names = [n for n in row.get_text().split() if n != r]
+                if c.get_active():
+                    names.append(r)
+                row.set_text(" ".join(names))
+            check.connect("toggled", toggled)
+            box.append(check)
+        return Gtk.MenuButton(icon_name="view-list-symbolic", popover=Gtk.Popover(child=box), valign=Gtk.Align.CENTER,
+                              css_classes=["flat"], tooltip_text="The network's rings")
+
     def entry_row(self, field):
         cls = Adw.PasswordEntryRow if field["type"] == "secret" else Adw.EntryRow
         row = cls(title=field["label"])
@@ -787,6 +821,8 @@ class Form:
                                 tooltip_text="Take it out of the secret store: the next apply gives the machine a generated one")
             forget.connect("clicked", lambda *_: self.forget_kept(field))
             row.add_suffix(forget)
+        if tuple(field.get("path") or ()) in (("unlock", "rings"), ("unlock", "control")):
+            row.add_suffix(self.ring_picker(row))       # the network's rings to tick, not names to know by heart
         if field["type"] == "file":
             btn = Gtk.Button(icon_name="document-open-symbolic", valign=Gtk.Align.CENTER,
                              tooltip_text="Choose a file")
@@ -5961,7 +5997,8 @@ class Window(Adw.ApplicationWindow):
             return ("Start the machine from the install media and %s. Then press the button." % how,
                     "Set it up", lambda: self.confirm_apply(h))
         if phase == "bare":
-            return ("It has no job yet. Choose what it should be in its settings.", "Open its settings",
+            return ("It has no job yet: choose its role in its settings (node for a gateway or a server). Then it "
+                    "gets its place on the VPN (Connect it) and is set up.", "Open its settings",
                     lambda: self.select_scope(h))
         errors = (self.status.get(h) or {}).get("errors") or []
         why = errors[0].split(": ", 1)[-1] if errors else "something is missing or wrong"

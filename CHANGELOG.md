@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.306.2 — a lean gateway; the cache serves no empty layers
+
+- **A gateway has no downloads and no SFTP** any more (the `node-gw` role and the `gateway`
+  preset): `downloader` and `sftp` are modules to add where wanted; the setup wizard no longer
+  asks where downloads go. Machines with their own module list keep theirs.
+- **The LAN cache** (kiwi-modules 0.123.1, 0.123.2): a layer that several images share and that expired
+  was served empty, and a new machine could not pull nginx. The mirrors now fetch it again.
+
 ## 2.306.1 — the local AI passes validate
 
 - `validate` (and the control node) filled in `ai.allow` only at a render, so a machine with the ai

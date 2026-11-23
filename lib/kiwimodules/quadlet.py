@@ -19,7 +19,7 @@ KNOWN_SERVICE_KEYS = {
     "image", "container_name", "environment", "volumes", "networks", "network_mode", "ports", "expose",
     "cap_add", "cap_drop", "sysctls", "devices", "restart", "logging", "security_opt", "init", "read_only",
     "tmpfs", "user", "shm_size", "stop_grace_period", "hostname", "command", "depends_on", "healthcheck",
-    "profiles", "labels", "extra_hosts", "dns", "entrypoint",
+    "profiles", "labels", "extra_hosts", "dns", "entrypoint", "ipc", "ulimits",
     # what podman does with a container that stays unhealthy (kill: systemd starts it anew);
     # docker has no such thing and leaves it marked unhealthy
     "x-kiwi-health-on-failure",
@@ -147,6 +147,14 @@ def container_unit(service, body, networks, services, secrets=(), env_file=None,
         container.append("Tmpfs=%s" % t)
     if body.get("shm_size") is not None:
         container.append("ShmSize=%s" % body["shm_size"])
+    if body.get("ipc"):                     # quadlet has no key of its own for it
+        container.append("PodmanArgs=--ipc=%s" % _esc(str(body["ipc"])))
+    for name, limit in sorted((body.get("ulimits") or {}).items()):
+        if isinstance(limit, dict):
+            soft, hard = limit.get("soft"), limit.get("hard")
+        else:
+            soft = hard = limit
+        container.append("Ulimit=%s=%s:%s" % (name, soft, hard))
     if body.get("stop_grace_period"):
         container.append("StopTimeout=%d" % _seconds(body["stop_grace_period"]))
     env_lines = []

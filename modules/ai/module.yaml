@@ -1,0 +1,97 @@
+schema_version: "1.0"
+
+module:
+  name: ai
+  title: Local AI
+  version: 1.0.0
+  description: "A language model at home: Unsloth Studio, its web page and its OpenAI-compatible API (/v1/...) at ai.<hostname>, on the LAN and/or the VPN only, with a key. For a machine with a GPU: AMD (the ROCm image) or NVIDIA (the CUDA one). Front-ends such as opencode talk to its API"
+  category: productivity
+  node_types: [node]
+
+dependencies:
+  required: [reverse-proxy]
+  optional: [vpn-client]
+
+network:
+  needs_vpn_dnat: true
+  open_ports: []
+
+firewall:
+  scope: vpn-client
+  rules: []
+
+templates:
+  compose: docker-compose.yml.j2
+
+derived:
+  ai_host: "ai.{{ hostname }}"
+  ai_image: "{{ image or ('docker.io/unsloth/unsloth-rocm:latest' if gpu == 'amd' else 'docker.io/unsloth/unsloth:latest') }}"
+  models_path: "{{ models_dir or docker_dir ~ '/' ~ container_prefix ~ '-ai/models' }}"
+  # who reaches the page and the API: the addresses kiwi-server fills in from ai.listen (lan, vpn)
+  ai_allow: "{% for c in allow %}allow {{ c }}; {% endfor %}deny all;"
+
+validate:
+  - when: "gpu not in ['amd', 'nvidia']"
+    error: "ai.gpu: amd or nvidia"
+  - when: "not allow"
+    error: "ai.allow: nobody may reach it; kiwi-server fills it in from ai.listen (lan, vpn)"
+  - when: "listen | reject('in', ['lan', 'vpn']) | list"
+    error: "ai.listen: lan, vpn or both"
+
+storage:
+  bind_mounts:
+    - { host: "{{ models_path }}", type: dir, required: true }
+  volumes: [unsloth_studio]
+
+urls:
+  - "Local AI: https://{{ ai_host }} (its API: https://{{ ai_host }}/v1, with a key made on its page: Settings, API)"
+
+nginx:
+  upstream:
+    name: unsloth
+    server: "{{ container_prefix }}-ai:8000"
+  server_name: "{{ ai_host }}"
+  site: ai
+  proxy_pass: "http://unsloth"
+  client_max_body_size: "0"
+  proxy_read_timeout: 3600s
+  comment: Local AI (Unsloth Studio)
+  extra_directives:
+    - "{{ ai_allow }}"
+
+backup:
+  volumes: [unsloth_studio]
+
+settings:
+  - key: gpu
+    type: enum
+    label: Graphics card
+    help: "amd: the ROCm image (/dev/kfd and /dev/dri go into the container; Radeon RX 6000 to 9000, ROCm 7.2). nvidia: the CUDA image (the NVIDIA container toolkit on the machine)."
+    options: [amd, nvidia]
+    default: amd
+  - key: listen
+    type: list
+    label: Reachable from
+    help: "lan: the machine's home network; vpn: the VPN's devices. Either or both; never public, never through Tor. Studio's own tools (web search, running code) cannot be switched off in its container: they run inside it, which sees nothing of the machine but the models and its own data."
+    default: [lan, vpn]
+  - key: allow
+    type: list
+    group: Advanced
+    label: Addresses that reach it
+    help: "Filled in by kiwi-server from Reachable from: the home network's and the VPN's ranges."
+    default: []
+  - key: models_dir
+    group: Advanced
+    label: Folder for the models
+    help: "Where the downloaded models are kept (big; not backed up, they download again). Empty: in the stack's folder."
+    default: ""
+  - key: image
+    group: Advanced
+    help: "Another image than the one for the card, pinned by tag."
+    default: ""
+  - key: studio_password
+    type: secret
+    group: Generated
+    label: Studio's password
+    help: "For the user unsloth on its page, set when its data is new. Empty: generated from the fleet's seed."
+    generate: true

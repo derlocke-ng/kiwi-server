@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.306.0 — a local AI; boards set up without hand work
+
+- **The local AI** (kiwi-modules 0.123.0, docs/roles.md "A local AI"): the `ai` module runs Unsloth
+  Studio on a machine with a graphics card (AMD or NVIDIA), its page and its OpenAI-compatible API
+  at `ai.<hostname>` for the LAN and/or the VPN only (`ai.listen`). `kiwi-server ai key` keeps its
+  API key in the store, `ai connect` writes opencode's provider block, `ai bench` times each model
+  and checks a few known answers, kept to compare. `on_demand: true`: a machine that is off unless
+  someone starts it is no problem when it is off.
+- **Boards built by kiwi-server** come up at their fixed address on the port `network.interface`
+  names, in their boot system and their system; root takes the fleet's key and Armbian's
+  first-login questions are skipped, so `adopt` needs no password; the volume grows before the
+  role (the image's 2 GB root did not hold the role's images). `adopt` offers no agent keys
+  before a board's password, and checks only its own sudoers file (Armbian's own failed the
+  whole check). The app has a picker of the network's rings and says what a bare machine needs.
+
 ## 2.305.0 — what a machine remembers, and its own units
 
 The owner, 23 Nov 2026: failed update units that could not be restarted or read, a History that

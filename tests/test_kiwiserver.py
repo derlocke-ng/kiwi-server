@@ -16470,6 +16470,26 @@ class TestRecovery(Base):
             self.assertEqual(relay["command"], ["/kiwi/follow.sh"])
             self.assertIn('VIP="192.168.2.70"', b.files["kn-dhcphelper/follow.sh"][0])
 
+    def test_the_local_ai_is_reached_from_the_lan_and_the_vpn_only(self):
+        """ai.listen (docs/design/ai.md): kiwi-server fills in the machine's home network and the mesh."""
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        node = dict(pap["node"], modules=list(pap["node"]["modules"]) + ["ai"], ai={"gpu": "amd"})
+        f = self.network(papaya=dict(pap, node=node, on_demand=True))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out"), None, self.ms)
+        b = r.script(f.hosts["papaya"])[1]
+        svc = b.compose["services"]["kn-ai"]
+        self.assertEqual(svc["devices"], ["/dev/kfd", "/dev/dri"])
+        allow = f.hosts["papaya"].module_settings["ai"]["allow"]
+        self.assertEqual(allow[0], "192.168.0.0/16" if pap["network"]["address"].endswith("/16") else allow[0])
+        self.assertEqual(len(allow), 2)
+        self.assertTrue(f.hosts["papaya"].cfg["on_demand"])
+        node["ai"] = {"gpu": "amd", "listen": ["vpn"]}
+        f = self.network(papaya=dict(pap, node=node))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out2"), None, self.ms)
+        r.script(f.hosts["papaya"])
+        self.assertEqual(len(f.hosts["papaya"].module_settings["ai"]["allow"]), 1)
+
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]
         bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",

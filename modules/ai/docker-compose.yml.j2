@@ -1,0 +1,31 @@
+# ai: Unsloth Studio, its page and its OpenAI-compatible API on port 8000 of the stack network
+services:
+  {{ container_prefix }}-ai:
+    image: {{ ai_image }}
+    container_name: {{ container_prefix }}-ai
+    environment:
+      - TZ={{ timezone }}
+      - UNSLOTH_STUDIO_PORT=8000
+      - UNSLOTH_STUDIO_PASSWORD={{ studio_password }}
+    devices:
+{% if gpu == 'amd' %}
+      - /dev/kfd
+      - /dev/dri
+{% else %}
+      - nvidia.com/gpu=all
+{% endif %}
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ models_path }}:/workspace/.cache/huggingface:z
+      - unsloth_studio:/opt/unsloth-studio

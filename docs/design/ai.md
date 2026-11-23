@@ -57,8 +57,18 @@ The results are kept per machine and model, so models and machines can be compar
 computer where the data is; it sends what it reads to the model at home, nothing else. To go
 through sh3's files: mounted read only on that computer.
 
+## The owner's workstation (23 November 2026)
+
+- AMD Radeon RX 9070 XT (RDNA 4, 16 GB), Ryzen 9 7900X, 64 GB ECC DDR5-4800: `unsloth/unsloth-rocm`
+  with `/dev/kfd` and `/dev/dri`. 16 GB on the card: models of about 14B fully on it at 8 bits, larger
+  ones at 4 bits or partly in the 64 GB of memory.
+- Two SSDs: the system of the fleet goes on the 500 GB one, named by its `/dev/disk/by-id/…` path in
+  `disk:` (never `auto`: the 2 TB one holds his own system, Bluefin-DX, and is not touched). uCore
+  brings its own boot partition on that disk; the firmware's boot menu picks which system starts.
+
 ## Open
 
-- The owner's settings: the workstation's GPU (NVIDIA or AMD), which models.
-- How `unsloth/unsloth` takes `--disable-tools`, and whether its API runs without the UI.
+- Which models.
+- How `unsloth/unsloth-rocm` takes `--disable-tools`, whether its API runs without the UI, and
+  whether its ROCm knows RDNA 4 (gfx1201: ROCm 6.4 or newer).
 - Podman or the host: measured on the workstation.

@@ -62,6 +62,12 @@ nginx:
 backup:
   volumes: [unsloth_studio]
 
+logins:
+  - label: Local AI (Unsloth Studio)
+    user: unsloth
+    password: studio_password
+    note: "Set when Studio first started. If someone changed it on its page, the new one is not known here. Its API takes a key made on its page (Settings, API), not this password."
+
 settings:
   - key: gpu
     type: enum

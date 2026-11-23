@@ -15,6 +15,7 @@ the machine's TPM until now) is kept: `apply` binds it to the network's rings an
 console, and removes the TPM (docs/design/encryption.md).
 """
 import io
+import os
 import shlex
 import subprocess
 import tarfile
@@ -311,8 +312,12 @@ def run(host, login, runner=subprocess.run, new_host_key=False):
         forget_host_key(login, runner)
     with tempfile.TemporaryDirectory(prefix="kiwi-adopt-") as tmp:
         # one connection, its password asked once; the host key goes to the fleet's known_hosts
+        # IdentitiesOnly: an agent with many keys offers them all and the board hangs up before it
+        # asks for its password ("Too many authentication failures", 23 Nov 2026)
         opts = ["-o", "ConnectTimeout=15", "-o", "ControlMaster=auto", "-o", "ControlPath=%s/c" % tmp,
-                "-o", "ControlPersist=120"]
+                "-o", "ControlPersist=120", "-o", "IdentitiesOnly=yes"]
+        if remote.KNOWN_HOSTS and os.path.isfile(host.fleet.resolve_path("secrets/admin_ed25519")):
+            opts += ["-i", host.fleet.resolve_path("secrets/admin_ed25519")]    # a board kiwi-server built takes it
         if remote.KNOWN_HOSTS:
             opts += ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=%s" % remote.KNOWN_HOSTS]
         dest = "/tmp/kiwi-adopt"

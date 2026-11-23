@@ -79,9 +79,15 @@ def _ssh(builder, script, stdin=None, stream=False):
 
 def customize(host):
     """userpatches/customize-image.sh: with a fixed address, the boot system takes it (the first
-    unlock at a known address); nothing secret."""
+    unlock at a known address); root takes the fleet admin's key, so `adopt` needs no password,
+    and Armbian's first-login questions are skipped (adopt locks root's password). Nothing secret."""
     net = host.cfg.get("network") or {}
     lines = ["#!/bin/bash", "# kiwi-server: for %s" % host.name, "set -e"]
+    pub = host.fleet.resolve_path("secrets/admin_ed25519.pub")
+    if os.path.isfile(pub):
+        key = " ".join(util.read_text(pub).split()[:2])
+        lines += ["install -d -m 0700 /root/.ssh", "echo %s >> /root/.ssh/authorized_keys" % shlex.quote(key),
+                  "chmod 0600 /root/.ssh/authorized_keys", "rm -f /root/.not_logged_in_yet"]
     if not net.get("dhcp", True) and net.get("address"):
         iface = ipaddress.ip_interface(str(net["address"]))
         gw = str(net.get("gateway") or "")

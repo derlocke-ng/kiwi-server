@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.306.1 — the local AI passes validate
+
+- `validate` (and the control node) filled in `ai.allow` only at a render, so a machine with the ai
+  module failed its check ("nobody may reach it"). The first such machine: lemonaide, the owner's
+  workstation as an on-demand server.
+
 ## 2.306.0 — a local AI; boards set up without hand work
 
 - **The local AI** (kiwi-modules 0.123.0, docs/roles.md "A local AI"): the `ai` module runs Unsloth

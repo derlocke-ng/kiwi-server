@@ -22,13 +22,15 @@ VERBS = {"status": "Checked", "plan": "Previewed", "apply": "Applied", "check": 
          "tell-test": "Sent a test message", "start-new": "Started a new backup history", "prune": "Removed old snapshots",
          "doctor": "Checked the tools of the control node", "adopt": "Took in", "service": "Looked after a container",
          "reboot": "Restarted", "poweroff": "Switched off", "wake": "Woke", "move": "Moved a part", "switch": "Gave a part to its standby",
-         "mtu": "Measured the MTU", "rotate-ring": "Replaced the keys of an unlock ring"}
+         "mtu": "Measured the MTU", "rotate-ring": "Replaced the keys of an unlock ring",
+         "window": "Let it open by itself for a while:"}
 # while it runs or waits (the control page's words since 2.200)
 DOING = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
         "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "wake": "Waking", "remove": "Removing", "reboot": "Restarting", "poweroff": "Switching off",
         "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
         "rotate-ring": "Replacing the keys of an unlock ring",
+        "window": "Letting it open by itself for a while:",
         "move": "Moving a part between", "switch": "Giving a part to its standby, from",
         "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
         "doctor": "Checking the tools of this machine", "service": "Looking after a container on"}

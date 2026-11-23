@@ -30,8 +30,11 @@ than "always by itself". This design is the one place for all of it.
 - Switching the way is an apply: it binds or unbinds the rings (unbinding exists since 2.234).
   `by-a-person` is "auto-unlock off". **Built (2.307.0)**: `by-itself` and `by-a-person`, switched on
   the page's Disk unlock and in the app's (a switch per machine, then an apply of it), or in the
-  machine's settings. Next: a window ("opens by itself for the next N minutes", the owner's 5
-  minutes), then `at-home` and the desktops below.
+  machine's settings. **The window (2.307.1)**: with auto-unlock off, **Opens by itself for N
+  minutes** (`unlock.window`, 5 by default; `kiwi-server unlock FLEET HOST --window`, the action
+  `window`) lets the control node's watchdog type its key if it waits at boot within those
+  minutes; outside them the watchdog leaves it alone (before, `recovery.unlock` opened any waiting
+  machine). Needs `unlock.ssh`. Next: `at-home`, then the desktops below.
 - A ring answers anyone who reaches it, so a machine that is **off or stolen** cannot be held
   by a switch: the answer there is `rotate ring NAME`, after which its old binding opens
   nothing. The page says so beside the switch.

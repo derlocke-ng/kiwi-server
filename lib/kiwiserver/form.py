@@ -139,6 +139,9 @@ BASE_GROUPS = [
              help="by-itself: its rings open it at boot. by-a-person: auto-unlock off; its rings stay named, and it waits "
                   "for its key, Unlock (Open now) or kiwi-server unlock. Changing it takes an apply",
              doc="docs/design/unlock.md"),
+        dict(path=("unlock", "window"), type="int", label="…opens by itself for a while, in minutes", default=5,
+             help="With auto-unlock off: Opens by itself for a while (the page, the app) lets the control node type its key "
+                  "if it waits at boot within this many minutes. Needs SSH while it waits"),
         dict(path=("unlock", "threshold"), type="int", label="…how many of them", default=1,
              help="1: any one ring opens it. 2: two of them have to answer"),
         dict(path=("unlock", "via"), type="map", label="…reached through", default={},

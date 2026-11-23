@@ -33,6 +33,12 @@ A_DAY = 3                   # acts on one machine in 24 hours
 OPEN_AGAIN = 300            # seconds between two tries to open one disk
 
 
+def _waits_for_a_person(host):
+    """Auto-unlock switched off (unlock.opens: by-a-person)."""
+    u = (getattr(host, "cfg", None) or {}).get("unlock") or {}
+    return bool(u.get("rings")) and u.get("opens") == "by-a-person"
+
+
 def policy(fleet, kind, host=None):
     """(minutes, what to do) for a master or a node; for `host`, its runbook's line for a machine that
     does not answer wins (runbook.py, docs/design/runbook.md), `recovery:` is what is left."""
@@ -122,6 +128,12 @@ def step(fleet, kinds, said, state, now, restart, where=None, locked=None, unloc
             what = "%s waits at boot with its disk locked" % name
             times = [t for t in opened.get(name, []) if now - t < 86400]
             opened[name] = times
+            h = fleet.hosts.get(name)
+            window = (state.get("unlock_windows") or {}).get(name) or 0
+            if h is not None and _waits_for_a_person(h) and window < now:
+                events.append({"host": name, "kind": "locked", "text": what + ": auto-unlock is off for it, it waits for "
+                               "its key or Unlock"})
+                continue
             if unlock is None or (fleet.defaults.get("recovery") or {}).get("unlock", True) is False:
                 events.append({"host": name, "kind": "locked", "text": what})
             elif len(times) >= 2 * A_DAY:

@@ -51,7 +51,8 @@ L: days. New ideas go to the end of their section.
 14. Disk unlock as the owner asked (23 Nov 2026: "enable/disable it for certain clients, auto-unlock on
     a timer, 5 min for my gaming workstation, a separate ring for dev devices"; docs/design/unlock.md).
     Built (2.307.0): auto-unlock on/off per machine (`unlock.opens`), on the page and in the app.
-    Next: a window, the control node opens a waiting machine for the next N minutes; then desktops
+    Built (2.307.1): the window, the control node types a waiting machine's key for the next N minutes
+    (`unlock.window`). Next: desktops
     (the Bluefin disk of lemonaide's workstation, dev devices with a ring of their own) with the
     auto-unlock and emergency rings, which needs item 10. M-L
 13. ~~A local AI (docs/design/ai.md, the owner, 23 Nov 2026; a priority: it helps him go through

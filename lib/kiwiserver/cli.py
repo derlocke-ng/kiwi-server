@@ -2688,7 +2688,7 @@ def cmd_recover(args):
 
     def open_it(name):
         h = fleet.hosts[name]
-        key_only = not h.cfg["unlock"].get("rings") and h.cfg["unlock"].get("ssh")
+        key_only = not unlock.wanted(h) and h.cfg["unlock"].get("ssh")      # no ring bound (none, or auto-unlock off)
         if not unlock._forwarded_rings(h) and not key_only:
             # a ring at home it reaches by itself: it opens when a machine that serves it is back
             raise KiwiError(unlock.locked_advice(h, args.fleet))
@@ -6499,7 +6499,19 @@ def cmd_unlock(args):
             unlock.say_picture(rows)
         return
     hosts = fleet.select([args.host])
-    if args.manual or not hosts[0].cfg["unlock"].get("rings"):     # no ring: its key opens it
+    if getattr(args, "window", False):  # auto-unlock off: the watchdog opens it for a while (docs/design/unlock.md)
+        h = hosts[0]
+        if not unlock.waits_for_a_person(h):
+            raise KiwiError("%s opens by itself already (unlock.opens): a window is for one with auto-unlock off" % h.name)
+        if not h.cfg["unlock"].get("ssh"):
+            raise KiwiError("%s has no SSH while it waits (unlock.ssh): nothing can type its key from here" % h.name)
+        minutes = max(1, min(int(h.cfg["unlock"].get("window") or 5), 120))
+        until = time.time() + minutes * 60
+        change_state(fleet, lambda s: s.setdefault("unlock_windows", {}).__setitem__(h.name, until))
+        util.say("%s opens by itself for the next %d minutes: if it waits at boot meanwhile, the watchdog types its key "
+                 "(restart it now)" % (h.name, minutes))
+        return
+    if args.manual or not unlock.wanted(hosts[0]):     # no ring bound: its key opens it
         unlock.type_key(hosts[0], address=args.address, port=args.port, timeout=args.timeout)
         return
     servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
@@ -7184,6 +7196,8 @@ def build_parser():
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host", nargs="?",
                                                                           help="none: who opens whom")
+    s.add_argument("--window", action="store_true",
+                   help="auto-unlock off: it opens by itself for its unlock.window minutes (the watchdog types its key)")
     s.add_argument("--ring", help="which ring, when unlock.via forwards more than one")
     s.add_argument("--manual", action="store_true", help="hand over the disk's key instead of forwarding a ring")
     s.add_argument("--address", metavar="ADDR", help="where the machine answers, instead of the fleet's addresses for it")

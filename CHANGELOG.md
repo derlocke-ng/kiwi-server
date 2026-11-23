@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.307.1 — opens by itself for a while
+
+- With auto-unlock off, **Opens by itself for N minutes** (the page's and the app's Disk unlock;
+  `kiwi-server unlock FLEET HOST --window`): if the machine waits at boot within those minutes
+  (`unlock.window`, 5 by default), the control node's watchdog types its key. Outside them it
+  leaves the machine waiting; before, it opened any waiting machine it could. Needs `unlock.ssh`.
+
 ## 2.307.0 — auto-unlock on and off per machine
 
 - **Disk unlock, per machine** (docs/design/unlock.md): `unlock.opens: by-a-person` switches

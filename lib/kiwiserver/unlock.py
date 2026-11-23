@@ -1261,7 +1261,8 @@ def picture(fleet, roles, ms):
                 path = "the master's relay"
             rings.append({"ring": r, "server": getattr(server, "name", None) if not isinstance(server, OperatorRing)
                           else "operator", "path": path})
-        rows.append({"name": h.name, "way": _way(h), "auto": wanted(h),
+        rows.append({"name": h.name, "way": _way(h), "auto": wanted(h), "window": int(cfg.get("window") or 5),
+                     "can_window": waits_for_a_person(h) and bool(cfg.get("ssh")),
                      "threshold": int(cfg.get("threshold") or 1) if rings else 0,
                      "rings": rings, "openers": who_opens, "needs": sorted(needs.get(h.name, [])),
                      "power_cut": "waits" if h.name in stuck else "opens" if rings else ""})

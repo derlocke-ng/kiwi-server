@@ -3722,6 +3722,9 @@ def cmd_apply(args):
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)
+            if "tang" in (h.modules or []):
+                from . import rings as ringsmod
+                ringsmod.after_apply(h, tgt)    # its stopped rings stay stopped (tang.stopped, switched rings)
             try:                            # its History: who applied what (kiwi-server history)
                 remote.run(tgt, "logger -t kiwi-role %s" % shlex.quote("applied: kiwi-server %s, from %s" % (
                     VERSION, os.environ.get("KIWI_ACTOR") or socket.gethostname())))
@@ -6518,6 +6521,35 @@ def cmd_unlock(args):
     unlock.open_disk(hosts[0], servers, ring=args.ring, address=args.address, port=args.port, timeout=args.timeout)
 
 
+def cmd_ring(args):
+    """A switched ring (docs/design/unlock.md): off, on, or on for a while. The machines whose own
+    ring it is (unlock.switch) wait at boot while it is off."""
+    from . import rings as ringsmod
+    fleet, roles, ms = load(args)
+    servers = unlock.ring_servers(fleet, lambda x: rolesmod.resolve_settings(roles[x.role], x, ms))
+    if args.ring not in servers or isinstance(servers[args.ring][0], unlock.OperatorRing):
+        raise KiwiError("no machine of this network serves the ring %s (the tang module's rings)" % args.ring)
+    server = servers[args.ring][0]
+    who = ringsmod.users(fleet, args.ring)
+    if not who:
+        raise KiwiError("the ring %s is no machine's own ring (unlock.switch): stopping it would stop others' "
+                        "auto-unlock with it" % args.ring)
+    tgt = remote.reach(server, getattr(args, "ssh", None))
+    if args.state == "window":
+        minutes = args.minutes or max(int((fleet.hosts[n].cfg.get("unlock") or {}).get("window") or 5) for n in who)
+        if args.ring not in ringsmod.stopped(server):
+            util.say("the ring %s runs already: %s unlock%s by itself" % (args.ring, ", ".join(who), "s" if len(who) == 1 else ""))
+            return
+        ringsmod.window(server, args.ring, max(1, min(int(minutes), 120)), tgt)
+        util.say("the ring %s runs for %d minutes: %s unlock%s if %s wait%s at boot now (restart %s)"
+                 % (args.ring, minutes, ", ".join(who), "s" if len(who) == 1 else "", "it" if len(who) == 1 else "they",
+                    "s" if len(who) == 1 else "", "it" if len(who) == 1 else "them"))
+        return
+    ringsmod.switch(fleet.path, server, args.ring, args.state, tgt)
+    util.say("auto-unlock %s for %s: the ring %s on %s %s" % (args.state, ", ".join(who), args.ring, server.name,
+                                                            "is stopped" if args.state == "off" else "runs"))
+
+
 def cmd_prune(args):
     """Old snapshots off the backup nodes. A machine can only add to its backups, so this
     is done from here, where the seed is."""
@@ -6812,6 +6844,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 what the machine itself remembers: applies, updates, its runbook, backups, starts
   kiwi-server ai key|connect|bench <fleet> <host> [MODEL...]
                                                 the local AI: its API key, opencode's settings, a benchmark of its models
+  kiwi-server ring <fleet> <ring> off|on|window   auto-unlock of the machines whose own ring it is: stopped,
+                                                running, or running for a while (docs/design/unlock.md)
   kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
   kiwi-server remove <fleet> <host> [--yes]     a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]
@@ -7194,6 +7228,9 @@ def build_parser():
     s.add_argument("--yes", action="store_true", help="do it (without: only say what it means)")
     s.add_argument("--dry-run", action="store_true", help="only say what it means")
     s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("ring", cmd_ring); s.add_argument("fleet"); s.add_argument("ring")
+    s.add_argument("state", choices=["off", "on", "window"], help="off: stopped; on: running; window: running for a while")
+    s.add_argument("--minutes", type=int, help="window: how long (default: unlock.window of its machines, 5)")
     s = sub("unlock", cmd_unlock); s.add_argument("fleet"); s.add_argument("host", nargs="?",
                                                                           help="none: who opens whom")
     s.add_argument("--window", action="store_true",

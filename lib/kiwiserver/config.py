@@ -166,6 +166,9 @@ DEFAULTS = {
         # how it opens (docs/design/unlock.md): by-itself, its rings open it; by-a-person, its rings
         # stay named but are not bound, and it waits for its key or Open now (auto-unlock off)
         "opens": "by-itself",
+        # its own ring (docs/design/unlock.md, switched rings): its disk is unlocked by its rings AND
+        # this one; stopping the ring (kiwi-server ring, Disk unlock) switches auto-unlock off for it
+        "switch": "",
         # with auto-unlock off: how long "opens by itself for a while" lasts, in minutes (the
         # control node opens it with its key if it waits at boot meanwhile; the owner's 5 minutes)
         "window": 5,
@@ -633,6 +636,13 @@ class Host:
             errs.append("unlock.rings must be a list of ring names")
         if u.get("opens", "by-itself") not in ("by-itself", "by-a-person"):
             errs.append("unlock.opens is by-itself or by-a-person")
+        if u.get("switch"):
+            if not isinstance(u["switch"], str) or not re.fullmatch(r"[a-z0-9-]+", u["switch"]):
+                errs.append("unlock.switch is the name of one ring")
+            elif u["switch"] in (u.get("rings") or []):
+                errs.append("unlock.switch is a ring of its own, not one of unlock.rings")
+            elif not u.get("rings"):
+                errs.append("unlock.switch needs unlock.rings: its disk is unlocked by those and its own ring")
         elif u["rings"]:
             if not isinstance(u.get("threshold"), int) or not 1 <= u["threshold"] <= len(u["rings"]):
                 errs.append("unlock.threshold must be between 1 and the number of rings")

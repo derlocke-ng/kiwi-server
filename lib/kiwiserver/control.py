@@ -46,6 +46,9 @@ ACTIONS = {
     "rotate-ring": ("rotate", False),   # new keys for an unlock ring (module: its name), every disk bound again
     "restore": ("backups", True), "unlock": ("unlock", True), "remove": ("remove", True),
     "window": ("unlock", True),         # auto-unlock off: it opens by itself for its unlock.window minutes
+    "ring-off": ("unlock", False),      # a switched ring (module: its name) stopped: its machines wait at boot
+    "ring-on": ("unlock", False),       # ...running again
+    "ring-window": ("unlock", False),   # ...running for a while
     "wake": ("wake", True),             # a machine at home that is off: another of its LAN sends the magic packet
     "tell-test": ("notify", False), "mtu": ("mtu", True),
     "start-new": ("backups", True),     # a rebuilt machine whose backups wait: a new history instead
@@ -58,7 +61,8 @@ ACTIONS = {
     "move": ("move", True),             # a part to another machine (partmove.py): hosts [from, to], module: the part
     "switch": ("switch", True),         # a part to the machine that keeps it ready: hosts [where it runs], module: the part
 }
-CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "rotate-ring", "setup", "build", "restore", "unlock", "window", "remove",
+CHANGES = {"apply", "backup", "update", "save", "rotate", "rotate-seed", "rotate-ring", "setup", "build", "restore", "unlock", "window",
+           "ring-off", "ring-on", "ring-window", "remove",
            "start-new", "prune", "service", "reboot", "poweroff", "move", "switch"}
 MODULE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 WHEN = re.compile(r"^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?$")      # a snapshot's time, as `backups --porcelain` gives it     # these change machines or the fleet: the audit log says who
@@ -1197,6 +1201,10 @@ class Control:
             if len(hosts) != 1:
                 raise KiwiError("which machine?")
             return list(self.kiwi) + ["unlock", self.fleet_path, hosts[0]]
+        if action in ("ring-off", "ring-on", "ring-window"):    # a switched ring: its name is the module
+            if not module or not MODULE.match(module):
+                raise KiwiError("which ring?")
+            return list(self.kiwi) + ["ring", self.fleet_path, module, action[len("ring-"):]]
         if action == "window":              # auto-unlock off, but it opens by itself for a while (watchdog)
             if len(hosts) != 1:
                 raise KiwiError("which machine?")

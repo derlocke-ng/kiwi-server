@@ -12275,23 +12275,25 @@ class TestWeb(WebBase):
             self.assertEqual(len(saved), 1)
 
     def test_auto_unlock_is_switched_on_the_disk_unlock_page(self):
-        """The owner, 23 Nov 2026: where do I switch auto-unlock per machine? On Disk unlock: saved,
-        then that machine is applied."""
+        """The owner, 23 Nov 2026: switch auto-unlock per machine by stopping a ring. A machine with a
+        ring of its own gets the switch; on the page it stops or starts that ring, or runs it a while."""
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
         rows = [{"name": "a", "way": "by itself", "auto": True, "threshold": 1, "openers": [], "needs": [], "power_cut": "opens",
-                 "rings": [{"ring": "infra", "server": "b", "path": "the LAN"}]}]
+                 "line": "Unlocked by b (auto-unlock on)", "switch": "a-own", "switch_on": True, "switch_server": "b", "window": 5,
+                 "rings": [{"ring": "infra", "server": "b", "path": "the LAN"}]},
+                {"name": "c", "way": "by itself", "auto": True, "threshold": 1, "openers": [], "needs": [], "power_cut": "opens",
+                 "line": "Unlocked by b", "switch": "", "rings": [{"ring": "infra", "server": "b", "path": "the LAN"}]}]
         with mock.patch.object(self.c, "unlock_picture", lambda: rows):
             body = self.ask("/unlock")[1]
-        self.assertIn("Auto-unlock off", body)
-        tok = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
-        saved, started = [], []
-        with mock.patch.object(self.c, "save_settings", lambda host, changes, user="admin": saved.append((host, changes)) or ["unlock"]), \
-                mock.patch.object(self.c, "start", lambda action, hosts=(), user="admin", **kw: started.append((action, list(hosts))) or "j9"):
-            code, where = self.ask("/unlock/a/opens", {"opens": "by-a-person", "csrf": tok})[:2]
-            self.assertEqual((code, where), (303, "/jobs/j9"))
-            self.assertEqual((saved, started), ([("a", {("unlock", "opens"): "by-a-person"})], [("apply", ["a"])]))
-            self.ask("/unlock/a/opens", {"opens": "by-a-person"})                  # no form of this session
-            self.assertEqual(len(saved), 1)
+        self.assertIn('value="ring-off">', body)
+        self.assertIn('name="module" value="a-own"', body)
+        self.assertNotIn('value="ring-window"', body)                           # it runs: no window
+        self.assertIn("a ring of its own in its Settings", body)                 # c has none
+        rows[0]["switch_on"] = False
+        with mock.patch.object(self.c, "unlock_picture", lambda: rows):
+            body = self.ask("/unlock")[1]
+        self.assertIn('value="ring-on">', body)
+        self.assertIn('value="ring-window"', body)
 
     def test_module_sources_are_added_updated_and_removed_on_the_page(self):
         self.assertEqual(self.ask("/modules")[0], 303)                              # a login first
@@ -16687,6 +16689,30 @@ class TestRecovery(Base):
                          "Unlocked by you (auto-unlock off): Unlock, or its key at boot")
         rc, out, err = self.run_cli("unlock", self.network().path, "--porcelain")
         self.assertEqual(sorted(m["name"] for m in json.loads(out)["machines"]), ["lychee", "papaya", "quince", "sorbet"])
+
+    def test_a_switch_ring_is_needed_besides_its_rings(self):
+        """unlock.switch (switched rings): its disk is bound to its rings AND its own ring, and a tree
+        compares with what the disk has by its shape."""
+        host = types.SimpleNamespace(name="desk", cfg={"unlock": {"rings": ["infra", "home"], "threshold": 1, "switch": "desk"}})
+        fake = {r: {"url": "http://10.0.0.%d:7500" % i, "thp": "t", "adv": "{}"} for i, r in enumerate(["infra", "home", "desk"], 1)}
+        with mock.patch.object(unlock, "pins", lambda h, s, rings=None: [fake[r] for r in (rings or h.cfg["unlock"]["rings"])]):
+            tree = unlock.tree(host, {})
+        self.assertEqual(tree["t"], 2)
+        self.assertEqual([p["url"] for p in tree["pins"]["tang"]], ["http://10.0.0.3:7500"])          # its own ring, needed
+        self.assertEqual(tree["pins"]["sss"][0]["t"], 1)                                             # and 1 of the others
+        self.assertEqual(unlock.tang_urls(tree), ["http://10.0.0.1:7500", "http://10.0.0.2:7500", "http://10.0.0.3:7500"])
+        listing = "device /dev/vda4\n1: sss '%s'\n" % json.dumps(tree)
+        self.assertEqual(unlock._bound_sigs(listing), [unlock._sig(tree)])
+        flat = {"t": 1, "pins": {"tang": tree["pins"]["sss"][0]["pins"]["tang"]}}
+        self.assertNotEqual(unlock._sig(flat), unlock._sig(tree))                                    # a rebind is due
+        # the leash watches its usual rings, not the one that is stopped on purpose
+        lan = types.SimpleNamespace(network=ipaddress.ip_network("10.0.0.0/24"))
+        with mock.patch.object(unlock, "_lan", lambda h: lan):
+            self.assertEqual(unlock.leash_urls(host, tree), ["http://10.0.0.1:7500", "http://10.0.0.2:7500"])
+        bad = self.network()
+        pap = bad.raw["hosts"]["papaya"]
+        f = self.network(papaya=dict(pap, unlock=dict(pap["unlock"], switch="infra")))
+        self.assertIn("not one of unlock.rings", " ".join(f.hosts["papaya"].validate(self.roles)))
 
     def test_auto_unlock_switched_off_keeps_the_rings_named_and_binds_none(self):
         """unlock.opens (docs/design/unlock.md; the owner, 23 Nov 2026: on and off per machine):

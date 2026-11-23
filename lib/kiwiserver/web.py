@@ -1655,13 +1655,14 @@ TEMPLATES["unlock.html"] = """{% extends "base.html" %}{% block main %}
 {% for m in machines %}<div class="card"><div class="row"><span><strong>{{ m.name }}</strong>
 {% if m.attention %}<span class="state warn">waits after a power cut</span>{% endif %}<br>
 <span class="muted">{{ m.line or m.way }}</span></span>
-{% if m.rings %}<span>{% if m.can_window %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action"
-value="window"><input type="hidden" name="host" value="{{ m.name }}"><button title="Restart it right after: if it waits at boot
-meanwhile, the control node types its key">For {{ m.window }} min</button></form>{% endif %}
-<form class="inline" method="post" action="/unlock/{{ m.name }}/opens">{{ tok }}<input type="hidden" name="opens"
-value="{{ 'by-a-person' if m.auto else 'by-itself' }}"><button>{{ "Auto-unlock off" if m.auto else "Auto-unlock on" }}</button></form></span>{% endif %}</div>
+{% if m.switch %}<span>{% if not m.switch_on %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action"
+value="ring-window"><input type="hidden" name="module" value="{{ m.switch }}"><button title="Its ring runs for a while: restart it
+right after, and if it waits at boot it unlocks within seconds">For {{ m.window }} min</button></form>{% endif %}
+<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="{{ 'ring-off' if m.switch_on else 'ring-on' }}">
+<input type="hidden" name="module" value="{{ m.switch }}"><button>{{ "Auto-unlock off" if m.switch_on else "Auto-unlock on" }}</button></form></span>{% endif %}</div>
 {% if m.rings %}<details class="small muted"><summary>Its rings</summary><ul>{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
-{{ r.path }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}</div>{% endfor %}
+{{ r.path }}{% endif %}</li>{% endfor %}{% if m.switch %}<li>its own ring {{ m.switch }} on {{ m.switch_server }}: {{ "runs" if m.switch_on else "stopped" }}</li>{% endif %}</ul>
+{% if not m.switch %}To switch its auto-unlock: a ring of its own in its Settings (Disk unlock, its own ring).{% endif %}</details>{% endif %}</div>{% endfor %}
 <p class="muted small">Auto-unlock off does not protect a machine that is off or stolen (a ring answers anyone who
 reaches it): <em>New keys</em> for its rings does (kiwi-server rotate ring). A machine's rings are in its Settings
 (Disk unlock). In a terminal: <code>kiwi-server unlock &lt;fleet&gt;</code>.</p>

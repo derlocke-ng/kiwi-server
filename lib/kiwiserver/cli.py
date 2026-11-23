@@ -3563,6 +3563,8 @@ def cmd_apply(args):
                 coreos_t.wait_for_ucore(h.name, tgt)    # a fresh one restarts twice by itself first
             if not args.no_run:
                 luks.swap(h, tgt)       # before the role script: its secrets must not land on a disk the old key opens
+                if h.target == "armbian" and h.cfg["armbian"].get("encrypt"):
+                    unlock.grow(h, tgt)     # before the role: its images do not fit the image's 2 GB root
             script = scripts[h.name]
             if not args.no_run and backupmod.carries_wireguard(h) and backupmod.put_back_wireguard(h, tgt):
                 util.say("%s: its WireGuard identity is back from the fleet's copy" % h.name)

@@ -912,6 +912,19 @@ def leash_script(host, wanted_tree):
     return LEASH_SCRIPT.replace("URLS", " ".join(urls)).replace("MINUTES", str(max(minutes, 5)))
 
 
+def grow(host, tgt, key=None):
+    """An encrypted board's volume to the size of its disk, once (Armbian's first start grows the
+    partition only). Before its role too: the image's root is about 2 GB, and the role's images
+    did not fit (a Rock Pi E, 23 Nov 2026)."""
+    key = key or luks.current_key(host) or luks.one_time_key(host)
+    if not key:
+        return False
+    grown = re.search(r"^grown (\d+)", remote.run(tgt, GROW_SCRIPT, (key + "\n").encode()).decode(errors="replace"), re.M)
+    if grown:
+        util.say("%s: its encrypted volume now fills its disk (%d GiB more)" % (host.name, round(int(grown.group(1)) / 1024)))
+    return bool(grown)
+
+
 def bind(host, tgt, servers, force=False):
     """Bind the disk to the host's rings; what is already right stays as it is. `force`: bound
     again even so, to the rings' keys as they are now (a ring's keys were rotated)."""
@@ -928,9 +941,7 @@ def bind(host, tgt, servers, force=False):
     if not coreos and b"removed" in remote.run(tgt, REMOVE_KEY_ONLY):
         util.say("%s: its disk opens by itself again: it restarts for updates in its window again" % host.name)
     if host.target == "armbian":        # the encrypted volume to the size of its disk, once
-        grown = re.search(r"^grown (\d+)", remote.run(tgt, GROW_SCRIPT, (key + "\n").encode()).decode(errors="replace"), re.M)
-        if grown:
-            util.say("%s: its encrypted volume now fills its disk (%d GiB more)" % (host.name, round(int(grown.group(1)) / 1024)))
+        grow(host, tgt, key)
     if forwarded(host):
         # it waits at boot for someone to forward the ring: it must not reboot unasked
         remote.run(tgt, "systemctl disable --now kiwi-reboot-if-required.timer zincati.service 2>/dev/null || true")

@@ -50,7 +50,9 @@ install -d -m 0700 -o "$U" -g "$U" "$H/.ssh"
 install -m 0600 -o "$U" -g "$U" "$D/authorized_keys" "$H/.ssh/authorized_keys"
 command -v sudo >/dev/null || apt-get -y -q install sudo
 install -m 0440 "$D/sudoers-kiwi" /etc/sudoers.d/kiwi-admin
-visudo -cq
+# our file only: a board's own file with loose permissions fails the whole check (Armbian's
+# armbian-newt-colors, 0644, 23 Nov 2026), and sudo itself reads ours anyway
+visudo -cqf /etc/sudoers.d/kiwi-admin
 install -d /etc/ssh/sshd_config.d
 grep -qi '^Include /etc/ssh/sshd_config.d/' /etc/ssh/sshd_config || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
 install -m 0644 "$D/sshd-kiwi.conf" /etc/ssh/sshd_config.d/50-kiwi.conf

@@ -42,7 +42,9 @@ L: days. New ideas go to the end of their section.
    own netinst media). M
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
 9. ~~The Devices table by site on the page, as Machines (ui.md).~~ Done (2.295.0).
-10. The client side: devices enrolled and kept by the network (bundles, the app, phones). M-L
+10. The client side: devices enrolled and kept by the network (bundles, the app, phones). The owner,
+    23 Nov 2026: his workstation's own system (Bluefin-DX, beside lemonaide's uCore on the same
+    machine) is to be managed by kiwi-server later too. M-L
 11. The agent takes orders from the control node: restart a service, update now (scale.md; the
     runbook's actions, asked for by a person). M
 12. An upgrade rehearsal drill: the previous release on a throwaway VM, data, the new one, `check`. M

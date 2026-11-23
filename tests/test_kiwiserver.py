@@ -16489,6 +16489,7 @@ class TestRecovery(Base):
         r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out2"), None, self.ms)
         r.script(f.hosts["papaya"])
         self.assertEqual(len(f.hosts["papaya"].module_settings["ai"]["allow"]), 1)
+        self.assertEqual([e for e in cli.settings_errors(self.roles, self.ms, f.hosts["papaya"]) if "ai." in e], [])
 
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]

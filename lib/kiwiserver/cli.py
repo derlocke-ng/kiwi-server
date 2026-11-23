@@ -270,6 +270,27 @@ def not_enrolled(error):
     return NOT_ENROLLED in error
 
 
+def fill_ai(host):
+    """ai.allow from ai.listen: lan, the machine's home network (from its fixed address); vpn,
+    the mesh. A machine on DHCP has no known home network: lan needs network.address."""
+    import ipaddress
+    a = host.module_settings.get("ai")
+    if a is None or a.get("allow"):
+        return
+    allow = []
+    listen = [str(x) for x in (a.get("listen") or [])]
+    if "lan" in listen:
+        addr = str((host.cfg.get("network") or {}).get("address") or "")
+        if "/" not in addr:
+            raise KiwiError("%s: ai.listen lan: the machine's home network is known from network.address "
+                            "(with its prefix, like 192.168.2.40/24)" % host.name)
+        allow.append(str(ipaddress.ip_interface(addr).network))
+    if "vpn" in listen:
+        mesh = ((host.fleet.defaults.get("master") or {}).get("mesh_subnet")) or "10.8.0.0/16"
+        allow.append(str(mesh))
+    a["allow"] = allow
+
+
 def settings_errors(roles, ms, host):
     """Resolve the host's role and module settings; the errors, as strings."""
     if host.role not in roles or host.target not in TARGETS:
@@ -285,6 +306,11 @@ def settings_errors(roles, ms, host):
     p = tls_problem(host)
     if p:
         return [p]
+    if "ai" in (host.modules or []):
+        try:
+            fill_ai(host)               # as the render fills it in, before the module's own checks
+        except KiwiError as e:
+            return [str(e)]
     return stack_errors(ms, host, role)
 
 
@@ -423,24 +449,7 @@ class Renderer:
                 rs["follow"] = bare
 
     def fill_ai(self, host):
-        """ai.allow from ai.listen: lan, the machine's home network (from its fixed address); vpn,
-        the mesh. A machine on DHCP has no known home network: lan needs network.address."""
-        import ipaddress
-        a = host.module_settings["ai"]
-        if a.get("allow"):
-            return
-        allow = []
-        listen = [str(x) for x in (a.get("listen") or [])]
-        if "lan" in listen:
-            addr = str((host.cfg.get("network") or {}).get("address") or "")
-            if "/" not in addr:
-                raise KiwiError("%s: ai.listen lan: the machine's home network is known from network.address "
-                                "(with its prefix, like 192.168.2.40/24)" % host.name)
-            allow.append(str(ipaddress.ip_interface(addr).network))
-        if "vpn" in listen:
-            mesh = ((self.fleet.defaults.get("master") or {}).get("mesh_subnet")) or "10.8.0.0/16"
-            allow.append(str(mesh))
-        a["allow"] = allow
+        fill_ai(host)
 
     def standby_endpoints(self):
         """address:WireGuard port:SSH port of the master, then of each of its standbys; [] without one."""

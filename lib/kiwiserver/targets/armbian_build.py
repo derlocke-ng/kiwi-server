@@ -6,7 +6,8 @@ and volumes, so it runs natively in one container of kiwi-server's (`kiwi-armbia
 24.04) and nothing of the builder is removed. The builder gets the board's one-time disk key, on a
 tmpfs inside the container and removed after the build (never on its disk; checked on sh3, 22 Nov
 2026: in no log or file of the build), and public keys: the fleet admin's, for the boot system's SSH
-(port 2222), where `kiwi-server unlock --manual` gives the one-time key at the first start. With a
+(port 2222: kiwi-server's unlock key), where `kiwi-server unlock --manual` gives the one-time key at
+the first start. With a
 fixed address the boot system takes it too. The rest of the fleet comes over SSH: `adopt` with the
 board's own login, then `apply`, which replaces the one-time key (luks.swap) and binds the rings.
 
@@ -84,7 +85,8 @@ def customize(host):
     if not net.get("dhcp", True) and net.get("address"):
         iface = ipaddress.ip_interface(str(net["address"]))
         gw = str(net.get("gateway") or "")
-        arg = "ip=%s::%s:%s:%s::off" % (iface.ip, gw, iface.network.netmask, host.hostname.split(".")[0])
+        dev = str(net.get("interface") or "")       # a board with two ports: the one with the cable (eth0, eth1)
+        arg = "ip=%s::%s:%s:%s:%s:off" % (iface.ip, gw, iface.network.netmask, host.hostname.split(".")[0], dev)
         lines.append("sed -i '/^extraargs=/d' /boot/armbianEnv.txt")
         lines.append("echo 'extraargs=%s' >> /boot/armbianEnv.txt" % arg)
     return "\n".join(lines) + "\n"
@@ -110,8 +112,9 @@ def image(host, out_img):
     rc, out = _ssh(builder, PREPARE % q)
     if rc != 0:
         raise KiwiError("%s: the builder %s is not ready: %s" % (host.name, builder, out.strip()[-600:]))
-    pub = util.read_text(host.fleet.resolve_path("secrets/admin_ed25519.pub")).strip()
-    for name, text, mode in (("dropbear_authorized_keys", pub + "\n", "0644"), ("customize-image.sh", customize(host), "0755")):
+    from .. import unlock
+    keys = unlock.authorized_line(host)      # kiwi-server's unlock key, as apply writes it later (22 Nov 2026: the admin's was refused)
+    for name, text, mode in (("dropbear_authorized_keys", keys.rstrip("\n") + "\n", "0644"), ("customize-image.sh", customize(host), "0755")):
         r = subprocess.run(SSH + [builder, "cat > %s && chmod %s %s" % (shlex.quote(wdir + "/userpatches/" + name), mode,
                                                                           shlex.quote(wdir + "/userpatches/" + name))],
                            input=text.encode(), capture_output=True)

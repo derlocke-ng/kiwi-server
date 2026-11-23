@@ -1609,6 +1609,7 @@ class TestArmbian(Base):
             return types.SimpleNamespace(returncode=0, stdout=out, stderr=b"")
         os.makedirs(os.path.join(self.tmp, "secrets"), exist_ok=True)
         write(os.path.join(self.tmp, "secrets", "admin_ed25519.pub"), KEY + "\n")
+        write(os.path.join(self.tmp, "secrets", "unlock_ed25519.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIUNLOCKKEY unlock\n")
         out = os.path.join(self.tmp, "out", "n2.img")
         with mock.patch.object(armbian_build.subprocess, "run", fake):
             armbian_build.image(h, out)
@@ -1620,6 +1621,17 @@ class TestArmbian(Base):
         self.assertTrue(all(once.encode() not in (i or b"") for c, i in calls if (c, i) not in sent))
         self.assertEqual(util.read_bytes(out), b"image")
         self.assertTrue(any(b"rm -f /secret/pass" in (i or b"") for _c, i in calls))
+        keys = [i for c, i in calls if "dropbear_authorized_keys" in " ".join(c)]
+        self.assertIn(b"UNLOCKKEY", keys[0])                            # the unlock key, not the admin's
+        self.assertIn(":n2:eth1:off", armbian_build.customize(self.host(
+            armbian={"board": "rockpi-e", "encrypt": True, "builder": "sh3"},
+            network={"dhcp": False, "address": "192.168.2.5/16", "gateway": "192.168.2.1", "interface": "eth1"})))
+        # Debian 13's cryptroot-unlock may time out after the disk opened: its boot system going away says so
+        answers = iter([True, True, False])
+        with mock.patch.object(unlock.remote, "_answers", lambda a, p: next(answers)), \
+                mock.patch.object(unlock.remote, "addresses", lambda host: ["192.168.2.5"]):
+            r = types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"Please unlock disk armbian-root\nError: Timeout reached while waiting for PID 169.\n")
+            self.assertTrue(unlock.type_key(h, runner=lambda *a, **k: r, sleep=lambda s: None))
 
     def test_first_boot_files(self):
         fs = armbian_t.files(self.host(), "#!/bin/bash\necho role\n")

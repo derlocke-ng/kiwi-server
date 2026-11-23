@@ -228,6 +228,30 @@ restarts. The control page has the same buttons on the machine's page,
 Services tab, **Its containers**; the app has them in the menu at each row of
 **Services**. A restart from there is in the machine's History.
 
+kiwi's own units on the machine take the same commands: the nightly update
+(`kiwi-stack-update`), the runbook (`kiwi-runbook`), the role (`kiwi-role`).
+`start` runs one that has finished once more, `logs` shows what it said:
+
+```bash
+kiwi-server service ~/kiwi/fleet.yaml papaya kiwi-stack-update logs
+kiwi-server service ~/kiwi/fleet.yaml papaya kiwi-stack-update start
+```
+
+The page lists them under **Kiwi's own units**, the app under **Services**, folded
+away unless one has failed.
+
+### What a machine remembers
+
+```bash
+kiwi-server history ~/kiwi/fleet.yaml papaya --days 30
+```
+
+The machine's own journal: every apply (which kiwi-server, from which computer),
+the nightly updates, what its runbook did, its backups and its starts. Applies
+made in a terminal are in it too, which the control node's Log does not see. The
+app's History of a machine and the page's History tab show it as **On the
+machine**.
+
 ### A shell on a machine
 
 kiwi-server reaches its machines with a key and a list of host keys of its own

@@ -771,6 +771,17 @@ stopped until you start it or the machine restarts.</p>
 <input type="hidden" name="action" value="service"><input type="hidden" name="host" value="{{ m.name }}">
 <input type="hidden" name="module" value="{{ s.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
 {% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+{% set ku = m.facts.kiwi_units or [] %}{% if ku %}{% set bad = ku | selectattr("active", "equalto", "failed") | list %}
+<details id="kiwi-units"{% if bad %} open{% endif %}><summary>Kiwi's own units: {{ ku | length }}{% if bad %},
+<span class="badge bad">{{ bad | length }} failed</span>{% else %}, none failed{% endif %}</summary>
+<p class="muted small">The update, the runbook, the role. Start runs one that has finished once more; Log shows its last lines.</p>
+<div class="scroll"><table class="tbl"><tbody>{% for u in ku %}<tr><td><b>{{ u.name }}</b></td>
+<td><span class="badge {{ 'bad' if u.active == 'failed' else 'ok' if u.active == 'active' else '' }}">{{ u.active }}</span>
+<span class="sm">{{ u.sub }}</span></td><td>{% for act, label in (("restart", "Restart"), ("start", "Start"), ("logs", "Log")) %}
+{% if not (act == "start" and u.active == "active") and not (act == "restart" and u.active != "active") %}<form class="inline" method="post" action="/run">{{ tok }}
+<input type="hidden" name="action" value="service"><input type="hidden" name="host" value="{{ m.name }}">
+<input type="hidden" name="module" value="{{ u.name }}"><input type="hidden" name="at" value="{{ act }}"><button>{{ label }}</button></form>
+{% endif %}{% endfor %}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
 {% if m.stops %}<h2 id="when">When it stops</h2><p>{{ m.stops }}</p>
 <details><summary class="muted small">Each part</summary><ul class="small">{% for r in m.parts_table %}<li>{{ r.sentence }}</li>{% endfor %}</ul>
 <p class="muted small">How much the network needs a part: <code>defaults.parts</code> in the fleet file
@@ -793,6 +804,10 @@ onsubmit="return confirm('Give {{ l.part }} to {{ l.ready_on }} now? It stops on
 <div class="actions"><button>See what would happen</button></div></form>{% endif %}{% endif %}
 {% endif %}{% if tab == "history" %}
 <p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
+{% if own is not none %}<h2>On the machine</h2><p class="muted small">What {{ m.name }} itself remembers of the last 30 days:
+applies, updates, what its runbook did, backups, starts.</p>{% for e in own[:120] %}<div class="card row"><span>{{ e.what }}</span>
+<span class="muted small">{{ e.time[:16]|replace("T", " ") }} · <span class="{{ 'bad' if e.kind == 'failed' else '' }}">{{ e.kind }}</span></span></div>
+{% else %}<p class="muted">Nothing in its journal.</p>{% endfor %}{% endif %}
 {% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
 <b>{{ verb(j.action) }}</b><span class="state {{ j.state }}">{{ jobword(j.state) }}</span></div>
 <span class="muted small">{{ (ago(j.started) ~ " ago") if j.started else "not started yet" }} · {{ j.user }}</span></a>{% endfor %}{% endif %}
@@ -2902,8 +2917,9 @@ def make_app(control: Control):
         mine = [e for e in control.audit_tail(600) if name in (e.get("hosts") or [])]
         jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
         standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
+        own = control.own_history(name) if tab == "history" else None     # what the machine itself remembers
         return page("host.html", request, "/", live=True, m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
-                    chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby,
+                    chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby, own=own,
                     targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
 
     def same_kind(m, ms):

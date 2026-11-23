@@ -49,6 +49,7 @@ if [ -n "$bt" ] && mkdir -p /run/kiwi-server 2>/dev/null && [ -w /run/kiwi-serve
 fi
 if [ -e /run/reboot-required ] || [ -e /run/ostree/staged-deployment ]; then kv reboot yes; fi
 kv failed "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
+kv kiwi_units "$(systemctl list-units --all --no-legend --plain --type=service 'kiwi-*' 2>/dev/null | awk '{print $1":"$3":"$4}' | tr '\n' ' ')"
 luks=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device 2>/dev/null | head -n 1)
 if [ -n "$luks" ]; then kv luks "$(clevis luks list -d "$luks" 2>/dev/null | wc -l)"
 elif grep -q 'coreos.liveiso=' /proc/cmdline 2>/dev/null || [ "$(findmnt -n -o FSTYPE / 2>/dev/null)" = tmpfs ]; then
@@ -335,6 +336,9 @@ def parse(data, local_now=None):
         # a game server asleep whose stop ended with an error code of its own is no failure (Zandronum)
         "failed_units": [u for u in raw.get("failed", "").split() if not _HEALTHCHECK_UNIT.match(u)
                          and u[:-len(".service")] not in {s["name"] for s in services if s["asleep"]}],
+        # kiwi's own units on the machine (the update, the runbook, the role): name, active, sub
+        "kiwi_units": [{"name": u.split(":")[0][:-len(".service")], "active": u.split(":")[1], "sub": u.split(":")[2]}
+                       for u in raw.get("kiwi_units", "").split() if u.count(":") == 2 and u.split(":")[0].endswith(".service")],
         "runtime": raw.get("runtime", ""),
         # a master: what each linked network opens to this one ({name: [names]}; None: it does not say)
         "opened": opened,
@@ -389,7 +393,7 @@ HINTS = {
     "service": "Restart it under the machine's services, and read its log there.",
     "unhealthy": "Read its log under the machine's services; a restart often helps.",
     "tunnel": "Apply the machine. If it stays, read the VPN client's log.",
-    "failed-units": "Read their log on the machine (journalctl -u NAME); a restart of the machine clears them.",
+    "failed-units": "Their log and a restart are with the machine's services (the app, the control page, or kiwi-server service FLEET MACHINE NAME logs).",
     "crash-loop": "Its log says why it stops: kiwi-server service FLEET MACHINE NAME logs. A setting, a full disk or its data.",
     "disk-full": "Remove what is not needed there, or give the machine a bigger disk.",
     "backup-store-full": "Remove old snapshots (Backups, Prune), or give the backup machine more space.",

@@ -1609,6 +1609,7 @@ class TestArmbian(Base):
             return types.SimpleNamespace(returncode=0, stdout=out, stderr=b"")
         os.makedirs(os.path.join(self.tmp, "secrets"), exist_ok=True)
         write(os.path.join(self.tmp, "secrets", "admin_ed25519.pub"), KEY + "\n")
+        write(os.path.join(self.tmp, "secrets", "unlock_ed25519.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIUNLOCKKEY unlock\n")
         out = os.path.join(self.tmp, "out", "n2.img")
         with mock.patch.object(armbian_build.subprocess, "run", fake):
             armbian_build.image(h, out)
@@ -1620,6 +1621,17 @@ class TestArmbian(Base):
         self.assertTrue(all(once.encode() not in (i or b"") for c, i in calls if (c, i) not in sent))
         self.assertEqual(util.read_bytes(out), b"image")
         self.assertTrue(any(b"rm -f /secret/pass" in (i or b"") for _c, i in calls))
+        keys = [i for c, i in calls if "dropbear_authorized_keys" in " ".join(c)]
+        self.assertIn(b"UNLOCKKEY", keys[0])                            # the unlock key, not the admin's
+        self.assertIn(":n2:eth1:off", armbian_build.customize(self.host(
+            armbian={"board": "rockpi-e", "encrypt": True, "builder": "sh3"},
+            network={"dhcp": False, "address": "192.168.2.5/16", "gateway": "192.168.2.1", "interface": "eth1"})))
+        # Debian 13's cryptroot-unlock may time out after the disk opened: its boot system going away says so
+        answers = iter([True, True, False])
+        with mock.patch.object(unlock.remote, "_answers", lambda a, p: next(answers)), \
+                mock.patch.object(unlock.remote, "addresses", lambda host: ["192.168.2.5"]):
+            r = types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"Please unlock disk armbian-root\nError: Timeout reached while waiting for PID 169.\n")
+            self.assertTrue(unlock.type_key(h, runner=lambda *a, **k: r, sleep=lambda s: None))
 
     def test_first_boot_files(self):
         fs = armbian_t.files(self.host(), "#!/bin/bash\necho role\n")
@@ -7927,8 +7939,9 @@ class TestManage(Base):
         self.assertRegex(new, r"^[a-kmnp-x2-9]{16}$")
         self.assertIn("role.sh.tmp", calls[1][0])            # the secrets come after the swap
         # no new volume key on a non-master; its disk opens with its key only: no restart for updates by itself
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         self.assertIn("kiwi-key-only", calls[2][0])
+        self.assertIn("logger -t kiwi-role", calls[3][0])
         with open(self.luks_file("key")) as fh:
             self.assertEqual(fh.read(), new)
         self.assertEqual(oct(os.stat(self.luks_file("key")).st_mode & 0o777), "0o600")
@@ -8033,9 +8046,10 @@ class TestManage(Base):
             rc, out, err = self.run_cli("apply", f.path, "sh3", "--ssh", "admin@192.168.1.7")
             self.assertEqual(rc, 0, err)
             # the role, then a look whether the starter's TPM still opens the disk (a CoreOS machine without rings)
-            self.assertEqual(calls[-2], ("stream", "admin@192.168.1.7", "bash /var/lib/kiwi-server/role.sh --force"))
-            self.assertIn("clevis luks list", calls[-1][2])
-            self.assertEqual(calls[-3][1], "admin@192.168.1.7")
+            self.assertEqual(calls[-3], ("stream", "admin@192.168.1.7", "bash /var/lib/kiwi-server/role.sh --force"))
+            self.assertIn("clevis luks list", calls[-2][2])
+            self.assertIn("logger -t kiwi-role 'applied: kiwi-server ", calls[-1][2])      # its History (kiwi-server history)
+            self.assertEqual(calls[-4][1], "admin@192.168.1.7")
             self.assertIn("sh3: applied", out)
             rc, out, err = self.run_cli("apply", f.path, "--ssh", "x@y")
             self.assertEqual(rc, 1)
@@ -9663,6 +9677,40 @@ peers=4 3
 
     def test_a_healthcheck_that_is_starting_is_not_a_failed_unit(self):
         self.assertEqual(facts.parse(self.SAMPLE)["failed_units"], ["kiwi-backup.service"])
+
+    def test_kiwis_own_units_are_listed_and_can_be_run_again(self):
+        """The owner, 23 Nov 2026: the update unit failed, and nothing showed it as a service to
+        restart or its log."""
+        f = facts.parse("now=1\nkiwi_units=kiwi-stack-update.service:failed:failed kiwi-runbook.service:inactive:dead "
+                        "kiwi-runbook.timer:active:waiting junk\n")
+        self.assertEqual(f["kiwi_units"], [{"name": "kiwi-stack-update", "active": "failed", "sub": "failed"},
+                                           {"name": "kiwi-runbook", "active": "inactive", "sub": "dead"}])
+        for name in ("kiwi-stack-update", "kn-nginx", "km-vpn-client"):
+            self.assertIn('n=%s' % name, cli.service_script(name, "logs"))
+        for bad in ("sshd", "kiwi stack", "kiwi-", "../x"):
+            with self.assertRaises(KiwiError):
+                cli.service_script(bad, "start")
+
+    def test_a_machines_own_history(self):
+        """kiwi-server history: what the machine's journal says, newest first (the owner, 23 Nov 2026:
+        "history is nearly empty everywhere")."""
+        out = "\n".join([
+            "J 2026-11-22T00:09:16+01:00 medlar.home systemd[1]: Failed to start kiwi-stack-update.service - Kiwi Server: pull",
+            "J 2026-11-23T02:40:01+01:00 medlar.home systemd[1]: Finished kiwi-stack-update.service - Kiwi Server: pull",
+            "J 2026-11-22T03:02:20+01:00 medlar.home systemd[1]: Finished kn-backup.service - Kiwi Network: backup",
+            "J 2026-11-21T08:17:15+01:00 quince.home kiwi-runbook[224463]: kn-portainer was down for 61 s: restarted",
+            "J 2026-11-21T08:08:01+01:00 quince.home kiwi-runbook[1]: /usr/local/sbin/kiwi-runbook: line 64: [: : integer expected",
+            "J 2026-11-23T02:41:00+01:00 medlar.home kiwi-role[9]: applied: kiwi-server 2.305.0, from desk",
+            "J 2026-11-23T02:41:00+01:00 medlar.home systemd[1]: Started something else",
+            "B  -1 35d313c887294c979d33eef595c204ca Sat 2026-11-21 03:02:37 CET Sat 2026-11-21 05:03:53 CET",
+            "garbage"])
+        got = cli.history_entries(out)
+        self.assertEqual([e["kind"] for e in got], ["apply", "update", "backup", "failed", "runbook", "failed", "boot"])
+        self.assertEqual(got[0]["what"], "applied: kiwi-server 2.305.0, from desk")
+        self.assertEqual(got[1]["what"], "the nightly update ran")
+        self.assertEqual(got[3]["what"], "the nightly update failed")
+        self.assertEqual(got[-1], {"time": "2026-11-21T03:02:37", "what": "started", "kind": "boot"})
+        self.assertIn("d=30\njournalctl --since \"-${d}d\"", cli.HISTORY_SCRIPT % {"days": 30})
 
     def test_what_is_wrong_is_said(self):
         f = facts.parse(self.SAMPLE, local_now=1000)

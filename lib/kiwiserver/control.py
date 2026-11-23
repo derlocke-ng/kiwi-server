@@ -1056,6 +1056,18 @@ class Control:
         with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a") as fh:
             fh.write(json.dumps(line) + "\n")
 
+    def own_history(self, name, days=30):
+        """What a machine itself remembers (kiwi-server history): [{time, what, kind}], None when it
+        does not answer or the store is locked."""
+        if self.locked():
+            return None
+        try:
+            r = subprocess.run(list(self.kiwi) + ["history", self.fleet_path, name, "--days", str(days), "--porcelain"],
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir, timeout=60)
+            return json.loads(r.stdout.strip().splitlines()[-1])["entries"] if r.returncode == 0 and r.stdout.strip() else None
+        except (subprocess.TimeoutExpired, ValueError, IndexError, KeyError):
+            return None
+
     def audit_tail(self, n=50):
         path = os.path.join(self.dir, "audit.jsonl")
         if not os.path.isfile(path):

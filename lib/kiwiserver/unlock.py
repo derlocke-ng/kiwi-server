@@ -1087,6 +1087,16 @@ def _as_new_installation(host, address, port, runner):
         return runner(argv, input=once.encode(), capture_output=True)
 
 
+def _goes_away(address, port, clock=time.monotonic, sleep=time.sleep, within=60):
+    """The boot system's SSH stops answering within a minute: it has handed over to the system."""
+    end = clock() + within
+    while clock() < end:
+        if not remote._answers(address, port):
+            return True
+        sleep(3)
+    return False
+
+
 def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, clock=time.monotonic, sleep=time.sleep):
     """The disk's key, handed to the initramfs over SSH, for when no ring can help. It goes
     on stdin without a line end: Debian passes stdin to cryptsetup as it is."""
@@ -1112,6 +1122,12 @@ def type_key(host, address=None, port=None, timeout=300, runner=subprocess.run, 
                 last = _last_words(r)
                 continue
             said = r.stderr.decode(errors="replace").strip().splitlines()[-1:] or ["no message"]
+            # Debian 13's cryptroot-unlock can give up waiting for its own helper after the disk
+            # opened (an Armbian board, 23 Nov 2026: "Timeout reached while waiting for PID"):
+            # a boot system that goes away has opened the disk
+            if "Timeout reached" in said[0] and _goes_away(a, sshport, clock, sleep):
+                util.say("%s: the disk is open; the machine goes on booting" % host.name)
+                return True
             raise KiwiError("%s: the initramfs did not take the key (%s) — it counts tries; see the console before trying again" % (host.name, said[0]))
         sleep(3)
     raise KiwiError("%s: no initramfs answered within %d s%s" % (host.name, timeout, " (ssh: %s)" % last if last else ""))

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.305.0 — what a machine remembers, and its own units
+
+The owner, 23 Nov 2026: failed update units that could not be restarted or read, a History that
+was nearly empty, a refresh that reset the view.
+
+- **`kiwi-server history FLEET MACHINE`**: what the machine's own journal says of the last days:
+  every apply (each now writes a line: which kiwi-server, from which computer), the nightly
+  updates, what its runbook did, its backups and starts. The app's History and the page's History
+  tab show it as "On the machine", next to the control node's log.
+- **kiwi's own units as services**: `kiwi-server service` takes `kiwi-stack-update`,
+  `kiwi-runbook`, `kiwi-role`, … too (start runs one again, logs shows it). The app and the page
+  list them, folded away unless one failed. The failed update units of 22 Nov were the bug
+  2.300.0 fixed; they ran again on medlar, lychee, papaya and sorbet.
+- **The app keeps the view on a refresh**: open sections stay open, the scroll stays.
+- **Encrypted boards built by kiwi-server** (2.303.0) get kiwi-server's unlock key in their boot
+  system (the admin's was refused), the port by `network.interface` (a board with two ports), and an
+  unlock that times out after the disk opened counts as done (Debian 13's `cryptroot-unlock`).
+- docs/design/ai.md: the owner's workstation for the local AI.
+
 ## 2.304.0 — another exit every day, a ring on a small board
 
 - **vpn-client `reconnect`** (kiwi-modules 0.122.0): `reconnect: "07:00"` connects the VPN client

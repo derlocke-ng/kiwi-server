@@ -10863,7 +10863,7 @@ class TestLogins(Base):
         self.assertEqual([x["site"] for x in modules["downloader"]], ["dl", "jd"])
         self.assertEqual(modules["tor"], [])
         self.assertEqual(sorted(n for n, x in modules.items() if x), [
-            "accounts", "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
+            "accounts", "ai", "btcpay", "cloud", "control", "dns", "downloader", "git", "immich", "opencloud", "paperless", "portainer", "sftp", "vault", "vpn-server", "xmpp"])
 
 
 class TestControl(StoreBase):

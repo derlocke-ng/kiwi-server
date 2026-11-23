@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.306.3 — the local AI's login is listed
+
+- `kiwi-server logins`, the control page and the app list Studio's login (user `unsloth`)
+  on a machine with the ai module (kiwi-modules 0.123.4).
+
 ## 2.306.2 — a lean gateway; the cache serves no empty layers
 
 - **The local AI starts** (kiwi-modules 0.123.3): the Studio image for AMD cards, Studio started

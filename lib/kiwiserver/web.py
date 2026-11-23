@@ -1659,6 +1659,9 @@ back by itself after a power cut.</p>
 name="opens" value="{{ 'by-a-person' if m.auto else 'by-itself' }}"><button>{{ "Switch auto-unlock off" if m.auto else
 "Switch auto-unlock on" }}</button></form> <span class="muted small">an apply of {{ m.name }}: its rings are
 {{ "unbound; it waits for its key or Unlock" if m.auto else "bound again" }}</span>
+{% if m.can_window %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="window">
+<input type="hidden" name="host" value="{{ m.name }}"><button>Opens by itself for {{ m.window }} minutes</button></form>
+<span class="muted small">then restart it: if it waits at boot meanwhile, the control node types its key</span>{% endif %}
 <ul class="small">{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
 {{ r.path }}{% endif %}</li>{% endfor %}</ul>
 <p class="small"><span class="dot {{ 'warn' if m.power_cut == 'waits' or m.needs else 'ok' }}"></span>After a power cut:

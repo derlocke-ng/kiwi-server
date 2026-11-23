@@ -166,6 +166,9 @@ DEFAULTS = {
         # how it opens (docs/design/unlock.md): by-itself, its rings open it; by-a-person, its rings
         # stay named but are not bound, and it waits for its key or Open now (auto-unlock off)
         "opens": "by-itself",
+        # with auto-unlock off: how long "opens by itself for a while" lasts, in minutes (the
+        # control node opens it with its key if it waits at boot meanwhile; the owner's 5 minutes)
+        "window": 5,
         "via": {},        # ring -> URL, where the LAN is not the way to it
         "ssh": False,     # an SSH server in the initramfs, for `kiwi-server unlock`
         "ssh_from": [],   # where it may be used from (CoreOS only: Dropbear has no from=)

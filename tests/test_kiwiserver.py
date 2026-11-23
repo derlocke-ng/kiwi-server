@@ -9545,6 +9545,26 @@ class TestWatchdog(unittest.TestCase):
         self.assertIn("nothing was done", ev[0]["text"])
         self.assertEqual(state.get("acted", {}).get("gate"), [])
 
+    def test_auto_unlock_off_waits_for_a_person_except_in_its_window(self):
+        """unlock.opens: by-a-person (the owner, 23 Nov 2026): the watchdog does not open it, only within
+        the minutes Opens by itself for a while gave it."""
+        f, state, done = self.fleet(master={"after": 5, "do": "restart"}), {}, []
+        f.hosts["gate"].cfg["unlock"] = dict(f.hosts["gate"].cfg.get("unlock") or {}, rings=["infra"], opens="by-a-person", ssh=True)
+
+        def step(now):
+            return watchdogmod.step(f, {"gate": "master"}, {"gate": False}, state, now,
+                                    lambda n: self.fail("not restarted"), None, {"gate": True}, done.append)
+        ev = step(self.NOW)
+        self.assertEqual(([e["kind"] for e in ev], done), (["locked"], []))
+        self.assertIn("auto-unlock is off for it", ev[0]["text"])
+        state["unlock_windows"] = {"gate": self.NOW + 300}               # Opens by itself for 5 minutes
+        ev = step(self.NOW + 60)
+        self.assertEqual(([e["kind"] for e in ev], done), (["unlocked"], ["gate"]))
+        done.clear()
+        state["opened"] = {}
+        ev = step(self.NOW + 400)                                           # the window is over
+        self.assertEqual(([e["kind"] for e in ev], done), (["locked"], []))
+
     def test_a_disk_that_waits_at_boot_is_opened_and_not_counted_as_gone(self):
         f, state, done = self.fleet(master={"after": 5, "do": "restart"}), {"gone": {"gate": self.NOW - 900}}, []
 
@@ -16677,6 +16697,21 @@ class TestRecovery(Base):
         self.assertTrue(unlock.wanted(self.network().hosts["papaya"]))                   # the default: by itself
         bad = self.network(papaya=dict(pap, unlock=dict(pap["unlock"], opens="sometimes")))
         self.assertIn("unlock.opens is by-itself or by-a-person", " ".join(bad.hosts["papaya"].validate(self.roles)))
+
+    def test_a_window_is_written_for_a_machine_with_auto_unlock_off(self):
+        """kiwi-server unlock FLEET HOST --window: its unlock.window minutes in the fleet's state, for the watchdog."""
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        f = self.network(papaya=dict(pap, unlock=dict(pap["unlock"], opens="by-a-person", ssh=True, window=7)))
+        before = time.time()
+        rc, out, err = self.run_cli("unlock", f.path, "papaya", "--window")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("opens by itself for the next 7 minutes", err + out)
+        until = cli.fleet_state(config.Fleet.load(f.path))["unlock_windows"]["papaya"]
+        self.assertTrue(before + 7 * 60 - 5 < until < time.time() + 7 * 60 + 5)
+        rc, _out, err = self.run_cli("unlock", self.network().path, "papaya", "--window")      # auto-unlock on: no window
+        self.assertNotEqual(rc, 0)
+        self.assertIn("opens by itself already", err)
 
     def test_three_two_one_two_copies_one_elsewhere(self):
         rep, checks = self.report(self.network())

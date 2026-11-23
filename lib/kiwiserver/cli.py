@@ -311,6 +311,8 @@ def settings_errors(roles, ms, host):
             fill_ai(host)               # as the render fills it in, before the module's own checks
         except KiwiError as e:
             return [str(e)]
+    if "backup-server" in (host.modules or []):
+        host.module_settings["backup-server"]["clients"] = backup_clients_of(host)
     return stack_errors(ms, host, role)
 
 
@@ -803,6 +805,8 @@ class Renderer:
             self.fill_vip(host)     # the site's moving address: its pair, password, checks (basics-twice.md)
         if "ai" in host.modules:
             self.fill_ai(host)      # who reaches the local AI: its LAN, the VPN (docs/design/ai.md)
+        if "backup-server" in host.modules:
+            host.module_settings["backup-server"]["clients"] = backup_clients_of(host)
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
@@ -1756,8 +1760,30 @@ def record_applied(fleet, *names, only_new=False):
             raise
 
 
+def _modules_of(host):
+    """The resolved module list, or the written one before the settings are resolved."""
+    return host.modules or list(host.role_settings_raw.get("modules") or [])
+
+
 def _backup_clients(host):
-    return sorted((host.role_settings_raw.get("backup-server") or {}).get("clients") or [])
+    if "backup-server" not in _modules_of(host) and "backup-server" not in host.role_settings_raw:
+        return []
+    return backup_clients_of(host)
+
+
+def backup_clients_of(host):
+    """Whose backups this server takes: its clients list, and every machine whose backup.servers
+    names it (rockpi backed up to lychee, which did not list it: 401 every night, 23 Nov 2026)."""
+    raw = host.role_settings_raw.get("backup-server") or {}
+    url = "https://" + str(raw.get("backup_domain") or "backup." + host.hostname)
+    out = set(str(c) for c in raw.get("clients") or [])
+    for x in host.fleet.hosts.values():
+        if x is host or "backup" not in _modules_of(x):
+            continue
+        servers = [str(s).rstrip("/") for s in ((x.role_settings_raw.get("backup") or {}).get("servers") or [])]
+        if url in servers:
+            out.add(x.hostname)
+    return sorted(out)
 
 
 def record_backup_clients(fleet, host):

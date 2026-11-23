@@ -9716,6 +9716,22 @@ peers=4 3
         self.assertEqual(got[-1], {"time": "2026-11-21T03:02:37", "what": "started", "kind": "boot"})
         self.assertIn("d=30\njournalctl --since \"-${d}d\"", cli.HISTORY_SCRIPT % {"days": 30})
 
+    def test_a_missing_secure_boot_certificate_is_said_with_its_way_out(self):
+        """bootloader-update failed because Secure Boot's db lacks Microsoft's 2023 UEFI CA (lemonaide,
+        23 Nov 2026): its own warning with fwupd's way out, not a bare failed unit."""
+        sample = self.SAMPLE.replace(
+            "failed=012c89533cccbc4fbd60eadec0d1bb3f13f79eb7ab9b218f8f8a4c02bbdefb94-7ee2adc215a743d0.service kiwi-backup.service",
+            "failed=bootloader-update.service\nsecureboot_ca=missing")
+        f = facts.parse(sample, local_now=1000)
+        self.assertEqual(f["failed_units"], [])
+        _state, problems, _notes = facts.assess(f)
+        p = next(x for x in problems if x["key"] == "secureboot-ca")
+        self.assertIn("lacks Microsoft's 2023 UEFI certificate", p["text"])
+        self.assertIn("fwupdmgr update", p["hint"])
+        # failed for another reason: still a failed unit
+        f = facts.parse(sample.replace("secureboot_ca=missing", "secureboot_ca="), local_now=1000)
+        self.assertEqual(f["failed_units"], ["bootloader-update.service"])
+
     def test_what_is_wrong_is_said(self):
         f = facts.parse(self.SAMPLE, local_now=1000)
         state, problems, notes = facts.assess(f)
@@ -16473,6 +16489,21 @@ class TestRecovery(Base):
             relay = b.compose["services"]["kn-dhcphelper"]
             self.assertEqual(relay["command"], ["/kiwi/follow.sh"])
             self.assertIn('VIP="192.168.2.70"', b.files["kn-dhcphelper/follow.sh"][0])
+
+    def test_a_backup_server_takes_every_machine_that_backs_up_to_it(self):
+        """backup-server.clients: what is written, and every machine whose backup.servers names the
+        server (rockpi was not listed on lychee: 401 every night, 23 Nov 2026)."""
+        net = self.network()
+        hosts = net.raw["hosts"]
+        server = next(n for n, h in hosts.items() if "backup-server" in ((h.get(h.get("role", "node")) or {}).get("modules") or []))
+        other = next(n for n, h in hosts.items() if n != server and h.get("role", "node") == "node")
+        oh = hosts[other]
+        block = dict(oh["node"], modules=sorted(set(oh["node"].get("modules") or []) | {"backup"}),
+                     backup={"servers": ["https://backup.%s.home" % server]})
+        f = self.network(**{other: dict(oh, node=block)})
+        got = cli.backup_clients_of(f.hosts[server])
+        self.assertIn(f.hosts[other].hostname, got)
+        self.assertEqual(cli._backup_clients(f.hosts[server]), got)       # the bookkeeping sees it too
 
     def test_the_local_ai_is_reached_from_the_lan_and_the_vpn_only(self):
         """ai.listen (docs/design/ai.md): kiwi-server fills in the machine's home network and the mesh."""

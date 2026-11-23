@@ -1899,7 +1899,7 @@ class TestModules(Base):
 
     def test_loader_and_resolution(self):
         ms = self.ms
-        self.assertEqual(len(ms.names()), 34)
+        self.assertEqual(len(ms.names()), 35)
         self.assertEqual(ms.resolve(["cloud"]), ["vpn-client", "reverse-proxy", "cloud"])
         self.assertEqual(ms.resolve(["dhcp-relay"]), ["dns", "dhcp-relay"])
         with self.assertRaises(KiwiError):
@@ -10337,7 +10337,7 @@ class TestCli(Base):
         self.assertEqual(data["base"], json.loads(json.dumps(formmod.BASE_GROUPS)))
         self.assertEqual(data["base"][0][1][0]["path"], ["hostname"])
         rc, out, _ = self.run_cli("modules", "--porcelain")
-        self.assertEqual(len(json.loads(out)["modules"]), 34)
+        self.assertEqual(len(json.loads(out)["modules"]), 35)
         rc, out, _ = self.run_cli("targets", "--porcelain")
         self.assertEqual(set(json.loads(out)["targets"]), {"coreos", "ucore", "debian", "armbian", "coreos-ram"})
 

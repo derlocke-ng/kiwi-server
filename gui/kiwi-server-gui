@@ -3644,11 +3644,44 @@ class Column:
         self.widget = Gtk.ScrolledWindow(child=self.clamp, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
     def show(self, children):
+        # what was open stays open, and the page stays where it was scrolled to (the owner, 23 Nov
+        # 2026: a refresh of a machine's overview reset the view)
+        adj = self.widget.get_vadjustment()
+        top = adj.get_value()
+        opened = _expanded(self.clamp.get_child())
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24, margin_top=18, margin_bottom=30,
                       margin_start=14, margin_end=14)
         for c in children:
             box.append(c)
+        if opened:
+            _expanded(box, opened)
         self.clamp.set_child(box)
+        if top:
+            def back():
+                adj.set_value(min(top, max(0.0, adj.get_upper() - adj.get_page_size())))
+                return False
+            GLib.idle_add(back)
+
+
+def _expanded(widget, open_these=None):
+    """The titles of the expander rows that are open below `widget`; with `open_these`, opens
+    those rows instead."""
+    found = set()
+    stack = [widget] if widget is not None else []
+    while stack:
+        w = stack.pop()
+        if isinstance(w, Adw.ExpanderRow):
+            title = w.get_title()
+            if open_these is None:
+                if w.get_expanded():
+                    found.add(title)
+            elif title in open_these:
+                w.set_expanded(True)
+        child = w.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return found
 
 
 class OverviewRow(Gtk.ListBoxRow):
@@ -6457,6 +6490,22 @@ class Window(Adw.ApplicationWindow):
             if host and s.get("stack"):
                 row.add_suffix(self.service_menu(host, s))
             g.add(row)
+        units = f.get("kiwi_units") or []
+        if units:       # kiwi's own: the update, the runbook, the role (start runs a oneshot once more)
+            bad = [u for u in units if u["active"] == "failed"]
+            more = Adw.ExpanderRow(title="Kiwi's own units",
+                                   subtitle=("%d failed: %s" % (len(bad), ", ".join(u["name"] for u in bad))) if bad
+                                   else "%d, none failed" % len(units), expanded=bool(bad))
+            more.add_prefix(dot("bad" if bad else "ok"))
+            for u in units:
+                kind = "bad" if u["active"] == "failed" else "ok" if u["active"] == "active" else "dim"
+                row = plain_row(u["name"], u["sub"] or u["active"])
+                row.add_prefix(dot(kind if kind != "dim" else "ok"))
+                row.add_suffix(pill(u["active"], kind if kind != "ok" else "dim"))
+                if host:
+                    row.add_suffix(self.service_menu(host, {"name": u["name"], "running": u["active"] == "active"}))
+                more.add_row(row)
+            g.add(more)
         return g
 
     def network_group(self, name, st, live, f):

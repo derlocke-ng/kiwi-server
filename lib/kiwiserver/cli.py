@@ -5505,16 +5505,20 @@ def cmd_onion(args):
     util.say("bring it to the machine: kiwi-server apply %s %s" % (typed_path(fleet.path), host.name))
 
 
-SERVICE_NAME = re.compile(r"^k[nm]-[a-z0-9][a-z0-9-]{0,40}$")
+# a container of the stack (kn-…, km-…), or one of kiwi's own units on the machine (kiwi-stack-update,
+# kiwi-runbook, kiwi-role, …): the owner, 23 Nov 2026, "services like the update thingy we don't see and
+# can't restart"
+SERVICE_NAME = re.compile(r"^(k[nm]-[a-z0-9][a-z0-9-]{0,40}|kiwi-[a-z0-9][a-z0-9-]{0,40})$")
 SERVICE_ACTIONS = ("restart", "stop", "start", "logs")
 
 
 def service_script(name, action, lines=200):
     """What runs on the machine for one service of its stack: restart, stop, start, or its last
-    lines of log. Only a container of the stack (kn-…, km-…): a podman machine runs each as its
-    own systemd unit (kiwi-stack's quadlets), a docker one as a container."""
+    lines of log. A container of the stack (kn-…, km-…: a podman machine runs each as its own
+    systemd unit, kiwi-stack's quadlets; a docker one as a container), or one of kiwi's own units
+    (kiwi-…: the update, the runbook, the role); start runs a oneshot unit once more."""
     if not SERVICE_NAME.match(name or ""):
-        raise KiwiError("%r is not a service of a stack (its container's name, like kn-nginx)" % name)
+        raise KiwiError("%r is not a service of a stack (its container's name, like kn-nginx, or kiwi-stack-update)" % name)
     if action not in SERVICE_ACTIONS:
         raise KiwiError("restart, stop, start or logs")
     lines = max(1, min(int(lines), 2000))

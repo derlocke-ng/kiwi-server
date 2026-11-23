@@ -9676,6 +9676,19 @@ peers=4 3
     def test_a_healthcheck_that_is_starting_is_not_a_failed_unit(self):
         self.assertEqual(facts.parse(self.SAMPLE)["failed_units"], ["kiwi-backup.service"])
 
+    def test_kiwis_own_units_are_listed_and_can_be_run_again(self):
+        """The owner, 23 Nov 2026: the update unit failed, and nothing showed it as a service to
+        restart or its log."""
+        f = facts.parse("now=1\nkiwi_units=kiwi-stack-update.service:failed:failed kiwi-runbook.service:inactive:dead "
+                        "kiwi-runbook.timer:active:waiting junk\n")
+        self.assertEqual(f["kiwi_units"], [{"name": "kiwi-stack-update", "active": "failed", "sub": "failed"},
+                                           {"name": "kiwi-runbook", "active": "inactive", "sub": "dead"}])
+        for name in ("kiwi-stack-update", "kn-nginx", "km-vpn-client"):
+            self.assertIn('n=%s' % name, cli.service_script(name, "logs"))
+        for bad in ("sshd", "kiwi stack", "kiwi-", "../x"):
+            with self.assertRaises(KiwiError):
+                cli.service_script(bad, "start")
+
     def test_what_is_wrong_is_said(self):
         f = facts.parse(self.SAMPLE, local_now=1000)
         state, problems, notes = facts.assess(f)

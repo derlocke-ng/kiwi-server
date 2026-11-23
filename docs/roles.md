@@ -449,8 +449,8 @@ desk:
 - `gpu`: `amd` (the ROCm image; Radeon RX 6000 to 9000) or `nvidia` (the CUDA image).
 - `listen`: `lan`, `vpn` or both. `lan` takes the home network from the machine's fixed address.
 - Studio's login is `unsloth` with a password from the seed (`kiwi-server logins`). Its own tools
-  (web search, running code) cannot be switched off in its container; they run inside it, which
-  sees the models and its own data only.
+  (web search, running code) are off; `tools: true` lets each chat switch them on. Never a
+  Cloudflare tunnel, and no JupyterLab.
 - The API key is made on its page (Settings, API) and shown once:
 
 ```bash

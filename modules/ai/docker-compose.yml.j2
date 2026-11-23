@@ -3,6 +3,14 @@ services:
   {{ container_prefix }}-ai:
     image: {{ ai_image }}
     container_name: {{ container_prefix }}-ai
+    # Studio alone, not the image's launcher: that one starts JupyterLab too (code as root in
+    # the container) and cannot switch Studio's tools off. No Cloudflare tunnel, ever, not even
+    # when its page's "Remote access" asks. The initial password only while none is stored:
+    # Studio refuses to start when handed one later.
+    command:
+      - sh
+      - -c
+      - "if unsloth-studio-run --stored; then unset UNSLOTH_STUDIO_PASSWORD; fi; exec /opt/unsloth-studio/bin/unsloth studio -H 0.0.0.0 -p 8000 --no-cloudflare{{ '' if tools else ' --disable-tools' }}"
     environment:
       - TZ={{ timezone }}
       - UNSLOTH_STUDIO_PORT=8000

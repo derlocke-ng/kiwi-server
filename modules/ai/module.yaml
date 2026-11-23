@@ -25,7 +25,7 @@ templates:
 
 derived:
   ai_host: "ai.{{ hostname }}"
-  ai_image: "{{ image or ('docker.io/unsloth/unsloth-rocm:latest' if gpu == 'amd' else 'docker.io/unsloth/unsloth:latest') }}"
+  ai_image: "{{ image or ('docker.io/unsloth/unsloth-rocm:studio' if gpu == 'amd' else 'docker.io/unsloth/unsloth:latest') }}"
   models_path: "{{ models_dir or docker_dir ~ '/' ~ container_prefix ~ '-ai/models' }}"
   # who reaches the page and the API: the addresses kiwi-server fills in from ai.listen (lan, vpn)
   ai_allow: "{% for c in allow %}allow {{ c }}; {% endfor %}deny all;"
@@ -66,14 +66,19 @@ settings:
   - key: gpu
     type: enum
     label: Graphics card
-    help: "amd: the ROCm image (/dev/kfd and /dev/dri go into the container; Radeon RX 6000 to 9000, ROCm 7.2). nvidia: the CUDA image (the NVIDIA container toolkit on the machine)."
+    help: "amd: the ROCm image with Studio (unsloth-rocm:studio; /dev/kfd and /dev/dri go into the container; Radeon RX 6000 to 9000, ROCm 7.2). nvidia: the CUDA image (the NVIDIA container toolkit on the machine)."
     options: [amd, nvidia]
     default: amd
   - key: listen
     type: list
     label: Reachable from
-    help: "lan: the machine's home network; vpn: the VPN's devices. Either or both; never public, never through Tor. Studio's own tools (web search, running code) cannot be switched off in its container: they run inside it, which sees nothing of the machine but the models and its own data."
+    help: "lan: the machine's home network; vpn: the VPN's devices. Either or both; never public, never through Tor."
     default: [lan, vpn]
+  - key: tools
+    type: bool
+    label: Studio's own tools
+    help: "Web search and running code inside its container, per chat. Off: switched off for every request (--disable-tools)."
+    default: false
   - key: allow
     type: list
     group: Advanced

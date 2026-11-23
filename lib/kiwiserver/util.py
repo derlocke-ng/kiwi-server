@@ -92,11 +92,27 @@ def settle(tmp, path):
         os.close(d)
 
 
+def guard_store_dir(d):
+    """Never make the secret store's folder on disk: with the store locked its link is gone, and
+    a write into secrets/ made a plain folder beside secrets.age (an apply that outlived the
+    idle lock, 23 Nov 2026). Any folder still to be made whose name plus .age exists is it."""
+    d = os.path.abspath(d)
+    while d and not os.path.lexists(d):
+        if os.path.exists(d + ".age"):
+            raise KiwiError("the secret store is locked: kiwi-server secrets unlock <fleet> (nothing was written to %s)"
+                            % d)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+
+
 def _write(path, data, mode, binary):
     if os.path.islink(path):        # the file the link names: a control node's fleet file is a
         path = os.path.realpath(path)   # link into RAM, and a copy beside the link would be on disk
     d = os.path.dirname(path)
     if d:
+        guard_store_dir(d)
         os.makedirs(d, exist_ok=True)
     tmp = tmp_name(path)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)

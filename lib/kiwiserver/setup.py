@@ -494,9 +494,7 @@ def questions(found=None):
                                      {"value": "debian", "label": "Debian 13"}]},
                         {"id": "disk", "label": "Its disk", "default": "auto", "advanced": True,
                          "help": "auto: the install finds the machine's one disk. A device like /dev/nvme0n1 when it has "
-                                 "several. Everything on it is erased."},
-                        {"id": "download_dir", "label": "Where downloads go", "default": "/home/user/downloads",
-                         "when": "preset == 'gateway'", "advanced": True}]}]},
+                                 "several. Everything on it is erased."}]}]},
         {"step": "Your keys", "id": "keys",
          "intro": "Kiwi Server now makes every key and password of your network and keeps them encrypted on this "
                   "computer. You get a recovery key, shown once: write it down. It is the way back in if this "
@@ -731,8 +729,6 @@ def make(answers, fleet_dir):
             node["vpn"] = False
             if not [x for x in hosts.values() if "dns" in x["node"].get("modules", [])]:
                 node["modules"] = ["dns"] + [x for x in preset_modules(node["preset"]) if x not in ("vpn-client", "dns")]
-        if node["preset"] == "gateway":
-            node["downloader"] = {"download_dir": n.get("download_dir") or "/home/user/downloads"}
         h = {"role": "node", "target": n.get("target") or "ucore", "disk": n.get("disk") or "auto", "node": node}
         if n.get("address"):
             address = str(n["address"]) if "/" in str(n["address"]) else "%s/%d" % (n["address"], prefix)

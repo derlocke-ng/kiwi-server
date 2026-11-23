@@ -120,11 +120,11 @@ hosts:
       #   mullvad_socks: false            # on in the master preset: Mullvad's SOCKS5 proxies by name,
       #                                   # de-fra-001.mullvad.home, refreshed every 6 hours
 
-  # a kiwi-node in gateway mode on uCore: LAN gateway + download station
+  # a kiwi-node in gateway mode on uCore: the LAN's gateway
   m1:
     role: node
     node:
-      preset: gateway                     # vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
+      preset: gateway                     # vpn-client, dns, dhcp-relay, reverse-proxy, gateway, portainer
       # vpn_ip: 10.8.0.6                  # its mesh address — taken from the WireGuard config's Address
       # master_ip: 10.8.0.1               # the master's Pi-hole is this node's DNS upstream — taken from the fleet's master
       pub_iface: eth0                     # the LAN side
@@ -137,8 +137,10 @@ hosts:
       #   dhcp_start: 192.168.1.100       # the broadcasts to it); turn the router's DHCP off
       #   dhcp_end: 192.168.1.250
       #   dhcp_router: 192.168.1.1        # or this machine's LAN address: LAN -> VPN for everyone
-      downloader:
-        download_dir: /mnt/data/downloads
+      # downloads and SFTP are not in a gateway: add the modules where wanted, e.g.
+      # modules: [vpn-client, dns, dhcp-relay, reverse-proxy, gateway, portainer, downloader, sftp]
+      # downloader:
+      #   download_dir: /mnt/data/downloads
 
   # a kiwi-node in cloud mode on uCore (hci): Nextcloud + Vaultwarden.
   # Containers run as podman quadlets (systemd units) unless runtime: docker is set.

@@ -9,6 +9,11 @@ services:
       - REGISTRY_PROXY_REMOTEURL={{ remotes[r] }}
       - REGISTRY_STORAGE_DELETE_ENABLED=true
       - REGISTRY_LOG_LEVEL=warn
+      # no in-memory descriptor cache: when a layer that several images share expires, the
+      # registry deletes its data for all of them, and that cache still said it was there, so
+      # the mirror served it empty (nginx on a new machine, 23 Nov 2026). Without it the mirror
+      # looks on its disk and fetches a missing layer again. Any value but inmemory/redis is off.
+      - REGISTRY_STORAGE_CACHE_BLOBDESCRIPTOR=off
     networks:
       {{ network_name }}: {}
     restart: unless-stopped

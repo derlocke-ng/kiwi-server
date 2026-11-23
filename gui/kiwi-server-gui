@@ -6943,7 +6943,7 @@ class Window(Adw.ApplicationWindow):
     # ---- hosts ----
     # what a machine at home does, as the first run asks it (kiwi-server's setup.PRESETS)
     PRESETS = (("cloud", "Keep my files, photos and passwords"),
-               ("gateway", "Be my home's ad blocker, VPN gateway and download station"),
+               ("gateway", "Be my home's ad blocker and VPN gateway"),
                ("minimal", "Nothing yet: only its place on the VPN"))
 
     def take_in_dialog(self):

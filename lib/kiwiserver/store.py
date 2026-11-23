@@ -577,6 +577,26 @@ def touch(store, fleet_path):
         pass
 
 
+_KEEPER = []
+
+
+def keep_open(store, fleet_path, every=300):
+    """While this process runs, the idle timer starts anew every few minutes: a command that
+    runs longer than the idle time (an apply pulling a big image) is not left without its
+    secrets halfway. Once per process; the thread ends with it."""
+    if _KEEPER:
+        return
+    import threading
+
+    def loop():
+        while True:
+            time.sleep(every)
+            touch(store, fleet_path)
+    th = threading.Thread(target=loop, name="kiwi-store-keep-open", daemon=True)
+    _KEEPER.append(th)
+    th.start()
+
+
 def open_stores():
     """The folders of the networks whose store is open on this computer now."""
     base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"

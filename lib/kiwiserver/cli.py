@@ -1077,6 +1077,7 @@ def load(args, need_roles=True):
     remote.configure(fleet.resolve_path("secrets/known_hosts"), fleet_identities(fleet))
     if st.exists() and st.is_open() and not getattr(args, "porcelain", False):
         store.touch(st, args.fleet)     # in use: it locks itself the idle time from now (the app's looks do not count)
+        store.keep_open(st, args.fleet)     # and stays open while this command runs (a long pull outlived 30m)
     roles = rolesmod.discover() if need_roles else None
     ms = modset(fleet) if need_roles else None
     if ms is not None:

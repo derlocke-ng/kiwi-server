@@ -48,6 +48,7 @@ def dir_lock(d):
         if key in mine:
             yield
             return
+        guard_store_dir(d)                  # never the store's folder on disk (a locked store)
         os.makedirs(d, mode=0o700, exist_ok=True)
         fd = os.open(os.path.join(d, ".kiwi-lock"), os.O_RDWR | os.O_CREAT, 0o600)
         try:

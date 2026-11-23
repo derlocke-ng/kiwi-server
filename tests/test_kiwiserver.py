@@ -17123,6 +17123,19 @@ class TestLockedStoreWrites(unittest.TestCase):
         util.write_text(os.path.join(tmp, "secrets", "luks", "x.key"), "k\n", 0o600)
         self.assertTrue(os.path.isfile(os.path.join(tmp, "open", "luks", "x.key")))
 
+    def test_no_new_ca_nor_lock_in_a_secrets_folder_on_disk(self):
+        """23 Nov 2026: with the store locked, a command made a new CA (and its private key) in a plain
+        secrets/ca beside secrets.age, and the store could not be opened any more."""
+        from kiwiserver import certs
+        tmp = tempfile.mkdtemp()
+        util.write_bytes(os.path.join(tmp, "secrets.age"), b"sealed", 0o600)
+        with self.assertRaisesRegex(KiwiError, "the secret store is locked"):
+            certs.ensure_ca(os.path.join(tmp, "secrets", "ca"))
+        with self.assertRaisesRegex(KiwiError, "the secret store is locked"):
+            with util.dir_lock(os.path.join(tmp, "secrets", "luks")):
+                pass
+        self.assertFalse(os.path.lexists(os.path.join(tmp, "secrets")))
+
 
 class TestTimeline(unittest.TestCase):
     """One History (kiwiserver.timeline): the machine's journal, the control node's tasks and its log,

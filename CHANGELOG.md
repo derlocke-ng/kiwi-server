@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.308.0 — switched rings: auto-unlock by stopping a ring
+
+- **A machine's own ring** (`unlock.switch`, docs/design/unlock.md): its disk is unlocked by its
+  rings **and** its own ring. Disk unlock's switch (page, app) and `kiwi-server ring FLEET RING
+  off|on` stop or start that ring at once, also while the machine is off; **For N minutes**
+  (`ring … window`) runs it that long, and the ring stops again by itself (a timer on its
+  machine). A machine waiting at boot unlocks within seconds: no SSH, no key typed. The owner,
+  23 Nov 2026: "just stop the tang servers". Drilled on quince: it waited at boot with its ring
+  stopped, and unlocked 21 s after the window opened.
+- `tang.stopped` (kiwi-modules 0.124.0) keeps a stopped ring stopped across restarts and applies.
+- The leash watches a machine's usual rings, not its own ring that is stopped on purpose.
+
 ## 2.307.2 — Disk unlock in plain words
 
 - **Disk unlock** (app, page, `kiwi-server unlock FLEET`) says who unlocks each machine, by the

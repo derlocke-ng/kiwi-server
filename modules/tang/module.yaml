@@ -35,6 +35,10 @@ backup:
   # without these keys the machines bound to them need their passphrase
   paths: ["${DOCKERDIR}/{{ container_prefix }}-tang"]
 
+validate:
+  - when: "stopped | reject('in', rings) | list"
+    error: "tang.stopped: only rings this machine serves (tang.rings)"
+
 settings:
   - key: rings
     type: map
@@ -43,6 +47,11 @@ settings:
     default: { infra: "7500" }
     key_pattern: '[a-z0-9-]+'
     pattern: '[0-9]+'
+  - key: stopped
+    type: list
+    label: Stopped rings
+    help: "Rings that answer nobody now (switched rings, kiwi-server's Disk unlock): a machine whose own ring is stopped waits for a person at boot. kiwi-server switches them; written here so an apply keeps them stopped."
+    default: []
   - key: image
     group: Advanced
     help: "The container image this module runs, pinned by tag. Change it to try another version or to pin a newer one. The default is this repository's build (images/tang)."

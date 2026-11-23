@@ -180,13 +180,17 @@ A disk can open itself at boot. The `tang` module on one node serves a
 - A ring taken out of a machine's `unlock.rings` comes off its disk with the next
   apply too, once its key on record is checked to open that disk (since 2.234.0;
   before, the binding stayed and the disk still opened by the ring).
-- **Auto-unlock off** for one machine: `unlock.opens: by-a-person` (the switch on the control
-  page's Disk unlock, in the app's, or in its settings). Its rings stay named but are unbound at
-  the next apply; it waits for its key, **Unlock** or `kiwi-server unlock`. Switched on again,
-  the next apply binds them again. The control node's watchdog leaves such a machine waiting;
-  **Opens by itself for N minutes** (`unlock.window`, 5 by default) lets it type the key once
-  within that time: restart the machine right after. A ring answers anyone who reaches it, so
-  for a machine that is off or stolen this is no protection: `kiwi-server rotate ring NAME` is.
+- **Auto-unlock on and off for one machine**: give it a ring of its own (`unlock.switch: RING`,
+  a ring of the tang module on another machine). Its disk is then unlocked by its rings **and**
+  its own ring. The switch on the control page's and the app's Disk unlock, or `kiwi-server
+  ring FLEET RING off|on`, stops or starts that ring at once, also while the machine is off;
+  `tang.stopped` keeps it so across restarts and applies. **For N minutes** (`ring … window`,
+  `unlock.window`, 5 by default) runs it that long: a machine waiting at boot unlocks within
+  seconds, and the ring stops again by itself (drilled on quince, 23 Nov 2026: waited 4 minutes,
+  unlocked 21 s after the window opened). A stopped ring answers nobody, so this also holds for a
+  machine that is off or stolen; a running one answers anyone who reaches it.
+- `unlock.opens: by-a-person` unbinds a machine's rings at its next apply instead (no ring of
+  its own needed); the watchdog then leaves it waiting.
 - A machine cannot serve its own ring. The ring named `operator` is served
   from the machine running kiwi-server while it is needed, for what no other
   machine can open.

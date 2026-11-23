@@ -23,7 +23,8 @@ VERBS = {"status": "Checked", "plan": "Previewed", "apply": "Applied", "check": 
          "doctor": "Checked the tools of the control node", "adopt": "Took in", "service": "Looked after a container",
          "reboot": "Restarted", "poweroff": "Switched off", "wake": "Woke", "move": "Moved a part", "switch": "Gave a part to its standby",
          "mtu": "Measured the MTU", "rotate-ring": "Replaced the keys of an unlock ring",
-         "window": "Let it open by itself for a while:"}
+         "window": "Let it open by itself for a while:", "ring-off": "Switched auto-unlock off:",
+         "ring-on": "Switched auto-unlock on:", "ring-window": "Let a machine unlock for a while:"}
 # while it runs or waits (the control page's words since 2.200)
 DOING = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
         "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
@@ -31,6 +32,8 @@ DOING = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "ch
         "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
         "rotate-ring": "Replacing the keys of an unlock ring",
         "window": "Letting it open by itself for a while:",
+        "ring-off": "Switching auto-unlock off:", "ring-on": "Switching auto-unlock on:",
+        "ring-window": "Letting a machine unlock for a while:",
         "move": "Moving a part between", "switch": "Giving a part to its standby, from",
         "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
         "doctor": "Checking the tools of this machine", "service": "Looking after a container on"}

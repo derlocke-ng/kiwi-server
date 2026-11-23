@@ -594,10 +594,16 @@ def _in_ring(server, ring, command):
     return remote.run(remote.reach(server), "%s exec %s-tang-%s %s" % (runtime, prefix, ring, command)).decode(errors="replace")
 
 
-def pins(host, servers):
+def switch_ring(host):
+    """Its own ring (docs/design/unlock.md, switched rings): its disk opens with its rings AND this
+    one, so stopping it switches auto-unlock off for this machine alone."""
+    return str(host.cfg["unlock"].get("switch") or "")
+
+
+def pins(host, servers, rings=None):
     """Where this host finds each of its rings, and the key each must answer with."""
     out = []
-    for ring in host.cfg["unlock"]["rings"]:
+    for ring in (host.cfg["unlock"]["rings"] if rings is None else rings):
         if ring not in servers:
             raise KiwiError("%s: no host of this fleet serves the ring %s (the tang module's rings)" % (host.name, ring))
         server, port = servers[ring]
@@ -614,9 +620,32 @@ def pins(host, servers):
 
 
 def tree(host, servers):
-    """The Clevis configuration for this host's rings."""
-    return {"t": int(host.cfg["unlock"]["threshold"]),
-            "pins": {"tang": [{"url": p["url"], "adv": json.loads(p["adv"])} for p in pins(host, servers)]}}
+    """The Clevis configuration for this host's rings: N of them; with a switch ring, those AND it."""
+    def tang(p):
+        return {"url": p["url"], "adv": json.loads(p["adv"])}
+    base = {"t": int(host.cfg["unlock"]["threshold"]), "pins": {"tang": [tang(p) for p in pins(host, servers)]}}
+    sw = switch_ring(host)
+    if not sw:
+        return base
+    return {"t": 2, "pins": {"sss": [base], "tang": [tang(p) for p in pins(host, servers, [sw])]}}
+
+
+def tang_urls(cfg):
+    """Every tang URL in a clevis sss tree, nested or not."""
+    pins_ = (cfg or {}).get("pins") or {}
+    out = [p["url"] for p in pins_.get("tang") or [] if isinstance(p, dict) and p.get("url")]
+    subs = pins_.get("sss") or []
+    for s in (subs if isinstance(subs, list) else [subs]):
+        out += tang_urls(s)
+    return sorted(out)
+
+
+def _sig(cfg):
+    """A clevis sss tree in a form two of them compare by: threshold, tang URLs, sub-trees."""
+    pins_ = (cfg or {}).get("pins") or {}
+    subs = pins_.get("sss") or []
+    return (int(cfg.get("t", 1)), tuple(sorted(p["url"] for p in pins_.get("tang") or [] if isinstance(p, dict))),
+            tuple(sorted(_sig(s) for s in (subs if isinstance(subs, list) else [subs]))))
 
 
 def _ip_setting(host):
@@ -626,6 +655,18 @@ def _ip_setting(host):
         # device to wait for, and `cut -d: -f6` of a value without colons is the whole value
         return ":::::IFACE:dhcp"
     return "%s::%s:%s::IFACE:off" % (me.ip, host.cfg["network"].get("gateway") or "", me.netmask)
+
+
+def _bound_sigs(listing):
+    """The shape of each binding on the disk (_sig), in the order of _bound."""
+    out = []
+    for m in re.finditer(r"^(\d+): (sss|tpm2) '(\{.*\})'\s*$", listing, re.M):
+        try:
+            cfg = json.loads(m.group(3))
+        except ValueError:
+            continue
+        out.append(None if m.group(2) == "tpm2" or "tpm2" in cfg.get("pins", {}) else _sig(cfg))
+    return out
 
 
 def _bound(listing):
@@ -638,7 +679,7 @@ def _bound(listing):
             if m.group(2) == "tpm2" or "tpm2" in cfg.get("pins", {}):
                 out.append((m.group(1), int(cfg.get("t", 1)), ["tpm2"]))
             else:
-                out.append((m.group(1), int(cfg["t"]), sorted(p["url"] for p in cfg["pins"]["tang"])))
+                out.append((m.group(1), int(cfg["t"]), tang_urls(cfg)))
         except (ValueError, KeyError, TypeError, AttributeError):
             continue
     return out
@@ -899,7 +940,10 @@ def leash_urls(host, wanted_tree):
     """The ring URLs at the machine's own site (its LAN), out of the rings it is bound to."""
     mine = _lan(host)
     out = []
-    for p in (wanted_tree or {}).get("pins", {}).get("tang", []):
+    subs = ((wanted_tree or {}).get("pins") or {}).get("sss")
+    # with a switch ring: its usual rings only; the switch ring is stopped on purpose (auto-unlock off)
+    urls = sorted(u for s in subs for u in tang_urls(s)) if subs else tang_urls(wanted_tree)
+    for p in [{"url": u} for u in urls]:
         try:
             h = urllib.parse.urlsplit(p["url"]).hostname
             if mine and h and ipaddress.ip_address(h) in mine.network:
@@ -988,15 +1032,16 @@ def _rebind(host, tgt, key, wanted_tree, force=False):
     if not listing.startswith("device "):
         raise KiwiError("%s: no disk on the machine opens with the key on record" % host.name)
     dev = listing.split()[1]
-    urls = sorted(p["url"] for p in wanted_tree["pins"]["tang"])
     now = _bound(listing)
-    if [(t, u) for _s, t, u in now] == [(wanted_tree["t"], urls)] and not force:
+    if _bound_sigs(listing) == [_sig(wanted_tree)] and not force:
         return False
-    old = " ".join(s for s, _t, _u in now)
+    old = " ".join(b[0] for b in now)
     data = "%s\n%s\n%s\n%s\n" % (key, dev, json.dumps(wanted_tree, separators=(",", ":")), old)
     remote.run(tgt, BIND_SCRIPT, data.encode())
-    util.say("%s: the disk opens by itself with %d of %s; its key stays for the console"
-             % (host.name, wanted_tree["t"], ", ".join(host.cfg["unlock"]["rings"])))
+    sw = switch_ring(host)
+    util.say("%s: its disk is unlocked by %d of %s%s; its key stays for the console"
+             % (host.name, int(host.cfg["unlock"].get("threshold") or 1), ", ".join(host.cfg["unlock"]["rings"]),
+                " and its own ring %s (switched on and off)" % sw if sw else ""))
     return True
 
 
@@ -1261,7 +1306,11 @@ def picture(fleet, roles, ms):
                 path = "the master's relay"
             rings.append({"ring": r, "server": getattr(server, "name", None) if not isinstance(server, OperatorRing)
                           else "operator", "path": path})
-        rows.append({"name": h.name, "way": _way(h), "auto": wanted(h), "window": int(cfg.get("window") or 5),
+        sw = switch_ring(h)
+        sw_server = servers.get(sw, (None, 0))[0] if sw else None
+        sw_on = bool(sw_server) and sw not in [str(x) for x in ((getattr(sw_server, "module_settings", None) or {}).get("tang") or {}).get("stopped") or []]
+        rows.append({"name": h.name, "way": _way(h), "auto": wanted(h) and (not sw or sw_on), "window": int(cfg.get("window") or 5),
+                     "switch": sw, "switch_on": sw_on, "switch_server": getattr(sw_server, "name", None),
                      "can_window": waits_for_a_person(h) and bool(cfg.get("ssh")),
                      "threshold": int(cfg.get("threshold") or 1) if rings else 0,
                      "rings": rings, "openers": who_opens, "needs": sorted(needs.get(h.name, [])),
@@ -1289,6 +1338,8 @@ def line(r):
         return "Unlocked by you: Unlock, or its key at boot"
     if not r.get("auto", True):
         return "Unlocked by you (auto-unlock off): Unlock, or its key at boot"
+    if r.get("switch") and not r.get("switch_on", True):
+        return "Unlocked by you (auto-unlock off): Unlock, or its key at boot"
     who = []
     for x in r["rings"]:
         w = "this computer" if x["server"] == "operator" else (x["server"] or "nobody")
@@ -1299,6 +1350,8 @@ def line(r):
          else "Unlocked by %d of %s together" % (n, _either(who, "and")))
     if any(x["path"] != "the LAN" for x in r["rings"]):
         s += ", through a tunnel"
+    if r.get("switch"):
+        s += " (auto-unlock on)"
     return s
 
 

@@ -40,6 +40,27 @@ than "always by itself". This design is the one place for all of it.
   nothing. The page says so beside the switch.
 - `at-home` never uses a relay or an opener, and suits the leash.
 
+## Switched rings (the owner, 23 Nov 2026: "just stop the tang servers")
+
+Auto-unlock on and off, and "for 5 minutes", by starting and stopping a ring, not by binding and
+unbinding a disk (2.307.0-2.307.2 unbound the rings at an apply of the machine itself: it had to
+run, could not be switched while off, and the window needed the control node to type its key).
+
+- A machine that is switched has a ring of its own (`unlock.switch: RING`), or shares one with
+  a group (the owner's "dev" ring for dev devices). Its disk is bound to `its rings AND its
+  switch ring` (clevis `sss`, t=2: the usual `sss` of its rings, and the switch ring's `tang`).
+- The switch ring runs on a ring machine like any ring (the tang module); `tang.stopped` lists
+  the rings that do not run. **Off**: the control node stops the ring's container at once and
+  writes it into `tang.stopped` (an apply of the ring machine later keeps it stopped). **On**:
+  the reverse.
+- **For N minutes**: the control node starts the ring and the ring machine stops it again by
+  itself after `unlock.window` minutes (a transient systemd timer there, so it stops even when
+  the control node is gone). A machine waiting at boot asks its rings again every few seconds:
+  it opens within seconds, no SSH, no key typed.
+- Servers on the shared rings are not switched: stopping a shared ring would stop everyone's.
+- A ring answers anyone who reaches it while it runs; stopped, nobody. For a machine that is off
+  or stolen, **off** now protects (its switch ring stays stopped), unlike unbinding.
+
 ## Openers: who opens the way for a machine away from home
 
 - A machine that reaches its rings only through a tunnel (`unlock.via`, a master at a hoster)

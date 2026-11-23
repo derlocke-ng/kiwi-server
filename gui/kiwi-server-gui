@@ -197,6 +197,10 @@ BASE_GROUPS = [
              help="The unlock rings (the tang module on other machines) that open this machine's encrypted disk at boot, "
                   "by name, space separated. Empty: someone types the passphrase or presses Unlock",
              doc="docs/security.md"),
+        dict(path=("unlock", "switch"), type="string", label="Its own ring", default="",
+             help="A ring of its own (a tang ring on another machine): its disk is unlocked by its rings AND this one, "
+                  "so Disk unlock switches auto-unlock on and off for it alone, and lets it unlock for a while",
+             doc="docs/design/unlock.md"),
         dict(path=("unlock", "opens"), type="enum", label="Opens", options=["by-itself", "by-a-person"], default="by-itself",
              help="by-itself: its rings open it at boot. by-a-person: auto-unlock off; its rings stay named, and it waits "
                   "for its key, Unlock (Open now) or kiwi-server unlock. Changing it takes an apply",
@@ -1464,8 +1468,8 @@ class UnlockDialog(Adw.Dialog):
         row.add_prefix(img)
         top.add(row)
         self.page.add(top)
-        g = Adw.PreferencesGroup(title="Each machine", description="The switch: auto-unlock on or off (saved, then that "
-                                 "machine is applied). Its rings are in its settings, Disk unlock.")
+        g = Adw.PreferencesGroup(title="Each machine", description="The switch: auto-unlock on or off, for a machine with a "
+                                 "ring of its own (its settings, Disk unlock): that ring runs or is stopped, at once.")
         for m in rows:
             row = long_row(m["name"], m.get("line") or m["way"])
             if m.get("rings"):
@@ -1477,16 +1481,20 @@ class UnlockDialog(Adw.Dialog):
                                 tooltip_text="After a power cut it waits for you")
                 img.add_css_class("warning")
                 row.add_prefix(img)
-            if m.get("rings"):
-                if m.get("can_window"):     # auto-unlock off: it opens by itself for a while (the control node)
+            if m.get("switch"):             # its own ring: auto-unlock is that ring running or stopped
+                if not m.get("switch_on"):
                     b = Gtk.Button(label="For %d min" % m.get("window", 5), valign=Gtk.Align.CENTER, css_classes=["flat"],
-                                   tooltip_text="Opens by itself for a while: restart it now, and if it waits at boot "
-                                                "meanwhile, the control node types its key")
-                    b.connect("clicked", lambda _b, name=m["name"]: self.window(name))
+                                   tooltip_text="Its ring runs for a while: restart it now, and if it waits at boot it "
+                                                "unlocks within seconds")
+                    b.connect("clicked", lambda _b, ring=m["switch"]: self.ring(ring, "window"))
                     row.add_suffix(b)
-                sw = Gtk.Switch(active=bool(m.get("auto")), valign=Gtk.Align.CENTER, tooltip_text="Auto-unlock")
-                sw.connect("notify::active", lambda s, _p, name=m["name"]: self.switch(name, s.get_active()))
+                sw = Gtk.Switch(active=bool(m.get("switch_on")), valign=Gtk.Align.CENTER,
+                                tooltip_text="Auto-unlock: its ring %s on %s runs or is stopped" % (m["switch"], m.get("switch_server")))
+                sw.connect("notify::active", lambda s, _p, ring=m["switch"]: self.ring(ring, "on" if s.get_active() else "off"))
                 row.add_suffix(sw)
+            elif m.get("rings"):
+                row.set_tooltip_text((row.get_tooltip_text() or "") + ". To switch its auto-unlock: a ring of its own "
+                                     "in its settings (Disk unlock, its own ring)")
             g.add(row)
         self.page.add(g)
         note = Adw.PreferencesGroup(description="Auto-unlock off does not protect a machine that is off or stolen (a ring "
@@ -1496,15 +1504,10 @@ class UnlockDialog(Adw.Dialog):
         self.stack.set_visible_child_name("list")
         return False
 
-    def window(self, name):
-        self.win.spawn(["control", "run", self.win.doc.path, "window", name], "Letting %s open by itself for a while…" % name)
-        self.close()
-
-    def switch(self, name, on):
-        self.win.doc.set(name, ("unlock", "opens"), "by-itself" if on else "by-a-person")
-        if not self.win.save():
-            return
-        self.win.spawn(["apply", self.win.doc.path, name], "Applying %s: auto-unlock %s…" % (name, "on" if on else "off"))
+    def ring(self, ring, state):
+        """A switched ring through the control node: on, off, or on for a while."""
+        self.win.spawn(["control", "run", self.win.doc.path, "ring-" + state, "--part", ring],
+                       {"on": "Auto-unlock on…", "off": "Auto-unlock off…", "window": "Unlocking for a while…"}[state])
         self.close()
 
 

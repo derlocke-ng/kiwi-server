@@ -804,6 +804,10 @@ onsubmit="return confirm('Give {{ l.part }} to {{ l.ready_on }} now? It stops on
 <div class="actions"><button>See what would happen</button></div></form>{% endif %}{% endif %}
 {% endif %}{% if tab == "history" %}
 <p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
+{% if own is not none %}<h2>On the machine</h2><p class="muted small">What {{ m.name }} itself remembers of the last 30 days:
+applies, updates, what its runbook did, backups, starts.</p>{% for e in own[:120] %}<div class="card row"><span>{{ e.what }}</span>
+<span class="muted small">{{ e.time[:16]|replace("T", " ") }} · <span class="{{ 'bad' if e.kind == 'failed' else '' }}">{{ e.kind }}</span></span></div>
+{% else %}<p class="muted">Nothing in its journal.</p>{% endfor %}{% endif %}
 {% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
 <b>{{ verb(j.action) }}</b><span class="state {{ j.state }}">{{ jobword(j.state) }}</span></div>
 <span class="muted small">{{ (ago(j.started) ~ " ago") if j.started else "not started yet" }} · {{ j.user }}</span></a>{% endfor %}{% endif %}
@@ -2913,8 +2917,9 @@ def make_app(control: Control):
         mine = [e for e in control.audit_tail(600) if name in (e.get("hosts") or [])]
         jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
         standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
+        own = control.own_history(name) if tab == "history" else None     # what the machine itself remembers
         return page("host.html", request, "/", live=True, m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
-                    chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby,
+                    chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby, own=own,
                     targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
 
     def same_kind(m, ms):

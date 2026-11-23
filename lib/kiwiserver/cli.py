@@ -3661,6 +3661,11 @@ def cmd_apply(args):
             if backupmod.carries_wireguard(h):
                 backupmod.keep_wireguard(h, tgt)
             wakemod.after_apply(h, tgt)     # its card's MAC for `wake`, and Wake-on-LAN on or off (network.wol)
+            try:                            # its History: who applied what (kiwi-server history)
+                remote.run(tgt, "logger -t kiwi-role %s" % shlex.quote("applied: kiwi-server %s, from %s" % (
+                    VERSION, os.environ.get("KIWI_ACTOR") or socket.gethostname())))
+            except KiwiError:
+                pass
             asleepmod.after_apply(h, tgt)   # asleep by day, awake for the night's backups (asleep), or always awake
             if servers and unlock.wanted(h):
                 from . import opener as openermod
@@ -5574,6 +5579,64 @@ def cmd_service(args):
         util.say("the full log of %s on %s: %s" % (args.name, h.name, shown_path(os.path.abspath(args.save))))
 
 
+# what the machine itself remembers (the owner, 23 Nov 2026: "history is nearly empty everywhere"):
+# applies (a line of kiwi-server's at each), updates, the runbook's actions, backups, boots
+HISTORY_SCRIPT = r'''
+d=%(days)d
+journalctl --since "-${d}d" -o short-iso --no-pager -t kiwi-role -t kiwi-runbook 2>/dev/null | sed 's/^/J /'
+journalctl --since "-${d}d" -o short-iso --no-pager -u kiwi-stack-update.service -u kn-backup.service -u kiwi-backup.service \
+    2>/dev/null | grep -E 'systemd\[1\]: (Finished|Failed to start)' | sed 's/^/J /'
+journalctl --list-boots --no-pager 2>/dev/null | tail -n 20 | sed 's/^/B /'
+'''
+
+_UNIT_WORDS = {"kiwi-stack-update": "the nightly update", "kn-backup": "a backup", "kiwi-backup": "a backup"}
+
+
+def history_entries(out):
+    """[{time, what, kind}] of HISTORY_SCRIPT's output, newest first: kind is apply, update,
+    runbook, backup, boot or failed."""
+    found = []
+    for line in out.splitlines():
+        if line.startswith("J "):
+            m = re.match(r"J (\S+) \S+ ([\w.-]+)(?:\[\d+\])?: (.*)$", line)
+            if not m:
+                continue
+            when, tag, msg = m.groups()
+            if tag == "systemd":
+                u = re.search(r"(Finished|Failed to start) ([\w.-]+)\.service", msg)
+                if not u:
+                    continue
+                word = _UNIT_WORDS.get(u.group(2), u.group(2))
+                ok = u.group(1) == "Finished"
+                found.append({"time": when, "what": "%s %s" % (word, "ran" if ok else "failed"),
+                              "kind": ("update" if "update" in u.group(2) else "backup") if ok else "failed"})
+            else:
+                kind = "apply" if tag == "kiwi-role" else "failed" if re.search(r": line \d+: ", msg) else "runbook"
+                found.append({"time": when, "what": msg.strip(), "kind": kind})
+        elif line.startswith("B "):
+            m = re.search(r"\w{3} (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)", line)
+            if m:
+                found.append({"time": "%sT%s" % m.groups(), "what": "started", "kind": "boot"})
+    found.sort(key=lambda e: e["time"][:19], reverse=True)
+    return found[:200]
+
+
+def cmd_history(args):
+    """What a machine itself remembers: applies, updates, what its runbook did, backups and
+    restarts (its journal, the last DAYS days)."""
+    fleet, _roles, _ms = load(args)
+    h = fleet.select([args.host])[0]
+    out = remote.run(remote.reach(h, args.ssh), HISTORY_SCRIPT % {"days": max(1, min(int(args.days), 365))}).decode(errors="replace")
+    entries = history_entries(out)
+    if getattr(args, "porcelain", False):
+        print(json.dumps({"host": h.name, "entries": entries}))
+        return
+    if not entries:
+        util.say("%s remembers nothing of the last %d days" % (h.name, args.days))
+    for e in entries:
+        print("  %s  %-8s %s" % (e["time"][:16].replace("T", " "), e["kind"], e["what"]))
+
+
 def cmd_disks(args):
     """The disks a machine has, as it sees them, and which of them hold data that is not
     mounted: with the line for `mounts` in the fleet file that puts it there."""
@@ -6603,6 +6666,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server status <fleet> [host...]          what the machines report: role applied, stack status
   kiwi-server service <fleet> <host> <name> restart|stop|start|logs
                                                 one service of a machine's stack by hand, e.g. kn-nginx
+  kiwi-server history <fleet> <host> [--days N]
+                                                what the machine itself remembers: applies, updates, its runbook, backups, starts
   kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
   kiwi-server remove <fleet> <host> [--yes]     a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]
@@ -6955,6 +7020,9 @@ def build_parser():
     s.add_argument("--lines", type=int, default=200, help="logs: how many of the last lines")
     s.add_argument("--raw", action="store_true", help="logs: every line as the machine has it, podman's too")
     s.add_argument("--save", metavar="FILE", help="logs: the full log into this file as well")
+    s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("history", cmd_history); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("--days", type=int, default=30, help="how far back (default 30)")
     s.add_argument("--ssh", metavar="USER@ADDR")
     s = sub("disks", cmd_disks); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--ssh", metavar="USER@ADDR")

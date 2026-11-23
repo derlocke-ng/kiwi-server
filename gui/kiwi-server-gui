@@ -2535,10 +2535,22 @@ class ActivityDialog(Adw.Dialog):
             except (ValueError, IndexError):
                 got = None
             why = (err.strip().replace("error: ", "").splitlines() or ["no answer"])[-1]
-            GLib.idle_add(self.show, got, why)
+            own = None
+            if self.host:           # what the machine itself remembers (kiwi-server history)
+                rc2, out2, _e = run_cli(self.win.cli, ["history", path, self.host, "--porcelain"], timeout=90)
+                try:
+                    own = json.loads(out2.strip().splitlines()[-1])["entries"] if rc2 == 0 and out2.strip() else None
+                except (ValueError, IndexError, KeyError):
+                    own = None
+            if got is None and own is not None:
+                got = {}
+            GLib.idle_add(self.show, got, why, own)
         threading.Thread(target=work, daemon=True).start()
 
-    def show(self, got, why):
+    KINDS = {"apply": "applied", "update": "updated", "runbook": "its runbook", "backup": "backup",
+             "boot": "started", "failed": "failed"}
+
+    def show(self, got, why, own=None):
         tb = Adw.ToolbarView()
         hb = Adw.HeaderBar()
         again = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Ask again")
@@ -2551,6 +2563,17 @@ class ActivityDialog(Adw.Dialog):
             self.set_child(tb)
             return False
         page = Adw.PreferencesPage()
+        if own is not None:
+            g = Adw.PreferencesGroup(title="On the machine", description="What %s itself remembers of the last 30 days: "
+                                     "applies, updates, what its runbook did, backups, starts." % self.host)
+            for e in own[:120]:
+                row = plain_row(e.get("what") or "", (e.get("time") or "")[:16].replace("T", " "))
+                row.add_suffix(Gtk.Label(label=self.KINDS.get(e.get("kind"), e.get("kind") or ""),
+                                         css_classes=["error" if e.get("kind") == "failed" else "dim-label"]))
+                g.add(row)
+            if not own:
+                g.add(plain_row("Nothing in its journal."))
+            page.add(g)
         g = Adw.PreferencesGroup(title="Tasks", description="What the control node did or does, newest first.")
         jobs = [j for j in got.get("jobs") or [] if self.mine(j)]
         entries = [e for e in got.get("entries") or [] if self.mine(e)]
